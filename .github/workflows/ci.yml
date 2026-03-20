@@ -1,0 +1,45 @@
+name: Continuous Confidence
+
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main, staging, develop]
+
+jobs:
+  ci:
+    name: CI Pipeline
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Layer 0a — Type check
+        run: npm run typecheck
+
+      - name: Layer 0b — Lint
+        run: npm run lint
+
+      - name: Layer 0c — Format check
+        run: npm run format:check
+
+      - name: Layer 1 — Unit tests
+        run: npm run test:coverage
+
+      - name: Layer 2 — Build
+        run: npm run build
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
