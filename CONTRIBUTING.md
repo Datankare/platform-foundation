@@ -1,5 +1,10 @@
 # Contributing to Platform Foundation
 
+> **AI-Assisted Codebase:** This project was built in partnership with
+> [Claude](https://claude.ai) by Anthropic as primary engineering partner.
+> Architecture, code, tests, and documentation were developed collaboratively
+> with Claude. New contributors are welcome to use AI tools in their workflow.
+
 Welcome to Platform Foundation. This guide gets you from zero to productive as fast as possible.
 
 ---

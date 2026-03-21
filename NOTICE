@@ -3,6 +3,10 @@ NOTICE
 Platform Foundation was created and is maintained by Datankare.
 https://github.com/Datankare
 
+This platform was built in partnership with Claude (Anthropic) as primary
+engineering partner — architecture, code, tests, and documentation.
+https://claude.ai | https://anthropic.com
+
 If you build something with this foundation, we'd love to know.
 Open an issue at https://github.com/Datankare/platform-foundation/issues
 or find us at https://github.com/Datankare.
