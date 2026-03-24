@@ -1,5 +1,6 @@
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
 
@@ -22,7 +23,7 @@ export async function translateText(
   const requestId = generateRequestId();
   const safeLang = sanitizeLanguageCode(targetLanguage);
 
-  const res = await fetch(TRANSLATE_URL, {
+  const res = await fetchWithTimeout(TRANSLATE_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
