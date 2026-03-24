@@ -17,10 +17,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "axios": "^1.9.0",
-    "cors": "^2.8.5",
     "dotenv": "^16.5.0",
-    "express": "^5.1.0",
     "next": "^16.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -28,7 +25,6 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
     "@tailwindcss/postcss": "^4",
-    "@types/cors": "^2.8.17",
     "@types/jest": "^29.5.14",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -58,6 +54,22 @@
       "lib/**/*.ts",
       "app/api/**/*.ts",
       "components/**/*.tsx"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "lines": 60,
+        "functions": 60,
+        "branches": 50
+      }
+    },
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.ts"
+    ],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/",
+      "components/SpikeApp.tsx",
+      "components/SpikeAppWrapper.tsx",
+      "jest.setup.ts"
     ]
   }
 }

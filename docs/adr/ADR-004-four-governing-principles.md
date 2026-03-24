@@ -31,6 +31,17 @@ and produces a single trustworthy answer: green means nothing is broken —
 anywhere, at any layer, on any platform. A change is not done until its tests
 are done. No exceptions.
 
+## Security Requirements (RAMPS — Security Pillar)
+
+OWASP Top 10 (2021) compliance is the baseline standard. Every phase must
+address all applicable categories before shipping:
+
+- API credentials: X-Goog-Api-Key header only — never in URLs (OWASP A02)
+- User input: sanitized before embedding in LLM prompts (OWASP A03)
+- Security headers: CSP, X-Frame-Options, HSTS required (OWASP A05)
+- Structured logging: every API route must use lib/logger.ts (OWASP A09)
+- No silent debt: every security deferral documented in SECURITY_DEBT.md
+
 ## Consequences
 
 - Every code review asks: does this honor RAMPS, AAA, Foundation as Fabric,

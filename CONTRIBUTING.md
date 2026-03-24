@@ -288,3 +288,41 @@ every deferral must be documented with a resolution plan.
 
 _Platform Foundation — Foundation as Fabric · Continuous Confidence_
 _Confidential & Proprietary — Datankare_
+
+## Security Checklist (Required for Every PR)
+
+Every pull request must pass this checklist before merge. See ADR-009 for details.
+
+**API Credentials (OWASP A02)**
+
+- [ ] No API keys in URL query parameters (`?key=`)
+- [ ] Google APIs use `X-Goog-Api-Key` header only
+- [ ] Anthropic API key injected via SDK constructor from `process.env`
+
+**Input Sanitization (OWASP A03)**
+
+- [ ] All user text passes `sanitizeForPrompt()` before embedding in LLM prompts
+- [ ] Language codes pass `sanitizeLanguageCode()` before use in API calls
+
+**Structured Logging (OWASP A09)**
+
+- [ ] Every new API route imports `logger` from `@/lib/logger`
+- [ ] No `console.error`, `console.log`, or `console.warn` in API routes or lib/
+- [ ] Error logs include `requestId`, `route`, and `error` fields
+- [ ] No sensitive data (API keys, user content, PII) in any log entry
+
+**Security Configuration (OWASP A05)**
+
+- [ ] New routes do not expose internal state or API key presence
+- [ ] next.config.ts security headers are not weakened
+
+**Testing**
+
+- [ ] New API routes have tests verifying no `?key=` in URLs
+- [ ] Coverage thresholds still pass after changes (`npm run test:coverage`)
+
+**Security Debt**
+
+- [ ] Any deferred security item is logged in `docs/SECURITY_DEBT.md`
+
+---

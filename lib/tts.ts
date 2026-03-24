@@ -1,6 +1,6 @@
-import axios from "axios";
+import { logger, generateRequestId } from "@/lib/logger";
+import { sanitizeLanguageCode } from "@/lib/sanitize";
 
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
 
 const VOICE_CONFIG: Record<string, { languageCode: string; name: string }> = {
@@ -9,19 +9,42 @@ const VOICE_CONFIG: Record<string, { languageCode: string; name: string }> = {
   es: { languageCode: "es-ES", name: "es-ES-Neural2-A" },
 };
 
+function getApiKey(): string {
+  const key = process.env.GOOGLE_API_KEY;
+  if (!key) throw new Error("GOOGLE_API_KEY is not configured");
+  return key;
+}
+
 export async function textToSpeech(text: string, languageCode: string): Promise<string> {
-  const voice = VOICE_CONFIG[languageCode] || VOICE_CONFIG["en"];
-  const response = await axios.post(`${TTS_URL}?key=${GOOGLE_API_KEY}`, {
-    input: { text },
-    voice: {
-      languageCode: voice.languageCode,
-      name: voice.name,
+  const requestId = generateRequestId();
+  const safeLang = sanitizeLanguageCode(languageCode);
+  const voice = VOICE_CONFIG[safeLang] || VOICE_CONFIG["en"];
+
+  logger.debug("textToSpeech called", { requestId, route: "lib/tts" });
+
+  const res = await fetch(TTS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      // OWASP A02: API key in header, never in URL query parameter
+      "X-Goog-Api-Key": getApiKey(),
     },
-    audioConfig: {
-      audioEncoding: "MP3",
-      speakingRate: 0.95,
-      pitch: 0,
-    },
+    body: JSON.stringify({
+      input: { text },
+      voice: { languageCode: voice.languageCode, name: voice.name },
+      audioConfig: { audioEncoding: "MP3", speakingRate: 0.95, pitch: 0 },
+    }),
   });
-  return response.data.audioContent;
+
+  if (!res.ok) {
+    logger.error("Google TTS API failed", {
+      requestId,
+      status: res.status,
+      route: "lib/tts",
+    });
+    throw new Error(`Google TTS API error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data.audioContent as string;
 }
