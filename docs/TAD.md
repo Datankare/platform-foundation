@@ -61,6 +61,7 @@ repositories. Never the reverse.
 | ADR-005 | Content Safety Architecture             |
 | ADR-006 | Database Architecture                   |
 | ADR-007 | Monorepo Structure                      |
+| ADR-008 | Input Pipeline Architecture             |
 | ADR-009 | Security Standards and OWASP Compliance |
 
 ---

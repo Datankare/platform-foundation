@@ -6,11 +6,16 @@ import { ProcessResponse } from "@/types";
 import { logger, generateRequestId } from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
+  const requestId = generateRequestId();
+  const start = Date.now();
+  logger.request("/api/process", "POST", requestId);
+
   try {
     const body = await request.json();
     const { text } = body;
 
     if (!text || typeof text !== "string") {
+      logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
       return NextResponse.json<ProcessResponse>(
         { success: false, error: "Text input is required." },
         { status: 400 }
@@ -20,6 +25,7 @@ export async function POST(request: NextRequest) {
     const trimmed = text.trim();
 
     if (trimmed.length === 0) {
+      logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
       return NextResponse.json<ProcessResponse>(
         { success: false, error: "Text cannot be empty." },
         { status: 400 }
@@ -27,6 +33,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (trimmed.length > 100) {
+      logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
       return NextResponse.json<ProcessResponse>(
         { success: false, error: "Text must be 100 characters or fewer." },
         { status: 400 }
@@ -36,6 +43,7 @@ export async function POST(request: NextRequest) {
     const safety = await checkSafety(trimmed);
 
     if (!safety.safe) {
+      logger.response("/api/process", "POST", 422, requestId, Date.now() - start);
       return NextResponse.json<ProcessResponse>(
         {
           success: false,
@@ -60,12 +68,12 @@ export async function POST(request: NextRequest) {
       })
     );
 
+    logger.response("/api/process", "POST", 200, requestId, Date.now() - start);
     return NextResponse.json<ProcessResponse>({
       success: true,
       translations: results,
     });
   } catch (error) {
-    const requestId = generateRequestId();
     logger.error("Process API error", {
       requestId,
       route: "/api/process",
