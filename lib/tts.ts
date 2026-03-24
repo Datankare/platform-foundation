@@ -1,5 +1,6 @@
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
 
@@ -22,7 +23,7 @@ export async function textToSpeech(text: string, languageCode: string): Promise<
 
   logger.debug("textToSpeech called", { requestId, route: "lib/tts" });
 
-  const res = await fetch(TTS_URL, {
+  const res = await fetchWithTimeout(TTS_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
