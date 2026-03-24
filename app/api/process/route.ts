@@ -3,6 +3,7 @@ import { checkSafety } from "@/lib/safety";
 import { translateToAllLanguages } from "@/lib/translate";
 import { textToSpeech } from "@/lib/tts";
 import { ProcessResponse } from "@/types";
+import { logger, generateRequestId } from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,7 +65,12 @@ export async function POST(request: NextRequest) {
       translations: results,
     });
   } catch (error) {
-    console.error("Process API error:", error);
+    const requestId = generateRequestId();
+    logger.error("Process API error", {
+      requestId,
+      route: "/api/process",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
     return NextResponse.json<ProcessResponse>(
       { success: false, error: "An unexpected error occurred. Please try again." },
       { status: 500 }

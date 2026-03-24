@@ -1,55 +1,67 @@
 # Technical Architecture Document (TAD)
 
-**Project:** Platform Foundation — GenAI-Native Cross-Platform Application Platform  
-**Version:** 1.0  
-**Date:** March 2026  
-**Status:** Approved  
+**Project:** Platform Foundation — Playform Template Repository
+**Version:** 2.0
+**Date:** March 2026
+**Status:** Approved
 **Repository:** github.com/Datankare/platform-foundation
 
 ---
 
-See Platform Foundation_TAD_v1.0.docx for the full formatted version.
+## Purpose
 
-## Quick Reference
+Platform Foundation is the template repository for Playform. All security
+primitives, architectural patterns, and platform infrastructure are
+established here first, then propagated to Playform and future game
+repositories. Never the reverse.
 
-### Stack
+## Stack
 
-- **Web:** Next.js 15+ + TypeScript + Tailwind CSS
-- **Mobile:** React Native (Phase 3+)
-- **Database:** PostgreSQL (Supabase) + JSONB + pgvector + Redis
-- **Auth:** Supabase Auth (Google, Apple SSO)
-- **LLM:** Anthropic Claude API (Haiku + Sonnet)
-- **Voice:** Web Speech API + Google STT + Google Cloud TTS
-- **Translation:** Google Translate API + Claude
-- **Payments:** Stripe
-- **Ads:** Google AdMob + Ad Manager
-- **Hosting:** Vercel (3 environments) + AWS (Phase 3+)
-- **CI/CD:** GitHub Actions (5-layer test pipeline)
+| Layer       | Technology           | Notes                             |
+| ----------- | -------------------- | --------------------------------- |
+| Framework   | Next.js 16.2+        | App Router, serverless API routes |
+| Language    | TypeScript           | strict: true                      |
+| Styling     | Tailwind CSS         | Utility-first                     |
+| LLM         | Anthropic Claude API | Haiku + Sonnet                    |
+| Translation | Google Translate API | X-Goog-Api-Key header auth        |
+| TTS         | Google Cloud TTS     | Neural2/Wavenet voices            |
+| Hosting     | Vercel               | 3 environments                    |
+| CI/CD       | GitHub Actions       | 5-layer pipeline                  |
 
-### Environments
+## Security Architecture
 
-| Environment | Branch  | URL                                    |
-| ----------- | ------- | -------------------------------------- |
-| Local       | any     | localhost:3000                         |
-| Dev         | develop | platform-foundation-dev.vercel.app     |
-| Staging     | staging | platform-foundation-staging.vercel.app |
-| Production  | main    | platform-foundation-inky.vercel.app    |
+### OWASP Top 10 Compliance — see ADR-009 for full mapping
 
-### Current API
+- **A02** ✅ — X-Goog-Api-Key header only, never URL params
+- **A03** ✅ — sanitizeForPrompt() at all LLM input surfaces
+- **A05** ✅ — CSP + security headers in next.config.ts
+- **A09** ✅ — lib/logger.ts structured logging platform-wide
+- **A01, A04, A07** ⏳ — Phase 1
 
-| Method | Endpoint     | Description                           |
-| ------ | ------------ | ------------------------------------- |
-| GET    | /api/health  | Platform health check                 |
-| POST   | /api/process | Text/voice → safety → translate → TTS |
+### Security Primitives
 
-### ADR Index
+- `lib/logger.ts` — structured JSON logging, 5 levels, runtime-configurable
+- `lib/sanitize.ts` — prompt injection defense, log sanitization
 
-- ADR-001: Platform and Game Layer Separation
-- ADR-002: Next.js + React Stack
-- ADR-003: GenAI-Native Architecture
-- ADR-004: Four Governing Principles
-- ADR-005: Content Safety Architecture
-- ADR-006: Database Architecture
+## API Inventory
+
+| Method | Route        | Description                                |
+| ------ | ------------ | ------------------------------------------ |
+| GET    | /api/health  | Service liveness — no key presence exposed |
+| POST   | /api/process | Text → safety → translate → TTS            |
+
+## ADR Index
+
+| ADR     | Title                                   |
+| ------- | --------------------------------------- |
+| ADR-001 | Platform and Game Layer Separation      |
+| ADR-002 | Next.js + React Stack                   |
+| ADR-003 | GenAI-Native Architecture               |
+| ADR-004 | Four Governing Principles               |
+| ADR-005 | Content Safety Architecture             |
+| ADR-006 | Database Architecture                   |
+| ADR-007 | Monorepo Structure                      |
+| ADR-009 | Security Standards and OWASP Compliance |
 
 ---
 

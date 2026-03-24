@@ -1,6 +1,6 @@
-import axios from "axios";
+import { logger, generateRequestId } from "@/lib/logger";
+import { sanitizeLanguageCode } from "@/lib/sanitize";
 
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
 
 export const TARGET_LANGUAGES = [
@@ -9,16 +9,40 @@ export const TARGET_LANGUAGES = [
   { code: "es", language: "Spanish", flag: "\u{1F1EA}\u{1F1F8}" },
 ];
 
+function getApiKey(): string {
+  const key = process.env.GOOGLE_API_KEY;
+  if (!key) throw new Error("GOOGLE_API_KEY is not configured");
+  return key;
+}
+
 export async function translateText(
   text: string,
   targetLanguage: string
 ): Promise<string> {
-  const response = await axios.post(`${TRANSLATE_URL}?key=${GOOGLE_API_KEY}`, {
-    q: text,
-    target: targetLanguage,
-    format: "text",
+  const requestId = generateRequestId();
+  const safeLang = sanitizeLanguageCode(targetLanguage);
+
+  const res = await fetch(TRANSLATE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      // OWASP A02: API key in header, never in URL query parameter
+      "X-Goog-Api-Key": getApiKey(),
+    },
+    body: JSON.stringify({ q: text, target: safeLang, format: "text" }),
   });
-  return response.data.data.translations[0].translatedText;
+
+  if (!res.ok) {
+    logger.error("Google Translate API failed", {
+      requestId,
+      status: res.status,
+      route: "lib/translate",
+    });
+    throw new Error(`Google Translate API error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data.data.translations[0].translatedText as string;
 }
 
 export async function translateToAllLanguages(
@@ -27,12 +51,7 @@ export async function translateToAllLanguages(
   const results = await Promise.all(
     TARGET_LANGUAGES.map(async (lang) => {
       const translated = await translateText(text, lang.code);
-      return {
-        code: lang.code,
-        language: lang.language,
-        flag: lang.flag,
-        translated,
-      };
+      return { code: lang.code, language: lang.language, flag: lang.flag, translated };
     })
   );
   return results;
