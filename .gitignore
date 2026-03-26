@@ -43,3 +43,10 @@ next-env.d.ts
 
 # Lighthouse
 docs/lighthouse-baseline.json
+
+# Playwright
+playwright-report/
+test-results/
+
+# k6
+k6-results/
