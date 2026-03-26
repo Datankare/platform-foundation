@@ -1,0 +1,41 @@
+name: "Load Test (k6)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Base URL to test"
+        required: false
+        default: "http://localhost:3000"
+  schedule:
+    - cron: "0 8 * * 1"
+
+jobs:
+  load-test:
+    name: k6 Load Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run k6 smoke test
+        run: k6 run k6/api-smoke.js
+        env:
+          K6_BASE_URL: ${{ github.event.inputs.target_url || 'http://localhost:3000' }}
+
+      - name: Upload k6 results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results
+          path: k6-results/
+          retention-days: 30
