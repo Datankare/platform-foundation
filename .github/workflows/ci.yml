@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Layer 0d — Dependency audit
+        run: npm audit --audit-level=high
+
       - name: Layer 0a — Type check
         run: npm run typecheck
 
