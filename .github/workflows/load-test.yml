@@ -33,7 +33,7 @@ jobs:
           K6_BASE_URL: ${{ github.event.inputs.target_url || 'http://localhost:3000' }}
 
       - name: Upload k6 results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: k6-results
