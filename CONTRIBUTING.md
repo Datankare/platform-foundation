@@ -289,6 +289,62 @@ every deferral must be documented with a resolution plan.
 _Platform Foundation — Foundation as Fabric · Continuous Confidence_
 _Confidential & Proprietary — Datankare_
 
+## Engineering Standards Checklist (Required for Every PR)
+
+Every pull request must pass this checklist before merge. This prevents
+the accumulation of sustainability debt.
+
+**Single Source of Truth (Standard 5: Redundancy)**
+
+- [ ] No hardcoded numbers in routes or components — all limits from shared/config/limits.ts
+- [ ] No duplicated utility functions — check shared/config/apiKeys.ts before adding a new key getter
+- [ ] Grep for existing implementations before adding a new utility
+
+**Function/Component Size (Standard 8: SRP)**
+
+- [ ] No function exceeds 200 lines (ESLint max-lines-per-function enforces this)
+- [ ] If a component has more than 5 useState hooks, consider extracting custom hooks
+- [ ] Each file has a single clear responsibility
+
+**Error Handling (Standard 7: Resilience)**
+
+- [ ] Error handling is fail-CLOSED, not fail-open (when in doubt, reject)
+- [ ] Every error path has a test
+- [ ] Every unlikely path has a test (unexpected response types, null, undefined)
+
+**Logging Pattern (Standard 5: Auditability)**
+
+- [ ] Every API route: generateRequestId() at top, logger.request() on entry, logger.response() on each exit
+- [ ] Timing: const start = Date.now() at top, Date.now() - start on each exit
+- [ ] No console.log/error/warn — use logger exclusively
+
+**Configuration**
+
+- [ ] New configurable values added to shared/config/limits.ts
+- [ ] New API keys accessed via shared/config/apiKeys.ts
+- [ ] No inline magic numbers
+
+## Phase Boundary Review (Required Before Phase Completion)
+
+Before any phase is declared complete, run the 11-point Professional
+Engineering Standards Matrix review:
+
+1. Naming — Intent-based names, no generic names
+2. Documentation — Comments explain why, not what
+3. Placement — Variables declared near use
+4. Control Flow — Guard clauses, early returns, no deep nesting
+5. Redundancy — No duplicated logic; Rule of Three applied
+6. Formatting — Prettier + ESLint clean, zero warnings
+7. Error Handling — Fail-closed, structured logging, every path tested
+8. SRP — No function over 200 lines, single responsibility
+9. Testing — All paths tested including unlikely ones
+10. State/Immutability — No direct mutation, pure functions preferred
+11. Performance — No N+1 patterns, parallel where possible
+
+This review is proactive — run it before declaring done, not after.
+Findings are severity-rated and must be resolved or formally deferred
+before the phase ships.
+
 ## Security Checklist (Required for Every PR)
 
 Every pull request must pass this checklist before merge. See ADR-009 for details.

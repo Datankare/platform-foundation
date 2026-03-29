@@ -29,8 +29,11 @@ JSON only, no backticks, no markdown:`,
   });
 
   const content = response.content[0];
-  if (content.type !== "text") {
-    return { safe: true };
+  if (!content || content.type !== "text") {
+    return {
+      safe: false,
+      reason: "Safety classifier returned unexpected response type.",
+    };
   }
 
   try {

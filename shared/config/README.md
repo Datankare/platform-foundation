@@ -1,16 +1,12 @@
-# config
+# shared/config/
 
-Shared configuration.
+Platform-wide configuration constants.
 
-## Status
+## Convention
 
-🚧 **Placeholder** — This directory is part of the Platform Foundation platform
-monorepo structure. Code will be added here in future phases.
+**If a value appears in more than one file, it lives in shared/config/.**
 
-## Phase
+- limits.ts — Size limits, character limits, timeouts, rate limits
+- apiKeys.ts — Centralized API key retrieval (single source of truth)
 
-Populated in: Phase 0-2 (populated incrementally)
-
----
-
-_See [TAD](../../docs/TAD.md) and [ADR-001](../../docs/adr/ADR-001-platform-game-separation.md) for architecture context._
+Import from here. Never hardcode values in routes or components.

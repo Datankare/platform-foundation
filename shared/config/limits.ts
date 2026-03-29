@@ -1,0 +1,6 @@
+export const MAX_INPUT_CHARACTERS = 100;
+export const MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024;
+export const MAX_AUDIO_SIZE_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+export const RATE_LIMIT_MAX_REQUESTS = 60;
+export const RATE_LIMIT_WINDOW_MS = 60_000;

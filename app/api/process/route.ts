@@ -4,6 +4,7 @@ import { translateToAllLanguages } from "@/lib/translate";
 import { textToSpeech } from "@/lib/tts";
 import { ProcessResponse } from "@/types";
 import { logger, generateRequestId } from "@/lib/logger";
+import { MAX_INPUT_CHARACTERS } from "@/shared/config/limits";
 
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -32,10 +33,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (trimmed.length > 100) {
+    if (trimmed.length > MAX_INPUT_CHARACTERS) {
       logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
       return NextResponse.json<ProcessResponse>(
-        { success: false, error: "Text must be 100 characters or fewer." },
+        {
+          success: false,
+          error: `Text must be ${MAX_INPUT_CHARACTERS} characters or fewer.`,
+        },
         { status: 400 }
       );
     }
