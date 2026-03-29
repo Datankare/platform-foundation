@@ -39,8 +39,6 @@ declare global {
   }
 }
 
-export { MAX_CHARACTERS, canSubmitText, getCharState } from "@/lib/inputValidation";
-
 export default function SpikeApp() {
   const [text, setText] = useState("");
   const [isLoading, setIsLoading] = useState(false);

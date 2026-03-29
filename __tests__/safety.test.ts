@@ -63,12 +63,12 @@ describe("checkSafety — real function", () => {
     expect(result.reason).toBeDefined();
   });
 
-  it("returns safe:true on non-text response type", async () => {
+  it("returns safe:false on non-text response type (fail-closed)", async () => {
     mockCreate.mockResolvedValueOnce({
       content: [{ type: "image", source: {} }],
     });
     const result = await checkSafety("some text");
-    expect(result.safe).toBe(true);
+    expect(result.safe).toBe(false);
   });
 
   it("sanitizes user input — wraps in user_input delimiter", async () => {

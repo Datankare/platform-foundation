@@ -1,4 +1,6 @@
-export const MAX_CHARACTERS = 100;
+import { MAX_INPUT_CHARACTERS } from "@/shared/config/limits";
+
+export const MAX_CHARACTERS = MAX_INPUT_CHARACTERS;
 
 export function canSubmitText(text: string, isLoading: boolean): boolean {
   const charCount = text.length;

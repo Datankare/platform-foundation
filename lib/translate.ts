@@ -1,6 +1,7 @@
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getGoogleApiKey } from "@/shared/config/apiKeys";
 
 const TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
 
@@ -9,12 +10,6 @@ export const TARGET_LANGUAGES = [
   { code: "hi", language: "Hindi", flag: "\u{1F1EE}\u{1F1F3}" },
   { code: "es", language: "Spanish", flag: "\u{1F1EA}\u{1F1F8}" },
 ];
-
-function getApiKey(): string {
-  const key = process.env.GOOGLE_API_KEY;
-  if (!key) throw new Error("GOOGLE_API_KEY is not configured");
-  return key;
-}
 
 export async function translateText(
   text: string,
@@ -28,7 +23,7 @@ export async function translateText(
     headers: {
       "Content-Type": "application/json",
       // OWASP A02: API key in header, never in URL query parameter
-      "X-Goog-Api-Key": getApiKey(),
+      "X-Goog-Api-Key": getGoogleApiKey(),
     },
     body: JSON.stringify({ q: text, target: safeLang, format: "text" }),
   });
