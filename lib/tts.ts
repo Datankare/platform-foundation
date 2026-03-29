@@ -1,6 +1,7 @@
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getGoogleApiKey } from "@/shared/config/apiKeys";
 
 const TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
 
@@ -9,12 +10,6 @@ const VOICE_CONFIG: Record<string, { languageCode: string; name: string }> = {
   hi: { languageCode: "hi-IN", name: "hi-IN-Neural2-A" },
   es: { languageCode: "es-ES", name: "es-ES-Neural2-A" },
 };
-
-function getApiKey(): string {
-  const key = process.env.GOOGLE_API_KEY;
-  if (!key) throw new Error("GOOGLE_API_KEY is not configured");
-  return key;
-}
 
 export async function textToSpeech(text: string, languageCode: string): Promise<string> {
   const requestId = generateRequestId();
@@ -28,7 +23,7 @@ export async function textToSpeech(text: string, languageCode: string): Promise<
     headers: {
       "Content-Type": "application/json",
       // OWASP A02: API key in header, never in URL query parameter
-      "X-Goog-Api-Key": getApiKey(),
+      "X-Goog-Api-Key": getGoogleApiKey(),
     },
     body: JSON.stringify({
       input: { text },
