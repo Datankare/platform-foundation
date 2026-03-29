@@ -14,6 +14,14 @@ const eslintConfig = [
     ignores: ["coverage/**", ".next/**", "node_modules/**", "next-env.d.ts", "k6/**"],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript", "prettier"),
+  {
+    rules: {
+      "max-lines-per-function": [
+        "warn",
+        { max: 200, skipBlankLines: true, skipComments: true },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;
