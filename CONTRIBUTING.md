@@ -324,26 +324,49 @@ the accumulation of sustainability debt.
 - [ ] New API keys accessed via shared/config/apiKeys.ts
 - [ ] No inline magic numbers
 
-## Phase Boundary Review (Required Before Phase Completion)
+## Sprint & Phase Sustainability Gate (22-Point Combined Checklist)
 
-Before any phase is declared complete, run the 11-point Professional
-Engineering Standards Matrix review:
+This gate runs at the end of every sprint AND every phase boundary.
+No sprint or phase is declared complete until all items pass or are
+formally deferred with justification.
 
-1. Naming — Intent-based names, no generic names
-2. Documentation — Comments explain why, not what
-3. Placement — Variables declared near use
-4. Control Flow — Guard clauses, early returns, no deep nesting
-5. Redundancy — No duplicated logic; Rule of Three applied
-6. Formatting — Prettier + ESLint clean, zero warnings
-7. Error Handling — Fail-closed, structured logging, every path tested
-8. SRP — No function over 200 lines, single responsibility
-9. Testing — All paths tested including unlikely ones
-10. State/Immutability — No direct mutation, pure functions preferred
-11. Performance — No N+1 patterns, parallel where possible
+### Part A — Professional Engineering Standards Matrix (11 points)
 
-This review is proactive — run it before declaring done, not after.
-Findings are severity-rated and must be resolved or formally deferred
-before the phase ships.
+1. Naming — Intent-based names, no generic names (data, info, x)
+2. Documentation — Comments explain why, not what. ADR references where applicable
+3. Placement — Variables declared near use, constants at module top
+4. Control Flow — Guard clauses, early returns, no more than 2 levels of nesting
+5. Redundancy — No duplicated logic. Shared config for repeated values
+6. Formatting — Prettier + ESLint clean, zero warnings, automated in CI
+7. Error Handling — Fail-closed, structured logging, every error path tested, nothing swallowed
+8. SRP — No function over 200 lines, single responsibility, hooks extracted at 5+ useState
+9. Testing — All paths tested including unlikely ones, coverage thresholds met
+10. State/Immutability — No direct mutation, pure functions preferred, explicit side effects
+11. Performance — No N+1 patterns, parallel where possible, timeouts on external calls
+
+### Part B — Generated Code Engineering Principles (11 points)
+
+1. Nesting depth — One level deep where possible. Two levels require justification
+2. Loop/retry caps — Every loop, poll, retry has a maximum. What happens when we hit it?
+3. Resource cleanup — Follow every exit path. Confirm it closes what it opened
+4. Function length — No function longer than 40-60 lines. Decompose upfront
+5. Input validation — Preconditions before, postconditions after. Assumptions visible and loud
+6. Empty catch blocks — Every error logged, raised, or explicitly returned. Nothing swallowed
+7. Module-level state — Scope locally, pass dependencies explicitly, data flow visible
+8. Side effect separation — Pure computation vs side-effectful operations clearly separated
+9. Abstraction depth — Can this be written more directly? Linear over elegant
+10. Linting/static analysis — In CI, failing on violations, set up before code not after
+11. Edge case tests — Tests force reasoning about failure modes
+
+### Process
+
+- Run both matrices against all code changed in the sprint
+- Rate findings: Critical, High, Medium, Low
+- Critical/High: must fix before sprint ships
+- Medium: fix or formally defer with justification + phase assignment + debt entry
+- Low: track, fix opportunistically
+- Generate updated sustainability report with sprint results
+- No sprint is complete until the gate passes
 
 ## Security Checklist (Required for Every PR)
 
