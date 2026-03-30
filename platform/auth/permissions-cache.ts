@@ -11,6 +11,12 @@
  * - Bounded: max 10,000 entries (LRU eviction when full)
  *
  * Sprint 3, Task 3.5
+ *
+ * Phase 2 decision: This module uses a module-level Map (mutable singleton).
+ * In Phase 2, this will be replaced with a CacheProvider interface
+ * (same pattern as AuthProvider) with InMemoryCache and RedisCache
+ * implementations. The interface will be designed with Redis in hand,
+ * not guessed at now. See ADR-012 for the abstraction pattern.
  */
 
 import {

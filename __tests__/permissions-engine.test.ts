@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Permissions engine, cache, entitlements, and audit tests.
  *
