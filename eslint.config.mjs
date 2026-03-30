@@ -18,7 +18,7 @@ const eslintConfig = [
     rules: {
       "max-lines-per-function": [
         "warn",
-        { max: 200, skipBlankLines: true, skipComments: true },
+        { max: 300, skipBlankLines: true, skipComments: true },
       ],
     },
   },

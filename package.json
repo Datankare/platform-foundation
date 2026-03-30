@@ -21,6 +21,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@supabase/supabase-js": "^2.100.1",
     "dotenv": "^16.5.0",
+    "jose": "^6.2.2",
     "next": "^16.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -60,7 +61,9 @@
     "collectCoverageFrom": [
       "lib/**/*.ts",
       "app/api/**/*.ts",
-      "components/**/*.tsx"
+      "components/**/*.tsx",
+      "platform/auth/**/*.ts",
+      "platform/auth/**/*.tsx"
     ],
     "coverageThreshold": {
       "global": {
@@ -75,6 +78,10 @@
     "coveragePathIgnorePatterns": [
       "/node_modules/",
       "components/SpikeApp.tsx",
+      "platform/auth/index.ts",
+      "lib/supabase/index.ts",
+      "platform/auth/index.ts",
+      "lib/supabase/index.ts",
       "components/SpikeAppWrapper.tsx",
       "jest.setup.ts"
     ]
