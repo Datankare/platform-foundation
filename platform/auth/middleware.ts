@@ -4,26 +4,20 @@
  * Validates the JWT on every protected API request. Extracts the player's
  * identity and makes it available to the route handler.
  *
- * Two modes:
+ * Three modes:
  * 1. requireAuth() — returns 401 if no valid token
  * 2. optionalAuth() — allows unauthenticated access, provides user if present
+ * 3. requirePermission() — returns 403 if user lacks the permission
  *
- * Usage in API routes:
- *
- *   import { requireAuth } from "@/platform/auth/middleware";
- *
- *   export async function GET(request: NextRequest) {
- *     const auth = await requireAuth(request);
- *     if (auth.error) return auth.error;
- *     // auth.user is the verified TokenPayload
- *     // auth.accessToken is the raw JWT for Supabase player client
- *   }
+ * Sprint 2: requireAuth + optionalAuth
+ * Sprint 3: requirePermission (real implementation replacing placeholder)
  *
  * ADR-012: Cognito JWT validated on every protected route.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthProvider } from "@/platform/auth/config";
+import { hasCachedPermission } from "@/platform/auth/permissions-cache";
 import type { TokenPayload } from "@/platform/auth/types";
 import { logger, generateRequestId } from "@/lib/logger";
 
@@ -43,9 +37,6 @@ export type AuthResult = AuthContext | AuthError;
 
 /**
  * Require authentication. Returns 401 if no valid token.
- *
- * Extracts Bearer token from Authorization header, verifies it via the
- * registered AuthProvider, and returns the decoded user payload.
  */
 export async function requireAuth(request: NextRequest): Promise<AuthResult> {
   const requestId = generateRequestId();
@@ -61,7 +52,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
     };
   }
 
-  const accessToken = authHeader.slice(7); // Remove "Bearer "
+  const accessToken = authHeader.slice(7);
 
   try {
     const auth = getAuthProvider();
@@ -92,7 +83,6 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
 
 /**
  * Optional authentication. Allows unauthenticated access.
- * Returns the user payload if a valid token is present, null otherwise.
  */
 export async function optionalAuth(
   request: NextRequest
@@ -118,6 +108,8 @@ export async function optionalAuth(
  * Require a specific permission. Returns 403 if the user doesn't have it.
  * Must be called AFTER requireAuth() — needs the user's identity.
  *
+ * Uses the permissions cache (60s TTL) to avoid DB round-trips.
+ *
  * Usage:
  *   const auth = await requireAuth(request);
  *   if (auth.error) return auth.error;
@@ -125,16 +117,24 @@ export async function optionalAuth(
  *   if (permCheck.error) return permCheck.error;
  */
 export async function requirePermission(
-  userId: string,
+  cognitoSub: string,
   permissionCode: string
 ): Promise<{ granted: true; error?: never } | { granted?: never; error: NextResponse }> {
-  // This will be implemented in Sprint 3 when the permissions engine is built.
-  // For now, it's a placeholder that always grants — permissions enforcement
-  // is wired in Sprint 3, Task 3.2.
-  //
-  // TODO: Sprint 3 — query role_permissions + player_entitlements via Supabase
-  // to check if the player has the required permission.
-  void userId;
-  void permissionCode;
+  const hasAccess = await hasCachedPermission(cognitoSub, permissionCode);
+
+  if (!hasAccess) {
+    logger.warn("Permission denied", {
+      cognitoSub,
+      permissionCode,
+      route: "platform/auth/middleware",
+    });
+    return {
+      error: NextResponse.json(
+        { error: "Permission denied", required: permissionCode },
+        { status: 403 }
+      ),
+    };
+  }
+
   return { granted: true };
 }

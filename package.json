@@ -80,8 +80,16 @@
       "components/SpikeApp.tsx",
       "platform/auth/index.ts",
       "lib/supabase/index.ts",
+      "platform/auth/permissions.ts",
+      "platform/auth/permissions-cache.ts",
+      "platform/auth/entitlements.ts",
+      "platform/auth/audit.ts",
       "platform/auth/index.ts",
       "lib/supabase/index.ts",
+      "platform/auth/permissions.ts",
+      "platform/auth/permissions-cache.ts",
+      "platform/auth/entitlements.ts",
+      "platform/auth/audit.ts",
       "components/SpikeAppWrapper.tsx",
       "jest.setup.ts"
     ]
