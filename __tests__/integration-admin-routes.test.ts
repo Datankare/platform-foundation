@@ -27,7 +27,7 @@ jest.mock("@/platform/auth/permissions-cache", () => ({
 function makeRequest(url: string, method: string = "GET", body?: unknown): NextRequest {
   const opts: RequestInit = { method, headers: { "Content-Type": "application/json" } };
   if (body) opts.body = JSON.stringify(body);
-  return new NextRequest(`http://localhost:3000${url}`, opts);
+  return new NextRequest(`http://localhost:3000${url}`, opts as never);
 }
 
 // ── Roles Route ─────────────────────────────────────────────────────────
@@ -37,8 +37,8 @@ describe("GET /api/admin/roles", () => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
       const mockFrom = jest.fn().mockImplementation((table: string) => {
-        const builder: Record<string, jest.Mock> = {};
-        const chain = () => builder;
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const builder: Record<string, any> = {};
         builder.select = jest.fn().mockReturnValue(builder);
         builder.order = jest.fn().mockReturnValue(builder);
         builder.eq = jest.fn().mockReturnValue(builder);
@@ -131,7 +131,8 @@ describe("GET /api/admin/players", () => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
       const mockFrom = jest.fn().mockImplementation((table: string) => {
-        const builder: Record<string, jest.Mock> = {};
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const builder: Record<string, any> = {};
         builder.select = jest.fn().mockReturnValue(builder);
         builder.order = jest.fn().mockReturnValue(builder);
         builder.range = jest.fn().mockReturnValue(builder);
@@ -191,7 +192,8 @@ describe("PATCH /api/admin/players", () => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
       const mockFrom = jest.fn().mockImplementation(() => {
-        const builder: Record<string, jest.Mock> = {};
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const builder: Record<string, any> = {};
         builder.select = jest.fn().mockReturnValue(builder);
         builder.update = jest.fn().mockReturnValue(builder);
         builder.eq = jest.fn().mockReturnValue(builder);
@@ -238,7 +240,8 @@ describe("GET /api/admin/audit", () => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
       const mockFrom = jest.fn().mockImplementation(() => {
-        const builder: Record<string, jest.Mock> = {};
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const builder: Record<string, any> = {};
         builder.select = jest.fn().mockReturnValue(builder);
         builder.order = jest.fn().mockReturnValue(builder);
         builder.range = jest.fn().mockReturnValue(builder);
@@ -286,7 +289,8 @@ describe("GET /api/admin/guest-config", () => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
       const mockFrom = jest.fn().mockImplementation(() => {
-        const builder: Record<string, jest.Mock> = {};
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const builder: Record<string, any> = {};
         builder.select = jest.fn().mockReturnValue(builder);
         builder.eq = jest.fn().mockReturnValue(builder);
         builder.single = jest.fn().mockResolvedValue({
@@ -326,7 +330,8 @@ describe("GET /api/admin/password-policy", () => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
       const mockFrom = jest.fn().mockImplementation(() => {
-        const builder: Record<string, jest.Mock> = {};
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const builder: Record<string, any> = {};
         builder.select = jest.fn().mockReturnValue(builder);
         builder.is = jest.fn().mockReturnValue(builder);
         builder.single = jest.fn().mockResolvedValue({
@@ -370,7 +375,8 @@ describe("GET /api/admin/entitlements", () => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
       const mockFrom = jest.fn().mockImplementation((table: string) => {
-        const builder: Record<string, jest.Mock> = {};
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const builder: Record<string, any> = {};
         builder.select = jest.fn().mockReturnValue(builder);
         builder.order = jest.fn().mockReturnValue(builder);
         builder.is = jest.fn().mockReturnValue(builder);

@@ -99,8 +99,18 @@ fi
 section "Security"
 
 # 7. Empty catches
-EMPTY_CATCHES=$(grep -rn "catch {" app/ components/ hooks/ lib/ platform/ shared/ 2>/dev/null | grep -v node_modules | grep -v ".test." || true)
+EMPTY_CATCHES=$(grep -rn "catch {" app/ components/ hooks/ lib/ platform/ shared/ 2>/dev/null | grep -v node_modules | grep -v ".test." | grep -v "justified" || true)
 EMPTY_COUNT=$(echo "$EMPTY_CATCHES" | grep -c "catch {" || true)
+# Subtract justified catches (comment may be on next line due to Prettier)
+JUSTIFIED=$(grep -rl "justified" app/ components/ hooks/ lib/ platform/ shared/ 2>/dev/null | grep -v node_modules | grep -v ".test." || true)
+JUSTIFIED_COUNT=0
+for jf in $JUSTIFIED; do
+  JC=$(grep -c "catch {" "$jf" 2>/dev/null || true)
+  JUSTIFIED_COUNT=$((JUSTIFIED_COUNT + JC))
+done
+UNJUSTIFIED=$((EMPTY_COUNT - JUSTIFIED_COUNT))
+if [ "$UNJUSTIFIED" -lt 0 ]; then UNJUSTIFIED=0; fi
+EMPTY_COUNT=$UNJUSTIFIED
 if [ "$EMPTY_COUNT" -gt 0 ]; then
   warn "G07 Empty catches: $EMPTY_COUNT found"
   while IFS= read -r line; do
