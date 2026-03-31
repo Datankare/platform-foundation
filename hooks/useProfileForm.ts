@@ -66,13 +66,10 @@ export function useProfileForm(
   const [pushEnabled, setPushEnabled] = useState(false);
 
   const [profileVis, setProfileVis] = useState<ProfileVisibility>("private");
-  const [displayNameVis, setDisplayNameVis] =
-    useState<ProfileVisibility>("private");
+  const [displayNameVis, setDisplayNameVis] = useState<ProfileVisibility>("private");
   const [avatarVis, setAvatarVis] = useState<ProfileVisibility>("private");
-  const [languageVis, setLanguageVis] =
-    useState<ProfileVisibility>("private");
-  const [timezoneVis, setTimezoneVis] =
-    useState<ProfileVisibility>("private");
+  const [languageVis, setLanguageVis] = useState<ProfileVisibility>("private");
+  const [timezoneVis, setTimezoneVis] = useState<ProfileVisibility>("private");
 
   const loadProfile = useCallback(async () => {
     setIsLoading(true);
