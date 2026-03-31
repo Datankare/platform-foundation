@@ -225,7 +225,8 @@ _Last updated: 2026-03-24 (Phase 0.9 Cleanup Sprint)_
 **Deadline:** Sprint 7
 
 The following files are excluded from unit coverage and require integration tests:
-- app/api/admin/** (6 API routes + AI orchestrator + handlers)
+
+- app/api/admin/\*\* (6 API routes + AI orchestrator + handlers)
 - app/admin/page.tsx
 - components/admin/ActionConfirmPanel.tsx, AdminConfigPanels.tsx, AdminDataPanels.tsx
 - components/admin/AdminDataViews.tsx, AdminPasswordPanel.tsx, AdminPromptBar.tsx

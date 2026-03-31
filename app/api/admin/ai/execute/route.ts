@@ -58,8 +58,8 @@ export async function POST(request: NextRequest) {
     [];
 
   for (const action of actions) {
-    const handler = toolHandlers[action.tool];
-    if (!handler) {
+    const validTools = new Set(Object.keys(toolHandlers));
+    if (!validTools.has(action.tool)) {
       results.push({
         tool: action.tool,
         success: false,
@@ -68,6 +68,8 @@ export async function POST(request: NextRequest) {
       break;
     }
 
+    // Validated: action.tool is a known key in toolHandlers
+    const handler = toolHandlers[action.tool as keyof typeof toolHandlers];
     const result = await handler(action.input, actorId);
     results.push({ tool: action.tool, ...result });
     if (!result.success) break;
