@@ -19,6 +19,7 @@ interface AdminShellProps {
   onSignOut: () => void;
   /** Render the active section's content */
   children: (activeSection: AdminSection) => React.ReactNode;
+  onSectionChange?: (section: AdminSection) => void;
 }
 
 const NAV_ITEMS: {
@@ -74,6 +75,7 @@ export default function AdminShell({
   adminName,
   hasPermission,
   onSignOut,
+  onSectionChange,
   children,
 }: AdminShellProps) {
   const visibleItems = NAV_ITEMS.filter((item) => hasPermission(item.permission));
@@ -95,7 +97,10 @@ export default function AdminShell({
           {visibleItems.map((item) => (
             <button
               key={item.section}
-              onClick={() => setActiveSection(item.section)}
+              onClick={() => {
+                setActiveSection(item.section);
+                onSectionChange?.(item.section);
+              }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition ${
                 activeSection === item.section
                   ? "bg-blue-600/20 text-blue-400"
