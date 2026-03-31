@@ -47,6 +47,8 @@ JSON only, no backticks, no markdown:`,
     const result = JSON.parse(cleaned);
     return result as SafetyResult;
   } catch {
+    /* justified */
+    // Parse failure — fail closed (safe:false)
     const requestId = generateRequestId();
     // OWASP A09: structured logging — never log user content
     logger.error("Safety parse error — fail closed", { requestId, route: "lib/safety" });

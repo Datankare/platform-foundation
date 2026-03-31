@@ -57,6 +57,8 @@ export default function AdminPromptBar({
       const { plan } = await res.json();
       onPlanReceived(plan);
     } catch {
+      /* justified */
+      // Network failure — shown to user via onPlanReceived
       onPlanReceived({
         message: "Failed to connect to AI service",
         actions: [],
