@@ -75,6 +75,8 @@ function getStoredValue(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
+    /* justified */
+    // localStorage unavailable — return safe default
     return null;
   }
 }
@@ -85,6 +87,8 @@ function setStoredValue(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch {
+    /* justified */
+    // localStorage unavailable — return safe default
     // localStorage may be full or disabled — fail silently
   }
 }
@@ -95,6 +99,8 @@ function removeStoredValue(key: string): void {
   try {
     localStorage.removeItem(key);
   } catch {
+    /* justified */
+    // localStorage unavailable — return safe default
     // fail silently
   }
 }
@@ -115,6 +121,8 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
         setUser(parsed);
         setAccessToken(storedToken);
       } catch {
+        /* justified */
+        // localStorage unavailable — return safe default
         // Corrupted storage — clear it
         removeStoredValue(TOKEN_STORAGE_KEY);
         removeStoredValue(REFRESH_STORAGE_KEY);

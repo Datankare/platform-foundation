@@ -100,6 +100,8 @@ export async function optionalAuth(
     const payload = await auth.verifyToken(accessToken);
     return { user: payload, accessToken: payload ? accessToken : null };
   } catch {
+    /* justified */
+    // Token verification failed — return unauthenticated
     return { user: null, accessToken: null };
   }
 }

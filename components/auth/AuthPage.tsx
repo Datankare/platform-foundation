@@ -73,6 +73,8 @@ export default function AuthPage() {
         });
       }
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
@@ -94,6 +96,8 @@ export default function AuthPage() {
       setPendingEmail(email);
       setView("email-verification");
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
@@ -115,6 +119,8 @@ export default function AuthPage() {
       // After verification, sign the user in
       setView("login");
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
@@ -128,6 +134,8 @@ export default function AuthPage() {
       const auth = getAuthProvider();
       await auth.resendEmailVerification(pendingEmail);
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("Could not resend verification code.");
     } finally {
       setIsLoading(false);
@@ -146,6 +154,8 @@ export default function AuthPage() {
       }
       setPendingEmail(email);
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
@@ -167,6 +177,8 @@ export default function AuthPage() {
         setError(result.error || "Password reset failed");
       }
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
@@ -195,6 +207,8 @@ export default function AuthPage() {
         });
       }
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
@@ -220,6 +234,8 @@ export default function AuthPage() {
         window.location.href = result.redirectUrl;
       }
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
@@ -247,6 +263,8 @@ export default function AuthPage() {
         isGuest: true,
       });
     } catch {
+      /* justified */
+      // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);

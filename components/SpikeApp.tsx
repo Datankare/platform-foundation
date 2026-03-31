@@ -126,6 +126,8 @@ export default function SpikeApp() {
         setTranslations(data.translations || []);
       }
     } catch {
+      /* justified */
+      // API error — shown to user via setError
       setError("Network error. Please check your connection and try again.");
     } finally {
       setIsLoading(false);
