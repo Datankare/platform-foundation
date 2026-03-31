@@ -217,3 +217,43 @@ contract defined before implementation.
 ---
 
 _Last updated: 2026-03-24 (Phase 0.9 Cleanup Sprint)_
+
+## TASK-014: Admin module coverage exclusions — Sprint 7
+
+**Added:** 2026-03-31 (Sprint 6)
+**Severity:** Medium
+**Deadline:** Sprint 7
+
+The following files are excluded from unit coverage and require integration tests:
+- app/api/admin/** (6 API routes + AI orchestrator + handlers)
+- app/admin/page.tsx
+- components/admin/ActionConfirmPanel.tsx, AdminConfigPanels.tsx, AdminDataPanels.tsx
+- components/admin/AdminDataViews.tsx, AdminPasswordPanel.tsx, AdminPromptBar.tsx
+- components/admin/ExecutionResultsPanel.tsx
+- platform/auth/admin-guard.ts
+
+These modules depend on Supabase and the Anthropic API. They need integration tests with real database connections in Sprint 7.
+
+## TASK-015: Platform config table (runtime settings) — Sprint 7
+
+**Added:** 2026-03-31 (Sprint 6)
+**Severity:** Medium
+**Deadline:** Sprint 7
+
+Admin highlight duration and other runtime settings are currently hardcoded in shared/config/limits.ts. Move to a database-backed platform_config table with admin UI. Permission-gated: super_admin, admin, can_change_config.
+
+## TASK-016: Repo inheritance model — Sprint 7
+
+**Added:** 2026-03-31 (Sprint 6)
+**Severity:** Medium
+**Deadline:** Sprint 7
+
+Platform-foundation → Playform currently uses manual file copy. Evaluate and implement git subtree or monorepo approach.
+
+## TASK-017: Seed data separation — Sprint 7
+
+**Added:** 2026-03-31 (Sprint 6)
+**Severity:** Medium
+**Deadline:** Sprint 7
+
+Platform-foundation ships 7 Playform-specific roles (guest, free, daily, monthly, annual, lifetime, admin). Should ship only 4 generic roles (guest, registered, admin, super_admin). Subscription tiers belong in Playform-specific seed data.
