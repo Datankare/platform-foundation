@@ -5,6 +5,7 @@
  * Sprint 2: middleware, context
  * Sprint 3: permissions, entitlements, audit, cache
  * Sprint 4: profile, devices, consent, password-policy, coppa
+ * Sprint 5: gdpr-deletion, data-export, guest-lifecycle
  */
 
 export type { AuthProvider } from "@/platform/auth/provider";
@@ -95,3 +96,34 @@ export {
   recordParentalConsent,
 } from "@/platform/auth/coppa";
 export type { AgeVerificationResult, ParentalConsentStatus } from "@/platform/auth/coppa";
+
+// Sprint 5 — GDPR & Guest Lifecycle
+export {
+  registerDeletionModule,
+  getDeletionModules,
+  softDeletePlayer,
+  hardPurgePlayer,
+} from "@/platform/auth/gdpr-deletion";
+export type { DeletionModule } from "@/platform/auth/gdpr-deletion";
+
+export {
+  registerExportModule,
+  getExportModules,
+  exportPlayerData,
+  estimateExportSize,
+} from "@/platform/auth/data-export";
+export type { ExportModule } from "@/platform/auth/data-export";
+
+export {
+  getGuestConfig,
+  resolveGuestPhase,
+  getGuestStatus,
+  incrementGuestSession,
+  convertGuestToRegistered,
+  cleanupExpiredGuests,
+} from "@/platform/auth/guest-lifecycle";
+export type {
+  GuestConfig,
+  GuestPhase,
+  GuestStatus,
+} from "@/platform/auth/guest-lifecycle";
