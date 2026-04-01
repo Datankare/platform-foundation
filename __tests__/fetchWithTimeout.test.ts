@@ -61,6 +61,7 @@ describe("fetchWithTimeout", () => {
 
     const fetchPromise = fetchWithTimeout("https://api.example.com/slow", {
       timeoutMs: 100,
+      maxRetries: 0,
     });
 
     // Advance timers to trigger the abort
