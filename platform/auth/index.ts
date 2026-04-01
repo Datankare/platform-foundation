@@ -127,3 +127,15 @@ export type {
   GuestPhase,
   GuestStatus,
 } from "@/platform/auth/guest-lifecycle";
+
+// Runtime configuration
+export {
+  getConfig,
+  getConfigString,
+  getConfigNumber,
+  getConfigBoolean,
+  listConfig,
+  setConfig,
+  deleteConfig,
+  clearConfigCache,
+} from "@/platform/auth/platform-config";
