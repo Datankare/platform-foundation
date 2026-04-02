@@ -8,7 +8,8 @@ export type AdminSection =
   | "entitlements"
   | "audit"
   | "guest-config"
-  | "password-policy";
+  | "password-policy"
+  | "platform-config";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -62,6 +63,12 @@ const NAV_ITEMS: {
     section: "password-policy",
     label: "Password Policy",
     icon: "🔑",
+    permission: "admin_manage_config",
+  },
+  {
+    section: "platform-config",
+    label: "Platform Config",
+    icon: "⚡",
     permission: "admin_manage_config",
   },
 ];
