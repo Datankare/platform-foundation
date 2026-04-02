@@ -339,3 +339,66 @@ export function PasswordPolicyDataView({ data }: { data: any }) {
     </div>
   );
 }
+
+export function PlatformConfigDataView({
+  data,
+}: {
+  data: {
+    entries?: {
+      key: string;
+      value: unknown;
+      description: string | null;
+      category: string;
+      updatedAt: string;
+    }[];
+  };
+}) {
+  if (!data.entries) return <p className="text-gray-400">Loading...</p>;
+  if (data.entries.length === 0)
+    return <p className="text-gray-400">No config entries found</p>;
+
+  // Group by category
+  type ConfigEntries = NonNullable<typeof data.entries>;
+  const grouped: Record<string, ConfigEntries> = {};
+  for (const entry of data.entries) {
+    if (!grouped[entry.category]) grouped[entry.category] = [];
+    grouped[entry.category].push(entry);
+  }
+
+  return (
+    <div className="space-y-6">
+      {Object.entries(grouped).map(([category, entries]) => (
+        <div key={category}>
+          <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-2">
+            {category}
+          </h3>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-gray-400 border-b border-gray-700">
+                <th className="text-left py-1 pr-4">Key</th>
+                <th className="text-left py-1 pr-4">Value</th>
+                <th className="text-left py-1">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry) => (
+                <tr
+                  key={entry.key}
+                  className="border-b border-gray-800 hover:bg-gray-800/50"
+                >
+                  <td className="py-2 pr-4 font-mono text-blue-300">{entry.key}</td>
+                  <td className="py-2 pr-4 font-mono">
+                    {typeof entry.value === "string"
+                      ? entry.value
+                      : JSON.stringify(entry.value)}
+                  </td>
+                  <td className="py-2 text-gray-400">{entry.description || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
