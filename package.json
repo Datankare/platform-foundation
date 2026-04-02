@@ -96,15 +96,6 @@
       "platform/auth/guest-lifecycle.ts",
       "platform/auth/admin-guard.ts",
       "app/admin/page.tsx",
-      "app/api/admin/players/route.ts",
-      "app/api/admin/roles/route.ts",
-      "app/api/admin/entitlements/route.ts",
-      "app/api/admin/audit/route.ts",
-      "app/api/admin/guest-config/route.ts",
-      "app/api/admin/password-policy/route.ts",
-      "app/api/admin/ai/route.ts",
-      "app/api/admin/ai/execute/route.ts",
-      "app/api/admin/ai/handlers.ts",
       "components/admin/ActionConfirmPanel.tsx",
       "components/admin/AdminConfigPanels.tsx",
       "components/admin/AdminDataPanels.tsx",
@@ -113,7 +104,7 @@
       "components/admin/AdminPromptBar.tsx",
       "components/admin/ExecutionResultsPanel.tsx",
       "platform/auth/platform-config.ts",
-      "app/api/admin/config/route.ts"
+      "app/api/admin/"
     ]
   }
 }
