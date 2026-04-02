@@ -112,7 +112,8 @@
       "components/admin/AdminPasswordPanel.tsx",
       "components/admin/AdminPromptBar.tsx",
       "components/admin/ExecutionResultsPanel.tsx",
-      "platform/auth/platform-config.ts"
+      "platform/auth/platform-config.ts",
+      "app/api/admin/config/route.ts"
     ]
   }
 }
