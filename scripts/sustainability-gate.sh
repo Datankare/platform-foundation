@@ -62,7 +62,7 @@ fi
 if npm run test:coverage 2>&1 | grep -q "Tests:.*failed"; then
   fail "G04 Tests: some tests failing"
 else
-  TEST_COUNT=$(npm run test 2>&1 | grep "Tests:" | grep -oE "[0-9]+ passed" | head -1)
+  TEST_COUNT=$(npm run test:coverage 2>&1 | grep "Tests:" | grep -oE "[0-9]+ passed" | head -1)
   pass "G04 Tests: $TEST_COUNT"
 fi
 
