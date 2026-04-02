@@ -43,6 +43,37 @@ export async function adminGuard(
 }
 
 /**
+ * Roles that cannot be assigned via the admin UI.
+ * super_admin can only be assigned directly in the database.
+ */
+export const PROTECTED_ROLES = ["super_admin"];
+
+/**
+ * Check if a role change would be a self-elevation attempt.
+ * Returns an error response if blocked, null if allowed.
+ */
+export function checkSelfElevation(
+  actorId: string,
+  targetId: string,
+  targetRole: string
+): NextResponse | null {
+  // No one can assign super_admin through the UI
+  if (PROTECTED_ROLES.includes(targetRole)) {
+    return NextResponse.json(
+      { error: `Role "${targetRole}" can only be assigned directly in the database` },
+      { status: 403 }
+    );
+  }
+
+  // No one can change their own role
+  if (actorId === targetId) {
+    return NextResponse.json({ error: "Cannot change your own role" }, { status: 403 });
+  }
+
+  return null;
+}
+
+/**
  * Get the actor ID for audit logging.
  * Returns the real user ID or "dev-admin" in dev bypass mode.
  */
