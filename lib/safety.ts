@@ -1,57 +1,91 @@
-import Anthropic from "@anthropic-ai/sdk";
+/**
+ * lib/safety.ts — Content safety check
+ *
+ * ADR-015: Uses the orchestration layer — no raw fetch/SDK calls.
+ * ADR-016: Structured classification (categories, confidence, severity).
+ *
+ * Phase 2 upgrade: binary safe/unsafe → structured ClassifierOutput.
+ * Backwards-compatible: checkSafety() still returns SafetyResult.
+ * New: classifyContent() returns full ClassifierOutput.
+ */
+
 import { SafetyResult } from "@/types";
-import { sanitizeForPrompt } from "@/lib/sanitize";
+import { getOrchestrator } from "@/platform/ai";
+import { getPromptConfig } from "@/prompts";
+import {
+  buildSafetyPrompt,
+  parseClassifierResponse,
+  ClassifierOutput,
+} from "@/prompts/safety/classify-v1";
 import { logger, generateRequestId } from "@/lib/logger";
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-export async function checkSafety(text: string): Promise<SafetyResult> {
-  const response = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 64,
-    messages: [
-      {
-        role: "user",
-        // OWASP A03: sanitize user input before embedding in LLM prompt
-        content: `You are a content safety classifier. Analyze the following text and respond with ONLY a JSON object. No markdown, no code fences, no explanation.
-
-Text to analyze: ${sanitizeForPrompt(text)}
-
-Respond with exactly this format:
-{"safe": true} if the content is appropriate for all ages (SFW)
-{"safe": false, "reason": "brief reason"} if the content is inappropriate (NSFW, sexual, violent, hateful)
-
-JSON only, no backticks, no markdown:`,
-      },
-    ],
-  });
-
-  const content = response.content[0];
-  if (!content || content.type !== "text") {
-    return {
-      safe: false,
-      reason: "Safety classifier returned unexpected response type.",
-    };
-  }
+/**
+ * Full structured classification — returns categories, confidence, severity.
+ * Use this for audit trail and tiered enforcement (ADR-016).
+ */
+export async function classifyContent(
+  text: string,
+  requestId?: string
+): Promise<ClassifierOutput> {
+  const reqId = requestId ?? generateRequestId();
+  const config = getPromptConfig("safety-classify");
 
   try {
-    const cleaned = content.text
-      .trim()
-      .replace(/^```json\n?/, "")
-      .replace(/^```\n?/, "")
-      .replace(/\n?```$/, "")
-      .trim();
+    const response = await getOrchestrator().complete(
+      {
+        tier: config.tier,
+        messages: [{ role: "user", content: buildSafetyPrompt(text) }],
+        maxTokens: config.maxTokens,
+        temperature: config.temperature,
+      },
+      {
+        useCase: config.name,
+        requestId: reqId,
+      }
+    );
 
-    const result = JSON.parse(cleaned);
-    return result as SafetyResult;
-  } catch {
-    /* justified */
-    // Parse failure — fail closed (safe:false)
-    const requestId = generateRequestId();
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      // Fail closed — no text response
+      return {
+        safe: false,
+        categories: [],
+        confidence: 0.5,
+        severity: "medium",
+        reason: "Safety classifier returned unexpected response type.",
+      };
+    }
+
+    return parseClassifierResponse(textBlock.text);
+  } catch (err) {
+    // Fail closed — any error means unsafe
     // OWASP A09: structured logging — never log user content
-    logger.error("Safety parse error — fail closed", { requestId, route: "lib/safety" });
-    return { safe: false, reason: "Content could not be verified as safe." };
+    logger.error("Safety classification error — fail closed", {
+      requestId: reqId,
+      route: "lib/safety",
+      error: err instanceof Error ? err.message : "Unknown",
+    });
+    return {
+      safe: false,
+      categories: [],
+      confidence: 0.5,
+      severity: "medium",
+      reason: "Content could not be verified as safe.",
+    };
   }
+}
+
+/**
+ * Backwards-compatible safety check — returns simple SafetyResult.
+ * Delegates to classifyContent() internally.
+ */
+export async function checkSafety(
+  text: string,
+  requestId?: string
+): Promise<SafetyResult> {
+  const result = await classifyContent(text, requestId);
+  return {
+    safe: result.safe,
+    reason: result.reason,
+  };
 }
