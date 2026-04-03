@@ -122,3 +122,7 @@ Read `docs/adr/ADR-004-four-governing-principles.md` for full detail.
 
 _Platform Foundation — Datankare_
 _Built with Foundation as Fabric · Continuous Confidence_
+
+## Phase 1 Assessment
+
+See [RAMPS Phase 1 Assessment](docs/RAMPS_PHASE1_ASSESSMENT.md) for the complete reliability, accessibility, maintainability, performance, and security report.
