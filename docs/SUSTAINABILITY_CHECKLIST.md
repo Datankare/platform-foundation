@@ -38,6 +38,44 @@ Then paste Part A and Part B below.
 
 ---
 
+## Phase Boundary Protocol
+
+> Run at every phase boundary. No phase exits without completing the exit gate.
+> No phase starts without completing the entry gate.
+
+### Phase Exit Gate (before marking a phase complete)
+
+| #   | Check                                                                                                        | Done |
+| --- | ------------------------------------------------------------------------------------------------------------ | ---- |
+| E1  | All sprint sustainability gates passed (22-point, zero failures)                                             | [ ]  |
+| E2  | RAMPS assessment written and committed (`docs/RAMPS_PHASE{N}_ASSESSMENT.md`)                                 | [ ]  |
+| E3  | README.md updated to reflect current state (both repos)                                                      | [ ]  |
+| E4  | ROADMAP.md updated — phase marked complete with dates, metrics recorded                                      | [ ]  |
+| E5  | ROADMAP.md changelog entry added with version, date, author, changes                                         | [ ]  |
+| E6  | All new ADRs committed and numbered sequentially                                                             | [ ]  |
+| E7  | SECURITY_DEBT.md — no Critical/High items open (all fixed or formally deferred with next-phase deadline)     | [ ]  |
+| E8  | All deferred items have explicit phase assignment in SECURITY_DEBT.md and ROADMAP.md deferred items registry | [ ]  |
+| E9  | Platform-foundation tagged with semver release (`vX.Y.Z`)                                                    | [ ]  |
+| E10 | GitHub Release created with release notes and "Set as latest release" checked                                | [ ]  |
+| E11 | Both repos on main, CI green                                                                                 | [ ]  |
+| E12 | Test counts and coverage recorded in ROADMAP.md phase metrics                                                | [ ]  |
+| E13 | Sync workflow verified — Playform current with latest PF release                                             | [ ]  |
+
+### Phase Entry Gate (before starting a new phase)
+
+| #   | Check                                                                                                                                          | Done |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| N1  | Previous phase exit gate fully complete                                                                                                        | [ ]  |
+| N2  | ROADMAP.md reviewed — all planned deliverables for this phase confirmed or adjusted                                                            | [ ]  |
+| N3  | Deferred items from previous phases reviewed — any that belong in this phase confirmed in scope                                                | [ ]  |
+| N4  | Cross-phase fabric reviewed (ADR-014 Observability, ADR-015 GenAI-Native, ADR-016 Content Safety) — this phase's fabric deliverables confirmed | [ ]  |
+| N5  | Prerequisites for this phase verified (e.g., infrastructure available, dependencies resolved)                                                  | [ ]  |
+| N6  | Sprint plan created with task breakdown and sequencing                                                                                         | [ ]  |
+| N7  | ROADMAP.md updated — phase status changed to "In Progress", start date recorded                                                                | [ ]  |
+| N8  | ROADMAP.md changelog entry added for phase start                                                                                               | [ ]  |
+
+---
+
 ## Part A — Professional Engineering Standards Matrix (11 points)
 
 ### A1. Naming
