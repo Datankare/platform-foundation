@@ -126,3 +126,7 @@ _Built with Foundation as Fabric · Continuous Confidence_
 ## Phase 1 Assessment
 
 See [RAMPS Phase 1 Assessment](docs/RAMPS_PHASE1_ASSESSMENT.md) for the complete reliability, accessibility, maintainability, performance, and security report.
+
+## Roadmap
+
+See [Product Roadmap](docs/ROADMAP.md) for all phases, deferred items, and change history.
