@@ -36,15 +36,15 @@ bump action versions in ci.yml and remove this entry.
 
 ### SEC-001 — CSP Allows unsafe-eval and unsafe-inline
 
-| Field        | Detail                          |
-| ------------ | ------------------------------- |
-| **ID**       | SEC-001                         |
-| **Type**     | Security — XSS protection       |
-| **Severity** | HIGH                            |
-| **OWASP**    | A05 — Security Misconfiguration |
+| Field        | Detail                               |
+| ------------ | ------------------------------------ |
+| **ID**       | SEC-001                              |
+| **Type**     | Security — XSS protection            |
+| **Severity** | HIGH                                 |
+| **OWASP**    | A05 — Security Misconfiguration      |
 | **Status**   | Deferred — Phase 9 (nonce-based CSP) |
-| **Logged**   | 2026-03-24 (Phase 0.9)          |
-| **Deadline** | Phase 9 — Hardening & Launch    |
+| **Logged**   | 2026-03-24 (Phase 0.9)               |
+| **Deadline** | Phase 9 — Hardening & Launch         |
 
 **What:** Content-Security-Policy in next.config.ts includes
 'unsafe-eval' and 'unsafe-inline' for scripts and styles. These weaken
@@ -63,18 +63,18 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 _Items below have been resolved and are retained for audit trail only._
 
-| ID       | Description                               | Resolved In      | Date       |
-| -------- | ----------------------------------------- | ---------------- | ---------- |
-| DS-001   | next/image disk cache vulnerability       | Phase 0 (Next.js 16 upgrade) | 2026-03-18 |
-| SEC-002  | No rate limiting on API routes            | Phase 1, Sprint 6 | 2026-03-31 |
-| SEC-003  | No retry logic for external API calls     | Phase 1, Sprint 7a (fetchWithTimeout retry) | 2026-04-01 |
-| SEC-004  | No E2E tests — Playwright not integrated  | Phase 0.75       | 2026-03-22 |
-| SEC-005  | SpeechRecognition hardcoded to en-US      | Phase 1          | 2026-04-02 |
+| ID       | Description                                  | Resolved In                                          | Date       |
+| -------- | -------------------------------------------- | ---------------------------------------------------- | ---------- |
+| DS-001   | next/image disk cache vulnerability          | Phase 0 (Next.js 16 upgrade)                         | 2026-03-18 |
+| SEC-002  | No rate limiting on API routes               | Phase 1, Sprint 6                                    | 2026-03-31 |
+| SEC-003  | No retry logic for external API calls        | Phase 1, Sprint 7a (fetchWithTimeout retry)          | 2026-04-01 |
+| SEC-004  | No E2E tests — Playwright not integrated     | Phase 0.75                                           | 2026-03-22 |
+| SEC-005  | SpeechRecognition hardcoded to en-US         | Phase 1                                              | 2026-04-02 |
 | SEC-006  | Placeholder READMEs lack interface contracts | Phase 1 (auth) + Phase 2 start (moderation, prompts) | 2026-04-03 |
-| TASK-014 | Admin module coverage exclusions          | Phase 1, Sprint 7a (integration tests) | 2026-04-01 |
-| TASK-015 | Platform config table                     | Phase 1, Sprint 7b | 2026-04-02 |
-| TASK-016 | Repo inheritance model                    | Phase 1, Sprint 7b (auto-sync) | 2026-04-02 |
-| TASK-017 | Seed data separation                      | Phase 1, Sprint 7b | 2026-04-02 |
+| TASK-014 | Admin module coverage exclusions             | Phase 1, Sprint 7a (integration tests)               | 2026-04-01 |
+| TASK-015 | Platform config table                        | Phase 1, Sprint 7b                                   | 2026-04-02 |
+| TASK-016 | Repo inheritance model                       | Phase 1, Sprint 7b (auto-sync)                       | 2026-04-02 |
+| TASK-017 | Seed data separation                         | Phase 1, Sprint 7b                                   | 2026-04-02 |
 
 ---
 

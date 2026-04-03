@@ -9,20 +9,20 @@
 
 ## Phase Summary
 
-| Phase | Name                         | Status      | PF Release | Started    | Completed  |
-| ----- | ---------------------------- | ----------- | ---------- | ---------- | ---------- |
-| 0     | Platform Scaffolding         | ✅ Complete | —          | 2026-03-15 | 2026-03-18 |
-| 0.5   | Input Reliability Sprint     | ✅ Complete | —          | 2026-03-18 | 2026-03-20 |
-| 0.75  | E2E Test Suite               | ✅ Complete | —          | 2026-03-20 | 2026-03-22 |
-| 1     | Identity & Access Foundation | ✅ Complete | v1.1.0     | 2026-03-22 | 2026-04-02 |
+| Phase | Name                         | Status         | PF Release | Started    | Completed  |
+| ----- | ---------------------------- | -------------- | ---------- | ---------- | ---------- |
+| 0     | Platform Scaffolding         | ✅ Complete    | —          | 2026-03-15 | 2026-03-18 |
+| 0.5   | Input Reliability Sprint     | ✅ Complete    | —          | 2026-03-18 | 2026-03-20 |
+| 0.75  | E2E Test Suite               | ✅ Complete    | —          | 2026-03-20 | 2026-03-22 |
+| 1     | Identity & Access Foundation | ✅ Complete    | v1.1.0     | 2026-03-22 | 2026-04-02 |
 | 2     | Communication Foundation     | 🔄 In Progress | —          | 2026-04-03 | —          |
-| 3     | Language & Voice Foundation  | ⏳ Upcoming | —          | —          | —          |
-| 4     | Content Safety Foundation    | ⏳ Upcoming | —          | —          | —          |
-| 5     | Game Engine Abstraction      | ⏳ Upcoming | —          | —          | —          |
-| 6     | Monetization Foundation      | ⏳ Upcoming | —          | —          | —          |
-| 7     | Analytics Foundation         | ⏳ Upcoming | —          | —          | —          |
-| 8     | Game 1 Implementation        | ⏳ Upcoming | —          | —          | —          |
-| 9     | Hardening & Launch           | ⏳ Upcoming | —          | —          | —          |
+| 3     | Language & Voice Foundation  | ⏳ Upcoming    | —          | —          | —          |
+| 4     | Content Safety Foundation    | ⏳ Upcoming    | —          | —          | —          |
+| 5     | Game Engine Abstraction      | ⏳ Upcoming    | —          | —          | —          |
+| 6     | Monetization Foundation      | ⏳ Upcoming    | —          | —          | —          |
+| 7     | Analytics Foundation         | ⏳ Upcoming    | —          | —          | —          |
+| 8     | Game 1 Implementation        | ⏳ Upcoming    | —          | —          | —          |
+| 9     | Hardening & Launch           | ⏳ Upcoming    | —          | —          | —          |
 
 ### Cross-Phase Fabric
 
@@ -144,14 +144,14 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 
 ### Sprint Plan
 
-| Sprint | Scope                                | Depends On                 |
-| ------ | ------------------------------------ | -------------------------- |
-| 1      | LLM Orchestration + Prompt Registry  | —                          |
-| 2      | Content Safety Refactor              | Sprint 1 (uses orchestrator) |
-| 3      | Observability Fabric                 | Sprint 1 (instruments orchestrator) |
-| 4      | Redis + Infrastructure Hardening     | External: Upstash Redis    |
-| 5      | Real-Time / WebSocket                | Sprint 4 (Redis for pub/sub) |
-| 6      | Integration Tests + Phase Gate       | All prior sprints          |
+| Sprint | Scope                               | Depends On                          |
+| ------ | ----------------------------------- | ----------------------------------- |
+| 1      | LLM Orchestration + Prompt Registry | —                                   |
+| 2      | Content Safety Refactor             | Sprint 1 (uses orchestrator)        |
+| 3      | Observability Fabric                | Sprint 1 (instruments orchestrator) |
+| 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             |
+| 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        |
+| 6      | Integration Tests + Phase Gate      | All prior sprints                   |
 
 ### Real-Time Communication
 
