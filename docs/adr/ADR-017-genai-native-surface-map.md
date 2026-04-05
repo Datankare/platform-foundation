@@ -104,17 +104,17 @@ Ten capabilities were missing from the roadmap. Each is assigned to the earliest
 
 After this ADR, the complete GenAI surface per phase is:
 
-| Phase | GenAI Capabilities |
-| ----- | --- |
-| 1 ✅ | Admin command bar (NL → plan → confirm → execute) |
-| 2 🔄 | Orchestrator, prompt registry, structured safety, AI output screening, streaming |
-| 3 | AI response caching, token tracking, multi-language AI, AI eval framework, enhanced moderation |
-| 4 | RAG pipeline, embedding store, player AI context, output explainability |
-| 5 | AI opponent, content generation, game-specific RAG, agentic framework, multimodal |
-| 6 | Token budgets, cost attribution per tier, AI A/B testing |
-| 7 | AI quality monitoring, NL analytics, personalization, player feedback loop, cost dashboards |
-| 8 | Conversational onboarding, in-game AI support, anti-cheat |
-| 9 | AI hardening (fallback chains, graceful degradation), chaos engineering for AI |
+| Phase | GenAI Capabilities                                                                             |
+| ----- | ---------------------------------------------------------------------------------------------- |
+| 1 ✅  | Admin command bar (NL → plan → confirm → execute)                                              |
+| 2 🔄  | Orchestrator, prompt registry, structured safety, AI output screening, streaming               |
+| 3     | AI response caching, token tracking, multi-language AI, AI eval framework, enhanced moderation |
+| 4     | RAG pipeline, embedding store, player AI context, output explainability                        |
+| 5     | AI opponent, content generation, game-specific RAG, agentic framework, multimodal              |
+| 6     | Token budgets, cost attribution per tier, AI A/B testing                                       |
+| 7     | AI quality monitoring, NL analytics, personalization, player feedback loop, cost dashboards    |
+| 8     | Conversational onboarding, in-game AI support, anti-cheat                                      |
+| 9     | AI hardening (fallback chains, graceful degradation), chaos engineering for AI                 |
 
 ### Verification
 
