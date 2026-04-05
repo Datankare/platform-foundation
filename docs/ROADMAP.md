@@ -9,20 +9,20 @@
 
 ## Phase Summary
 
-| Phase | Name                         | Status      | PF Release | Started    | Completed  |
-| ----- | ---------------------------- | ----------- | ---------- | ---------- | ---------- |
-| 0     | Platform Scaffolding         | ✅ Complete | —          | 2026-03-15 | 2026-03-18 |
-| 0.5   | Input Reliability Sprint     | ✅ Complete | —          | 2026-03-18 | 2026-03-20 |
-| 0.75  | E2E Test Suite               | ✅ Complete | —          | 2026-03-20 | 2026-03-22 |
-| 1     | Identity & Access Foundation | ✅ Complete | v1.1.0     | 2026-03-22 | 2026-04-02 |
-| 2     | Communication Foundation     | ⏳ Upcoming | —          | —          | —          |
-| 3     | Language & Voice Foundation  | ⏳ Upcoming | —          | —          | —          |
-| 4     | Content Safety Foundation    | ⏳ Upcoming | —          | —          | —          |
-| 5     | Game Engine Abstraction      | ⏳ Upcoming | —          | —          | —          |
-| 6     | Monetization Foundation      | ⏳ Upcoming | —          | —          | —          |
-| 7     | Analytics Foundation         | ⏳ Upcoming | —          | —          | —          |
-| 8     | Game 1 Implementation        | ⏳ Upcoming | —          | —          | —          |
-| 9     | Hardening & Launch           | ⏳ Upcoming | —          | —          | —          |
+| Phase | Name                         | Status         | PF Release | Started    | Completed  |
+| ----- | ---------------------------- | -------------- | ---------- | ---------- | ---------- |
+| 0     | Platform Scaffolding         | ✅ Complete    | —          | 2026-03-15 | 2026-03-18 |
+| 0.5   | Input Reliability Sprint     | ✅ Complete    | —          | 2026-03-18 | 2026-03-20 |
+| 0.75  | E2E Test Suite               | ✅ Complete    | —          | 2026-03-20 | 2026-03-22 |
+| 1     | Identity & Access Foundation | ✅ Complete    | v1.1.0     | 2026-03-22 | 2026-04-02 |
+| 2     | Communication Foundation     | 🔄 In Progress | —          | 2026-04-03 | —          |
+| 3     | Language & Voice Foundation  | ⏳ Upcoming    | —          | —          | —          |
+| 4     | Content Safety Foundation    | ⏳ Upcoming    | —          | —          | —          |
+| 5     | Game Engine Abstraction      | ⏳ Upcoming    | —          | —          | —          |
+| 6     | Monetization Foundation      | ⏳ Upcoming    | —          | —          | —          |
+| 7     | Analytics Foundation         | ⏳ Upcoming    | —          | —          | —          |
+| 8     | Game 1 Implementation        | ⏳ Upcoming    | —          | —          | —          |
+| 9     | Hardening & Launch           | ⏳ Upcoming    | —          | —          | —          |
 
 ### Cross-Phase Fabric
 
@@ -136,11 +136,22 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 
 ---
 
-## Phase 2 — Communication Foundation ⏳
+## Phase 2 — Communication Foundation 🔄
 
 **Objective:** WebSocket/real-time infrastructure, plus the three cross-phase fabric foundations (observability, GenAI-native stack, content safety).
 
 **Prerequisites:** Phase 1 complete, Redis infrastructure available.
+
+### Sprint Plan
+
+| Sprint | Scope                               | Depends On                          |
+| ------ | ----------------------------------- | ----------------------------------- |
+| 1      | LLM Orchestration + Prompt Registry | —                                   |
+| 2      | Content Safety Refactor             | Sprint 1 (uses orchestrator)        |
+| 3      | Observability Fabric                | Sprint 1 (instruments orchestrator) |
+| 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             |
+| 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        |
+| 6      | Integration Tests + Phase Gate      | All prior sprints                   |
 
 ### Real-Time Communication
 
@@ -460,3 +471,4 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 | ------- | ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1.0.0   | 2026-04-03 | Raman Sud | Initial roadmap — all 10 phases defined. Phase 0–1 complete. Deferred items assigned to Phases 2–9.                                                                                                                                             |
 | 1.1.0   | 2026-04-03 | Raman Sud | Pre-Phase 2 architectural review. Added ADR-014 (Observability), ADR-015 (GenAI-Native Stack), ADR-016 (Content Safety). All three woven into Phases 2–9 as cross-phase fabric with detailed per-phase deliverables. Added standing rules 9–11. |
+| 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                              |

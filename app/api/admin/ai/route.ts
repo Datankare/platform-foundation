@@ -8,15 +8,15 @@
  * GenAI-native admin (ADR-003): all admin operations flow
  * through natural language → AI plan → human confirm → execute.
  *
- * Sprint 6
+ * Phase 2: refactored to use platform/ai orchestration layer (ADR-015).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { logger } from "@/lib/logger";
-
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { logger, generateRequestId } from "@/lib/logger";
+import { getOrchestrator } from "@/platform/ai";
+import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
 
 interface AdminTool {
   name: string;
@@ -344,67 +344,35 @@ export async function POST(request: NextRequest) {
   const denied = await adminGuard(request, "can_access_admin");
   if (denied) return denied;
 
+  const requestId = generateRequestId();
   const { prompt, panel } = await request.json();
 
   if (!prompt || !panel) {
     return NextResponse.json({ error: "prompt and panel are required" }, { status: 400 });
   }
 
-  if (!ANTHROPIC_API_KEY) {
-    return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY not configured" },
-      { status: 500 }
-    );
-  }
-
   const tools = getToolsForPanel(panel);
   const context = await getContextForPanel(panel);
-
-  const systemPrompt = `You are an admin assistant for the Playform platform. You help administrators manage the system through natural language commands.
-
-Current panel: ${panel}
-${context}
-
-RULES:
-- Always use the provided tools to perform actions. Never make up data.
-- For destructive actions (delete, revoke), always explain the impact first.
-- For multi-step operations, break them into individual tool calls.
-- If the request is ambiguous, ask for clarification.
-- If a search returns no results, say so clearly.
-- Always refer to roles and permissions by their exact codes as shown in the context.`;
+  const config = getPromptConfig("admin-command-bar");
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        system: systemPrompt,
+    const response = await getOrchestrator().complete(
+      {
+        tier: config.tier,
+        system: buildAdminSystemPrompt(panel, context),
+        messages: [{ role: "user", content: prompt }],
+        maxTokens: config.maxTokens,
         tools: tools.map((t) => ({
           name: t.name,
           description: t.description,
           input_schema: t.input_schema,
         })),
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      logger.error("Anthropic API error", {
-        status: response.status,
-        body: errorBody,
-        route: "api/admin/ai",
-      });
-      return NextResponse.json({ error: "AI service error" }, { status: 502 });
-    }
-
-    const data = await response.json();
+      },
+      {
+        useCase: config.name,
+        requestId,
+      }
+    );
 
     // Extract text responses and tool calls
     const plan: {
@@ -412,7 +380,7 @@ RULES:
       actions: { tool: string; input: Record<string, unknown> }[];
     } = { message: "", actions: [] };
 
-    for (const block of data.content || []) {
+    for (const block of response.content) {
       if (block.type === "text") {
         plan.message += block.text;
       }
@@ -428,6 +396,7 @@ RULES:
   } catch (err) {
     logger.error("Admin AI orchestrator error", {
       error: err instanceof Error ? err.message : "Unknown",
+      requestId,
       route: "api/admin/ai",
     });
     return NextResponse.json({ error: "AI service unavailable" }, { status: 500 });
