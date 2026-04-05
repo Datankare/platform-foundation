@@ -1,78 +1,49 @@
 /**
- * lib/safety.ts — Content safety check
+ * lib/safety.ts — Content safety check (backwards-compatible facade)
  *
- * ADR-015: Uses the orchestration layer — no raw fetch/SDK calls.
- * ADR-016: Structured classification (categories, confidence, severity).
+ * ADR-016: Multi-layer defense via platform/moderation middleware.
+ * ADR-017: Input AND output screening through same pipeline.
  *
- * Phase 2 upgrade: binary safe/unsafe → structured ClassifierOutput.
- * Backwards-compatible: checkSafety() still returns SafetyResult.
- * New: classifyContent() returns full ClassifierOutput.
+ * This file is a thin wrapper for backwards compatibility.
+ * New code should use `screenContent` from `@/platform/moderation` directly.
  */
 
 import { SafetyResult } from "@/types";
-import { getOrchestrator } from "@/platform/ai";
-import { getPromptConfig } from "@/prompts";
-import {
-  buildSafetyPrompt,
-  parseClassifierResponse,
-  ClassifierOutput,
-} from "@/prompts/safety/classify-v1";
-import { logger, generateRequestId } from "@/lib/logger";
+import { screenContent } from "@/platform/moderation";
+import type { ClassifierOutput } from "@/prompts/safety/classify-v1";
+import { generateRequestId } from "@/lib/logger";
 
 /**
  * Full structured classification — returns categories, confidence, severity.
- * Use this for audit trail and tiered enforcement (ADR-016).
+ * Delegates to the moderation middleware pipeline (blocklist + classifier + audit).
  */
 export async function classifyContent(
   text: string,
   requestId?: string
 ): Promise<ClassifierOutput> {
   const reqId = requestId ?? generateRequestId();
-  const config = getPromptConfig("safety-classify");
 
-  try {
-    const response = await getOrchestrator().complete(
-      {
-        tier: config.tier,
-        messages: [{ role: "user", content: buildSafetyPrompt(text) }],
-        maxTokens: config.maxTokens,
-        temperature: config.temperature,
-      },
-      {
-        useCase: config.name,
-        requestId: reqId,
-      }
-    );
+  const result = await screenContent(text, {
+    direction: "input",
+    requestId: reqId,
+  });
 
-    const textBlock = response.content.find((b) => b.type === "text");
-    if (!textBlock || textBlock.type !== "text") {
-      // Fail closed — no text response
-      return {
-        safe: false,
-        categories: [],
-        confidence: 0.5,
-        severity: "medium",
-        reason: "Safety classifier returned unexpected response type.",
-      };
-    }
-
-    return parseClassifierResponse(textBlock.text);
-  } catch (err) {
-    // Fail closed — any error means unsafe
-    // OWASP A09: structured logging — never log user content
-    logger.error("Safety classification error — fail closed", {
-      requestId: reqId,
-      route: "lib/safety",
-      error: err instanceof Error ? err.message : "Unknown",
-    });
-    return {
-      safe: false,
-      categories: [],
-      confidence: 0.5,
-      severity: "medium",
-      reason: "Content could not be verified as safe.",
-    };
+  // If classifier was invoked, return its output
+  if (result.classifierOutput) {
+    return result.classifierOutput;
   }
+
+  // Blocklist-only result (no classifier invoked) — synthesize ClassifierOutput
+  return {
+    safe: result.action === "allow",
+    categories: [],
+    confidence: 1.0,
+    severity: result.action === "block" ? "critical" : "low",
+    reason:
+      result.action === "block"
+        ? `Blocked by content filter: ${result.blocklistMatches.join(", ")}`
+        : undefined,
+  };
 }
 
 /**
