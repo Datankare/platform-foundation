@@ -1,6 +1,6 @@
 # Technical Architecture Document (TAD)
 
-**Project:** Platform Foundation — Playform Template Repository
+**Project:** Platform Foundation — Reusable Platform Template
 **Version:** 2.0
 **Date:** March 2026
 **Status:** Approved
@@ -10,10 +10,10 @@
 
 ## Purpose
 
-Platform Foundation is the template repository for Playform. All security
+Platform Foundation is a reusable platform template. All security
 primitives, architectural patterns, and platform infrastructure are
-established here first, then propagated to Playform and future game
-repositories. Never the reverse.
+established here first, then propagated to consumer applications.
+Never the reverse.
 
 ## Stack
 

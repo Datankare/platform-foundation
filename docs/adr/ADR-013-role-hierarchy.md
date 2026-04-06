@@ -7,7 +7,7 @@
 ## Context
 
 The admin UI needs a clear separation between governance operations
-(who can do what) and day-to-day operational administration (player
+(who can do what) and day-to-day operational administration (user
 management, audit viewing). Without separation, any admin could
 escalate their own privileges.
 
@@ -18,9 +18,9 @@ escalate their own privileges.
 | Role            | Purpose           | Scope                          |
 | --------------- | ----------------- | ------------------------------ |
 | super_admin     | Access governance | Roles, config, all permissions |
-| admin           | Operational       | Players, entitlements, audit   |
-| registered/free | Normal player     | Gameplay, profile              |
-| guest           | Anonymous         | Time-limited play              |
+| admin           | Operational       | Users, entitlements, audit     |
+| registered/free | Normal user       | App features, profile          |
+| guest           | Anonymous         | Time-limited access            |
 
 ### Permission Assignment
 
@@ -33,7 +33,7 @@ escalate their own privileges.
 
 - `can_access_admin` — access admin UI
 - `admin_view_audit` — view audit trail
-- `admin_manage_players` — edit player roles, view data
+- `admin_manage_players` — edit user roles, view data
 - `admin_manage_entitlements` — manage entitlement groups
 
 ### Anti-Elevation Rules
