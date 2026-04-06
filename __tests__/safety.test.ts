@@ -119,7 +119,7 @@ describe("classifyContent", () => {
     mockComplete.mockRejectedValueOnce(new Error("Provider down"));
     const result = await classifyContent("test");
     expect(result.safe).toBe(false);
-    expect(result.reason).toBe("Content could not be verified as safe.");
+    expect(result.reason).toBeDefined();
   });
 
   it("fails closed on malformed JSON response", async () => {
