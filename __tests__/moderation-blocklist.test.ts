@@ -72,17 +72,8 @@ describe("validatePattern", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("rejects ReDoS-vulnerable regex patterns (safe-regex2)", () => {
-    const result = validatePattern({
-      id: "t-4",
-      pattern: "([a-zA-Z]+)*x",
-      type: "regex",
-      category: "hate",
-      severity: "high",
-    });
-    expect(result.valid).toBe(false);
-    expect(result.reason).toContain("safe-regex2");
-  });
+  // ReDoS rejection tests are in moderation-blocklist-redos.test.ts
+  // (isolated for CodeQL exclusion — they necessarily contain unsafe patterns)
 
   it("rejects invalid regex syntax", () => {
     const result = validatePattern({
@@ -146,33 +137,7 @@ describe("compilePatterns", () => {
     expect(compiled).toHaveLength(2);
   });
 
-  it("rejects unsafe regex and keeps the rest (fail closed)", () => {
-    const compiled = compilePatterns([
-      {
-        id: "safe-1",
-        pattern: "good",
-        type: "substring",
-        category: "hate",
-        severity: "low",
-      },
-      {
-        id: "unsafe-1",
-        pattern: "([a-zA-Z]+)*x",
-        type: "regex",
-        category: "hate",
-        severity: "high",
-      },
-      {
-        id: "safe-2",
-        pattern: "[a-z]+",
-        type: "regex",
-        category: "hate",
-        severity: "medium",
-      },
-    ]);
-    expect(compiled).toHaveLength(2);
-    expect(compiled.map((c) => c.source.id)).toEqual(["safe-1", "safe-2"]);
-  });
+  // Unsafe regex rejection test is in moderation-blocklist-redos.test.ts
 
   it("returns empty array for all-invalid patterns", () => {
     const compiled = compilePatterns([
@@ -247,20 +212,7 @@ describe("scanBlocklist — regex patterns", () => {
     expect(result.matched).toBe(false);
   });
 
-  it("silently skips unsafe regex patterns (fail closed at compile time)", () => {
-    const unsafePatterns: BlocklistPattern[] = [
-      {
-        id: "unsafe-1",
-        pattern: "([a-zA-Z]+)*x",
-        type: "regex",
-        category: "hate",
-        severity: "high",
-      },
-    ];
-    // Unsafe pattern is rejected during compilation — no match, no crash
-    const result = scanBlocklist("aaaaaaaaab", unsafePatterns);
-    expect(result.matched).toBe(false);
-  });
+  // Unsafe regex rejection test is in moderation-blocklist-redos.test.ts
 });
 
 // ---------------------------------------------------------------------------
