@@ -12,7 +12,7 @@ limiting, no security headers, no structured logging — were inherited from
 the validation spike and must not recur in Phase 1 or beyond.
 
 This ADR establishes the permanent security baseline that all future phases
-build on. It defines what "secure by default" means for Playform.
+build on. It defines what "secure by default" means for the platform and all consumers.
 
 ## Decision
 

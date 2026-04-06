@@ -1,15 +1,19 @@
 # GenAI-Native Roadmap
 
 **Owner:** Raman Sud, CTO
-**Canonical location:** `docs/GENAI_ROADMAP.md` (both platform-foundation and playform repos)
+**Canonical location:** `docs/GENAI_ROADMAP.md`
 **Governing ADRs:** ADR-003 (GenAI-Native), ADR-015 (GenAI-Native Stack), ADR-017 (Complete Surface Map)
 **Rule:** Updated at every sprint boundary. No GenAI capability is built without placement here first (Standing Rule 12).
+
+> **Consumer note:** This document describes platform-level GenAI capabilities.
+> Consumer applications (e.g., games, learning tools, SaaS products) extend these
+> capabilities with app-specific implementations in their own repos.
 
 ---
 
 ## The GenAI-Native Principle
 
-GenAI is the medium the platform operates in — not a feature bolted on. Every player interaction, every admin action, every safety decision, every piece of content flows through AI infrastructure that is instrumented, cached, budgeted, monitored, resilient, and explainable.
+GenAI is the medium the platform operates in — not a feature bolted on. Every user interaction, every admin action, every safety decision, every piece of content flows through AI infrastructure that is instrumented, cached, budgeted, monitored, resilient, and explainable.
 
 ---
 
@@ -20,12 +24,11 @@ GenAI is the medium the platform operates in — not a feature bolted on. Every 
 | 1     | ✅ Complete               | Admin AI command bar                                                         |
 | 2     | 🔄 Sprint 2 of 6 complete | Orchestration layer, prompt registry, structured safety, moderation pipeline |
 | 3     | ⏳ Upcoming               | Multi-language AI, eval framework, response caching, token tracking          |
-| 4     | ⏳ Upcoming               | RAG, embeddings, player context, explainability                              |
-| 5     | ⏳ Upcoming               | AI opponent, content generation, agentic framework, multimodal               |
+| 4     | ⏳ Upcoming               | RAG, embeddings, user context, explainability                                |
+| 5     | ⏳ Upcoming               | Adaptive AI behavior, content generation, agentic framework, multimodal      |
 | 6     | ⏳ Upcoming               | Token budgets, cost attribution, A/B testing                                 |
 | 7     | ⏳ Upcoming               | AI quality monitoring, personalization, feedback loop, NL analytics          |
-| 8     | ⏳ Upcoming               | Conversational onboarding, in-game AI support, anti-cheat                    |
-| 9     | ⏳ Upcoming               | AI hardening, fallback chains, graceful degradation                          |
+| 8     | ⏳ Upcoming               | AI hardening, fallback chains, graceful degradation                          |
 
 ---
 
@@ -57,36 +60,36 @@ GenAI is the medium the platform operates in — not a feature bolted on. Every 
 
 ## Phase 3 — Language & Voice Foundation ⏳
 
-| Capability              | Status     | Detail                                                                                       |
-| ----------------------- | ---------- | -------------------------------------------------------------------------------------------- |
-| AI response caching     | ⏳ Planned | Identical inputs → cached outputs. Translation and classification are highly cacheable.      |
-| Token tracking          | ⏳ Planned | Per-request token accounting for cost visibility before monetization phase                   |
-| Enhanced moderation     | ⏳ Planned | Multi-model classification with confidence score aggregation                                 |
-| Multi-language AI       | ⏳ Planned | Safety classification and AI interactions operate in player's language natively (ADR-017 §3) |
-| AI evaluation framework | ⏳ Planned | `prompts/evals/` with datasets per prompt, regression runs in CI (ADR-017 §4)                |
+| Capability              | Status     | Detail                                                                                         |
+| ----------------------- | ---------- | ---------------------------------------------------------------------------------------------- |
+| AI response caching     | ⏳ Planned | Identical inputs → cached outputs. Translation and classification are highly cacheable.        |
+| Token tracking          | ⏳ Planned | Per-request token accounting for cost visibility before monetization phase                     |
+| Enhanced moderation     | ⏳ Planned | Multi-model classification with confidence score aggregation                                   |
+| Multi-language AI       | ⏳ Planned | Safety classification and AI interactions operate in the user's language natively (ADR-017 §3) |
+| AI evaluation framework | ⏳ Planned | `prompts/evals/` with datasets per prompt, regression runs in CI (ADR-017 §4)                  |
 
 ---
 
 ## Phase 4 — Content Safety Foundation ⏳
 
-| Capability               | Status     | Detail                                                                                                    |
-| ------------------------ | ---------- | --------------------------------------------------------------------------------------------------------- |
-| RAG foundation           | ⏳ Planned | Document chunking, context injection, retrieval pipeline                                                  |
-| Embedding store          | ⏳ Planned | pgvector extension on Supabase for semantic search and personalization                                    |
-| Player AI context store  | ⏳ Planned | Per-player interaction history, learning patterns, preferences — injected into AI prompts (ADR-017 §5)    |
-| AI output explainability | ⏳ Planned | Explanation chain for every AI decision — why was content blocked, why did difficulty adjust (ADR-017 §6) |
+| Capability               | Status     | Detail                                                                                                  |
+| ------------------------ | ---------- | ------------------------------------------------------------------------------------------------------- |
+| RAG foundation           | ⏳ Planned | Document chunking, context injection, retrieval pipeline                                                |
+| Embedding store          | ⏳ Planned | pgvector extension on Supabase for semantic search and personalization                                  |
+| User AI context store    | ⏳ Planned | Per-user interaction history, learning patterns, preferences — injected into AI prompts (ADR-017 §5)    |
+| AI output explainability | ⏳ Planned | Explanation chain for every AI decision — why was content blocked, why did behavior adjust (ADR-017 §6) |
 
 ---
 
-## Phase 5 — Game Engine Abstraction ⏳
+## Phase 5 — Application Framework ⏳
 
-| Capability                 | Status     | Detail                                                                                     |
-| -------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| AI opponent                | ⏳ Planned | LLM-driven adaptive opponent behavior — adjusts to player skill and style                  |
-| Content generation         | ⏳ Planned | Dynamic hints, narratives, flavor text — no two players see the same static content        |
-| Game-specific RAG          | ⏳ Planned | Game rules, hint systems, adaptive content fed through RAG into AI                         |
-| Agentic workflow framework | ⏳ Planned | `platform/ai/agent.ts` — tool registry, multi-step execution, state, rollback (ADR-017 §7) |
-| Multimodal AI              | ⏳ Planned | Image/audio input in provider interface, image generation (ADR-017 §8)                     |
+| Capability                 | Status     | Detail                                                                                                                |
+| -------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| Adaptive AI behavior       | ⏳ Planned | LLM-driven adaptive behavior framework — consumers implement app-specific logic (e.g., opponents, tutors, assistants) |
+| Dynamic content generation | ⏳ Planned | AI-generated contextual content — consumers define content types and templates                                        |
+| Application-specific RAG   | ⏳ Planned | RAG foundation (Phase 4) extended with app-specific knowledge bases and context                                       |
+| Agentic workflow framework | ⏳ Planned | `platform/ai/agent.ts` — tool registry, multi-step execution, state, rollback (ADR-017 §7)                            |
+| Multimodal AI              | ⏳ Planned | Image/audio input in provider interface, image generation (ADR-017 §8)                                                |
 
 ---
 
@@ -105,33 +108,27 @@ GenAI is the medium the platform operates in — not a feature bolted on. Every 
 | Capability             | Status     | Detail                                                                                  |
 | ---------------------- | ---------- | --------------------------------------------------------------------------------------- |
 | AI quality monitoring  | ⏳ Planned | Hallucination detection, user satisfaction signals, response quality tracking           |
-| Analytics intelligence | ⏳ Planned | Natural language querying — "how did I do this week?"                                   |
-| Personalization        | ⏳ Planned | Player experience adapted via behavior, skill, preferences                              |
-| Player feedback loop   | ⏳ Planned | Thumbs up/down, correction tracking, appeal outcomes feeding into quality (ADR-017 §10) |
-| Cost dashboards        | ⏳ Planned | Token cost per player, per feature, per game                                            |
+| Analytics intelligence | ⏳ Planned | Natural language querying — "how is my app performing this week?"                       |
+| Personalization        | ⏳ Planned | User experience adapted via behavior, skill, preferences                                |
+| User feedback loop     | ⏳ Planned | Thumbs up/down, correction tracking, appeal outcomes feeding into quality (ADR-017 §10) |
+| Cost dashboards        | ⏳ Planned | Token cost per user, per feature, per app, per subscription tier                        |
 
 ---
 
-## Phase 8 — Game 1 Implementation ⏳
-
-| Capability                | Status     | Detail                                                                  |
-| ------------------------- | ---------- | ----------------------------------------------------------------------- |
-| Conversational onboarding | ⏳ Planned | Adaptive tutorials that adjust to what the player already knows         |
-| In-game AI support        | ⏳ Planned | Rules assistant, dispute resolution, contextual help — always available |
-| Anti-cheat                | ⏳ Planned | Anomaly detection on player behavior patterns                           |
-
----
-
-## Phase 9 — Hardening & Launch ⏳
+## Phase 8 — Hardening & Launch ⏳
 
 | Capability               | Status     | Detail                                                                  |
 | ------------------------ | ---------- | ----------------------------------------------------------------------- |
 | AI hardening             | ⏳ Planned | Fallback chains across providers, graceful model degradation            |
 | Chaos engineering for AI | ⏳ Planned | Deliberately break AI in staging — verify fallback and degradation work |
 
+> **Note:** Consumer-specific AI capabilities (e.g., conversational onboarding, in-app AI
+> support, anomaly detection) are built in consumer repos using the platform's agentic
+> framework (Phase 5), RAG pipeline (Phase 4), and orchestration layer (Phase 2).
+
 ---
 
-## Phase 9 Verification Checklist (ADR-017)
+## Launch Verification Checklist (ADR-017)
 
 At launch, every one of these must be true:
 
@@ -141,23 +138,24 @@ At launch, every one of these must be true:
 | 2   | Every AI call is instrumented with model, tokens, cost, latency              | [ ]      |
 | 3   | Every AI input AND output is safety-screened                                 | [ ]      |
 | 4   | Every prompt is versioned, tested, and has an eval dataset                   | [ ]      |
-| 5   | AI operates in the player's language natively                                | [ ]      |
-| 6   | AI remembers player context across sessions                                  | [ ]      |
-| 7   | AI decisions are explainable to admins and players                           | [ ]      |
+| 5   | AI operates in the user's language natively                                  | [ ]      |
+| 6   | AI remembers user context across sessions                                    | [ ]      |
+| 7   | AI decisions are explainable to admins and users                             | [ ]      |
 | 8   | AI supports streaming for conversational surfaces                            | [ ]      |
 | 9   | AI supports multimodal input and output                                      | [ ]      |
 | 10  | Multi-step AI workflows use the agentic framework                            | [ ]      |
 | 11  | Prompt changes are A/B tested against live traffic                           | [ ]      |
-| 12  | Player feedback flows back into AI quality improvement                       | [ ]      |
+| 12  | User feedback flows back into AI quality improvement                         | [ ]      |
 | 13  | AI is resilient — fallback providers, circuit breakers, graceful degradation | [ ]      |
-| 14  | AI cost is tracked per player, per feature, per game, per subscription tier  | [ ]      |
+| 14  | AI cost is tracked per user, per feature, per app, per subscription tier     | [ ]      |
 
-If any statement is false at Phase 9, GenAI-native is incomplete.
+If any statement is false at launch, GenAI-native is incomplete.
 
 ---
 
 ## Changelog
 
-| Date       | Author    | Change                                                                                                                  |
-| ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete. |
+| Date       | Author    | Change                                                                                                                                               |
+| ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete.                              |
+| 2026-04-06 | Raman Sud | Generalized for platform-foundation: player→user, game→application, Phase 8 app implementation moved to consumer repos. Phase 9→Phase 8 (hardening). |

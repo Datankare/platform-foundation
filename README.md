@@ -20,7 +20,7 @@ from day one.
 - ✅ Auth provider abstraction (Cognito-ready, pluggable to any IdP)
 - ✅ RBAC permissions engine with role inheritance
 - ✅ Entitlements engine (time-bounded grants)
-- ✅ Player profiles with per-field visibility (private/friends/public)
+- ✅ User profiles with per-field visibility (private/friends/public)
 - ✅ COPPA age verification + parental consent schema
 - ✅ GDPR: data export, cascading deletion, guest lifecycle
 - ✅ Platform config table (runtime key-value settings)
@@ -39,7 +39,7 @@ from day one.
 - ✅ Input AND output screening — AI-generated content screened before reaching users
 - ✅ safe-regex2 validated blocklist patterns — pre-compiled, ReDoS-safe
 - ⏳ Streaming responses, multi-language AI, eval framework (Phase 2–3)
-- ⏳ RAG pipeline, player context, agentic framework, multimodal (Phase 4–5)
+- ⏳ RAG pipeline, user context, agentic framework, multimodal (Phase 4–5)
 
 See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability map.
 
@@ -97,13 +97,13 @@ platform-foundation/
 ├── platform/moderation/ ← Content safety — blocklist, classifier, middleware (Phase 2 ✅)
 ├── platform/realtime/   ← WebSocket engine (Phase 2)
 ├── platform/voice/      ← Voice pipeline (Phase 3)
-├── platform/game-engine/← Game engine abstraction (Phase 5)
+├── platform/game-engine/← Application framework (Phase 5) — directory rename tracked in SECURITY_DEBT.md
 ├── platform/monetization/← Monetization (Phase 6)
 ├── platform/analytics/  ← Analytics engine (Phase 7)
 ├── prompts/             ← Versioned LLM prompt library with tests (Phase 2 ✅)
 ├── components/admin/    ← Admin UI (GenAI command bar, data views)
 ├── components/auth/     ← Auth UI (login, register, profile, age gate)
-├── app/api/admin/       ← Admin API routes (roles, players, config, audit)
+├── app/api/admin/       ← Admin API routes (roles, users, config, audit)
 ├── supabase/migrations/ ← 7 database migrations
 ├── docs/adr/            ← 17 ADRs
 ├── scripts/             ← Sustainability gate

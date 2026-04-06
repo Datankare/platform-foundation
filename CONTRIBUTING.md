@@ -204,10 +204,10 @@ platform-foundation/
 
 Every file you create belongs to one of two layers:
 
-**Platform layer** — game-agnostic, lives in `lib/`, `platform/` (coming), `shared/`
-**Game layer** — game-specific, lives in `games/app-01/` (coming)
+**Platform layer** — consumer-agnostic, lives in `lib/`, `platform/`, `shared/`
+**Application layer** — consumer-specific, lives in consumer repos (not in PF)
 
-Before adding any code, ask: _"Is this platform-level or game-level?"_
+Before adding any code, ask: _"Is this platform-level or application-level?"_
 If you're unsure, read ADR-001.
 
 ---
@@ -247,14 +247,37 @@ npm run format            # Prettier fix (auto-writes)
 
 ## Governing Principles
 
-All code must honor these four principles. Read the ADRs for full detail.
+All code must honor these five principles. Read the ADRs for full detail.
 
-| Principle                 | Meaning                                                              | ADR     |
-| ------------------------- | -------------------------------------------------------------------- | ------- |
-| **RAMPS**                 | Reliability · Accessibility · Manageability · Performance · Security | ADR-004 |
-| **AAA**                   | Authentication · Authorization · Analytics                           | ADR-004 |
-| **Foundation as Fabric**  | Infrastructure woven in — never bolted on                            | ADR-004 |
-| **Continuous Confidence** | Green means nothing is broken — anywhere                             | ADR-004 |
+| Principle                      | Meaning                                                              | ADR     |
+| ------------------------------ | -------------------------------------------------------------------- | ------- |
+| **RAMPS**                      | Reliability · Accessibility · Manageability · Performance · Security | ADR-004 |
+| **AAA**                        | Authentication · Authorization · Analytics                           | ADR-004 |
+| **Foundation as Fabric**       | Infrastructure woven in — never bolted on                            | ADR-004 |
+| **Continuous Confidence**      | Green means nothing is broken — anywhere                             | ADR-004 |
+| **Platform-First Abstraction** | Every capability evaluated for PF before building in a consumer      | ADR-001 |
+
+### Platform-First Abstraction Rule
+
+Before building any capability in a consumer repo, ask:
+
+> _"Does the generic abstraction belong in platform-foundation?"_
+
+If yes, build the abstraction in PF first — with interfaces, documentation, and
+instructions for how consumers extend it. Then build the consumer-specific
+implementation on top. This is the auth/Cognito pattern applied everywhere:
+
+| PF provides                                    | Consumer provides                     |
+| ---------------------------------------------- | ------------------------------------- |
+| Auth provider interface + RBAC + permissions   | Cognito concrete provider             |
+| Moderation middleware + blocklist + classifier | App-specific blocklist patterns       |
+| AI orchestrator + prompt registry              | App-specific prompts and AI behavior  |
+| WebSocket engine + room abstractions           | App-specific room types and protocols |
+| Application framework + lifecycle              | Concrete application implementation   |
+| Token budgets + cost attribution               | Subscription plans and pricing        |
+
+PF must remain **consumer-agnostic** — no consumer-specific code, terminology,
+or business logic in PF. PF uses "user" not "player", "application" not "game".
 
 ---
 
