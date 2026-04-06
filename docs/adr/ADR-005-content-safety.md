@@ -7,7 +7,7 @@
 
 The platform is strictly SFW (Safe For Work) and must remain so across all
 input modalities (text and voice), all languages, and all game types. Content
-safety must work in real time, before content reaches other players, and must
+safety must work in real time, before content reaches other users, and must
 handle multilingual input correctly.
 
 ## Decision
@@ -26,11 +26,11 @@ Multi-layer content safety architecture:
 6. **Tiered consequences:** warn → suspend → ban with appeal path
 
 The safety check is the FIRST step in the processing pipeline — before
-translation, before TTS, before any content reaches other players.
+translation, before TTS, before any content reaches other users.
 
 ## Consequences
 
-- No sexual, violent, hateful, or inappropriate content can reach players
+- No sexual, violent, hateful, or inappropriate content can reach users
 - Multilingual evasion attempts are caught at the source language level
 - False positives are possible — the appeal path mitigates this
 - Adds latency to every submission — acceptable given safety requirement

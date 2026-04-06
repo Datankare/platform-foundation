@@ -59,7 +59,7 @@ Then paste Part A and Part B below.
 | E10 | GitHub Release created with release notes and "Set as latest release" checked                                | [ ]  |
 | E11 | Both repos on main, CI green                                                                                 | [ ]  |
 | E12 | Test counts and coverage recorded in ROADMAP.md phase metrics                                                | [ ]  |
-| E13 | Sync workflow verified — Playform current with latest PF release                                             | [ ]  |
+| E13 | Sync workflow verified — consumer repos current with latest PF release                                       | [ ]  |
 
 ### Phase Entry Gate (before starting a new phase)
 

@@ -59,6 +59,65 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ---
 
+### TASK-018 — Rename "player" → "user" in PF codebase
+
+| Field          | Detail                                              |
+| -------------- | --------------------------------------------------- |
+| **ID**         | TASK-018                                            |
+| **Type**       | Technical debt — platform-game separation (ADR-001) |
+| **Severity**   | Medium                                              |
+| **Status**     | Tracked — docs generalized, code pending            |
+| **Logged**     | 2026-04-06                                          |
+| **Resolve by** | Phase 3 start                                       |
+
+**What:** PF is a consumer-agnostic platform template, but the codebase uses
+game-specific terminology ("player") throughout. Docs have been generalized
+to "user"; code needs to follow.
+
+**Files requiring rename:**
+
+- Database: `players` table, `player_entitlements`, `player_content_rating`
+- Supabase migrations: all references to `player_id`, `player_*` columns
+- Types: `types/index.ts` — any player-specific interfaces
+- Platform: `platform/auth/profile.ts`, `coppa.ts`, `devices.ts`, `gdpr-deletion.ts`
+- Components: `components/auth/ProfilePage.tsx`
+- API routes: `app/api/admin/players/`
+- Tests: all `*player*` references in test files
+
+**Resolution plan:**
+
+1. Create migration 008 to rename `players` → `users`, `player_*` → `user_*`
+2. Update all TypeScript types and interfaces
+3. Update all component and API route references
+4. Update all test files
+5. Run full quality gate on both repos
+6. Remove this entry when complete
+
+---
+
+### TASK-019 — Rename `platform/game-engine/` → `platform/app-framework/`
+
+| Field          | Detail                                              |
+| -------------- | --------------------------------------------------- |
+| **ID**         | TASK-019                                            |
+| **Type**       | Technical debt — platform-game separation (ADR-001) |
+| **Severity**   | Low                                                 |
+| **Status**     | Tracked — placeholder directory, no code yet        |
+| **Logged**     | 2026-04-06                                          |
+| **Resolve by** | Phase 5 start                                       |
+
+**What:** Directory `platform/game-engine/` should be `platform/app-framework/`
+to reflect PF's consumer-agnostic nature. Currently a placeholder with README only.
+
+**Resolution plan:**
+
+1. Rename directory and update README
+2. Update all references in ROADMAP.md, ADRs, TAD.md
+3. Update consumer sync exclude list if needed
+4. Remove this entry when complete
+
+---
+
 ## Resolved Items
 
 _Items below have been resolved and are retained for audit trail only._
@@ -78,4 +137,4 @@ _Items below have been resolved and are retained for audit trail only._
 
 ---
 
-_Last updated: 2026-04-03 (Phase 2 entry — debt register cleanup)_
+_Last updated: 2026-04-06 (Generalization: player→user, game→application in docs. TASK-018/019 logged for code renames.)_

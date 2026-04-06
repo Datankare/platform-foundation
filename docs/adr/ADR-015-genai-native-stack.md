@@ -6,7 +6,7 @@
 
 ## Context
 
-Playform's core differentiator is GenAI as infrastructure fabric — not a feature bolted on, but the primary interaction model. During the Phase 1 review, an honest audit revealed that the admin UI command bar is the only place where this philosophy is fully delivered. Everywhere else, GenAI is either absent or a single raw API call with no sophistication.
+The platform's core differentiator is GenAI as infrastructure fabric — not a feature bolted on, but the primary interaction model. During the Phase 1 review, an honest audit revealed that the admin UI command bar is the only place where this philosophy is fully delivered. Everywhere else, GenAI is either absent or a single raw API call with no sophistication.
 
 Current state: raw `fetch()` to Anthropic API in two places (admin AI route, safety.ts). Inline prompt strings. No model tiering, no fallback, no caching, no token tracking. `prompts/README.md` is an empty placeholder.
 
@@ -27,10 +27,10 @@ Current state: raw `fetch()` to Anthropic API in two places (admin AI route, saf
 | Game-Specific RAG         | Game rules, hints, adaptive content fed through RAG into AI                                                        | 5     |
 | Token Budget System       | Per-subscription-tier token allowances, enforcement, overage handling                                              | 6     |
 | AI Quality Monitoring     | Hallucination detection, response quality tracking, user satisfaction                                              | 7     |
-| Cost Attribution          | Token cost per player, per feature, per game — dashboards                                                          | 7     |
+| Cost Attribution          | Token cost per user, per feature, per app — dashboards                                                             | 7     |
 | Conversational Onboarding | Adaptive tutorials, in-game AI help                                                                                | 8     |
 | In-Game AI Support        | Rules assistant, dispute resolution, contextual help                                                               | 8     |
-| Anti-Cheat                | Anomaly detection on player behavior patterns                                                                      | 8     |
+| Anti-Cheat                | Anomaly detection on user behavior patterns                                                                        | 8     |
 | AI Hardening              | Fallback chains, circuit breakers, model degradation gracefully                                                    | 9     |
 
 ### GenAI Touchpoints Across the Platform
@@ -41,11 +41,11 @@ Current state: raw `fetch()` to Anthropic API in two places (admin AI route, saf
 | Content Moderation     | Multi-layer safety classifier with structured output            | 2–4   |
 | AI Opponent            | LLM-driven adaptive opponent behavior                           | 5     |
 | Content Generation     | Dynamic hints, narratives, flavor text                          | 5     |
-| Personalization        | Player experience adapted via behavior, skill, preferences      | 7     |
+| Personalization        | User experience adapted via behavior, skill, preferences        | 7     |
 | Analytics Intelligence | Natural language querying ("how did I do this week?")           | 7     |
 | Onboarding             | Conversational tutorials, adaptive help                         | 8     |
 | Support                | In-game AI assistant for rules, help, disputes                  | 8     |
-| Anti-Cheat             | Anomaly detection on player behavior                            | 8     |
+| Anti-Cheat             | Anomaly detection on user behavior                              | 8     |
 
 ### Current State (Phase 1 baseline)
 
@@ -56,7 +56,7 @@ Current state: raw `fetch()` to Anthropic API in two places (admin AI route, saf
 | `prompts/README.md` — empty placeholder         | No prompt library exists                                        |
 | No LLM abstraction layer                        | Every AI call is a direct Anthropic fetch with hardcoded config |
 | No caching                                      | Identical classification requests re-call the API every time    |
-| No cost tracking                                | Unknown cost per request, per player, per feature               |
+| No cost tracking                                | Unknown cost per request, per user, per feature                 |
 
 ### Target Architecture
 
