@@ -80,13 +80,13 @@ export interface ModerationAuditRecord {
 // Blocklist types
 // ---------------------------------------------------------------------------
 
-/** A blocklist pattern — can be exact match or regex */
+/** A blocklist pattern — exact word, substring, or validated regex */
 export interface BlocklistPattern {
   /** Unique identifier */
   id: string;
   /** The pattern string */
   pattern: string;
-  /** Match type */
+  /** Match type: "exact" = word boundary, "substring" = contains, "regex" = validated safe regex */
   type: "exact" | "substring" | "regex";
   /** Which safety category this pattern maps to */
   category: string;
