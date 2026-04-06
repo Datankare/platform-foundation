@@ -17,7 +17,7 @@ Four principles govern every architectural and engineering decision:
 Performance · Security. Built into the fabric from day one — never retrofitted.
 
 **AAA** — Authentication · Authorization · Analytics. First-class platform
-citizens that power every feature, every game, and every player interaction.
+citizens that power every feature, every application, and every user interaction.
 
 **Foundation as Fabric** — All infrastructure, compliance, operational, and
 platform capabilities are non-negotiable requirements. None are optional.
