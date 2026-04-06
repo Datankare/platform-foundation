@@ -39,9 +39,9 @@ auth provider must implement. The interface covers:
 The interface lives in `platform/auth/` and is the only auth contract that
 routes, middleware, and components depend on. No route imports Cognito directly.
 
-### Cognito Implementation (Playform)
+### Cognito Implementation (Consumer Example)
 
-Playform provides the Cognito implementation of the `AuthProvider` interface.
+Consumer applications provide concrete implementations of the `AuthProvider` interface (e.g., Cognito).
 This implementation:
 
 - Configures the Cognito user pool (playform-auth, us-east-1)
@@ -54,7 +54,7 @@ This implementation:
 Supabase provides:
 
 - PostgreSQL database with Row-Level Security (RLS)
-- Player data isolation (Player A cannot query Player B's data)
+- User data isolation (User A cannot query User B's data)
 - RBAC tables (roles, permissions, entitlements, audit_log)
 - Standard SQL migrations (portable — not Supabase-specific)
 
