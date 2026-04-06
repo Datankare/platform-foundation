@@ -75,7 +75,7 @@ describe("validatePattern", () => {
   it("rejects ReDoS-vulnerable regex patterns (safe-regex2)", () => {
     const result = validatePattern({
       id: "t-4",
-      pattern: "(a+)+b",
+      pattern: "([a-zA-Z]+)*x",
       type: "regex",
       category: "hate",
       severity: "high",
@@ -157,7 +157,7 @@ describe("compilePatterns", () => {
       },
       {
         id: "unsafe-1",
-        pattern: "(a+)+b",
+        pattern: "([a-zA-Z]+)*x",
         type: "regex",
         category: "hate",
         severity: "high",
@@ -251,7 +251,7 @@ describe("scanBlocklist — regex patterns", () => {
     const unsafePatterns: BlocklistPattern[] = [
       {
         id: "unsafe-1",
-        pattern: "(a+)+b",
+        pattern: "([a-zA-Z]+)*x",
         type: "regex",
         category: "hate",
         severity: "high",
