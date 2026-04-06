@@ -30,6 +30,19 @@ from day one.
 - ✅ Password policy (12 char, rotation, history)
 - ✅ Immutable audit log
 
+### GenAI-Native Stack (Phase 2 — in progress)
+
+- ✅ LLM orchestration layer — provider abstraction, model tiering (Haiku/Sonnet), circuit breaker
+- ✅ AI call instrumentation — every call tracked: model, tokens, latency, cost
+- ✅ Versioned prompt registry — prompts are first-class tested artifacts, not inline strings
+- ✅ Content safety middleware — multi-layer defense: blocklist → LLM classifier → audit trail
+- ✅ Input AND output screening — AI-generated content screened before reaching users
+- ✅ safe-regex2 validated blocklist patterns — pre-compiled, ReDoS-safe
+- ⏳ Streaming responses, multi-language AI, eval framework (Phase 2–3)
+- ⏳ RAG pipeline, player context, agentic framework, multimodal (Phase 4–5)
+
+See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability map.
+
 ### Infrastructure (ready to use)
 
 - ✅ Next.js 16 + TypeScript strict + Tailwind CSS
@@ -37,7 +50,7 @@ from day one.
 - ✅ CodeQL SAST + Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 367 unit + integration tests, 80.6% line coverage
+- ✅ 473 unit + integration tests, 80%+ line coverage
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point automated sustainability gate
 - ✅ Versioned releases (v1.1.0)
@@ -54,9 +67,10 @@ from day one.
 
 | Document                           | Purpose                                                        |
 | ---------------------------------- | -------------------------------------------------------------- |
-| `docs/adr/ADR-001–016`             | 16 Architecture Decision Records                               |
+| `docs/adr/ADR-001–017`             | 17 Architecture Decision Records                               |
 | `docs/TAD.md`                      | Technical Architecture Document                                |
-| `docs/ROADMAP.md`                  | 10-phase roadmap with versioned changelog                      |
+| `docs/ROADMAP.md`                  | 10-phase product roadmap with versioned changelog              |
+| `docs/GENAI_ROADMAP.md`            | GenAI-native capability map — accomplished and forthcoming     |
 | `docs/RAMPS_PHASE1_ASSESSMENT.md`  | Phase 1 quality baseline (tests, coverage, OWASP, GDPR, COPPA) |
 | `docs/SECURITY_DEBT.md`            | Tracked deferrals with phase assignments                       |
 | `docs/OWASP_CONTROLS.md`           | 23 verified OWASP Top 10 controls                              |
@@ -78,20 +92,21 @@ See `CONTRIBUTING.md` for the inheritance model.
 
 ```
 platform-foundation/
+├── platform/ai/         ← LLM orchestration, provider abstraction, instrumentation (Phase 2 ✅)
 ├── platform/auth/       ← Identity, permissions, RBAC, GDPR, COPPA (Phase 1 ✅)
+├── platform/moderation/ ← Content safety — blocklist, classifier, middleware (Phase 2 ✅)
 ├── platform/realtime/   ← WebSocket engine (Phase 2)
 ├── platform/voice/      ← Voice pipeline (Phase 3)
-├── platform/moderation/ ← Content safety (Phase 4)
 ├── platform/game-engine/← Game engine abstraction (Phase 5)
 ├── platform/monetization/← Monetization (Phase 6)
 ├── platform/analytics/  ← Analytics engine (Phase 7)
+├── prompts/             ← Versioned LLM prompt library with tests (Phase 2 ✅)
 ├── components/admin/    ← Admin UI (GenAI command bar, data views)
 ├── components/auth/     ← Auth UI (login, register, profile, age gate)
 ├── app/api/admin/       ← Admin API routes (roles, players, config, audit)
 ├── supabase/migrations/ ← 7 database migrations
-├── docs/adr/            ← 16 ADRs
+├── docs/adr/            ← 17 ADRs
 ├── scripts/             ← Sustainability gate
-├── prompts/             ← Versioned LLM prompts (Phase 2)
 └── shared/              ← Shared components, types, utils
 ```
 
@@ -120,7 +135,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 367 tests, 80%+ coverage
+npm run test:coverage  # 473 tests, 80%+ coverage
 npm run build          # Clean build
 ./scripts/sustainability-gate.sh  # 22-point gate
 ```
@@ -148,7 +163,9 @@ See [RAMPS Phase 1 Assessment](docs/RAMPS_PHASE1_ASSESSMENT.md) for the complete
 
 See [Product Roadmap](docs/ROADMAP.md) for all 10 phases, deferred items, and versioned change history.
 
+See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete GenAI capability map — what's been delivered, what's forthcoming, and the 14-point Phase 9 verification checklist.
+
 ---
 
-_Platform Foundation v1.1.0 — Datankare_
+_Platform Foundation v1.1.1 — Datankare_
 _Built with Foundation as Fabric · Continuous Confidence_
