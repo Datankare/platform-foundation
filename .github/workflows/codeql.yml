@@ -30,6 +30,12 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
+          # Only the ReDoS test fixture file is excluded — it necessarily
+          # contains unsafe regex patterns to verify safe-regex2 validation.
+          # All other test files remain fully scanned by CodeQL.
+          config: |
+            paths-ignore:
+              - '__tests__/moderation-blocklist-redos.test.ts'
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3

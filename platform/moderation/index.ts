@@ -31,8 +31,13 @@ export { screenContent } from "./middleware";
 export type { ScreeningOptions } from "./middleware";
 
 // Blocklist (for direct use and testing)
-export { scanBlocklist, getDefaultPatterns } from "./blocklist";
-export type { BlocklistMatch, BlocklistResult } from "./blocklist";
+export {
+  scanBlocklist,
+  getDefaultPatterns,
+  validatePattern,
+  compilePatterns,
+} from "./blocklist";
+export type { BlocklistMatch, BlocklistResult, PatternValidation } from "./blocklist";
 
 // Classifier (for direct use and testing)
 export { classify } from "./classifier";
