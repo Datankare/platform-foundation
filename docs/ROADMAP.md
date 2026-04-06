@@ -26,13 +26,14 @@
 
 ### Cross-Phase Fabric
 
-Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
+Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, ADR-017):
 
-| Fabric         | Principle                                                                       | Starts  |
-| -------------- | ------------------------------------------------------------------------------- | ------- |
-| Observability  | Woven in, not bolted on. Every phase adds its observability layer.              | Phase 2 |
-| GenAI-Native   | Infrastructure, not a feature. Every AI interaction goes through orchestration. | Phase 2 |
-| Content Safety | Multi-layer defense. Every input surface screened from day one.                 | Phase 2 |
+| Fabric             | Principle                                                                                  | Starts  |
+| ------------------ | ------------------------------------------------------------------------------------------ | ------- |
+| Observability      | Woven in, not bolted on. Every phase adds its observability layer.                         | Phase 2 |
+| GenAI-Native       | Infrastructure, not a feature. Every AI interaction goes through orchestration.            | Phase 2 |
+| Content Safety     | Multi-layer defense. Every input AND output surface screened from day one.                 | Phase 2 |
+| GenAI Completeness | No GenAI capability discovered late. Complete surface map in ADR-017, verified at Phase 9. | Phase 2 |
 
 ---
 
@@ -169,23 +170,25 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 | Distributed tracing — trace propagation across external API calls | Voice → safety → translate → TTS pipeline is opaque without it |
 | AI call instrumentation — per-call model, tokens, latency, cost   | Unknown AI spend is unacceptable                               |
 
-### GenAI-Native Stack Foundation (ADR-015)
+### GenAI-Native Stack Foundation (ADR-015, ADR-017)
 
-| Deliverable                                                                                                    | Rationale                                                                   |
-| -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `platform/ai/orchestrator.ts` — LLM provider abstraction, model tiering (Haiku/Sonnet), circuit breaker, retry | Raw `fetch()` to Anthropic must be replaced with instrumented orchestration |
-| `platform/ai/provider.ts` — provider interface (Anthropic primary, pluggable fallback)                         | If Anthropic is down, everything fails today                                |
-| `prompts/` — versioned prompt library, prompts extracted from inline strings, prompt tests                     | `prompts/README.md` has been an empty placeholder since Phase 0             |
-| Refactor admin AI + safety to use orchestration layer                                                          | Two call sites today, both raw `fetch()`                                    |
+| Deliverable                                                                                                    | Rationale                                                                                 |
+| -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `platform/ai/orchestrator.ts` — LLM provider abstraction, model tiering (Haiku/Sonnet), circuit breaker, retry | Raw `fetch()` to Anthropic must be replaced with instrumented orchestration               |
+| `platform/ai/provider.ts` — provider interface (Anthropic primary, pluggable fallback)                         | If Anthropic is down, everything fails today                                              |
+| `prompts/` — versioned prompt library, prompts extracted from inline strings, prompt tests                     | `prompts/README.md` has been an empty placeholder since Phase 0                           |
+| Refactor admin AI + safety to use orchestration layer                                                          | Two call sites today, both raw `fetch()`                                                  |
+| Streaming support — `provider.stream()` alongside `complete()`, time-to-first-token instrumentation            | Conversational surfaces (chat, onboarding, admin) need progressive rendering (ADR-017 §2) |
 
-### Content Safety Foundation (ADR-016)
+### Content Safety Foundation (ADR-016, ADR-017)
 
-| Deliverable                                                                                                                                                                       | Rationale                                                 |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `platform/moderation/blocklist.ts` — keyword/pattern pre-screen (instant, zero-cost)                                                                                              | Reduces AI costs for obvious violations                   |
-| Refactor `safety.ts` — structured classifier output: categories (harassment, sexual, violence, self-harm, hate, dangerous), confidence (0–1), severity (low/medium/high/critical) | Binary safe/unsafe is insufficient for tiered enforcement |
-| Safety middleware — universal, applied at every input surface (text, voice transcript, file extract)                                                                              | Only `/api/process` is covered today                      |
-| Audit trail upgrade — full classifier output logged per decision (input hash, categories, confidence, severity, action)                                                           | Current audit logs pass/fail only — legally insufficient  |
+| Deliverable                                                                                                                                                                       | Rationale                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `platform/moderation/blocklist.ts` — keyword/pattern pre-screen (instant, zero-cost)                                                                                              | Reduces AI costs for obvious violations                                                     |
+| Refactor `safety.ts` — structured classifier output: categories (harassment, sexual, violence, self-harm, hate, dangerous), confidence (0–1), severity (low/medium/high/critical) | Binary safe/unsafe is insufficient for tiered enforcement                                   |
+| Safety middleware — universal, applied at every input AND output surface                                                                                                          | Only `/api/process` inputs are covered today; AI outputs go unscreened (ADR-017 §1)         |
+| AI output screening — every AI-generated response screened before reaching the player                                                                                             | Game hints, onboarding dialogue, admin responses could contain hallucinated harmful content |
+| Audit trail upgrade — full classifier output logged per decision (input hash, categories, confidence, severity, action, direction)                                                | Current audit logs pass/fail only — legally insufficient                                    |
 
 ### Infrastructure Hardening (carried from Phase 1)
 
@@ -226,13 +229,15 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 | Voice pipeline tracing — multi-API chain observability | Voice is the most complex pipeline; needs end-to-end visibility |
 | SLA definition — committed uptime (99.9%? 99.95%?)     | Shapes infrastructure cost and architecture decisions           |
 
-### GenAI-Native (ADR-015)
+### GenAI-Native (ADR-015, ADR-017)
 
-| Deliverable                                              | Rationale                                           |
-| -------------------------------------------------------- | --------------------------------------------------- |
-| AI response caching — identical inputs → cached outputs  | Translation and classification are highly cacheable |
-| Token tracking — per-request token accounting            | Cost visibility before monetization phase           |
-| Enhanced moderation — multi-model with confidence scores | Single binary check is insufficient                 |
+| Deliverable                                                                        | Rationale                                                                    |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| AI response caching — identical inputs → cached outputs                            | Translation and classification are highly cacheable                          |
+| Token tracking — per-request token accounting                                      | Cost visibility before monetization phase                                    |
+| Enhanced moderation — multi-model with confidence scores                           | Single binary check is insufficient                                          |
+| Multi-language AI — safety classification and AI interactions in player's language | English-only AI in a 10-language platform is not GenAI-native (ADR-017 §3)   |
+| AI evaluation framework — `prompts/evals/` with datasets, regression runs in CI    | No way to prove classify-v2 is better than v1 across edge cases (ADR-017 §4) |
 
 ### Content Safety (ADR-016)
 
@@ -267,12 +272,14 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | Content safety audit trail — every moderation decision with full classifier output, confidence, action, player rating | Legal defensibility for moderation decisions |
 
-### GenAI-Native (ADR-015)
+### GenAI-Native (ADR-015, ADR-017)
 
-| Deliverable                                                               | Rationale                                                       |
-| ------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| RAG foundation — document chunking, context injection, retrieval pipeline | Game rules and player history need to feed into AI interactions |
-| Embedding store — pgvector extension on Supabase                          | Semantic search and personalization foundation                  |
+| Deliverable                                                                              | Rationale                                                                                       |
+| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| RAG foundation — document chunking, context injection, retrieval pipeline                | Game rules and player history need to feed into AI interactions                                 |
+| Embedding store — pgvector extension on Supabase                                         | Semantic search and personalization foundation                                                  |
+| Player AI context store — per-player interaction history, learning patterns, preferences | Each AI interaction starts cold today; personalization requires persistent context (ADR-017 §5) |
+| AI output explainability — explanation chain for every AI decision                       | Audit trail logs what, not why; human review queue needs explainability (ADR-017 §6)            |
 
 ### Social
 
@@ -295,14 +302,16 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 | Turn-based and real-time game support             | —                   |
 | Game session lifecycle                            | —                   |
 
-### GenAI-Native (ADR-015)
+### GenAI-Native (ADR-015, ADR-017)
 
-| Deliverable                                                    | Rationale                                          |
-| -------------------------------------------------------------- | -------------------------------------------------- |
-| AI opponent — LLM-driven adaptive opponent behavior            | GenAI touchpoint: not scripted, driven by AI       |
-| Content generation — dynamic hints, narratives, flavor text    | GenAI touchpoint: contextual content               |
-| Game-specific RAG — game rules, hint systems, adaptive content | RAG foundation (Phase 4) extended for game context |
-| User-generated game content screening                          | New input surface must integrate safety middleware |
+| Deliverable                                                                                            | Rationale                                                                                                      |
+| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| AI opponent — LLM-driven adaptive opponent behavior                                                    | GenAI touchpoint: not scripted, driven by AI                                                                   |
+| Content generation — dynamic hints, narratives, flavor text                                            | GenAI touchpoint: contextual content                                                                           |
+| Game-specific RAG — game rules, hint systems, adaptive content                                         | RAG foundation (Phase 4) extended for game context                                                             |
+| User-generated game content screening                                                                  | New input surface must integrate safety middleware                                                             |
+| Agentic workflow framework — `platform/ai/agent.ts` with tool registry, multi-step execution, rollback | Admin command bar is one pattern; game AI, disputes, anti-cheat all need reusable agent framework (ADR-017 §7) |
+| Multimodal AI — image/audio input in provider interface, image generation                              | Language-learning needs visual and audio AI, not just text (ADR-017 §8)                                        |
 
 ---
 
@@ -320,12 +329,13 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 | Ad network integration                                      | ADR-011                             |
 | CSP updates for ad domains                                  | ADR-011                             |
 
-### GenAI-Native (ADR-015)
+### GenAI-Native (ADR-015, ADR-017)
 
-| Deliverable                                                  | Rationale                                                                               |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Token budget system — per-subscription-tier token allowances | Free tier gets X tokens/month, paid tiers get more. Enforcement at orchestration layer. |
-| Cost attribution per subscription tier                       | Know how much AI each tier actually consumes                                            |
+| Deliverable                                                                      | Rationale                                                                                                |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Token budget system — per-subscription-tier token allowances                     | Free tier gets X tokens/month, paid tiers get more. Enforcement at orchestration layer.                  |
+| Cost attribution per subscription tier                                           | Know how much AI each tier actually consumes                                                             |
+| AI A/B testing — split-test prompt versions and model tiers against live traffic | Prompt iteration is gut feel without experimentation; essential before scaling monetization (ADR-017 §9) |
 
 ---
 
@@ -350,12 +360,13 @@ Three architectural commitments span all phases (see ADR-014, ADR-015, ADR-016):
 | Player-level cost attribution — token cost per player, per feature, per game  | Business intelligence for AI spend                     |
 | Full observability dashboards — error rates, latency percentiles, cost trends | Phase 7 is the analytics phase; dashboards belong here |
 
-### GenAI-Native (ADR-015)
+### GenAI-Native (ADR-015, ADR-017)
 
-| Deliverable                                                                    | Rationale                                        |
-| ------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Analytics intelligence — natural language querying ("how did I do this week?") | GenAI touchpoint: NL interface to analytics      |
-| Personalization — player experience adapted via behavior, skill, preferences   | Needs analytics data to drive personalization AI |
+| Deliverable                                                                                                           | Rationale                                                                         |
+| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Analytics intelligence — natural language querying ("how did I do this week?")                                        | GenAI touchpoint: NL interface to analytics                                       |
+| Personalization — player experience adapted via behavior, skill, preferences                                          | Needs analytics data to drive personalization AI                                  |
+| Player feedback loop — thumbs up/down on AI responses, correction tracking, appeal outcomes feeding back into quality | Without closed-loop feedback, AI quality is static after deployment (ADR-017 §10) |
 
 ---
 
@@ -459,7 +470,8 @@ These rules apply across all phases and are never deferred:
 8. **Versioned releases** on platform-foundation at every phase boundary (vX.Y.Z)
 9. **Observability is fabric** — every new external API integration includes instrumentation from day one (ADR-014)
 10. **GenAI goes through orchestration** — no raw `fetch()` to LLM APIs after Phase 2 (ADR-015)
-11. **Safety middleware at every input surface** — no input surface ships unscreened (ADR-016)
+11. **Safety middleware at every input AND output surface** — no input surface ships unscreened; no AI-generated output reaches a player unscreened (ADR-016, ADR-017)
+12. **GenAI surface map is complete** — no new GenAI capability is added without placement in ADR-017's surface map. If it's not in the map, add it before building it (ADR-017)
 
 ---
 
@@ -467,8 +479,9 @@ These rules apply across all phases and are never deferred:
 
 All changes to this roadmap are logged here. Each entry includes date, author, and what changed.
 
-| Version | Date       | Author    | Change                                                                                                                                                                                                                                          |
-| ------- | ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0.0   | 2026-04-03 | Raman Sud | Initial roadmap — all 10 phases defined. Phase 0–1 complete. Deferred items assigned to Phases 2–9.                                                                                                                                             |
-| 1.1.0   | 2026-04-03 | Raman Sud | Pre-Phase 2 architectural review. Added ADR-014 (Observability), ADR-015 (GenAI-Native Stack), ADR-016 (Content Safety). All three woven into Phases 2–9 as cross-phase fabric with detailed per-phase deliverables. Added standing rules 9–11. |
-| 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                              |
+| Version | Date       | Author    | Change                                                                                                                                                                                                                                                                                                                          |
+| ------- | ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0.0   | 2026-04-03 | Raman Sud | Initial roadmap — all 10 phases defined. Phase 0–1 complete. Deferred items assigned to Phases 2–9.                                                                                                                                                                                                                             |
+| 1.1.0   | 2026-04-03 | Raman Sud | Pre-Phase 2 architectural review. Added ADR-014 (Observability), ADR-015 (GenAI-Native Stack), ADR-016 (Content Safety). All three woven into Phases 2–9 as cross-phase fabric with detailed per-phase deliverables. Added standing rules 9–11.                                                                                 |
+| 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                                                                                                              |
+| 2.1.0   | 2026-04-05 | Raman Sud | GenAI-native surface map audit (ADR-017). 10 gaps identified and placed: output screening (P2), streaming (P2), multi-language AI (P3), eval framework (P3), player context (P4), explainability (P4), agentic framework (P5), multimodal (P5), A/B testing (P6), feedback loop (P7). Standing rules 11 updated, rule 12 added. |
