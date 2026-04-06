@@ -103,9 +103,7 @@ export function validatePattern(pattern: BlocklistPattern): PatternValidation {
   if (pattern.type === "regex") {
     // Step 1: Can it construct a valid RegExp?
     try {
-      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
-      // Validation step — testing syntax before safe-regex2 check. Not executed at scan time.
-      new RegExp(pattern.pattern, "i");
+      new RegExp(pattern.pattern, "i"); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     } catch {
       /* justified — validation step, not execution */
       return { valid: false, reason: `Invalid regex syntax: ${pattern.pattern}` };
@@ -156,11 +154,7 @@ export function compilePatterns(patterns: BlocklistPattern[]): CompiledPattern[]
 
     if (pattern.type === "regex") {
       // Pre-compile — validated safe by validatePattern above
-      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
-      // Pattern validated by safe-regex2 against ReDoS before construction.
-      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
-      // Pattern validated safe by safe-regex2 above — pre-compiling for scan-time use.
-      compiled.push({ source: pattern, compiled: new RegExp(pattern.pattern, "i") });
+      compiled.push({ source: pattern, compiled: new RegExp(pattern.pattern, "i") }); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     } else {
       compiled.push({ source: pattern, compiled: null });
     }
