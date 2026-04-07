@@ -19,16 +19,16 @@ GenAI is the medium the platform operates in — not a feature bolted on. Every 
 
 ## Phase Summary
 
-| Phase | GenAI Status              | Key GenAI Capabilities                                                       |
-| ----- | ------------------------- | ---------------------------------------------------------------------------- |
-| 1     | ✅ Complete               | Admin AI command bar                                                         |
-| 2     | 🔄 Sprint 2 of 6 complete | Orchestration layer, prompt registry, structured safety, moderation pipeline |
-| 3     | ⏳ Upcoming               | Multi-language AI, eval framework, response caching, token tracking          |
-| 4     | ⏳ Upcoming               | RAG, embeddings, user context, explainability                                |
-| 5     | ⏳ Upcoming               | Adaptive AI behavior, content generation, agentic framework, multimodal      |
-| 6     | ⏳ Upcoming               | Token budgets, cost attribution, A/B testing                                 |
-| 7     | ⏳ Upcoming               | AI quality monitoring, personalization, feedback loop, NL analytics          |
-| 8     | ⏳ Upcoming               | AI hardening, fallback chains, graceful degradation                          |
+| Phase | GenAI Status              | Key GenAI Capabilities                                                   |
+| ----- | ------------------------- | ------------------------------------------------------------------------ |
+| 1     | ✅ Complete               | Admin AI command bar                                                     |
+| 2     | 🔄 Sprint 3 of 6 complete | Orchestration, prompt registry, safety, moderation, observability fabric |
+| 3     | ⏳ Upcoming               | Multi-language AI, eval framework, response caching, token tracking      |
+| 4     | ⏳ Upcoming               | RAG, embeddings, user context, explainability                            |
+| 5     | ⏳ Upcoming               | Adaptive AI behavior, content generation, agentic framework, multimodal  |
+| 6     | ⏳ Upcoming               | Token budgets, cost attribution, A/B testing                             |
+| 7     | ⏳ Upcoming               | AI quality monitoring, personalization, feedback loop, NL analytics      |
+| 8     | ⏳ Upcoming               | AI hardening, fallback chains, graceful degradation                      |
 
 ---
 
@@ -42,19 +42,25 @@ GenAI is the medium the platform operates in — not a feature bolted on. Every 
 
 ## Phase 2 — Communication Foundation 🔄
 
-| Capability                     | Status       | Detail                                                                                                     |
-| ------------------------------ | ------------ | ---------------------------------------------------------------------------------------------------------- |
-| LLM orchestration layer        | ✅ Sprint 1  | `platform/ai/orchestrator.ts` — provider abstraction, model tiering (Haiku/Sonnet), circuit breaker, retry |
-| Provider interface             | ✅ Sprint 1  | `platform/ai/provider.ts` — Anthropic primary, pluggable fallback. No raw `fetch()` to LLM APIs.           |
-| AI call instrumentation        | ✅ Sprint 1  | Every AI call auto-records: model, tokens in/out, latency, estimated cost, success/failure                 |
-| Prompt registry                | ✅ Sprint 1  | `prompts/` — versioned prompts with tests, registry with version resolution                                |
-| Admin AI refactored            | ✅ Sprint 1  | Raw `fetch()` + inline prompt → orchestrator + prompt registry                                             |
-| Safety classifier refactored   | ✅ Sprint 1  | Anthropic SDK direct call → orchestrator. Structured output: 6 categories, confidence, severity            |
-| Blocklist pre-screen (Layer 1) | ✅ Sprint 2  | `platform/moderation/blocklist.ts` — instant, zero-cost pattern matching. safe-regex2 validated.           |
-| LLM classifier (Layer 2)       | ✅ Sprint 2  | `platform/moderation/classifier.ts` — structured classification via orchestrator                           |
-| Safety middleware              | ✅ Sprint 2  | `platform/moderation/middleware.ts` — universal pipeline for input AND output screening (ADR-017)          |
-| Moderation audit trail         | ✅ Sprint 2  | SHA-256 hashed input, full classifier output, action, direction logged per decision                        |
-| Streaming responses            | ⏳ Sprint 3+ | `provider.stream()` alongside `complete()`, time-to-first-token instrumentation                            |
+| Capability                     | Status      | Detail                                                                                                     |
+| ------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| LLM orchestration layer        | ✅ Sprint 1 | `platform/ai/orchestrator.ts` — provider abstraction, model tiering (Haiku/Sonnet), circuit breaker, retry |
+| Provider interface             | ✅ Sprint 1 | `platform/ai/provider.ts` — Anthropic primary, pluggable fallback. No raw `fetch()` to LLM APIs.           |
+| AI call instrumentation        | ✅ Sprint 1 | Every AI call auto-records: model, tokens in/out, latency, estimated cost, success/failure                 |
+| Prompt registry                | ✅ Sprint 1 | `prompts/` — versioned prompts with tests, registry with version resolution                                |
+| Admin AI refactored            | ✅ Sprint 1 | Raw `fetch()` + inline prompt → orchestrator + prompt registry                                             |
+| Safety classifier refactored   | ✅ Sprint 1 | Anthropic SDK direct call → orchestrator. Structured output: 6 categories, confidence, severity            |
+| Blocklist pre-screen (Layer 1) | ✅ Sprint 2 | `platform/moderation/blocklist.ts` — instant, zero-cost pattern matching. safe-regex2 validated.           |
+| LLM classifier (Layer 2)       | ✅ Sprint 2 | `platform/moderation/classifier.ts` — structured classification via orchestrator                           |
+| Safety middleware              | ✅ Sprint 2 | `platform/moderation/middleware.ts` — universal pipeline for input AND output screening (ADR-017)          |
+| Moderation audit trail         | ✅ Sprint 2 | SHA-256 hashed input, full classifier output, action, direction logged per decision                        |
+| Error tracking (Sentry)        | ✅ Sprint 3 | `platform/observability/error-reporting.ts` — ErrorReporter interface, Sentry + NoOp implementations       |
+| Distributed tracing            | ✅ Sprint 3 | `platform/observability/tracing.ts` — TraceProvider interface, trace/span lifecycle, header propagation    |
+| Metrics persistence            | ✅ Sprint 3 | `platform/observability/metrics-sink.ts` — MetricsSink interface, InMemory + Supabase implementations      |
+| Health monitoring              | ✅ Sprint 3 | `platform/observability/health.ts` — HealthRegistry + probes for Supabase, LLM provider, generic HTTP      |
+| AI metrics → MetricsSink       | ✅ Sprint 3 | AI instrumentation now delegates to MetricsSink for persistent storage alongside in-memory buffer          |
+| Logger trace context           | ✅ Sprint 3 | `lib/logger.ts` — traceId/spanId fields, withTrace() scoped logger, documented log entry schema            |
+| Streaming responses            | ⏳ Sprint 5 | `provider.stream()` alongside `complete()`, time-to-first-token instrumentation                            |
 
 ---
 
@@ -159,3 +165,4 @@ If any statement is false at launch, GenAI-native is incomplete.
 | ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete.                              |
 | 2026-04-06 | Raman Sud | Generalized for platform-foundation: player→user, game→application, Phase 8 app implementation moved to consumer repos. Phase 9→Phase 8 (hardening). |
+| 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.            |
