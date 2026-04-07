@@ -15,6 +15,8 @@
 
 GenAI is the medium the platform operates in — not a feature bolted on. Every user interaction, every admin action, every safety decision, every piece of content flows through AI infrastructure that is instrumented, cached, budgeted, monitored, resilient, and explainable.
 
+The 14 principles that define what "GenAI-native" means for this platform are documented in the **[GenAI-Native Systems Manifesto](./GENAI_MANIFESTO.md)**. This roadmap maps those principles to phased delivery.
+
 ---
 
 ## Phase Summary
