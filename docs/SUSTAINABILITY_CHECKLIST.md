@@ -76,6 +76,22 @@ Then paste Part A and Part B below.
 
 ---
 
+## Sprint Documentation Gate (D1-D7)
+
+> Run at the end of every sprint, before the final commit. No deliverable is handed off until all D1-D7 are verified.
+
+| #   | Check                                                              | Done |
+| --- | ------------------------------------------------------------------ | ---- |
+| D1  | ROADMAP.md sprint status updated                                   | [ ]  |
+| D2  | ROADMAP.md deferred items resolved/updated                         | [ ]  |
+| D3  | GENAI_ROADMAP.md phase status + sprint count updated               | [ ]  |
+| D4  | GENAI_ROADMAP.md sprint deliverables recorded                      | [ ]  |
+| D5  | SECURITY_DEBT.md resolved items moved to audit trail               | [ ]  |
+| D6  | README.md stats current (test count, module list, migration count) | [ ]  |
+| D7  | PR has title + description per .github/pull_request_template.md    | [ ]  |
+
+---
+
 ## Part A — Professional Engineering Standards Matrix (11 points)
 
 ### A1. Naming
