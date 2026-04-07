@@ -21,16 +21,16 @@ The 14 principles that define what "GenAI-native" means for this platform are do
 
 ## Phase Summary
 
-| Phase | GenAI Status              | Key GenAI Capabilities                                                   |
-| ----- | ------------------------- | ------------------------------------------------------------------------ |
-| 1     | ✅ Complete               | Admin AI command bar                                                     |
-| 2     | 🔄 Sprint 3 of 6 complete | Orchestration, prompt registry, safety, moderation, observability fabric |
-| 3     | ⏳ Upcoming               | Multi-language AI, eval framework, response caching, token tracking      |
-| 4     | ⏳ Upcoming               | RAG, embeddings, user context, explainability                            |
-| 5     | ⏳ Upcoming               | Adaptive AI behavior, content generation, agentic framework, multimodal  |
-| 6     | ⏳ Upcoming               | Token budgets, cost attribution, A/B testing                             |
-| 7     | ⏳ Upcoming               | AI quality monitoring, personalization, feedback loop, NL analytics      |
-| 8     | ⏳ Upcoming               | AI hardening, fallback chains, graceful degradation                      |
+| Phase | GenAI Status              | Key GenAI Capabilities                                                                                       |
+| ----- | ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1     | ✅ Complete               | Admin AI command bar                                                                                         |
+| 2     | 🔄 Sprint 4 of 7 complete | Orchestration, prompt registry, safety, moderation, observability, AI-aware cache, rate limiting, GDPR purge |
+| 3     | ⏳ Upcoming               | Multi-language AI, eval framework, response caching, token tracking                                          |
+| 4     | ⏳ Upcoming               | RAG, embeddings, user context, explainability                                                                |
+| 5     | ⏳ Upcoming               | Adaptive AI behavior, content generation, agentic framework, multimodal                                      |
+| 6     | ⏳ Upcoming               | Token budgets, cost attribution, A/B testing                                                                 |
+| 7     | ⏳ Upcoming               | AI quality monitoring, personalization, feedback loop, NL analytics                                          |
+| 8     | ⏳ Upcoming               | AI hardening, fallback chains, graceful degradation                                                          |
 
 ---
 

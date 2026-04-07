@@ -150,7 +150,8 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 | 1      | LLM Orchestration + Prompt Registry | —                                   | ✅ Complete |
 | 2      | Content Safety Refactor             | Sprint 1 (uses orchestrator)        | ✅ Complete |
 | 3      | Observability Fabric + TASK-018     | Sprint 1 (instruments orchestrator) | ✅ Complete |
-| 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             | ⏳ Next     |
+| 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             | ✅ Complete |
+| 4b     | Auth Wiring — Live Login Screen     | Sprint 4 (auth components exist)    | ⏳ Next     |
 | 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        | ⏳ Upcoming |
 | 6      | Integration Tests + Phase Gate      | All prior sprints                   | ⏳ Upcoming |
 
@@ -192,13 +193,13 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ### Infrastructure Hardening (carried from Phase 1)
 
-| Deliverable                                              | Source                        |
-| -------------------------------------------------------- | ----------------------------- |
-| Redis-backed permissions cache (CacheProvider interface) | permissions-cache.ts deferred |
-| Redis-backed rate limiter (multi-instance)               | rate-limit.ts deferred        |
-| Password policy enforcement (runtime, not just schema)   | password-policy.ts deferred   |
-| GDPR hard purge implementation                           | gdpr-deletion.ts deferred     |
-| Integration tests against live Supabase + Cognito        | Sprint 7 deferred             |
+| Deliverable                                              | Source                             |
+| -------------------------------------------------------- | ---------------------------------- |
+| Redis-backed permissions cache (CacheProvider interface) | ✅ Sprint 4 (platform/cache/)      |
+| Redis-backed rate limiter (multi-instance)               | ✅ Sprint 4 (platform/rate-limit/) |
+| Password policy enforcement (runtime, not just schema)   | ✅ Sprint 4 (password-policy.ts)   |
+| GDPR hard purge implementation                           | ✅ Sprint 4 (platform/gdpr/)       |
+| Integration tests against live Supabase + Cognito        | Sprint 7 deferred                  |
 
 ### Carried Forward
 

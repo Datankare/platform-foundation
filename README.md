@@ -50,14 +50,14 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL SAST + Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 545 unit + integration tests, 80%+ line coverage
+- ✅ 689 unit + integration tests, 82%+ line coverage
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point automated sustainability gate
 - ✅ Versioned releases (v1.1.0)
 
 ### Database (Supabase)
 
-- ✅ 7 migrations (001–007)
+- ✅ 9 migrations (001–009)
 - ✅ 14 tables
 - ✅ 20 Row-Level Security policies
 - ✅ Generic roles: guest, registered, admin, super_admin
@@ -137,7 +137,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 545 tests, 80%+ coverage
+npm run test:coverage  # 689 tests, 82%+ coverage
 npm run build          # Clean build
 ./scripts/sustainability-gate.sh  # 22-point gate
 ```

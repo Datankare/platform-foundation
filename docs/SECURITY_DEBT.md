@@ -101,7 +101,11 @@ _Items below have been resolved and are retained for audit trail only._
 | TASK-016 | Repo inheritance model                       | Phase 1, Sprint 7b (auto-sync)                       | 2026-04-02 |
 | TASK-017 | Seed data separation                         | Phase 1, Sprint 7b                                   | 2026-04-02 |
 | TASK-018 | Rename player → user in PF codebase          | Phase 2, Sprint 3 (52 files + migration 008)         | 2026-04-06 |
+| TASK-020 | Redis CacheProvider (deferred from Phase 1)  | Phase 2, Sprint 4 (platform/cache/)                  | 2026-04-07 |
+| TASK-021 | Redis rate limiter (deferred from Phase 1)   | Phase 2, Sprint 4 (platform/rate-limit/)             | 2026-04-07 |
+| TASK-022 | Password enforcement (deferred from Phase 1) | Phase 2, Sprint 4 (password-policy.ts enhanced)      | 2026-04-07 |
+| TASK-023 | GDPR hard purge (deferred from Phase 1)      | Phase 2, Sprint 4 (platform/gdpr/)                   | 2026-04-07 |
 
 ---
 
-_Last updated: 2026-04-06 (Sprint 3: Observability fabric built. TASK-018 resolved — player→user code rename complete.)_
+_Last updated: 2026-04-07 (Sprint 4: Redis cache, rate limiter, GDPR hard purge, password enforcement resolved. TASK-020–023 closed.)_
