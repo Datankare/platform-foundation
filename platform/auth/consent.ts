@@ -1,9 +1,9 @@
 /**
  * platform/auth/consent.ts — Consent records service
  *
- * Tracks what the player agreed to, when, and which version.
+ * Tracks what the user agreed to, when, and which version.
  * GDPR requires purpose limitation — we can only use data for
- * the purposes the player consented to.
+ * the purposes the user consented to.
  *
  * Sprint 4, Task 4.8
  */
@@ -14,7 +14,7 @@ import { logger } from "@/lib/logger";
 
 export interface ConsentRecord {
   id: string;
-  playerId: string;
+  userId: string;
   consentType: string;
   consentVersion: string;
   granted: boolean;
@@ -23,10 +23,10 @@ export interface ConsentRecord {
 }
 
 /**
- * Record a player's consent for a specific purpose.
+ * Record a user's consent for a specific purpose.
  */
 export async function grantConsent(params: {
-  playerId: string;
+  userId: string;
   consentType: string;
   consentVersion: string;
   ipAddress?: string;
@@ -35,7 +35,7 @@ export async function grantConsent(params: {
   const supabase = getSupabaseServiceClient();
 
   const { error } = await supabase.from("consent_records").insert({
-    player_id: params.playerId,
+    user_id: params.userId,
     consent_type: params.consentType,
     consent_version: params.consentVersion,
     granted: true,
@@ -45,7 +45,7 @@ export async function grantConsent(params: {
 
   if (error) {
     logger.error("Consent grant failed", {
-      playerId: params.playerId,
+      userId: params.userId,
       consentType: params.consentType,
       error: error.message,
       route: "platform/auth/consent",
@@ -55,8 +55,8 @@ export async function grantConsent(params: {
 
   await writeAuditLog({
     action: "consent_granted",
-    actorId: params.playerId,
-    targetId: params.playerId,
+    actorId: params.userId,
+    targetId: params.userId,
     details: {
       consentType: params.consentType,
       consentVersion: params.consentVersion,
@@ -67,11 +67,11 @@ export async function grantConsent(params: {
 }
 
 /**
- * Revoke a player's consent for a specific purpose.
+ * Revoke a user's consent for a specific purpose.
  * Sets revoked_at — does not delete the record (audit trail).
  */
 export async function revokeConsent(params: {
-  playerId: string;
+  userId: string;
   consentType: string;
 }): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseServiceClient();
@@ -79,13 +79,13 @@ export async function revokeConsent(params: {
   const { error } = await supabase
     .from("consent_records")
     .update({ revoked_at: new Date().toISOString() })
-    .eq("player_id", params.playerId)
+    .eq("user_id", params.userId)
     .eq("consent_type", params.consentType)
     .is("revoked_at", null);
 
   if (error) {
     logger.error("Consent revocation failed", {
-      playerId: params.playerId,
+      userId: params.userId,
       consentType: params.consentType,
       error: error.message,
       route: "platform/auth/consent",
@@ -95,8 +95,8 @@ export async function revokeConsent(params: {
 
   await writeAuditLog({
     action: "consent_revoked",
-    actorId: params.playerId,
-    targetId: params.playerId,
+    actorId: params.userId,
+    targetId: params.userId,
     details: { consentType: params.consentType },
   });
 
@@ -104,15 +104,15 @@ export async function revokeConsent(params: {
 }
 
 /**
- * Get all active consent records for a player.
+ * Get all active consent records for a user.
  */
-export async function getPlayerConsents(playerId: string): Promise<ConsentRecord[]> {
+export async function getUserConsents(userId: string): Promise<ConsentRecord[]> {
   const supabase = getSupabaseServiceClient();
 
   const { data, error } = await supabase
     .from("consent_records")
     .select("*")
-    .eq("player_id", playerId)
+    .eq("user_id", userId)
     .is("revoked_at", null)
     .order("granted_at", { ascending: false });
 
@@ -120,7 +120,7 @@ export async function getPlayerConsents(playerId: string): Promise<ConsentRecord
 
   return data.map((row: Record<string, unknown>) => ({
     id: row.id as string,
-    playerId: row.player_id as string,
+    userId: row.user_id as string,
     consentType: row.consent_type as string,
     consentVersion: row.consent_version as string,
     granted: row.granted as boolean,
@@ -130,12 +130,9 @@ export async function getPlayerConsents(playerId: string): Promise<ConsentRecord
 }
 
 /**
- * Check if a player has active consent for a specific type.
+ * Check if a user has active consent for a specific type.
  */
-export async function hasConsent(
-  playerId: string,
-  consentType: string
-): Promise<boolean> {
-  const consents = await getPlayerConsents(playerId);
+export async function hasConsent(userId: string, consentType: string): Promise<boolean> {
+  const consents = await getUserConsents(userId);
   return consents.some((c) => c.consentType === consentType);
 }

@@ -59,40 +59,6 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ---
 
-### TASK-018 — Rename "player" → "user" in PF codebase
-
-| Field          | Detail                                              |
-| -------------- | --------------------------------------------------- |
-| **ID**         | TASK-018                                            |
-| **Type**       | Technical debt — platform-game separation (ADR-001) |
-| **Severity**   | Medium                                              |
-| **Status**     | Tracked — docs generalized, code pending            |
-| **Logged**     | 2026-04-06                                          |
-| **Resolve by** | Phase 3 start                                       |
-
-**What:** PF is a consumer-agnostic platform template, but the codebase uses
-game-specific terminology ("player") throughout. Docs have been generalized
-to "user"; code needs to follow.
-
-**Files requiring rename:**
-
-- Database: `players` table, `player_entitlements`, `player_content_rating`
-- Supabase migrations: all references to `player_id`, `player_*` columns
-- Types: `types/index.ts` — any player-specific interfaces
-- Platform: `platform/auth/profile.ts`, `coppa.ts`, `devices.ts`, `gdpr-deletion.ts`
-- Components: `components/auth/ProfilePage.tsx`
-- API routes: `app/api/admin/players/`
-- Tests: all `*player*` references in test files
-
-**Resolution plan:**
-
-1. Create migration 008 to rename `players` → `users`, `player_*` → `user_*`
-2. Update all TypeScript types and interfaces
-3. Update all component and API route references
-4. Update all test files
-5. Run full quality gate on both repos
-6. Remove this entry when complete
-
 ---
 
 ### TASK-019 — Rename `platform/game-engine/` → `platform/app-framework/`
@@ -134,7 +100,8 @@ _Items below have been resolved and are retained for audit trail only._
 | TASK-015 | Platform config table                        | Phase 1, Sprint 7b                                   | 2026-04-02 |
 | TASK-016 | Repo inheritance model                       | Phase 1, Sprint 7b (auto-sync)                       | 2026-04-02 |
 | TASK-017 | Seed data separation                         | Phase 1, Sprint 7b                                   | 2026-04-02 |
+| TASK-018 | Rename player → user in PF codebase          | Phase 2, Sprint 3 (52 files + migration 008)         | 2026-04-06 |
 
 ---
 
-_Last updated: 2026-04-06 (Generalization: player→user, game→application in docs. TASK-018/019 logged for code renames.)_
+_Last updated: 2026-04-06 (Sprint 3: Observability fabric built. TASK-018 resolved — player→user code rename complete.)_

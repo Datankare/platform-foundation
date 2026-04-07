@@ -6,7 +6,7 @@
  * - Correct options are passed
  * - Missing env vars throw descriptive errors
  * - Browser client is a singleton
- * - Player client passes JWT as Authorization header
+ * - User client passes JWT as Authorization header
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -77,10 +77,10 @@ describe("getSupabaseServiceClient", () => {
   });
 });
 
-describe("getSupabasePlayerClient", () => {
+describe("getSupabaseUserClient", () => {
   it("creates a client with JWT in Authorization header", async () => {
-    const { getSupabasePlayerClient } = await import("@/lib/supabase/server");
-    getSupabasePlayerClient("cognito-jwt-token-123");
+    const { getSupabaseUserClient } = await import("@/lib/supabase/server");
+    getSupabaseUserClient("cognito-jwt-token-123");
 
     expect(mockCreateClient).toHaveBeenCalledWith(
       "https://test.supabase.co",
@@ -100,39 +100,39 @@ describe("getSupabasePlayerClient", () => {
   });
 
   it("creates a new client per call with different tokens", async () => {
-    const { getSupabasePlayerClient } = await import("@/lib/supabase/server");
-    getSupabasePlayerClient("token-a");
-    getSupabasePlayerClient("token-b");
+    const { getSupabaseUserClient } = await import("@/lib/supabase/server");
+    getSupabaseUserClient("token-a");
+    getSupabaseUserClient("token-b");
 
-    // Find the two player client calls (anon key, not service role key)
-    const playerCalls = mockCreateClient.mock.calls.filter(
+    // Find the two user client calls (anon key, not service role key)
+    const userCalls = mockCreateClient.mock.calls.filter(
       (call) => call[1] === "test-anon-key"
     );
-    expect(playerCalls.length).toBe(2);
+    expect(userCalls.length).toBe(2);
     expect(
-      (playerCalls[0][2] as { global: { headers: { Authorization: string } } }).global
+      (userCalls[0][2] as { global: { headers: { Authorization: string } } }).global
         .headers.Authorization
     ).toBe("Bearer token-a");
     expect(
-      (playerCalls[1][2] as { global: { headers: { Authorization: string } } }).global
+      (userCalls[1][2] as { global: { headers: { Authorization: string } } }).global
         .headers.Authorization
     ).toBe("Bearer token-b");
   });
 
   it("throws if NEXT_PUBLIC_SUPABASE_URL is missing", async () => {
     delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const { getSupabasePlayerClient } = await import("@/lib/supabase/server");
+    const { getSupabaseUserClient } = await import("@/lib/supabase/server");
 
-    expect(() => getSupabasePlayerClient("token")).toThrow(
+    expect(() => getSupabaseUserClient("token")).toThrow(
       "Missing Supabase environment variables"
     );
   });
 
   it("throws if NEXT_PUBLIC_SUPABASE_ANON_KEY is missing", async () => {
     delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const { getSupabasePlayerClient } = await import("@/lib/supabase/server");
+    const { getSupabaseUserClient } = await import("@/lib/supabase/server");
 
-    expect(() => getSupabasePlayerClient("token")).toThrow(
+    expect(() => getSupabaseUserClient("token")).toThrow(
       "Missing Supabase environment variables"
     );
   });

@@ -185,7 +185,7 @@ export interface AuthProvider {
 
   /**
    * Get the user's auth-level attributes (email, email_verified, sub).
-   * This is NOT the player profile — it's the auth provider's view of the user.
+   * This is NOT the user profile — it's the auth provider's view of the user.
    */
   getUserInfo(accessToken: AuthToken): Promise<{
     userId: AuthUserId;

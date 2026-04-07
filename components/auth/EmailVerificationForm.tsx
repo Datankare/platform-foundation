@@ -13,7 +13,7 @@ interface EmailVerificationFormProps {
 
 /**
  * Email verification form shown after registration.
- * Player must verify email before accessing the platform.
+ * User must verify email before accessing the platform.
  */
 export default function EmailVerificationForm({
   email,

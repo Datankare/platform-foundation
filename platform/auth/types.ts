@@ -7,7 +7,7 @@
  * ADR-012: Auth provider interface for cloud-agnostic platform.
  */
 
-/** Unique identifier for a player in the auth system */
+/** Unique identifier for a user in the auth system */
 export type AuthUserId = string;
 
 /** JWT token string */

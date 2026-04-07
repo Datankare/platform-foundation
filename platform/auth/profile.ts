@@ -1,12 +1,12 @@
 /**
- * platform/auth/profile.ts — Player profile service
+ * platform/auth/profile.ts — User profile service
  *
- * CRUD operations for player profiles with per-field visibility controls.
- * Uses the service client for writes (audit logged) and player client
+ * CRUD operations for user profiles with per-field visibility controls.
+ * Uses the service client for writes (audit logged) and user client
  * for reads (RLS enforced).
  *
  * Privacy model (three tiers):
- * - private: only the player can see it (default)
+ * - private: only the user can see it (default)
  * - friends: visible to friends (Phase 3 groups)
  * - public: visible to everyone
  *
@@ -21,7 +21,7 @@ import { logger } from "@/lib/logger";
 
 export type ProfileVisibility = "private" | "friends" | "public";
 
-export interface PlayerProfile {
+export interface UserProfile {
   id: string;
   email: string | null;
   displayName: string | null;
@@ -84,8 +84,8 @@ function toSnakeCase(update: ProfileUpdate): Record<string, unknown> {
   return result;
 }
 
-/** Map snake_case DB row to camelCase PlayerProfile */
-function toProfile(row: Record<string, unknown>): PlayerProfile {
+/** Map snake_case DB row to camelCase UserProfile */
+function toProfile(row: Record<string, unknown>): UserProfile {
   return {
     id: row.id as string,
     email: row.email as string | null,
@@ -110,22 +110,22 @@ function toProfile(row: Record<string, unknown>): PlayerProfile {
 }
 
 /**
- * Get the full profile for the authenticated player (own profile).
+ * Get the full profile for the authenticated user (own profile).
  * Returns all fields regardless of visibility — it's their own data.
  */
-export async function getOwnProfile(playerId: string): Promise<PlayerProfile | null> {
+export async function getOwnProfile(userId: string): Promise<UserProfile | null> {
   const supabase = getSupabaseServiceClient();
 
   const { data, error } = await supabase
-    .from("players")
+    .from("users")
     .select("*")
-    .eq("id", playerId)
+    .eq("id", userId)
     .is("deleted_at", null)
     .single();
 
   if (error || !data) {
     logger.warn("Profile not found", {
-      playerId,
+      userId,
       error: error?.message,
       route: "platform/auth/profile",
     });
@@ -136,25 +136,25 @@ export async function getOwnProfile(playerId: string): Promise<PlayerProfile | n
 }
 
 /**
- * Get a public-facing profile for another player.
+ * Get a public-facing profile for another user.
  * Only returns fields where visibility is 'public' (or 'friends' in Phase 3).
  */
 export async function getPublicProfile(
-  playerId: string
-): Promise<Partial<PlayerProfile> | null> {
+  userId: string
+): Promise<Partial<UserProfile> | null> {
   const supabase = getSupabaseServiceClient();
 
   const { data, error } = await supabase
-    .from("players")
+    .from("users")
     .select("*")
-    .eq("id", playerId)
+    .eq("id", userId)
     .is("deleted_at", null)
     .single();
 
   if (error || !data) return null;
 
   const full = toProfile(data);
-  const visible: Partial<PlayerProfile> = { id: full.id };
+  const visible: Partial<UserProfile> = { id: full.id };
 
   if (full.profileVisibility === "public") {
     if (full.displayNameVisibility === "public") {
@@ -175,12 +175,12 @@ export async function getPublicProfile(
 }
 
 /**
- * Update the player's own profile.
+ * Update the user's own profile.
  * Validates that only allowed fields are updated.
  * Audit logged.
  */
 export async function updateProfile(
-  playerId: string,
+  userId: string,
   update: ProfileUpdate
 ): Promise<{ success: boolean; error?: string }> {
   const dbUpdate = toSnakeCase(update);
@@ -192,14 +192,14 @@ export async function updateProfile(
   const supabase = getSupabaseServiceClient();
 
   const { error } = await supabase
-    .from("players")
+    .from("users")
     .update(dbUpdate)
-    .eq("id", playerId)
+    .eq("id", userId)
     .is("deleted_at", null);
 
   if (error) {
     logger.error("Profile update failed", {
-      playerId,
+      userId,
       error: error.message,
       route: "platform/auth/profile",
     });
@@ -208,8 +208,8 @@ export async function updateProfile(
 
   await writeAuditLog({
     action: "profile_updated",
-    actorId: playerId,
-    targetId: playerId,
+    actorId: userId,
+    targetId: userId,
     details: { fields: Object.keys(update) },
   });
 
@@ -217,20 +217,20 @@ export async function updateProfile(
 }
 
 /**
- * Get a player's profile for admin viewing.
- * Returns all fields. Audit logged (admin accessed player data).
+ * Get a user's profile for admin viewing.
+ * Returns all fields. Audit logged (admin accessed user data).
  */
 export async function getProfileAsAdmin(
   adminId: string,
-  playerId: string
-): Promise<PlayerProfile | null> {
-  const profile = await getOwnProfile(playerId);
+  userId: string
+): Promise<UserProfile | null> {
+  const profile = await getOwnProfile(userId);
 
   if (profile) {
     await writeAuditLog({
       action: "profile_viewed_by_admin",
       actorId: adminId,
-      targetId: playerId,
+      targetId: userId,
     });
   }
 

@@ -53,10 +53,10 @@ export {
 export {
   grantEntitlement,
   revokeEntitlement,
-  getPlayerEntitlements,
+  getUserEntitlements,
 } from "@/platform/auth/entitlements";
 
-export { writeAuditLog, getAuditLogForPlayer } from "@/platform/auth/audit";
+export { writeAuditLog, getAuditLogForUser } from "@/platform/auth/audit";
 export type { AuditAction, AuditEntry } from "@/platform/auth/audit";
 
 // Sprint 4 — Profile & Privacy
@@ -67,18 +67,18 @@ export {
   getProfileAsAdmin,
 } from "@/platform/auth/profile";
 export type {
-  PlayerProfile,
+  UserProfile,
   ProfileUpdate,
   ProfileVisibility,
 } from "@/platform/auth/profile";
 
-export { registerDevice, listPlayerDevices, removeDevice } from "@/platform/auth/devices";
+export { registerDevice, listUserDevices, removeDevice } from "@/platform/auth/devices";
 export type { DeviceRecord } from "@/platform/auth/devices";
 
 export {
   grantConsent,
   revokeConsent,
-  getPlayerConsents,
+  getUserConsents,
   hasConsent,
 } from "@/platform/auth/consent";
 export type { ConsentRecord } from "@/platform/auth/consent";
@@ -101,15 +101,15 @@ export type { AgeVerificationResult, ParentalConsentStatus } from "@/platform/au
 export {
   registerDeletionModule,
   getDeletionModules,
-  softDeletePlayer,
-  hardPurgePlayer,
+  softDeleteUser,
+  hardPurgeUser,
 } from "@/platform/auth/gdpr-deletion";
 export type { DeletionModule } from "@/platform/auth/gdpr-deletion";
 
 export {
   registerExportModule,
   getExportModules,
-  exportPlayerData,
+  exportUserData,
   estimateExportSize,
 } from "@/platform/auth/data-export";
 export type { ExportModule } from "@/platform/auth/data-export";

@@ -10,9 +10,9 @@ const inputClass =
 const btnSecondary =
   "bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm font-medium px-4 py-2 rounded-lg transition";
 
-// ── Players Panel ───────────────────────────────────────────────────────
+// ── Users Panel ───────────────────────────────────────────────────────
 
-export interface PlayerRow {
+export interface UserRow {
   id: string;
   email: string | null;
   displayName: string | null;
@@ -21,26 +21,26 @@ export interface PlayerRow {
   isDeleted: boolean;
 }
 
-interface PlayersPanelProps {
-  players: PlayerRow[];
+interface UsersPanelProps {
+  users: UserRow[];
   onSearch: (query: string) => void;
-  onChangeRole: (playerId: string, newRoleId: string) => void;
-  onViewProfile: (playerId: string) => void;
+  onChangeRole: (userId: string, newRoleId: string) => void;
+  onViewProfile: (userId: string) => void;
   roles: { id: string; name: string }[];
 }
 
-export function PlayersPanel({
-  players,
+export function UsersPanel({
+  users,
   onSearch,
   onChangeRole,
   onViewProfile,
   roles,
-}: PlayersPanelProps) {
+}: UsersPanelProps) {
   const [search, setSearch] = useState("");
 
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-6">Player Management</h2>
+      <h2 className="text-xl font-bold text-white mb-6">User Management</h2>
       <div className="mb-4">
         <input
           type="text"
@@ -65,7 +65,7 @@ export function PlayersPanel({
             </tr>
           </thead>
           <tbody>
-            {players.map((p) => (
+            {users.map((p) => (
               <tr key={p.id}>
                 <td className={tdClass}>{p.email || "—"}</td>
                 <td className={tdClass}>{p.displayName || "—"}</td>
@@ -95,8 +95,8 @@ export function PlayersPanel({
             ))}
           </tbody>
         </table>
-        {players.length === 0 && (
-          <p className="text-center text-gray-500 py-8 text-sm">No players found.</p>
+        {users.length === 0 && (
+          <p className="text-center text-gray-500 py-8 text-sm">No users found.</p>
         )}
       </div>
     </div>
@@ -161,19 +161,19 @@ export interface EntitlementGroupRow {
   code: string;
   displayName: string;
   isActive: boolean;
-  playerCount: number;
+  userCount: number;
 }
 
 interface EntitlementsPanelProps {
   groups: EntitlementGroupRow[];
   onToggleActive: (groupId: string) => void;
-  onManagePlayers: (groupId: string) => void;
+  onManageUsers: (groupId: string) => void;
 }
 
 export function EntitlementsPanel({
   groups,
   onToggleActive,
-  onManagePlayers,
+  onManageUsers,
 }: EntitlementsPanelProps) {
   return (
     <div>
@@ -184,7 +184,7 @@ export function EntitlementsPanel({
             <tr>
               <th className={thClass}>Code</th>
               <th className={thClass}>Name</th>
-              <th className={thClass}>Players</th>
+              <th className={thClass}>Users</th>
               <th className={thClass}>Status</th>
               <th className={thClass}>Actions</th>
             </tr>
@@ -196,7 +196,7 @@ export function EntitlementsPanel({
                   <code className="text-xs">{g.code}</code>
                 </td>
                 <td className={tdClass}>{g.displayName}</td>
-                <td className={tdClass}>{g.playerCount}</td>
+                <td className={tdClass}>{g.userCount}</td>
                 <td className={tdClass}>
                   <span
                     className={`text-xs px-2 py-0.5 rounded ${
@@ -216,10 +216,10 @@ export function EntitlementsPanel({
                     {g.isActive ? "Deactivate" : "Activate"}
                   </button>
                   <button
-                    onClick={() => onManagePlayers(g.id)}
+                    onClick={() => onManageUsers(g.id)}
                     className="text-blue-400 hover:text-blue-300 text-sm"
                   >
-                    Players
+                    Users
                   </button>
                 </td>
               </tr>

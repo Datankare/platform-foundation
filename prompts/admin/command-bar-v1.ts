@@ -20,7 +20,7 @@ export const ADMIN_COMMAND_BAR_V1 = {
 /**
  * Build the admin command bar system prompt.
  *
- * @param panel - Active admin panel (roles, players, entitlements, etc.)
+ * @param panel - Active admin panel (roles, users, entitlements, etc.)
  * @param context - Database context string (current roles, permissions, counts)
  */
 export function buildAdminSystemPrompt(panel: string, context: string): string {

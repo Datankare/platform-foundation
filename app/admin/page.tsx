@@ -8,7 +8,7 @@ import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
 import {
   RolesDataView,
-  PlayersDataView,
+  UsersDataView,
   EntitlementsDataView,
   AuditDataView,
   GuestConfigDataView,
@@ -28,7 +28,7 @@ interface ExecutionResult {
 }
 
 const PANEL_TITLES: Record<string, string> = {
-  players: "Players",
+  users: "Users",
   roles: "Roles",
   entitlements: "Entitlements",
   audit: "Audit Trail",
@@ -37,7 +37,7 @@ const PANEL_TITLES: Record<string, string> = {
 };
 
 const PANEL_HINTS: Record<string, string> = {
-  players: 'Try: "Show all players" or "Change alice@example.com to admin role"',
+  users: 'Try: "Show all users" or "Change alice@example.com to admin role"',
   roles: 'Try: "Create a moderator role with can_play and can_view_audit"',
   entitlements: 'Try: "Create beta_access entitlement with can_translate"',
   audit: 'Try: "Show role changes from the last 7 days"',
@@ -46,7 +46,7 @@ const PANEL_HINTS: Record<string, string> = {
 };
 
 const ENDPOINTS: Record<string, string> = {
-  players: "/api/admin/players",
+  users: "/api/admin/users",
   roles: "/api/admin/roles",
   entitlements: "/api/admin/entitlements",
   audit: "/api/admin/audit?offset=0",
@@ -57,7 +57,7 @@ const ENDPOINTS: Record<string, string> = {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
-  players: PlayersDataView,
+  users: UsersDataView,
   roles: RolesDataView,
   entitlements: EntitlementsDataView,
   audit: AuditDataView,

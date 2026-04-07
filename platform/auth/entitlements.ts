@@ -1,7 +1,7 @@
 /**
  * platform/auth/entitlements.ts — Entitlements engine
  *
- * Manages entitlement groups and player-to-group assignments.
+ * Manages entitlement groups and user-to-group assignments.
  * Entitlements are additive grants on top of the primary role —
  * they never remove permissions, only add.
  *
@@ -16,21 +16,21 @@ import { logger } from "@/lib/logger";
 import { writeAuditLog } from "@/platform/auth/audit";
 
 export interface EntitlementGrant {
-  playerId: string;
+  userId: string;
   entitlementGroupId: string;
   grantedBy: string;
   expiresAt?: string;
 }
 
 export interface EntitlementRevoke {
-  playerId: string;
+  userId: string;
   entitlementGroupId: string;
   revokedBy: string;
 }
 
 /**
- * Grant an entitlement group to a player.
- * Idempotent — if the player already has the entitlement, updates expiry.
+ * Grant an entitlement group to a user.
+ * Idempotent — if the user already has the entitlement, updates expiry.
  */
 export async function grantEntitlement(
   grant: EntitlementGrant
@@ -38,15 +38,15 @@ export async function grantEntitlement(
   const supabase = getSupabaseServiceClient();
 
   try {
-    const { error } = await supabase.from("player_entitlements").upsert(
+    const { error } = await supabase.from("user_entitlements").upsert(
       {
-        player_id: grant.playerId,
+        user_id: grant.userId,
         entitlement_group_id: grant.entitlementGroupId,
         granted_by: grant.grantedBy,
         expires_at: grant.expiresAt || null,
         revoked_at: null,
       },
-      { onConflict: "player_id,entitlement_group_id" }
+      { onConflict: "user_id,entitlement_group_id" }
     );
 
     if (error) {
@@ -60,7 +60,7 @@ export async function grantEntitlement(
     await writeAuditLog({
       action: "entitlement_granted",
       actorId: grant.grantedBy,
-      targetId: grant.playerId,
+      targetId: grant.userId,
       details: {
         entitlementGroupId: grant.entitlementGroupId,
         expiresAt: grant.expiresAt || null,
@@ -79,7 +79,7 @@ export async function grantEntitlement(
 }
 
 /**
- * Revoke an entitlement group from a player.
+ * Revoke an entitlement group from a user.
  * Sets revoked_at — does not delete the record (audit trail preserved).
  */
 export async function revokeEntitlement(
@@ -89,12 +89,12 @@ export async function revokeEntitlement(
 
   try {
     const { error } = await supabase
-      .from("player_entitlements")
+      .from("user_entitlements")
       .update({
         revoked_at: new Date().toISOString(),
         revoked_by: revoke.revokedBy,
       })
-      .eq("player_id", revoke.playerId)
+      .eq("user_id", revoke.userId)
       .eq("entitlement_group_id", revoke.entitlementGroupId)
       .is("revoked_at", null);
 
@@ -109,7 +109,7 @@ export async function revokeEntitlement(
     await writeAuditLog({
       action: "entitlement_revoked",
       actorId: revoke.revokedBy,
-      targetId: revoke.playerId,
+      targetId: revoke.userId,
       details: {
         entitlementGroupId: revoke.entitlementGroupId,
       },
@@ -127,17 +127,17 @@ export async function revokeEntitlement(
 }
 
 /**
- * Get all active entitlements for a player.
+ * Get all active entitlements for a user.
  */
-export async function getPlayerEntitlements(
-  playerId: string
+export async function getUserEntitlements(
+  userId: string
 ): Promise<{ entitlementGroupId: string; code: string; expiresAt: string | null }[]> {
   const supabase = getSupabaseServiceClient();
 
   const { data, error } = await supabase
-    .from("player_entitlements")
+    .from("user_entitlements")
     .select("entitlement_group_id, expires_at")
-    .eq("player_id", playerId)
+    .eq("user_id", userId)
     .is("revoked_at", null);
 
   if (error || !data) return [];

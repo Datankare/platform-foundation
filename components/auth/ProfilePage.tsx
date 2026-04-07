@@ -1,12 +1,12 @@
 "use client";
 
 import React from "react";
-import type { PlayerProfile, ProfileUpdate } from "@/platform/auth/profile";
+import type { UserProfile, ProfileUpdate } from "@/platform/auth/profile";
 import { useProfileForm } from "@/hooks/useProfileForm";
 import VisibilitySelect from "@/components/auth/VisibilitySelect";
 
 interface ProfilePageProps {
-  onLoadProfile: () => Promise<PlayerProfile | null>;
+  onLoadProfile: () => Promise<UserProfile | null>;
   onUpdateProfile: (
     update: ProfileUpdate
   ) => Promise<{ success: boolean; error?: string }>;
@@ -14,7 +14,7 @@ interface ProfilePageProps {
 }
 
 /**
- * Player profile page — view and edit own profile with visibility controls.
+ * User profile page — view and edit own profile with visibility controls.
  * Decomposed: state in useProfileForm hook, visibility in VisibilitySelect.
  */
 export default function ProfilePage({

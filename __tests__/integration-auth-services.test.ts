@@ -13,10 +13,10 @@ describe("getOwnProfile", () => {
     jest.resetModules();
   });
 
-  it("returns mapped profile for existing player", async () => {
+  it("returns mapped profile for existing user", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "players",
+        table: "users",
         response: {
           data: {
             id: "p1",
@@ -58,10 +58,10 @@ describe("getOwnProfile", () => {
     expect(profile!.emailVerified).toBe(true);
   });
 
-  it("returns null when player not found", async () => {
+  it("returns null when user not found", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "players",
+        table: "users",
         response: { data: null, error: { message: "not found" } },
       },
     ]);
@@ -85,7 +85,7 @@ describe("getPublicProfile", () => {
   it("only returns public visibility fields", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "players",
+        table: "users",
         response: {
           data: {
             id: "p1",
@@ -131,7 +131,7 @@ describe("getPublicProfile", () => {
   it("returns only id when profile is private", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "players",
+        table: "users",
         response: {
           data: {
             id: "p1",
@@ -178,7 +178,7 @@ describe("updateProfile", () => {
 
   it("converts camelCase to snake_case and updates", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "players", response: { data: null, error: null } },
+      { table: "users", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
     ]);
 
@@ -222,7 +222,7 @@ describe("registerDevice", () => {
 
   it("upserts device and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "player_devices", response: { data: null, error: null } },
+      { table: "user_devices", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
     ]);
 
@@ -234,13 +234,13 @@ describe("registerDevice", () => {
     const result = await registerDevice("p1", "device-123", "iPhone 15");
 
     expect(result.success).toBe(true);
-    expect(mockClient.from).toHaveBeenCalledWith("player_devices");
+    expect(mockClient.from).toHaveBeenCalledWith("user_devices");
   });
 
   it("returns error on upsert failure", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "player_devices",
+        table: "user_devices",
         response: { data: null, error: { message: "constraint violation" } },
       },
     ]);
@@ -257,7 +257,7 @@ describe("registerDevice", () => {
   });
 });
 
-describe("listPlayerDevices", () => {
+describe("listUserDevices", () => {
   beforeEach(() => {
     jest.resetModules();
   });
@@ -265,12 +265,12 @@ describe("listPlayerDevices", () => {
   it("returns mapped device records", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "player_devices",
+        table: "user_devices",
         response: {
           data: [
             {
               id: "d1",
-              player_id: "p1",
+              user_id: "p1",
               device_id: "dev-1",
               device_name: "iPhone",
               is_trusted: true,
@@ -287,8 +287,8 @@ describe("listPlayerDevices", () => {
       getSupabaseServiceClient: () => mockClient,
     }));
 
-    const { listPlayerDevices } = await import("@/platform/auth/devices");
-    const devices = await listPlayerDevices("p1");
+    const { listUserDevices } = await import("@/platform/auth/devices");
+    const devices = await listUserDevices("p1");
 
     expect(devices).toHaveLength(1);
     expect(devices[0].deviceId).toBe("dev-1");
@@ -299,7 +299,7 @@ describe("listPlayerDevices", () => {
   it("returns empty array on error", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "player_devices",
+        table: "user_devices",
         response: { data: null, error: { message: "query failed" } },
       },
     ]);
@@ -308,8 +308,8 @@ describe("listPlayerDevices", () => {
       getSupabaseServiceClient: () => mockClient,
     }));
 
-    const { listPlayerDevices } = await import("@/platform/auth/devices");
-    const devices = await listPlayerDevices("p1");
+    const { listUserDevices } = await import("@/platform/auth/devices");
+    const devices = await listUserDevices("p1");
 
     expect(devices).toEqual([]);
   });
@@ -334,7 +334,7 @@ describe("grantConsent", () => {
 
     const { grantConsent } = await import("@/platform/auth/consent");
     const result = await grantConsent({
-      playerId: "p1",
+      userId: "p1",
       consentType: "marketing",
       consentVersion: "1.0",
     });
@@ -361,7 +361,7 @@ describe("revokeConsent", () => {
 
     const { revokeConsent } = await import("@/platform/auth/consent");
     const result = await revokeConsent({
-      playerId: "p1",
+      userId: "p1",
       consentType: "marketing",
     });
 
@@ -378,9 +378,9 @@ describe("recordAgeVerification", () => {
     jest.resetModules();
   });
 
-  it("updates player with age data and writes audit log", async () => {
+  it("updates user with age data and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "players", response: { data: null, error: null } },
+      { table: "users", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
     ]);
 
@@ -400,7 +400,7 @@ describe("recordAgeVerification", () => {
   it("returns error on DB failure", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "players",
+        table: "users",
         response: { data: null, error: { message: "update failed" } },
       },
     ]);
@@ -422,9 +422,9 @@ describe("recordParentalConsent", () => {
     jest.resetModules();
   });
 
-  it("updates player parental consent status", async () => {
+  it("updates user parental consent status", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "players", response: { data: null, error: null } },
+      { table: "users", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
     ]);
 
