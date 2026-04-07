@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 
 export type AdminSection =
-  | "players"
+  | "users"
   | "roles"
   | "entitlements"
   | "audit"
@@ -30,10 +30,10 @@ const NAV_ITEMS: {
   permission: string;
 }[] = [
   {
-    section: "players",
-    label: "Players",
+    section: "users",
+    label: "Users",
     icon: "👥",
-    permission: "admin_manage_players",
+    permission: "admin_manage_users",
   },
   {
     section: "roles",
@@ -88,7 +88,7 @@ export default function AdminShell({
   const visibleItems = NAV_ITEMS.filter((item) => hasPermission(item.permission));
 
   const [activeSection, setActiveSection] = useState<AdminSection>(
-    visibleItems[0]?.section || "players"
+    visibleItems[0]?.section || "users"
   );
 
   return (

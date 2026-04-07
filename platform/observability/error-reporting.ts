@@ -14,7 +14,7 @@
  * Consumers can implement ErrorReporter for Datadog, Bugsnag, New Relic, etc.
  */
 
-import type { ErrorReporter, ErrorContext, TraceContext } from "./types";
+import type { ErrorReporter, ErrorContext } from "./types";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------

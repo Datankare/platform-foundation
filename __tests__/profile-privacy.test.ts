@@ -1,5 +1,5 @@
 /**
- * Sprint 4 — Player Profile & Privacy tests
+ * Sprint 4 — User Profile & Privacy tests
  *
  * Tests pure functions that don't require Supabase:
  * - Password validation against policy

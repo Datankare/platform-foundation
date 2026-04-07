@@ -1,13 +1,13 @@
 /**
  * platform/auth/permissions.ts — Permissions engine
  *
- * Resolves a player's effective permissions from three sources:
+ * Resolves a user's effective permissions from three sources:
  * 1. Primary role permissions (role_permissions table)
  * 2. Role inheritance (role_inheritance table)
- * 3. Additive entitlements (player_entitlements + entitlement_permissions)
+ * 3. Additive entitlements (user_entitlements + entitlement_permissions)
  *
  * Uses the Supabase service client (bypasses RLS) because permission
- * checks happen server-side in middleware before the player context exists.
+ * checks happen server-side in middleware before the user context exists.
  *
  * Sprint 3, Tasks 3.1 + 3.4
  */
@@ -16,7 +16,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
 
 export interface EffectivePermissions {
-  playerId: string;
+  userId: string;
   roleId: string;
   roleName: string;
   permissions: string[];
@@ -24,7 +24,7 @@ export interface EffectivePermissions {
 }
 
 /**
- * Resolve all effective permissions for a player.
+ * Resolve all effective permissions for a user.
  * Combines: role permissions + inherited role permissions + entitlement permissions.
  *
  * Returns a deduplicated list of permission codes.
@@ -34,18 +34,18 @@ export async function resolvePermissions(
 ): Promise<EffectivePermissions | null> {
   const supabase = getSupabaseServiceClient();
 
-  // 1. Get the player's role
-  const { data: player, error: playerError } = await supabase
-    .from("players")
+  // 1. Get the user's role
+  const { data: user, error: userError } = await supabase
+    .from("users")
     .select("id, role_id")
     .eq("cognito_sub", cognitoSub)
     .is("deleted_at", null)
     .single();
 
-  if (playerError || !player) {
-    logger.warn("Player not found for permission resolution", {
+  if (userError || !user) {
+    logger.warn("User not found for permission resolution", {
       cognitoSub,
-      error: playerError?.message,
+      error: userError?.message,
       route: "platform/auth/permissions",
     });
     return null;
@@ -55,7 +55,7 @@ export async function resolvePermissions(
   const { data: role } = await supabase
     .from("roles")
     .select("name")
-    .eq("id", player.role_id)
+    .eq("id", user.role_id)
     .single();
 
   const roleName = role?.name || "unknown";
@@ -64,7 +64,7 @@ export async function resolvePermissions(
   const { data: rolePerms } = await supabase
     .from("role_permissions")
     .select("permission_id")
-    .eq("role_id", player.role_id);
+    .eq("role_id", user.role_id);
 
   const permissionIds = new Set(
     (rolePerms || []).map((rp: { permission_id: string }) => rp.permission_id)
@@ -74,7 +74,7 @@ export async function resolvePermissions(
   const { data: inheritedRoles } = await supabase
     .from("role_inheritance")
     .select("inherits_from_id")
-    .eq("role_id", player.role_id);
+    .eq("role_id", user.role_id);
 
   if (inheritedRoles && inheritedRoles.length > 0) {
     const inheritedRoleIds = inheritedRoles.map(
@@ -91,17 +91,17 @@ export async function resolvePermissions(
   }
 
   // 5. Get entitlement permissions (active, not expired, not revoked)
-  const { data: playerEntitlements } = await supabase
-    .from("player_entitlements")
+  const { data: userEntitlements } = await supabase
+    .from("user_entitlements")
     .select("entitlement_group_id")
-    .eq("player_id", player.id)
+    .eq("user_id", user.id)
     .is("revoked_at", null);
 
   const activeEntitlements: string[] = [];
 
-  if (playerEntitlements && playerEntitlements.length > 0) {
+  if (userEntitlements && userEntitlements.length > 0) {
     const now = new Date().toISOString();
-    const entitlementGroupIds = playerEntitlements
+    const entitlementGroupIds = userEntitlements
       .filter(
         (pe: { entitlement_group_id: string; expires_at?: string | null }) =>
           !pe.expires_at || pe.expires_at > now
@@ -146,8 +146,8 @@ export async function resolvePermissions(
   }
 
   return {
-    playerId: player.id,
-    roleId: player.role_id,
+    userId: user.id,
+    roleId: user.role_id,
     roleName,
     permissions: permissionCodes,
     entitlementGroups: activeEntitlements,
@@ -155,7 +155,7 @@ export async function resolvePermissions(
 }
 
 /**
- * Check if a player has a specific permission.
+ * Check if a user has a specific permission.
  * Convenience wrapper around resolvePermissions.
  */
 export async function hasPermission(

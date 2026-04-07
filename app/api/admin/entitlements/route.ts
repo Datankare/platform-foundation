@@ -1,7 +1,7 @@
 /**
  * app/api/admin/entitlements/route.ts — Admin entitlement management
  *
- * GET: List entitlement groups with player counts
+ * GET: List entitlement groups with user counts
  * PATCH: Toggle active status
  */
 
@@ -30,16 +30,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Get player counts per group
+  // Get user counts per group
   const { data: assignments } = await supabase
-    .from("player_entitlements")
+    .from("user_entitlements")
     .select("entitlement_group_id")
     .is("revoked_at", null);
 
-  const playerCounts = new Map<string, number>();
+  const userCounts = new Map<string, number>();
   for (const a of assignments || []) {
     const gid = a.entitlement_group_id as string;
-    playerCounts.set(gid, (playerCounts.get(gid) || 0) + 1);
+    userCounts.set(gid, (userCounts.get(gid) || 0) + 1);
   }
 
   const result = (groups || []).map(
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
       code: g.code,
       displayName: g.display_name,
       isActive: g.is_active,
-      playerCount: playerCounts.get(g.id) || 0,
+      userCount: userCounts.get(g.id) || 0,
     })
   );
 

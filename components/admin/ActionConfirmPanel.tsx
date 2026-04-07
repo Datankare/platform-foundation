@@ -36,14 +36,14 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
       if (input.remove?.length) parts.push(`remove: ${input.remove.join(", ")}`);
       return `Update permissions on "${input.role_name}" — ${parts.join("; ")}`;
     }
-    case "assign_role_to_player":
-      return `Assign role "${input.role_name}" to ${input.player_emails?.join(", ") || input.player_ids?.join(", ")}`;
-    case "change_player_role":
-      return `Change "${input.player_identifier}" to role "${input.new_role}"`;
+    case "assign_role_to_user":
+      return `Assign role "${input.role_name}" to ${input.user_emails?.join(", ") || input.user_ids?.join(", ")}`;
+    case "change_user_role":
+      return `Change "${input.user_identifier}" to role "${input.new_role}"`;
     case "bulk_change_role":
-      return `Change ${input.player_identifiers?.length || 0} players to role "${input.new_role}"`;
-    case "delete_player":
-      return `Delete player "${input.player_identifier}" (soft-delete, GDPR)`;
+      return `Change ${input.user_identifiers?.length || 0} users to role "${input.new_role}"`;
+    case "delete_user":
+      return `Delete user "${input.user_identifier}" (soft-delete, GDPR)`;
     case "create_entitlement_group": {
       const perms = input.permissions?.length
         ? ` with: ${input.permissions.join(", ")}`
@@ -54,10 +54,10 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
       const expiry = input.expires_in_days
         ? ` (expires in ${input.expires_in_days} days)`
         : "";
-      return `Grant "${input.entitlement_code}" to ${input.player_identifiers?.length || 0} players${expiry}`;
+      return `Grant "${input.entitlement_code}" to ${input.user_identifiers?.length || 0} users${expiry}`;
     }
     case "revoke_entitlement":
-      return `Revoke "${input.entitlement_code}" from ${input.player_identifiers?.length || 0} players`;
+      return `Revoke "${input.entitlement_code}" from ${input.user_identifiers?.length || 0} users`;
     case "delete_entitlement_group":
       return `Delete entitlement group "${input.code}"`;
     case "update_guest_config": {
@@ -90,7 +90,7 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
 
 const destructiveTools = new Set([
   "delete_role",
-  "delete_player",
+  "delete_user",
   "delete_entitlement_group",
   "revoke_entitlement",
 ]);

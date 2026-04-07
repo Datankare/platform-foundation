@@ -17,12 +17,12 @@ export async function GET(request: NextRequest) {
 
   const supabase = getSupabaseServiceClient();
 
-  // Global policy: both role_id and player_id are null
+  // Global policy: both role_id and user_id are null
   const { data } = await supabase
     .from("password_policy")
     .select("*")
     .is("role_id", null)
-    .is("player_id", null)
+    .is("user_id", null)
     .single();
 
   const policy = data
@@ -59,7 +59,7 @@ export async function PUT(request: NextRequest) {
   const { error } = await supabase.from("password_policy").upsert(
     {
       role_id: null,
-      player_id: null,
+      user_id: null,
       min_length: body.minLength,
       rotation_days: body.rotationDays,
       require_uppercase: body.requireUppercase,
@@ -68,7 +68,7 @@ export async function PUT(request: NextRequest) {
       require_special: body.requireSpecial,
       password_history_count: body.passwordHistoryCount,
     },
-    { onConflict: "role_id,player_id" }
+    { onConflict: "role_id,user_id" }
   );
 
   if (error) {

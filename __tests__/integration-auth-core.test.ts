@@ -28,7 +28,7 @@ describe("writeAuditLog", () => {
     await writeAuditLog({
       action: "role_changed",
       actorId: "admin-1",
-      targetId: "player-1",
+      targetId: "user-1",
       details: { oldRole: "free", newRole: "admin" },
       ipAddress: "1.2.3.4",
       userAgent: "Mozilla/5.0",
@@ -39,7 +39,7 @@ describe("writeAuditLog", () => {
     expect(builder.insert).toHaveBeenCalledWith({
       action: "role_changed",
       actor_id: "admin-1",
-      target_id: "player-1",
+      target_id: "user-1",
       details: { oldRole: "free", newRole: "admin" },
       ip_address: "1.2.3.4",
       user_agent: "Mozilla/5.0",
@@ -89,7 +89,7 @@ describe("writeAuditLog", () => {
   });
 });
 
-describe("getAuditLogForPlayer", () => {
+describe("getAuditLogForUser", () => {
   beforeEach(() => {
     jest.resetModules();
   });
@@ -103,7 +103,7 @@ describe("getAuditLogForPlayer", () => {
             {
               action: "role_changed",
               actor_id: "admin-1",
-              target_id: "player-1",
+              target_id: "user-1",
               details: { newRole: "admin" },
               ip_address: "1.2.3.4",
               user_agent: "Mozilla",
@@ -119,14 +119,14 @@ describe("getAuditLogForPlayer", () => {
       getSupabaseServiceClient: () => mockClient,
     }));
 
-    const { getAuditLogForPlayer } = await import("@/platform/auth/audit");
+    const { getAuditLogForUser } = await import("@/platform/auth/audit");
 
-    const entries = await getAuditLogForPlayer("player-1");
+    const entries = await getAuditLogForUser("user-1");
 
     expect(entries).toHaveLength(1);
     expect(entries[0].action).toBe("role_changed");
     expect(entries[0].actorId).toBe("admin-1");
-    expect(entries[0].targetId).toBe("player-1");
+    expect(entries[0].targetId).toBe("user-1");
   });
 
   it("returns empty array on error", async () => {
@@ -141,9 +141,9 @@ describe("getAuditLogForPlayer", () => {
       getSupabaseServiceClient: () => mockClient,
     }));
 
-    const { getAuditLogForPlayer } = await import("@/platform/auth/audit");
+    const { getAuditLogForUser } = await import("@/platform/auth/audit");
 
-    const entries = await getAuditLogForPlayer("player-1");
+    const entries = await getAuditLogForUser("user-1");
     expect(entries).toEqual([]);
   });
 });
@@ -155,10 +155,10 @@ describe("grantEntitlement", () => {
     jest.resetModules();
   });
 
-  it("upserts player_entitlements and writes audit log", async () => {
+  it("upserts user_entitlements and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      // upsert player_entitlements
-      { table: "player_entitlements", response: { data: null, error: null } },
+      // upsert user_entitlements
+      { table: "user_entitlements", response: { data: null, error: null } },
       // writeAuditLog
       { table: "audit_log", response: { data: null, error: null } },
     ]);
@@ -170,20 +170,20 @@ describe("grantEntitlement", () => {
     const { grantEntitlement } = await import("@/platform/auth/entitlements");
 
     const result = await grantEntitlement({
-      playerId: "p1",
+      userId: "p1",
       entitlementGroupId: "eg1",
       grantedBy: "admin-1",
       expiresAt: "2027-01-01T00:00:00Z",
     });
 
     expect(result.success).toBe(true);
-    expect(mockClient.from).toHaveBeenCalledWith("player_entitlements");
+    expect(mockClient.from).toHaveBeenCalledWith("user_entitlements");
   });
 
   it("returns error on upsert failure", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "player_entitlements",
+        table: "user_entitlements",
         response: { data: null, error: { message: "duplicate key" } },
       },
     ]);
@@ -195,7 +195,7 @@ describe("grantEntitlement", () => {
     const { grantEntitlement } = await import("@/platform/auth/entitlements");
 
     const result = await grantEntitlement({
-      playerId: "p1",
+      userId: "p1",
       entitlementGroupId: "eg1",
       grantedBy: "admin-1",
     });
@@ -212,7 +212,7 @@ describe("revokeEntitlement", () => {
 
   it("sets revoked_at and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "player_entitlements", response: { data: null, error: null } },
+      { table: "user_entitlements", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
     ]);
 
@@ -223,7 +223,7 @@ describe("revokeEntitlement", () => {
     const { revokeEntitlement } = await import("@/platform/auth/entitlements");
 
     const result = await revokeEntitlement({
-      playerId: "p1",
+      userId: "p1",
       entitlementGroupId: "eg1",
       revokedBy: "admin-1",
     });
@@ -231,7 +231,7 @@ describe("revokeEntitlement", () => {
     expect(result.success).toBe(true);
     const builder = mockClient._fromCalls[0].builder;
     expect(builder.update).toHaveBeenCalled();
-    expect(builder.eq).toHaveBeenCalledWith("player_id", "p1");
+    expect(builder.eq).toHaveBeenCalledWith("user_id", "p1");
   });
 });
 
@@ -242,10 +242,10 @@ describe("resolvePermissions", () => {
     jest.resetModules();
   });
 
-  it("returns null when player not found", async () => {
+  it("returns null when user not found", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "players",
+        table: "users",
         response: { data: null, error: { message: "not found" } },
       },
     ]);
@@ -262,9 +262,9 @@ describe("resolvePermissions", () => {
 
   it("queries correct tables in sequence", async () => {
     const mockClient = createSequentialMockSupabase([
-      // 1. Get player
+      // 1. Get user
       {
-        table: "players",
+        table: "users",
         response: { data: { id: "p1", role_id: "r1" }, error: null },
       },
       // 2. Get role name
@@ -285,9 +285,9 @@ describe("resolvePermissions", () => {
         table: "role_inheritance",
         response: { data: [], error: null },
       },
-      // 5. Get player entitlements
+      // 5. Get user entitlements
       {
-        table: "player_entitlements",
+        table: "user_entitlements",
         response: { data: [], error: null },
       },
       // 6. Resolve permission codes
@@ -309,7 +309,7 @@ describe("resolvePermissions", () => {
     const result = await resolvePermissions("test-sub");
 
     expect(result).not.toBeNull();
-    expect(result!.playerId).toBe("p1");
+    expect(result!.userId).toBe("p1");
     expect(result!.roleName).toBe("admin");
     expect(result!.permissions).toContain("can_play");
     expect(result!.permissions).toContain("can_manage_roles");
@@ -322,10 +322,10 @@ describe("hasPermission", () => {
     jest.resetModules();
   });
 
-  it("returns false when player not found", async () => {
+  it("returns false when user not found", async () => {
     const mockClient = createSequentialMockSupabase([
       {
-        table: "players",
+        table: "users",
         response: { data: null, error: { message: "not found" } },
       },
     ]);

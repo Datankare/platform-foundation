@@ -89,27 +89,27 @@ export function resolveGuestPhase(sessionCount: number, config: GuestConfig): Gu
 /**
  * Get the full guest status including phase, session count, and token expiry.
  */
-export async function getGuestStatus(guestPlayerId: string): Promise<GuestStatus | null> {
+export async function getGuestStatus(guestUserId: string): Promise<GuestStatus | null> {
   const supabase = getSupabaseServiceClient();
 
-  const { data: player } = await supabase
-    .from("players")
+  const { data: user } = await supabase
+    .from("users")
     .select("*")
-    .eq("id", guestPlayerId)
+    .eq("id", guestUserId)
     .is("deleted_at", null)
     .single();
 
-  if (!player) return null;
+  if (!user) return null;
 
   const config = await getGuestConfig();
-  const sessionCount = (player.guest_session_count as number) || 0;
+  const sessionCount = (user.guest_session_count as number) || 0;
   const phase = resolveGuestPhase(sessionCount, config);
 
-  const tokenExpiresAt = player.guest_token_expires_at as string | null;
+  const tokenExpiresAt = user.guest_token_expires_at as string | null;
   const isExpired = tokenExpiresAt ? new Date(tokenExpiresAt) < new Date() : false;
 
   return {
-    guestId: guestPlayerId,
+    guestId: guestUserId,
     sessionCount,
     phase,
     config,
@@ -124,32 +124,32 @@ export async function getGuestStatus(guestPlayerId: string): Promise<GuestStatus
  * Returns the new phase (so the UI can show nudge/lockout).
  */
 export async function incrementGuestSession(
-  guestPlayerId: string
+  guestUserId: string
 ): Promise<{ phase: GuestPhase; sessionCount: number } | null> {
   const supabase = getSupabaseServiceClient();
 
-  const { data: player } = await supabase
-    .from("players")
+  const { data: user } = await supabase
+    .from("users")
     .select("guest_session_count")
-    .eq("id", guestPlayerId)
+    .eq("id", guestUserId)
     .single();
 
-  if (!player) return null;
+  if (!user) return null;
 
-  const currentCount = (player.guest_session_count as number) || 0;
+  const currentCount = (user.guest_session_count as number) || 0;
   const newCount = currentCount + 1;
 
   const { error } = await supabase
-    .from("players")
+    .from("users")
     .update({
       guest_session_count: newCount,
       last_login_at: new Date().toISOString(),
     })
-    .eq("id", guestPlayerId);
+    .eq("id", guestUserId);
 
   if (error) {
     logger.error("Failed to increment guest session", {
-      guestPlayerId,
+      guestUserId,
       error: error.message,
       route: "platform/auth/guest-lifecycle",
     });
@@ -163,16 +163,16 @@ export async function incrementGuestSession(
   if (phase === "nudge" && currentCount < config.nudgeAfterSessions) {
     await writeAuditLog({
       action: "guest_nudge_shown",
-      actorId: guestPlayerId,
-      targetId: guestPlayerId,
+      actorId: guestUserId,
+      targetId: guestUserId,
       details: { sessionCount: newCount },
     });
   }
   if (phase === "lockout" && currentCount < config.lockoutAfterSessions) {
     await writeAuditLog({
       action: "guest_locked_out",
-      actorId: guestPlayerId,
-      targetId: guestPlayerId,
+      actorId: guestUserId,
+      targetId: guestUserId,
       details: { sessionCount: newCount },
     });
   }
@@ -181,12 +181,12 @@ export async function incrementGuestSession(
 }
 
 /**
- * Convert a guest to a registered player.
- * Preserves the player ID and all associated data (play history,
+ * Convert a guest to a registered user.
+ * Preserves the user ID and all associated data (play history,
  * entitlements, devices). Only updates the auth fields.
  */
 export async function convertGuestToRegistered(
-  guestPlayerId: string,
+  guestUserId: string,
   cognitoSub: string,
   email: string,
   roleId: string
@@ -194,7 +194,7 @@ export async function convertGuestToRegistered(
   const supabase = getSupabaseServiceClient();
 
   const { error } = await supabase
-    .from("players")
+    .from("users")
     .update({
       cognito_sub: cognitoSub,
       email,
@@ -203,12 +203,12 @@ export async function convertGuestToRegistered(
       guest_token_expires_at: null,
       guest_session_count: null,
     })
-    .eq("id", guestPlayerId)
+    .eq("id", guestUserId)
     .is("cognito_sub", null);
 
   if (error) {
     logger.error("Guest conversion failed", {
-      guestPlayerId,
+      guestUserId,
       error: error.message,
       route: "platform/auth/guest-lifecycle",
     });
@@ -217,8 +217,8 @@ export async function convertGuestToRegistered(
 
   await writeAuditLog({
     action: "account_converted_from_guest",
-    actorId: guestPlayerId,
-    targetId: guestPlayerId,
+    actorId: guestUserId,
+    targetId: guestUserId,
     details: { email, roleId },
   });
 
@@ -227,7 +227,7 @@ export async function convertGuestToRegistered(
 
 /**
  * Clean up expired guest sessions.
- * Called by a scheduled job. Removes guest players whose tokens
+ * Called by a scheduled job. Removes guest users whose tokens
  * have expired and who never converted.
  */
 export async function cleanupExpiredGuests(): Promise<{
@@ -238,7 +238,7 @@ export async function cleanupExpiredGuests(): Promise<{
   const now = new Date().toISOString();
 
   const { data, error } = await supabase
-    .from("players")
+    .from("users")
     .delete()
     .is("cognito_sub", null)
     .not("guest_token", "is", null)

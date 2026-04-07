@@ -124,9 +124,9 @@ describe("GET /api/admin/roles", () => {
   });
 });
 
-// ── Players Route ───────────────────────────────────────────────────────
+// ── Users Route ───────────────────────────────────────────────────────
 
-describe("GET /api/admin/players", () => {
+describe("GET /api/admin/users", () => {
   beforeEach(() => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
@@ -139,7 +139,7 @@ describe("GET /api/admin/players", () => {
         builder.or = jest.fn().mockReturnValue(builder);
         builder.eq = jest.fn().mockReturnValue(builder);
 
-        if (table === "players") {
+        if (table === "users") {
           builder.then = (resolve: (v: unknown) => void) =>
             resolve({
               data: [
@@ -174,20 +174,20 @@ describe("GET /api/admin/players", () => {
     });
   });
 
-  it("returns players with resolved role names", async () => {
-    const { GET } = await import("@/app/api/admin/players/route");
-    const req = makeRequest("/api/admin/players");
+  it("returns users with resolved role names", async () => {
+    const { GET } = await import("@/app/api/admin/users/route");
+    const req = makeRequest("/api/admin/users");
     const res = await GET(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.players).toHaveLength(1);
-    expect(body.players[0].email).toBe("alice@test.com");
-    expect(body.players[0].roleName).toBe("admin");
+    expect(body.users).toHaveLength(1);
+    expect(body.users[0].email).toBe("alice@test.com");
+    expect(body.users[0].roleName).toBe("admin");
   });
 });
 
-describe("PATCH /api/admin/players", () => {
+describe("PATCH /api/admin/users", () => {
   beforeEach(() => {
     jest.resetModules();
     jest.doMock("@/lib/supabase/server", () => {
@@ -211,18 +211,18 @@ describe("PATCH /api/admin/players", () => {
     });
   });
 
-  it("returns 400 without playerId", async () => {
-    const { PATCH } = await import("@/app/api/admin/players/route");
-    const req = makeRequest("/api/admin/players", "PATCH", { roleId: "r1" });
+  it("returns 400 without userId", async () => {
+    const { PATCH } = await import("@/app/api/admin/users/route");
+    const req = makeRequest("/api/admin/users", "PATCH", { roleId: "r1" });
     const res = await PATCH(req);
 
     expect(res.status).toBe(400);
   });
 
   it("returns success for valid role change", async () => {
-    const { PATCH } = await import("@/app/api/admin/players/route");
-    const req = makeRequest("/api/admin/players", "PATCH", {
-      playerId: "p1",
+    const { PATCH } = await import("@/app/api/admin/users/route");
+    const req = makeRequest("/api/admin/users", "PATCH", {
+      userId: "p1",
       roleId: "r-new",
     });
     const res = await PATCH(req);
@@ -395,7 +395,7 @@ describe("GET /api/admin/entitlements", () => {
               ],
               error: null,
             });
-        } else if (table === "player_entitlements") {
+        } else if (table === "user_entitlements") {
           builder.then = (resolve: (v: unknown) => void) =>
             resolve({
               data: [{ entitlement_group_id: "eg1" }, { entitlement_group_id: "eg1" }],
@@ -415,7 +415,7 @@ describe("GET /api/admin/entitlements", () => {
     });
   });
 
-  it("returns entitlement groups with player counts", async () => {
+  it("returns entitlement groups with user counts", async () => {
     const { GET } = await import("@/app/api/admin/entitlements/route");
     const req = makeRequest("/api/admin/entitlements");
     const res = await GET(req);
@@ -424,7 +424,7 @@ describe("GET /api/admin/entitlements", () => {
     expect(res.status).toBe(200);
     expect(body.groups).toHaveLength(1);
     expect(body.groups[0].code).toBe("beta_access");
-    expect(body.groups[0].playerCount).toBe(2);
+    expect(body.groups[0].userCount).toBe(2);
     expect(body.groups[0].isActive).toBe(true);
   });
 });

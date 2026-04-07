@@ -8,6 +8,7 @@
 
 import {
   InMemoryMetricsSink,
+  SupabaseMetricsSink,
   createMetricsSink,
 } from "@/platform/observability/metrics-sink";
 import type { MetricEvent } from "@/platform/observability/types";
@@ -146,7 +147,6 @@ describe("createMetricsSink", () => {
 
   // SupabaseMetricsSink construction tested but not flushed (requires live DB)
   it("returns SupabaseMetricsSink when both URL and key provided", () => {
-    const { SupabaseMetricsSink } = require("@/platform/observability/metrics-sink");
     const sink = createMetricsSink({
       supabaseUrl: "https://example.supabase.co",
       supabaseKey: "fake-key",

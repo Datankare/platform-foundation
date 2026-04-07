@@ -80,7 +80,7 @@ export class DefaultTraceProvider implements TraceProvider {
     };
   }
 
-  createSpan(parent: TraceContext, name: string): TraceContext {
+  createSpan(parent: TraceContext, _name: string): TraceContext {
     return {
       traceId: parent.traceId,
       spanId: generateSpanId(),
