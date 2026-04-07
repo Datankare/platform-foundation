@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type {
-  PlayerProfile,
+  UserProfile,
   ProfileUpdate,
   ProfileVisibility,
 } from "@/platform/auth/profile";
 
 export interface ProfileFormState {
-  profile: PlayerProfile | null;
+  profile: UserProfile | null;
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
@@ -48,12 +48,12 @@ export interface ProfileFormActions {
  * Extracted from ProfilePage for SRP compliance (< 300 lines).
  */
 export function useProfileForm(
-  onLoadProfile: () => Promise<PlayerProfile | null>,
+  onLoadProfile: () => Promise<UserProfile | null>,
   onUpdateProfile: (
     update: ProfileUpdate
   ) => Promise<{ success: boolean; error?: string }>
 ): ProfileFormState & ProfileFormActions {
-  const [profile, setProfile] = useState<PlayerProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

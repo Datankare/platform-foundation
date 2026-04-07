@@ -195,19 +195,19 @@ export function RolesDataView({ data }: { data: any }) {
   );
 }
 
-// ── Players Data View ───────────────────────────────────────────────────
+// ── Users Data View ───────────────────────────────────────────────────
 
-export function PlayersDataView({ data }: { data: any }) {
-  const players = data?.players || [];
-  const highlighted = useHighlight(players.map((p: any) => p.id));
+export function UsersDataView({ data }: { data: any }) {
+  const users = data?.users || [];
+  const highlighted = useHighlight(users.map((p: any) => p.id));
 
   return (
     <DataTable
       headers={["Email", "Display Name", "Role", "Created"]}
-      isEmpty={players.length === 0}
-      emptyMessage="No players found."
+      isEmpty={users.length === 0}
+      emptyMessage="No users found."
     >
-      {players.map((p: any) => (
+      {users.map((p: any) => (
         <tr
           key={p.id}
           className={highlighted.has(p.id) ? "bg-green-900/30 transition-colors" : ""}
@@ -230,7 +230,7 @@ export function EntitlementsDataView({ data }: { data: any }) {
 
   return (
     <DataTable
-      headers={["Code", "Name", "Players", "Status"]}
+      headers={["Code", "Name", "Users", "Status"]}
       isEmpty={groups.length === 0}
       emptyMessage="No entitlement groups. Use the command bar to create one."
     >
@@ -243,7 +243,7 @@ export function EntitlementsDataView({ data }: { data: any }) {
             <code className="text-xs">{g.code}</code>
           </td>
           <td className={tdClass}>{g.displayName}</td>
-          <td className={tdClass}>{g.playerCount}</td>
+          <td className={tdClass}>{g.userCount}</td>
           <td className={tdClass}>
             <span
               className={`text-xs px-2 py-0.5 rounded ${

@@ -81,11 +81,11 @@ export function evaluateAge(dateOfBirth: string): AgeVerificationResult {
 }
 
 /**
- * Record age verification for a player.
- * Updates the player record with DOB, age_verified, and content_rating_level.
+ * Record age verification for a user.
+ * Updates the user record with DOB, age_verified, and content_rating_level.
  */
 export async function recordAgeVerification(
-  playerId: string,
+  userId: string,
   dateOfBirth: string
 ): Promise<{
   success: boolean;
@@ -105,11 +105,11 @@ export async function recordAgeVerification(
       : "not_required",
   };
 
-  const { error } = await supabase.from("players").update(updateData).eq("id", playerId);
+  const { error } = await supabase.from("users").update(updateData).eq("id", userId);
 
   if (error) {
     logger.error("Age verification failed", {
-      playerId,
+      userId,
       error: error.message,
       route: "platform/auth/coppa",
     });
@@ -118,8 +118,8 @@ export async function recordAgeVerification(
 
   await writeAuditLog({
     action: "profile_updated",
-    actorId: playerId,
-    targetId: playerId,
+    actorId: userId,
+    targetId: userId,
     details: {
       field: "age_verification",
       contentRatingLevel: evaluation.contentRatingLevel,
@@ -134,7 +134,7 @@ export async function recordAgeVerification(
  * Record parental consent decision.
  */
 export async function recordParentalConsent(
-  playerId: string,
+  userId: string,
   status: "granted" | "denied",
   parentEmail?: string
 ): Promise<{ success: boolean; error?: string }> {
@@ -145,11 +145,11 @@ export async function recordParentalConsent(
     parental_consent_email: parentEmail || null,
   };
 
-  const { error } = await supabase.from("players").update(updateData).eq("id", playerId);
+  const { error } = await supabase.from("users").update(updateData).eq("id", userId);
 
   if (error) {
     logger.error("Parental consent recording failed", {
-      playerId,
+      userId,
       consentStatus: status,
       error: error.message,
       route: "platform/auth/coppa",
@@ -159,8 +159,8 @@ export async function recordParentalConsent(
 
   await writeAuditLog({
     action: "consent_granted",
-    actorId: playerId,
-    targetId: playerId,
+    actorId: userId,
+    targetId: userId,
     details: { type: "parental_consent", consentStatus: status },
   });
 

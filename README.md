@@ -50,7 +50,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL SAST + Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 473 unit + integration tests, 80%+ line coverage
+- ✅ 545 unit + integration tests, 80%+ line coverage
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point automated sustainability gate
 - ✅ Versioned releases (v1.1.0)
@@ -92,22 +92,23 @@ See `CONTRIBUTING.md` for the inheritance model.
 
 ```
 platform-foundation/
-├── platform/ai/         ← LLM orchestration, provider abstraction, instrumentation (Phase 2 ✅)
-├── platform/auth/       ← Identity, permissions, RBAC, GDPR, COPPA (Phase 1 ✅)
-├── platform/moderation/ ← Content safety — blocklist, classifier, middleware (Phase 2 ✅)
-├── platform/realtime/   ← WebSocket engine (Phase 2)
-├── platform/voice/      ← Voice pipeline (Phase 3)
-├── platform/game-engine/← Application framework (Phase 5) — directory rename tracked in SECURITY_DEBT.md
-├── platform/monetization/← Monetization (Phase 6)
-├── platform/analytics/  ← Analytics engine (Phase 7)
-├── prompts/             ← Versioned LLM prompt library with tests (Phase 2 ✅)
-├── components/admin/    ← Admin UI (GenAI command bar, data views)
-├── components/auth/     ← Auth UI (login, register, profile, age gate)
-├── app/api/admin/       ← Admin API routes (roles, users, config, audit)
-├── supabase/migrations/ ← 7 database migrations
-├── docs/adr/            ← 17 ADRs
-├── scripts/             ← Sustainability gate
-└── shared/              ← Shared components, types, utils
+├── platform/ai/            ← LLM orchestration, provider abstraction, instrumentation (Phase 2 ✅)
+├── platform/auth/          ← Identity, permissions, RBAC, GDPR, COPPA (Phase 1 ✅)
+├── platform/moderation/    ← Content safety — blocklist, classifier, middleware (Phase 2 ✅)
+├── platform/observability/ ← Error tracking, tracing, metrics, health (Phase 2 ✅)
+├── platform/realtime/      ← WebSocket engine (Phase 2)
+├── platform/voice/         ← Voice pipeline (Phase 3)
+├── platform/game-engine/   ← Application framework (Phase 5) — rename tracked in SECURITY_DEBT.md
+├── platform/monetization/  ← Monetization (Phase 6)
+├── platform/analytics/     ← Analytics engine (Phase 7)
+├── prompts/                ← Versioned LLM prompt library with tests (Phase 2 ✅)
+├── components/admin/       ← Admin UI (GenAI command bar, data views)
+├── components/auth/        ← Auth UI (login, register, profile, age gate)
+├── app/api/admin/          ← Admin API routes (roles, users, config, audit)
+├── supabase/migrations/    ← 8 database migrations
+├── docs/adr/               ← 17 ADRs
+├── scripts/                ← Sustainability gate
+└── shared/                 ← Shared components, types, utils
 ```
 
 ## Quick Start
@@ -135,7 +136,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 473 tests, 80%+ coverage
+npm run test:coverage  # 545 tests, 80%+ coverage
 npm run build          # Clean build
 ./scripts/sustainability-gate.sh  # 22-point gate
 ```

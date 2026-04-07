@@ -6,9 +6,27 @@
  * - Default level: error (production-safe, minimal noise)
  * - Runtime-configurable via LOG_LEVEL environment variable
  * - Every log entry is structured JSON with mandatory fields
+ * - Trace context (traceId, spanId) auto-injected when observability is initialized
  * - Never logs: API keys, user input content, audio data, PII
  *
  * OWASP A09: Security Logging and Monitoring
+ *
+ * Log entry schema (for log drain configuration):
+ *   {
+ *     "timestamp": "2026-04-06T12:00:00.000Z",  // ISO 8601
+ *     "level": "info",                            // error | warn | info | debug
+ *     "environment": "production",                // NODE_ENV
+ *     "message": "POST /api/process → 200",       // Human-readable summary
+ *     "requestId": "k3m8x2p1",                    // Short correlation ID (legacy)
+ *     "traceId": "a1b2c3d4...",                    // 32-char hex, links all spans in a request
+ *     "spanId": "e5f6g7h8...",                     // 16-char hex, identifies this operation
+ *     "route": "/api/process",                     // API route
+ *     "method": "POST",                            // HTTP method
+ *     "status": 200,                               // HTTP status code
+ *     "durationMs": 142,                           // Request duration
+ *     "error": "TypeError: ...",                   // Error message (only on error level)
+ *     ...                                          // Additional context fields
+ *   }
  */
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "silent";
@@ -25,6 +43,8 @@ export interface LogEntry {
   timestamp: string;
   level: LogLevel;
   requestId?: string;
+  traceId?: string;
+  spanId?: string;
   route?: string;
   method?: string;
   status?: number;
@@ -77,6 +97,26 @@ export const logger = {
   warn: (message: string, fields?: Partial<LogEntry>) => emit("warn", message, fields),
   info: (message: string, fields?: Partial<LogEntry>) => emit("info", message, fields),
   debug: (message: string, fields?: Partial<LogEntry>) => emit("debug", message, fields),
+
+  /**
+   * Create a scoped logger with trace context auto-injected into every entry.
+   * Use within a request handler to correlate all log entries in a trace.
+   *
+   * Usage:
+   *   const trace = tracer.createTrace();
+   *   const log = logger.withTrace(trace.traceId, trace.spanId);
+   *   log.info("Processing request");  // traceId + spanId auto-attached
+   */
+  withTrace: (traceId: string, spanId?: string) => ({
+    error: (message: string, fields?: Partial<LogEntry>) =>
+      emit("error", message, { traceId, spanId, ...fields }),
+    warn: (message: string, fields?: Partial<LogEntry>) =>
+      emit("warn", message, { traceId, spanId, ...fields }),
+    info: (message: string, fields?: Partial<LogEntry>) =>
+      emit("info", message, { traceId, spanId, ...fields }),
+    debug: (message: string, fields?: Partial<LogEntry>) =>
+      emit("debug", message, { traceId, spanId, ...fields }),
+  }),
 
   /** Convenience: log an incoming API request */
   request: (

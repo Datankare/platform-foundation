@@ -69,7 +69,7 @@ describe("buildAdminSystemPrompt", () => {
   });
 
   it("includes all admin rules", () => {
-    const prompt = buildAdminSystemPrompt("players", "");
+    const prompt = buildAdminSystemPrompt("users", "");
     expect(prompt).toContain("Always use the provided tools");
     expect(prompt).toContain("destructive actions");
     expect(prompt).toContain("ambiguous");

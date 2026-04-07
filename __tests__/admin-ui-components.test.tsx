@@ -163,13 +163,13 @@ describe("ExecutionResultsPanel", () => {
           {
             tool: "delete_role",
             success: false,
-            error: "Cannot delete — 5 players assigned",
+            error: "Cannot delete — 5 users assigned",
           },
         ]}
         onDismiss={jest.fn()}
       />
     );
-    expect(screen.getByText("Cannot delete — 5 players assigned")).toBeDefined();
+    expect(screen.getByText("Cannot delete — 5 users assigned")).toBeDefined();
   });
 
   it("calls onDismiss", () => {
@@ -232,7 +232,7 @@ describe("AdminPromptBar", () => {
 
 import {
   RolesDataView,
-  PlayersDataView,
+  UsersDataView,
   EntitlementsDataView,
   GuestConfigDataView,
   PasswordPolicyDataView,
@@ -294,12 +294,12 @@ describe("RolesDataView", () => {
   });
 });
 
-describe("PlayersDataView", () => {
-  it("renders players table", () => {
+describe("UsersDataView", () => {
+  it("renders users table", () => {
     render(
-      <PlayersDataView
+      <UsersDataView
         data={{
-          players: [
+          users: [
             {
               id: "p1",
               email: "alice@test.com",
@@ -315,9 +315,9 @@ describe("PlayersDataView", () => {
     expect(screen.getByText("Alice")).toBeDefined();
   });
 
-  it("shows empty message when no players", () => {
-    render(<PlayersDataView data={{ players: [] }} />);
-    expect(screen.getByText(/No players found/)).toBeDefined();
+  it("shows empty message when no users", () => {
+    render(<UsersDataView data={{ users: [] }} />);
+    expect(screen.getByText(/No users found/)).toBeDefined();
   });
 });
 
@@ -332,7 +332,7 @@ describe("EntitlementsDataView", () => {
               code: "beta_access",
               displayName: "Beta Access",
               isActive: true,
-              playerCount: 5,
+              userCount: 5,
             },
           ],
         }}

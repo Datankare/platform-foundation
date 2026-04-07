@@ -81,14 +81,14 @@ export async function handleDeleteRole(
   if (!role) return { success: false, error: `Role "${role_name}" not found` };
 
   const { count } = await supabase
-    .from("players")
+    .from("users")
     .select("id", { count: "exact", head: true })
     .eq("role_id", role.id);
 
   if ((count || 0) > 0) {
     return {
       success: false,
-      error: `Cannot delete "${role_name}" — ${count} players assigned. Reassign first.`,
+      error: `Cannot delete "${role_name}" — ${count} users assigned. Reassign first.`,
     };
   }
 
@@ -229,12 +229,12 @@ export async function handleAssignPermissions(
   };
 }
 
-export async function handleChangePlayerRole(
+export async function handleChangeUserRole(
   input: Record<string, any>,
   actorId: string
 ): Promise<ActionResult> {
   const supabase = getSupabaseServiceClient();
-  const { player_identifier, new_role } = input;
+  const { user_identifier, new_role } = input;
 
   const { data: role } = await supabase
     .from("roles")
@@ -245,23 +245,23 @@ export async function handleChangePlayerRole(
   if (!role) return { success: false, error: `Role "${new_role}" not found` };
 
   const { error } = await supabase
-    .from("players")
+    .from("users")
     .update({ role_id: role.id })
-    .or(`email.eq.${player_identifier},id.eq.${player_identifier}`);
+    .or(`email.eq.${user_identifier},id.eq.${user_identifier}`);
 
   if (error) return { success: false, error: error.message };
 
-  invalidatePermissions(player_identifier);
+  invalidatePermissions(user_identifier);
 
   await writeAuditLog({
     action: "role_changed",
     actorId,
-    details: { prompt_action: true, player_identifier, new_role },
+    details: { prompt_action: true, user_identifier, new_role },
   });
 
   return {
     success: true,
-    result: `Player "${player_identifier}" assigned to "${new_role}"`,
+    result: `User "${user_identifier}" assigned to "${new_role}"`,
   };
 }
 
@@ -339,7 +339,7 @@ export async function handleUpdatePasswordPolicy(
   const { error } = await supabase.from("password_policy").upsert(
     {
       role_id: null,
-      player_id: null,
+      user_id: null,
       min_length: input.min_length,
       rotation_days: input.rotation_days,
       require_uppercase: input.require_uppercase,
@@ -348,7 +348,7 @@ export async function handleUpdatePasswordPolicy(
       require_special: input.require_special,
       password_history_count: input.password_history_count,
     },
-    { onConflict: "role_id,player_id" }
+    { onConflict: "role_id,user_id" }
   );
 
   if (error) return { success: false, error: error.message };

@@ -135,8 +135,10 @@ export interface OrchestratorOptions {
 export interface AICallMetrics {
   /** Use case label */
   useCase: string;
-  /** Request ID for correlation */
+  /** Request ID for correlation (legacy — use traceId for distributed tracing) */
   requestId: string;
+  /** Trace ID for distributed tracing (ADR-014) */
+  traceId?: string;
   /** Model used */
   model: string;
   /** Model tier */
