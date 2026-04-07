@@ -31,6 +31,10 @@ export { RedisCacheProvider } from "./redis-cache";
 export type { RedisCacheConfig } from "./redis-cache";
 export { createCacheHealthProbe } from "./health-probe";
 
+// AI-specific cache (GenAI Principle P4: cached AI responses)
+export { AICache, buildAICacheKey, getAICache, resetAICache } from "./ai-cache";
+export type { AICacheConfig, AICacheMetricsCallback } from "./ai-cache";
+
 import { InMemoryCacheProvider } from "./memory-cache";
 import { RedisCacheProvider } from "./redis-cache";
 import type { CacheConfig, CacheProvider } from "./types";

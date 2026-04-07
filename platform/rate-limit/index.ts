@@ -18,6 +18,14 @@ export type {
 } from "./types";
 export { DEFAULT_RULES } from "./types";
 
+// Token-aware extension (GenAI Principle P5: cost tracking, P10: no late discovery)
+export type {
+  TokenBudgetRule,
+  TokenAwareRateLimitResult,
+  TokenAwareRateLimiter,
+} from "./token-aware";
+export { TOKEN_BUDGET_RULES } from "./token-aware";
+
 export { InMemoryRateLimiter } from "./memory-limiter";
 export { RedisRateLimiter } from "./redis-limiter";
 export type { RedisRateLimiterConfig } from "./redis-limiter";

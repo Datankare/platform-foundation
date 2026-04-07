@@ -15,3 +15,6 @@ export type {
 } from "./types";
 
 export { CachePurgeHandler, PurgePipeline, RateLimitPurgeHandler } from "./hard-purge";
+
+// AI data purge (GenAI Principle P2, P5: AI data is user-deletable)
+export { AIMetricsPurgeHandler, AICachePurgeHandler } from "./ai-purge-handler";
