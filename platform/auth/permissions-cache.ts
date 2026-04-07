@@ -36,7 +36,7 @@ const MAX_ENTRIES = 10_000;
 const cache = new Map<string, CacheEntry>();
 
 /**
- * Get cached permissions for a player. Resolves from DB on cache miss.
+ * Get cached permissions for a user. Resolves from DB on cache miss.
  */
 export async function getCachedPermissions(
   cognitoSub: string,
@@ -66,7 +66,7 @@ export async function getCachedPermissions(
 }
 
 /**
- * Check if a player has a specific permission (cached).
+ * Check if a user has a specific permission (cached).
  */
 export async function hasCachedPermission(
   cognitoSub: string,
@@ -78,7 +78,7 @@ export async function hasCachedPermission(
 }
 
 /**
- * Invalidate cached permissions for a player.
+ * Invalidate cached permissions for a user.
  * Call after role changes, entitlement grants/revokes.
  */
 export function invalidatePermissions(cognitoSub: string): void {
@@ -87,7 +87,7 @@ export function invalidatePermissions(cognitoSub: string): void {
 
 /**
  * Clear the entire cache.
- * Useful for admin operations that affect many players.
+ * Useful for admin operations that affect many users.
  */
 export function clearPermissionsCache(): void {
   cache.clear();

@@ -10,7 +10,6 @@ import {
   generateTraceId,
   generateSpanId,
 } from "@/platform/observability/tracing";
-import type { TraceContext } from "@/platform/observability/types";
 
 describe("generateTraceId", () => {
   it("generates a 32-character hex string (16 bytes)", () => {

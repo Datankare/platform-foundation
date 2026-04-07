@@ -20,6 +20,11 @@ const eslintConfig = [
         "warn",
         { max: 300, skipBlankLines: true, skipComments: true },
       ],
+      // Allow _prefixed params in interface implementations (NoopErrorReporter, etc.)
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
     },
   },
 ];

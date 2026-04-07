@@ -84,8 +84,8 @@ beforeEach(() => {
 // ── Permissions Engine Tests ────────────────────────────────────────────
 
 describe("resolvePermissions", () => {
-  it("returns null when player not found", async () => {
-    queryResponses["players:single"] = { data: null, error: { message: "Not found" } };
+  it("returns null when user not found", async () => {
+    queryResponses["users:single"] = { data: null, error: { message: "Not found" } };
     const { resolvePermissions } = await import("@/platform/auth/permissions");
     const result = await resolvePermissions("unknown-sub");
     expect(result).toBeNull();
@@ -131,7 +131,7 @@ describe("writeAuditLog", () => {
     await writeAuditLog({
       action: "role_changed",
       actorId: "admin-1",
-      targetId: "player-1",
+      targetId: "user-1",
       details: { oldRole: "free", newRole: "monthly" },
     });
 
@@ -143,7 +143,7 @@ describe("writeAuditLog", () => {
     const { writeAuditLog } = await import("@/platform/auth/audit");
 
     await expect(
-      writeAuditLog({ action: "login_success", actorId: "player-1" })
+      writeAuditLog({ action: "login_success", actorId: "user-1" })
     ).resolves.toBeUndefined();
   });
 });
@@ -151,46 +151,46 @@ describe("writeAuditLog", () => {
 // ── Entitlements Tests ──────────────────────────────────────────────────
 
 describe("grantEntitlement", () => {
-  it("calls from(player_entitlements) with upsert", async () => {
-    queryResponses["player_entitlements:data"] = { error: null };
+  it("calls from(user_entitlements) with upsert", async () => {
+    queryResponses["user_entitlements:data"] = { error: null };
     queryResponses["audit_log:data"] = { error: null };
 
     const { grantEntitlement } = await import("@/platform/auth/entitlements");
     const result = await grantEntitlement({
-      playerId: "player-1",
+      userId: "user-1",
       entitlementGroupId: "group-1",
       grantedBy: "admin-1",
       expiresAt: "2026-12-31T23:59:59Z",
     });
 
     expect(result.success).toBe(true);
-    expect(mockFrom).toHaveBeenCalledWith("player_entitlements");
+    expect(mockFrom).toHaveBeenCalledWith("user_entitlements");
   });
 });
 
 describe("revokeEntitlement", () => {
-  it("calls from(player_entitlements) with update", async () => {
-    queryResponses["player_entitlements:data"] = { error: null };
+  it("calls from(user_entitlements) with update", async () => {
+    queryResponses["user_entitlements:data"] = { error: null };
     queryResponses["audit_log:data"] = { error: null };
 
     const { revokeEntitlement } = await import("@/platform/auth/entitlements");
     const result = await revokeEntitlement({
-      playerId: "player-1",
+      userId: "user-1",
       entitlementGroupId: "group-1",
       revokedBy: "admin-1",
     });
 
     expect(result.success).toBe(true);
-    expect(mockFrom).toHaveBeenCalledWith("player_entitlements");
+    expect(mockFrom).toHaveBeenCalledWith("user_entitlements");
   });
 });
 
-describe("getPlayerEntitlements", () => {
-  it("returns empty array when player has no entitlements", async () => {
-    queryResponses["player_entitlements:data"] = { data: [], error: null };
+describe("getUserEntitlements", () => {
+  it("returns empty array when user has no entitlements", async () => {
+    queryResponses["user_entitlements:data"] = { data: [], error: null };
 
-    const { getPlayerEntitlements } = await import("@/platform/auth/entitlements");
-    const result = await getPlayerEntitlements("player-1");
+    const { getUserEntitlements } = await import("@/platform/auth/entitlements");
+    const result = await getUserEntitlements("user-1");
 
     expect(result).toHaveLength(0);
   });

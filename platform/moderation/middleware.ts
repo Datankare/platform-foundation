@@ -18,7 +18,7 @@
  *   const result = await screenContent(text, { direction: "input", requestId });
  *   if (result.action === "block") { ... }
  *
- *   // Screen AI output before sending to player
+ *   // Screen AI output before sending to user
  *   const result = await screenContent(aiResponse, { direction: "output", requestId });
  */
 

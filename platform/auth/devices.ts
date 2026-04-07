@@ -1,7 +1,7 @@
 /**
  * platform/auth/devices.ts — Device registry service
  *
- * Tracks devices a player has signed in from. Integrates with
+ * Tracks devices a user has signed in from. Integrates with
  * the AuthProvider's device management (Cognito tracks devices)
  * and stores device records in Supabase for the profile UI.
  *
@@ -14,7 +14,7 @@ import { logger } from "@/lib/logger";
 
 export interface DeviceRecord {
   id: string;
-  playerId: string;
+  userId: string;
   deviceId: string;
   deviceName: string | null;
   isTrusted: boolean;
@@ -23,29 +23,29 @@ export interface DeviceRecord {
 }
 
 /**
- * Register or update a device for a player.
+ * Register or update a device for a user.
  * Called on every sign-in to track last used time.
  */
 export async function registerDevice(
-  playerId: string,
+  userId: string,
   deviceId: string,
   deviceName?: string
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseServiceClient();
 
-  const { error } = await supabase.from("player_devices").upsert(
+  const { error } = await supabase.from("user_devices").upsert(
     {
-      player_id: playerId,
+      user_id: userId,
       device_id: deviceId,
       device_name: deviceName || null,
       last_used_at: new Date().toISOString(),
     },
-    { onConflict: "player_id,device_id" }
+    { onConflict: "user_id,device_id" }
   );
 
   if (error) {
     logger.error("Device registration failed", {
-      playerId,
+      userId,
       deviceId,
       error: error.message,
       route: "platform/auth/devices",
@@ -55,8 +55,8 @@ export async function registerDevice(
 
   await writeAuditLog({
     action: "device_registered",
-    actorId: playerId,
-    targetId: playerId,
+    actorId: userId,
+    targetId: userId,
     details: { deviceId, deviceName },
   });
 
@@ -64,22 +64,22 @@ export async function registerDevice(
 }
 
 /**
- * List all devices for a player.
+ * List all devices for a user.
  */
-export async function listPlayerDevices(playerId: string): Promise<DeviceRecord[]> {
+export async function listUserDevices(userId: string): Promise<DeviceRecord[]> {
   const supabase = getSupabaseServiceClient();
 
   const { data, error } = await supabase
-    .from("player_devices")
+    .from("user_devices")
     .select("*")
-    .eq("player_id", playerId)
+    .eq("user_id", userId)
     .order("last_used_at", { ascending: false });
 
   if (error || !data) return [];
 
   return data.map((row: Record<string, unknown>) => ({
     id: row.id as string,
-    playerId: row.player_id as string,
+    userId: row.user_id as string,
     deviceId: row.device_id as string,
     deviceName: row.device_name as string | null,
     isTrusted: (row.is_trusted as boolean) || false,
@@ -89,23 +89,23 @@ export async function listPlayerDevices(playerId: string): Promise<DeviceRecord[
 }
 
 /**
- * Remove a device from the player's device list.
+ * Remove a device from the user's device list.
  */
 export async function removeDevice(
-  playerId: string,
+  userId: string,
   deviceId: string
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseServiceClient();
 
   const { error } = await supabase
-    .from("player_devices")
+    .from("user_devices")
     .delete()
-    .eq("player_id", playerId)
+    .eq("user_id", userId)
     .eq("device_id", deviceId);
 
   if (error) {
     logger.error("Device removal failed", {
-      playerId,
+      userId,
       deviceId,
       error: error.message,
       route: "platform/auth/devices",
@@ -115,8 +115,8 @@ export async function removeDevice(
 
   await writeAuditLog({
     action: "device_removed",
-    actorId: playerId,
-    targetId: playerId,
+    actorId: userId,
+    targetId: userId,
     details: { deviceId },
   });
 

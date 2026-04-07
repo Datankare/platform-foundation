@@ -2,7 +2,7 @@
  * platform/auth/data-export.ts — GDPR data export
  *
  * Implements the right of access (GDPR Article 15).
- * Players can request a copy of all their stored data.
+ * Users can request a copy of all their stored data.
  *
  * Returns a structured JSON object with data from all
  * registered export modules.
@@ -16,9 +16,9 @@ import { writeAuditLog } from "@/platform/auth/audit";
 export interface ExportModule {
   moduleName: string;
   description: string;
-  /** Collects all data this module holds for the player */
+  /** Collects all data this module holds for the user */
   collectData: (
-    playerId: string
+    userId: string
   ) => Promise<{ data: Record<string, unknown>; error?: string }>;
 }
 
@@ -47,59 +47,59 @@ export function getExportModules(): ExportModule[] {
 }
 
 /**
- * Export all player data across all registered modules.
+ * Export all user data across all registered modules.
  * Returns a structured JSON object suitable for download.
  */
-export async function exportPlayerData(
-  playerId: string
+export async function exportUserData(
+  userId: string
 ): Promise<{ data: Record<string, unknown>; errors: string[] }> {
   const supabase = getSupabaseServiceClient();
   const errors: string[] = [];
   const exportData: Record<string, unknown> = {};
 
-  // 1. Core player data
-  const { data: player, error: playerError } = await supabase
-    .from("players")
+  // 1. Core user data
+  const { data: user, error: userError } = await supabase
+    .from("users")
     .select("*")
-    .eq("id", playerId)
+    .eq("id", userId)
     .is("deleted_at", null)
     .single();
 
-  if (playerError) {
-    errors.push(`players: ${playerError.message}`);
+  if (userError) {
+    errors.push(`users: ${userError.message}`);
   } else {
-    exportData.profile = player;
+    exportData.profile = user;
   }
 
   // 2. Consent records
   const { data: consents } = await supabase
     .from("consent_records")
     .select("*")
-    .eq("player_id", playerId);
+    .eq("user_id", userId);
 
   exportData.consents = consents || [];
 
   // 3. Devices
   const { data: devices } = await supabase
-    .from("player_devices")
+    .from("user_devices")
     .select("*")
-    .eq("player_id", playerId);
+    .eq("user_id", userId);
 
   exportData.devices = devices || [];
 
   // 4. Entitlements
   const { data: entitlements } = await supabase
-    .from("player_entitlements")
+    .from("user_entitlements")
     .select("*")
-    .eq("player_id", playerId);
+    .eq("user_id", userId);
 
   exportData.entitlements = entitlements || [];
 
-  // 5. Audit log (player as actor or target)
+  // 5. Audit log (user as actor or target)
   const { data: auditEntries } = await supabase
     .from("audit_log")
     .select("*")
-    .or(`actor_id.eq.${playerId},target_id.eq.${playerId}`)
+    .or(`actor_id.eq.${userId},target_id.eq.${userId}`)
     .order("created_at", { ascending: false })
     .limit(500);
 
@@ -107,7 +107,7 @@ export async function exportPlayerData(
 
   // 6. Registered module data
   for (const mod of registeredExportModules) {
-    const result = await mod.collectData(playerId);
+    const result = await mod.collectData(userId);
     if (result.error) {
       errors.push(`${mod.moduleName}: ${result.error}`);
     } else {
@@ -118,7 +118,7 @@ export async function exportPlayerData(
   // 7. Metadata
   exportData._meta = {
     exportedAt: new Date().toISOString(),
-    playerId,
+    userId,
     moduleCount: registeredExportModules.length + 5,
     format: "JSON",
     version: "1.0",
@@ -127,8 +127,8 @@ export async function exportPlayerData(
   // 8. Audit log the export
   await writeAuditLog({
     action: "profile_updated",
-    actorId: playerId,
-    targetId: playerId,
+    actorId: userId,
+    targetId: userId,
     details: {
       type: "data_export",
       moduleCount: registeredExportModules.length + 5,
@@ -140,13 +140,13 @@ export async function exportPlayerData(
 }
 
 /**
- * Get the size estimate of a player's data export.
+ * Get the size estimate of a user's data export.
  * Useful for showing the user before they trigger the export.
  */
 export async function estimateExportSize(
-  playerId: string
+  userId: string
 ): Promise<{ estimatedBytes: number }> {
-  const { data } = await exportPlayerData(playerId);
+  const { data } = await exportUserData(userId);
   const json = JSON.stringify(data);
   return { estimatedBytes: new TextEncoder().encode(json).length };
 }

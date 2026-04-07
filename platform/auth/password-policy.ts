@@ -1,7 +1,7 @@
 /**
  * platform/auth/password-policy.ts — Password policy service
  *
- * Resolves the effective password policy for a player using a
+ * Resolves the effective password policy for a user using a
  * three-level cascade: individual → role → global default.
  *
  * Schema in Phase 1, enforcement in Phase 2.
@@ -46,11 +46,11 @@ function toPolicy(row: Record<string, unknown>): PasswordPolicy {
 }
 
 /**
- * Resolve the effective password policy for a player.
+ * Resolve the effective password policy for a user.
  * Cascade: individual override → role override → global default.
  */
 export async function getEffectivePasswordPolicy(
-  playerId: string,
+  userId: string,
   roleId: string
 ): Promise<PasswordPolicy> {
   const supabase = getSupabaseServiceClient();
@@ -59,7 +59,7 @@ export async function getEffectivePasswordPolicy(
   const { data: individual } = await supabase
     .from("password_policy")
     .select("*")
-    .eq("player_id", playerId)
+    .eq("user_id", userId)
     .single();
 
   if (individual) return toPolicy(individual);
@@ -73,19 +73,19 @@ export async function getEffectivePasswordPolicy(
 
   if (rolePolicy) return toPolicy(rolePolicy);
 
-  // 3. Check for global default (both role_id and player_id are null)
+  // 3. Check for global default (both role_id and user_id are null)
   const { data: global } = await supabase
     .from("password_policy")
     .select("*")
     .is("role_id", null)
-    .is("player_id", null)
+    .is("user_id", null)
     .single();
 
   if (global) return toPolicy(global);
 
   // 4. Hardcoded fallback (should never reach here if seed data exists)
   logger.warn("No password policy found, using hardcoded default", {
-    playerId,
+    userId,
     roleId,
     route: "platform/auth/password-policy",
   });

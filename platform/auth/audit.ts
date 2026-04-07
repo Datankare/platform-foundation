@@ -84,12 +84,12 @@ export async function writeAuditLog(entry: AuditEntry): Promise<void> {
 }
 
 /**
- * Read audit log entries for a specific player.
- * Returns entries where the player is either actor or target.
+ * Read audit log entries for a specific user.
+ * Returns entries where the user is either actor or target.
  * Admin only — RLS enforces this at the database level.
  */
-export async function getAuditLogForPlayer(
-  playerId: string,
+export async function getAuditLogForUser(
+  userId: string,
   limit: number = 50
 ): Promise<AuditEntry[]> {
   const supabase = getSupabaseServiceClient();
@@ -97,7 +97,7 @@ export async function getAuditLogForPlayer(
   const { data, error } = await supabase
     .from("audit_log")
     .select("action, actor_id, target_id, details, ip_address, user_agent, created_at")
-    .or(`actor_id.eq.${playerId},target_id.eq.${playerId}`)
+    .or(`actor_id.eq.${userId},target_id.eq.${userId}`)
     .order("created_at", { ascending: false })
     .limit(limit);
 

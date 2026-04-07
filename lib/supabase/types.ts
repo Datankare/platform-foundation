@@ -17,7 +17,7 @@ type TableDef<R extends Record<string, any>> = {
 export interface Database {
   public: {
     Tables: {
-      players: TableDef<{
+      users: TableDef<{
         id: string;
         cognito_sub: string | null;
         guest_token: string | null;
@@ -64,9 +64,9 @@ export interface Database {
         permission_id: string;
         [key: string]: any;
       }>;
-      player_entitlements: TableDef<{
+      user_entitlements: TableDef<{
         id: string;
-        player_id: string;
+        user_id: string;
         entitlement_group_id: string;
         granted_by: string | null;
         expires_at: string | null;
@@ -87,12 +87,12 @@ export interface Database {
       }>;
       consent_records: TableDef<{
         id: string;
-        player_id: string;
+        user_id: string;
         [key: string]: any;
       }>;
-      player_devices: TableDef<{
+      user_devices: TableDef<{
         id: string;
-        player_id: string;
+        user_id: string;
         device_id: string;
         [key: string]: any;
       }>;

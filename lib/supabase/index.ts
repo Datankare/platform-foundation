@@ -3,9 +3,9 @@
  *
  * Import from here:
  *   import { getSupabaseBrowserClient } from "@/lib/supabase";
- *   import { getSupabaseServiceClient, getSupabasePlayerClient } from "@/lib/supabase";
+ *   import { getSupabaseServiceClient, getSupabaseUserClient } from "@/lib/supabase";
  */
 
 export { getSupabaseBrowserClient } from "@/lib/supabase/client";
-export { getSupabaseServiceClient, getSupabasePlayerClient } from "@/lib/supabase/server";
+export { getSupabaseServiceClient, getSupabaseUserClient } from "@/lib/supabase/server";
 export type { Database } from "@/lib/supabase/types";
