@@ -121,6 +121,7 @@ export class SupabaseHealthProbe implements HealthProbe {
   }
 
   async check(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<HealthCheckResult> {
+    /* istanbul ignore next -- requires live Supabase */
     const start = Date.now();
     try {
       const controller = new AbortController();
@@ -182,6 +183,7 @@ export class LLMProviderHealthProbe implements HealthProbe {
       };
     }
 
+    /* istanbul ignore next -- requires live Anthropic API */
     const start = Date.now();
     try {
       const controller = new AbortController();
