@@ -145,14 +145,14 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ### Sprint Plan
 
-| Sprint | Scope                               | Depends On                          |
-| ------ | ----------------------------------- | ----------------------------------- |
-| 1      | LLM Orchestration + Prompt Registry | —                                   |
-| 2      | Content Safety Refactor             | Sprint 1 (uses orchestrator)        |
-| 3      | Observability Fabric                | Sprint 1 (instruments orchestrator) |
-| 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             |
-| 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        |
-| 6      | Integration Tests + Phase Gate      | All prior sprints                   |
+| Sprint | Scope                               | Depends On                          | Status      |
+| ------ | ----------------------------------- | ----------------------------------- | ----------- |
+| 1      | LLM Orchestration + Prompt Registry | —                                   | ✅ Complete |
+| 2      | Content Safety Refactor             | Sprint 1 (uses orchestrator)        | ✅ Complete |
+| 3      | Observability Fabric + TASK-018     | Sprint 1 (instruments orchestrator) | ✅ Complete |
+| 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             | ⏳ Next     |
+| 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        | ⏳ Upcoming |
+| 6      | Integration Tests + Phase Gate      | All prior sprints                   | ⏳ Upcoming |
 
 ### Real-Time Communication
 
@@ -484,3 +484,4 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 | 1.1.0   | 2026-04-03 | Raman Sud | Pre-Phase 2 architectural review. Added ADR-014 (Observability), ADR-015 (GenAI-Native Stack), ADR-016 (Content Safety). All three woven into Phases 2–9 as cross-phase fabric with detailed per-phase deliverables. Added standing rules 9–11.                                                                               |
 | 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                                                                                                            |
 | 2.1.0   | 2026-04-05 | Raman Sud | GenAI-native surface map audit (ADR-017). 10 gaps identified and placed: output screening (P2), streaming (P2), multi-language AI (P3), eval framework (P3), user context (P4), explainability (P4), agentic framework (P5), multimodal (P5), A/B testing (P6), feedback loop (P7). Standing rules 11 updated, rule 12 added. |
+| 2.2.0   | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric (platform/observability/ — error tracking, tracing, metrics, health). TASK-018 resolved (player→user rename, 52 files + migration 008). Docs generalized. PF tests: 473→541.                                                                                                          |
