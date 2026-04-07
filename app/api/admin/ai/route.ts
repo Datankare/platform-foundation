@@ -66,8 +66,7 @@ function getToolsForPanel(panel: string): AdminTool[] {
       },
       {
         name: "delete_role",
-        description:
-          "Delete a role. Returns impact analysis (how many players affected).",
+        description: "Delete a role. Returns impact analysis (how many users affected).",
         input_schema: {
           type: "object",
           properties: {
@@ -112,72 +111,71 @@ function getToolsForPanel(panel: string): AdminTool[] {
         },
       },
       {
-        name: "assign_role_to_player",
-        description: "Assign a role to one or more players.",
+        name: "assign_role_to_user",
+        description: "Assign a role to one or more users.",
         input_schema: {
           type: "object",
           properties: {
             role_name: { type: "string", description: "Role to assign" },
-            player_ids: {
+            user_ids: {
               type: "array",
               items: { type: "string" },
-              description: "Player IDs to assign the role to",
+              description: "User IDs to assign the role to",
             },
-            player_emails: {
+            user_emails: {
               type: "array",
               items: { type: "string" },
-              description: "Player emails to assign the role to",
+              description: "User emails to assign the role to",
             },
           },
           required: ["role_name"],
         },
       },
     ],
-    players: [
+    users: [
       {
-        name: "change_player_role",
-        description: "Change a player's role.",
+        name: "change_user_role",
+        description: "Change a user's role.",
         input_schema: {
           type: "object",
           properties: {
-            player_identifier: {
+            user_identifier: {
               type: "string",
-              description: "Player email or ID",
+              description: "User email or ID",
             },
             new_role: { type: "string", description: "New role name" },
           },
-          required: ["player_identifier", "new_role"],
+          required: ["user_identifier", "new_role"],
         },
       },
       {
         name: "bulk_change_role",
-        description: "Change role for multiple players at once.",
+        description: "Change role for multiple users at once.",
         input_schema: {
           type: "object",
           properties: {
-            player_identifiers: {
+            user_identifiers: {
               type: "array",
               items: { type: "string" },
-              description: "Player emails or IDs",
+              description: "User emails or IDs",
             },
             new_role: { type: "string", description: "New role name" },
           },
-          required: ["player_identifiers", "new_role"],
+          required: ["user_identifiers", "new_role"],
         },
       },
       {
-        name: "delete_player",
-        description:
-          "Soft-delete a player (GDPR). Anonymizes PII, preserves audit trail.",
+        name: "delete_user",
+        description: "Soft-delete a user (GDPR). Anonymizes PII, preserves audit trail.",
         input_schema: {
           type: "object",
           properties: {
-            player_identifier: {
+            user_identifier: {
               type: "string",
-              description: "Player email or ID",
+              description: "User email or ID",
             },
           },
-          required: ["player_identifier"],
+          required: ["user_identifier"],
         },
       },
     ],
@@ -201,38 +199,38 @@ function getToolsForPanel(panel: string): AdminTool[] {
       },
       {
         name: "grant_entitlement",
-        description: "Grant an entitlement to players.",
+        description: "Grant an entitlement to users.",
         input_schema: {
           type: "object",
           properties: {
             entitlement_code: { type: "string", description: "Entitlement code" },
-            player_identifiers: {
+            user_identifiers: {
               type: "array",
               items: { type: "string" },
-              description: "Player emails or IDs",
+              description: "User emails or IDs",
             },
             expires_in_days: {
               type: "number",
               description: "Optional: auto-expire after N days",
             },
           },
-          required: ["entitlement_code", "player_identifiers"],
+          required: ["entitlement_code", "user_identifiers"],
         },
       },
       {
         name: "revoke_entitlement",
-        description: "Revoke an entitlement from players.",
+        description: "Revoke an entitlement from users.",
         input_schema: {
           type: "object",
           properties: {
             entitlement_code: { type: "string", description: "Entitlement code" },
-            player_identifiers: {
+            user_identifiers: {
               type: "array",
               items: { type: "string" },
-              description: "Player emails or IDs",
+              description: "User emails or IDs",
             },
           },
-          required: ["entitlement_code", "player_identifiers"],
+          required: ["entitlement_code", "user_identifiers"],
         },
       },
       {
@@ -318,13 +316,13 @@ async function getContextForPanel(panel: string): Promise<string> {
     return `Current roles: ${JSON.stringify(roles || [])}\nAvailable permissions: ${JSON.stringify(perms || [])}`;
   }
 
-  if (panel === "players") {
+  if (panel === "users") {
     const { data: roles } = await supabase.from("roles").select("name, display_name");
     const { count } = await supabase
-      .from("players")
+      .from("users")
       .select("id", { count: "exact", head: true })
       .is("deleted_at", null);
-    return `Total active players: ${count || 0}\nRoles: ${JSON.stringify(roles || [])}`;
+    return `Total active users: ${count || 0}\nRoles: ${JSON.stringify(roles || [])}`;
   }
 
   if (panel === "entitlements") {

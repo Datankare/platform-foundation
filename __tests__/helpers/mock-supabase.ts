@@ -66,7 +66,7 @@ export function createQueryBuilder(
  *
  * Usage:
  *   const mockClient = createMockSupabase({
- *     players: { data: [{ id: "p1", role_id: "r1" }], error: null },
+ *     users: { data: [{ id: "p1", role_id: "r1" }], error: null },
  *     roles: { data: [{ id: "r1", name: "admin" }], error: null },
  *   });
  */
@@ -94,7 +94,7 @@ export function createMockSupabase(
  *
  * Usage:
  *   jest.mock("@/lib/supabase/server", () =>
- *     mockSupabaseModule({ players: { data: [...], error: null } })
+ *     mockSupabaseModule({ users: { data: [...], error: null } })
  *   );
  */
 export function mockSupabaseModule(tableResponses: Record<string, MockResponse> = {}) {

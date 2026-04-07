@@ -3,11 +3,11 @@
  *
  * Implements the right to erasure (GDPR Article 17) using a
  * deletion manifest pattern. Each module registers what data
- * it holds for a player, and the manifest coordinates deletion
+ * it holds for a user, and the manifest coordinates deletion
  * across all registered modules.
  *
  * Two-phase approach:
- * 1. Soft delete — mark player as deleted_at, anonymize PII
+ * 1. Soft delete — mark user as deleted_at, anonymize PII
  * 2. Hard purge — scheduled job removes all data after retention period
  *
  * Sprint 5, Tasks 5.1 + 5.2
@@ -22,16 +22,16 @@ export interface DeletionModule {
   description: string;
   tables: string[];
   /** Soft delete: anonymize PII, set deleted_at */
-  softDelete: (playerId: string) => Promise<{ success: boolean; error?: string }>;
+  softDelete: (userId: string) => Promise<{ success: boolean; error?: string }>;
   /** Hard purge: permanently remove all data */
-  hardPurge: (playerId: string) => Promise<{ success: boolean; error?: string }>;
+  hardPurge: (userId: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const registeredModules: DeletionModule[] = [];
 
 /**
  * Register a module's deletion handler.
- * Called at startup by each module that stores player data.
+ * Called at startup by each module that stores user data.
  */
 export function registerDeletionModule(module: DeletionModule): void {
   const existing = registeredModules.find((m) => m.moduleName === module.moduleName);
@@ -55,20 +55,20 @@ export function getDeletionModules(): DeletionModule[] {
 }
 
 /**
- * Phase 1: Soft delete a player.
- * - Sets deleted_at on the player record
+ * Phase 1: Soft delete a user.
+ * - Sets deleted_at on the user record
  * - Anonymizes PII (email, display_name, real_name)
  * - Runs soft delete on all registered modules
  * - Audit logged
  */
-export async function softDeletePlayer(
-  playerId: string,
+export async function softDeleteUser(
+  userId: string,
   requestedBy: string
 ): Promise<{ success: boolean; errors: string[] }> {
   const supabase = getSupabaseServiceClient();
   const errors: string[] = [];
 
-  // 1. Anonymize player record
+  // 1. Anonymize user record
   const anonymized = {
     email: null,
     display_name: "[deleted]",
@@ -78,19 +78,19 @@ export async function softDeletePlayer(
     deleted_at: new Date().toISOString(),
   };
 
-  const { error: playerError } = await supabase
-    .from("players")
+  const { error: userError } = await supabase
+    .from("users")
     .update(anonymized)
-    .eq("id", playerId)
+    .eq("id", userId)
     .is("deleted_at", null);
 
-  if (playerError) {
-    errors.push(`players: ${playerError.message}`);
+  if (userError) {
+    errors.push(`users: ${userError.message}`);
   }
 
   // 2. Run soft delete on all registered modules
   for (const mod of registeredModules) {
-    const result = await mod.softDelete(playerId);
+    const result = await mod.softDelete(userId);
     if (!result.success) {
       errors.push(`${mod.moduleName}: ${result.error || "Unknown error"}`);
     }
@@ -98,7 +98,7 @@ export async function softDeletePlayer(
 
   // 3. Record in deletion manifest
   const { error: manifestError } = await supabase.from("deletion_manifest").insert({
-    player_id: playerId,
+    user_id: userId,
     requested_by: requestedBy,
     phase: "soft_delete",
     status: errors.length === 0 ? "completed" : "partial",
@@ -113,7 +113,7 @@ export async function softDeletePlayer(
 
   if (manifestError) {
     logger.error("Failed to write deletion manifest", {
-      playerId,
+      userId,
       error: manifestError.message,
       route: "platform/auth/gdpr-deletion",
     });
@@ -123,7 +123,7 @@ export async function softDeletePlayer(
   await writeAuditLog({
     action: "account_deleted",
     actorId: requestedBy,
-    targetId: playerId,
+    targetId: userId,
     details: {
       phase: "soft_delete",
       moduleCount: registeredModules.length,
@@ -135,32 +135,29 @@ export async function softDeletePlayer(
 }
 
 /**
- * Phase 2: Hard purge a player's data.
+ * Phase 2: Hard purge a user's data.
  * Called by a scheduled job after the retention period.
  * Permanently removes all data across all modules.
  */
-export async function hardPurgePlayer(
-  playerId: string
+export async function hardPurgeUser(
+  userId: string
 ): Promise<{ success: boolean; errors: string[] }> {
   const supabase = getSupabaseServiceClient();
   const errors: string[] = [];
 
   // 1. Run hard purge on all registered modules
   for (const mod of registeredModules) {
-    const result = await mod.hardPurge(playerId);
+    const result = await mod.hardPurge(userId);
     if (!result.success) {
       errors.push(`${mod.moduleName}: ${result.error || "Unknown error"}`);
     }
   }
 
-  // 2. Delete player record
-  const { error: playerError } = await supabase
-    .from("players")
-    .delete()
-    .eq("id", playerId);
+  // 2. Delete user record
+  const { error: userError } = await supabase.from("users").delete().eq("id", userId);
 
-  if (playerError) {
-    errors.push(`players: ${playerError.message}`);
+  if (userError) {
+    errors.push(`users: ${userError.message}`);
   }
 
   // 3. Update deletion manifest
@@ -172,11 +169,11 @@ export async function hardPurgePlayer(
       purged_at: new Date().toISOString(),
       errors: errors.length > 0 ? JSON.stringify(errors) : null,
     })
-    .eq("player_id", playerId);
+    .eq("user_id", userId);
 
   if (manifestError) {
     logger.error("Failed to update deletion manifest", {
-      playerId,
+      userId,
       error: manifestError.message,
       route: "platform/auth/gdpr-deletion",
     });

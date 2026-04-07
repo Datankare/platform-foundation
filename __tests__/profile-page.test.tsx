@@ -5,12 +5,12 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import ProfilePage from "@/components/auth/ProfilePage";
-import type { PlayerProfile } from "@/platform/auth/profile";
+import type { UserProfile } from "@/platform/auth/profile";
 
-const mockProfile: PlayerProfile = {
-  id: "player-1",
+const mockProfile: UserProfile = {
+  id: "user-1",
   email: "test@example.com",
-  displayName: "TestPlayer",
+  displayName: "TestUser",
   avatarUrl: null,
   realName: null,
   languagePreference: "en",
@@ -68,7 +68,7 @@ describe("ProfilePage", () => {
     render(<ProfilePage {...mockProps} />);
     await waitFor(() => {
       const input = screen.getByLabelText("Display Name") as HTMLInputElement;
-      expect(input.value).toBe("TestPlayer");
+      expect(input.value).toBe("TestUser");
     });
   });
 
@@ -85,7 +85,7 @@ describe("ProfilePage", () => {
     await waitFor(() => {
       expect(mockProps.onUpdateProfile).toHaveBeenCalledWith(
         expect.objectContaining({
-          displayName: "TestPlayer",
+          displayName: "TestUser",
           languagePreference: "en",
         })
       );

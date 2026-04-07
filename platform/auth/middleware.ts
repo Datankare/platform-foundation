@@ -1,7 +1,7 @@
 /**
  * platform/auth/middleware.ts — Auth middleware for API routes
  *
- * Validates the JWT on every protected API request. Extracts the player's
+ * Validates the JWT on every protected API request. Extracts the user's
  * identity and makes it available to the route handler.
  *
  * Three modes:

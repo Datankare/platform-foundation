@@ -31,7 +31,7 @@ describe("AdminShell", () => {
 
   it("renders all nav items when all permissions granted", () => {
     render(<AdminShell {...mockProps} />);
-    expect(screen.getByText("Players")).toBeDefined();
+    expect(screen.getByText("Users")).toBeDefined();
     expect(screen.getByText("Roles")).toBeDefined();
     expect(screen.getByText("Entitlements")).toBeDefined();
     expect(screen.getByText("Audit Log")).toBeDefined();
@@ -45,7 +45,7 @@ describe("AdminShell", () => {
         {(section: AdminSection) => <div>{section}</div>}
       </AdminShell>
     );
-    expect(screen.queryByText("Players")).toBeNull();
+    expect(screen.queryByText("Users")).toBeNull();
     expect(screen.queryByText("Roles")).toBeNull();
   });
 
@@ -63,6 +63,6 @@ describe("AdminShell", () => {
 
   it("defaults to first visible section", () => {
     render(<AdminShell {...mockProps} />);
-    expect(screen.getByTestId("content").textContent).toBe("players");
+    expect(screen.getByTestId("content").textContent).toBe("users");
   });
 });
