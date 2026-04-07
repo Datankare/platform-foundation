@@ -4,12 +4,16 @@
  * ADR-014: Observability — every AI call automatically instrumented.
  * ADR-015: Cost visibility from Phase 2 onward.
  *
- * Currently logs structured metrics via the platform logger.
- * Phase 3 adds Sentry spans and Datadog APM integration.
+ * Records metrics through two channels:
+ *   1. In-memory buffer (always available — backwards compatible)
+ *   2. Observability MetricsSink (when initialized — persistent storage)
+ *
+ * Errors are forwarded to the ErrorReporter when observability is initialized.
  */
 
 import { AICallMetrics, ModelTier, MODEL_REGISTRY } from "./types";
 import { logger } from "@/lib/logger";
+import { tryGetObservability } from "@/platform/observability";
 
 // ---------------------------------------------------------------------------
 // Cost calculation
@@ -30,22 +34,53 @@ export function estimateCost(
 // Metrics recording
 // ---------------------------------------------------------------------------
 
-/** In-memory metrics buffer — replaced by external sink in Phase 3 */
+/** In-memory metrics buffer — always available, even without observability. */
 const metricsBuffer: AICallMetrics[] = [];
 const MAX_BUFFER_SIZE = 1000;
 
 export function recordMetrics(metrics: AICallMetrics): void {
-  // Structured log — searchable in log aggregation (Phase 3)
+  // Structured log — searchable in log aggregation
   logger.info("ai_call", {
     ...metrics,
-    // Override logger's default message field
     message: `AI call: ${metrics.useCase} → ${metrics.model} (${metrics.latencyMs}ms, $${metrics.estimatedCostUsd})`,
   });
 
-  // Buffer for in-process aggregation (replaced by external store in Phase 3)
+  // In-memory buffer (always available)
   metricsBuffer.push(metrics);
   if (metricsBuffer.length > MAX_BUFFER_SIZE) {
     metricsBuffer.shift();
+  }
+
+  // Forward to MetricsSink (persistent storage — when observability is initialized)
+  const obs = tryGetObservability();
+  if (obs) {
+    obs.metrics.record({
+      name: "ai.call",
+      timestamp: new Date().toISOString(),
+      traceId: metrics.traceId,
+      values: {
+        inputTokens: metrics.inputTokens,
+        outputTokens: metrics.outputTokens,
+        latencyMs: metrics.latencyMs,
+        estimatedCostUsd: metrics.estimatedCostUsd,
+        success: metrics.success ? 1 : 0,
+      },
+      tags: {
+        model: metrics.model,
+        tier: metrics.tier,
+        useCase: metrics.useCase,
+        cached: String(metrics.cached ?? false),
+      },
+    });
+
+    // Forward errors to ErrorReporter
+    if (!metrics.success && metrics.error) {
+      obs.errors.captureMessage(
+        `AI call failed: ${metrics.useCase} → ${metrics.model}: ${metrics.error}`,
+        "error",
+        { tags: { model: metrics.model, useCase: metrics.useCase } }
+      );
+    }
   }
 }
 
