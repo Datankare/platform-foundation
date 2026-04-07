@@ -50,7 +50,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL SAST + Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 541 unit + integration tests, 80%+ line coverage
+- ✅ 545 unit + integration tests, 80%+ line coverage
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point automated sustainability gate
 - ✅ Versioned releases (v1.1.0)
@@ -136,7 +136,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 541 tests, 80%+ coverage
+npm run test:coverage  # 545 tests, 80%+ coverage
 npm run build          # Clean build
 ./scripts/sustainability-gate.sh  # 22-point gate
 ```

@@ -155,6 +155,7 @@ export class SupabaseMetricsSink implements MetricsSink {
   async flush(): Promise<void> {
     if (this.buffer.length === 0) return;
 
+    /* istanbul ignore next -- requires live Supabase; tested in integration tests (Sprint 6) */
     // Drain buffer into a local batch
     const batch = this.buffer.splice(0, this.buffer.length);
 
@@ -197,6 +198,7 @@ export class SupabaseMetricsSink implements MetricsSink {
   }
 
   async query(options: MetricsQueryOptions): Promise<readonly MetricEvent[]> {
+    /* istanbul ignore next -- requires live Supabase; tested in integration tests (Sprint 6) */
     // Build Supabase REST query
     const params = new URLSearchParams();
     params.set("order", "timestamp.desc");

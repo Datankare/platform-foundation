@@ -113,6 +113,7 @@ export class SentryErrorReporter implements ErrorReporter {
       const sentryModule = require("@sentry/nextjs") as SentryLike;
       this.sentry = sentryModule;
 
+      /* istanbul ignore next -- requires @sentry/nextjs installed */
       sentryModule.init({
         dsn: this.config.dsn,
         environment: this.config.environment,
@@ -122,6 +123,7 @@ export class SentryErrorReporter implements ErrorReporter {
         sendDefaultPii: false,
       });
 
+      /* istanbul ignore next -- requires @sentry/nextjs installed */
       logger.info("Sentry error reporter initialized", {
         environment: this.config.environment,
         version: this.config.version,
@@ -138,6 +140,7 @@ export class SentryErrorReporter implements ErrorReporter {
   captureError(error: Error, context?: ErrorContext): void {
     if (!this.sentry) return;
 
+    /* istanbul ignore next -- requires @sentry/nextjs installed */
     this.sentry.withScope((scope) => {
       if (context?.traceContext) {
         scope.setContext("trace", {
@@ -170,6 +173,7 @@ export class SentryErrorReporter implements ErrorReporter {
   ): void {
     if (!this.sentry) return;
 
+    /* istanbul ignore next -- requires @sentry/nextjs installed */
     this.sentry.withScope((scope) => {
       if (context?.tags) {
         for (const [key, value] of Object.entries(context.tags)) {
@@ -187,11 +191,13 @@ export class SentryErrorReporter implements ErrorReporter {
 
   setUser(userId: string | null): void {
     if (!this.sentry) return;
+    /* istanbul ignore next -- requires @sentry/nextjs installed */
     this.sentry.setUser(userId ? { id: userId } : null);
   }
 
   async flush(timeoutMs = 2000): Promise<void> {
     if (!this.sentry) return;
+    /* istanbul ignore next -- requires @sentry/nextjs installed */
     await this.sentry.flush(timeoutMs);
   }
 }

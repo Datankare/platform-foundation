@@ -100,4 +100,58 @@ describe("logger", () => {
     const raw = (console.error as jest.Mock).mock.calls[0][0];
     expect(() => JSON.parse(raw)).not.toThrow();
   });
+
+  it("withTrace injects traceId and spanId into all log levels", () => {
+    process.env.LOG_LEVEL = "debug";
+    const log = logger.withTrace("trace-abc123", "span-def456");
+
+    log.info("traced info");
+    log.warn("traced warn");
+    log.error("traced error");
+    log.debug("traced debug");
+
+    const infoEntry = JSON.parse((console.log as jest.Mock).mock.calls[0][0]);
+    expect(infoEntry.traceId).toBe("trace-abc123");
+    expect(infoEntry.spanId).toBe("span-def456");
+    expect(infoEntry.message).toBe("traced info");
+
+    const warnEntry = JSON.parse((console.warn as jest.Mock).mock.calls[0][0]);
+    expect(warnEntry.traceId).toBe("trace-abc123");
+
+    const errorEntry = JSON.parse((console.error as jest.Mock).mock.calls[0][0]);
+    expect(errorEntry.traceId).toBe("trace-abc123");
+  });
+
+  it("withTrace allows additional fields alongside trace context", () => {
+    process.env.LOG_LEVEL = "info";
+    const log = logger.withTrace("t1", "s1");
+    log.info("with extras", { route: "/api/test", durationMs: 42 });
+
+    const entry = JSON.parse((console.log as jest.Mock).mock.calls[0][0]);
+    expect(entry.traceId).toBe("t1");
+    expect(entry.spanId).toBe("s1");
+    expect(entry.route).toBe("/api/test");
+    expect(entry.durationMs).toBe(42);
+  });
+
+  it("request convenience logs method + route at info level", () => {
+    process.env.LOG_LEVEL = "info";
+    logger.request("/api/process", "POST", "req-abc");
+
+    const entry = JSON.parse((console.log as jest.Mock).mock.calls[0][0]);
+    expect(entry.route).toBe("/api/process");
+    expect(entry.method).toBe("POST");
+    expect(entry.requestId).toBe("req-abc");
+  });
+
+  it("silent level suppresses all output", () => {
+    process.env.LOG_LEVEL = "silent";
+    logger.error("should not appear");
+    logger.warn("should not appear");
+    logger.info("should not appear");
+    logger.debug("should not appear");
+    expect(console.error).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalled();
+    expect(console.log).not.toHaveBeenCalled();
+  });
 });
