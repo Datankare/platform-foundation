@@ -30,7 +30,7 @@ export function initAuth(): void {
     });
   } else {
     // Development/test fallback — mock provider
-    registerAuthProvider(createMockAuthProvider());
+    registerAuthProvider(createMockAuthProvider({}));
     logger.warn(
       "Auth initialized with MockAuthProvider — set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID for real auth"
     );
