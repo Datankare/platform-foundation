@@ -29,6 +29,9 @@ from day one.
 - ✅ Rate limiting (per-IP sliding window)
 - ✅ Password policy (12 char, rotation, history)
 - ✅ Immutable audit log
+- ✅ CognitoAuthProvider (full AuthProvider implementation, fetch-based)
+- ✅ Auth routing (/auth login screen, protected routes, middleware)
+- ✅ 9 server-side auth API routes (sign-in, sign-up, sign-out, MFA, guest, etc.)
 
 ### GenAI-Native Stack (Phase 2 — in progress)
 
@@ -50,7 +53,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL SAST + Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 689 unit + integration tests, 82%+ line coverage
+- ✅ 790 unit + integration tests, 84%+ line coverage
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point automated sustainability gate
 - ✅ Versioned releases (v1.1.0)
@@ -137,7 +140,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 689 tests, 82%+ coverage
+npm run test:coverage  # 790 tests, 84%+ coverage
 npm run build          # Clean build
 ./scripts/sustainability-gate.sh  # 22-point gate
 ```
