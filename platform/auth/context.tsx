@@ -105,6 +105,18 @@ function removeStoredValue(key: string): void {
   }
 }
 
+/** Set session indicator cookie for middleware route protection */
+function setSessionCookie(maxAge: number): void {
+  if (typeof document === "undefined") return;
+  document.cookie = "pf_has_session=true; path=/; max-age=" + maxAge + "; SameSite=Lax";
+}
+
+/** Clear session indicator cookie */
+function clearSessionCookie(): void {
+  if (typeof document === "undefined") return;
+  document.cookie = "pf_has_session=; path=/; max-age=0; SameSite=Lax";
+}
+
 export function AuthContextProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -127,6 +139,7 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
         removeStoredValue(TOKEN_STORAGE_KEY);
         removeStoredValue(REFRESH_STORAGE_KEY);
         removeStoredValue(USER_STORAGE_KEY);
+        clearSessionCookie();
       }
     }
     setIsLoading(false);
@@ -153,6 +166,7 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
       setStoredValue(TOKEN_STORAGE_KEY, session.accessToken);
       setStoredValue(REFRESH_STORAGE_KEY, session.refreshToken);
       setStoredValue(USER_STORAGE_KEY, JSON.stringify(authUser));
+      setSessionCookie(3600);
     },
     []
   );
@@ -163,6 +177,7 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
     removeStoredValue(TOKEN_STORAGE_KEY);
     removeStoredValue(REFRESH_STORAGE_KEY);
     removeStoredValue(USER_STORAGE_KEY);
+    clearSessionCookie();
   }, []);
 
   const getAccessToken = useCallback(() => {
