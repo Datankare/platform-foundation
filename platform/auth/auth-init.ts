@@ -1,36 +1,19 @@
 /**
- * platform/auth/auth-init.ts — Server-side auth initialization
+ * platform/auth/auth-init.ts — Auth initialization (backward compat)
  *
- * Registers the CognitoAuthProvider (or MockAuthProvider in test) at startup.
- * Import this file once in server-side code.
- *
- * NOTE: Playform uses cognito-config.ts instead (excluded from sync).
+ * Delegates to the central provider registry.
+ * Existing callers (auth API routes, AuthPageClient) import from here.
+ * New code should import initProviders from @/platform/providers/registry.
  *
  * @module platform/auth
  */
 
-import { registerAuthProvider, hasAuthProvider } from "@/platform/auth/config";
-import { createCognitoAuthProvider } from "@/platform/auth/cognito-provider";
-import { createMockAuthProvider } from "@/platform/auth/mock-provider";
-import { logger } from "@/lib/logger";
+import { initProviders } from "@/platform/providers/registry";
 
+/**
+ * Initialize auth (and all other providers).
+ * Backward-compatible wrapper around initProviders().
+ */
 export function initAuth(): void {
-  if (hasAuthProvider()) return;
-
-  const userPoolId = process.env.COGNITO_USER_POOL_ID ?? "";
-  const clientId = process.env.COGNITO_CLIENT_ID ?? "";
-  const region = process.env.COGNITO_REGION ?? process.env.AWS_REGION ?? "us-east-1";
-
-  if (userPoolId && clientId) {
-    registerAuthProvider(createCognitoAuthProvider({ region, userPoolId, clientId }));
-    logger.info("Auth initialized with CognitoAuthProvider", {
-      region,
-      userPoolId: `${userPoolId.slice(0, 12)}...`,
-    });
-  } else {
-    registerAuthProvider(createMockAuthProvider({}));
-    logger.warn(
-      "Auth initialized with MockAuthProvider — set COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID for real auth"
-    );
-  }
+  initProviders();
 }
