@@ -50,7 +50,9 @@ export interface ProviderSelections {
 
 function getProviderSelections(): ProviderSelections {
   return {
-    auth: (process.env.AUTH_PROVIDER as AuthProviderType) ?? "mock",
+    auth:
+      ((process.env.AUTH_PROVIDER ??
+        process.env.NEXT_PUBLIC_AUTH_PROVIDER) as AuthProviderType) ?? "mock",
     cache: (process.env.CACHE_PROVIDER as CacheProviderType) ?? "memory",
     ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
@@ -66,8 +68,12 @@ function initAuthProvider(type: AuthProviderType): void {
 
   if (type === "cognito") {
     const region = process.env.COGNITO_REGION ?? process.env.AWS_REGION ?? "us-east-1";
-    const userPoolId = process.env.COGNITO_USER_POOL_ID ?? "";
-    const clientId = process.env.COGNITO_CLIENT_ID ?? "";
+    const userPoolId =
+      process.env.COGNITO_USER_POOL_ID ??
+      process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID ??
+      "";
+    const clientId =
+      process.env.COGNITO_CLIENT_ID ?? process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID ?? "";
 
     if (!userPoolId || !clientId) {
       logger.warn(

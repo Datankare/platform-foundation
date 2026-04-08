@@ -54,7 +54,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "media-src 'self' blob:",
-              "connect-src 'self'",
+              "connect-src 'self' https://cognito-idp.us-east-1.amazonaws.com",
               "font-src 'self'",
               "frame-ancestors 'none'",
             ].join("; "),
