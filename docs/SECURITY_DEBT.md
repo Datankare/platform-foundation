@@ -108,4 +108,4 @@ _Items below have been resolved and are retained for audit trail only._
 
 ---
 
-_Last updated: 2026-04-07 (Sprint 4: Redis cache, rate limiter, GDPR hard purge, password enforcement resolved. TASK-020–023 closed.)_
+_Last updated: 2026-04-07 (Sprint 4b: Auth wiring complete — CognitoAuthProvider, route protection, 9 auth API routes, live login screen.)_
