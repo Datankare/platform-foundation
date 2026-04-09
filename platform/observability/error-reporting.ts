@@ -109,8 +109,10 @@ export class SentryErrorReporter implements ErrorReporter {
 
     try {
       // Dynamic import — @sentry/nextjs is an optional peer dependency.
+      // String concatenation prevents Turbopack from resolving at build time.
+      const moduleName = "@sentry/" + "nextjs";
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const sentryModule = require("@sentry/nextjs") as SentryLike;
+      const sentryModule = require(moduleName) as SentryLike;
       this.sentry = sentryModule;
 
       /* istanbul ignore next -- requires @sentry/nextjs installed */
