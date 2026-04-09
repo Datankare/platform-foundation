@@ -120,6 +120,44 @@ Systems evolve based on real-world usage.
 - **Data-Driven Tuning:** Prompt tuning and model selection are informed by production data.
 - **Guardrails:** Safeguards prevent feedback loops from degrading system quality over time.
 
+## 15. Agent Identity as Delegated Capability
+
+Identity evolves from "who are you" to "what are you allowed to do right now."
+
+- **Delegation Chain:** Every agent action carries provenance — who initiated the goal, which agent interpreted it, which sub-agent proposed the next step.
+- **Scoped Permissions:** Agent permissions are narrow, time-bounded, and revocable — not inherited from the user's broad session.
+- **Auditability:** The full delegation chain (user → planner → researcher → executor) is logged and reconstructible for any action.
+- **Separation of Actor:** An agent acting on behalf of a user is a distinct identity with distinct constraints, not the user themselves.
+
+## 16. Cognitive Memory Architecture
+
+Agent memory is a structured architecture, not a single store.
+
+- **Working Memory:** Active task state — what the agent is doing now, what it has tried, what is pending.
+- **Episodic Memory:** Temporal trajectories — sequences of attempts, observations, errors, and outcomes across sessions.
+- **Semantic Memory:** Durable facts about users, organizations, systems, and domains — with consolidation and contradiction handling.
+- **Procedural Memory:** Learned routines and policies — how this class of task should generally be approached, versioned and governed.
+- **Resource Memory:** Where things live — which dashboard, repo, file, workflow, or person is relevant, with permission-aware retrieval.
+- **Selective Recall:** Remembering well is more important than remembering everything. Forgetting policies, freshness signals, and trust boundaries are explicit.
+
+## 17. Cognition-Commitment Boundary
+
+Internal deliberation and external action are architecturally separated.
+
+- **Internal Fluidity:** Agents may branch, backtrack, reconsider, and explore hypotheses freely within the cognitive loop.
+- **External Durability:** Actions that touch production systems, send messages, spend money, or modify state are durable, idempotent, and explicitly approved.
+- **No Leakage:** No agent "thinking out loud" leaks into the real world as side effects. Draft actions are held until committed.
+- **Approval Gates:** Actions above a configurable risk threshold require deterministic validation, policy check, or human approval before commitment.
+
+## 18. Durable Execution Trajectories
+
+The execution unit is the trajectory, not the request.
+
+- **Trajectory as Object:** The evolving path of reasoning, tool use, and state transitions connecting a goal to an outcome is the primary runtime object.
+- **Checkpointed:** Agent state is checkpointed between steps — surviving crashes, resuming after interruption, replaying for debugging.
+- **Inspectable:** Pause, resume, branch, approve, and rollback are first-class operations available to users and admins.
+- **Behavioral Forensics:** When an agent makes a poor choice, the postmortem reads like a behavioral analysis — why the agent chose that tool, what alternatives it considered, what context it retrieved, what evidence it found persuasive.
+
 ---
 
 ## Principle Readiness
@@ -140,13 +178,27 @@ Systems evolve based on real-world usage.
 | 12  | Economic Transparency             | 🔶 Partial   | Per-call cost tracking built; per-user budgets in Phase 6       |
 | 13  | Control Plane & Governance        | ⏳ Phase 6–7 | Token budgets, A/B testing planned                              |
 | 14  | Self-Improving Feedback Loops     | ⏳ Phase 7   | Feedback loop + quality monitoring planned                      |
+| 15  | Agent Identity as Delegation      | ⏳ Phase 5   | Delegated capability model for agentic framework                |
+| 16  | Cognitive Memory Architecture     | ⏳ Phase 4–5 | Extends RAG/user context with structured memory types           |
+| 17  | Cognition-Commitment Boundary     | ⏳ Phase 5   | Draft-then-commit pattern in agentic framework                  |
+| 18  | Durable Execution Trajectories    | ⏳ Phase 5   | Checkpointed, resumable, inspectable agent workflows            |
 
-**Summary:** 5 of 14 principles fully implemented, 3 partially implemented, 6 planned across Phases 3–7. All 14 are accounted for in the [GenAI-Native Roadmap](./GENAI_ROADMAP.md).
+**Summary:** 5 of 18 principles fully implemented, 7 partially implemented or cross-phase, 6 planned across Phases 3–7. All 18 are accounted for in the [GenAI-Native Roadmap](./GENAI_ROADMAP.md).
+
+---
+
+## References
+
+| Source                                                                                                                                                                         | Relevance                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rodriguez, J. (2026). "The Agent-Native Rewrite: Why Every Piece of Software Infrastructure Needs to be Reimagined for AI Agents." _The Sequence Opinion #840_, April 9, 2026. | Informed P15 (Agent Identity), P16 (Cognitive Memory), P17 (Cognition-Commitment Boundary), P18 (Durable Execution Trajectories). Core thesis: identity, storage, messaging, memory, execution, and observability must be rethought for AI agents that generate their own control flow. |
 
 ---
 
 ## Changelog
 
-| Date       | Author    | Change                                                                                                              |
-| ---------- | --------- | ------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-07 | Raman Sud | Initial manifesto — 14 principles extracted from platform architecture and roadmap planning. Readiness table added. |
+| Date       | Author    | Change                                                                                                                                                                                                        |
+| ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-09 | Raman Sud | P15-P18 elevated to cross-phase fabric (not Phase 5 deferrals). Agentic-native is a standing architectural commitment across all phases.                                                                      |
+| 2026-04-09 | Raman Sud | Added P15–P18 (Agent Identity, Cognitive Memory, Cognition-Commitment Boundary, Durable Execution Trajectories). Informed by Rodriguez 2026 "Agent-Native Rewrite." Readiness table updated to 18 principles. |
+| 2026-04-07 | Raman Sud | Initial manifesto — 14 principles extracted from platform architecture and roadmap planning. Readiness table added.                                                                                           |

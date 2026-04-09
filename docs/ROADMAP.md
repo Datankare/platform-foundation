@@ -28,12 +28,13 @@
 
 Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, ADR-017):
 
-| Fabric             | Principle                                                                                  | Starts  |
-| ------------------ | ------------------------------------------------------------------------------------------ | ------- |
-| Observability      | Woven in, not bolted on. Every phase adds its observability layer.                         | Phase 2 |
-| GenAI-Native       | Infrastructure, not a feature. Every AI interaction goes through orchestration.            | Phase 2 |
-| Content Safety     | Multi-layer defense. Every input AND output surface screened from day one.                 | Phase 2 |
-| GenAI Completeness | No GenAI capability discovered late. Complete surface map in ADR-017, verified at Phase 9. | Phase 2 |
+| Fabric             | Principle                                                                                                            | Starts  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- | ------- |
+| Observability      | Woven in, not bolted on. Every phase adds its observability layer.                                                   | Phase 2 |
+| GenAI-Native       | Infrastructure, not a feature. Every AI interaction goes through orchestration.                                      | Phase 2 |
+| Content Safety     | Multi-layer defense. Every input AND output surface screened from day one.                                           | Phase 2 |
+| GenAI Completeness | No GenAI capability discovered late. Complete surface map in ADR-017, verified at Phase 9.                           | Phase 2 |
+| Agentic-Native     | Infrastructure built for agents, not bolted on. Every layer supports delegation, trajectories, and cognitive memory. | Phase 2 |
 
 ---
 
