@@ -45,10 +45,11 @@ export function middleware(request: NextRequest) {
   // API routes — require Authorization header (validated in route handlers)
   if (pathname.startsWith("/api/")) {
     const authHeader = request.headers.get("authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const hasCookie = request.cookies.get("pf_has_session")?.value === "true";
+    const hasBearer = authHeader && authHeader.startsWith("Bearer ");
+    if (!hasCookie && !hasBearer) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
-    return NextResponse.next();
   }
 
   // Page routes — check for session cookie (lightweight check)
