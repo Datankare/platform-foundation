@@ -142,7 +142,11 @@ export default function SpikeApp() {
       }
     });
 
-    const audio = new Audio(`data:audio/mp3;base64,${base64}`);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "audio/mp3" });
+    const audio = new Audio(URL.createObjectURL(blob));
     audioRefs.current[index] = audio;
     setPlayingIndex(index);
 
