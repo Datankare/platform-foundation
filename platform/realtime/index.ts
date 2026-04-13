@@ -48,8 +48,8 @@ export {
   releaseConnection,
   resetConnectionTracking,
   getConnectionStats,
-} from "./middleware";
-export type { ConnectionRequest, RealtimeMiddlewareConfig } from "./middleware";
+} from "./connection-guard";
+export type { ConnectionRequest, RealtimeMiddlewareConfig } from "./connection-guard";
 
 // Health
 export { checkRealtimeHealth, createRealtimeHealthProbe } from "./health-probe";
