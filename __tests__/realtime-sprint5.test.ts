@@ -262,7 +262,7 @@ import {
   releaseConnection,
   resetConnectionTracking,
   getConnectionStats,
-} from "@/platform/realtime/middleware";
+} from "@/platform/realtime/connection-guard";
 
 describe("Realtime middleware", () => {
   beforeEach(() => {
