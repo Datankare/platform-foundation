@@ -12,7 +12,7 @@
  */
 
 import type { RealtimeProvider, ConnectionState } from "./types";
-import { getConnectionStats } from "./middleware";
+import { getConnectionStats } from "./connection-guard";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
