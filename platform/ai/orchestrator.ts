@@ -10,12 +10,19 @@
  *     useCase: "safety-classify",
  *     requestId: "abc123",
  *   });
+ *
+ *   // Streaming (Sprint 5):
+ *   for await (const chunk of orchestrator.stream(request, opts)) {
+ *     process.stdout.write(chunk.text);
+ *   }
  */
 
 import {
   AIProvider,
   AIRequest,
   AIResponse,
+  AIStreamChunk,
+  AIStreamOptions,
   CircuitState,
   CircuitBreakerConfig,
   DEFAULT_CIRCUIT_BREAKER_CONFIG,
@@ -122,6 +129,20 @@ export class CircuitBreaker {
 export interface Orchestrator {
   /** Send a completion request through the orchestration layer */
   complete(request: AIRequest, options: OrchestratorOptions): Promise<AIResponse>;
+
+  /**
+   * Stream a completion response through the orchestration layer.
+   * Instrumented with time-to-first-token, total tokens, and cost.
+   * Falls back to complete() if the provider doesn't support streaming.
+   *
+   * @yields AIStreamChunk — text fragments with done/usage on final chunk
+   */
+  stream(
+    request: AIRequest,
+    options: OrchestratorOptions,
+    streamOptions?: AIStreamOptions
+  ): AsyncIterable<AIStreamChunk>;
+
   /** Get circuit breaker state — for monitoring */
   getCircuitState(): CircuitState;
   /** Reset circuit breaker — for tests */
@@ -196,6 +217,194 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
         }
 
         recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage);
+        throw err;
+      }
+    },
+
+    async *stream(
+      request: AIRequest,
+      opts: OrchestratorOptions,
+      streamOptions?: AIStreamOptions
+    ): AsyncIterable<AIStreamChunk> {
+      const effectiveRequest = opts.tierOverride
+        ? { ...request, tier: opts.tierOverride }
+        : request;
+
+      // Circuit breaker check
+      if (!circuitBreaker.canExecute()) {
+        const error = new AIProviderError(
+          "Circuit breaker is open — AI provider is unavailable",
+          "transient"
+        );
+        recordFailureMetrics(effectiveRequest, opts, 0, error.message);
+        throw error;
+      }
+
+      const startTime = Date.now();
+      let firstChunkTime: number | null = null;
+      let totalText = "";
+
+      // Fallback: if provider doesn't support streaming, use complete()
+      if (!provider.stream) {
+        logger.info("Provider does not support streaming, falling back to complete()", {
+          provider: provider.name,
+          useCase: opts.useCase,
+        });
+
+        const response = await provider.complete(effectiveRequest);
+        const latencyMs = Date.now() - startTime;
+        const text = response.content
+          .filter((b) => b.type === "text")
+          .map((b) => (b as { type: "text"; text: string }).text)
+          .join("");
+
+        circuitBreaker.recordSuccess();
+
+        const metrics: AICallMetrics = {
+          useCase: opts.useCase,
+          requestId: opts.requestId,
+          model: response.model,
+          tier: effectiveRequest.tier,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          estimatedCostUsd: estimateCost(
+            effectiveRequest.tier,
+            response.usage.inputTokens,
+            response.usage.outputTokens
+          ),
+          latencyMs,
+          cached: false,
+          success: true,
+          timestamp: new Date().toISOString(),
+          timeToFirstTokenMs: latencyMs,
+        };
+        recordMetrics(metrics);
+
+        yield {
+          text,
+          done: true,
+          usage: {
+            inputTokens: response.usage.inputTokens,
+            outputTokens: response.usage.outputTokens,
+            cost: estimateCost(
+              effectiveRequest.tier,
+              response.usage.inputTokens,
+              response.usage.outputTokens
+            ),
+          },
+        };
+        return;
+      }
+
+      try {
+        for await (const chunk of provider.stream(effectiveRequest, streamOptions)) {
+          // Track time-to-first-token
+          if (firstChunkTime === null && chunk.text) {
+            firstChunkTime = Date.now();
+            const ttft = firstChunkTime - startTime;
+
+            if (ttft > 2000) {
+              logger.warn("Time-to-first-token exceeds 2s SLA", {
+                ttftMs: ttft,
+                useCase: opts.useCase,
+                provider: provider.name,
+              });
+            }
+          }
+
+          totalText += chunk.text;
+
+          // On final chunk, record metrics
+          if (chunk.done) {
+            const latencyMs = Date.now() - startTime;
+            circuitBreaker.recordSuccess();
+
+            const metrics: AICallMetrics = {
+              useCase: opts.useCase,
+              requestId: opts.requestId,
+              model: `${provider.name}-stream`,
+              tier: effectiveRequest.tier,
+              inputTokens: chunk.usage?.inputTokens ?? 0,
+              outputTokens: chunk.usage?.outputTokens ?? 0,
+              estimatedCostUsd: chunk.usage?.cost ?? 0,
+              latencyMs,
+              cached: false,
+              success: true,
+              timestamp: new Date().toISOString(),
+              timeToFirstTokenMs: firstChunkTime ? firstChunkTime - startTime : undefined,
+            };
+            recordMetrics(metrics);
+          }
+
+          yield chunk;
+        }
+      } catch (err) {
+        const latencyMs = Date.now() - startTime;
+        const errorMessage = err instanceof Error ? err.message : "Unknown error";
+
+        const isTransient = err instanceof AIProviderError && err.kind === "transient";
+        if (isTransient) {
+          circuitBreaker.recordFailure();
+        }
+
+        recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage);
+
+        // Fallback: if streaming failed mid-way, try complete()
+        if (totalText === "") {
+          logger.info("Streaming failed, falling back to complete()", {
+            useCase: opts.useCase,
+            error: errorMessage,
+          });
+
+          try {
+            const response = await provider.complete(effectiveRequest);
+            const fallbackLatency = Date.now() - startTime;
+            circuitBreaker.recordSuccess();
+
+            const text = response.content
+              .filter((b) => b.type === "text")
+              .map((b) => (b as { type: "text"; text: string }).text)
+              .join("");
+
+            const metrics: AICallMetrics = {
+              useCase: `${opts.useCase}-stream-fallback`,
+              requestId: opts.requestId,
+              model: response.model,
+              tier: effectiveRequest.tier,
+              inputTokens: response.usage.inputTokens,
+              outputTokens: response.usage.outputTokens,
+              estimatedCostUsd: estimateCost(
+                effectiveRequest.tier,
+                response.usage.inputTokens,
+                response.usage.outputTokens
+              ),
+              latencyMs: fallbackLatency,
+              cached: false,
+              success: true,
+              timestamp: new Date().toISOString(),
+            };
+            recordMetrics(metrics);
+
+            yield {
+              text,
+              done: true,
+              usage: {
+                inputTokens: response.usage.inputTokens,
+                outputTokens: response.usage.outputTokens,
+                cost: estimateCost(
+                  effectiveRequest.tier,
+                  response.usage.inputTokens,
+                  response.usage.outputTokens
+                ),
+              },
+            };
+            return;
+          } catch (fallbackErr) {
+            // Both stream and complete failed
+            throw fallbackErr;
+          }
+        }
+
         throw err;
       }
     },

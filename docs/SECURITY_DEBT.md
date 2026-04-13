@@ -109,3 +109,11 @@ _Items below have been resolved and are retained for audit trail only._
 ---
 
 _Last updated: 2026-04-07 (Sprint 4b: Auth wiring complete — CognitoAuthProvider, route protection, 9 auth API routes, live login screen.)_
+
+### TASK-024: Social Login (Google, Apple, Microsoft SSO)
+
+- **Priority:** Medium
+- **Phase:** 8–9 (Production Hardening)
+- **Status:** Deferred — infrastructure ready, console configuration pending
+- **Description:** Code is complete: SsoButtons.tsx, initiateSso(), handleSsoCallback(), provider interface all built. Requires: (1) OAuth credentials from Google Cloud, Apple Developer, Azure AD; (2) Cognito identity provider configuration; (3) Custom domain on Cognito for callback URLs; (4) Privacy policy URLs and app review (Apple). Zero code changes needed.
+- **Tracking:** ADR-012, platform/auth/provider.ts, components/auth/SsoButtons.tsx

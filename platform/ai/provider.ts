@@ -11,6 +11,8 @@ import {
   AIRequest,
   AIResponse,
   AIContentBlock,
+  AIStreamChunk,
+  AIStreamOptions,
   MODEL_REGISTRY,
 } from "./types";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
@@ -116,6 +118,127 @@ export class AnthropicProvider implements AIProvider {
       },
       stopReason: data.stop_reason || "end_turn",
     };
+  }
+
+  /**
+   * Stream a completion response using Anthropic's streaming API.
+   * Yields AIStreamChunk objects as they arrive.
+   *
+   * @see https://docs.anthropic.com/en/api/messages-streaming
+   */
+  async *stream(
+    request: AIRequest,
+    options?: AIStreamOptions
+  ): AsyncIterable<AIStreamChunk> {
+    const modelConfig = MODEL_REGISTRY[request.tier];
+
+    if (!this.apiKey) {
+      throw new AIProviderError("ANTHROPIC_API_KEY not configured", "config");
+    }
+
+    const body: Record<string, unknown> = {
+      model: modelConfig.modelId,
+      max_tokens: options?.maxTokens ?? request.maxTokens,
+      stream: true,
+      messages: request.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+    };
+
+    if (options?.system ?? request.system) {
+      body.system = options?.system ?? request.system;
+    }
+
+    if (request.tools && request.tools.length > 0) {
+      body.tools = request.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.input_schema,
+      }));
+    }
+
+    if (options?.temperature ?? request.temperature !== undefined) {
+      body.temperature = options?.temperature ?? request.temperature;
+    }
+
+    const response = await fetch(`${this.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(body),
+      signal: options?.abortSignal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new AIProviderError(
+        `Anthropic streaming API returned ${response.status}: ${errorBody}`,
+        response.status >= 500 ? "transient" : "permanent"
+      );
+    }
+
+    if (!response.body) {
+      throw new AIProviderError("Anthropic streaming response has no body", "transient");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") continue;
+
+          try {
+            const event = JSON.parse(data);
+
+            if (event.type === "message_start") {
+              inputTokens = event.message?.usage?.input_tokens ?? 0;
+            } else if (event.type === "content_block_delta") {
+              const text = event.delta?.text ?? "";
+              if (text) {
+                yield { text, done: false };
+              }
+            } else if (event.type === "message_delta") {
+              outputTokens = event.usage?.output_tokens ?? 0;
+            } else if (event.type === "message_stop") {
+              yield {
+                text: "",
+                done: true,
+                usage: {
+                  inputTokens,
+                  outputTokens,
+                  cost:
+                    (inputTokens * modelConfig.inputCostPer1M +
+                      outputTokens * modelConfig.outputCostPer1M) /
+                    1_000_000,
+                },
+              };
+            }
+          } catch {
+            // Skip unparseable lines
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
 
