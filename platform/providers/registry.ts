@@ -10,14 +10,16 @@
  * GenAI Principles:
  *   P1  — All AI through orchestration (provider registered here)
  *   P6  — Resilient: every slot has a working fallback
+ *   P7  — Provider-aware: realtime abstraction (Sprint 5)
  *   P9  — Observable: provider selections logged at startup
  *   P10 — No late discovery: all provider slots defined here
  *
  * Environment variables (all optional — omit for mock/fallback):
- *   AUTH_PROVIDER     = "cognito" | "mock"      (default: "mock")
- *   CACHE_PROVIDER    = "upstash" | "memory"    (default: "memory")
- *   AI_PROVIDER       = "anthropic" | "mock"    (default: "mock")
- *   ERROR_REPORTER    = "sentry" | "noop"       (default: "noop")
+ *   AUTH_PROVIDER      = "cognito" | "mock"      (default: "mock")
+ *   CACHE_PROVIDER     = "upstash" | "memory"    (default: "memory")
+ *   AI_PROVIDER        = "anthropic" | "mock"    (default: "mock")
+ *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
+ *   REALTIME_PROVIDER  = "supabase" | "mock"     (default: "mock")
  *
  * @module platform/providers
  */
@@ -36,12 +38,14 @@ export type AuthProviderType = "cognito" | "mock";
 export type CacheProviderType = "upstash" | "memory";
 export type AIProviderType = "anthropic" | "mock";
 export type ErrorReporterType = "sentry" | "noop";
+export type RealtimeProviderType = "supabase" | "mock";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
   cache: CacheProviderType;
   ai: AIProviderType;
   errorReporter: ErrorReporterType;
+  realtime: RealtimeProviderType;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +60,7 @@ function getProviderSelections(): ProviderSelections {
     cache: (process.env.CACHE_PROVIDER as CacheProviderType) ?? "memory",
     ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
+    realtime: (process.env.REALTIME_PROVIDER as RealtimeProviderType) ?? "mock",
   };
 }
 
@@ -138,6 +143,22 @@ function initErrorReporter(type: ErrorReporterType): void {
   // Default: noop (already the default)
 }
 
+function initRealtimeProvider(type: RealtimeProviderType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    if (!url) {
+      logger.warn(
+        "REALTIME_PROVIDER=supabase but SUPABASE_URL missing — falling back to mock"
+      );
+    }
+    // Supabase realtime is initialized on-demand when channels are created.
+    // The provider reads Supabase config from env at channel creation time.
+    return;
+  }
+
+  // Default: mock (in-memory, no external dependencies)
+}
+
 // ---------------------------------------------------------------------------
 // Central init
 // ---------------------------------------------------------------------------
@@ -157,6 +178,7 @@ export function initProviders(): ProviderSelections {
   initCacheProvider(selections.cache);
   initAIProvider(selections.ai);
   initErrorReporter(selections.errorReporter);
+  initRealtimeProvider(selections.realtime);
 
   initialized = true;
 
@@ -165,6 +187,7 @@ export function initProviders(): ProviderSelections {
     cache: selections.cache,
     ai: selections.ai,
     errorReporter: selections.errorReporter,
+    realtime: selections.realtime,
   });
 
   return selections;

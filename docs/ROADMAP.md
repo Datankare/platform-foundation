@@ -153,7 +153,7 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 | 3      | Observability Fabric + TASK-018     | Sprint 1 (instruments orchestrator) | ✅ Complete |
 | 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             | ✅ Complete |
 | 4b     | Auth Wiring — Live Login Screen     | Sprint 4 (auth components exist)    | ✅ Complete |
-| 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        | ⏳ Upcoming |
+| 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        | ✅ Complete |
 | 6      | Integration Tests + Phase Gate      | All prior sprints                   | ⏳ Upcoming |
 
 ### Real-Time Communication
