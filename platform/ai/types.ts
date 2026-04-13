@@ -107,12 +107,51 @@ export interface AIResponse {
   stopReason: string;
 }
 
+// ---------------------------------------------------------------------------
+// AI Streaming — Sprint 5
+// ---------------------------------------------------------------------------
+
+/** A single chunk from an AI streaming response */
+export interface AIStreamChunk {
+  /** Text fragment */
+  text: string;
+  /** Whether this is the final chunk */
+  done: boolean;
+  /** Token usage (only present on final chunk) */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cost?: number;
+  };
+}
+
+/** Options for AI streaming */
+export interface AIStreamOptions {
+  /** System prompt */
+  system?: string;
+  /** Maximum tokens to generate */
+  maxTokens?: number;
+  /** Temperature (0–1) */
+  temperature?: number;
+  /** Abort signal for cancellation */
+  abortSignal?: AbortSignal;
+}
+
+// ---------------------------------------------------------------------------
+// Provider interface
+// ---------------------------------------------------------------------------
+
 /** Provider interface — implemented by each LLM vendor */
 export interface AIProvider {
   /** Provider name for logging */
   readonly name: string;
   /** Send a completion request */
   complete(request: AIRequest): Promise<AIResponse>;
+  /**
+   * Stream a completion response. Optional — providers that don't support
+   * streaming will have this undefined; the orchestrator falls back to complete().
+   */
+  stream?(request: AIRequest, options?: AIStreamOptions): AsyncIterable<AIStreamChunk>;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +198,8 @@ export interface AICallMetrics {
   error?: string;
   /** Timestamp */
   timestamp: string;
+  /** Time to first token in ms (streaming only) */
+  timeToFirstTokenMs?: number;
 }
 
 // ---------------------------------------------------------------------------
