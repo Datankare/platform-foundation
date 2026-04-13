@@ -20,6 +20,7 @@ function createMockOrchestrator(): Orchestrator {
     complete: mockComplete,
     getCircuitState: (): CircuitState => "closed",
     resetCircuit: jest.fn(),
+    stream: jest.fn(),
   };
 }
 
