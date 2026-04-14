@@ -20,6 +20,7 @@
  *   AI_PROVIDER        = "anthropic" | "mock"    (default: "mock")
  *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
  *   REALTIME_PROVIDER  = "supabase" | "mock"     (default: "mock")
+ *   TRANSLATION_PROVIDER = "google" | "mock"     (default: "mock")
  *
  * @module platform/providers
  */
@@ -39,6 +40,7 @@ export type CacheProviderType = "upstash" | "memory";
 export type AIProviderType = "anthropic" | "mock";
 export type ErrorReporterType = "sentry" | "noop";
 export type RealtimeProviderType = "supabase" | "mock";
+export type TranslationProviderType = "google" | "mock";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -46,6 +48,7 @@ export interface ProviderSelections {
   ai: AIProviderType;
   errorReporter: ErrorReporterType;
   realtime: RealtimeProviderType;
+  translation: TranslationProviderType;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +64,7 @@ function getProviderSelections(): ProviderSelections {
     ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
     realtime: (process.env.REALTIME_PROVIDER as RealtimeProviderType) ?? "mock",
+    translation: (process.env.TRANSLATION_PROVIDER as TranslationProviderType) ?? "mock",
   };
 }
 
@@ -159,6 +163,22 @@ function initRealtimeProvider(type: RealtimeProviderType): void {
   // Default: mock (in-memory, no external dependencies)
 }
 
+function initTranslationProvider(type: TranslationProviderType): void {
+  if (type === "google") {
+    const apiKey =
+      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
+    if (!apiKey) {
+      logger.warn(
+        "TRANSLATION_PROVIDER=google but GOOGLE_API_KEY missing — translations will fail"
+      );
+    }
+    // GoogleTranslateProvider reads API key from env at call time
+    return;
+  }
+
+  // Default: mock (deterministic, zero cost)
+}
+
 // ---------------------------------------------------------------------------
 // Central init
 // ---------------------------------------------------------------------------
@@ -179,6 +199,7 @@ export function initProviders(): ProviderSelections {
   initAIProvider(selections.ai);
   initErrorReporter(selections.errorReporter);
   initRealtimeProvider(selections.realtime);
+  initTranslationProvider(selections.translation);
 
   initialized = true;
 
@@ -188,6 +209,7 @@ export function initProviders(): ProviderSelections {
     ai: selections.ai,
     errorReporter: selections.errorReporter,
     realtime: selections.realtime,
+    translation: selections.translation,
   });
 
   return selections;
