@@ -153,6 +153,18 @@
 
 ---
 
+### L11: Read Consumer Code Before Building Platform Abstractions
+
+**Source:** Our own Phase 3 Sprint 2 experience (April 2026).
+
+**Problem it fixes:** Building platform abstractions based only on PF's simplified code produces interfaces that are too narrow for the actual consumer. PF had 3 voice configs; Playform had 10. PF had no STT; Playform had full transcription with auto-detect.
+
+**How we adopted it:** Before building any new PF module, always check Playform's implementation of the same feature. The consumer has the richer code — the abstraction must capture that full surface, not just PF's skeleton. Standing rule: "Read Playform before building PF abstraction."
+
+**What it changed:** Sprint 2 voice provider was built to match Playform's full voice surface (10 languages, STT with auto-detect, content extraction routing) rather than PF's 3-language TTS-only skeleton.
+
+---
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._

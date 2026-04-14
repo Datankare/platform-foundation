@@ -21,6 +21,8 @@
  *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
  *   REALTIME_PROVIDER  = "supabase" | "mock"     (default: "mock")
  *   TRANSLATION_PROVIDER = "google" | "mock"     (default: "mock")
+ *   TTS_PROVIDER          = "google" | "mock"     (default: "mock")
+ *   STT_PROVIDER          = "google" | "mock"     (default: "mock")
  *
  * @module platform/providers
  */
@@ -41,6 +43,8 @@ export type AIProviderType = "anthropic" | "mock";
 export type ErrorReporterType = "sentry" | "noop";
 export type RealtimeProviderType = "supabase" | "mock";
 export type TranslationProviderType = "google" | "mock";
+export type TTSProviderType = "google" | "mock";
+export type STTProviderType = "google" | "mock";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -49,6 +53,8 @@ export interface ProviderSelections {
   errorReporter: ErrorReporterType;
   realtime: RealtimeProviderType;
   translation: TranslationProviderType;
+  tts: TTSProviderType;
+  stt: STTProviderType;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +71,8 @@ function getProviderSelections(): ProviderSelections {
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
     realtime: (process.env.REALTIME_PROVIDER as RealtimeProviderType) ?? "mock",
     translation: (process.env.TRANSLATION_PROVIDER as TranslationProviderType) ?? "mock",
+    tts: (process.env.TTS_PROVIDER as TTSProviderType) ?? "mock",
+    stt: (process.env.STT_PROVIDER as STTProviderType) ?? "mock",
   };
 }
 
@@ -163,6 +171,30 @@ function initRealtimeProvider(type: RealtimeProviderType): void {
   // Default: mock (in-memory, no external dependencies)
 }
 
+function initTTSProvider(type: TTSProviderType): void {
+  if (type === "google") {
+    const apiKey =
+      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
+    if (!apiKey) {
+      logger.warn("TTS_PROVIDER=google but GOOGLE_API_KEY missing — TTS will fail");
+    }
+    return;
+  }
+  // Default: mock
+}
+
+function initSTTProvider(type: STTProviderType): void {
+  if (type === "google") {
+    const apiKey =
+      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
+    if (!apiKey) {
+      logger.warn("STT_PROVIDER=google but GOOGLE_API_KEY missing — STT will fail");
+    }
+    return;
+  }
+  // Default: mock
+}
+
 function initTranslationProvider(type: TranslationProviderType): void {
   if (type === "google") {
     const apiKey =
@@ -200,6 +232,8 @@ export function initProviders(): ProviderSelections {
   initErrorReporter(selections.errorReporter);
   initRealtimeProvider(selections.realtime);
   initTranslationProvider(selections.translation);
+  initTTSProvider(selections.tts);
+  initSTTProvider(selections.stt);
 
   initialized = true;
 
@@ -210,6 +244,8 @@ export function initProviders(): ProviderSelections {
     errorReporter: selections.errorReporter,
     realtime: selections.realtime,
     translation: selections.translation,
+    tts: selections.tts,
+    stt: selections.stt,
   });
 
   return selections;
