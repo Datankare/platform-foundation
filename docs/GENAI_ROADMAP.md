@@ -15,22 +15,22 @@
 
 GenAI is the medium the platform operates in — not a feature bolted on. Every user interaction, every admin action, every safety decision, every piece of content flows through AI infrastructure that is instrumented, cached, budgeted, monitored, resilient, and explainable.
 
-The 14 principles that define what "GenAI-native" means for this platform are documented in the **[GenAI-Native Systems Manifesto](./GENAI_MANIFESTO.md)**. This roadmap maps those principles to phased delivery.
+The 18 principles that define what "GenAI-native" means for this platform are documented in the **[GenAI-Native Systems Manifesto](./GENAI_MANIFESTO.md)**. This roadmap maps those principles to phased delivery.
 
 ---
 
 ## Phase Summary
 
-| Phase | GenAI Status               | Key GenAI Capabilities                                                                                       |
-| ----- | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 1     | ✅ Complete                | Admin AI command bar                                                                                         |
-| 2     | 🔄 Sprint 4b of 7 complete | Orchestration, prompt registry, safety, moderation, observability, AI-aware cache, rate limiting, GDPR purge |
-| 3     | ⏳ Upcoming                | Multi-language AI, eval framework, response caching, token tracking                                          |
-| 4     | ⏳ Upcoming                | RAG, embeddings, user context, explainability                                                                |
-| 5     | ⏳ Upcoming                | Adaptive AI behavior, content generation, agentic framework, multimodal                                      |
-| 6     | ⏳ Upcoming                | Token budgets, cost attribution, A/B testing                                                                 |
-| 7     | ⏳ Upcoming                | AI quality monitoring, personalization, feedback loop, NL analytics                                          |
-| 8     | ⏳ Upcoming                | AI hardening, fallback chains, graceful degradation                                                          |
+| Phase | GenAI Status | Key GenAI Capabilities                                                                                                          |
+| ----- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | ✅ Complete  | Admin AI command bar                                                                                                            |
+| 2     | ✅ Complete  | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry |
+| 3     | ⏳ Upcoming  | Multi-language AI, eval framework, response caching, token tracking                                                             |
+| 4     | ⏳ Upcoming  | RAG, embeddings, user context, explainability                                                                                   |
+| 5     | ⏳ Upcoming  | Adaptive AI behavior, content generation, agentic framework, multimodal                                                         |
+| 6     | ⏳ Upcoming  | Token budgets, cost attribution, A/B testing                                                                                    |
+| 7     | ⏳ Upcoming  | AI quality monitoring, personalization, feedback loop, NL analytics                                                             |
+| 8     | ⏳ Upcoming  | AI hardening, fallback chains, graceful degradation                                                                             |
 
 ---
 
@@ -42,7 +42,7 @@ The 14 principles that define what "GenAI-native" means for this platform are do
 
 ---
 
-## Phase 2 — Communication Foundation 🔄
+## Phase 2 — Communication Foundation ✅
 
 | Capability                     | Status      | Detail                                                                                                       |
 | ------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------ |
