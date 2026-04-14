@@ -140,7 +140,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 790 tests, 84%+ coverage
+npm run test:coverage  # 863 tests, 84%+ coverage
 npm run build          # Clean build
 ./scripts/sustainability-gate.sh  # 22-point gate
 ```
