@@ -55,6 +55,7 @@ export default class ErrorBoundary extends Component<
       return (
         <div
           role="alert"
+          aria-live="assertive"
           style={{
             minHeight: "100vh",
             display: "flex",

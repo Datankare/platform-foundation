@@ -43,6 +43,23 @@ Then paste Part A and Part B below.
 > Run at every phase boundary. No phase exits without completing the exit gate.
 > No phase starts without completing the entry gate.
 
+### Accessibility Gate (every sprint)
+
+| #   | Check                                                                                        | Done |
+| --- | -------------------------------------------------------------------------------------------- | ---- |
+| A1  | All new/modified components have semantic HTML (labels, headings, landmarks)                 | [ ]  |
+| A2  | All interactive elements keyboard-reachable (tab, Enter/Space, Escape)                       | [ ]  |
+| A3  | All error messages have `role="alert"` and `aria-live="assertive"`                           | [ ]  |
+| A4  | All forms have `aria-busy` during loading states                                             | [ ]  |
+| A5  | No new `text-gray-600` or darker on dark backgrounds (WCAG AA contrast 4.5:1 minimum)        | [ ]  |
+| A6  | All dynamic content changes announced via `aria-live` regions                                | [ ]  |
+| A7  | All decorative elements have `aria-hidden="true"`, all meaningful elements have `aria-label` | [ ]  |
+| A8  | axe-core E2E test passes with zero violations                                                | [ ]  |
+
+> Run this gate on every sprint alongside the 22-point sustainability gate.
+> Critical/High: must fix before sprint ships.
+> Phase boundary: full manual screen reader pass (NVDA or VoiceOver) on all new UX.
+
 ### Phase Exit Gate (before marking a phase complete)
 
 | #   | Check                                                                                                        | Done |
@@ -60,6 +77,8 @@ Then paste Part A and Part B below.
 | E11 | Both repos on main, CI green                                                                                 | [ ]  |
 | E12 | Test counts and coverage recorded in ROADMAP.md phase metrics                                                | [ ]  |
 | E13 | Sync workflow verified — consumer repos current with latest PF release                                       | [ ]  |
+| E14 | Accessibility gate A1-A8 passed for all components modified in this phase                                    | [ ]  |
+| E15 | Manual screen reader test on new UX surfaces (NVDA or VoiceOver)                                             | [ ]  |
 
 ### Phase Entry Gate (before starting a new phase)
 
