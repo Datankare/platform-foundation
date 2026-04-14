@@ -125,6 +125,34 @@
 
 ---
 
+### L10: Claude.ai vs Claude Code — Know What Each Tool Costs You
+
+**Source:** Our own workflow analysis after 7 sprints across Phase 2 (April 2026).
+
+**Problem it fixes:** Choosing the wrong AI-assisted development workflow without understanding the tradeoffs. Both tools have real strengths; neither is strictly better.
+
+**What Claude.ai costs us (friction):**
+
+- **No autonomous file operations.** Every file edit requires generating scripts/patches, human copy-paste, and running manually. Claude Code reads/writes files directly in the repo.
+- **No autonomous test-fix loops.** Claude Code runs tests, sees failures, fixes, re-runs until green — one pass. We do this across multiple messages. Sprint 6 integration tests took 4 fix rounds that Claude Code would have self-corrected.
+- **No git operations.** We compose git commands, human pastes them. Zsh comment syntax (`#`) causes failures regularly. Claude Code branches, commits, pushes natively.
+- **No live file reading.** Every type mismatch we hit (`MetricEvent.value` vs `.values`, `blocked` vs `matched`, `MemoryCacheProvider` vs `InMemoryCacheProvider`) happened because the AI couldn't read the actual file — it had to ask the human to run `grep`/`head`/`sed -n`.
+- **Session context limits.** Long sessions get compacted. Context drifts. Standing rules weaken over time (see L7).
+
+**What Claude.ai gives us (safety + depth):**
+
+- **Human review on every change.** Nothing lands without verification. Zero regressions shipped to main across 7 sprints. Claude Code can make bad decisions autonomously at speed.
+- **Architectural discussion.** Phase planning, RAMPS assessments, risk analysis (song ID costs/privacy), article analysis (Karpathy) — this depth of conversation doesn't happen naturally in Claude Code, which is biased toward "do this task."
+- **Document generation.** ADRs, manifesto, sprint plans, ENGINEERING_LEARNINGS — Claude Code is weaker at long-form structured documents.
+- **Cross-session memory.** Claude Code has CLAUDE.md but no memory of project history, preferences, or past decisions. Claude.ai carries context about the full project evolution.
+- **Deliberate pace.** Every mistake gets caught before committing. The "A is for Accessibility" correction, the coverage regression flag, the middleware.ts sync collision — all caught because a human reviewed before applying.
+
+**How we adopted it:** Continue using Claude.ai for planning, architecture, review, and document generation. If autonomous coding speed becomes a bottleneck, consider Claude Code for sprint execution with Claude.ai for oversight. The two tools are complementary, not competing.
+
+**Future plan:** Evaluate hybrid workflow — Claude Code for mechanical coding tasks (file creation, test loops, git operations) under a CLAUDE.md that encodes our standing rules, with Claude.ai for architecture decisions, phase planning, and quality review. Not urgent — current workflow delivers reliably, just slower on mechanical steps.
+
+---
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._
