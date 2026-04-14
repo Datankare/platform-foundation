@@ -48,7 +48,7 @@ export default function RegisterForm({
     <div className="flex flex-col gap-6">
       <h2 className="text-xl font-bold text-white text-center">Create Account</h2>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">
         <div>
           <label htmlFor="register-email" className="block text-sm text-gray-400 mb-1.5">
             Email
@@ -62,7 +62,7 @@ export default function RegisterForm({
             placeholder="you@example.com"
             disabled={isLoading}
             required
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
         </div>
 
@@ -82,11 +82,15 @@ export default function RegisterForm({
             placeholder="Create a strong password"
             disabled={isLoading}
             required
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
           {/* Password requirements */}
           {password.length > 0 && (
-            <div className="mt-2 flex flex-col gap-1">
+            <div
+              aria-live="polite"
+              aria-label="Password requirements"
+              className="mt-2 flex flex-col gap-1"
+            >
               <PasswordCheck
                 label={`At least ${minPasswordLength} characters`}
                 passed={passwordChecks.length}
@@ -115,7 +119,7 @@ export default function RegisterForm({
             placeholder="Confirm your password"
             disabled={isLoading}
             required
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
           {confirmPassword.length > 0 && !passwordChecks.match && (
             <p className="text-red-400 text-xs mt-1">Passwords do not match</p>
@@ -125,6 +129,7 @@ export default function RegisterForm({
         {error && (
           <div
             role="alert"
+            aria-live="assertive"
             className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
           >
             {error}

@@ -69,6 +69,7 @@ export default function MfaChallengeForm({
         {error && (
           <div
             role="alert"
+            aria-live="assertive"
             className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
           >
             {error}

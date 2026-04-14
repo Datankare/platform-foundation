@@ -55,14 +55,19 @@ export default function LoginForm({
       />
 
       {/* Divider */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4" role="separator" aria-label="or">
         <div className="flex-1 h-px bg-gray-700" />
-        <span className="text-xs text-gray-500 uppercase tracking-wider">or</span>
+        <span
+          className="text-xs text-gray-500 uppercase tracking-wider"
+          aria-hidden="true"
+        >
+          or
+        </span>
         <div className="flex-1 h-px bg-gray-700" />
       </div>
 
       {/* Email/Password Form */}
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">
         <div>
           <label htmlFor="login-email" className="block text-sm text-gray-400 mb-1.5">
             Email
@@ -76,7 +81,7 @@ export default function LoginForm({
             placeholder="you@example.com"
             disabled={isLoading}
             required
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
         </div>
 
@@ -102,7 +107,7 @@ export default function LoginForm({
             placeholder="Enter your password"
             disabled={isLoading}
             required
-            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+            className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
         </div>
 
@@ -110,6 +115,7 @@ export default function LoginForm({
         {error && (
           <div
             role="alert"
+            aria-live="assertive"
             className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
           >
             {error}
