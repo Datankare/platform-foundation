@@ -9,20 +9,20 @@
 
 ## Phase Summary
 
-| Phase | Name                         | Status      | PF Release | Started    | Completed  |
-| ----- | ---------------------------- | ----------- | ---------- | ---------- | ---------- |
-| 0     | Platform Scaffolding         | ✅ Complete | —          | 2026-03-15 | 2026-03-18 |
-| 0.5   | Input Reliability Sprint     | ✅ Complete | —          | 2026-03-18 | 2026-03-20 |
-| 0.75  | E2E Test Suite               | ✅ Complete | —          | 2026-03-20 | 2026-03-22 |
-| 1     | Identity & Access Foundation | ✅ Complete | v1.1.0     | 2026-03-22 | 2026-04-02 |
-| 2     | Communication Foundation     | ✅ Complete | v1.3.0     | 2026-04-03 | 2026-04-13 |
+| Phase | Name                         | Status         | PF Release | Started    | Completed  |
+| ----- | ---------------------------- | -------------- | ---------- | ---------- | ---------- |
+| 0     | Platform Scaffolding         | ✅ Complete    | —          | 2026-03-15 | 2026-03-18 |
+| 0.5   | Input Reliability Sprint     | ✅ Complete    | —          | 2026-03-18 | 2026-03-20 |
+| 0.75  | E2E Test Suite               | ✅ Complete    | —          | 2026-03-20 | 2026-03-22 |
+| 1     | Identity & Access Foundation | ✅ Complete    | v1.1.0     | 2026-03-22 | 2026-04-02 |
+| 2     | Communication Foundation     | ✅ Complete    | v1.3.0     | 2026-04-03 | 2026-04-13 |
 | 3     | Language & Voice Foundation  | 🔄 In Progress | —          | 2026-04-14 | —          |
-| 4     | Content Safety Foundation    | ⏳ Upcoming | —          | —          | —          |
-| 5     | Application Framework        | ⏳ Upcoming | —          | —          | —          |
-| 6     | Monetization Foundation      | ⏳ Upcoming | —          | —          | —          |
-| 7     | Analytics Foundation         | ⏳ Upcoming | —          | —          | —          |
-| 8     | Consumer App Integration     | ⏳ Upcoming | —          | —          | —          |
-| 9     | Hardening & Launch           | ⏳ Upcoming | —          | —          | —          |
+| 4     | Content Safety Foundation    | ⏳ Upcoming    | —          | —          | —          |
+| 5     | Application Framework        | ⏳ Upcoming    | —          | —          | —          |
+| 6     | Monetization Foundation      | ⏳ Upcoming    | —          | —          | —          |
+| 7     | Analytics Foundation         | ⏳ Upcoming    | —          | —          | —          |
+| 8     | Consumer App Integration     | ⏳ Upcoming    | —          | —          | —          |
+| 9     | Hardening & Launch           | ⏳ Upcoming    | —          | —          | —          |
 
 ### Cross-Phase Fabric
 
