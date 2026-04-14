@@ -213,6 +213,7 @@ export default function SpikeApp() {
             <p
               id="char-status"
               role="alert"
+              aria-live="assertive"
               className="text-red-400 text-xs mb-3 text-center font-medium"
             >
               ✗ Too long — please shorten to 100 characters or fewer

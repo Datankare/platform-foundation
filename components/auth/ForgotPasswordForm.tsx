@@ -88,13 +88,14 @@ export default function ForgotPasswordForm({
               placeholder="you@example.com"
               disabled={isLoading}
               required
-              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
             />
           </div>
 
           {error && (
             <div
               role="alert"
+              aria-live="assertive"
               className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
             >
               {error}
@@ -127,7 +128,7 @@ export default function ForgotPasswordForm({
               placeholder="Enter 6-digit code"
               disabled={isLoading}
               required
-              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
             />
           </div>
 
@@ -147,7 +148,7 @@ export default function ForgotPasswordForm({
               placeholder="Create a new password"
               disabled={isLoading}
               required
-              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
             />
           </div>
 
@@ -167,7 +168,7 @@ export default function ForgotPasswordForm({
               placeholder="Confirm new password"
               disabled={isLoading}
               required
-              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
+              className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
             />
             {confirmPassword.length > 0 && !passwordsMatch && (
               <p className="text-red-400 text-xs mt-1">Passwords do not match</p>
@@ -177,6 +178,7 @@ export default function ForgotPasswordForm({
           {error && (
             <div
               role="alert"
+              aria-live="assertive"
               className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm"
             >
               {error}
