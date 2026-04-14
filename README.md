@@ -68,18 +68,21 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Documentation
 
-| Document                           | Purpose                                                        |
-| ---------------------------------- | -------------------------------------------------------------- |
-| `docs/adr/ADR-001–017`             | 17 Architecture Decision Records                               |
-| `docs/TAD.md`                      | Technical Architecture Document                                |
-| `docs/ROADMAP.md`                  | 10-phase product roadmap with versioned changelog              |
-| `docs/GENAI_ROADMAP.md`            | GenAI-native capability map — accomplished and forthcoming     |
-| `docs/GENAI_MANIFESTO.md`          | The 14 GenAI-native principles — what "GenAI-native" means     |
-| `docs/RAMPS_PHASE1_ASSESSMENT.md`  | Phase 1 quality baseline (tests, coverage, OWASP, GDPR, COPPA) |
-| `docs/SECURITY_DEBT.md`            | Tracked deferrals with phase assignments                       |
-| `docs/OWASP_CONTROLS.md`           | 23 verified OWASP Top 10 controls                              |
-| `docs/SUSTAINABILITY_CHECKLIST.md` | 22-point gate definitions                                      |
-| `CONTRIBUTING.md`                  | Branch workflow, seed separation, standing rules               |
+| Document                | Purpose                                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `docs/adr/ADR-001–017`  | 17 Architecture Decision Records                           |
+| `docs/TAD.md`           | Technical Architecture Document                            |
+| `docs/ROADMAP.md`       | 10-phase product roadmap with versioned changelog          |
+| `docs/GENAI_ROADMAP.md` | GenAI-native capability map — accomplished and forthcoming |
+
+| `docs/GENAI_MANIFESTO.md
+
+- `docs/ENGINEERING_LEARNINGS.md` — Adopted engineering principles and learning log`         | The 14 GenAI-native principles — what "GenAI-native" means     |
+|`docs/RAMPS_PHASE1_ASSESSMENT.md` | Phase 1 quality baseline (tests, coverage, OWASP, GDPR, COPPA) |
+|`docs/SECURITY_DEBT.md`           | Tracked deferrals with phase assignments                       |
+|`docs/OWASP_CONTROLS.md`          | 23 verified OWASP Top 10 controls                              |
+|`docs/SUSTAINABILITY_CHECKLIST.md`| 22-point gate definitions                                      |
+|`CONTRIBUTING.md` | Branch workflow, seed separation, standing rules |
 
 ### Consumer Inheritance
 
@@ -168,7 +171,9 @@ See [RAMPS Phase 1 Assessment](docs/RAMPS_PHASE1_ASSESSMENT.md) for the complete
 
 See [Product Roadmap](docs/ROADMAP.md) for all 10 phases, deferred items, and versioned change history.
 
-See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete GenAI capability map — what's been delivered, what's forthcoming, and the 14-point Phase 9 verification checklist. See [GenAI-Native Systems Manifesto](docs/GENAI_MANIFESTO.md) for the 14 principles that define what "GenAI-native" means.
+See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete GenAI capability map — what's been delivered, what's forthcoming, and the 14-point Phase 9 verification checklist. See [GenAI-Native Systems Manifesto](docs/GENAI_MANIFESTO.md
+
+- `docs/ENGINEERING_LEARNINGS.md` — Adopted engineering principles and learning log) for the 14 principles that define what "GenAI-native" means.
 
 ---
 
