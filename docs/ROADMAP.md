@@ -18,7 +18,7 @@
 | 2     | Communication Foundation     | ✅ Complete    | v1.3.0     | 2026-04-03 | 2026-04-13 |
 | 3     | Language & Voice Foundation  | 🔄 In Progress | —          | 2026-04-14 | —          |
 | 4     | Content Safety Foundation    | ⏳ Upcoming    | —          | —          | —          |
-| 5     | Application Framework        | ⏳ Upcoming    | —          | —          | —          |
+| 5     | Application Framework + AUX  | ⏳ Upcoming    | —          | —          | —          |
 | 6     | Monetization Foundation      | ⏳ Upcoming    | —          | —          | —          |
 | 7     | Analytics Foundation         | ⏳ Upcoming    | —          | —          | —          |
 | 8     | Consumer App Integration     | ⏳ Upcoming    | —          | —          | —          |

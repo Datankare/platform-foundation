@@ -177,6 +177,37 @@
 
 ---
 
+### L13: Design for Agents Running Your Platform, Not Just On It
+
+**Source:** Dharmesh Shah (simple.ai@dharmesh), "Why Agents Need Their Own Interface" (April 2026).
+
+**Problem it fixes:** Exposing granular API endpoints and expecting agents to chain them together. An agent calling `/api/process`, `/api/stream`, `/api/extract`, `/api/tts` separately must reason about workflow, handle errors, retry stale data, and burn tokens re-discovering the orchestration logic every time. This is bad AUX (Agent User Experience).
+
+**The insight:** There are two levels of agentic design:
+
+1. **Agents running ON your platform** — agents can call your APIs. This is table stakes.
+2. **Agents running your platform** — the platform exposes workflow-level tools that encapsulate complete workflows. One call = one complete workflow. The platform returns structured results with `nextActions` so agents know what's possible without reasoning from scratch.
+
+**Example — bad AUX (current):**
+
+```
+Agent calls: /api/process → parse response → /api/tts → handle error → retry → /api/extract
+Five API calls + all error handling per interaction. Agent reasons through it every time.
+```
+
+**Example — good AUX (target):**
+
+```
+Agent calls: /api/agent/process-content { intent: "translate", input: audio, targetLanguages: ["es"] }
+Platform returns: { trajectory, results, nextActions: ["translate-more", "done"], cost }
+```
+
+**How we adopted it:** Added to Phase 5 planning as a first-class design goal. Created `docs/AUX_DESIGN.md` to capture the AUX surface before building it. Every new API endpoint is now evaluated against: "Could an agent call this as a single workflow, or does it require multi-call orchestration?"
+
+**Standing rule:** Every endpoint designed from Phase 4 onward must have an AUX assessment: what would an agent need to call to accomplish this workflow in one shot? If the answer is "multiple endpoints + reasoning," design a workflow-level tool.
+
+---
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._
