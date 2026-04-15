@@ -165,6 +165,18 @@
 
 ---
 
+### L12: The GenAI Mapping Table Is a Pre-Flight Checklist, Not a Planning Document
+
+**Source:** Our own Phase 3 Sprint 3 near-miss (April 2026).
+
+**Problem it fixes:** Skipping the 18-principle mapping table because "I already know the principles." Sprint 3's initial pipeline implementation missed P15-P18 entirely — the agentic principles. The pipeline was an autonomous agent acting on behalf of users, but had no agent identity, no cognitive memory, no intents, and no trajectories. The gap was only caught because the human asked "have we checked all our GenAI principles?" If not caught, the pipeline would have shipped non-agentic and required expensive retrofitting.
+
+**How we adopted it:** The mapping table is now mandatory before any code, every sprint. It checks ALL 18 principles — not just the ones that feel relevant. The principles you skip are the ones that bite. Pilots don't skip the checklist because they've flown before. The value isn't in knowing the items — it's in forcing verification against the actual implementation.
+
+**Standing rule:** Every sprint starts with a complete 18-principle mapping table. No exceptions. If a principle doesn't apply, mark it "—" with a reason. The table is the first output of the sprint, before any file is created.
+
+---
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._
