@@ -29,6 +29,27 @@ export {
 // Chunker
 export { chunkText, getByteLength, TTS_BYTE_LIMIT } from "./chunker";
 
+// Pipeline
+export {
+  VoicePipeline,
+  type PipelineRequest,
+  type PipelineResult,
+  type PipelineStepResult,
+  type PipelineConfig,
+  type PipelineMetricEvent,
+  type PipelineIntent,
+  type SafetyScreenFn,
+  type TranslationCache,
+} from "./pipeline";
+
+// Health probes
+export {
+  checkTranslationHealth,
+  checkTTSHealth,
+  checkSTTHealth,
+  type VoiceHealthStatus,
+} from "./health-probe";
+
 // Providers
 export { GoogleTTSProvider } from "./google-tts";
 export { GoogleSTTProvider } from "./google-stt";
