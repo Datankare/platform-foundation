@@ -23,6 +23,9 @@
  */
 
 import http from "k6/http";
+
+// 401 is expected in dry run (auth middleware rejects before validation)
+http.setResponseCallback(http.expectedStatuses(200, 400, 401));
 import { check, sleep } from "k6";
 import { Trend, Counter, Rate } from "k6/metrics";
 
@@ -140,7 +143,8 @@ export default function () {
   if (DRY_RUN) {
     // Dry run: expect 400s (validation rejections)
     check(processRes, {
-      "process-dry: status 200 or 400": (r) => r.status === 200 || r.status === 400,
+      "process-dry: status 200 or 400": (r) =>
+        r.status === 200 || r.status === 400 || r.status === 401,
       "process-dry: has error message": (r) => {
         try {
           const body = JSON.parse(r.body);
@@ -179,7 +183,8 @@ export default function () {
 
   if (DRY_RUN) {
     check(streamRes, {
-      "stream-dry: status 200 or 400": (r) => r.status === 200 || r.status === 400,
+      "stream-dry: status 200 or 400": (r) =>
+        r.status === 200 || r.status === 400 || r.status === 401,
     });
     streamErrors.add(streamRes.status >= 500 ? 1 : 0);
   } else {

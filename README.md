@@ -45,9 +45,24 @@ from day one.
 - ✅ Observability fabric — distributed tracing, metrics sink, health registry, error reporting
 - ✅ Realtime foundation — provider-abstracted WebSocket layer (Supabase first, swappable)
 - ✅ Agentic-native message schema — agent identity (P15), intent enforcement (P17), trajectories (P18), memory hints (P16)
-- ✅ Provider registry — 5 swappable slots: auth, cache, AI, error reporter, realtime
+- ✅ Provider registry — 10 swappable slots: auth, cache, AI, error reporter, realtime, translation, TTS, STT, song ID, audio converter
 - ✅ AI cache — prompt-hash keying, TTL by use case, hit/miss metrics, cost savings tracking
 - ✅ SSE streaming endpoint (`/api/stream`) + React hooks (`useRealtimeStream`, `useRealtimeChannel`)
+
+### Language & Voice Foundation (Phase 3 — complete)
+
+- ✅ TranslationProvider abstraction (Google, mock, env-var swap)
+- ✅ 10-language config: codes, flags, RTL, voice settings
+- ✅ TTSProvider + STTProvider (Google Cloud, mock)
+- ✅ TTS chunker — handles Google's 5,000-byte limit automatically
+- ✅ VoicePipeline orchestrator — STT → safety screen → translate → TTS
+- ✅ Agentic voice pipeline — P15-P18 (agent identity, intent, trajectory, memory)
+- ✅ SongIdentificationProvider (ACRCloud, mock) — audio fingerprint matching
+- ✅ AudioFormatConverter (ffmpeg-service, passthrough, mock)
+- ✅ Canonical audio format — all audio normalized to WAV 16kHz mono s16 PCM
+- ✅ Privacy by design — metadata stripping, clip limits, no audio in logs
+- ✅ Health probes for all voice providers
+- ✅ Provider registry — 10 swappable slots: auth, cache, AI, error reporter, realtime, translation, TTS, STT, song ID, audio converter
 
 See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability map.
 
