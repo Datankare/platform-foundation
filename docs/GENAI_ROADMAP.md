@@ -25,7 +25,7 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | 1     | ✅ Complete  | Admin AI command bar                                                                                                            |
 | 2     | ✅ Complete  | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry |
-| 3     | ⏳ Upcoming  | Multi-language AI, eval framework, response caching, token tracking                                                             |
+| 3     | ✅ Complete  | Voice pipeline (P1-P18 agentic), song ID, translation/TTS/STT providers, canonical audio format                                 |
 | 4     | ⏳ Upcoming  | RAG, embeddings, user context, explainability                                                                                   |
 | 5     | ⏳ Upcoming  | Adaptive AI behavior, content generation, agentic framework, multimodal                                                         |
 | 6     | ⏳ Upcoming  | Token budgets, cost attribution, A/B testing                                                                                    |
@@ -66,15 +66,21 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 
 ---
 
-## Phase 3 — Language & Voice Foundation ⏳
+## Phase 3 — Language & Voice Foundation ✅
 
-| Capability              | Status     | Detail                                                                                         |
-| ----------------------- | ---------- | ---------------------------------------------------------------------------------------------- |
-| AI response caching     | ⏳ Planned | Identical inputs → cached outputs. Translation and classification are highly cacheable.        |
-| Token tracking          | ⏳ Planned | Per-request token accounting for cost visibility before monetization phase                     |
-| Enhanced moderation     | ⏳ Planned | Multi-model classification with confidence score aggregation                                   |
-| Multi-language AI       | ⏳ Planned | Safety classification and AI interactions operate in the user's language natively (ADR-017 §3) |
-| AI evaluation framework | ⏳ Planned | `prompts/evals/` with datasets per prompt, regression runs in CI (ADR-017 §4)                  |
+| Capability                       | Status       | Detail                                                                                      |
+| -------------------------------- | ------------ | ------------------------------------------------------------------------------------------- |
+| Translation provider abstraction | ✅ Sprint 1  | TranslationProvider interface, Google implementation, 10-language config, cache integration |
+| Voice provider abstraction       | ✅ Sprint 2  | TTSProvider + STTProvider interfaces, TTS chunker (5,000-byte limit fix), 10 voice configs  |
+| Agentic voice pipeline           | ✅ Sprint 3  | VoicePipeline: STT → safety → translate → TTS, P15-P18 agentic context, ADR-019             |
+| Song identification              | ✅ Sprint 4a | SongIdentificationProvider (ACRCloud), AudioFormatConverter, canonical format, ADR-020      |
+| Cost tracking per call           | ✅ Sprint 4a | estimatedCostUsd on IdentifyResult + ConversionResult (P5)                                  |
+| Provider-aware orchestration     | ✅ Sprint 4a | 10 provider slots, all env-var swappable (P7)                                               |
+| AI response caching              | ⏳ Deferred  | Moved to Phase 4 — needs RAG/embedding infrastructure                                       |
+| Token tracking                   | ⏳ Deferred  | Moved to Phase 6 — aligns with monetization token budgets                                   |
+| Enhanced moderation              | ⏳ Deferred  | Moved to Phase 4 — aligns with content safety foundation                                    |
+| Multi-language AI                | ⏳ Deferred  | Moved to Phase 4 — needs multi-language safety classification                               |
+| AI evaluation framework          | ⏳ Deferred  | Moved to Phase 4 — needs RAG test datasets (ADR-017 §4)                                     |
 
 ---
 
@@ -163,8 +169,9 @@ If any statement is false at launch, GenAI-native is incomplete.
 
 ## Changelog
 
-| Date       | Author    | Change                                                                                                                                               |
-| ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete.                              |
-| 2026-04-06 | Raman Sud | Generalized for platform-foundation: player→user, game→application, Phase 8 app implementation moved to consumer repos. Phase 9→Phase 8 (hardening). |
-| 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.            |
+| Date       | Author    | Change                                                                                                                                                                                                     |
+| ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete.                                                                                    |
+| 2026-04-06 | Raman Sud | Generalized for platform-foundation: player→user, game→application, Phase 8 app implementation moved to consumer repos. Phase 9→Phase 8 (hardening).                                                       |
+| 2026-04-16 | Raman Sud | Phase 3 complete. Translation, voice, pipeline, song ID providers delivered. 5 GenAI capabilities deferred to Phase 4/6 (caching, token tracking, enhanced moderation, multi-language AI, eval framework). |
+| 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.                                                                  |

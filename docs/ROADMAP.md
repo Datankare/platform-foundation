@@ -16,9 +16,9 @@
 | 0.75  | E2E Test Suite               | ✅ Complete | —          | 2026-03-20 | 2026-03-22 |
 | 1     | Identity & Access Foundation | ✅ Complete | v1.1.0     | 2026-03-22 | 2026-04-02 |
 | 2     | Communication Foundation     | ✅ Complete | v1.3.0     | 2026-04-03 | 2026-04-13 |
-| 3     | Language & Voice Foundation  | ⏳ Upcoming | —          | —          | —          |
+| 3     | Language & Voice Foundation  | ✅ Complete | v1.4.0     | 2026-04-14 | 2026-04-16 |
 | 4     | Content Safety Foundation    | ⏳ Upcoming | —          | —          | —          |
-| 5     | Application Framework        | ⏳ Upcoming | —          | —          | —          |
+| 5     | Application Framework + AUX  | ⏳ Upcoming | —          | —          | —          |
 | 6     | Monetization Foundation      | ⏳ Upcoming | —          | —          | —          |
 | 7     | Analytics Foundation         | ⏳ Upcoming | —          | —          | —          |
 | 8     | Consumer App Integration     | ⏳ Upcoming | —          | —          | —          |
@@ -211,9 +211,52 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ---
 
-## Phase 3 — Language & Voice Foundation ⏳
+## Phase 3 — Language & Voice Foundation ✅
 
-**Objective:** Advanced language processing and voice interaction.
+**Objective:** Advanced language processing, voice interaction, and song identification.
+**PF Release:** v1.4.0
+
+### Sprints Completed
+
+| Sprint | Scope                            | Tests Added |
+| ------ | -------------------------------- | ----------- |
+| 1      | Translation provider abstraction | +22         |
+| 2      | Voice provider + TTS chunker fix | +30         |
+| 3      | Voice pipeline (P1-P18 agentic)  | +31         |
+| 4a     | Song ID + Audio format provider  | +67         |
+| 4b     | Phase gate + release             | —           |
+
+### Deliverables
+
+| Deliverable                                                    | Status |
+| -------------------------------------------------------------- | ------ |
+| TranslationProvider interface (Google, mock, env-var swap)     | ✅     |
+| 10-language config with codes, flags, RTL, voice settings      | ✅     |
+| TTSProvider + STTProvider interfaces (Google, mock)            | ✅     |
+| TTS chunker — 5,000-byte Google limit (TASK-020)               | ✅     |
+| VoicePipeline orchestrator — STT → safety → translate → TTS    | ✅     |
+| Agentic voice pipeline (P15-P18: identity, intent, trajectory) | ✅     |
+| SongIdentificationProvider (ACRCloud, mock)                    | ✅     |
+| AudioFormatConverter (ffmpeg-service, passthrough, mock)       | ✅     |
+| Canonical audio format — WAV 16kHz mono s16 PCM                | ✅     |
+| Privacy: metadata stripping, clip limits, no-audio-in-logs     | ✅     |
+| Health probes for all voice providers                          | ✅     |
+| SONG_IDENTIFY rate limit rule (10/user/hour)                   | ✅     |
+| Provider registry: 10 slots (was 8)                            | ✅     |
+| ADR-019: Voice Pipeline Architecture                           | ✅     |
+| ADR-020: Song Identification Architecture                      | ✅     |
+| RAMPS Phase 3 Assessment                                       | ✅     |
+| k6 dry run — no regression                                     | ✅     |
+
+### Final Metrics
+
+| Metric                   | Platform-Foundation |
+| ------------------------ | ------------------- |
+| Unit + integration tests | 1013                |
+| Test suites              | 68                  |
+| Code coverage (stmts)    | 82.54%              |
+| ADRs                     | 20                  |
+| Provider slots           | 10                  |
 
 ### Voice & Language
 
@@ -486,4 +529,5 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 | 1.1.0   | 2026-04-03 | Raman Sud | Pre-Phase 2 architectural review. Added ADR-014 (Observability), ADR-015 (GenAI-Native Stack), ADR-016 (Content Safety). All three woven into Phases 2–9 as cross-phase fabric with detailed per-phase deliverables. Added standing rules 9–11.                                                                               |
 | 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                                                                                                            |
 | 2.1.0   | 2026-04-05 | Raman Sud | GenAI-native surface map audit (ADR-017). 10 gaps identified and placed: output screening (P2), streaming (P2), multi-language AI (P3), eval framework (P3), user context (P4), explainability (P4), agentic framework (P5), multimodal (P5), A/B testing (P6), feedback loop (P7). Standing rules 11 updated, rule 12 added. |
+| 3.0.0   | 2026-04-16 | Raman Sud | Phase 3 complete. 4 sprints delivered: translation provider, voice providers + chunker, agentic voice pipeline, song ID + audio format. 150 tests added (863→1013). ADR-019, ADR-020. 10 provider slots. Tagged v1.4.0.                                                                                                       |
 | 2.2.0   | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric (platform/observability/ — error tracking, tracing, metrics, health). TASK-018 resolved (player→user rename, 52 files + migration 008). Docs generalized. PF tests: 473→545.                                                                                                          |

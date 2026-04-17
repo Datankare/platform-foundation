@@ -117,3 +117,8 @@ _Last updated: 2026-04-07 (Sprint 4b: Auth wiring complete — CognitoAuthProvid
 - **Status:** Deferred — infrastructure ready, console configuration pending
 - **Description:** Code is complete: SsoButtons.tsx, initiateSso(), handleSsoCallback(), provider interface all built. Requires: (1) OAuth credentials from Google Cloud, Apple Developer, Azure AD; (2) Cognito identity provider configuration; (3) Custom domain on Cognito for callback URLs; (4) Privacy policy URLs and app review (Apple). Zero code changes needed.
 - **Tracking:** ADR-012, platform/auth/provider.ts, components/auth/SsoButtons.tsx
+
+| TASK-025 | ALB + Elastic IP for ffmpeg-service | Phase 5 | ECS Fargate public IP changes on task restart. Add ALB or Elastic IP for stable URL. Currently using direct IP — acceptable for development, not production. |
+| TASK-025 | ALB for ffmpeg-service (stable URL) | Phase 5 | ECS Fargate public IP changes on task restart. Add ALB or Elastic IP for stable URL. |
+| TASK-026 | Rotate ACRCloud access secret before production | Phase 5 | Secret key exposed during setup. Rotate via ACRCloud Console before production. |
+| TASK-027 | Narrow IAM permissions for Terraform user | Sprint 4b (Phase 3 close) | IAM user has IAMFullAccess, EC2FullAccess, ECS_FullAccess, ECRFullAccess, CloudWatchLogsFullAccess. Active security risk — replace with scoped policy before closing Phase 3. |
