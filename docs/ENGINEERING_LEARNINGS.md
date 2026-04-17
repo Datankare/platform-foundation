@@ -153,6 +153,61 @@
 
 ---
 
+### L11: Read Consumer Code Before Building Platform Abstractions
+
+**Source:** Our own Phase 3 Sprint 2 experience (April 2026).
+
+**Problem it fixes:** Building platform abstractions based only on PF's simplified code produces interfaces that are too narrow for the actual consumer. PF had 3 voice configs; Playform had 10. PF had no STT; Playform had full transcription with auto-detect.
+
+**How we adopted it:** Before building any new PF module, always check Playform's implementation of the same feature. The consumer has the richer code — the abstraction must capture that full surface, not just PF's skeleton. Standing rule: "Read Playform before building PF abstraction."
+
+**What it changed:** Sprint 2 voice provider was built to match Playform's full voice surface (10 languages, STT with auto-detect, content extraction routing) rather than PF's 3-language TTS-only skeleton.
+
+---
+
+### L12: The GenAI Mapping Table Is a Pre-Flight Checklist, Not a Planning Document
+
+**Source:** Our own Phase 3 Sprint 3 near-miss (April 2026).
+
+**Problem it fixes:** Skipping the 18-principle mapping table because "I already know the principles." Sprint 3's initial pipeline implementation missed P15-P18 entirely — the agentic principles. The pipeline was an autonomous agent acting on behalf of users, but had no agent identity, no cognitive memory, no intents, and no trajectories. The gap was only caught because the human asked "have we checked all our GenAI principles?" If not caught, the pipeline would have shipped non-agentic and required expensive retrofitting.
+
+**How we adopted it:** The mapping table is now mandatory before any code, every sprint. It checks ALL 18 principles — not just the ones that feel relevant. The principles you skip are the ones that bite. Pilots don't skip the checklist because they've flown before. The value isn't in knowing the items — it's in forcing verification against the actual implementation.
+
+**Standing rule:** Every sprint starts with a complete 18-principle mapping table. No exceptions. If a principle doesn't apply, mark it "—" with a reason. The table is the first output of the sprint, before any file is created.
+
+---
+
+### L13: Design for Agents Running Your Platform, Not Just On It
+
+**Source:** Dharmesh Shah (simple.ai@dharmesh), "Why Agents Need Their Own Interface" (April 2026).
+
+**Problem it fixes:** Exposing granular API endpoints and expecting agents to chain them together. An agent calling `/api/process`, `/api/stream`, `/api/extract`, `/api/tts` separately must reason about workflow, handle errors, retry stale data, and burn tokens re-discovering the orchestration logic every time. This is bad AUX (Agent User Experience).
+
+**The insight:** There are two levels of agentic design:
+
+1. **Agents running ON your platform** — agents can call your APIs. This is table stakes.
+2. **Agents running your platform** — the platform exposes workflow-level tools that encapsulate complete workflows. One call = one complete workflow. The platform returns structured results with `nextActions` so agents know what's possible without reasoning from scratch.
+
+**Example — bad AUX (current):**
+
+```
+Agent calls: /api/process → parse response → /api/tts → handle error → retry → /api/extract
+Five API calls + all error handling per interaction. Agent reasons through it every time.
+```
+
+**Example — good AUX (target):**
+
+```
+Agent calls: /api/agent/process-content { intent: "translate", input: audio, targetLanguages: ["es"] }
+Platform returns: { trajectory, results, nextActions: ["translate-more", "done"], cost }
+```
+
+**How we adopted it:** Added to Phase 5 planning as a first-class design goal. Created `docs/AUX_DESIGN.md` to capture the AUX surface before building it. Every new API endpoint is now evaluated against: "Could an agent call this as a single workflow, or does it require multi-call orchestration?"
+
+**Standing rule:** Every endpoint designed from Phase 4 onward must have an AUX assessment: what would an agent need to call to accomplish this workflow in one shot? If the answer is "multiple endpoints + reasoning," design a workflow-level tool.
+
+---
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._

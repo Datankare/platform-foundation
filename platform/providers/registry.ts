@@ -20,6 +20,11 @@
  *   AI_PROVIDER        = "anthropic" | "mock"    (default: "mock")
  *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
  *   REALTIME_PROVIDER  = "supabase" | "mock"     (default: "mock")
+ *   TRANSLATION_PROVIDER = "google" | "mock"     (default: "mock")
+ *   TTS_PROVIDER          = "google" | "mock"     (default: "mock")
+ *   STT_PROVIDER          = "google" | "mock"     (default: "mock")
+ *   SONG_ID_PROVIDER      = "acrcloud" | "mock"   (default: "mock")
+ *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
  *
  * @module platform/providers
  */
@@ -39,6 +44,11 @@ export type CacheProviderType = "upstash" | "memory";
 export type AIProviderType = "anthropic" | "mock";
 export type ErrorReporterType = "sentry" | "noop";
 export type RealtimeProviderType = "supabase" | "mock";
+export type TranslationProviderType = "google" | "mock";
+export type TTSProviderType = "google" | "mock";
+export type STTProviderType = "google" | "mock";
+export type SongIdProviderType = "acrcloud" | "mock";
+export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -46,6 +56,11 @@ export interface ProviderSelections {
   ai: AIProviderType;
   errorReporter: ErrorReporterType;
   realtime: RealtimeProviderType;
+  translation: TranslationProviderType;
+  tts: TTSProviderType;
+  stt: STTProviderType;
+  songId: SongIdProviderType;
+  audioConverter: AudioConverterType;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +76,11 @@ function getProviderSelections(): ProviderSelections {
     ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
     realtime: (process.env.REALTIME_PROVIDER as RealtimeProviderType) ?? "mock",
+    translation: (process.env.TRANSLATION_PROVIDER as TranslationProviderType) ?? "mock",
+    tts: (process.env.TTS_PROVIDER as TTSProviderType) ?? "mock",
+    stt: (process.env.STT_PROVIDER as STTProviderType) ?? "mock",
+    songId: (process.env.SONG_ID_PROVIDER as SongIdProviderType) ?? "mock",
+    audioConverter: (process.env.AUDIO_CONVERTER as AudioConverterType) ?? "mock",
   };
 }
 
@@ -107,12 +127,9 @@ function initCacheProvider(type: CacheProviderType): void {
       return;
     }
 
-    // Cache factory auto-detects from env vars
     resetCache();
     return;
   }
-
-  // Default: memory (already the default)
 }
 
 function initAIProvider(type: AIProviderType): void {
@@ -123,11 +140,8 @@ function initAIProvider(type: AIProviderType): void {
         "AI_PROVIDER=anthropic but ANTHROPIC_API_KEY missing — AI calls will fail"
       );
     }
-    // AnthropicProvider is the default in the orchestrator
     return;
   }
-
-  // Default: orchestrator falls back gracefully
 }
 
 function initErrorReporter(type: ErrorReporterType): void {
@@ -136,11 +150,8 @@ function initErrorReporter(type: ErrorReporterType): void {
     if (!dsn) {
       logger.warn("ERROR_REPORTER=sentry but SENTRY_DSN missing — falling back to noop");
     }
-    // Observability init handles DSN presence/absence
     return;
   }
-
-  // Default: noop (already the default)
 }
 
 function initRealtimeProvider(type: RealtimeProviderType): void {
@@ -151,12 +162,76 @@ function initRealtimeProvider(type: RealtimeProviderType): void {
         "REALTIME_PROVIDER=supabase but SUPABASE_URL missing — falling back to mock"
       );
     }
-    // Supabase realtime is initialized on-demand when channels are created.
-    // The provider reads Supabase config from env at channel creation time.
+    return;
+  }
+}
+
+function initTTSProvider(type: TTSProviderType): void {
+  if (type === "google") {
+    const apiKey =
+      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
+    if (!apiKey) {
+      logger.warn("TTS_PROVIDER=google but GOOGLE_API_KEY missing — TTS will fail");
+    }
+    return;
+  }
+}
+
+function initSTTProvider(type: STTProviderType): void {
+  if (type === "google") {
+    const apiKey =
+      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
+    if (!apiKey) {
+      logger.warn("STT_PROVIDER=google but GOOGLE_API_KEY missing — STT will fail");
+    }
+    return;
+  }
+}
+
+function initTranslationProvider(type: TranslationProviderType): void {
+  if (type === "google") {
+    const apiKey =
+      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
+    if (!apiKey) {
+      logger.warn(
+        "TRANSLATION_PROVIDER=google but GOOGLE_API_KEY missing — translations will fail"
+      );
+    }
+    return;
+  }
+}
+
+function initSongIdProvider(type: SongIdProviderType): void {
+  if (type === "acrcloud") {
+    const host = process.env.ACRCLOUD_HOST ?? "";
+    const key = process.env.ACRCLOUD_ACCESS_KEY ?? "";
+    const secret = process.env.ACRCLOUD_ACCESS_SECRET ?? "";
+
+    if (!host || !key || !secret) {
+      logger.warn(
+        "SONG_ID_PROVIDER=acrcloud but ACRCLOUD_HOST, ACRCLOUD_ACCESS_KEY, or ACRCLOUD_ACCESS_SECRET missing — song ID will fail"
+      );
+    }
+    return;
+  }
+}
+
+function initAudioConverter(type: AudioConverterType): void {
+  if (type === "ffmpeg-service") {
+    const url = process.env.AUDIO_CONVERTER_URL ?? "";
+    const key = process.env.AUDIO_CONVERTER_KEY ?? "";
+
+    if (!url || !key) {
+      logger.warn(
+        "AUDIO_CONVERTER=ffmpeg-service but AUDIO_CONVERTER_URL or AUDIO_CONVERTER_KEY missing — conversion will fail"
+      );
+    }
     return;
   }
 
-  // Default: mock (in-memory, no external dependencies)
+  if (type === "passthrough") {
+    return;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +254,11 @@ export function initProviders(): ProviderSelections {
   initAIProvider(selections.ai);
   initErrorReporter(selections.errorReporter);
   initRealtimeProvider(selections.realtime);
+  initTranslationProvider(selections.translation);
+  initTTSProvider(selections.tts);
+  initSTTProvider(selections.stt);
+  initSongIdProvider(selections.songId);
+  initAudioConverter(selections.audioConverter);
 
   initialized = true;
 
@@ -188,6 +268,11 @@ export function initProviders(): ProviderSelections {
     ai: selections.ai,
     errorReporter: selections.errorReporter,
     realtime: selections.realtime,
+    translation: selections.translation,
+    tts: selections.tts,
+    stt: selections.stt,
+    songId: selections.songId,
+    audioConverter: selections.audioConverter,
   });
 
   return selections;

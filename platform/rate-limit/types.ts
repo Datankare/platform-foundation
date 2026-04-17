@@ -82,4 +82,6 @@ export const DEFAULT_RULES: Record<string, RateLimitRule> = {
   AUTH_LOGIN: { id: "auth:login", maxRequests: 10, windowSeconds: 900 },
   /** Admin operations: 30 per minute */
   ADMIN_OPS: { id: "admin:ops", maxRequests: 30, windowSeconds: 60 },
+  /** Song identification: 10 per hour per user */
+  SONG_IDENTIFY: { id: "song:identify", maxRequests: 10, windowSeconds: 3600 },
 };
