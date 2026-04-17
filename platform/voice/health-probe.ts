@@ -5,12 +5,16 @@
  * - Translation provider (connectivity + latency)
  * - TTS provider (connectivity + latency)
  * - STT provider (connectivity)
+ * - Song identification provider (connectivity) — Sprint 4a
+ * - Audio format converter (connectivity) — Sprint 4a
  *
  * @module platform/voice
  */
 
 import type { TTSProvider, STTProvider } from "./types";
 import type { TranslationProvider } from "@/platform/translation/types";
+import type { SongIdentificationProvider } from "./identify-types";
+import type { AudioFormatConverter } from "./audio-format-types";
 
 // ── Health Probe Results ────────────────────────────────────────────────
 
@@ -98,6 +102,74 @@ export async function checkSTTHealth(provider: STTProvider): Promise<VoiceHealth
 
     return {
       provider: provider.name,
+      healthy: !isConnectivity,
+      latencyMs: Date.now() - start,
+      error: isConnectivity ? message : undefined,
+    };
+  }
+}
+
+/**
+ * Check song identification provider health.
+ * Sends a minimal audio buffer — expects either a result or a non-connectivity error.
+ */
+export async function checkSongIdHealth(
+  provider: SongIdentificationProvider
+): Promise<VoiceHealthStatus> {
+  const start = Date.now();
+  try {
+    // Minimal WAV-like buffer — provider may return no match (healthy)
+    // or throw a validation error (also healthy — means it's reachable)
+    const minimalAudio = Buffer.alloc(160_000, 0); // ~5s at 32kB/s
+    await provider.identify({
+      audioData: minimalAudio,
+      durationSeconds: 5,
+      requestId: "health-check",
+    });
+    return {
+      provider: provider.name,
+      healthy: true,
+      latencyMs: Date.now() - start,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isConnectivity = /ECONNREFUSED|ENOTFOUND|timed out|fetch failed/i.test(message);
+
+    return {
+      provider: provider.name,
+      healthy: !isConnectivity,
+      latencyMs: Date.now() - start,
+      error: isConnectivity ? message : undefined,
+    };
+  }
+}
+
+/**
+ * Check audio format converter health.
+ * Sends a minimal WAV buffer — expects passthrough or conversion success.
+ */
+export async function checkAudioConverterHealth(
+  converter: AudioFormatConverter
+): Promise<VoiceHealthStatus> {
+  const start = Date.now();
+  try {
+    const minimalWav = Buffer.alloc(100, 0);
+    await converter.convert({
+      audioData: minimalWav,
+      sourceFormat: "wav",
+      requestId: "health-check",
+    });
+    return {
+      provider: converter.name,
+      healthy: true,
+      latencyMs: Date.now() - start,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isConnectivity = /ECONNREFUSED|ENOTFOUND|timed out|fetch failed/i.test(message);
+
+    return {
+      provider: converter.name,
       healthy: !isConnectivity,
       latencyMs: Date.now() - start,
       error: isConnectivity ? message : undefined,
