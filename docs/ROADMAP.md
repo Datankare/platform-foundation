@@ -9,20 +9,20 @@
 
 ## Phase Summary
 
-| Phase | Name                         | Status      | PF Release | Started    | Completed  |
-| ----- | ---------------------------- | ----------- | ---------- | ---------- | ---------- |
-| 0     | Platform Scaffolding         | ✅ Complete | —          | 2026-03-15 | 2026-03-18 |
-| 0.5   | Input Reliability Sprint     | ✅ Complete | —          | 2026-03-18 | 2026-03-20 |
-| 0.75  | E2E Test Suite               | ✅ Complete | —          | 2026-03-20 | 2026-03-22 |
-| 1     | Identity & Access Foundation | ✅ Complete | v1.1.0     | 2026-03-22 | 2026-04-02 |
-| 2     | Communication Foundation     | ✅ Complete | v1.3.0     | 2026-04-03 | 2026-04-13 |
-| 3     | Language & Voice Foundation  | ✅ Complete | v1.4.0     | 2026-04-14 | 2026-04-16 |
-| 4     | Content Safety Foundation    | ⏳ Upcoming | —          | —          | —          |
-| 5     | Application Framework + AUX  | ⏳ Upcoming | —          | —          | —          |
-| 6     | Monetization Foundation      | ⏳ Upcoming | —          | —          | —          |
-| 7     | Analytics Foundation         | ⏳ Upcoming | —          | —          | —          |
-| 8     | Consumer App Integration     | ⏳ Upcoming | —          | —          | —          |
-| 9     | Hardening & Launch           | ⏳ Upcoming | —          | —          | —          |
+| Phase | Name                         | Status         | PF Release | Started    | Completed  |
+| ----- | ---------------------------- | -------------- | ---------- | ---------- | ---------- |
+| 0     | Platform Scaffolding         | ✅ Complete    | —          | 2026-03-15 | 2026-03-18 |
+| 0.5   | Input Reliability Sprint     | ✅ Complete    | —          | 2026-03-18 | 2026-03-20 |
+| 0.75  | E2E Test Suite               | ✅ Complete    | —          | 2026-03-20 | 2026-03-22 |
+| 1     | Identity & Access Foundation | ✅ Complete    | v1.1.0     | 2026-03-22 | 2026-04-02 |
+| 2     | Communication Foundation     | ✅ Complete    | v1.3.0     | 2026-04-03 | 2026-04-13 |
+| 3     | Language & Voice Foundation  | ✅ Complete    | v1.4.0     | 2026-04-14 | 2026-04-16 |
+| 4     | Content Safety Foundation    | 🔄 In Progress | —          | 2026-04-18 | —          |
+| 5     | Application Framework + AUX  | ⏳ Upcoming    | —          | —          | —          |
+| 6     | Monetization Foundation      | ⏳ Upcoming    | —          | —          | —          |
+| 7     | Analytics Foundation         | ⏳ Upcoming    | —          | —          | —          |
+| 8     | Consumer App Integration     | ⏳ Upcoming    | —          | —          | —          |
+| 9     | Hardening & Launch           | ⏳ Upcoming    | —          | —          | —          |
 
 ### Cross-Phase Fabric
 
@@ -294,7 +294,7 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ---
 
-## Phase 4 — Content Safety Foundation ⏳
+## Phase 4 — Content Safety Foundation 🔄
 
 **Objective:** Full COPPA implementation, content moderation engine, and human review.
 
@@ -530,4 +530,5 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 | 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                                                                                                            |
 | 2.1.0   | 2026-04-05 | Raman Sud | GenAI-native surface map audit (ADR-017). 10 gaps identified and placed: output screening (P2), streaming (P2), multi-language AI (P3), eval framework (P3), user context (P4), explainability (P4), agentic framework (P5), multimodal (P5), A/B testing (P6), feedback loop (P7). Standing rules 11 updated, rule 12 added. |
 | 3.0.0   | 2026-04-16 | Raman Sud | Phase 3 complete. 4 sprints delivered: translation provider, voice providers + chunker, agentic voice pipeline, song ID + audio format. 150 tests added (863→1013). ADR-019, ADR-020. 10 provider slots. Tagged v1.4.0.                                                                                                       |
+| 4.0.0   | 2026-04-18 | Raman Sud | Phase 4 started — Content Safety + Social System + Agent Runtime. Sprint 0: Sentry installed, instrumentation.ts wired, TASK-027/028/030 resolved, L14 added. 8 sprints planned, 6 agents, 3 new ADRs (021-023), embedding provider slot #11.                                                                                 |
 | 2.2.0   | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric (platform/observability/ — error tracking, tracing, metrics, health). TASK-018 resolved (player→user rename, 52 files + migration 008). Docs generalized. PF tests: 473→545.                                                                                                          |

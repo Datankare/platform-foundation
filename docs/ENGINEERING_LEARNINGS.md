@@ -208,6 +208,28 @@ Platform returns: { trajectory, results, nextActions: ["translate-more", "done"]
 
 ---
 
+### L14: Pre-Flight Rule — Read Before Write, Every Time
+
+**Source:** Phase 3, Sprint 4 Playform wiring — 6 consecutive failures in a single session.
+
+**Problem it fixes:** Late in a long session, Claude begins making assumptions about file structure, import patterns, test directives, and type compatibility without reading the actual code. The result is a cascade of failures: wrong jest environment, missing mock signatures, incorrect type assertions, broken component wiring. Each fix introduces new assumptions that cause the next failure.
+
+**The insight:** The root cause is always the same — writing code based on what Claude _remembers_ the file looks like, not what it _actually_ looks like. Memory degrades over long sessions (L7), but the pre-flight rule catches it regardless of session length.
+
+**The rule — before creating or modifying ANY file, Claude must:**
+
+1. **Read** an existing file of the same type in the target repo to verify patterns (test directives, import style, type compatibility, mock signatures)
+2. **State** any assumptions being made
+3. **Verify** the quality gate command includes coverage check
+
+**Why this is L14 and not just L1 restated:** L1 says "state assumptions." L14 says "don't assume at all — read the file first." L1 is about honesty; L14 is about preventing the situation where assumptions are needed. Reading eliminates the assumption.
+
+**How we adopted it:** Added as a permanent standing rule in the session handoff document and enforced from Phase 4 onward. Skipping any step is an L1/L7 violation. If late in a long session, this rule applies with MORE rigor, not less.
+
+**Standing rule:** Before creating or modifying ANY file, read an existing file of the same type first. No exceptions. No "I remember what it looks like." Read it.
+
+---
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._
@@ -227,4 +249,4 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 ---
 
-_Last updated: April 13, 2026_
+_Last updated: April 18, 2026_
