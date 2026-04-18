@@ -228,6 +228,66 @@ Platform returns: { trajectory, results, nextActions: ["translate-more", "done"]
 
 **Standing rule:** Before creating or modifying ANY file, read an existing file of the same type first. No exceptions. No "I remember what it looks like." Read it.
 
+### L15: Adversarial Review — Three Hostile Personas, No LGTM Allowed
+
+**Source:** Alireza Rezvani, "Claude Code Skills Field Report" (April 2026). Adversarial code reviewer skill with three forced personas.
+
+**Problem it fixes:** Sustainability gates and checklists verify _presence_ of things (tests exist, coverage held, types pass). They do not force _hostile scrutiny_ — asking what breaks at 3am, whether a new hire can maintain this, or whether there is an injection vector. The Phase 3 Sprint 4 failure (6 consecutive failures on Playform wiring) would have been caught by a New Hire persona asking "can someone with no context understand how SpikeApp assembles its components?"
+
+**The three personas (all mandatory, each MUST find at least one issue):**
+
+1. **Saboteur** — what breaks in production at 3am? Race conditions, retries without idempotency, silent failures, unbounded collections, circuit breaker gaps.
+2. **New Hire** — can someone with no context maintain this in six months? Variable names, function length, missing "why" comments, implicit coupling between modules, undocumented assumptions.
+3. **Security Auditor** — OWASP top ten, then environment secrets. Input validation at every boundary, injection vectors, hardcoded credentials, CORS misconfigurations.
+
+**Rules of engagement:**
+
+- Each persona MUST surface at least one finding — no "LGTM" allowed
+- Findings classified as BLOCK (must fix before merge), CONCERN (should fix, tracked), or NOTE (informational)
+- Duplicate findings from two personas are promoted one severity level
+- Final verdict: BLOCK / CONCERNS / CLEAN
+
+**How we adopted it:** Added to sprint close process. Before any sprint closes, run the 3-persona adversarial review on the sprint's code. Especially critical for agent-to-agent interactions where edge cases hide in the communication paths.
+
+**Standing rule:** Every sprint close includes a 3-persona adversarial review. No persona may return "LGTM."
+
+### L16: The 30/60 Day Doc Freshness Rule
+
+**Source:** Alireza Rezvani, "Claude Code Skills Field Report" (April 2026). 30-day audit, 60-day delete rule adapted for documentation.
+
+**Problem it fixes:** L9 says "Living Documents Go Stale — Review at Phase Boundaries." But phase boundaries can be 2-4 weeks apart, and some docs drift between phases without anyone noticing. SERVICE_ACCOUNTS.md was not even in the expected directory when we looked for it. AUX_DESIGN.md was written in Phase 3 but will not be actively used until Phase 5 — by then it may be half-wrong. Staleness is time-based, not event-based.
+
+**The rule:**
+
+- Every doc in `docs/` must have a `_Last updated:` footer with a date.
+- At every **sprint boundary**: scan for any doc not updated in 30+ days. Verify it is still accurate. Update the footer if confirmed current, or fix the content.
+- At every **phase boundary**: flag any doc not updated in 60+ days for refresh. Docs that are 60+ days stale must be re-read and either updated to reflect current state or explicitly confirmed as still accurate with a new date.
+
+**What this is NOT:** This is not an archiving or deletion rule. No doc is deleted based on age alone. The rule forces a freshness check, not a purge.
+
+**How we adopted it:** Added to sprint documentation gate (D1-D7) and phase exit gate (E1-E15). The `_Last updated:` footer is the trigger — if it is missing, add it. If it is old, verify.
+
+**Standing rule:** At sprint close, verify every doc with `_Last updated:` older than 30 days. At phase boundary, docs older than 60 days must be refreshed.
+
+### L17: Module-Level Gotchas — Scar Tissue Where It Matters
+
+**Source:** Alireza Rezvani, "Claude Code Skills Field Report" (April 2026). "The Gotchas section is the most valuable content in any skill."
+
+**Problem it fixes:** Our gotchas are centralized in ENGINEERING_LEARNINGS.md (global patterns) and the session handoff "Things That Trip Us Up" (session-specific). Both are global. When Claude is writing a new test in `platform/social/`, the relevant gotcha — "jest.mock needs generateRequestId" — is buried in a global list, not visible in the module context. L14 (pre-flight rule) mitigates this by forcing a read of existing files, but a module-level gotchas section is more direct.
+
+**The rule:**
+
+- Each `platform/` module maintains a `## Gotchas` section at the bottom of its `index.ts` JSDoc or in a `GOTCHAS.md` file within the module folder.
+- When a bug is found during development, the fix goes into:
+  1. The **module-level** gotchas (if module-specific — e.g., "SentryErrorReporter requires @sentry/nextjs as peer dependency")
+  2. The **global** ENGINEERING_LEARNINGS.md (if it is a cross-cutting pattern — e.g., "always mock generateRequestId")
+- Module gotchas are the **first thing read** during pre-flight (L14). Before writing any code in a module, read its gotchas section.
+- Gotchas grow over time. They are never pruned. Each entry includes: what broke, why, and the fix.
+
+**How we adopted it:** Starting Phase 4, every new module (`platform/social/`, `platform/agents/`) ships with a Gotchas section from day one. Existing modules get gotchas sections added as bugs are encountered.
+
+**Standing rule:** Every `platform/` module maintains a Gotchas section. Module-specific bugs go there first, global patterns go to ENGINEERING_LEARNINGS.md.
+
 ---
 
 ## Noted (Not Yet Adopted)
@@ -242,11 +302,12 @@ _Entries here are interesting but haven't passed the "changes how we build" test
 
 _Articles Raman has flagged for discussion. Processed entries move to "Adopted" or "Noted" above._
 
-| Date       | Source                                                                                                                                      | Topic                                   | Status                     |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------------- |
-| 2026-04-13 | [Karpathy's CLAUDE.md analysis](https://alirezarezvani.medium.com/andrej-karpathys-claude-md-what-each-principle-really-fixes-20b159b4b582) | Four principles for LLM coding behavior | ✅ Processed → L1, L2, L3  |
-| 2026-03-26 | [The Agent-Native Rewrite](https://thesequence.substack.com/) (Rodriguez, Opinion #840)                                                     | Agent-native architecture vs bolt-on    | ✅ Processed → L5, P15-P18 |
+| Date       | Source                                                                                                                                      | Topic                                   | Status                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------- |
+| 2026-04-13 | [Karpathy's CLAUDE.md analysis](https://alirezarezvani.medium.com/andrej-karpathys-claude-md-what-each-principle-really-fixes-20b159b4b582) | Four principles for LLM coding behavior | ✅ Processed → L1, L2, L3    |
+| 2026-03-26 | [The Agent-Native Rewrite](https://thesequence.substack.com/) (Rodriguez, Opinion #840)                                                     | Agent-native architecture vs bolt-on    | ✅ Processed → L5, P15-P18   |
+| 2026-04-18 | [Claude Code Skills Field Report](https://alirezarezvani.medium.com) (Rezvani)                                                              | Skills at small-team scale              | ✅ Processed → L15, L16, L17 |
 
 ---
 
-_Last updated: April 18, 2026_
+_Last updated: April 18, 2026 (L15-L17 added)_
