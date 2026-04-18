@@ -88,27 +88,29 @@ to reflect PF's consumer-agnostic nature. Currently a placeholder with README on
 
 _Items below have been resolved and are retained for audit trail only._
 
-| ID       | Description                                  | Resolved In                                          | Date       |
-| -------- | -------------------------------------------- | ---------------------------------------------------- | ---------- |
-| DS-001   | next/image disk cache vulnerability          | Phase 0 (Next.js 16 upgrade)                         | 2026-03-18 |
-| SEC-002  | No rate limiting on API routes               | Phase 1, Sprint 6                                    | 2026-03-31 |
-| SEC-003  | No retry logic for external API calls        | Phase 1, Sprint 7a (fetchWithTimeout retry)          | 2026-04-01 |
-| SEC-004  | No E2E tests — Playwright not integrated     | Phase 0.75                                           | 2026-03-22 |
-| SEC-005  | SpeechRecognition hardcoded to en-US         | Phase 1                                              | 2026-04-02 |
-| SEC-006  | Placeholder READMEs lack interface contracts | Phase 1 (auth) + Phase 2 start (moderation, prompts) | 2026-04-03 |
-| TASK-014 | Admin module coverage exclusions             | Phase 1, Sprint 7a (integration tests)               | 2026-04-01 |
-| TASK-015 | Platform config table                        | Phase 1, Sprint 7b                                   | 2026-04-02 |
-| TASK-016 | Repo inheritance model                       | Phase 1, Sprint 7b (auto-sync)                       | 2026-04-02 |
-| TASK-017 | Seed data separation                         | Phase 1, Sprint 7b                                   | 2026-04-02 |
-| TASK-018 | Rename player → user in PF codebase          | Phase 2, Sprint 3 (52 files + migration 008)         | 2026-04-06 |
-| TASK-020 | Redis CacheProvider (deferred from Phase 1)  | Phase 2, Sprint 4 (platform/cache/)                  | 2026-04-07 |
-| TASK-021 | Redis rate limiter (deferred from Phase 1)   | Phase 2, Sprint 4 (platform/rate-limit/)             | 2026-04-07 |
-| TASK-022 | Password enforcement (deferred from Phase 1) | Phase 2, Sprint 4 (password-policy.ts enhanced)      | 2026-04-07 |
-| TASK-023 | GDPR hard purge (deferred from Phase 1)      | Phase 2, Sprint 4 (platform/gdpr/)                   | 2026-04-07 |
+| ID       | Description                                     | Resolved In                                                             | Date       |
+| -------- | ----------------------------------------------- | ----------------------------------------------------------------------- | ---------- |
+| DS-001   | next/image disk cache vulnerability             | Phase 0 (Next.js 16 upgrade)                                            | 2026-03-18 |
+| SEC-002  | No rate limiting on API routes                  | Phase 1, Sprint 6                                                       | 2026-03-31 |
+| SEC-003  | No retry logic for external API calls           | Phase 1, Sprint 7a (fetchWithTimeout retry)                             | 2026-04-01 |
+| SEC-004  | No E2E tests — Playwright not integrated        | Phase 0.75                                                              | 2026-03-22 |
+| SEC-005  | SpeechRecognition hardcoded to en-US            | Phase 1                                                                 | 2026-04-02 |
+| SEC-006  | Placeholder READMEs lack interface contracts    | Phase 1 (auth) + Phase 2 start (moderation, prompts)                    | 2026-04-03 |
+| TASK-014 | Admin module coverage exclusions                | Phase 1, Sprint 7a (integration tests)                                  | 2026-04-01 |
+| TASK-015 | Platform config table                           | Phase 1, Sprint 7b                                                      | 2026-04-02 |
+| TASK-016 | Repo inheritance model                          | Phase 1, Sprint 7b (auto-sync)                                          | 2026-04-02 |
+| TASK-017 | Seed data separation                            | Phase 1, Sprint 7b                                                      | 2026-04-02 |
+| TASK-018 | Rename player → user in PF codebase             | Phase 2, Sprint 3 (52 files + migration 008)                            | 2026-04-06 |
+| TASK-020 | Redis CacheProvider (deferred from Phase 1)     | Phase 2, Sprint 4 (platform/cache/)                                     | 2026-04-07 |
+| TASK-021 | Redis rate limiter (deferred from Phase 1)      | Phase 2, Sprint 4 (platform/rate-limit/)                                | 2026-04-07 |
+| TASK-022 | Password enforcement (deferred from Phase 1)    | Phase 2, Sprint 4 (password-policy.ts enhanced)                         | 2026-04-07 |
+| TASK-023 | GDPR hard purge (deferred from Phase 1)         | Phase 2, Sprint 4 (platform/gdpr/)                                      | 2026-04-07 |
+| TASK-027 | Narrow IAM permissions (scoped from FullAccess) | Phase 4 entry (confirmed via CLI — cannot list IAM policies, ECS works) | 2026-04-17 |
+| TASK-028 | Install @sentry/nextjs (build warning resolved) | Phase 4, Sprint 0 (npm install, DSN in Vercel, ERROR_REPORTER=sentry)   | 2026-04-17 |
 
 ---
 
-_Last updated: 2026-04-07 (Sprint 4b: Auth wiring complete — CognitoAuthProvider, route protection, 9 auth API routes, live login screen.)_
+_Last updated: 2026-04-17 (Phase 4 Sprint 0: TASK-027 IAM confirmed scoped, TASK-028 Sentry installed.)_
 
 ### TASK-024: Social Login (Google, Apple, Microsoft SSO)
 
@@ -121,4 +123,3 @@ _Last updated: 2026-04-07 (Sprint 4b: Auth wiring complete — CognitoAuthProvid
 | TASK-025 | ALB + Elastic IP for ffmpeg-service | Phase 5 | ECS Fargate public IP changes on task restart. Add ALB or Elastic IP for stable URL. Currently using direct IP — acceptable for development, not production. |
 | TASK-025 | ALB for ffmpeg-service (stable URL) | Phase 5 | ECS Fargate public IP changes on task restart. Add ALB or Elastic IP for stable URL. |
 | TASK-026 | Rotate ACRCloud access secret before production | Phase 5 | Secret key exposed during setup. Rotate via ACRCloud Console before production. |
-| TASK-027 | Narrow IAM permissions for Terraform user | Sprint 4b (Phase 3 close) | IAM user has IAMFullAccess, EC2FullAccess, ECS_FullAccess, ECRFullAccess, CloudWatchLogsFullAccess. Active security risk — replace with scoped policy before closing Phase 3. |
