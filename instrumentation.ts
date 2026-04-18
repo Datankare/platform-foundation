@@ -4,6 +4,9 @@
  * Called once when the server starts. Initializes observability
  * (error reporting, tracing, metrics) and provider registry.
  *
+ * Uses require() instead of import — Turbopack does not resolve
+ * path aliases in instrumentation.ts with top-level imports.
+ *
  * @see https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  *
  * ## Error reporter customization
@@ -24,25 +27,26 @@
  * @module instrumentation
  */
 
-import { initObservability } from "@/platform/observability";
-import { initProviders } from "@/platform/providers";
-import { logger } from "@/lib/logger";
-
 export function register() {
-  // Initialize provider registry (auth, cache, AI, etc.)
-  initProviders();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { initProviders } = require("@/platform/providers");
+    initProviders();
 
-  // Initialize observability (error reporter, tracing, metrics)
-  initObservability({
-    sentryDsn: process.env.SENTRY_DSN,
-    environment: process.env.NODE_ENV ?? "development",
-    version: process.env.npm_package_version ?? "0.0.0",
-    traceSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
-  });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { initObservability } = require("@/platform/observability");
+    initObservability({
+      sentryDsn: process.env.SENTRY_DSN,
+      environment: process.env.NODE_ENV ?? "development",
+      version: process.env.npm_package_version ?? "0.0.0",
+      traceSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
+    });
 
-  logger.info("Instrumentation complete", {
-    errorReporter: process.env.ERROR_REPORTER ?? "noop",
-    hasSentryDsn: !!process.env.SENTRY_DSN,
-    environment: process.env.NODE_ENV,
-  });
+    console.log("[instrumentation] Observability initialized", {
+      errorReporter: process.env.ERROR_REPORTER ?? "noop",
+      hasSentryDsn: !!process.env.SENTRY_DSN,
+    });
+  } catch (err) {
+    console.error("[instrumentation] Failed to initialize:", err);
+  }
 }
