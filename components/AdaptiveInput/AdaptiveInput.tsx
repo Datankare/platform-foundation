@@ -156,13 +156,13 @@ export default function AdaptiveInput({
       {/* Intent Bar */}
       {intentDisplay && (
         <div
-          className="mb-2 px-3 py-1.5 rounded-md bg-gray-50 text-sm text-gray-500 flex items-center justify-between"
+          className="mb-2 px-3 py-1.5 rounded-md bg-gray-50 text-sm text-gray-600 flex items-center justify-between"
           aria-live="polite"
           data-testid="intent-bar"
         >
           <span>{intentDisplay}</span>
           {intentConfidence > 0 && (
-            <span className="text-xs text-gray-400" data-testid="intent-confidence">
+            <span className="text-xs text-gray-600" data-testid="intent-confidence">
               {Math.round(intentConfidence * 100)}%
             </span>
           )}
