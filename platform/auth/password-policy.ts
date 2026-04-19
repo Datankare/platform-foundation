@@ -254,7 +254,10 @@ export function validatePassword(password: string, policy: PasswordPolicy): stri
       "This password has appeared in data breaches. Choose a different password."
     );
   }
-  if (/^(.)\1+$/.test(password)) {
+  // ReDoS-safe: iterative check instead of /^(.)\1+$/ which has exponential backtracking
+  const allSameChar =
+    password.length > 0 && password.split("").every((c) => c === password[0]);
+  if (allSameChar) {
     violations.push("Password cannot be a single repeated character");
   }
   if (isSequential(password)) {

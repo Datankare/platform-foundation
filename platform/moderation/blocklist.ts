@@ -101,7 +101,7 @@ export function validatePattern(pattern: BlocklistPattern): PatternValidation {
   }
 
   if (pattern.type === "regex") {
-    // Step 1: Can it construct a valid RegExp?
+    // Step 1: Check syntax validity (try/catch, no stored reference)
     try {
       new RegExp(pattern.pattern, "i"); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     } catch {
@@ -109,7 +109,7 @@ export function validatePattern(pattern: BlocklistPattern): PatternValidation {
       return { valid: false, reason: `Invalid regex syntax: ${pattern.pattern}` };
     }
 
-    // Step 2: Is it safe from ReDoS? (safe-regex2)
+    // Step 2: Is it safe from ReDoS? (safe-regex2 — only reached for syntactically valid patterns)
     if (!safeRegex(pattern.pattern)) {
       return {
         valid: false,

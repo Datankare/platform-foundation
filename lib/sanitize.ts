@@ -17,8 +17,12 @@
  * Removes: backticks, angle brackets used as tags, JSON braces when
  * they appear to form instruction-like patterns.
  */
+/**
+ * ReDoS-safe: \s{0,10} bounds whitespace matching to prevent catastrophic backtracking.
+ * Original used \s* which allows exponential backtracking on crafted input.
+ */
 const PROMPT_INJECTION_PATTERN =
-  /(`{1,3}|<\s*\/?\s*(?:system|prompt|instruction|command|ignore|override)\s*>)/gi;
+  /(`{1,3}|<\s{0,10}\/?\s{0,10}(?:system|prompt|instruction|command|ignore|override)\s{0,10}>)/gi;
 
 /**
  * Sanitize user text before embedding in an LLM prompt.
