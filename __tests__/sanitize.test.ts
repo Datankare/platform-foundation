@@ -61,6 +61,7 @@ describe("sanitizeForLog", () => {
 
   it("removes control characters", () => {
     const result = sanitizeForLog("hello\x00world\x1F");
+    // eslint-disable-next-line no-control-regex -- test verifies control char stripping
     expect(result).not.toMatch(/[\x00-\x1F]/);
   });
 
