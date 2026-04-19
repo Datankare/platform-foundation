@@ -241,9 +241,11 @@ export function validatePassword(password: string, policy: PasswordPolicy): stri
   if (policy.requireLowercase && !/[a-z]/.test(password)) {
     violations.push("Must contain a lowercase letter");
   }
+  // eslint-disable-next-line regexp/prefer-d -- ASCII digits only, \d matches Unicode
   if (policy.requireNumber && !/[0-9]/.test(password)) {
     violations.push("Must contain a number");
   }
+  // eslint-disable-next-line regexp/use-ignore-case -- ASCII-only special char detection
   if (policy.requireSpecial && !/[^A-Za-z0-9]/.test(password)) {
     violations.push("Must contain a special character");
   }
@@ -316,8 +318,8 @@ function calculateStrength(password: string): number {
 
   const hasUpper = /[A-Z]/.test(password);
   const hasLower = /[a-z]/.test(password);
-  const hasDigit = /[0-9]/.test(password);
-  const hasSpecial = /[^a-zA-Z0-9]/.test(password);
+  const hasDigit = /[0-9]/.test(password); // eslint-disable-line regexp/prefer-d -- ASCII digits only
+  const hasSpecial = /[^a-zA-Z0-9]/.test(password); // eslint-disable-line regexp/use-ignore-case -- ASCII-only
   const classCount = [hasUpper, hasLower, hasDigit, hasSpecial].filter(Boolean).length;
   if (classCount >= 3) score++;
 

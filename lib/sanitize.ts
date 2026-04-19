@@ -53,6 +53,7 @@ export function sanitizeForLog(text: string, maxLength = 100): string {
   if (!text || typeof text !== "string") return "";
   const truncated = text.length > maxLength ? text.slice(0, maxLength) + "…" : text;
   // Remove control characters and newlines for single-line log safety
+  // eslint-disable-next-line no-control-regex -- intentional: stripping control characters
   return truncated.replace(/[\x00-\x1F\x7F]/g, " ").trim();
 }
 
@@ -63,6 +64,6 @@ export function sanitizeForLog(text: string, maxLength = 100): string {
 export function sanitizeLanguageCode(code: string): string {
   if (!code || typeof code !== "string") return "en-US";
   // Language codes: letters, digits, hyphens only
-  const cleaned = code.replace(/[^a-zA-Z0-9-]/g, "");
+  const cleaned = code.replace(/[^a-zA-Z0-9-]/g, ""); // eslint-disable-line regexp/use-ignore-case -- ASCII-only language code sanitization
   return cleaned.length > 0 ? cleaned : "en-US";
 }
