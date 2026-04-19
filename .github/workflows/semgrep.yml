@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   semgrep:
@@ -25,20 +24,17 @@ jobs:
       - name: Install Semgrep
         run: pip install semgrep
 
-      - name: Run Semgrep (SARIF for GitHub Code Scanning)
-        run: semgrep scan --config auto --config p/owasp-top-ten --config p/typescript --sarif --output semgrep-results.sarif .
+      - name: Run Semgrep
+        run: semgrep scan --config auto --config p/owasp-top-ten --config p/typescript --error .
 
-      - name: Upload to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Run Semgrep (artifact)
         if: always()
-        with:
-          sarif_file: semgrep-results.sarif
-          category: semgrep
+        run: semgrep scan --config auto --config p/owasp-top-ten --config p/typescript --json --output semgrep-results.json . || true
 
-      - name: Upload artifact (backup)
+      - name: Upload results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: semgrep-results
-          path: semgrep-results.sarif
+          path: semgrep-results.json
           retention-days: 30
