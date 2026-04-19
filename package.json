@@ -66,6 +66,8 @@
       "app/api/**/*.ts",
       "components/**/*.tsx",
       "platform/auth/**/*.ts",
+      "platform/agents/**/*.ts",
+      "platform/input/**/*.ts",
       "platform/auth/**/*.tsx"
     ],
     "coverageThreshold": {
