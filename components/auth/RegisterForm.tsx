@@ -30,8 +30,8 @@ export default function RegisterForm({
     length: password.length >= minPasswordLength,
     uppercase: /[A-Z]/.test(password),
     lowercase: /[a-z]/.test(password),
-    number: /[0-9]/.test(password),
-    special: /[^A-Za-z0-9]/.test(password),
+    number: /[0-9]/.test(password), // eslint-disable-line regexp/prefer-d -- ASCII-only digit matching for password validation
+    special: /[^A-Za-z0-9]/.test(password), // eslint-disable-line regexp/use-ignore-case -- ASCII-only, must match server-side password-policy.ts
     match: password.length > 0 && password === confirmPassword,
   };
 
