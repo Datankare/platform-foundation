@@ -81,11 +81,30 @@ export interface AdaptiveInputProps {
 
 // ── Mode Configuration ────────────────────────────────────────────────
 
-const MODE_CONFIG: Record<InputMode, { label: string; ariaLabel: string }> = {
-  text: { label: "Text", ariaLabel: "Text input mode" },
-  speech: { label: "Speech", ariaLabel: "Speech input mode" },
-  music: { label: "Music", ariaLabel: "Music identification mode" },
-  file: { label: "File", ariaLabel: "File upload mode" },
+const MODE_CONFIG: Record<
+  InputMode,
+  { label: string; ariaLabel: string; title: string }
+> = {
+  text: {
+    label: "Text",
+    ariaLabel: "Text input mode",
+    title: "Type or paste text to process",
+  },
+  speech: {
+    label: "Speech",
+    ariaLabel: "Speech input mode",
+    title: "Use your mic to speak — transcribed in real time",
+  },
+  music: {
+    label: "Music",
+    ariaLabel: "Music identification mode",
+    title: "Hold your mic near a song to identify it",
+  },
+  file: {
+    label: "File",
+    ariaLabel: "File upload mode",
+    title: "Upload audio, PDF, or text files to extract content",
+  },
 };
 
 /** Pill order: text → speech → file → music (file is a text variant, music is distinct) */
@@ -148,6 +167,7 @@ export default function AdaptiveInput({
               onClick={() => onModeSelect(mode)}
               aria-pressed={isActive}
               aria-label={config.ariaLabel}
+              title={config.title}
               disabled={disabled}
               className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
                 isActive

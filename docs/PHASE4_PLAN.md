@@ -128,6 +128,8 @@
 
 **Also activates input agents:** swaps rule-based classifier/intent for agent-backed implementations.
 
+**Effort tier design (informed by Rezvani 2026 "/powerup" analysis):** Agent-backed classifiers need an effort dimension in addition to model tier. The audio classifier should use low effort for clear signals (obvious speech, obvious music) and high effort for ambiguous audio (speech over music, background noise). `AgentConfig.budgetConfig` already has cost caps; add an `effortTier` field ("low" | "standard" | "max") that maps to the LLM's thinking budget. This avoids burning Opus-max tokens on easy classifications while enabling deep analysis when confidence is low.
+
 (rest unchanged from original plan)
 
 ### Sprint 4c — Playform: Social wiring + team UI
@@ -189,4 +191,4 @@
 
 ---
 
-_Generated: April 19, 2026_
+_Generated: April 19, 2026 (Sprint 4b effort tier note added)_

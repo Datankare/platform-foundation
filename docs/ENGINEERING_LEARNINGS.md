@@ -302,12 +302,13 @@ _Entries here are interesting but haven't passed the "changes how we build" test
 
 _Articles Raman has flagged for discussion. Processed entries move to "Adopted" or "Noted" above._
 
-| Date       | Source                                                                                                                                      | Topic                                   | Status                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------- |
-| 2026-04-13 | [Karpathy's CLAUDE.md analysis](https://alirezarezvani.medium.com/andrej-karpathys-claude-md-what-each-principle-really-fixes-20b159b4b582) | Four principles for LLM coding behavior | ✅ Processed → L1, L2, L3    |
-| 2026-03-26 | [The Agent-Native Rewrite](https://thesequence.substack.com/) (Rodriguez, Opinion #840)                                                     | Agent-native architecture vs bolt-on    | ✅ Processed → L5, P15-P18   |
-| 2026-04-18 | [Claude Code Skills Field Report](https://alirezarezvani.medium.com) (Rezvani)                                                              | Skills at small-team scale              | ✅ Processed → L15, L16, L17 |
+| Date       | Source                                                                                                                                      | Topic                                   | Status                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 2026-04-13 | [Karpathy's CLAUDE.md analysis](https://alirezarezvani.medium.com/andrej-karpathys-claude-md-what-each-principle-really-fixes-20b159b4b582) | Four principles for LLM coding behavior | ✅ Processed → L1, L2, L3                                                                                     |
+| 2026-03-26 | [The Agent-Native Rewrite](https://thesequence.substack.com/) (Rodriguez, Opinion #840)                                                     | Agent-native architecture vs bolt-on    | ✅ Processed → L5, P15-P18                                                                                    |
+| 2026-04-18 | [Claude Code Skills Field Report](https://alirezarezvani.medium.com) (Rezvani)                                                              | Skills at small-team scale              | ✅ Processed → L15, L16, L17                                                                                  |
+| 2026-04-19 | [Claude Code /powerup: 10 Built-In Lessons](https://alirezarezvani.medium.com) (Rezvani)                                                    | In-tool discoverability, effort tiers   | ✅ Noted → PHASE4_PLAN (4b effort tier), AGENT_ARCHITECTURE (Concierge UI constraint), AdaptiveInput tooltips |
 
 ---
 
-_Last updated: April 18, 2026 (L15-L17 added)_
+_Last updated: April 19, 2026 (Rezvani /powerup article processed)_
