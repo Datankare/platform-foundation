@@ -290,6 +290,30 @@ Platform returns: { trajectory, results, nextActions: ["translate-more", "done"]
 
 ---
 
+### L18: Visual Pre-Flight — Render Before Commit
+
+**Source:** Phase 4 Sprint 1b maintenance (April 2026). Six visual bugs shipped to production that were all discoverable without running the app — black text on dark background, wrong icon direction, stale results on mode switch, hardcoded placeholder values, confusing label text, and a full-width UI element that looked interactive when it wasn't.
+
+**Problem it fixes:** L14 (pre-flight rule) says "read before write." But L14 is about code patterns — import styles, type signatures, mock shapes. It does not cover visual outcomes. A component can pass typecheck, lint, 121 unit tests, and 86% coverage while being completely unusable because text is invisible on the consumer's background.
+
+The root cause: every verification in the quality gate operates on code structure, not on what the user sees. Types compile ≠ text is readable. Tests pass ≠ buttons make sense. Coverage holds ≠ the UI isn't confusing.
+
+**The rule — before committing any component or UI change, Claude must:**
+
+1. **Walk through every visual state mentally:** What does the user see when the component mounts? When text is entered? When mode switches? When results arrive? When errors occur? On a light background? On a dark background?
+2. **Check color values against the consumer's background:** If the component will render on `bg-slate-900`, are `text-gray-900` and `bg-gray-100` visible? "It has dark: variants" is not an answer — verify the activation mechanism.
+3. **Check conditional UI:** When a mode changes, does stale content from the previous mode persist? Are default/fallback values meaningful or lazy placeholders?
+4. **Check icon/label semantics:** Does an upload icon point up? Does "Spoken" next to a mic icon read as "you spoke this" or "conversational register"? Labels are read in context, not in isolation.
+5. **State the visual outcome** in the assumptions block before creating the file: "User sees white text on dark card, placeholder is gray-500, inactive pills are gray-700."
+
+**Why this is L18 and not just L14 extended:** L14 prevents code-level assumptions by reading existing files. L18 prevents visual-level assumptions by simulating the user's experience. You can follow L14 perfectly and still ship invisible text. L18 catches what L14 cannot.
+
+**How we adopted it:** Added to the pre-flight process alongside L14. Every component change now includes a visual state walkthrough in the assumptions block. The THEMES map pattern (all color decisions in one constant, selected by variant prop) was adopted in AdaptiveInput as the reference implementation.
+
+**Standing rule:** Before committing any UI change, walk through every visual state the user will encounter. "Tests pass" is not "users can see it."
+
+---
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._
@@ -311,4 +335,4 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 ---
 
-_Last updated: April 19, 2026 (Rezvani /powerup article processed)_
+_Last updated: April 20, 2026 (L18 added — Visual Pre-Flight)_
