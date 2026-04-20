@@ -130,6 +130,12 @@ Wrap existing provider pipelines as agents with trajectories, cost tracking, and
 | Analyst    | Group health, hierarchy stats | P12 economic transparency, P18 trajectories   |
 | Curator    | Digests, personalized content | P8 context/memory, P11 resilient degradation  |
 
+### Concierge design constraint
+
+The Concierge agent MUST use the same AdaptiveInput component and ActionItem[] contract as the rest of the app. Onboarding flows are not a separate UI — they are IntentResolver outputs rendered by the same component the user will use daily. This means the Concierge's onboarding actions (e.g., "Try speaking", "Upload a file", "Identify a song") appear as ActionItem[] buttons, and the user learns by doing, not by watching a tutorial.
+
+**Source:** Rezvani, A. (2026). "Claude Code /powerup: 10 Built-In Lessons." Key insight: "Learn the tool inside the tool." Anthropic built their tutorial using the same rendering framework that powers the product. Applied here: the Concierge teaches users through the same UI contract they'll use in production.
+
 ### Inter-agent communication
 
 | From       | To                | Trigger            | Data                          |
@@ -257,4 +263,4 @@ platform/input/
 
 ---
 
-_Last updated: April 19, 2026 (Sprint 1 — input agent architecture + sequence diagram added)_
+_Last updated: April 19, 2026 (Sprint 1b — Concierge UI constraint added, effort tier note)_
