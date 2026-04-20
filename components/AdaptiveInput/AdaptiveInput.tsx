@@ -148,7 +148,6 @@ export default function AdaptiveInput({
 
   const handleUploadClick = useCallback(() => {
     onUpload();
-    fileInputRef.current?.click();
   }, [onUpload]);
 
   const handleTextChange = useCallback(
