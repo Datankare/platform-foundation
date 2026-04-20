@@ -2,37 +2,11 @@
  * components/AdaptiveInput/AdaptiveInput.tsx — Adaptive input component
  *
  * Generic input component driven entirely by the agent output contract.
- * The UI renders whatever the conductor returns — no hardcoded behavior.
+ * Supports light and dark themes via explicit `variant` prop — does NOT
+ * depend on OS prefers-color-scheme.
  *
- * Consumers (Playform) provide their own IntentResolver and event handlers.
- * This component handles ONLY the visual rendering and user interaction,
- * never business logic.
- *
- * Theme: supports light and dark via Tailwind dark: variants.
- * Dark mode activates via @media (prefers-color-scheme: dark).
- *
- * UX Design:
- *   - Single unified input area — user just starts doing
- *   - Mode pills are indicators AND clickable overrides (P10)
- *   - Intent bar shows what the agent classified
- *   - Action buttons rendered from ActionItem[] — fully dynamic
- *   - Textarea with inline mic + upload icons
- *   - Character counter with configurable max
- *   - "Listening..." badge + waveform when audio active
- *   - Gray for info, red for errors only (UX rule)
- *
- * Accessibility:
- *   - aria-live="polite" on intent bar (screen reader announces changes)
- *   - aria-pressed on mode pills (toggleable)
- *   - role="status" on character counter
- *   - Labels on all interactive elements
- *   - WCAG AA color contrast on all text (4.5:1 minimum)
- *
- * GenAI Principles:
- *   P1  — Renders structured agent output, not ad-hoc UI state
- *   P6  — Consumes ConductorOutput, ActionItem[] typed schemas
- *   P10 — Mode pills allow human override of agent classification
- *   P11 — Graceful: shows "Processing..." if no intent available
+ * L18: Every color value is in the THEMES map. Visual outcome for every
+ * state is documented in the theme definition.
  *
  * @module components/AdaptiveInput
  */
@@ -42,40 +16,78 @@
 import React, { useCallback, useRef } from "react";
 import type { InputMode, ConductorOutput, ActionItem } from "@/platform/input/types";
 
+// ── Theme ─────────────────────────────────────────────────────────────
+
+type Variant = "light" | "dark";
+
+interface ThemeClasses {
+  pillInactive: string;
+  intentText: string;
+  intentConfidence: string;
+  listeningText: string;
+  border: string;
+  textarea: string;
+  micDefault: string;
+  micRecording: string;
+  uploadBtn: string;
+  counterNormal: string;
+  actionSecondary: string;
+  processingText: string;
+}
+
+/**
+ * All color decisions in one place. No dark: variants, no OS dependency.
+ * Consumer picks "light" or "dark" based on their background.
+ */
+const THEMES: Record<Variant, ThemeClasses> = {
+  light: {
+    pillInactive: "bg-gray-100 text-gray-600 hover:bg-gray-200",
+    intentText: "text-gray-400",
+    intentConfidence: "text-gray-300",
+    listeningText: "text-gray-500",
+    border: "border-gray-200",
+    textarea: "text-gray-900 placeholder-gray-400",
+    micDefault: "text-gray-400 hover:text-gray-600 hover:bg-gray-100",
+    micRecording: "bg-red-100 text-red-600",
+    uploadBtn: "text-gray-400 hover:text-gray-600 hover:bg-gray-100",
+    counterNormal: "text-gray-400",
+    actionSecondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
+    processingText: "text-gray-500",
+  },
+  dark: {
+    pillInactive: "bg-gray-700/50 text-gray-300 hover:bg-gray-600",
+    intentText: "text-gray-500",
+    intentConfidence: "text-gray-600",
+    listeningText: "text-gray-400",
+    border: "border-gray-600",
+    textarea: "text-white placeholder-gray-500",
+    micDefault: "text-gray-500 hover:text-gray-300 hover:bg-gray-700",
+    micRecording: "bg-red-900/40 text-red-400",
+    uploadBtn: "text-gray-500 hover:text-gray-300 hover:bg-gray-700",
+    counterNormal: "text-gray-500",
+    actionSecondary: "bg-gray-700 text-gray-300 hover:bg-gray-600",
+    processingText: "text-gray-400",
+  },
+};
+
 // ── Props ─────────────────────────────────────────────────────────────
 
 export interface AdaptiveInputProps {
-  /** Current conductor output — drives all visual state */
   readonly output: ConductorOutput;
-  /** Current text in the input area */
   readonly text: string;
-  /** Maximum character count */
   readonly maxChars?: number;
-  /** Whether audio recording is active */
   readonly isRecording?: boolean;
-  /** Whether the component is in a loading/processing state */
   readonly isProcessing?: boolean;
-  /** Placeholder text for the textarea */
   readonly placeholder?: string;
-  /** Whether the textarea is disabled */
   readonly disabled?: boolean;
-
-  // ── Event Handlers ──
-  /** Called when text changes */
+  /** Theme variant — "light" for light backgrounds, "dark" for dark (default: "light") */
+  readonly variant?: Variant;
   readonly onTextChange: (text: string) => void;
-  /** Called when a mode pill is clicked (P10 — human override) */
   readonly onModeSelect: (mode: InputMode) => void;
-  /** Called when an action button is clicked */
   readonly onAction: (actionId: string) => void;
-  /** Called when mic button is clicked */
   readonly onMicToggle: () => void;
-  /** Called when upload button is clicked */
   readonly onUpload: () => void;
-
-  // ── Optional Slots ──
-  /** Optional: content rendered below the input (e.g., From/To language bar) */
   readonly languageBar?: React.ReactNode;
-  /** Optional: content rendered below the intent bar (e.g., waveform) */
   readonly audioFeedback?: React.ReactNode;
 }
 
@@ -107,7 +119,7 @@ const MODE_CONFIG: Record<
   },
 };
 
-/** Pill order: text → speech → file → music (file is a text variant, music is distinct) */
+/** Pill order: text → speech → file → music */
 const MODES: InputMode[] = ["text", "speech", "file", "music"];
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -120,6 +132,7 @@ export default function AdaptiveInput({
   isProcessing = false,
   placeholder = "Type, speak, or drop a file...",
   disabled = false,
+  variant = "light",
   onTextChange,
   onModeSelect,
   onAction,
@@ -131,6 +144,7 @@ export default function AdaptiveInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const charCount = text.length;
   const isOverLimit = charCount > maxChars;
+  const t = THEMES[variant];
 
   const handleUploadClick = useCallback(() => {
     onUpload();
@@ -144,7 +158,6 @@ export default function AdaptiveInput({
     [onTextChange]
   );
 
-  // Determine intent display text
   const intentDisplay = output.intent?.displayLabel ?? null;
   const intentConfidence = output.intent?.confidence ?? 0;
   const actions = output.intent?.actions ?? [];
@@ -170,9 +183,7 @@ export default function AdaptiveInput({
               title={config.title}
               disabled={disabled}
               className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
-                isActive
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700/50 dark:text-gray-300 dark:hover:bg-gray-600"
+                isActive ? "bg-blue-600 text-white" : t.pillInactive
               } ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
               data-testid={`mode-pill-${mode}`}
             >
@@ -180,17 +191,16 @@ export default function AdaptiveInput({
             </button>
           );
         })}
-        {/* Intent Indicator — right-aligned, non-interactive */}
         {intentDisplay && (
           <span
-            className="ml-auto text-xs text-gray-400 dark:text-gray-500 select-none"
+            className={`ml-auto text-xs ${t.intentText} select-none`}
             aria-live="polite"
             data-testid="intent-bar"
           >
             {intentDisplay}
             {intentConfidence > 0 && (
               <span
-                className="ml-1 text-gray-300 dark:text-gray-600"
+                className={`ml-1 ${t.intentConfidence}`}
                 data-testid="intent-confidence"
               >
                 {Math.round(intentConfidence * 100)}%
@@ -206,7 +216,7 @@ export default function AdaptiveInput({
       {/* Listening Badge */}
       {isRecording && (
         <div
-          className="mb-2 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"
+          className={`mb-2 flex items-center gap-2 text-sm ${t.listeningText}`}
           aria-live="polite"
           data-testid="listening-badge"
         >
@@ -216,7 +226,9 @@ export default function AdaptiveInput({
       )}
 
       {/* Input Area */}
-      <div className="relative border rounded-lg border-gray-200 dark:border-gray-600 focus-within:border-blue-400 transition-colors">
+      <div
+        className={`relative border rounded-lg ${t.border} focus-within:border-blue-400 transition-colors`}
+      >
         <textarea
           value={text}
           onChange={handleTextChange}
@@ -224,7 +236,7 @@ export default function AdaptiveInput({
           disabled={disabled || isProcessing}
           maxLength={maxChars + 100}
           rows={4}
-          className="w-full px-4 py-3 pr-20 resize-none rounded-lg bg-transparent text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none disabled:opacity-50"
+          className={`w-full px-4 py-3 pr-20 resize-none rounded-lg bg-transparent ${t.textarea} focus:outline-none disabled:opacity-50`}
           aria-label="Input text"
           data-testid="input-textarea"
         />
@@ -238,9 +250,7 @@ export default function AdaptiveInput({
             aria-label={isRecording ? "Stop recording" : "Start recording"}
             aria-pressed={isRecording}
             className={`p-2 rounded-md transition-colors ${
-              isRecording
-                ? "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400"
-                : "text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-700"
+              isRecording ? t.micRecording : t.micDefault
             } ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
             data-testid="mic-button"
           >
@@ -251,14 +261,13 @@ export default function AdaptiveInput({
             onClick={handleUploadClick}
             disabled={disabled}
             aria-label="Upload file"
-            className={`p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-700 transition-colors ${
+            className={`p-2 rounded-md ${t.uploadBtn} transition-colors ${
               disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
             }`}
             data-testid="upload-button"
           >
             <UploadIcon />
           </button>
-          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -277,7 +286,7 @@ export default function AdaptiveInput({
         aria-label={`${charCount} of ${maxChars} characters used`}
         data-testid="char-counter"
       >
-        <span className={isOverLimit ? "text-red-500" : "text-gray-400"}>
+        <span className={isOverLimit ? "text-red-500" : t.counterNormal}>
           {charCount}/{maxChars}
         </span>
       </div>
@@ -303,7 +312,7 @@ export default function AdaptiveInput({
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 action.primary
                   ? "bg-blue-600 text-white hover:bg-blue-700"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  : t.actionSecondary
               } ${
                 disabled || isProcessing || action.disabled
                   ? "opacity-50 cursor-not-allowed"
@@ -320,7 +329,7 @@ export default function AdaptiveInput({
       {/* Processing Indicator */}
       {isProcessing && (
         <div
-          className="mt-2 text-sm text-gray-500 dark:text-gray-400"
+          className={`mt-2 text-sm ${t.processingText}`}
           aria-live="polite"
           aria-busy="true"
           data-testid="processing-indicator"
@@ -332,7 +341,7 @@ export default function AdaptiveInput({
   );
 }
 
-// ── Icons (inline SVG — no external dependencies) ─────────────────────
+// ── Icons ─────────────────────────────────────────────────────────────
 
 function MicIcon() {
   return (
