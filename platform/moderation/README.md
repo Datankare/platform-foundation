@@ -54,6 +54,21 @@ fails closed to the strictest possible values.
 
 Seed defaults are in `supabase/migrations/010_content_safety_audit.sql`.
 
+## Tracing a Decision
+
+A single screenContent() call flows through 4 files:
+
+1. **middleware.ts** — builds ScreeningContext, delegates to Guardian
+2. **guardian.ts** — runs 5-step trajectory (context, blocklist, classifier, thresholds, decide)
+3. **config.ts** — reads thresholds from platform_config table (60s cache)
+4. **context.ts** — determines severity adjustments based on content type and user history
+
+To debug: query content_safety_audit by request_id or trajectory_id, read the reasoning field, check context_factors for adjustments applied.
+
+## Reasoning Safety
+
+The reasoning field contains metadata only — severity levels, confidence scores, threshold names, content type labels. Raw input text is never included. The inputHash (SHA-256) is the only reference to original content. The classifierOutput JSONB may contain the classifier's reason string (AI-generated, may reference input themes) — acceptable for admin audit trail but should not be exposed to end users.
+
 ## Gotchas
 
 1. **`collectCoverageFrom` must include `platform/moderation/**/\*.ts`\*\* — gotcha #24.
