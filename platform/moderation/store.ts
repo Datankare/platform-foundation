@@ -18,10 +18,14 @@ import { logger } from "@/lib/logger";
 // ---------------------------------------------------------------------------
 
 export class InMemoryModerationStore implements ModerationStore {
+  private static readonly MAX_RECORDS = 10_000;
   private records: ModerationAuditRecord[] = [];
 
   async logAudit(record: ModerationAuditRecord): Promise<void> {
     this.records.push({ ...record });
+    if (this.records.length > InMemoryModerationStore.MAX_RECORDS) {
+      this.records = this.records.slice(-InMemoryModerationStore.MAX_RECORDS);
+    }
   }
 
   async queryAudits(
@@ -89,6 +93,11 @@ export class SupabaseModerationStore implements ModerationStore {
   private readonly supabaseKey: string;
 
   constructor(supabaseUrl: string, supabaseKey: string) {
+    if (typeof window !== "undefined") {
+      throw new Error(
+        "SupabaseModerationStore must not be instantiated client-side — service role key would leak"
+      );
+    }
     this.supabaseUrl = supabaseUrl;
     this.supabaseKey = supabaseKey;
   }

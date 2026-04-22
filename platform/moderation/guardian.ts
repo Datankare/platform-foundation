@@ -287,7 +287,20 @@ export class Guardian {
       }
     } else {
       // Classifier says unsafe — apply content rating with context adjustment
-      const thresholds = await loadContentRatingThresholds(ratingLevel);
+      let thresholds;
+      try {
+        thresholds = await loadContentRatingThresholds(ratingLevel);
+      } catch {
+        // P11: Config unavailable — fail closed with strictest thresholds
+        thresholds = {
+          level: 1 as const,
+          label: "fail-closed (config unavailable)",
+          blockSeverity: "low" as const,
+          warnSeverity: "low" as const,
+          escalateBelow: 0.95,
+        };
+        reasonParts.push("Config unavailable — using fail-closed thresholds.");
+      }
 
       // Apply severity reduction from context
       const originalSeverity = classifierOutput.severity;
