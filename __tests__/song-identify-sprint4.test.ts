@@ -723,9 +723,9 @@ describe("Registry — Sprint 4a provider slots", () => {
     expect(getActiveProviders().audioConverter).toBe("passthrough");
   });
 
-  it("has 10 provider slots total", async () => {
+  it("has 11 provider slots total", async () => {
     const { getActiveProviders } = await import("@/platform/providers/registry");
-    expect(Object.keys(getActiveProviders())).toHaveLength(10);
+    expect(Object.keys(getActiveProviders())).toHaveLength(11);
   });
 });
 

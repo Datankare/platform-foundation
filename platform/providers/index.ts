@@ -9,5 +9,6 @@ export type {
   CacheProviderType,
   AIProviderType,
   ErrorReporterType,
+  ModerationStoreType,
   ProviderSelections,
 } from "./registry";

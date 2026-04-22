@@ -5,6 +5,20 @@
  * Tests mock the orchestrator, not the Anthropic SDK directly.
  */
 
+jest.mock("@/platform/auth/platform-config", () => ({
+  getConfig: jest.fn(async (key: string, defaultValue: unknown) => {
+    const m: Record<string, unknown> = {
+      "moderation.level1.block_severity": "medium",
+      "moderation.level1.warn_severity": "low",
+      "moderation.level1.escalate_below": 0.7,
+      "moderation.translation_severity_reduction": 1,
+      "moderation.transcription_severity_reduction": 1,
+      "moderation.extraction_severity_reduction": 1,
+    };
+    return m[key] ?? defaultValue;
+  }),
+}));
+
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
 import type {
   AIRequest,

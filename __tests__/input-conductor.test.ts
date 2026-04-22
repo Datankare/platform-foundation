@@ -1,9 +1,9 @@
 /**
- * Sprint 1a — Input conductor tests
+ * Sprint 2 — Input conductor tests (updated with trajectory assertions)
  *
  * Tests for InputConductor interface and DefaultInputConductor.
- * This is the core orchestration test — verifies the full
- * event → classify → resolve → emit pipeline.
+ * Core orchestration test — verifies the full event → classify → resolve
+ * → emit pipeline, including Trajectory with Step records (P18).
  *
  * 18-principle mapping: P1 P2 P3 P7 P10 P11 P15 P17 P18
  */
@@ -154,6 +154,90 @@ describe("DefaultInputConductor — processEvent (P2)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// DefaultInputConductor — Trajectory (P18)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("DefaultInputConductor — trajectory (P18)", () => {
+  let conductor: DefaultInputConductor;
+
+  beforeEach(() => {
+    conductor = new DefaultInputConductor();
+  });
+
+  it("produces a trajectory on processEvent", async () => {
+    const output = await conductor.processEvent(makeEvent("keystroke"), makeContext());
+
+    expect(output.trajectory).toBeDefined();
+    expect(output.trajectory.trajectoryId).toMatch(/^traj-/);
+    expect(output.trajectory.agentId).toBe("conductor-default");
+    expect(output.trajectory.status).toBe("completed");
+  });
+
+  it("trajectory has 2 steps: classify + resolve-intent", async () => {
+    const output = await conductor.processEvent(makeEvent("mic"), makeContext());
+
+    expect(output.trajectory.steps).toHaveLength(2);
+    expect(output.trajectory.steps[0].action).toBe("classify");
+    expect(output.trajectory.steps[0].boundary).toBe("cognition");
+    expect(output.trajectory.steps[1].action).toBe("resolve-intent");
+    expect(output.trajectory.steps[1].boundary).toBe("cognition");
+  });
+
+  it("trajectory steps record timing", async () => {
+    const output = await conductor.processEvent(makeEvent("keystroke"), makeContext());
+
+    for (const step of output.trajectory.steps) {
+      expect(step.durationMs).toBeGreaterThanOrEqual(0);
+      expect(step.timestamp).toBeTruthy();
+    }
+  });
+
+  it("trajectory records classification output in step", async () => {
+    const output = await conductor.processEvent(makeEvent("mic"), makeContext());
+
+    const classifyStep = output.trajectory.steps[0];
+    expect(classifyStep.output.classification).toBe("speech");
+    expect(classifyStep.output.confidence).toBe(0.5);
+  });
+
+  it("trajectory records intent output in step", async () => {
+    const output = await conductor.processEvent(makeEvent("keystroke"), makeContext());
+
+    const resolveStep = output.trajectory.steps[1];
+    expect(resolveStep.output.intent).toBe("process_text");
+    expect(typeof resolveStep.output.actionCount).toBe("number");
+  });
+
+  it("forceMode produces trajectory with force-mode step", async () => {
+    const output = await conductor.forceMode("music", makeContext());
+
+    expect(output.trajectory.steps).toHaveLength(2);
+    expect(output.trajectory.steps[0].action).toBe("force-mode");
+    expect(output.trajectory.steps[0].output.userForced).toBe(true);
+    expect(output.trajectory.steps[1].action).toBe("resolve-intent");
+  });
+
+  it("initial getCurrentOutput has empty trajectory", () => {
+    const output = conductor.getCurrentOutput();
+    expect(output.trajectory.steps).toHaveLength(0);
+    expect(output.trajectory.status).toBe("completed");
+  });
+
+  it("each processEvent creates a fresh trajectory", async () => {
+    const out1 = await conductor.processEvent(makeEvent("keystroke"), makeContext());
+    const out2 = await conductor.processEvent(makeEvent("mic"), makeContext());
+
+    expect(out1.trajectory.trajectoryId).not.toBe(out2.trajectory.trajectoryId);
+  });
+
+  it("trajectory totalCost is sum of step costs", async () => {
+    const output = await conductor.processEvent(makeEvent("keystroke"), makeContext());
+    const expectedCost = output.trajectory.steps.reduce((sum, s) => sum + s.cost, 0);
+    expect(output.trajectory.totalCost).toBe(expectedCost);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // DefaultInputConductor — forceMode (P10)
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -194,11 +278,9 @@ describe("DefaultInputConductor — forceMode (P10)", () => {
   });
 
   it("overrides previous classification", async () => {
-    // First: classify as text via keystroke
     await conductor.processEvent(makeEvent("keystroke"), makeContext());
     expect(conductor.getCurrentOutput().mode).toBe("text");
 
-    // Force to music mode
     const output = await conductor.forceMode("music", makeContext());
     expect(output.mode).toBe("music");
     expect(output.modeForced).toBe(true);
@@ -228,6 +310,8 @@ describe("DefaultInputConductor — getCurrentOutput", () => {
     expect(output.intent).toBeNull();
     expect(output.modeForced).toBe(false);
     expect(output.classifying).toBe(false);
+    expect(output.trajectory).toBeDefined();
+    expect(output.trajectory.steps).toHaveLength(0);
   });
 
   it("returns latest state after processing", async () => {
@@ -239,6 +323,7 @@ describe("DefaultInputConductor — getCurrentOutput", () => {
     expect(output.mode).toBe("speech");
     expect(output.classification).not.toBeNull();
     expect(output.intent).not.toBeNull();
+    expect(output.trajectory.steps).toHaveLength(2);
   });
 });
 
@@ -252,11 +337,11 @@ describe("DefaultInputConductor — resilient degradation (P11)", () => {
 
     const output = await conductor.processEvent(makeEvent("mic"), makeContext());
 
-    // Should NOT throw — falls back gracefully
     expect(output.mode).toBe("text");
     expect(output.classification!.classification).toBe("text");
     expect(output.classification!.confidence).toBe(0);
     expect(output.classification!.classifiedBy).toBe("fallback");
+    expect(output.trajectory.steps[0].output.fallback).toBe(true);
   });
 
   it("returns empty actions when resolver throws", async () => {
@@ -267,11 +352,11 @@ describe("DefaultInputConductor — resilient degradation (P11)", () => {
 
     const output = await conductor.processEvent(makeEvent("keystroke"), makeContext());
 
-    // Classification succeeds, intent resolution fails gracefully
     expect(output.classification!.classification).toBe("text");
     expect(output.intent!.intent).toBe("unknown");
     expect(output.intent!.actions).toHaveLength(0);
     expect(output.intent!.resolvedBy).toBe("fallback");
+    expect(output.trajectory.steps[1].output.fallback).toBe(true);
   });
 
   it("handles both classifier and resolver failing", async () => {
@@ -285,6 +370,7 @@ describe("DefaultInputConductor — resilient degradation (P11)", () => {
     expect(output.mode).toBe("text");
     expect(output.classification!.classifiedBy).toBe("fallback");
     expect(output.intent!.resolvedBy).toBe("fallback");
+    expect(output.trajectory.steps).toHaveLength(2);
   });
 
   it("handles resolver failure in forceMode", async () => {
@@ -325,6 +411,7 @@ describe("DefaultInputConductor — custom implementations (P7)", () => {
     expect(output.classification!.classifiedBy).toBe("custom-audio");
     expect(output.classification!.confidence).toBe(0.95);
     expect(output.mode).toBe("music");
+    expect(output.trajectory.steps[0].output.classification).toBe("music");
   });
 
   it("uses injected resolver", async () => {

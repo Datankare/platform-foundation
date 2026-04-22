@@ -3,7 +3,8 @@
  *
  * The Conductor is the top-level orchestrator for the input agent layer.
  * It receives raw InputEvents, delegates to the classifier and intent
- * resolver, and emits ConductorOutput for the UI to render.
+ * resolver, and emits ConductorOutput (including a full Trajectory) for
+ * the UI to render.
  *
  * This is the only module the UI needs to interact with — the classifier
  * and intent resolver are internal implementation details.
@@ -17,12 +18,17 @@
  *   P11 — If classification fails, falls back to text mode
  *   P15 — Conductor has its own agent identity
  *   P17 — classify = cognition, route-to-pipeline = commitment
- *   P18 — Each input session creates a trajectory
+ *   P18 — Each input operation creates a Trajectory with Step records
  *
  * @module platform/input
  */
 
-import type { AgentIdentity } from "@/platform/agents/types";
+import type {
+  AgentIdentity,
+  Trajectory,
+  Step,
+  StepBoundary,
+} from "@/platform/agents/types";
 import type {
   InputEvent,
   InputMode,
@@ -32,6 +38,50 @@ import type {
 } from "./types";
 import { type InputClassifier, RuleBasedClassifier } from "./classifier";
 import { type IntentResolver, type IntentContext, DefaultIntentResolver } from "./intent";
+
+// ── Trajectory helpers ────────────────────────────────────────────────
+
+function generateId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function makeStep(
+  stepIndex: number,
+  action: string,
+  boundary: StepBoundary,
+  input: Record<string, unknown>,
+  output: Record<string, unknown>,
+  durationMs: number,
+  cost: number
+): Step {
+  return {
+    stepIndex,
+    action,
+    boundary,
+    input,
+    output,
+    durationMs,
+    cost,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function buildTrajectory(
+  agentId: string,
+  steps: Step[],
+  status: Trajectory["status"] = "completed"
+): Trajectory {
+  const now = new Date().toISOString();
+  return {
+    trajectoryId: `traj-${generateId()}`,
+    agentId,
+    steps,
+    status,
+    totalCost: steps.reduce((sum, s) => sum + s.cost, 0),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 // ── Interface ─────────────────────────────────────────────────────────
 
@@ -48,7 +98,8 @@ export interface InputConductor {
   /**
    * Process a raw input event through the classify → resolve pipeline.
    *
-   * Returns a complete ConductorOutput that the UI can render.
+   * Returns a complete ConductorOutput that the UI can render,
+   * including a Trajectory recording all steps (P18).
    */
   processEvent(event: InputEvent, context: IntentContext): Promise<ConductorOutput>;
 
@@ -75,6 +126,9 @@ export interface InputConductor {
  * Both the classifier and resolver can be swapped via constructor
  * injection — this is how Sprint 4b will upgrade to agent-backed
  * implementations without changing the UI.
+ *
+ * Every processEvent/forceMode call produces a Trajectory (P18)
+ * with Step records for each stage of the pipeline.
  */
 export class DefaultInputConductor implements InputConductor {
   readonly identity: AgentIdentity;
@@ -85,25 +139,47 @@ export class DefaultInputConductor implements InputConductor {
   private currentIntent: IntentResult | null = null;
   private currentMode: InputMode = "text";
   private modeForced = false;
+  private currentTrajectory: Trajectory;
 
   constructor(classifier?: InputClassifier, resolver?: IntentResolver, actorId?: string) {
     this.classifier = classifier ?? new RuleBasedClassifier();
     this.resolver = resolver ?? new DefaultIntentResolver();
+    const agentId = actorId ?? "conductor-default";
     this.identity = {
       actorType: "agent",
-      actorId: actorId ?? "conductor-default",
+      actorId: agentId,
       agentRole: "conductor",
     };
+    // Initial trajectory — no steps yet
+    this.currentTrajectory = buildTrajectory(agentId, []);
   }
 
   async processEvent(
     event: InputEvent,
     context: IntentContext
   ): Promise<ConductorOutput> {
-    // Step 1: Classify the input (P17 — cognition)
+    const steps: Step[] = [];
+
+    // Step 0: Classify the input (P17 — cognition)
     let classification: ClassificationResult;
+    const classifyStart = Date.now();
     try {
       classification = await this.classifier.classify(event);
+      steps.push(
+        makeStep(
+          0,
+          "classify",
+          "cognition",
+          { eventType: event.type },
+          {
+            classification: classification.classification,
+            confidence: classification.confidence,
+            mode: classification.mode,
+          },
+          Date.now() - classifyStart,
+          classification.cost
+        )
+      );
     } catch {
       // P11: classification failure → fallback to text mode
       classification = {
@@ -114,21 +190,48 @@ export class DefaultInputConductor implements InputConductor {
         latencyMs: 0,
         cost: 0,
       };
+      steps.push(
+        makeStep(
+          0,
+          "classify",
+          "cognition",
+          { eventType: event.type },
+          { classification: "text", confidence: 0, fallback: true },
+          Date.now() - classifyStart,
+          0
+        )
+      );
     }
 
     this.currentClassification = classification;
     this.currentMode = classification.mode;
     this.modeForced = false;
 
-    // Step 2: Resolve intent (P17 — cognition)
+    // Step 1: Resolve intent (P17 — cognition)
     const intentContext: IntentContext = {
       ...context,
       currentMode: this.currentMode,
     };
 
     let intent: IntentResult;
+    const resolveStart = Date.now();
     try {
       intent = await this.resolver.resolve(classification, intentContext);
+      steps.push(
+        makeStep(
+          1,
+          "resolve-intent",
+          "cognition",
+          { classification: classification.classification, mode: this.currentMode },
+          {
+            intent: intent.intent,
+            confidence: intent.confidence,
+            actionCount: intent.actions.length,
+          },
+          Date.now() - resolveStart,
+          intent.cost
+        )
+      );
     } catch {
       // P11: resolution failure → generic fallback
       intent = {
@@ -140,18 +243,31 @@ export class DefaultInputConductor implements InputConductor {
         latencyMs: 0,
         cost: 0,
       };
+      steps.push(
+        makeStep(
+          1,
+          "resolve-intent",
+          "cognition",
+          { classification: classification.classification, mode: this.currentMode },
+          { intent: "unknown", fallback: true },
+          Date.now() - resolveStart,
+          0
+        )
+      );
     }
 
     this.currentIntent = intent;
+    this.currentTrajectory = buildTrajectory(this.identity.actorId, steps);
 
     return this.getCurrentOutput();
   }
 
   async forceMode(mode: InputMode, context: IntentContext): Promise<ConductorOutput> {
+    const steps: Step[] = [];
     this.currentMode = mode;
     this.modeForced = true;
 
-    // Create a synthetic classification for the forced mode
+    // Step 0: Synthetic classification for forced mode (P17 — cognition)
     const classification: ClassificationResult = {
       classification:
         mode === "speech"
@@ -169,14 +285,46 @@ export class DefaultInputConductor implements InputConductor {
     };
     this.currentClassification = classification;
 
-    // Resolve intent for the forced mode
+    steps.push(
+      makeStep(
+        0,
+        "force-mode",
+        "cognition",
+        { forcedMode: mode },
+        {
+          classification: classification.classification,
+          confidence: 1.0,
+          userForced: true,
+        },
+        0,
+        0
+      )
+    );
+
+    // Step 1: Resolve intent for the forced mode
     const intentContext: IntentContext = {
       ...context,
       currentMode: mode,
     };
 
+    const resolveStart = Date.now();
     try {
       this.currentIntent = await this.resolver.resolve(classification, intentContext);
+      steps.push(
+        makeStep(
+          1,
+          "resolve-intent",
+          "cognition",
+          { classification: classification.classification, mode },
+          {
+            intent: this.currentIntent.intent,
+            confidence: this.currentIntent.confidence,
+            actionCount: this.currentIntent.actions.length,
+          },
+          Date.now() - resolveStart,
+          this.currentIntent.cost
+        )
+      );
     } catch {
       this.currentIntent = {
         intent: "unknown",
@@ -187,7 +335,20 @@ export class DefaultInputConductor implements InputConductor {
         latencyMs: 0,
         cost: 0,
       };
+      steps.push(
+        makeStep(
+          1,
+          "resolve-intent",
+          "cognition",
+          { classification: classification.classification, mode },
+          { intent: "unknown", fallback: true },
+          Date.now() - resolveStart,
+          0
+        )
+      );
     }
+
+    this.currentTrajectory = buildTrajectory(this.identity.actorId, steps);
 
     return this.getCurrentOutput();
   }
@@ -199,6 +360,7 @@ export class DefaultInputConductor implements InputConductor {
       intent: this.currentIntent,
       modeForced: this.modeForced,
       classifying: false,
+      trajectory: this.currentTrajectory,
     };
   }
 }
