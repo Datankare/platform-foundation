@@ -404,3 +404,30 @@ describe("Guardian — edge cases", () => {
     expect(result.contentType).toBe("transcription");
   });
 });
+
+// ---------------------------------------------------------------------------
+// F1: Config loading failure — fail-closed thresholds
+// ---------------------------------------------------------------------------
+
+describe("Guardian — config failure (F1: fail-closed)", () => {
+  it("uses fail-closed thresholds when config loading throws", async () => {
+    const { getConfig } = jest.requireMock("@/platform/auth/platform-config");
+    getConfig
+      .mockRejectedValueOnce(new Error("DB down"))
+      .mockRejectedValueOnce(new Error("DB down"))
+      .mockRejectedValueOnce(new Error("DB down"));
+
+    mockClassifierUnsafe("low", 0.98);
+    const guardian = new Guardian();
+
+    const result = await guardian.screen(
+      "borderline text",
+      "input",
+      "req-fc",
+      makeContext({ contentRatingLevel: 3 })
+    );
+
+    expect(result.action).toBe("block");
+    expect(result.reasoning).toContain("fail-closed");
+  });
+});

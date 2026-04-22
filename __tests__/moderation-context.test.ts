@@ -160,3 +160,20 @@ describe("evaluateContext", () => {
     expect(result.severityReduction).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// F6: Unknown contentType validation
+// ---------------------------------------------------------------------------
+
+describe("evaluateContext — unknown contentType (F6)", () => {
+  it("returns safe defaults for unknown content type", async () => {
+    const ctx = { contentType: "bogus" as ScreeningContext["contentType"] };
+    const result = await evaluateContext(ctx);
+
+    expect(result.severityReduction).toBe(0);
+    expect(result.attributeToUser).toBe(true);
+    expect(result.factors).toEqual(
+      expect.arrayContaining([expect.stringContaining("unknown-content-type")])
+    );
+  });
+});
