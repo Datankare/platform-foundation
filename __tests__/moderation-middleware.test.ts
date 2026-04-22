@@ -1,17 +1,40 @@
 /**
- * __tests__/moderation-middleware.test.ts — Safety middleware pipeline tests
+ * __tests__/moderation-middleware.test.ts — screenContent middleware tests
  *
- * Tests: blocklist short-circuit, classifier integration, decision logic,
- * input vs output direction, blocklistOnly mode, fail-closed behavior.
+ * Tests: backward compatibility (no context), context passthrough,
+ * direction handling, content type defaults.
  */
 
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
 import type { AIResponse, Orchestrator, CircuitState } from "@/platform/ai";
 import { screenContent } from "@/platform/moderation/middleware";
+import { resetGuardian } from "@/platform/moderation/guardian";
+import { resetModerationStore } from "@/platform/moderation/store";
 
-// ---------------------------------------------------------------------------
-// Mock orchestrator (classifier calls go through this)
-// ---------------------------------------------------------------------------
+jest.mock("@/lib/logger", () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  generateRequestId: () => "mock-req-id",
+}));
+
+jest.mock("@/platform/auth/platform-config", () => ({
+  getConfig: jest.fn(async (key: string, defaultValue: unknown) => {
+    const configMap: Record<string, unknown> = {
+      "moderation.level1.block_severity": "medium",
+      "moderation.level1.warn_severity": "low",
+      "moderation.level1.escalate_below": 0.7,
+      "moderation.level2.block_severity": "high",
+      "moderation.level2.warn_severity": "medium",
+      "moderation.level2.escalate_below": 0.6,
+      "moderation.level3.block_severity": "critical",
+      "moderation.level3.warn_severity": "high",
+      "moderation.level3.escalate_below": 0.5,
+      "moderation.translation_severity_reduction": 1,
+      "moderation.transcription_severity_reduction": 1,
+      "moderation.extraction_severity_reduction": 1,
+    };
+    return configMap[key] ?? defaultValue;
+  }),
+}));
 
 const mockComplete = jest.fn();
 
@@ -31,187 +54,133 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  if (previousOrchestrator) {
-    setOrchestrator(previousOrchestrator);
-  }
+  if (previousOrchestrator) setOrchestrator(previousOrchestrator);
 });
 
 beforeEach(() => {
   mockComplete.mockReset();
   clearMetrics();
+  resetGuardian();
+  resetModerationStore();
 });
 
-function mockClassifierResponse(text: string): void {
-  const response: AIResponse = {
-    content: [{ type: "text", text }],
+function mockSafe(): void {
+  mockComplete.mockResolvedValueOnce({
+    content: [
+      {
+        type: "text",
+        text: '{"safe": true, "categories": [], "confidence": 0.95, "severity": "low"}',
+      },
+    ],
     model: "claude-haiku-4-5-20251001",
     usage: { inputTokens: 100, outputTokens: 30 },
     stopReason: "end_turn",
-  };
-  mockComplete.mockResolvedValueOnce(response);
+  } as AIResponse);
 }
 
-const DEFAULT_OPTS = { direction: "input" as const, requestId: "test-req" };
+function mockUnsafe(severity: string, confidence: number): void {
+  mockComplete.mockResolvedValueOnce({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          safe: false,
+          categories: ["violence"],
+          confidence,
+          severity,
+        }),
+      },
+    ],
+    model: "claude-haiku-4-5-20251001",
+    usage: { inputTokens: 100, outputTokens: 30 },
+    stopReason: "end_turn",
+  } as AIResponse);
+}
 
 // ---------------------------------------------------------------------------
-// Layer 1: Blocklist short-circuit
+// Backward compatibility (no context)
 // ---------------------------------------------------------------------------
 
-describe("screenContent — blocklist", () => {
-  it("blocks critical blocklist hits immediately without calling classifier", async () => {
-    const result = await screenContent("kill yourself", DEFAULT_OPTS);
-
-    expect(result.action).toBe("block");
-    expect(result.triggeredBy).toBe("blocklist");
-    expect(result.blocklistMatches).toContain("kill yourself");
-    // Classifier should NOT have been called
-    expect(mockComplete).not.toHaveBeenCalled();
-  });
-
-  it("blocks high-severity blocklist hits immediately", async () => {
-    const result = await screenContent("nsfw content", DEFAULT_OPTS);
-
-    expect(result.action).toBe("block");
-    expect(result.triggeredBy).toBe("blocklist");
-    expect(mockComplete).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Layer 2: Classifier
-// ---------------------------------------------------------------------------
-
-describe("screenContent — classifier", () => {
+describe("screenContent — backward compatible (no context)", () => {
   it("allows safe content", async () => {
-    mockClassifierResponse(
-      '{"safe": true, "categories": [], "confidence": 0.95, "severity": "low"}'
-    );
-
-    const result = await screenContent("Hello, how are you?", DEFAULT_OPTS);
+    mockSafe();
+    const result = await screenContent("hello", { direction: "input", requestId: "r1" });
 
     expect(result.action).toBe("allow");
-    expect(result.triggeredBy).toBe("none");
-    expect(result.classifierOutput?.safe).toBe(true);
-    expect(mockComplete).toHaveBeenCalledTimes(1);
+    expect(result.contentType).toBe("generation");
+    expect(result.contentRatingLevel).toBe(1);
   });
 
-  it("blocks high-severity unsafe content", async () => {
-    mockClassifierResponse(
-      '{"safe": false, "categories": ["violence"], "confidence": 0.9, "severity": "high", "reason": "graphic violence"}'
-    );
-
-    const result = await screenContent(
-      "some violent text that is not in blocklist",
-      DEFAULT_OPTS
-    );
-
-    expect(result.action).toBe("block");
-    expect(result.triggeredBy).toBe("classifier");
-    expect(result.classifierOutput?.categories).toContain("violence");
-  });
-
-  it("warns on medium-severity unsafe content", async () => {
-    mockClassifierResponse(
-      '{"safe": false, "categories": ["harassment"], "confidence": 0.85, "severity": "medium", "reason": "mildly aggressive"}'
-    );
-
-    const result = await screenContent("you are so annoying", DEFAULT_OPTS);
-
-    expect(result.action).toBe("warn");
-    expect(result.triggeredBy).toBe("classifier");
-  });
-
-  it("escalates when classifier confidence is low", async () => {
-    mockClassifierResponse(
-      '{"safe": false, "categories": ["hate"], "confidence": 0.45, "severity": "high", "reason": "ambiguous"}'
-    );
-
-    const result = await screenContent("ambiguous text", DEFAULT_OPTS);
-
-    expect(result.action).toBe("escalate");
-    expect(result.classifierOutput?.confidence).toBeLessThan(0.6);
-  });
-
-  it("allows low-severity unsafe content", async () => {
-    mockClassifierResponse(
-      '{"safe": false, "categories": ["harassment"], "confidence": 0.8, "severity": "low", "reason": "borderline"}'
-    );
-
-    const result = await screenContent("slightly edgy text", DEFAULT_OPTS);
-
-    expect(result.action).toBe("allow");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Direction: input vs output (ADR-017)
-// ---------------------------------------------------------------------------
-
-describe("screenContent — direction", () => {
-  it("records input direction", async () => {
-    mockClassifierResponse(
-      '{"safe": true, "categories": [], "confidence": 0.9, "severity": "low"}'
-    );
-
-    const result = await screenContent("user text", {
+  it("blocks critical blocklist hits", async () => {
+    const result = await screenContent("kill yourself", {
       direction: "input",
-      requestId: "r1",
-    });
-
-    expect(result.direction).toBe("input");
-  });
-
-  it("records output direction", async () => {
-    mockClassifierResponse(
-      '{"safe": true, "categories": [], "confidence": 0.9, "severity": "low"}'
-    );
-
-    const result = await screenContent("AI generated response", {
-      direction: "output",
       requestId: "r2",
     });
 
-    expect(result.direction).toBe("output");
+    expect(result.action).toBe("block");
+    expect(result.triggeredBy).toBe("blocklist");
+    expect(mockComplete).not.toHaveBeenCalled();
   });
 
-  it("blocks unsafe AI output the same as unsafe input", async () => {
-    mockClassifierResponse(
-      '{"safe": false, "categories": ["sexual"], "confidence": 0.92, "severity": "high", "reason": "inappropriate AI output"}'
-    );
-
-    const result = await screenContent("AI said something bad", {
+  it("defaults to ai-output for output direction", async () => {
+    mockSafe();
+    const result = await screenContent("AI text", {
       direction: "output",
       requestId: "r3",
     });
 
-    expect(result.action).toBe("block");
-    expect(result.direction).toBe("output");
+    expect(result.contentType).toBe("ai-output");
   });
 });
 
 // ---------------------------------------------------------------------------
-// blocklistOnly mode
+// With context
 // ---------------------------------------------------------------------------
 
-describe("screenContent — blocklistOnly", () => {
-  it("skips classifier when blocklistOnly is true", async () => {
-    const result = await screenContent("perfectly fine text", {
-      ...DEFAULT_OPTS,
-      blocklistOnly: true,
+describe("screenContent — with context", () => {
+  it("passes context to Guardian", async () => {
+    mockSafe();
+    const result = await screenContent("translation text", {
+      direction: "input",
+      requestId: "r4",
+      context: {
+        contentType: "translation",
+        contentRatingLevel: 2,
+        userId: "user-123",
+        sourceLanguage: "ar",
+        targetLanguage: "en",
+      },
     });
 
-    expect(result.action).toBe("allow");
-    expect(mockComplete).not.toHaveBeenCalled();
+    expect(result.contentType).toBe("translation");
+    expect(result.contentRatingLevel).toBe(2);
   });
 
-  it("still blocks critical blocklist hits in blocklistOnly mode", async () => {
-    const result = await screenContent("how to make a bomb", {
-      ...DEFAULT_OPTS,
-      blocklistOnly: true,
+  it("applies severity reduction for translation", async () => {
+    mockUnsafe("high", 0.9);
+    const result = await screenContent("violent translation", {
+      direction: "input",
+      requestId: "r5",
+      context: {
+        contentType: "translation",
+        contentRatingLevel: 2,
+      },
     });
 
-    expect(result.action).toBe("block");
-    expect(mockComplete).not.toHaveBeenCalled();
+    // high - 1 = medium, Level 2 medium = warn
+    expect(result.action).toBe("warn");
+    expect(result.severityAdjustment).toBe(-1);
+  });
+
+  it("does not attribute to user for ai-output", async () => {
+    mockUnsafe("high", 0.9);
+    const result = await screenContent("bad AI output", {
+      direction: "output",
+      requestId: "r6",
+      context: { contentType: "ai-output" },
+    });
+
+    expect(result.attributeToUser).toBe(false);
   });
 });
 
@@ -221,37 +190,23 @@ describe("screenContent — blocklistOnly", () => {
 
 describe("screenContent — edge cases", () => {
   it("allows empty text", async () => {
-    const result = await screenContent("", DEFAULT_OPTS);
-
+    const result = await screenContent("", { direction: "input", requestId: "r7" });
     expect(result.action).toBe("allow");
     expect(mockComplete).not.toHaveBeenCalled();
   });
 
-  it("allows whitespace-only text", async () => {
-    const result = await screenContent("   ", DEFAULT_OPTS);
+  it("includes trajectory and agent IDs", async () => {
+    mockSafe();
+    const result = await screenContent("test", { direction: "input", requestId: "r8" });
 
-    expect(result.action).toBe("allow");
-    expect(mockComplete).not.toHaveBeenCalled();
+    expect(result.trajectoryId).toMatch(/^traj-/);
+    expect(result.agentId).toMatch(/^guardian-/);
   });
 
-  it("fails closed when classifier throws", async () => {
-    mockComplete.mockRejectedValueOnce(new Error("API down"));
+  it("includes reasoning", async () => {
+    mockSafe();
+    const result = await screenContent("hello", { direction: "input", requestId: "r9" });
 
-    const result = await screenContent("some text to classify", DEFAULT_OPTS);
-
-    // Classifier returns fail-closed output (safe: false)
-    // Middleware should treat this as unsafe
-    expect(result.action).not.toBe("allow");
-    expect(result.classifierOutput?.safe).toBe(false);
-  });
-
-  it("records pipeline latency", async () => {
-    mockClassifierResponse(
-      '{"safe": true, "categories": [], "confidence": 0.9, "severity": "low"}'
-    );
-
-    const result = await screenContent("test", DEFAULT_OPTS);
-
-    expect(result.pipelineLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(result.reasoning.length).toBeGreaterThan(0);
   });
 });

@@ -27,6 +27,15 @@ function makeOutput(overrides?: Partial<ConductorOutput>): ConductorOutput {
     intent: null,
     modeForced: false,
     classifying: false,
+    trajectory: {
+      trajectoryId: "traj-test",
+      agentId: "conductor-default",
+      steps: [],
+      status: "completed" as const,
+      totalCost: 0,
+      createdAt: "2026-04-22T00:00:00Z",
+      updatedAt: "2026-04-22T00:00:00Z",
+    },
     ...overrides,
   };
 }
