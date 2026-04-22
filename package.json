@@ -68,6 +68,7 @@
       "platform/auth/**/*.ts",
       "platform/agents/**/*.ts",
       "platform/input/**/*.ts",
+      "platform/moderation/**/*.ts",
       "platform/auth/**/*.tsx"
     ],
     "coverageThreshold": {

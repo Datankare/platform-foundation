@@ -7,6 +7,7 @@
  * - ClassificationResult: what the classifier determined
  * - IntentResult: what the user wants to do
  * - ActionItem: available actions rendered by the UI
+ * - ConductorOutput: full output including Trajectory (P18)
  *
  * These types form the contract between the agent layer and the UI.
  * The UI renders whatever the agent layer returns — no hardcoded behavior.
@@ -22,9 +23,12 @@
  *   P12 — Cost tracking: cost field on results (0 for rule-based)
  *   P15 — classifiedBy tracks which classifier produced the result
  *   P17 — Classification = cognition; routing = commitment
+ *   P18 — Every processEvent/forceMode produces a Trajectory
  *
  * @module platform/input
  */
+
+import type { Trajectory } from "@/platform/agents/types";
 
 // ── Input Events ──────────────────────────────────────────────────────
 
@@ -169,6 +173,7 @@ export interface ActionItem {
  * The complete output of the InputConductor for a given input event.
  *
  * This is what the AdaptiveInput component consumes to render its state.
+ * The trajectory records the full agent execution path (P18).
  */
 export interface ConductorOutput {
   /** Current input mode (detected or forced) */
@@ -181,6 +186,8 @@ export interface ConductorOutput {
   readonly modeForced: boolean;
   /** Whether classification is currently in progress */
   readonly classifying: boolean;
+  /** Full agent trajectory for this operation (P18) */
+  readonly trajectory: Trajectory;
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────
@@ -200,3 +207,7 @@ export interface ConductorOutput {
 // 4. IntentResult.intent is a machine-readable string (e.g., "translate", "identify_song").
 //    IntentResult.displayLabel is human-readable (e.g., "Translate text", "Identify song").
 //    Never use intent for display or displayLabel for logic.
+//
+// 5. ConductorOutput.trajectory is always present. Before any events, it has 0 steps
+//    and status "completed". After processEvent/forceMode, it records classify + resolve steps.
+//    Consumers that don't need trajectory data can ignore it.
