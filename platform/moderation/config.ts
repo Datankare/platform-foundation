@@ -31,11 +31,20 @@ function key(path: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Fail-closed defaults — STRICTEST possible values
+// WARNING: FAIL-CLOSED DEFAULTS — MAXIMUM RESTRICTION
 //
-// These are NOT the intended defaults. The intended defaults are in
-// migration 010 seed data. These only activate when the database
-// is unreachable. They are intentionally extreme.
+// These values are NOT the intended operating defaults.
+// The intended defaults live ONLY in the database (migration 010 seed data).
+//
+// These values activate ONLY when the database is unreachable.
+// They are intentionally the STRICTEST possible — blocking everything
+// at the lowest severity threshold. This is by design: if we cannot
+// read configuration, we protect users by blocking aggressively
+// rather than allowing potentially harmful content through.
+//
+// DO NOT change these to match the intended defaults. That would
+// defeat the fail-closed principle. If these values are being used,
+// the database connection needs fixing, not these constants.
 // ---------------------------------------------------------------------------
 
 const FAIL_CLOSED_SEVERITY: SafetySeverity = "low";

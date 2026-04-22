@@ -236,3 +236,43 @@ describe("ModerationStore singleton", () => {
     expect(getModerationStore()).not.toBe(custom);
   });
 });
+
+// ---------------------------------------------------------------------------
+// F2: InMemoryStore bounded size
+// ---------------------------------------------------------------------------
+
+describe("InMemoryModerationStore — bounded size (F2)", () => {
+  it("drops oldest records when exceeding MAX_RECORDS", async () => {
+    const store = new InMemoryModerationStore();
+
+    for (let i = 0; i < 10_001; i++) {
+      await store.logAudit(
+        makeRecord({
+          inputHash: `hash-${i}`,
+          timestamp: new Date(Date.now() + i).toISOString(),
+        })
+      );
+    }
+
+    expect(store.getRecordCount()).toBe(10_000);
+
+    const oldest = await store.getByInputHash("hash-0");
+    expect(oldest).toHaveLength(0);
+
+    const newest = await store.getByInputHash("hash-10000");
+    expect(newest).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F7: SupabaseModerationStore server-side guard
+// ---------------------------------------------------------------------------
+
+describe("SupabaseModerationStore — server-side guard (F7)", () => {
+  it("does not throw in Node.js environment (no window)", async () => {
+    const mod = await import("@/platform/moderation/store");
+    expect(() => {
+      new mod.SupabaseModerationStore("https://example.supabase.co", "test-key");
+    }).not.toThrow();
+  });
+});
