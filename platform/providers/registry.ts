@@ -25,6 +25,7 @@
  *   STT_PROVIDER          = "google" | "mock"     (default: "mock")
  *   SONG_ID_PROVIDER      = "acrcloud" | "mock"   (default: "mock")
  *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
+ *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
  *
  * @module platform/providers
  */
@@ -33,6 +34,7 @@ import { registerAuthProvider, hasAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { createCognitoAuthProvider } from "@/platform/auth/cognito-provider";
 import { resetCache } from "@/platform/cache";
+import { SupabaseModerationStore, setModerationStore } from "@/platform/moderation/store";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -49,6 +51,7 @@ export type TTSProviderType = "google" | "mock";
 export type STTProviderType = "google" | "mock";
 export type SongIdProviderType = "acrcloud" | "mock";
 export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
+export type ModerationStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -61,6 +64,7 @@ export interface ProviderSelections {
   stt: STTProviderType;
   songId: SongIdProviderType;
   audioConverter: AudioConverterType;
+  moderationStore: ModerationStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +85,7 @@ function getProviderSelections(): ProviderSelections {
     stt: (process.env.STT_PROVIDER as STTProviderType) ?? "mock",
     songId: (process.env.SONG_ID_PROVIDER as SongIdProviderType) ?? "mock",
     audioConverter: (process.env.AUDIO_CONVERTER as AudioConverterType) ?? "mock",
+    moderationStore: (process.env.MODERATION_STORE as ModerationStoreType) ?? "memory",
   };
 }
 
@@ -234,6 +239,23 @@ function initAudioConverter(type: AudioConverterType): void {
   }
 }
 
+function initModerationStore(type: ModerationStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    if (!url || !key) {
+      logger.warn(
+        "MODERATION_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
+      );
+      return;
+    }
+
+    setModerationStore(new SupabaseModerationStore(url, key));
+    return;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Central init
 // ---------------------------------------------------------------------------
@@ -259,6 +281,7 @@ export function initProviders(): ProviderSelections {
   initSTTProvider(selections.stt);
   initSongIdProvider(selections.songId);
   initAudioConverter(selections.audioConverter);
+  initModerationStore(selections.moderationStore);
 
   initialized = true;
 
@@ -273,6 +296,7 @@ export function initProviders(): ProviderSelections {
     stt: selections.stt,
     songId: selections.songId,
     audioConverter: selections.audioConverter,
+    moderationStore: selections.moderationStore,
   });
 
   return selections;

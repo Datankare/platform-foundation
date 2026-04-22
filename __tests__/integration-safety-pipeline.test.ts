@@ -50,9 +50,18 @@ describe("Content Safety Pipeline Integration", () => {
         action: "block" as const,
         triggeredBy: "blocklist" as const,
         direction: "input" as const,
+        contentType: "generation" as const,
+        contentRatingLevel: 1 as const,
         blocklistMatches: ["bomb"],
         classifierOutput: undefined,
+        reasoning: "Blocklist hit: dangerous (severity: critical). Blocked immediately.",
+        severityAdjustment: 0,
+        contextFactors: [] as string[],
+        attributeToUser: true,
         pipelineLatencyMs: 5,
+        classifierCostUsd: 0,
+        trajectoryId: "traj-test",
+        agentId: "guardian-test",
       };
 
       const record = await buildAuditRecord("test content", mockResult, "req-123");
