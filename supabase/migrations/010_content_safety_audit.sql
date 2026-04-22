@@ -134,87 +134,87 @@ COMMENT ON COLUMN content_safety_audit.trajectory_id IS
 
 -- ── Level 1: Under 13 (COPPA, strictest) ────────────────────────────────────
 
-INSERT INTO platform_config (key, value, description, category, updated_by)
+INSERT INTO platform_config (key, value, description, category)
 VALUES
   ('moderation.level1.block_severity', '"medium"',
    'Minimum severity to BLOCK for Level 1 (under 13). Options: low, medium, high, critical.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.level1.warn_severity', '"low"',
    'Minimum severity to WARN for Level 1 (under 13). Options: low, medium, high, critical.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.level1.escalate_below', '0.7',
    'Classifier confidence threshold — below this, escalate for human review (Level 1). Range: 0.0-1.0.',
-   'moderation', 'system')
+   'moderation')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── Level 2: 13–17 (teen, moderate) ──────────────────────────────────────────
 
-INSERT INTO platform_config (key, value, description, category, updated_by)
+INSERT INTO platform_config (key, value, description, category)
 VALUES
   ('moderation.level2.block_severity', '"high"',
    'Minimum severity to BLOCK for Level 2 (13-17). Options: low, medium, high, critical.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.level2.warn_severity', '"medium"',
    'Minimum severity to WARN for Level 2 (13-17). Options: low, medium, high, critical.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.level2.escalate_below', '0.6',
    'Classifier confidence threshold for escalation (Level 2). Range: 0.0-1.0.',
-   'moderation', 'system')
+   'moderation')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── Level 3: 18+ (adult, standard) ──────────────────────────────────────────
 
-INSERT INTO platform_config (key, value, description, category, updated_by)
+INSERT INTO platform_config (key, value, description, category)
 VALUES
   ('moderation.level3.block_severity', '"critical"',
    'Minimum severity to BLOCK for Level 3 (18+). Options: low, medium, high, critical.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.level3.warn_severity', '"high"',
    'Minimum severity to WARN for Level 3 (18+). Options: low, medium, high, critical.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.level3.escalate_below', '0.5',
    'Classifier confidence threshold for escalation (Level 3). Range: 0.0-1.0.',
-   'moderation', 'system')
+   'moderation')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── Content type severity reductions ─────────────────────────────────────────
 
-INSERT INTO platform_config (key, value, description, category, updated_by)
+INSERT INTO platform_config (key, value, description, category)
 VALUES
   ('moderation.translation_severity_reduction', '1',
    'Severity levels to reduce for translation content (user translating existing text). Range: 0-3.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.transcription_severity_reduction', '1',
    'Severity levels to reduce for transcription content (STT artifacts). Range: 0-3.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.extraction_severity_reduction', '1',
    'Severity levels to reduce for extraction content (user uploaded document). Range: 0-3.',
-   'moderation', 'system')
+   'moderation')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── Strike thresholds (account consequences) ─────────────────────────────────
 
-INSERT INTO platform_config (key, value, description, category, updated_by)
+INSERT INTO platform_config (key, value, description, category)
 VALUES
   ('moderation.strike_warn_threshold', '1',
    'Number of strikes before user receives a warning. Range: 1-10.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.strike_suspend_threshold', '3',
    'Number of strikes before user is suspended (7 days). Range: 1-20.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.strike_ban_threshold', '4',
    'Number of strikes before permanent ban (appeal via human review). Range: 1-50.',
-   'moderation', 'system')
+   'moderation')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── Pipeline configuration ───────────────────────────────────────────────────
 
-INSERT INTO platform_config (key, value, description, category, updated_by)
+INSERT INTO platform_config (key, value, description, category)
 VALUES
   ('moderation.classifier_effort', '"standard"',
    'Default effort tier for the LLM classifier. Options: low, standard, max.',
-   'moderation', 'system'),
+   'moderation'),
   ('moderation.blocklist_only_surfaces', '[]',
    'Content types that skip the classifier (blocklist only). JSON array of content_type values.',
-   'moderation', 'system')
+   'moderation')
 ON CONFLICT (key) DO NOTHING;
