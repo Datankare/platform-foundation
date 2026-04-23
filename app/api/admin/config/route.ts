@@ -1,25 +1,47 @@
 /**
  * GET /api/admin/config — List all platform config entries
  * PUT /api/admin/config — Update a config entry
+ * DELETE /api/admin/config — Delete a config entry
  *
- * Permission: admin_manage_config (super_admin only in production)
- * Sprint 7b, Task 7b.2
+ * Sprint 3a enhancement: Permission tier routing.
+ *   - GET: config_view (all admins). Returns enhanced entries with metadata.
+ *   - PUT: config_manage_standard for standard-tier keys,
+ *          config_manage_safety for safety-tier keys.
+ *   - DELETE: config_manage_safety (super_admin only — deleting config is dangerous)
+ *
+ * Sprint 7b, Task 7b.2 (original)
+ * Sprint 3a, Phase 4 (enhanced)
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard, getAdminActorId } from "@/platform/auth/admin-guard";
-import { listConfig, setConfig, deleteConfig } from "@/platform/auth/platform-config";
+import {
+  listConfig,
+  setConfig,
+  deleteConfig,
+  listEnhancedConfig,
+  getPermissionTier,
+} from "@/platform/auth/platform-config";
 import { logger, generateRequestId } from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
   const requestId = generateRequestId();
-  const denied = await adminGuard(request, "admin_manage_config");
+  // Sprint 3a: downgraded from admin_manage_config to config_view
+  const denied = await adminGuard(request, "config_view");
   if (denied) return denied;
 
   try {
     const category = request.nextUrl.searchParams.get("category") || undefined;
-    const entries = await listConfig(category);
+    const enhanced = request.nextUrl.searchParams.get("enhanced") === "true";
 
+    if (enhanced) {
+      // Sprint 3a: return enhanced entries with full metadata
+      const entries = await listEnhancedConfig({ category });
+      return NextResponse.json({ entries, enhanced: true });
+    }
+
+    // Original behavior: simple entries
+    const entries = await listConfig(category);
     return NextResponse.json({ entries });
   } catch (error) {
     logger.error("Config list failed", {
@@ -33,8 +55,6 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   const requestId = generateRequestId();
-  const denied = await adminGuard(request, "admin_manage_config");
-  if (denied) return denied;
 
   try {
     const { key, value, description, category } = await request.json();
@@ -42,6 +62,14 @@ export async function PUT(request: NextRequest) {
     if (!key || value === undefined) {
       return NextResponse.json({ error: "key and value are required" }, { status: 400 });
     }
+
+    // Sprint 3a: permission tier routing
+    const tier = await getPermissionTier(key);
+    const requiredPermission =
+      tier === "safety" ? "config_manage_safety" : "config_manage_standard";
+
+    const denied = await adminGuard(request, requiredPermission);
+    if (denied) return denied;
 
     const actorId = getAdminActorId(request);
     const result = await setConfig(key, value, actorId, description, category);
@@ -63,7 +91,8 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   const requestId = generateRequestId();
-  const denied = await adminGuard(request, "admin_manage_config");
+  // Sprint 3a: delete requires safety-tier permission
+  const denied = await adminGuard(request, "config_manage_safety");
   if (denied) return denied;
 
   try {
