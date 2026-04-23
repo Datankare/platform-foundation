@@ -398,8 +398,11 @@ export async function countPendingApprovals(): Promise<number> {
 // ---------------------------------------------------------------------------
 //
 // 1. isApprovalRequired() reads from platform_config via getConfig(), which
-//    has a 60s cache. Toggling the flag takes up to 60s to take effect.
-//    Call clearConfigCache() after changing the flag if immediate effect needed.
+//    has a 60s cache. HOWEVER: both setConfig() and setConfigWithHistory()
+//    call cache.delete(key) on write, so changes through the platform's own
+//    API take effect immediately. The 60s window only applies to direct DB
+//    changes (e.g., Supabase dashboard, migration scripts). If immediate
+//    effect is needed after a direct DB change, call clearConfigCache().
 //
 // 2. Self-approval check compares requested_by === reviewerId as strings.
 //    Both must be the same UUID format (from Cognito/auth). If one is null

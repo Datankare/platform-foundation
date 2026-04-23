@@ -237,6 +237,8 @@ export interface ConfigImpactMetrics {
   readonly escalateCount: number;
   readonly blockRate: number;
   readonly warnRate: number;
+  /** True when query hit the row limit — metrics are approximate */
+  readonly truncated: boolean;
 }
 
 // ---------------------------------------------------------------------------

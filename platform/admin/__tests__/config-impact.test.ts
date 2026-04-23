@@ -178,6 +178,22 @@ describe("generateImpactReport", () => {
     expect(report.summary).toContain("Insufficient data");
   });
 
+  it("sets truncated flag when row limit is hit (F2)", async () => {
+    // Generate exactly 10000 rows to trigger truncation detection
+    const maxRows = Array.from({ length: 10000 }, () => ({
+      action_taken: "allow",
+    }));
+
+    mockSupabase.from.mockReturnValue(createChainMock({ data: maxRows, error: null }));
+
+    const change = makeHistoryRecord();
+    const report = await generateImpactReport(change, "2026-04-22T12:00:00Z");
+
+    // Both before and after query the same mock, both get 10000 rows
+    expect(report.before.truncated).toBe(true);
+    expect(report.summary).toContain("approximate");
+  });
+
   it("notes insufficient data when screenings below threshold", async () => {
     const chain = createChainMock({
       data: [{ action_taken: "allow" }],

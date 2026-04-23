@@ -182,8 +182,11 @@ export async function listConfig(category?: string): Promise<ConfigEntry[]> {
  * Set a config value. Creates or updates the key.
  * Clears the cache entry and writes an audit log.
  *
- * NOTE: This is the original setConfig — no validation, no history.
- * For validated writes with history, use setConfigWithHistory().
+ * @deprecated Use {@link setConfigWithHistory} instead. This function
+ * bypasses validation (value_type, min/max, allowed_values), does not
+ * write to platform_config_history, and does not check permission tiers.
+ * It exists for backward compatibility with pre-Sprint-3a code paths.
+ * All new code should use setConfigWithHistory().
  */
 export async function setConfig(
   key: string,
@@ -342,6 +345,21 @@ function parseAllowedValues(raw: unknown): readonly string[] | null {
   return null;
 }
 
+/**
+ * Sanitize a search query for use in PostgREST .or() filter strings.
+ *
+ * PostgREST filter syntax uses commas, parentheses, and dots as operators.
+ * User input containing these characters could break or manipulate queries.
+ * This strips all characters that have special meaning in PostgREST filters.
+ *
+ * Security: S1 from L15 adversarial review — never interpolate raw user
+ * input into PostgREST filter strings.
+ */
+function sanitizeForPostgrest(input: string): string {
+  // Strip PostgREST operators and SQL LIKE wildcards
+  return input.replace(/[%_,().\\/"']/g, "").trim();
+}
+
 /** Parse a permission_tier string. Falls back to "standard". */
 function parsePermissionTier(raw: string): PermissionTier {
   return raw === "safety" ? "safety" : "standard";
@@ -399,8 +417,11 @@ export async function listEnhancedConfig(
     query = query.eq("value_type", options.valueType);
   }
   if (options?.query) {
-    // Text search across key and description
-    query = query.or(`key.ilike.%${options.query}%,description.ilike.%${options.query}%`);
+    // S1: sanitize before interpolating into PostgREST filter string
+    const safeQuery = sanitizeForPostgrest(options.query);
+    if (safeQuery.length > 0) {
+      query = query.or(`key.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`);
+    }
   }
 
   const { data, error } = (await query) as {
@@ -434,11 +455,28 @@ export async function getPermissionTier(key: string): Promise<PermissionTier> {
  *   3. String enum values in allowed_values list
  *   4. JSON array values are valid arrays
  */
+/** Maximum serialized size for a config value (64 KB). Prevents unbounded storage. */
+const MAX_CONFIG_VALUE_BYTES = 65_536;
+
 export function validateConfigValue(
   entry: EnhancedConfigEntry,
   proposedValue: unknown
 ): ConfigValidationResult {
   const errors: string[] = [];
+
+  // S3: Enforce max size to prevent unbounded storage
+  try {
+    const serialized = JSON.stringify(proposedValue);
+    if (serialized.length > MAX_CONFIG_VALUE_BYTES) {
+      errors.push(
+        `Value size ${serialized.length} bytes exceeds maximum ${MAX_CONFIG_VALUE_BYTES} bytes`
+      );
+      return { valid: false, errors };
+    }
+  } catch {
+    errors.push("Value cannot be serialized to JSON");
+    return { valid: false, errors };
+  }
 
   switch (entry.valueType) {
     case "number": {
@@ -525,7 +563,13 @@ interface ConfigHistoryRow {
 
 /**
  * Write a history record to platform_config_history.
- * Fire-and-forget — failures are logged, not thrown (P11).
+ *
+ * Unlike moderation audit (fire-and-forget per P11), config history IS
+ * the audit trail — callers must know if it fails so gaps are surfaceable.
+ * Failures are caught (never throw) but returned to the caller.
+ *
+ * Error logs include the full change payload so gaps are reconstructible
+ * from Sentry even if the DB write is permanently lost.
  */
 async function writeConfigHistory(
   configKey: string,
@@ -534,7 +578,17 @@ async function writeConfigHistory(
   changedBy: string,
   changeComment: string,
   changeSource: ConfigChangeSource = "admin_ui"
-): Promise<void> {
+): Promise<{ success: boolean; error?: string }> {
+  const changePayload = {
+    configKey,
+    previousValue,
+    newValue,
+    changedBy,
+    changeComment,
+    changeSource,
+    route: "platform/auth/platform-config",
+  };
+
   try {
     const supabase = getSupabaseServiceClient();
     const { error } = await (supabase.from("platform_config_history" as never).insert({
@@ -549,18 +603,19 @@ async function writeConfigHistory(
     }>);
 
     if (error) {
-      logger.error("Config history write failed", {
-        configKey,
+      logger.error("Config history write failed — full payload for reconstruction", {
+        ...changePayload,
         error: error.message,
-        route: "platform/auth/platform-config",
       });
+      return { success: false, error: error.message };
     }
+    return { success: true };
   } catch (err) {
-    logger.error("Config history write error", {
-      configKey,
+    logger.error("Config history write error — full payload for reconstruction", {
+      ...changePayload,
       error: err instanceof Error ? err.message : String(err),
-      route: "platform/auth/platform-config",
     });
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -635,7 +690,12 @@ export async function setConfigWithHistory(
   actorId: string,
   changeComment: string,
   changeSource: ConfigChangeSource = "config_agent"
-): Promise<{ success: boolean; error?: string; validationErrors?: readonly string[] }> {
+): Promise<{
+  success: boolean;
+  error?: string;
+  validationErrors?: readonly string[];
+  historyWriteFailed?: boolean;
+}> {
   // 1. Load entry metadata
   const entry = await getEnhancedConfig(key);
   if (!entry) {
@@ -683,8 +743,15 @@ export async function setConfigWithHistory(
   // 5. Invalidate cache
   cache.delete(key);
 
-  // 6. Write history record (fire-and-forget)
-  writeConfigHistory(key, previousValue, value, actorId, changeComment, changeSource);
+  // 6. Write history record — await result, surface failures
+  const historyResult = await writeConfigHistory(
+    key,
+    previousValue,
+    value,
+    actorId,
+    changeComment,
+    changeSource
+  );
 
   // 7. Write audit log (fire-and-forget)
   writeAuditLog({
@@ -700,5 +767,5 @@ export async function setConfigWithHistory(
     },
   });
 
-  return { success: true };
+  return { success: true, historyWriteFailed: !historyResult.success };
 }

@@ -470,6 +470,26 @@ describe("listEnhancedConfig", () => {
     expect(chain.or).toHaveBeenCalledWith(expect.stringContaining("moderation"));
   });
 
+  it("sanitizes search query to strip PostgREST operators (S1)", async () => {
+    const chain = createChainMock({ data: [], error: null });
+    mockSupabase.from.mockReturnValue(chain);
+
+    await listEnhancedConfig({ query: "mod,eration.level(1)" });
+
+    // Should strip commas, dots, parens — result is "moderationlevel1"
+    expect(chain.or).toHaveBeenCalledWith(expect.not.stringContaining(",eration"));
+  });
+
+  it("skips search when query sanitizes to empty string (S1)", async () => {
+    const chain = createChainMock({ data: [], error: null });
+    mockSupabase.from.mockReturnValue(chain);
+
+    await listEnhancedConfig({ query: ".,()%" });
+
+    // All characters stripped — or() should NOT be called
+    expect(chain.or).not.toHaveBeenCalled();
+  });
+
   it("applies permission tier filter", async () => {
     const chain = createChainMock({ data: [], error: null });
     mockSupabase.from.mockReturnValue(chain);
@@ -640,6 +660,22 @@ describe("validateConfigValue", () => {
     });
   });
 
+  describe("value size limit (S3)", () => {
+    const entry = makeEntry({ valueType: "string" });
+
+    it("rejects values exceeding 64KB", () => {
+      const hugeValue = "x".repeat(70_000);
+      const result = validateConfigValue(entry, hugeValue);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain("exceeds maximum");
+    });
+
+    it("accepts values within size limit", () => {
+      const okValue = "x".repeat(1000);
+      expect(validateConfigValue(entry, okValue).valid).toBe(true);
+    });
+  });
+
   describe("string type", () => {
     const entry = makeEntry({ valueType: "string" });
 
@@ -728,6 +764,54 @@ describe("setConfigWithHistory", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not found");
+  });
+
+  it("surfaces historyWriteFailed when history write fails (F1)", async () => {
+    // First call: getEnhancedConfig
+    const enhancedChain = createChainMock({
+      data: {
+        key: "rate_limit_rpm",
+        value: 100,
+        description: "Rate limit",
+        category: "system",
+        updated_at: "2026-04-22T00:00:00Z",
+        default_value: 100,
+        value_type: "number",
+        min_value: 10,
+        max_value: 1000,
+        allowed_values: null,
+        permission_tier: "standard",
+      },
+      error: null,
+    });
+
+    // Second call: config update (succeeds)
+    const updateChain = createChainMock({ data: null, error: null });
+
+    // Third call: history insert (FAILS)
+    const historyChain = createChainMock({
+      data: null,
+      error: { message: "connection refused" },
+    });
+
+    let callCount = 0;
+    mockSupabase.from.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return enhancedChain;
+      if (callCount === 2) return updateChain;
+      return historyChain;
+    });
+
+    const result = await setConfigWithHistory(
+      "rate_limit_rpm",
+      200,
+      "admin-1",
+      "Testing history failure"
+    );
+
+    // Config change succeeded but history write failed
+    expect(result.success).toBe(true);
+    expect(result.historyWriteFailed).toBe(true);
   });
 
   it("returns validation errors for invalid value", async () => {

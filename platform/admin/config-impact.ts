@@ -96,12 +96,16 @@ async function queryAuditMetrics(
   }
 }
 
+/** Row limit for audit queries — matches the .limit() in queryAuditMetrics */
+const AUDIT_QUERY_LIMIT = 10000;
+
 /** Aggregate action_taken rows into metrics */
 function aggregateMetrics(
   rows: ReadonlyArray<{ action_taken: string }>
 ): ConfigImpactMetrics {
   const total = rows.length;
   if (total === 0) return emptyMetrics();
+  const truncated = total >= AUDIT_QUERY_LIMIT;
 
   let blockCount = 0;
   let warnCount = 0;
@@ -133,6 +137,7 @@ function aggregateMetrics(
     escalateCount,
     blockRate: total > 0 ? blockCount / total : 0,
     warnRate: total > 0 ? warnCount / total : 0,
+    truncated,
   };
 }
 
@@ -146,6 +151,7 @@ function emptyMetrics(): ConfigImpactMetrics {
     escalateCount: 0,
     blockRate: 0,
     warnRate: 0,
+    truncated: false,
   };
 }
 
@@ -214,6 +220,10 @@ function generateSummary(
     parts.push(
       `Warn rate ${direction} from ${formatPercent(before.warnRate)} to ${formatPercent(after.warnRate)}.`
     );
+  }
+
+  if (before.truncated || after.truncated) {
+    parts.push("Note: Data was truncated due to high volume — metrics are approximate.");
   }
 
   parts.push(

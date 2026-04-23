@@ -171,9 +171,14 @@ export async function POST(request: NextRequest) {
 
 /**
  * Build a basic acknowledgment response.
- * This is a placeholder until the full LLM-driven conversation
- * is activated in Sprint 4b. For now, the config AI endpoint
- * primarily serves as a tool execution gateway.
+ *
+ * TASK-037: Replace this placeholder with LLM-driven conversation
+ * in Sprint 4b when the agent runtime is activated. The full flow:
+ * system prompt → LLM with tool definitions → tool calls → response.
+ * Do NOT extend this keyword-matching approach — it does not scale.
+ *
+ * For now, the config AI endpoint primarily serves as a tool execution
+ * gateway via the /execute sub-route.
  */
 function buildAcknowledgment(message: string): string {
   const lower = message.toLowerCase();

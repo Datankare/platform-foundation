@@ -102,7 +102,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Inject actorId into input for write operations
+    // SECURITY INVARIANT (S2): Inject actorId/reviewerId from the
+    // authenticated session, overwriting any values the frontend sent.
+    // This prevents a compromised frontend from spoofing a different
+    // reviewer to bypass the self-approval check in config-approval.ts.
+    // Do NOT remove this overwrite or allow frontend-supplied actor IDs.
     const enrichedInput = { ...body.input };
     if (WRITE_TOOLS.has(body.toolId) || APPROVAL_TOOLS.has(body.toolId)) {
       enrichedInput.actorId = actorId;

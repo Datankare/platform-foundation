@@ -850,6 +850,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
 /**
  * Dispatch a tool call by ID.
  * Used by the config agent to route tool invocations to the correct handler.
+ *
+ * Note: Input is cast via `as unknown as` because the agent runtime
+ * passes Record<string, unknown>. Type safety is enforced at two levels:
+ *   1. Tool schemas (CONFIG_TOOLS[].inputSchema) — validated by the LLM
+ *   2. Each handler validates its own inputs (e.g., validateConfigValue)
+ * See Gotcha #3 in this file for context.
  */
 export async function dispatchConfigTool(
   toolId: string,
