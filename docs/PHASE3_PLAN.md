@@ -265,3 +265,5 @@ _Future plan:_ Evaluate on-device fingerprinting (Chromaprint/AcoustID — open 
 
 _Planned by: Raman Sud, CTO_
 _Date: April 13, 2026_
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_

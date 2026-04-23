@@ -263,4 +263,4 @@ platform/input/
 
 ---
 
-_Last updated: April 19, 2026 (Sprint 1b — Concierge UI constraint added, effort tier note)_
+_Last updated: April 23, 2026 (Sprint 3a — config agent added to roster)_

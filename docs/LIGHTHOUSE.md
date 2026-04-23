@@ -29,3 +29,5 @@
 ---
 
 _Raw Lighthouse JSON stored in docs/lighthouse-baseline.json_
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_

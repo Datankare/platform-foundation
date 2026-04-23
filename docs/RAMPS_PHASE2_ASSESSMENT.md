@@ -180,3 +180,5 @@ These are not part of the RAMPS scoring but recorded for completeness:
 
 _Assessed by: Raman Sud, CTO_
 _Reviewed: April 13, 2026_
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_

@@ -110,7 +110,7 @@ _Items below have been resolved and are retained for audit trail only._
 
 ---
 
-_Last updated: 2026-04-17 (Phase 4 Sprint 0: TASK-027 IAM confirmed scoped, TASK-028 Sentry installed.)_
+_Last updated: April 23, 2026 (Sprint 3a close review)_
 
 ### TASK-024: Social Login (Google, Apple, Microsoft SSO)
 

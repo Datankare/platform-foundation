@@ -67,3 +67,5 @@ Never the reverse.
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_
