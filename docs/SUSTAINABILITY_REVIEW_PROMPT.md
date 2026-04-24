@@ -73,3 +73,5 @@ Provide your assessment as:
 4. A recommended fix order (prioritized by severity and effort)
 
 Rate the overall codebase: how many of 22 pass, how many findings by severity.
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_
