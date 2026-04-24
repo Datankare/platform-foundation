@@ -165,3 +165,5 @@ phase. No category may be left unaddressed.
 | Date       | Phase       | Changes                                       |
 | ---------- | ----------- | --------------------------------------------- |
 | 2026-03-25 | Pre-Phase 1 | Initial mapping — all 10 categories addressed |
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_

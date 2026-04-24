@@ -307,3 +307,5 @@ Then paste Part A and Part B below.
 ## License
 
 This checklist is open for use. Attribution appreciated: Datankare Engineering Standards.
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_

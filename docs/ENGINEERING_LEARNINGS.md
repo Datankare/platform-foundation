@@ -314,6 +314,41 @@ The root cause: every verification in the quality gate operates on code structur
 
 ---
 
+### L19: Audit-Critical Writes Are Not Fire-and-Forget
+
+**Source:** Phase 4, Sprint 3a — L15 adversarial review finding F1 (April 2026).
+
+**Problem it fixes:** Config history writes were fire-and-forget (modeled after moderation audit). But config history IS the audit trail — its sole purpose is answering "who changed what and when." A silent failure defeats the entire feature. The admin sees "success" but there's an undetectable gap in the change history.
+
+**The distinction:** Moderation audit (P11 fire-and-forget) and config history serve different roles:
+
+- **Moderation audit**: The moderation decision (block/allow/warn) still applies regardless of whether the audit record persists. Fire-and-forget is correct — the primary function (content safety) is preserved.
+- **Config history**: The history IS the primary function. Without it, there's no record of what changed, when, or why. Silent failure breaks the core promise.
+
+**The test:** Before making any persistence call fire-and-forget, ask: "Does the caller need to know if this write failed?" If the answer is yes — if the write IS the feature, not a side effect of the feature — then await the result and surface failures.
+
+**How we adopted it:** `writeConfigHistory()` changed from `Promise<void>` (fire-and-forget) to `Promise<{ success, error }>`. The caller (`setConfigWithHistory`) surfaces `historyWriteFailed: boolean` in its return type. Error logs include the full change payload so gaps are reconstructible from Sentry.
+
+**Standing rule:** When adding a new persistence write, classify it: is it a side effect (fire-and-forget OK) or the primary function (must await and surface)? Document the classification in the JSDoc.
+
+---
+
+### Workflow Gotchas (32–37) — Phase 4 Session Scar Tissue
+
+> These are cross-cutting workflow issues, not module-specific (those go in module Gotchas sections per L17). They apply to every session regardless of which module is being built.
+
+**32. Duplicate filenames in downloads.** Browser silently overwrites files with the same name. When downloading multiple files from Claude, prefix with module path: INPUT*, MOD*, PROV*, ADMIN*, PCONFIG*, ROUTE*, PROMPT*, MAINT*. Never use the same filename twice in a session.
+
+**33. Sync reads from PF main, not develop.** Playform's sync config has `source_ref: "main"`. PRs must be merged ALL THE WAY TO MAIN before triggering Playform sync. Merging to develop or staging is not enough. This cost a full debug cycle in Phase 4 Sprint 2.
+
+**34. Config-dependent code needs platform-config mock in tests.** Any code path reaching `getConfig()` calls `getSupabaseServiceClient()` without a mock. Every test file touching Guardian, middleware, safety, or config-agent code needs the platform-config mock. Symptom: "Cannot read properties of undefined (reading 'from')."
+
+**35. git checkout discards uncommitted changes.** Switching branches without committing loses work. Maintenance fixes applied via sed/python but never committed were lost when switching to main. Always commit or stash before branch switching.
+
+**36. sed with template literals fails.** Backticks and `${}` get mangled by shell escaping in heredocs and sed commands. For complex multi-line edits, use Python scripts or complete file replacements. Simple single-line sed is fine.
+
+**37. git add -A picks up untracked files.** The wiki/ directory with 33 files was accidentally committed. Use explicit `git add <file1> <file2>` for targeted commits. Never use `git add -A` or `git add .` in these repos.
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._
@@ -335,4 +370,4 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 ---
 
-_Last updated: April 20, 2026 (L18 added — Visual Pre-Flight)_
+_Last updated: April 23, 2026 (L19 added — Audit-Critical Writes; Gotchas 32–37; Sprint 3a close)_

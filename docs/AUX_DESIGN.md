@@ -336,3 +336,5 @@ When we build the AUX layer, every endpoint must pass:
 _This document is reviewed at every phase boundary per L9._
 _See [ENGINEERING_LEARNINGS.md](ENGINEERING_LEARNINGS.md) for L13 (AUX design principle)._
 _See [ROADMAP.md](ROADMAP.md) for Phase 5 timeline._
+
+_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_
