@@ -21,6 +21,7 @@ import { adminGuard, getAdminActorId } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { dispatchConfigTool } from "@/platform/admin/config-handlers";
 import { getPermissionTier } from "@/platform/auth/platform-config";
+import type { ToolExecutionContext } from "@/platform/admin/types";
 
 // ---------------------------------------------------------------------------
 // Permission routing
@@ -113,8 +114,20 @@ export async function POST(request: NextRequest) {
       enrichedInput.reviewerId = actorId;
     }
 
-    // Execute the tool
-    const result = await dispatchConfigTool(body.toolId, enrichedInput);
+    // P3/P15/P18: Create trajectory context for this request
+    const trajectoryContext: ToolExecutionContext = {
+      trajectoryId: `traj-\${Date.now().toString(36)}-\${Math.random().toString(36).slice(2, 8)}`,
+      agentId: `config-manager-\${Date.now().toString(36)}`,
+      onBehalfOf: actorId,
+      steps: [],
+    };
+
+    // Execute the tool with trajectory recording
+    const result = await dispatchConfigTool(
+      body.toolId,
+      enrichedInput,
+      trajectoryContext
+    );
 
     logger.info("Config tool executed", {
       requestId,
@@ -123,10 +136,26 @@ export async function POST(request: NextRequest) {
       actorId,
       success: result.success,
       durationMs: result.durationMs,
+      trajectoryId: trajectoryContext.trajectoryId,
     });
 
-    const status = result.success ? 200 : 422;
-    return NextResponse.json(result, { status });
+    // A7: For mutation tools, check business outcome (data.applied) for HTTP status
+    // success:true = tool ran without throwing. data.applied = business operation succeeded.
+    let status = result.success ? 200 : 422;
+    const data = result.data as Record<string, unknown> | null;
+    if (result.success && data && data.applied === false && !data.pendingConfirmation) {
+      status = 422; // Business operation failed (validation error, key not found, etc.)
+    }
+
+    return NextResponse.json(
+      {
+        ...result,
+        trajectoryId: trajectoryContext.trajectoryId,
+        agentId: trajectoryContext.agentId,
+        steps: trajectoryContext.steps,
+      },
+      { status }
+    );
   } catch (error) {
     logger.error("Config tool execution failed", {
       requestId,

@@ -8,12 +8,16 @@
  * Permission: config_view (all admins can converse; writes checked per-tool)
  *
  * GenAI Principles:
- *   P2  — Bounded execution: max steps enforced
- *   P3  — Observability: trajectory returned with every response
- *   P10 — Human oversight: changes require explicit confirmation
- *   P12 — Cost tracking: total cost returned per turn
- *   P15 — Agent identity: config-manager on behalf of admin
- *   P18 — Durable trajectories: trajectoryId stable across turn
+ *   P2  — Bounded execution: one tool per HTTP request via /execute sub-route
+ *   P3  — Observability: trajectory returned in /execute responses (not this route)
+ *   P5  — Versioned artifacts: prompt + tool definitions versioned
+ *   P10 — Human oversight: update_config requires confirmed:true to apply
+ *   P15 — Agent identity: config-manager created per session
+ *
+ * Note: P12 (cost tracking) and P17/P18 (trajectories) are implemented in
+ * the /execute sub-route where actual tool calls happen. This conversation
+ * route is a placeholder (TASK-037) until Sprint 4b connects the LLM.
+ * Cost tracking will be populated when LLM calls are added.
  *
  * Phase 4, Sprint 3a
  */

@@ -302,6 +302,43 @@ export interface ConfigAgentResult {
 }
 
 // ---------------------------------------------------------------------------
+// Tool execution context — trajectory threading (P3/P15/P17/P18)
+// ---------------------------------------------------------------------------
+
+/**
+ * Context passed through tool dispatch for trajectory recording.
+ * Created by the execute route, threaded through dispatchConfigTool,
+ * steps appended after each tool call.
+ */
+export interface ToolExecutionContext {
+  /** Trajectory ID — stable across all tool calls in this request */
+  readonly trajectoryId: string;
+  /** Agent ID — the config-manager instance */
+  readonly agentId: string;
+  /** Admin user ID this agent acts on behalf of */
+  readonly onBehalfOf: string;
+  /** Steps accumulated during this request — mutable, appended to */
+  readonly steps: Step[];
+}
+
+/** Whether a tool is a read (cognition) or write (commitment) */
+export type ToolBoundary = "cognition" | "commitment";
+
+/** Classification of each tool's boundary */
+export const TOOL_BOUNDARIES: Record<string, ToolBoundary> = {
+  search_config: "cognition",
+  get_config: "cognition",
+  get_history: "cognition",
+  compare_to_defaults: "cognition",
+  impact_report: "cognition",
+  bulk_review: "cognition",
+  update_config: "commitment",
+  request_approval: "commitment",
+  approve_change: "commitment",
+  reject_change: "commitment",
+} as const;
+
+// ---------------------------------------------------------------------------
 // Config agent tool definitions (P5)
 // ---------------------------------------------------------------------------
 

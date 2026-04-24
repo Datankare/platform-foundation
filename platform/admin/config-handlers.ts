@@ -20,11 +20,14 @@
  *
  * GenAI Principles:
  *   P2  — Agentic execution: tools are bounded, single-purpose operations
- *   P3  — Total observability: every tool call timed and returned as ConfigToolResult
+ *   P3  — Total observability: every tool call timed; trajectory recorded at dispatch level
  *   P5  — Versioned artifacts: tool definitions exported for agent registration
  *   P6  — Structured outputs: all results typed via ConfigToolResult
- *   P10 — Human oversight: update_config returns reconfirmation data, not auto-applies
+ *   P10 — Human oversight: update_config requires confirmed:true to apply (preview by default)
  *   P13 — Control plane: permission tier checks on every mutation
+ *   P15 — Agent identity: agentId threaded through trajectory context
+ *   P17 — Cognition-commitment: read tools = cognition, write tools = commitment
+ *   P18 — Durable trajectories: steps recorded per tool call via ToolExecutionContext
  *
  * @module platform/admin
  */
@@ -50,8 +53,10 @@ import type {
   ConfigHistoryOptions,
   PermissionTier,
   EnhancedConfigEntry,
+  ToolExecutionContext,
 } from "./types";
-import type { Tool } from "@/platform/agents/types";
+import { TOOL_BOUNDARIES } from "./types";
+import type { Tool, StepBoundary } from "@/platform/agents/types";
 
 // ---------------------------------------------------------------------------
 // Tool execution wrapper
@@ -146,6 +151,13 @@ export interface UpdateConfigInput {
   readonly value: unknown;
   readonly changeComment: string;
   readonly actorId: string;
+  /**
+   * P10: Must be true to apply the change. When false or absent,
+   * returns a preview (changeRequest) without applying. The agent
+   * presents the preview, admin confirms, agent calls again with
+   * confirmed: true.
+   */
+  readonly confirmed?: boolean;
 }
 
 /**
@@ -154,7 +166,7 @@ export interface UpdateConfigInput {
  * This tool does NOT auto-apply the change. It returns a
  * ConfigChangeRequest with all reconfirmation data. The agent
  * presents this to the admin for confirmation. Only after
- * explicit confirmation does the agent call applyConfigChange().
+ * explicit confirmation does the agent call update_config with confirmed: true.
  *
  * For safety-tier keys with two-person approval enabled, this
  * creates a pending approval instead of applying.
@@ -185,18 +197,22 @@ export async function handleUpdateConfig(
     const needsApproval =
       entry.permissionTier === "safety" && (await isApprovalRequired());
 
-    // 4. Build the reconfirmation data
-    const changeRequest: ConfigChangeRequest = {
-      key: input.key,
-      currentValue: entry.value,
-      proposedValue: input.value,
-      impact: buildImpactDescription(entry, input.value),
-      affectedUsers: buildAffectedUsersDescription(entry),
-      reversible: true,
-      permissionTier: entry.permissionTier,
-      requiresApproval: needsApproval,
-      changeComment: input.changeComment,
-    };
+    // 4. Build the reconfirmation data (A8: pure function, independently testable)
+    const changeRequest = buildChangeRequest(
+      entry,
+      input.value,
+      input.changeComment,
+      needsApproval
+    );
+
+    // P10: If not explicitly confirmed, return preview only
+    if (!input.confirmed) {
+      return {
+        applied: false,
+        pendingConfirmation: true,
+        changeRequest,
+      };
+    }
 
     if (needsApproval) {
       // Create pending approval — don't apply
@@ -218,13 +234,14 @@ export async function handleUpdateConfig(
       };
     }
 
-    // 5. Apply the change directly
+    // 5. Apply the change directly (A5: pass loaded entry to skip re-load)
     const result = await setConfigWithHistory(
       input.key,
       input.value,
       input.actorId,
       input.changeComment,
-      "config_agent"
+      "config_agent",
+      entry
     );
 
     return {
@@ -234,6 +251,30 @@ export async function handleUpdateConfig(
       changeRequest,
     };
   });
+}
+
+/**
+ * Build a ConfigChangeRequest from an entry and proposed value.
+ * Pure function — no side effects, independently testable.
+ * Extracted per A8/B8 sustainability review.
+ */
+export function buildChangeRequest(
+  entry: EnhancedConfigEntry,
+  proposedValue: unknown,
+  changeComment: string,
+  requiresApproval: boolean
+): ConfigChangeRequest {
+  return {
+    key: entry.key,
+    currentValue: entry.value,
+    proposedValue,
+    impact: buildImpactDescription(entry, proposedValue),
+    affectedUsers: buildAffectedUsersDescription(entry),
+    reversible: true,
+    permissionTier: entry.permissionTier,
+    requiresApproval,
+    changeComment,
+  };
 }
 
 /** Generate a human-readable impact description */
@@ -410,14 +451,12 @@ export async function handleImpactReport(
       };
     }
 
-    // Generate impact reports for each change
-    // Each change's "after" window ends at the next change (or now)
-    const reports = [];
-    for (let i = 0; i < history.length; i++) {
+    // A11: Generate impact reports in parallel (each does 2 DB queries)
+    const reportPromises = history.map((change, i) => {
       const nextChangeAt = i > 0 ? history[i - 1].createdAt : undefined;
-      const report = await generateImpactReport(history[i], nextChangeAt);
-      reports.push(report);
-    }
+      return generateImpactReport(change, nextChangeAt);
+    });
+    const reports = await Promise.all(reportPromises);
 
     return { reports };
   });
@@ -847,50 +886,107 @@ export const CONFIG_TOOLS: readonly Tool[] = [
 // Tool dispatcher — maps tool ID to handler
 // ---------------------------------------------------------------------------
 
+/** Required fields per tool (B5: validate before dispatch, not accidentally) */
+const REQUIRED_FIELDS: Record<string, readonly string[]> = {
+  get_config: ["key"],
+  update_config: ["key", "value", "changeComment"],
+  impact_report: ["configKey"],
+  request_approval: ["configKey", "proposedValue", "changeComment"],
+  approve_change: ["approvalId", "reviewComment"],
+  reject_change: ["approvalId", "reviewComment"],
+};
+
 /**
- * Dispatch a tool call by ID.
- * Used by the config agent to route tool invocations to the correct handler.
+ * Dispatch a tool call by ID with trajectory recording.
  *
- * Note: Input is cast via `as unknown as` because the agent runtime
- * passes Record<string, unknown>. Type safety is enforced at two levels:
- *   1. Tool schemas (CONFIG_TOOLS[].inputSchema) — validated by the LLM
- *   2. Each handler validates its own inputs (e.g., validateConfigValue)
- * See Gotcha #3 in this file for context.
+ * Architecture:
+ *   - B5: Validates required fields before dispatching (intentional, not accidental)
+ *   - P17: Classifies each tool as cognition (read) or commitment (write)
+ *   - P18: Records a step in the trajectory context after execution
+ *   - Input casting: Record<string, unknown> → typed input. Type safety is at
+ *     tool schema level (P6) + handler validation (validateConfigValue).
+ *     See Gotcha #3.
  */
 export async function dispatchConfigTool(
   toolId: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  context?: ToolExecutionContext
 ): Promise<ConfigToolResult> {
+  // B5: Validate required fields before dispatching
+  const requiredFields = REQUIRED_FIELDS[toolId];
+  if (requiredFields) {
+    const missing = requiredFields.filter(
+      (f) => input[f] === undefined || input[f] === null
+    );
+    if (missing.length > 0) {
+      return {
+        toolId,
+        success: false,
+        data: null,
+        error: `Missing required fields: ${missing.join(", ")}`,
+        durationMs: 0,
+      };
+    }
+  }
+
+  let result: ConfigToolResult;
   switch (toolId) {
     case "search_config":
-      return handleSearchConfig(input as unknown as SearchConfigInput);
+      result = await handleSearchConfig(input as unknown as SearchConfigInput);
+      break;
     case "get_config":
-      return handleGetConfig(input as unknown as GetConfigInput);
+      result = await handleGetConfig(input as unknown as GetConfigInput);
+      break;
     case "update_config":
-      return handleUpdateConfig(input as unknown as UpdateConfigInput);
+      result = await handleUpdateConfig(input as unknown as UpdateConfigInput);
+      break;
     case "get_history":
-      return handleGetHistory(input as unknown as GetHistoryInput);
+      result = await handleGetHistory(input as unknown as GetHistoryInput);
+      break;
     case "compare_to_defaults":
-      return handleCompareToDefaults(input as unknown as CompareToDefaultsInput);
+      result = await handleCompareToDefaults(input as unknown as CompareToDefaultsInput);
+      break;
     case "impact_report":
-      return handleImpactReport(input as unknown as ImpactReportInput);
+      result = await handleImpactReport(input as unknown as ImpactReportInput);
+      break;
     case "bulk_review":
-      return handleBulkReview(input as unknown as BulkReviewInput);
+      result = await handleBulkReview(input as unknown as BulkReviewInput);
+      break;
     case "request_approval":
-      return handleRequestApproval(input as unknown as RequestApprovalInput);
+      result = await handleRequestApproval(input as unknown as RequestApprovalInput);
+      break;
     case "approve_change":
-      return handleApproveChange(input as unknown as ApproveChangeInput);
+      result = await handleApproveChange(input as unknown as ApproveChangeInput);
+      break;
     case "reject_change":
-      return handleRejectChange(input as unknown as RejectChangeInput);
+      result = await handleRejectChange(input as unknown as RejectChangeInput);
+      break;
     default:
       return {
         toolId,
         success: false,
         data: null,
-        error: `Unknown tool: ${toolId}`,
+        error: `Unknown tool: \${toolId}`,
         durationMs: 0,
       };
   }
+
+  // P17/P18: Record step in trajectory after execution
+  if (context && result) {
+    const boundary: StepBoundary = TOOL_BOUNDARIES[toolId] ?? "cognition";
+    context.steps.push({
+      stepIndex: context.steps.length,
+      action: toolId,
+      boundary,
+      input: { toolId },
+      output: { success: result.success },
+      cost: 0,
+      durationMs: result.durationMs,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -907,14 +1003,24 @@ export async function dispatchConfigTool(
 //    not who requested. Both IDs are in the approval record.
 //
 // 3. dispatchConfigTool uses `as unknown as` for input casting. This is
-//    intentional — the agent runtime passes Record<string, unknown>,
-//    and each handler validates its own inputs. Type safety is at the
-//    tool schema level (P6), not the TypeScript level here.
+//    intentional — the agent runtime passes Record<string, unknown>.
+//    Type safety is enforced at three levels: (a) REQUIRED_FIELDS check
+//    in dispatcher catches missing fields (B5), (b) tool schemas define
+//    the contract (P6), (c) handlers validate values (validateConfigValue).
 //
 // 4. CONFIG_TOOLS is `as const` — immutable array. When the agent runtime
 //    registers tools (Sprint 4a), it reads from this array. Do not mutate.
 //
-// 5. The `Tool` import from agents/types uses JSON Schema for inputSchema
+// 5. handleApproveChange: if the approval succeeds but setConfigWithHistory
+//    fails, the approval record shows "approved" but the config value is
+//    unchanged. This is intentional — the approval decision and the config
+//    mutation are separate facts. The response includes both `approved: true`
+//    and `applied: false` with `applyError`. Recovery: fix the underlying
+//    issue (e.g., DB connectivity) and re-execute the apply manually.
+//    A cron job to detect "approved but not applied" states is a future
+//    enhancement.
+//
+// 6. The `Tool` import from agents/types uses JSON Schema for inputSchema
 //    and outputSchema. These are descriptive (for the LLM), not enforced
 //    at runtime. Runtime validation happens in each handler via
 //    validateConfigValue().

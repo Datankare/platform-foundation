@@ -689,15 +689,17 @@ export async function setConfigWithHistory(
   value: unknown,
   actorId: string,
   changeComment: string,
-  changeSource: ConfigChangeSource = "config_agent"
+  changeSource: ConfigChangeSource = "config_agent",
+  /** A5: Pass a pre-loaded entry to avoid redundant DB round trip */
+  preloadedEntry?: EnhancedConfigEntry
 ): Promise<{
   success: boolean;
   error?: string;
   validationErrors?: readonly string[];
   historyWriteFailed?: boolean;
 }> {
-  // 1. Load entry metadata
-  const entry = await getEnhancedConfig(key);
+  // 1. Load entry metadata (A5: skip if pre-loaded by caller)
+  const entry = preloadedEntry ?? (await getEnhancedConfig(key));
   if (!entry) {
     return {
       success: false,

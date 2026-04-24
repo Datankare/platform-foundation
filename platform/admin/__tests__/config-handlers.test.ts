@@ -60,6 +60,7 @@ jest.mock("../config-impact", () => ({
 // ── Imports ─────────────────────────────────────────────────────────────
 
 import {
+  buildChangeRequest,
   handleSearchConfig,
   handleGetConfig,
   handleUpdateConfig,
@@ -73,7 +74,7 @@ import {
   dispatchConfigTool,
   CONFIG_TOOLS,
 } from "../config-handlers";
-import type { EnhancedConfigEntry } from "../types";
+import type { EnhancedConfigEntry, ToolExecutionContext } from "../types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -162,6 +163,45 @@ describe("handleGetConfig", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("handleUpdateConfig", () => {
+  it("returns preview without applying when confirmed is false (P10)", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(makeEntry());
+    mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
+    mockIsApprovalRequired.mockResolvedValue(false);
+
+    const result = await handleUpdateConfig({
+      key: "rate_limit_rpm",
+      value: 200,
+      changeComment: "Preview only",
+      actorId: "admin-1",
+      // confirmed is absent — should return preview
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.data as any).applied).toBe(false);
+    expect((result.data as any).pendingConfirmation).toBe(true);
+    expect((result.data as any).changeRequest).toBeDefined();
+    expect(mockSetConfigWithHistory).not.toHaveBeenCalled();
+  });
+
+  it("applies when confirmed is true (P10)", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(makeEntry());
+    mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
+    mockIsApprovalRequired.mockResolvedValue(false);
+    mockSetConfigWithHistory.mockResolvedValue({ success: true });
+
+    const result = await handleUpdateConfig({
+      key: "rate_limit_rpm",
+      value: 200,
+      changeComment: "Confirmed change",
+      actorId: "admin-1",
+      confirmed: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.data as any).applied).toBe(true);
+    expect(mockSetConfigWithHistory).toHaveBeenCalled();
+  });
+
   it("applies a valid standard-tier change", async () => {
     mockGetEnhancedConfig.mockResolvedValue(makeEntry());
     mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
@@ -173,6 +213,7 @@ describe("handleUpdateConfig", () => {
       value: 200,
       changeComment: "Increasing for load test",
       actorId: "admin-1",
+      confirmed: true,
     });
 
     expect(result.success).toBe(true);
@@ -182,7 +223,8 @@ describe("handleUpdateConfig", () => {
       200,
       "admin-1",
       "Increasing for load test",
-      "config_agent"
+      "config_agent",
+      expect.objectContaining({ key: "rate_limit_rpm" })
     );
   });
 
@@ -240,6 +282,7 @@ describe("handleUpdateConfig", () => {
       value: "high",
       changeComment: "Tightening thresholds",
       actorId: "admin-1",
+      confirmed: true,
     });
 
     expect(result.success).toBe(true);
@@ -263,6 +306,7 @@ describe("handleUpdateConfig", () => {
       value: "high",
       changeComment: "Tightening",
       actorId: "admin-1",
+      confirmed: true,
     });
 
     expect((result.data as any).applied).toBe(true);
@@ -470,6 +514,33 @@ describe("handleApproveChange", () => {
     expect(mockSetConfigWithHistory).toHaveBeenCalled();
   });
 
+  it("surfaces apply failure when approval succeeds but config write fails (B11)", async () => {
+    mockApproveApprovalChange.mockResolvedValue({
+      success: true,
+      record: {
+        id: "apr-1",
+        configKey: "moderation.level2.block_severity",
+        proposedValue: "high",
+        changeComment: "Tightening",
+      },
+    });
+    mockSetConfigWithHistory.mockResolvedValue({
+      success: false,
+      error: "Database connection refused",
+    });
+
+    const result = await handleApproveChange({
+      approvalId: "apr-1",
+      reviewerId: "admin-2",
+      reviewComment: "Looks good",
+    });
+
+    expect(result.success).toBe(true); // Tool executed
+    expect((result.data as any).approved).toBe(true);
+    expect((result.data as any).applied).toBe(false);
+    expect((result.data as any).applyError).toContain("Database connection");
+  });
+
   it("returns error when approval fails", async () => {
     mockApproveApprovalChange.mockResolvedValue({
       success: false,
@@ -526,11 +597,81 @@ describe("dispatchConfigTool", () => {
     expect(result.toolId).toBe("search_config");
   });
 
+  it("rejects missing required fields (B5)", async () => {
+    const result = await dispatchConfigTool("update_config", {
+      // missing key, value, changeComment
+      actorId: "admin-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Missing required fields");
+    expect(result.error).toContain("key");
+  });
+
+  it("accepts tools with no required fields", async () => {
+    mockListEnhancedConfig.mockResolvedValue([]);
+
+    const result = await dispatchConfigTool("search_config", {});
+
+    expect(result.success).toBe(true);
+  });
+
   it("returns error for unknown tool", async () => {
     const result = await dispatchConfigTool("nonexistent_tool", {});
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Unknown tool");
+  });
+
+  it("records trajectory step when context provided (P18)", async () => {
+    mockListEnhancedConfig.mockResolvedValue([]);
+
+    const context: ToolExecutionContext = {
+      trajectoryId: "traj-test",
+      agentId: "agent-test",
+      onBehalfOf: "admin-1",
+      steps: [],
+    };
+
+    await dispatchConfigTool("search_config", {}, context);
+
+    expect(context.steps).toHaveLength(1);
+    expect(context.steps[0].action).toBe("search_config");
+    expect(context.steps[0].boundary).toBe("cognition");
+    expect(context.steps[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("marks write tools as commitment boundary (P17)", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(null);
+
+    const context: ToolExecutionContext = {
+      trajectoryId: "traj-test",
+      agentId: "agent-test",
+      onBehalfOf: "admin-1",
+      steps: [],
+    };
+
+    await dispatchConfigTool(
+      "update_config",
+      {
+        key: "k1",
+        value: "v1",
+        changeComment: "test",
+      },
+      context
+    );
+
+    expect(context.steps).toHaveLength(1);
+    expect(context.steps[0].boundary).toBe("commitment");
+  });
+
+  it("works without context (backward compatible)", async () => {
+    mockListEnhancedConfig.mockResolvedValue([]);
+
+    const result = await dispatchConfigTool("search_config", {});
+
+    expect(result.success).toBe(true);
+    // No crash, no trajectory — backward compatible
   });
 
   it("records duration on every call", async () => {
@@ -545,6 +686,39 @@ describe("dispatchConfigTool", () => {
 // ═══════════════════════════════════════════════════════════════════════
 // Tool definitions
 // ═══════════════════════════════════════════════════════════════════════
+
+describe("buildChangeRequest (A8: pure function)", () => {
+  it("builds change request with correct fields", () => {
+    const entry = makeEntry({
+      key: "moderation.level1.block_severity",
+      value: "medium",
+      permissionTier: "safety",
+    });
+
+    const result = buildChangeRequest(entry, "high", "Tightening", true);
+
+    expect(result.key).toBe("moderation.level1.block_severity");
+    expect(result.currentValue).toBe("medium");
+    expect(result.proposedValue).toBe("high");
+    expect(result.changeComment).toBe("Tightening");
+    expect(result.requiresApproval).toBe(true);
+    expect(result.permissionTier).toBe("safety");
+    expect(result.impact).toContain("safety-critical");
+    expect(result.affectedUsers).toContain("under 13");
+  });
+
+  it("identifies affected users by key pattern", () => {
+    const level2 = makeEntry({ key: "moderation.level2.warn_severity" });
+    expect(buildChangeRequest(level2, "low", "test", false).affectedUsers).toContain(
+      "13"
+    );
+
+    const level3 = makeEntry({ key: "moderation.level3.block_severity" });
+    expect(buildChangeRequest(level3, "low", "test", false).affectedUsers).toContain(
+      "18+"
+    );
+  });
+});
 
 describe("CONFIG_TOOLS", () => {
   it("defines exactly 10 tools", () => {

@@ -258,7 +258,11 @@ async function reviewChange(
       };
     }
 
-    // Update the approval record
+    // A4: Conditional UPDATE — only updates if status is still 'pending'.
+    // Prevents TOCTOU race where two admins approve simultaneously.
+    // If another admin already changed the status between our SELECT
+    // and this UPDATE, the WHERE clause won't match and we'll get
+    // no rows back, which we detect as a conflict.
     const { data: updated, error } = await (supabase
       .from("config_pending_approvals" as never)
       .update({
@@ -268,6 +272,7 @@ async function reviewChange(
         reviewed_at: new Date().toISOString(),
       } as never)
       .eq("id", approvalId)
+      .eq("status", "pending")
       .select(APPROVAL_COLUMNS)
       .single() as unknown as Promise<{
       data: ApprovalRow | null;
@@ -275,6 +280,13 @@ async function reviewChange(
     }>);
 
     if (error || !updated) {
+      // If no rows updated, another reviewer got there first
+      if (!updated && !error) {
+        return {
+          success: false,
+          error: "This approval was already reviewed by another admin. Please refresh.",
+        };
+      }
       return {
         success: false,
         error: error?.message ?? "Failed to update approval",
