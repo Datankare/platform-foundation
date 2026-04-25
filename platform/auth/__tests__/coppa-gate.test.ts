@@ -110,7 +110,10 @@ describe("checkCoppaGate", () => {
       mockGetConfig.mockResolvedValue(false);
       mockSupabase.from.mockReturnValue(createChainMock({ data: null, error: null }));
 
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440000", "translate");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440000",
+        "translate"
+      );
 
       expect(result.allowed).toBe(true);
       expect(result.reason).toContain("disabled");
@@ -129,7 +132,10 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440001", "translate");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440001",
+        "translate"
+      );
 
       expect(result.allowed).toBe(true);
       expect(result.contentRatingLevel).toBe(3);
@@ -146,7 +152,10 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440002", "translate");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440002",
+        "translate"
+      );
 
       expect(result.allowed).toBe(true);
     });
@@ -164,7 +173,10 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", "translate");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440003",
+        "translate"
+      );
 
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain("Parental consent");
@@ -189,7 +201,10 @@ describe("checkCoppaGate", () => {
         "generate",
         "upload_file",
       ]) {
-        const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", feature);
+        const result = await checkCoppaGate(
+          "550e8400-e29b-41d4-a716-446655440003",
+          feature
+        );
         expect(result.allowed).toBe(false);
       }
     });
@@ -205,7 +220,10 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", "view_profile");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440003",
+        "view_profile"
+      );
 
       expect(result.allowed).toBe(true);
       expect(result.reason).toContain("not restricted");
@@ -220,7 +238,10 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440004", "translate");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440004",
+        "translate"
+      );
 
       expect(result.allowed).toBe(false);
       expect(result.consentStatus).toBe("pending");
@@ -231,7 +252,10 @@ describe("checkCoppaGate", () => {
         throw new Error("connection refused");
       });
 
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440000", "translate");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440000",
+        "translate"
+      );
 
       expect(result.allowed).toBe(false);
     });
@@ -254,7 +278,10 @@ describe("checkCoppaGate", () => {
       mockSupabase.from.mockReturnValue(chain);
 
       // Should still block — fallback list includes translate
-      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", "translate");
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440003",
+        "translate"
+      );
       expect(result.allowed).toBe(false);
     });
   });
@@ -269,7 +296,10 @@ describe("updateCoppaEnforcement", () => {
     const chain = createChainMock({ data: null, error: null });
     mockSupabase.from.mockReturnValue(chain);
 
-    const result = await updateCoppaEnforcement("550e8400-e29b-41d4-a716-446655440000", true);
+    const result = await updateCoppaEnforcement(
+      "550e8400-e29b-41d4-a716-446655440000",
+      true
+    );
 
     expect(result.success).toBe(true);
   });
@@ -281,7 +311,10 @@ describe("updateCoppaEnforcement", () => {
     });
     mockSupabase.from.mockReturnValue(chain);
 
-    const result = await updateCoppaEnforcement("550e8400-e29b-41d4-a716-446655440000", true);
+    const result = await updateCoppaEnforcement(
+      "550e8400-e29b-41d4-a716-446655440000",
+      true
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("update failed");
@@ -292,7 +325,10 @@ describe("updateCoppaEnforcement", () => {
       throw new Error("crash");
     });
 
-    const result = await updateCoppaEnforcement("550e8400-e29b-41d4-a716-446655440000", true);
+    const result = await updateCoppaEnforcement(
+      "550e8400-e29b-41d4-a716-446655440000",
+      true
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("crash");
