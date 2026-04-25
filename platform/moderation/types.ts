@@ -279,3 +279,199 @@ export interface ModerationStore {
   /** Get audit records by input hash — for deduplication and history. */
   getByInputHash(inputHash: string): Promise<readonly ModerationAuditRecord[]>;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sprint 3b — Account Consequences + COPPA Enforcement Types
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// Account status — maps to account_status enum in Migration 012
+// ---------------------------------------------------------------------------
+
+/**
+ * User account status. Drives feature access and content restrictions.
+ *
+ *   active     — normal operation, no restrictions
+ *   warned     — user has been warned, next violation escalates
+ *   restricted — read-only mode, no content generation/modification
+ *   suspended  — no platform access for a configured duration
+ *   banned     — permanent ban, requires human review to lift
+ */
+export type AccountStatus = "active" | "warned" | "restricted" | "suspended" | "banned";
+
+// ---------------------------------------------------------------------------
+// Strike records — maps to user_strikes table in Migration 012
+// ---------------------------------------------------------------------------
+
+/**
+ * A single strike record. Created by the Sentinel agent when the
+ * Guardian blocks content and attributeToUser is true.
+ *
+ * Maps 1:1 to the user_strikes table.
+ */
+export interface StrikeRecord {
+  readonly id: string;
+  readonly userId: string;
+  /** Safety category that triggered this strike */
+  readonly category: string;
+  /** Severity of the violation */
+  readonly severity: SafetySeverity;
+  /** Links to content_safety_audit record */
+  readonly moderationAuditId: string | null;
+  /** P18: Sentinel trajectory ID */
+  readonly trajectoryId: string;
+  /** P15: Sentinel agent ID */
+  readonly agentId: string;
+  /** Human-readable reason */
+  readonly reason: string;
+  /** When this strike expires (null = never) */
+  readonly expiresAt: string | null;
+  /** Whether this strike has expired */
+  readonly expired: boolean;
+  readonly createdAt: string;
+}
+
+/** Options for querying strikes */
+export interface StrikeQueryOptions {
+  readonly userId: string;
+  /** Only active (non-expired) strikes */
+  readonly activeOnly?: boolean;
+  /** Filter by category */
+  readonly category?: string;
+  /** Limit results */
+  readonly limit?: number;
+}
+
+/** Summary of a user's active strikes for consequence evaluation */
+export interface StrikeSummary {
+  /** Total active (non-expired) strikes */
+  readonly totalActive: number;
+  /** Active strikes per category */
+  readonly byCategory: Readonly<Record<string, number>>;
+  /** Most recent strike (for recency evaluation) */
+  readonly mostRecent: StrikeRecord | null;
+  /** Highest severity among active strikes */
+  readonly highestSeverity: SafetySeverity | null;
+}
+
+// ---------------------------------------------------------------------------
+// User account state — combines status + restrictions + strikes
+// ---------------------------------------------------------------------------
+
+/**
+ * Full account state for a user. Loaded by the Sentinel and COPPA gate
+ * to evaluate what actions are permitted.
+ */
+export interface UserAccountState {
+  readonly userId: string;
+  readonly accountStatus: AccountStatus;
+  readonly restrictedUntil: string | null;
+  readonly suspendedUntil: string | null;
+  readonly bannedAt: string | null;
+  readonly banReason: string | null;
+  /** COPPA enforcement flag — true for under-13 without consent */
+  readonly coppaEnforcementActive: boolean;
+  readonly contentRatingLevel: ContentRatingLevel;
+  /** Strike summary (populated on demand) */
+  readonly strikeSummary?: StrikeSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Consequence actions — what the Sentinel decides
+// ---------------------------------------------------------------------------
+
+/**
+ * Consequence action determined by the Sentinel after evaluating
+ * strike history against thresholds.
+ *
+ *   none       — strike recorded, no status change needed
+ *   warn       — set status to warned
+ *   restrict   — set status to restricted (read-only for configured duration)
+ *   suspend    — set status to suspended (no access for configured duration)
+ *   ban        — set status to banned (permanent, requires human review)
+ */
+export type ConsequenceAction = "none" | "warn" | "restrict" | "suspend" | "ban";
+
+// ---------------------------------------------------------------------------
+// Sentinel result — returned by the Sentinel agent
+// ---------------------------------------------------------------------------
+
+/**
+ * Result from the Sentinel agent after processing a block event.
+ * Contains the strike record, consequence decision, and full trajectory.
+ */
+export interface SentinelResult {
+  /** The strike that was recorded */
+  readonly strike: StrikeRecord;
+  /** User's updated strike summary */
+  readonly strikeSummary: StrikeSummary;
+  /** Consequence action taken (or none) */
+  readonly consequenceAction: ConsequenceAction;
+  /** Previous account status before this decision */
+  readonly previousStatus: AccountStatus;
+  /** New account status after this decision */
+  readonly newStatus: AccountStatus;
+  /** Human-readable reasoning chain */
+  readonly reasoning: string;
+  /** Sentinel trajectory ID (P18) */
+  readonly trajectoryId: string;
+  /** Sentinel agent ID (P15) */
+  readonly agentId: string;
+}
+
+// ---------------------------------------------------------------------------
+// COPPA gate result — returned by the consent gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Result from the COPPA consent gate check.
+ *
+ * The gate runs BEFORE the Guardian on every request for users
+ * with coppa_enforcement_active = true.
+ */
+export interface CoppaGateResult {
+  /** Whether the request is allowed to proceed */
+  readonly allowed: boolean;
+  /** Why the request was blocked (if not allowed) */
+  readonly reason: string;
+  /** Which feature was requested */
+  readonly feature: string;
+  /** User's content rating level */
+  readonly contentRatingLevel: ContentRatingLevel;
+  /** User's parental consent status */
+  readonly consentStatus: string;
+}
+
+// ---------------------------------------------------------------------------
+// Strike store — persistence interface (P7: provider-aware)
+// ---------------------------------------------------------------------------
+
+/**
+ * StrikeStore — persistence interface for strike records.
+ *
+ * Implementations:
+ *   InMemoryStrikeStore — for tests (default)
+ *   SupabaseStrikeStore — for production
+ *
+ * Unlike ModerationStore, strike writes are NOT fire-and-forget.
+ * Strike recording IS the primary function (L19). Failures must
+ * be surfaced to the caller.
+ */
+export interface StrikeStore {
+  /** Record a strike. Returns the created record or error. */
+  recordStrike(
+    strike: Omit<StrikeRecord, "id" | "createdAt">
+  ): Promise<{ success: boolean; record?: StrikeRecord; error?: string }>;
+
+  /** Get active strikes for a user. */
+  getActiveStrikes(userId: string): Promise<readonly StrikeRecord[]>;
+
+  /** Get strike summary for a user. */
+  getStrikeSummary(userId: string): Promise<StrikeSummary>;
+
+  /** Get all strikes for a user (including expired). */
+  queryStrikes(options: StrikeQueryOptions): Promise<readonly StrikeRecord[]>;
+
+  /** Mark expired strikes. Returns count of newly expired strikes. */
+  expireStrikes(): Promise<number>;
+}
