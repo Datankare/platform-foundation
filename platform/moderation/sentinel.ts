@@ -81,7 +81,6 @@ async function loadExpiryDays(severity: SafetySeverity): Promise<number> {
   return typeof days === "number" ? days : FAIL_CLOSED_EXPIRY_DAYS;
 }
 
-
 /** Load suspension duration in days */
 async function loadSuspensionDays(): Promise<number> {
   const days = await getConfig<number>("moderation.suspension_duration_days", 7);
