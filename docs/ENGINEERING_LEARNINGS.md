@@ -370,4 +370,4 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 ---
 
-_Last updated: April 23, 2026 (L19 added — Audit-Critical Writes; Gotchas 32–37; Sprint 3a close)_
+_Last updated: April 24, 2026 (Sprint 3b close — all findings fixed)_

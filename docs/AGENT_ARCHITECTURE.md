@@ -263,4 +263,4 @@ platform/input/
 
 ---
 
-_Last updated: April 23, 2026 (Sprint 3a — config agent added to roster)_
+_Last updated: April 24, 2026 (Sprint 3b — Sentinel agent added to roster)_

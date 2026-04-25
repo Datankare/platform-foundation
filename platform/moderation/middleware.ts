@@ -7,6 +7,14 @@
  * This is a thin wrapper around the Guardian agent. It provides the
  * screenContent() API that all callers use. The Guardian does the work.
  *
+ * Sprint 3b enhancement: After a Guardian block with attributeToUser=true,
+ * the Sentinel is fired asynchronously to record a strike and evaluate
+ * account consequences. The block response returns immediately — the
+ * Sentinel runs in the background.
+ *
+ * Note: The COPPA consent gate (coppa-gate.ts) runs BEFORE this middleware,
+ * at the API route level. Order: auth → account status → COPPA gate → here.
+ *
  * Backward compatible: callers that don't pass ScreeningContext get
  * contentType "generation" (standard, no adjustments) and level 1
  * (strictest — "treat all as minors" per ADR-016).
@@ -38,6 +46,8 @@ import type {
   ContentRatingLevel,
 } from "./types";
 import { getGuardian } from "./guardian";
+import { getSentinel } from "./sentinel";
+import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
 // Screening options
@@ -70,6 +80,11 @@ export interface ScreeningOptions {
 /**
  * Screen content through the Guardian agent pipeline.
  * Returns a ModerationResult with action, reasoning, and trajectory.
+ *
+ * Sprint 3b: If the Guardian blocks with attributeToUser=true and a
+ * userId is known, the Sentinel is fired asynchronously to record a
+ * strike and evaluate account consequences. The block result is returned
+ * immediately — the Sentinel runs in the background.
  */
 export async function screenContent(
   text: string,
@@ -87,5 +102,70 @@ export async function screenContent(
     contentRatingLevel: context.contentRatingLevel ?? options.contentRatingLevel ?? 1,
   };
 
-  return getGuardian().screen(text, options.direction, options.requestId, mergedContext);
+  const result = await getGuardian().screen(
+    text,
+    options.direction,
+    options.requestId,
+    mergedContext
+  );
+
+  // Sprint 3b: Fire Sentinel on block + attributeToUser + known userId
+  if (result.action === "block" && result.attributeToUser && mergedContext.userId) {
+    fireSentinel(result, mergedContext.userId, options.requestId);
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Sentinel hook (async, non-blocking)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fire the Sentinel agent asynchronously after a Guardian block.
+ *
+ * This is intentionally non-blocking — the block response goes back to
+ * the user immediately. The Sentinel records the strike and evaluates
+ * consequences in the background.
+ *
+ * The Sentinel itself is L19-compliant (strike recording returns success/error).
+ * But from the middleware's perspective, the Sentinel is fire-and-forget
+ * because the Guardian's block decision is already final — the user sees
+ * "blocked" regardless of whether the strike was recorded.
+ *
+ * Errors are logged but never thrown.
+ */
+function fireSentinel(result: ModerationResult, userId: string, requestId: string): void {
+  getSentinel()
+    .processBlock(result, userId, requestId)
+    .then((sentinelResult) => {
+      if (sentinelResult.consequenceAction !== "none") {
+        logger.info("Sentinel consequence applied", {
+          userId,
+          action: sentinelResult.consequenceAction,
+          previousStatus: sentinelResult.previousStatus,
+          newStatus: sentinelResult.newStatus,
+          totalActiveStrikes: sentinelResult.strikeSummary.totalActive,
+          trajectoryId: sentinelResult.trajectoryId,
+          requestId,
+          route: "platform/moderation/middleware",
+        });
+      }
+    })
+    .catch((err) => {
+      // F1: Full reconstruction payload so missed strikes can be
+      // manually reconciled from Sentry if Sentinel crashes consistently
+      logger.error("Sentinel processing failed — strike may not be recorded", {
+        userId,
+        requestId,
+        guardianAction: result.action,
+        triggeredBy: result.triggeredBy,
+        contentType: result.contentType,
+        severity: result.classifierOutput?.severity ?? "unknown",
+        categories: result.classifierOutput?.categories?.join(",") ?? "unknown",
+        guardianTrajectoryId: result.trajectoryId,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/moderation/middleware",
+      });
+    });
 }

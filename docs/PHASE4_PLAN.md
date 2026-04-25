@@ -191,4 +191,4 @@
 
 ---
 
-_Last updated: April 23, 2026 (Sprint 3a complete — config management agent)_
+_Last updated: April 24, 2026 (Sprint 3b complete — Sentinel + COPPA + strikes)_
