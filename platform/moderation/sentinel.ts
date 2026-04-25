@@ -25,6 +25,7 @@
  */
 
 import type { AgentIdentity, Step, StepBoundary } from "@/platform/agents/types";
+import { generateId } from "@/platform/agents/utils";
 import type {
   ModerationResult,
   AccountStatus,
@@ -42,10 +43,6 @@ import { logger } from "@/lib/logger";
 // ---------------------------------------------------------------------------
 // Trajectory helpers (same pattern as guardian.ts)
 // ---------------------------------------------------------------------------
-
-function generateId(): string {
-  return Math.random().toString(36).slice(2, 10);
-}
 
 function makeStep(
   stepIndex: number,
@@ -165,6 +162,19 @@ export class Sentinel {
     userId: string,
     requestId: string
   ): Promise<SentinelResult> {
+    // B5: Runtime guard — validate preconditions, not just JSDoc
+    if (moderationResult.action !== "block") {
+      throw new Error(
+        "Sentinel.processBlock called with non-block action: " + moderationResult.action
+      );
+    }
+    if (!moderationResult.attributeToUser) {
+      throw new Error("Sentinel.processBlock called with attributeToUser=false");
+    }
+    if (!userId) {
+      throw new Error("Sentinel.processBlock called without userId");
+    }
+
     const trajectoryId = `traj-${generateId()}`;
     const steps: Step[] = [];
     const reasonParts: string[] = [];
@@ -406,7 +416,15 @@ async function loadUserStatus(userId: string): Promise<AccountStatus> {
   }
 }
 
-/** Update user's account status in the DB */
+/**
+ * Update user's account status in the DB.
+ *
+ * SECURITY INVARIANT (S2): This function is intentionally NOT exported.
+ * It writes directly to the users table via service_role, bypassing
+ * all authorization checks. Only the Sentinel agent should call it,
+ * and only as the result of a consequence evaluation. If this function
+ * is ever exported, it MUST be wrapped with authorization checks.
+ */
 async function updateUserStatus(
   userId: string,
   newStatus: AccountStatus,
@@ -493,10 +511,13 @@ export function resetSentinel(): void {
 // 2. consequenceToStatus only upgrades severity — warned → active never happens
 //    automatically. Only human review (Sprint 6) can downgrade status.
 //
-// 3. The Sentinel does NOT handle "restrict" consequence currently. The
-//    restrict action requires the restriction_duration_hours config and
-//    sets restricted_until on the user. This will be added when the
-//    middleware consent gate is in place to enforce it.
+// 3. The Sentinel does NOT handle "restrict" consequence currently.
+//    The ConsequenceAction type includes "restrict" for type completeness,
+//    but evaluateConsequence() never returns it — the threshold ladder is
+//    warn → suspend → ban (no restrict step). If restrict is added later,
+//    it needs: (a) a threshold in evaluateConsequence, (b) restriction_duration_hours
+//    from config, (c) set restricted_until on users table, (d) middleware
+//    enforcement to check restricted_until before allowing writes.
 //
 // 4. loadUserStatus returns "active" on any error (fail-open for reads).
 //    This is the opposite of fail-closed for writes. Rationale: if we
@@ -504,3 +525,11 @@ export function resetSentinel(): void {
 //    consequence evaluation will be retried next time.
 //
 // 5. SEVERITY_RANK is duplicated from guardian.ts. See strikes.ts Gotcha #5.
+//
+// 6. evaluateConsequence queries getStrikeSummary AFTER recordStrike.
+//    This works because Supabase is strongly consistent for service_role
+//    connections (read-after-write consistency). If the store is ever
+//    replaced with an eventually-consistent backend, the count could
+//    be stale by one — evaluating consequences based on the previous
+//    strike count. This would delay the consequence by one violation
+//    (e.g., ban at 5 strikes instead of 4). Monitor if store changes.

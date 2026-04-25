@@ -73,12 +73,44 @@ beforeEach(() => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("checkCoppaGate", () => {
+  describe("input validation (S1)", () => {
+    it("rejects empty userId", async () => {
+      const result = await checkCoppaGate("", "translate");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("Invalid user ID");
+    });
+
+    it("rejects non-UUID userId", async () => {
+      const result = await checkCoppaGate("not-a-uuid", "translate");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("Invalid user ID");
+    });
+
+    it("accepts valid UUID", async () => {
+      const chain = createChainMock({
+        data: {
+          coppa_enforcement_active: false,
+          content_rating_level: 3,
+          parental_consent_status: "not_required",
+        },
+        error: null,
+      });
+      mockSupabase.from.mockReturnValue(chain);
+
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440000",
+        "translate"
+      );
+      expect(result.allowed).toBe(true);
+    });
+  });
+
   describe("enforcement disabled", () => {
     it("allows all features when enforcement is disabled", async () => {
       mockGetConfig.mockResolvedValue(false);
       mockSupabase.from.mockReturnValue(createChainMock({ data: null, error: null }));
 
-      const result = await checkCoppaGate("user-1", "translate");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440000", "translate");
 
       expect(result.allowed).toBe(true);
       expect(result.reason).toContain("disabled");
@@ -97,7 +129,7 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("adult-user", "translate");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440001", "translate");
 
       expect(result.allowed).toBe(true);
       expect(result.contentRatingLevel).toBe(3);
@@ -114,7 +146,7 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("consented-minor", "translate");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440002", "translate");
 
       expect(result.allowed).toBe(true);
     });
@@ -132,7 +164,7 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("minor-user", "translate");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", "translate");
 
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain("Parental consent");
@@ -157,7 +189,7 @@ describe("checkCoppaGate", () => {
         "generate",
         "upload_file",
       ]) {
-        const result = await checkCoppaGate("minor-user", feature);
+        const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", feature);
         expect(result.allowed).toBe(false);
       }
     });
@@ -173,7 +205,7 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("minor-user", "view_profile");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", "view_profile");
 
       expect(result.allowed).toBe(true);
       expect(result.reason).toContain("not restricted");
@@ -188,7 +220,7 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const result = await checkCoppaGate("unknown-user", "translate");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440004", "translate");
 
       expect(result.allowed).toBe(false);
       expect(result.consentStatus).toBe("pending");
@@ -199,7 +231,7 @@ describe("checkCoppaGate", () => {
         throw new Error("connection refused");
       });
 
-      const result = await checkCoppaGate("user-1", "translate");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440000", "translate");
 
       expect(result.allowed).toBe(false);
     });
@@ -222,7 +254,7 @@ describe("checkCoppaGate", () => {
       mockSupabase.from.mockReturnValue(chain);
 
       // Should still block — fallback list includes translate
-      const result = await checkCoppaGate("minor-user", "translate");
+      const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440003", "translate");
       expect(result.allowed).toBe(false);
     });
   });
@@ -237,7 +269,7 @@ describe("updateCoppaEnforcement", () => {
     const chain = createChainMock({ data: null, error: null });
     mockSupabase.from.mockReturnValue(chain);
 
-    const result = await updateCoppaEnforcement("user-1", true);
+    const result = await updateCoppaEnforcement("550e8400-e29b-41d4-a716-446655440000", true);
 
     expect(result.success).toBe(true);
   });
@@ -249,7 +281,7 @@ describe("updateCoppaEnforcement", () => {
     });
     mockSupabase.from.mockReturnValue(chain);
 
-    const result = await updateCoppaEnforcement("user-1", true);
+    const result = await updateCoppaEnforcement("550e8400-e29b-41d4-a716-446655440000", true);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("update failed");
@@ -260,7 +292,7 @@ describe("updateCoppaEnforcement", () => {
       throw new Error("crash");
     });
 
-    const result = await updateCoppaEnforcement("user-1", true);
+    const result = await updateCoppaEnforcement("550e8400-e29b-41d4-a716-446655440000", true);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("crash");

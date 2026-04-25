@@ -153,9 +153,17 @@ function fireSentinel(result: ModerationResult, userId: string, requestId: strin
       }
     })
     .catch((err) => {
+      // F1: Full reconstruction payload so missed strikes can be
+      // manually reconciled from Sentry if Sentinel crashes consistently
       logger.error("Sentinel processing failed — strike may not be recorded", {
         userId,
         requestId,
+        guardianAction: result.action,
+        triggeredBy: result.triggeredBy,
+        contentType: result.contentType,
+        severity: result.classifierOutput?.severity ?? "unknown",
+        categories: result.classifierOutput?.categories?.join(",") ?? "unknown",
+        guardianTrajectoryId: result.trajectoryId,
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/middleware",
       });

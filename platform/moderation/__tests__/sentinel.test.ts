@@ -178,6 +178,32 @@ describe("Sentinel", () => {
     expect(sentinel.identity.agentRole).toBe("sentinel");
   });
 
+  describe("processBlock — guard clauses (B5)", () => {
+    it("throws on non-block action", async () => {
+      const sentinel = new Sentinel("test");
+      const result = makeBlockResult({ action: "allow" });
+      await expect(sentinel.processBlock(result, "user-1", "req-1")).rejects.toThrow(
+        "non-block action"
+      );
+    });
+
+    it("throws when attributeToUser is false", async () => {
+      const sentinel = new Sentinel("test");
+      const result = makeBlockResult({ attributeToUser: false });
+      await expect(sentinel.processBlock(result, "user-1", "req-1")).rejects.toThrow(
+        "attributeToUser=false"
+      );
+    });
+
+    it("throws when userId is empty", async () => {
+      const sentinel = new Sentinel("test");
+      const result = makeBlockResult();
+      await expect(sentinel.processBlock(result, "", "req-1")).rejects.toThrow(
+        "without userId"
+      );
+    });
+  });
+
   describe("processBlock", () => {
     it("records a strike and returns result with trajectory", async () => {
       const sentinel = new Sentinel("test-sentinel");

@@ -27,6 +27,7 @@
  */
 
 import type { AgentIdentity, Step, StepBoundary } from "@/platform/agents/types";
+import { generateId } from "@/platform/agents/utils";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 import type {
   ScreeningContext,
@@ -59,10 +60,6 @@ function severityAtOrAbove(severity: SafetySeverity, threshold: SafetySeverity):
 // ---------------------------------------------------------------------------
 // Trajectory helpers
 // ---------------------------------------------------------------------------
-
-function generateId(): string {
-  return Math.random().toString(36).slice(2, 10);
-}
 
 function makeStep(
   stepIndex: number,

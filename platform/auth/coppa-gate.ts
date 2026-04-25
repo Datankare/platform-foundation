@@ -152,10 +152,24 @@ async function loadUserCoppaState(userId: string): Promise<UserCoppaState> {
  *   - Under-13 users without parental consent trying to use blocked features
  *   - DB errors or unknown users (fail-closed)
  */
+/** UUID v4 format — loose check, not cryptographic validation */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function checkCoppaGate(
   userId: string,
   feature: string
 ): Promise<CoppaGateResult> {
+  // S1: Validate userId format at boundary
+  if (!userId || !UUID_PATTERN.test(userId)) {
+    return {
+      allowed: false,
+      reason: "Invalid user ID format",
+      feature,
+      contentRatingLevel: 1,
+      consentStatus: "unknown",
+    };
+  }
+
   // Check master switch
   const enabled = await isEnforcementEnabled();
   if (!enabled) {
