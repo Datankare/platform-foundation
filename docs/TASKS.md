@@ -345,6 +345,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: April 25, 2026 (Sprint 3c — initial creation,
-migrated from SECURITY_DEBT.md, consolidated from
-PHASE4_PLAN.md and code references)_
+_Last updated: April 26, 2026 (Sprint 3c close — TASK-038/040/041/043 resolved)_
