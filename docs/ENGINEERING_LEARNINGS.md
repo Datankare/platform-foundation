@@ -333,7 +333,7 @@ The root cause: every verification in the quality gate operates on code structur
 
 ---
 
-### Workflow Gotchas (32–37) — Phase 4 Session Scar Tissue
+### Workflow Gotchas (32–40) — Phase 4 + Sprint 3c Session Scar Tissue
 
 > These are cross-cutting workflow issues, not module-specific (those go in module Gotchas sections per L17). They apply to every session regardless of which module is being built.
 
@@ -348,6 +348,12 @@ The root cause: every verification in the quality gate operates on code structur
 **36. sed with template literals fails.** Backticks and `${}` get mangled by shell escaping in heredocs and sed commands. For complex multi-line edits, use Python scripts or complete file replacements. Simple single-line sed is fine.
 
 **37. git add -A picks up untracked files.** The wiki/ directory with 33 files was accidentally committed. Use explicit `git add <file1> <file2>` for targeted commits. Never use `git add -A` or `git add .` in these repos.
+
+**38. Markdown auto-formatting on credential paste.** Pasting URLs or hostnames from rich-text sources (Notion, Apple Notes, Markdown docs) can inject `[text](url)` link syntax into shell variables and `.env` files. During TASK-026 rotation, `ACRCLOUD_HOST` was pasted as `[identify-us-west-2.acrcloud.com](http://...)` instead of the plain hostname. Always verify env files with `cat -A` or visual inspection before sourcing. Affects `.env` files, runbook-to-Vercel paste, any credential workflow.
+
+**39. Never `cat` a credentials file in a shared/observed terminal.** This includes any session that is screen-shared, recorded, inside a chat assistant context, or captured by a clipboard history tool. During TASK-026 rotation, a broken verification command led to `cat` of a credentials file in chat, exposing the secret. Credentials had to be rotated again immediately. Use length-only and shape-only verification: `awk -F= '{print $1, "length:", length($2)}' creds.env`. For value inspection, use `cat -A` only when you control the entire output destination.
+
+**40. Bash `&&` chaining breaks on `grep` no-match.** `grep` exits with code 1 when it finds no matches, which is the _clean_ result for a "no bad patterns present" check. Commands chained with `&&` silently halt at this exit code, making it look like the script failed when it actually succeeded. Use `;` separators for verification scripts where no-match is the expected clean state, or pipe through `|| true`.
 
 ## Noted (Not Yet Adopted)
 
@@ -370,4 +376,4 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 ---
 
-_Last updated: April 24, 2026 (Sprint 3b close — all findings fixed)_
+_Last updated: April 25, 2026 (Sprint 3c — Gotchas 38–40 added from TASK-026 rotation)_

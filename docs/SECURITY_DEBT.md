@@ -1,36 +1,12 @@
 # Security & Technical Debt Register
 
-All known, consciously deferred items.
+Security-specific consciously deferred items only.
+Non-security tasks (refactors, features, infrastructure) live in TASKS.md.
 These are NOT ignored — each has a resolution plan and a hard deadline.
 
 ---
 
 ## Open Items
-
----
-
-### CI-001 — GitHub Actions Node.js 24 deprecation warning
-
-| Field          | Detail                                                                          |
-| -------------- | ------------------------------------------------------------------------------- |
-| **ID**         | CI-001                                                                          |
-| **Type**       | External dependency                                                             |
-| **Severity**   | Warning only — not a failure                                                    |
-| **Component**  | actions/checkout, actions/setup-node                                            |
-| **Status**     | Blocked on GitHub releasing Node.js 24 compatible action versions               |
-| **Logged**     | 2026-03-19                                                                      |
-| **Resolve by** | Automatically resolves when GitHub ships updated actions — before June 2nd 2026 |
-
-**Why we cannot fix this today:**
-GitHub's own actions (checkout, setup-node) have not yet released
-versions that natively run on Node.js 24. The warning comes from
-GitHub's runner infrastructure, not our workflow configuration.
-We have already set node-version: 24 and FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true.
-Nothing further can be done until GitHub ships the updated action versions.
-
-**Resolution plan:**
-Monitor GitHub Actions changelog. When updated versions ship,
-bump action versions in ci.yml and remove this entry.
 
 ---
 
@@ -59,28 +35,27 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ---
 
----
+### TASK-044 — Per-environment ACRCloud projects for security isolation
 
-### TASK-019 — Rename `platform/game-engine/` → `platform/app-framework/`
+| Field        | Detail                          |
+| ------------ | ------------------------------- |
+| **ID**       | TASK-044                        |
+| **Type**     | Security — credential isolation |
+| **Severity** | Medium                          |
+| **Phase**    | When staging traffic begins     |
+| **Status**   | Open                            |
+| **Logged**   | 2026-04-25                      |
+| **Source**   | TASK-026 rotation               |
 
-| Field          | Detail                                              |
-| -------------- | --------------------------------------------------- |
-| **ID**         | TASK-019                                            |
-| **Type**       | Technical debt — platform-game separation (ADR-001) |
-| **Severity**   | Low                                                 |
-| **Status**     | Tracked — placeholder directory, no code yet        |
-| **Logged**     | 2026-04-06                                          |
-| **Resolve by** | Phase 5 start                                       |
-
-**What:** Directory `platform/game-engine/` should be `platform/app-framework/`
-to reflect PF's consumer-agnostic nature. Currently a placeholder with README only.
+**What:** All Vercel environments (Production, Preview, Development) currently share the same ACRCloud credentials (`playform-prod-songid`). This means: (1) preview/dev API calls consume production paid quota, (2) staging bugs that hammer the identify endpoint affect production rate limits, (3) compromised dev env credential exposes production usage. Best practice: create `playform-staging-songid` and `playform-dev-songid` projects with separate credentials scoped per Vercel environment.
 
 **Resolution plan:**
 
-1. Rename directory and update README
-2. Update all references in ROADMAP.md, ADRs, TAD.md
-3. Update consumer sync exclude list if needed
-4. Remove this entry when complete
+1. Create `playform-staging-songid` ACRCloud project
+2. Create `playform-dev-songid` ACRCloud project (or use mock provider for dev)
+3. Scope Vercel env vars per environment
+4. Update ROTATION_RUNBOOK.md with per-env rotation procedures
+5. Remove this entry when complete
 
 ---
 
@@ -88,38 +63,30 @@ to reflect PF's consumer-agnostic nature. Currently a placeholder with README on
 
 _Items below have been resolved and are retained for audit trail only._
 
-| ID       | Description                                     | Resolved In                                                             | Date       |
-| -------- | ----------------------------------------------- | ----------------------------------------------------------------------- | ---------- |
-| DS-001   | next/image disk cache vulnerability             | Phase 0 (Next.js 16 upgrade)                                            | 2026-03-18 |
-| SEC-002  | No rate limiting on API routes                  | Phase 1, Sprint 6                                                       | 2026-03-31 |
-| SEC-003  | No retry logic for external API calls           | Phase 1, Sprint 7a (fetchWithTimeout retry)                             | 2026-04-01 |
-| SEC-004  | No E2E tests — Playwright not integrated        | Phase 0.75                                                              | 2026-03-22 |
-| SEC-005  | SpeechRecognition hardcoded to en-US            | Phase 1                                                                 | 2026-04-02 |
-| SEC-006  | Placeholder READMEs lack interface contracts    | Phase 1 (auth) + Phase 2 start (moderation, prompts)                    | 2026-04-03 |
-| TASK-014 | Admin module coverage exclusions                | Phase 1, Sprint 7a (integration tests)                                  | 2026-04-01 |
-| TASK-015 | Platform config table                           | Phase 1, Sprint 7b                                                      | 2026-04-02 |
-| TASK-016 | Repo inheritance model                          | Phase 1, Sprint 7b (auto-sync)                                          | 2026-04-02 |
-| TASK-017 | Seed data separation                            | Phase 1, Sprint 7b                                                      | 2026-04-02 |
-| TASK-018 | Rename player → user in PF codebase             | Phase 2, Sprint 3 (52 files + migration 008)                            | 2026-04-06 |
-| TASK-020 | Redis CacheProvider (deferred from Phase 1)     | Phase 2, Sprint 4 (platform/cache/)                                     | 2026-04-07 |
-| TASK-021 | Redis rate limiter (deferred from Phase 1)      | Phase 2, Sprint 4 (platform/rate-limit/)                                | 2026-04-07 |
-| TASK-022 | Password enforcement (deferred from Phase 1)    | Phase 2, Sprint 4 (password-policy.ts enhanced)                         | 2026-04-07 |
-| TASK-023 | GDPR hard purge (deferred from Phase 1)         | Phase 2, Sprint 4 (platform/gdpr/)                                      | 2026-04-07 |
-| TASK-027 | Narrow IAM permissions (scoped from FullAccess) | Phase 4 entry (confirmed via CLI — cannot list IAM policies, ECS works) | 2026-04-17 |
-| TASK-028 | Install @sentry/nextjs (build warning resolved) | Phase 4, Sprint 0 (npm install, DSN in Vercel, ERROR_REPORTER=sentry)   | 2026-04-17 |
+| ID       | Description                                     | Resolved In                                                                                         | Date       |
+| -------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ---------- |
+| DS-001   | next/image disk cache vulnerability             | Phase 0 (Next.js 16 upgrade)                                                                        | 2026-03-18 |
+| SEC-002  | No rate limiting on API routes                  | Phase 1, Sprint 6                                                                                   | 2026-03-31 |
+| SEC-003  | No retry logic for external API calls           | Phase 1, Sprint 7a (fetchWithTimeout retry)                                                         | 2026-04-01 |
+| SEC-004  | No E2E tests — Playwright not integrated        | Phase 0.75                                                                                          | 2026-03-22 |
+| SEC-005  | SpeechRecognition hardcoded to en-US            | Phase 1                                                                                             | 2026-04-02 |
+| SEC-006  | Placeholder READMEs lack interface contracts    | Phase 1 (auth) + Phase 2 start (moderation, prompts)                                                | 2026-04-03 |
+| TASK-026 | Rotate ACRCloud access secret                   | Sprint 3c — paid project `playform-prod-songid`, trial 99216 deprovisioned. See ROTATION_RUNBOOK.md | 2026-04-25 |
+| TASK-027 | Narrow IAM permissions (scoped from FullAccess) | Phase 4 entry (confirmed via CLI)                                                                   | 2026-04-17 |
 
 ---
 
-_Last updated: April 24, 2026 (Sprint 3b close — no new security debt. COPPA gate + Sentinel added with full OWASP controls.)_
+## Migration Note (April 25, 2026)
 
-### TASK-024: Social Login (Google, Apple, Microsoft SSO)
+The following items were migrated to TASKS.md (Sprint 3c) as they are not security-related:
 
-- **Priority:** Medium
-- **Phase:** 8–9 (Production Hardening)
-- **Status:** Deferred — infrastructure ready, console configuration pending
-- **Description:** Code is complete: SsoButtons.tsx, initiateSso(), handleSsoCallback(), provider interface all built. Requires: (1) OAuth credentials from Google Cloud, Apple Developer, Azure AD; (2) Cognito identity provider configuration; (3) Custom domain on Cognito for callback URLs; (4) Privacy policy URLs and app review (Apple). Zero code changes needed.
-- **Tracking:** ADR-012, platform/auth/provider.ts, components/auth/SsoButtons.tsx
+- CI-001 → TASKS.md (build/CI category)
+- TASK-019 → TASKS.md (refactor)
+- TASK-024 → TASKS.md (feature deferral)
+- TASK-025 → TASKS.md (infrastructure)
+- TASK-014 through TASK-023 resolved items → TASKS.md resolved table
+- TASK-028 resolved → TASKS.md resolved table
 
-| TASK-025 | ALB + Elastic IP for ffmpeg-service | Phase 5 | ECS Fargate public IP changes on task restart. Add ALB or Elastic IP for stable URL. Currently using direct IP — acceptable for development, not production. |
-| TASK-025 | ALB for ffmpeg-service (stable URL) | Phase 5 | ECS Fargate public IP changes on task restart. Add ALB or Elastic IP for stable URL. |
-| TASK-026 | Rotate ACRCloud access secret before production | Phase 5 | Secret key exposed during setup. Rotate via ACRCloud Console before production. |
+---
+
+_Last updated: April 25, 2026 (Sprint 3c — scope narrowed to security-only, non-security items migrated to TASKS.md, TASK-026 closed, TASK-044 added)_
