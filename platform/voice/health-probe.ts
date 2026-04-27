@@ -176,3 +176,28 @@ export async function checkAudioConverterHealth(
     };
   }
 }
+
+// ── HealthProbe Adapter (TASK-041) ──────────────────────────────────────────
+// Wraps checkSongIdHealth into HealthProbe interface for HealthRegistry.
+
+import type { HealthProbe, HealthCheckResult } from "@/platform/observability/types";
+
+export class SongIdHealthProbeAdapter implements HealthProbe {
+  readonly name = "song-identification";
+  private readonly provider: SongIdentificationProvider;
+
+  constructor(provider: SongIdentificationProvider) {
+    this.provider = provider;
+  }
+
+  async check(): Promise<HealthCheckResult> {
+    const result = await checkSongIdHealth(this.provider);
+    return {
+      name: this.name,
+      status: result.healthy ? "healthy" : "unhealthy",
+      latencyMs: result.latencyMs,
+      detail: result.error,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+}

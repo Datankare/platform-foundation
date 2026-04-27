@@ -25,7 +25,7 @@ Phase 3 delivered four sprints building the language and voice infrastructure: t
 | Circuit breaker                   | ✅     | Inherited from orchestrator for AI calls. fetchWithTimeout retry handles transient failures on voice providers. |
 | Canonical format                  | ✅     | All audio normalized to WAV 16kHz mono s16 PCM before processing — eliminates format-dependent failures         |
 
-**Risk:** ACRCloud free trial expires ~2026-04-30. Mitigation: provider swap is config change. TASK-026 (rotate secret) tracked.
+**Risk:** ACRCloud free trial expired ~2026-04-30. **Mitigated 2026-04-25:** migrated to paid project `playform-prod-songid` (TASK-026 closed). See ROTATION_RUNBOOK.md.
 
 ---
 
@@ -106,11 +106,11 @@ Phase 3 delivered four sprints building the language and voice infrastructure: t
 
 **Open security tasks:**
 
-| Task     | Description                   | Status            |
-| -------- | ----------------------------- | ----------------- |
-| TASK-025 | ALB for ffmpeg-service        | ✅ Done           |
-| TASK-026 | Rotate ACRCloud access secret | Before production |
-| TASK-027 | Narrow IAM permissions        | ✅ Done           |
+| Task     | Description                   | Status               |
+| -------- | ----------------------------- | -------------------- |
+| TASK-025 | ALB for ffmpeg-service        | ✅ Done              |
+| TASK-026 | Rotate ACRCloud access secret | ✅ Done (2026-04-25) |
+| TASK-027 | Narrow IAM permissions        | ✅ Done              |
 
 ---
 
@@ -130,7 +130,7 @@ Phase 3 delivered four sprints building the language and voice infrastructure: t
 ## Recommendations for Phase 4
 
 1. **Run k6 live burst against staging** after merge — captures real API latency with voice providers
-2. **TASK-026:** Rotate ACRCloud secret before any production traffic
+2. **TASK-026:** ✅ Rotated 2026-04-25. Paid project `playform-prod-songid`. See ROTATION_RUNBOOK.md.
 3. **Branch coverage at 73.79%** — Phase 4 should target 75%+ by covering more error branches
 4. **Fix k6 dry run check assertions** — process/stream return non-400 status for validation errors; update checks to match actual Playform behavior
 
