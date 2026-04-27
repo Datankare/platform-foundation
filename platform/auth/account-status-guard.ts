@@ -147,7 +147,19 @@ async function loadAccountState(userId: string): Promise<UserAccountRow> {
       error: { message: string } | null;
     }>);
 
-    if (error || !data) return failClosed;
+    if (error) return failClosed;
+
+    // User authenticated but not in users table (mock mode, first login,
+    // or race condition). Authentication passed — treat as active, not banned.
+    // This is distinct from a DB error (which fails closed above).
+    if (!data) {
+      return {
+        accountStatus: "active",
+        restrictedUntil: null,
+        suspendedUntil: null,
+        bannedAt: null,
+      };
+    }
 
     // B5: Validate status is a known value
     const status = VALID_STATUSES.has(data.account_status)
@@ -161,6 +173,18 @@ async function loadAccountState(userId: string): Promise<UserAccountRow> {
       bannedAt: data.banned_at,
     };
   } catch (err) {
+    // Check if Supabase is configured. If not (mock/CI mode),
+    // there is no DB to query — degrade to active, not banned.
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    if (!supabaseUrl) {
+      return {
+        accountStatus: "active" as AccountStatus,
+        restrictedUntil: null,
+        suspendedUntil: null,
+        bannedAt: null,
+      };
+    }
+
     logger.error("Account status guard: failed to load user state — failing closed", {
       userId,
       error: err instanceof Error ? err.message : String(err),

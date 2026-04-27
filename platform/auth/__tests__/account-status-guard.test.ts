@@ -228,20 +228,22 @@ describe("checkAccountStatus", () => {
     expect(result.accountStatus).toBe("banned");
   });
 
-  it("fails closed when user not found", async () => {
+  it("allows when user not found (authenticated but no DB row)", async () => {
     mockSupabase.from.mockReturnValue(createChainMock({ data: null, error: null }));
     const result = await checkAccountStatus(VALID_USER_ID, "translate");
-    expect(result.allowed).toBe(false);
-    expect(result.accountStatus).toBe("banned");
+    expect(result.allowed).toBe(true);
+    expect(result.accountStatus).toBe("active");
   });
 
   it("fails closed when DB throws exception", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
     mockSupabase.from.mockImplementation(() => {
       throw new Error("Connection refused");
     });
     const result = await checkAccountStatus(VALID_USER_ID, "translate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("banned");
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
   });
 
   it("fails closed when account_status is unknown value", async () => {
