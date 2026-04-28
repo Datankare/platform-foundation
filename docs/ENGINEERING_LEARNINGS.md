@@ -333,7 +333,7 @@ The root cause: every verification in the quality gate operates on code structur
 
 ---
 
-### Workflow Gotchas (32–41) — Phase 4 + Sprint 3c/3d Session Scar Tissue
+### Workflow Gotchas (32–44) — Phase 4 + Sprint 3c/3d Session Scar Tissue
 
 > These are cross-cutting workflow issues, not module-specific (those go in module Gotchas sections per L17). They apply to every session regardless of which module is being built.
 
@@ -357,6 +357,12 @@ The root cause: every verification in the quality gate operates on code structur
 
 **40. Bash `&&` chaining breaks on `grep` no-match.** `grep` exits with code 1 when it finds no matches, which is the _clean_ result for a "no bad patterns present" check. Commands chained with `&&` silently halt at this exit code, making it look like the script failed when it actually succeeded. Use `;` separators for verification scripts where no-match is the expected clean state, or pipe through `|| true`.
 
+**42. Side-effect imports bypass the provider registry.** During Sprint 3d, 9 auth routes had `import "@/platform/auth/cognito-config"` which auto-registered Cognito at module load time, before `initProviders()` ran. The registry's `if (hasAuthProvider()) return` guard meant mock provider never registered. Side-effect imports that mutate global state are invisible race conditions. Auth registration must only happen through `initProviders()` in `instrumentation.ts`. Never register providers via side-effect imports.
+
+**43. Next.js production builds isolate module singletons.** `require()` in `instrumentation.ts` and `import` in route handlers may resolve to different module instances in production builds. A singleton set in one context is null in the other. Fix: `getAuthProvider()` uses lazy initialization — if the singleton is null, it calls `initProviders()` again. This is safe because `initProviders()` is idempotent (`if (initialized) return`).
+
+**44. Mock provider IDs must pass the same validation as real IDs.** Account-status guard validates UUID format. Mock provider used `"mock-user-001"` which fails the regex. Changed to a valid UUID. Any guard that validates input format will reject test fixtures that use placeholder strings. Mock data must be realistic.
+
 ## Noted (Not Yet Adopted)
 
 _Entries here are interesting but haven't passed the "changes how we build" test yet._
@@ -378,4 +384,4 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 ---
 
-_Last updated: April 26, 2026 (Sprint 3d — Gotcha 41 added: no copy-paste mocks)_
+_Last updated: April 27, 2026 (Sprint 3d close — Gotchas 42–44 added: side-effect imports, module isolation, mock IDs)_
