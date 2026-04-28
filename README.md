@@ -73,8 +73,8 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL SAST + Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 87 suites, 1428 tests, 84.86% statement coverage
-- ✅ 8+ integration test suites covering all cross-module boundaries
+- ✅ 89 suites, 1461 tests, 85.48% statement coverage
+- ✅ 10+ integration test suites covering all cross-module boundaries
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8)
 - ✅ Versioned releases (v1.3.0)
@@ -82,7 +82,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 12 migrations (001–012)
+- ✅ 14 migrations (001–014)
 - ✅ 14 tables
 - ✅ 20 Row-Level Security policies
 - ✅ Generic roles: guest, registered, admin, super_admin
@@ -139,7 +139,7 @@ platform-foundation/
 ├── components/auth/        ← Auth UI (login, register, profile, age gate)
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream)
-├── supabase/migrations/    ← 12 database migrations
+├── supabase/migrations/    ← 14 database migrations
 ├── docs/adr/               ← 18 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
@@ -170,7 +170,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 87 suites, 1428 tests, 84.86% coverage
+npm run test:coverage  # 89 suites, 1461 tests, 85.48% coverage
 npm run build          # Clean build
 ```
 
@@ -208,5 +208,5 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v1.3.0 — Datankare_
-_Phase 4 In Progress · 87 suites · 1428 tests · 84.86% coverage · 20 ADRs · 18 GenAI principles · 3 agents_
+_Phase 4 In Progress · 89 suites · 1461 tests · 85.48% coverage · 20 ADRs · 18 GenAI principles · 3 agents_
 _Built with Foundation as Fabric · Continuous Confidence_

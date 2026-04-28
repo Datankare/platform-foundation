@@ -184,4 +184,6 @@ If any statement is false at launch, GenAI-native is incomplete.
 | 2026-04-16 | Raman Sud | Phase 3 complete. Translation, voice, pipeline, song ID providers delivered. 5 GenAI capabilities deferred to Phase 4/6 (caching, token tracking, enhanced moderation, multi-language AI, eval framework). |
 | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.                                                                  |
 
-_Last updated: April 24, 2026 (Sprint 3b close — Sentinel, COPPA gate, strikes added)_
+| 2026-04-27 | Raman Sud | Sprint 3c/3d. Song-ID duration config (P13). Health probe wired (P3). Profile field screening through Guardian (P4). Account-status guard (P4, P11). Auth on all routes. authFetch wrapper. 4 agents active (Guardian, Config Manager, Sentinel + health probe adapter). |
+
+_Last updated: April 27, 2026 (Sprint 3d close — profile screening, account-status guard, auth pipeline)_

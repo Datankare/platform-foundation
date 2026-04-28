@@ -191,4 +191,4 @@
 
 ---
 
-_Last updated: April 24, 2026 (Sprint 3b complete — Sentinel + COPPA + strikes)_
+_Last updated: April 27, 2026 (Sprint 3d complete — profile screening, account-status guard, auth pipeline)_
