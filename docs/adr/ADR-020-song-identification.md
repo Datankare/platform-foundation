@@ -135,8 +135,8 @@ Both providers use `fetchWithTimeout` from `@/lib/fetchWithTimeout` (not raw fet
 
 ### Risks
 
-- ACRCloud free trial expires ~2026-04-30 — must move to paid tier or swap provider
-- `ACRCLOUD_ACCESS_SECRET` must be rotated before production (TASK-026)
+- ✅ ACRCloud migrated to paid project `playform-prod-songid` on 2026-04-25. Free trial (project 99216) deprovisioned.
+- ✅ `ACRCLOUD_ACCESS_SECRET` rotated 2026-04-25 (TASK-026 closed). See ROTATION_RUNBOOK.md.
 
 ## Alignment with Playform
 

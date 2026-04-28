@@ -534,4 +534,6 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 | 4.0.0   | 2026-04-18 | Raman Sud | Phase 4 started — Content Safety + Social System + Agent Runtime. Sprint 0: Sentry installed, instrumentation.ts wired, TASK-027/028/030 resolved, L14 added. 8 sprints planned, 6 agents, 3 new ADRs (021-023), embedding provider slot #11.                                                                                 |
 | 2.2.0   | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric (platform/observability/ — error tracking, tracing, metrics, health). TASK-018 resolved (player→user rename, 52 files + migration 008). Docs generalized. PF tests: 473→545.                                                                                                          |
 
-_Last updated: April 24, 2026 (Sprint 3b close — changelog 4.1.0)_
+| 4.2.0 | 2026-04-25 | Raman Sud | Sprint 3c catch-up. TASK-026 closed (ACRCloud rotation to paid project). SECURITY_DEBT.md scope narrowed to security-only; non-security tasks migrated to new TASKS.md. New ROTATION_RUNBOOK.md. Gotchas 38–40 added to ENGINEERING_LEARNINGS. platform/voice/GOTCHAS.md added (L17). 7 follow-up TASKs filed (038–044). |
+
+_Last updated: April 25, 2026 (Sprint 3c — changelog 4.2.0)_
