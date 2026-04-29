@@ -1,0 +1,158 @@
+<svg width="100%" viewBox="0 0 680 640" xmlns="http://www.w3.org/2000/svg">
+<title>Playform platform architecture — full system block diagram</title>
+<desc>Layered architecture showing user actions, social services, social agents, agent runtime, platform services, observability, and data layer. Items new in Sprint 4a are highlighted in purple and teal.</desc>
+
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .th { font-size: 14px; font-weight: 500; }
+  .ts { font-size: 12px; font-weight: 400; }
+  .label { font-size: 11px; font-weight: 400; }
+
+  /* Purple — social (new) */
+  .fill-purple { fill: #EEEDFE; stroke: #534AB7; }
+  .fill-purple-inner { fill: #CECBF6; stroke: #534AB7; }
+  .text-purple { fill: #3C3489; }
+  .text-purple-sub { fill: #534AB7; }
+
+  /* Teal — agent runtime (new) */
+  .fill-teal { fill: #E1F5EE; stroke: #0F6E56; }
+  .fill-teal-inner { fill: #9FE1CB; stroke: #0F6E56; }
+  .text-teal { fill: #085041; }
+  .text-teal-sub { fill: #0F6E56; }
+
+  /* Blue — platform services (existing) */
+  .fill-blue { fill: #E6F1FB; stroke: #185FA5; }
+  .fill-blue-inner { fill: #B5D4F4; stroke: #185FA5; }
+  .text-blue { fill: #0C447C; }
+  .text-blue-sub { fill: #185FA5; }
+
+  /* Gray — infrastructure (existing) */
+  .fill-gray { fill: #F1EFE8; stroke: #5F5E5A; }
+  .text-gray { fill: #444441; }
+  .text-gray-sub { fill: #5F5E5A; }
+
+  .arr { stroke: #888780; stroke-width: 1.5; }
+  .legend-box { stroke-width: 0.5; }
+</style>
+
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<!-- Legend -->
+<rect x="40" y="8" width="10" height="10" rx="2" class="fill-purple legend-box"/>
+<text class="label text-purple" x="54" y="17">New in Sprint 4a</text>
+<rect x="170" y="8" width="10" height="10" rx="2" class="fill-blue legend-box"/>
+<text class="label text-blue" x="184" y="17">Existing platform</text>
+
+<!-- Tier 1: User actions -->
+<rect x="40" y="30" width="600" height="40" rx="8" class="fill-gray" stroke-width="0.5"/>
+<text class="th text-gray" x="340" y="50" text-anchor="middle" dominant-baseline="central">User actions</text>
+<text class="ts text-gray-sub" x="340" y="82" text-anchor="middle">Create groups, send invites, accept/decline, leave, view members</text>
+
+<!-- Arrow -->
+<line x1="340" y1="88" x2="340" y2="104" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Tier 2: Social Services (NEW) — container -->
+<rect x="40" y="106" width="600" height="86" rx="14" class="fill-purple" stroke-width="0.5"/>
+<text class="th text-purple" x="54" y="122" dominant-baseline="central">Social services</text>
+
+<rect x="56" y="132" width="176" height="48" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="th text-purple" x="144" y="150" text-anchor="middle" dominant-baseline="central">Group service</text>
+<text class="ts text-purple-sub" x="144" y="167" text-anchor="middle" dominant-baseline="central">Validation, screening</text>
+
+<rect x="244" y="132" width="176" height="48" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="th text-purple" x="332" y="150" text-anchor="middle" dominant-baseline="central">Invite service</text>
+<text class="ts text-purple-sub" x="332" y="167" text-anchor="middle" dominant-baseline="central">Auth, accept flow</text>
+
+<rect x="432" y="132" width="196" height="48" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="th text-purple" x="530" y="150" text-anchor="middle" dominant-baseline="central">Social store</text>
+<text class="ts text-purple-sub" x="530" y="167" text-anchor="middle" dominant-baseline="central">Memory + Supabase</text>
+
+<!-- Arrow -->
+<line x1="340" y1="192" x2="340" y2="208" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Tier 3: Social Agents — container -->
+<rect x="40" y="210" width="600" height="104" rx="14" class="fill-purple" stroke-width="0.5"/>
+<text class="th text-purple" x="54" y="228" dominant-baseline="central">Social agents (activated in Sprint 4b)</text>
+
+<!-- Row 1 -->
+<rect x="56" y="237" width="176" height="30" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="ts text-purple" x="144" y="252" text-anchor="middle" dominant-baseline="central">Guardian — safety</text>
+
+<rect x="244" y="237" width="176" height="30" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="ts text-purple" x="332" y="252" text-anchor="middle" dominant-baseline="central">Matchmaker — discover</text>
+
+<rect x="432" y="237" width="196" height="30" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="ts text-purple" x="530" y="252" text-anchor="middle" dominant-baseline="central">Gatekeeper — join eval</text>
+
+<!-- Row 2 -->
+<rect x="56" y="274" width="176" height="30" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="ts text-purple" x="144" y="289" text-anchor="middle" dominant-baseline="central">Concierge — onboard</text>
+
+<rect x="244" y="274" width="176" height="30" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="ts text-purple" x="332" y="289" text-anchor="middle" dominant-baseline="central">Analyst — health</text>
+
+<rect x="432" y="274" width="196" height="30" rx="6" class="fill-purple-inner" stroke-width="0.5"/>
+<text class="ts text-purple" x="530" y="289" text-anchor="middle" dominant-baseline="central">Curator — digests</text>
+
+<!-- Arrow -->
+<line x1="340" y1="314" x2="340" y2="330" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Tier 4: Agent Runtime (NEW) — container -->
+<rect x="40" y="332" width="600" height="82" rx="14" class="fill-teal" stroke-width="0.5"/>
+<text class="th text-teal" x="54" y="348" dominant-baseline="central">Agent runtime</text>
+
+<rect x="56" y="356" width="130" height="46" rx="6" class="fill-teal-inner" stroke-width="0.5"/>
+<text class="th text-teal" x="121" y="372" text-anchor="middle" dominant-baseline="central">Registry</text>
+<text class="ts text-teal-sub" x="121" y="390" text-anchor="middle" dominant-baseline="central">Agent configs</text>
+
+<rect x="198" y="356" width="130" height="46" rx="6" class="fill-teal-inner" stroke-width="0.5"/>
+<text class="th text-teal" x="263" y="372" text-anchor="middle" dominant-baseline="central">executeAgent</text>
+<text class="ts text-teal-sub" x="263" y="390" text-anchor="middle" dominant-baseline="central">Core loop</text>
+
+<rect x="340" y="356" width="145" height="46" rx="6" class="fill-teal-inner" stroke-width="0.5"/>
+<text class="th text-teal" x="412" y="372" text-anchor="middle" dominant-baseline="central">Trajectory store</text>
+<text class="ts text-teal-sub" x="412" y="390" text-anchor="middle" dominant-baseline="central">Steps, costs (P18)</text>
+
+<rect x="497" y="356" width="131" height="46" rx="6" class="fill-teal-inner" stroke-width="0.5"/>
+<text class="th text-teal" x="562" y="372" text-anchor="middle" dominant-baseline="central">Budget tracker</text>
+<text class="ts text-teal-sub" x="562" y="390" text-anchor="middle" dominant-baseline="central">Per-agent (P12)</text>
+
+<!-- Arrow -->
+<line x1="340" y1="414" x2="340" y2="430" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Tier 5: Platform Services (existing) -->
+<rect x="40" y="432" width="600" height="66" rx="14" class="fill-blue" stroke-width="0.5"/>
+<text class="th text-blue" x="54" y="448" dominant-baseline="central">Platform services</text>
+
+<rect x="56" y="456" width="108" height="32" rx="6" class="fill-blue-inner" stroke-width="0.5"/>
+<text class="ts text-blue" x="110" y="472" text-anchor="middle" dominant-baseline="central">Moderation</text>
+
+<rect x="174" y="456" width="108" height="32" rx="6" class="fill-blue-inner" stroke-width="0.5"/>
+<text class="ts text-blue" x="228" y="472" text-anchor="middle" dominant-baseline="central">Auth / COPPA</text>
+
+<rect x="292" y="456" width="108" height="32" rx="6" class="fill-blue-inner" stroke-width="0.5"/>
+<text class="ts text-blue" x="346" y="472" text-anchor="middle" dominant-baseline="central">AI orchestrator</text>
+
+<rect x="410" y="456" width="108" height="32" rx="6" class="fill-blue-inner" stroke-width="0.5"/>
+<text class="ts text-blue" x="464" y="472" text-anchor="middle" dominant-baseline="central">Voice pipeline</text>
+
+<rect x="528" y="456" width="100" height="32" rx="6" class="fill-blue-inner" stroke-width="0.5"/>
+<text class="ts text-blue" x="578" y="472" text-anchor="middle" dominant-baseline="central">Translation</text>
+
+<!-- Arrow -->
+<line x1="340" y1="498" x2="340" y2="514" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Tier 6: Observability (existing) -->
+<rect x="40" y="516" width="600" height="36" rx="8" class="fill-gray" stroke-width="0.5"/>
+<text class="th text-gray" x="340" y="534" text-anchor="middle" dominant-baseline="central">Observability: traces, metrics, Sentry, audit log, health probes</text>
+
+<!-- Arrow -->
+<line x1="340" y1="552" x2="340" y2="568" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Tier 7: Data Layer -->
+<rect x="40" y="570" width="600" height="44" rx="8" class="fill-gray" stroke-width="0.5"/>
+<text class="th text-gray" x="340" y="586" text-anchor="middle" dominant-baseline="central">Supabase + 16 migrations</text>
+<text class="ts text-gray-sub" x="340" y="604" text-anchor="middle" dominant-baseline="central">Users, groups, memberships, invites, trajectories, budgets, config</text>
+</svg>
