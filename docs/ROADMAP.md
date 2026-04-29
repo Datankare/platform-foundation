@@ -536,4 +536,6 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 4.2.0 | 2026-04-25 | Raman Sud | Sprint 3c catch-up. TASK-026 closed (ACRCloud rotation to paid project). SECURITY_DEBT.md scope narrowed to security-only; non-security tasks migrated to new TASKS.md. New ROTATION_RUNBOOK.md. Gotchas 38–40 added to ENGINEERING_LEARNINGS. platform/voice/GOTCHAS.md added (L17). 7 follow-up TASKs filed (038–044). |
 
-_Last updated: April 25, 2026 (Sprint 3c — changelog 4.2.0)_
+| 4.3.0 | 2026-04-27 | Raman Sud | Sprint 3d. Profile field screening (Guardian screens displayName/realName before DB write). Account-status guard (structural gate: auth → status → COPPA → Guardian). Auth wired into all 7 API routes + authFetch wrapper. /api/profile route (GET + PUT). Lazy provider init for Next.js module isolation. cognito-config side-effect imports removed. Migration 014. Gotchas 42–44. 89 suites/1461 tests/85.5% coverage (PF). 103 suites/1690 tests/88.32% coverage (Playform). |
+
+_Last updated: April 27, 2026 (Sprint 3d — changelog 4.3.0)_
