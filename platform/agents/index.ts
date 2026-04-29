@@ -1,24 +1,72 @@
 /**
  * platform/agents/index.ts — Public API
  *
- * Agent type vocabulary for the platform runtime.
- * Sprint 1a: types only. Sprint 4a adds registry, runtime, trajectory, budget.
+ * Agent runtime for the platform. Sprint 1a delivered types.
+ * Sprint 4a adds: registry, tools, trajectory store, budget tracker, runtime.
  *
  * @module platform/agents
  */
 
-// Agent identity (P15)
+// ── Types (Sprint 1a) ────────────────────────────────────────────────
+
 export type { AgentIdentity } from "./types";
-
-// Trajectory and steps (P18)
 export type { Trajectory, Step, TrajectoryStatus, StepBoundary } from "./types";
-
-// Tools (P5)
 export type { Tool } from "./types";
-
-// Budget (P12)
-export type { BudgetConfig } from "./types";
+export type { BudgetConfig, AgentConfig } from "./types";
 export { DEFAULT_BUDGET_CONFIG } from "./types";
 
-// Agent config (P2)
-export type { AgentConfig } from "./types";
+// ── Utilities ─────────────────────────────────────────────────────────
+
+export { generateId } from "./utils";
+
+// ── Agent Registry (Sprint 4a) ──────────────────────────────────────
+
+export {
+  registerAgent,
+  getAgent,
+  hasAgent,
+  listAgents,
+  unregisterAgent,
+  resetAgentRegistry,
+} from "./registry";
+
+// ── Tool Registry (Sprint 4a) ───────────────────────────────────────
+
+export {
+  registerTool,
+  getTool,
+  hasTool,
+  listTools,
+  resolveTools,
+  resetToolRegistry,
+} from "./tools";
+
+// ── Trajectory Store (Sprint 4a) ────────────────────────────────────
+
+export type {
+  TrajectoryStore,
+  TrajectoryQuery,
+  TrajectoryCost,
+  TrajectoryRecord,
+} from "./trajectory-store";
+export {
+  InMemoryTrajectoryStore,
+  getTrajectoryStore,
+  setTrajectoryStore,
+  resetTrajectoryStore,
+} from "./trajectory-store";
+
+// ── Budget Tracker (Sprint 4a) ──────────────────────────────────────
+
+export type { BudgetStatus, BudgetCheckResult } from "./budget-tracker";
+export { BudgetTracker, getBudgetTracker, resetBudgetTracker } from "./budget-tracker";
+
+// ── Runtime (Sprint 4a) ─────────────────────────────────────────────
+
+export type {
+  StepOutcome,
+  WorkflowContext,
+  WorkflowFn,
+  ExecutionResult,
+} from "./runtime";
+export { executeAgent } from "./runtime";

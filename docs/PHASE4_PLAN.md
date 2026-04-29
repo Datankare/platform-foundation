@@ -186,9 +186,9 @@
 
 | Repo                | Floor  |
 | ------------------- | ------ |
-| Platform-Foundation | 82.54% |
+| Platform-Foundation | 86.47% |
 | Playform            | 86.03% |
 
 ---
 
-_Last updated: April 24, 2026 (Sprint 3b complete — Sentinel + COPPA + strikes)_
+_Last updated: April 29, 2026 (Sprint 4a complete — social data model, agent runtime, SupabaseSocialStore)_
