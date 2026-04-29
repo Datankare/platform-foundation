@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playform Social Features — UI Mockups</title>
+<style>
+:root{--bg:#fff;--bg2:#f5f4f0;--bg3:#eeedeb;--text:#1a1a1a;--text2:#666;--text3:#999;--border:#e0dfdc;--info-bg:#E6F1FB;--info:#0C447C;--info-border:#185FA5;--success-bg:#EAF3DE;--success:#27500A;--danger-bg:#FCEBEB;--danger:#791F1F;--warn-bg:#FAEEDA;--warn:#633806;--purple-bg:#EEEDFE;--purple:#3C3489;--teal-bg:#E1F5EE;--teal:#085041;--coral-bg:#FAECE7;--coral:#712B13;--amber-bg:#FAEEDA;--amber:#633806;--radius:8px;--radius-lg:12px}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a1a;--bg2:#2c2c2a;--bg3:#3d3d3a;--text:#e8e6df;--text2:#a5a49e;--text3:#73726c;--border:#444441;--info-bg:#042C53;--info:#85B7EB;--info-border:#378ADD;--success-bg:#173404;--success:#97C459;--danger-bg:#501313;--danger:#F09595;--warn-bg:#412402;--warn:#FAC775;--purple-bg:#26215C;--purple:#CECBF6;--teal-bg:#04342C;--teal:#9FE1CB;--coral-bg:#4A1B0C;--coral:#F5C4B3;--amber-bg:#412402;--amber:#FAC775}}
+*{box-sizing:border-box;margin:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;background:var(--bg3);color:var(--text);padding:40px 20px;line-height:1.5}
+.page-title{font-size:24px;font-weight:500;text-align:center;margin:0 0 4px}.page-sub{font-size:14px;color:var(--text2);text-align:center;margin:0 0 32px}
+.section-title{font-size:18px;font-weight:500;margin:32px 0 16px;padding:0 8px}
+.screens{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;margin-bottom:24px}
+.screen-col{flex:1;min-width:320px;max-width:400px}
+.screen-label{font-size:13px;color:var(--text2);margin:0 0 8px;text-align:center}
+.screen-wrap{background:var(--bg2);border-radius:var(--radius-lg);padding:16px}
+.phone{background:var(--bg);border-radius:var(--radius-lg);border:0.5px solid var(--border);overflow:hidden}
+.nav{display:flex;border-bottom:0.5px solid var(--border);padding:10px 16px;align-items:center;justify-content:space-between}
+.nav-title{font-size:16px;font-weight:500}
+.btn-sm{font-size:13px;padding:6px 14px;border-radius:var(--radius);border:0.5px solid var(--border);background:transparent;cursor:pointer;color:var(--text)}
+.btn-primary{background:var(--info-bg);color:var(--info);border-color:var(--info-border)}
+.btn-success{background:var(--success-bg);color:var(--success)}
+.btn-danger{color:var(--danger);border-color:var(--danger)}
+.group-card{padding:14px 16px;border-bottom:0.5px solid var(--border);display:flex;align-items:center;gap:12px}
+.group-card:last-child{border-bottom:none}
+.avatar{width:40px;height:40px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;font-weight:500;font-size:14px}
+.avatar-round{border-radius:50%;width:36px;height:36px;font-size:13px}
+.group-name{font-size:14px;font-weight:500}
+.group-meta{font-size:12px;color:var(--text2);margin:2px 0 0}
+.badge{font-size:11px;padding:2px 8px;border-radius:var(--radius);white-space:nowrap}
+.tab-bar{display:flex;border-top:0.5px solid var(--border);padding:8px 16px;justify-content:space-around}
+.tab{font-size:12px;color:var(--text3);text-align:center;padding:4px 0}.tab.active{color:var(--info);font-weight:500}
+.section-head{font-size:13px;font-weight:500;padding:10px 16px 6px;color:var(--text2)}
+.form-group{padding:0 16px;margin:12px 0}
+.form-label{font-size:13px;color:var(--text2);margin:0 0 6px;display:block}
+.form-input{width:100%;box-sizing:border-box;padding:8px 12px;border:0.5px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--bg);color:var(--text)}
+textarea.form-input{min-height:80px;resize:vertical;font-family:inherit}
+.form-hint{font-size:11px;color:var(--text3);margin:4px 0 0}
+.form-actions{padding:12px 16px;display:flex;gap:8px;justify-content:flex-end}
+.group-header{padding:16px;text-align:center;border-bottom:0.5px solid var(--border)}
+.stat{text-align:center;padding:8px 0}.stat-num{font-size:18px;font-weight:500}.stat-label{font-size:11px;color:var(--text2);margin:2px 0 0}
+.member-row{padding:10px 16px;display:flex;align-items:center;gap:10px;border-bottom:0.5px solid var(--border)}.member-row:last-child{border-bottom:none}
+.invite-card{padding:14px 16px;border-bottom:0.5px solid var(--border)}.invite-card:last-child{border-bottom:none}
+.invite-actions{display:flex;gap:8px;margin-top:10px}
+.admin{background:var(--bg);border-radius:var(--radius-lg);border:0.5px solid var(--border);overflow:hidden;margin-bottom:20px;max-width:820px;margin-left:auto;margin-right:auto}
+.admin-nav{display:flex;border-bottom:0.5px solid var(--border);padding:0 16px}
+.admin-tab{font-size:13px;padding:12px 16px;color:var(--text2);border-bottom:2px solid transparent;cursor:pointer}.admin-tab.active{color:var(--info);border-bottom-color:var(--info);font-weight:500}
+.admin-body{padding:20px}
+.config-title{font-size:14px;font-weight:500;margin:0 0 12px}
+.config-section{margin-bottom:24px}
+.config-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:0.5px solid var(--border)}.config-row:last-child{border-bottom:none}
+.config-label{font-size:13px}.config-hint{font-size:11px;color:var(--text3);margin:2px 0 0}
+.config-input{width:80px;text-align:right;font-size:13px;padding:6px 8px;border:0.5px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text)}
+.toggle{width:36px;height:20px;background:var(--info);border-radius:10px;position:relative;display:inline-block;vertical-align:middle}.toggle::after{content:'';position:absolute;top:2px;right:2px;width:16px;height:16px;background:var(--bg);border-radius:50%}
+.metric-bar{display:flex;gap:12px;margin-bottom:20px}
+.metric{flex:1;background:var(--bg2);border-radius:var(--radius);padding:12px;text-align:center}.metric-num{font-size:20px;font-weight:500}.metric-label{font-size:11px;color:var(--text2);margin:4px 0 0}
+.agent-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.agent-card{background:var(--bg2);border-radius:var(--radius);padding:14px}
+.agent-name{font-size:13px;font-weight:500;margin:0 0 4px}.agent-role{font-size:11px;color:var(--text2);margin:0 0 10px}
+.agent-stat{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}.agent-stat-label{color:var(--text2)}.agent-stat-val{font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--text3)}
+.tier-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px}
+.tier-card{background:var(--bg2);border-radius:var(--radius);padding:14px}
+.tier-label{font-size:13px;font-weight:500;margin:0 0 8px}
+.tier-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}.tier-row-label{color:var(--text2)}.tier-row-val{font-weight:500}
+.ladder{display:flex;gap:4px;align-items:flex-end;margin-top:12px}
+.ladder-step{flex:1;border-radius:var(--radius) var(--radius) 0 0;text-align:center;padding:8px 4px 6px;font-size:11px}
+.footer{text-align:center;font-size:12px;color:var(--text3);margin:40px 0 0;padding:20px 0;border-top:0.5px solid var(--border)}
+</style>
+</head>
+<body>
+<p class="page-title">Social features — UI mockups</p>
+<p class="page-sub">Platform Foundation / Sprint 4a / April 29, 2026 / 7 screens / Datankare Confidential</p>
+
+<p class="section-title">User-facing screens</p>
+<div class="screens">
+<div class="screen-col">
+<p class="screen-label">1. My groups</p>
+<div class="screen-wrap"><div class="phone">
+<div class="nav"><span class="nav-title">My groups</span><button class="btn-sm btn-primary" style="font-size:12px">+ Create</button></div>
+<div class="group-card"><div class="avatar" style="background:var(--info-bg);color:var(--info)">SB</div><div style="flex:1"><p class="group-name">Study buddies</p><p class="group-meta">5 members</p></div><span class="badge" style="background:var(--info-bg);color:var(--info)">Owner</span></div>
+<div class="group-card"><div class="avatar" style="background:var(--purple-bg);color:var(--purple)">ML</div><div style="flex:1"><p class="group-name">Music lovers</p><p class="group-meta">12 members</p></div><span class="badge" style="background:var(--bg2);color:var(--text2)">Member</span></div>
+<div class="group-card"><div class="avatar" style="background:var(--teal-bg);color:var(--teal)">TN</div><div style="flex:1"><p class="group-name">Trivia night</p><p class="group-meta">8 members</p></div><span class="badge" style="background:var(--bg2);color:var(--text2)">Member</span></div>
+<div style="padding:12px 16px;text-align:center"><p style="font-size:12px;color:var(--text3)">3 active groups</p></div>
+<div class="tab-bar"><div class="tab active">Groups</div><div class="tab">Invites</div><div class="tab">Profile</div></div>
+</div></div></div>
+<div class="screen-col">
+<p class="screen-label">2. Create group</p>
+<div class="screen-wrap"><div class="phone">
+<div class="nav"><span style="font-size:14px;color:var(--text2)">Cancel</span><span class="nav-title">New group</span><span style="width:48px"></span></div>
+<div style="padding:20px 16px 8px;text-align:center"><div style="width:64px;height:64px;border-radius:var(--radius-lg);background:var(--bg2);border:0.5px dashed var(--border);margin:0 auto 8px;display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--text3)">+</div><p style="font-size:11px;color:var(--text3)">Add group photo</p></div>
+<div class="form-group"><label class="form-label">Group name</label><input class="form-input" value="Hindi practice"><p class="form-hint">3 to 100 characters</p></div>
+<div class="form-group"><label class="form-label">Description</label><textarea class="form-input">Practice conversational Hindi together. All levels welcome.</textarea><p class="form-hint">Up to 500 characters</p></div>
+<div style="padding:8px 16px"><p style="font-size:12px;color:var(--text2)">You will be the group owner.</p><p style="font-size:11px;color:var(--text3)">Group names and descriptions are reviewed for content safety.</p></div>
+<div class="form-actions"><button class="btn-sm btn-primary" style="width:100%">Create group</button></div>
+<div style="height:16px"></div>
+</div></div></div>
+</div>
+<div class="screens">
+<div class="screen-col">
+<p class="screen-label">3. Group detail</p>
+<div class="screen-wrap"><div class="phone">
+<div class="nav"><span style="font-size:14px;color:var(--info)">Back</span><span class="nav-title">Study buddies</span><span style="font-size:14px;color:var(--text2)">Edit</span></div>
+<div class="group-header">
+<div style="width:56px;height:56px;border-radius:var(--radius-lg);background:var(--info-bg);color:var(--info);display:flex;align-items:center;justify-content:center;font-weight:500;font-size:18px;margin:0 auto 8px">SB</div>
+<p style="font-size:15px;font-weight:500">Study buddies</p><p style="font-size:12px;color:var(--text2);margin:4px 0 0">Practice languages together</p>
+<div style="display:flex;justify-content:center;gap:24px;margin-top:12px"><div class="stat"><p class="stat-num">5</p><p class="stat-label">Members</p></div><div class="stat"><p class="stat-num">Active</p><p class="stat-label">Status</p></div></div>
+<div style="display:flex;gap:8px;justify-content:center;margin-top:12px"><button class="btn-sm btn-primary">Invite</button><button class="btn-sm btn-danger">Leave group</button></div>
+</div>
+<p class="section-head">Members</p>
+<div class="member-row"><div class="avatar avatar-round" style="background:var(--info-bg);color:var(--info)">AS</div><div style="flex:1"><p style="font-size:13px;font-weight:500">Alice S.</p><p style="font-size:11px;color:var(--text3)">Joined Apr 20</p></div><span class="badge" style="background:var(--info-bg);color:var(--info)">Owner</span></div>
+<div class="member-row"><div class="avatar avatar-round" style="background:var(--purple-bg);color:var(--purple)">BK</div><div style="flex:1"><p style="font-size:13px;font-weight:500">Bob K.</p><p style="font-size:11px;color:var(--text3)">Joined Apr 22</p></div><span class="badge" style="background:var(--bg2);color:var(--text2)">Member</span></div>
+<div class="member-row"><div class="avatar avatar-round" style="background:var(--teal-bg);color:var(--teal)">CM</div><div style="flex:1"><p style="font-size:13px;font-weight:500">Carol M.</p><p style="font-size:11px;color:var(--text3)">Joined Apr 25</p></div><span class="badge" style="background:var(--bg2);color:var(--text2)">Member</span></div>
+<div class="member-row"><div class="avatar avatar-round" style="background:var(--amber-bg);color:var(--amber)">DW</div><div style="flex:1"><p style="font-size:13px;font-weight:500">Dave W.</p><p style="font-size:11px;color:var(--text3)">Joined Apr 26</p></div><span class="badge" style="background:var(--purple-bg);color:var(--purple)">Admin</span></div>
+<div class="member-row"><div class="avatar avatar-round" style="background:var(--coral-bg);color:var(--coral)">EP</div><div style="flex:1"><p style="font-size:13px;font-weight:500">Eve P.</p><p style="font-size:11px;color:var(--text3)">Joined Apr 28</p></div><span class="badge" style="background:var(--bg2);color:var(--text2)">Member</span></div>
+</div></div></div>
+<div class="screen-col">
+<p class="screen-label">4. My invitations</p>
+<div class="screen-wrap"><div class="phone">
+<div class="nav"><span class="nav-title">Invitations</span><span style="font-size:13px;color:var(--text2)">2 pending</span></div>
+<p class="section-head">Pending</p>
+<div class="invite-card"><div style="display:flex;align-items:center;gap:10px"><div class="avatar avatar-round" style="background:var(--purple-bg);color:var(--purple)">ML</div><div style="flex:1"><p style="font-size:14px;font-weight:500">Music lovers</p><p style="font-size:12px;color:var(--text2)">Invited by Sarah T.</p><p style="font-size:11px;color:var(--text3)">12 members</p></div></div><div class="invite-actions"><button class="btn-sm btn-success" style="flex:1">Accept</button><button class="btn-sm btn-danger" style="flex:1">Decline</button></div></div>
+<div class="invite-card"><div style="display:flex;align-items:center;gap:10px"><div class="avatar avatar-round" style="background:var(--teal-bg);color:var(--teal)">LC</div><div style="flex:1"><p style="font-size:14px;font-weight:500">Language club</p><p style="font-size:12px;color:var(--text2)">Invited by Mike R.</p><p style="font-size:11px;color:var(--text3)">6 members</p></div></div><div class="invite-actions"><button class="btn-sm btn-success" style="flex:1">Accept</button><button class="btn-sm btn-danger" style="flex:1">Decline</button></div></div>
+<p class="section-head">Recent</p>
+<div class="invite-card" style="opacity:0.6"><div style="display:flex;align-items:center;gap:10px"><div class="avatar avatar-round" style="background:var(--bg2);color:var(--text2)">TN</div><div style="flex:1"><p style="font-size:14px;font-weight:500">Trivia night</p><p style="font-size:12px;color:var(--text2)">Invited by Alex B.</p></div><span class="badge" style="background:var(--success-bg);color:var(--success)">Accepted</span></div></div>
+<div class="invite-card" style="opacity:0.6"><div style="display:flex;align-items:center;gap:10px"><div class="avatar avatar-round" style="background:var(--bg2);color:var(--text2)">BC</div><div style="flex:1"><p style="font-size:14px;font-weight:500">Book club</p><p style="font-size:12px;color:var(--text2)">Invited by Jane L.</p></div><span class="badge" style="background:var(--danger-bg);color:var(--danger)">Declined</span></div></div>
+</div></div></div>
+</div>
+
+<p class="section-title">Admin screens</p>
+<div class="admin">
+<div class="admin-nav"><div class="admin-tab">General</div><div class="admin-tab active">Social</div><div class="admin-tab">Safety</div><div class="admin-tab">Agents</div></div>
+<div class="admin-body">
+<p class="screen-label" style="text-align:left;margin-bottom:16px">5. Social settings</p>
+<div class="config-section"><p class="config-title">Group limits</p>
+<div class="config-row"><div><p class="config-label">Minimum name length</p><p class="config-hint">Shortest allowed group name</p></div><input class="config-input" type="number" value="3"></div>
+<div class="config-row"><div><p class="config-label">Maximum name length</p><p class="config-hint">Longest allowed group name</p></div><input class="config-input" type="number" value="100"></div>
+<div class="config-row"><div><p class="config-label">Maximum description length</p><p class="config-hint">Characters allowed in group description</p></div><input class="config-input" type="number" value="500"></div></div>
+<div class="config-section"><p class="config-title">Invitations</p>
+<div class="config-row"><div><p class="config-label">Require content screening</p><p class="config-hint">Screen group names via Guardian</p></div><div class="toggle"></div></div>
+<div class="config-row"><div><p class="config-label">Invitation expiry (days)</p><p class="config-hint">Auto-expire pending invitations</p></div><input class="config-input" type="number" value="30"></div>
+<div class="config-row"><div><p class="config-label">Allow member-to-member invites</p><p class="config-hint">If off, only owners and admins can invite</p></div><div class="toggle"></div></div></div>
+<div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn-sm">Cancel</button><button class="btn-sm btn-primary">Save changes</button></div>
+</div></div>
+
+<div class="admin">
+<div class="admin-nav"><div class="admin-tab">General</div><div class="admin-tab">Social</div><div class="admin-tab active">Safety</div><div class="admin-tab">Agents</div></div>
+<div class="admin-body">
+<p class="screen-label" style="text-align:left;margin-bottom:16px">6. Content safety</p>
+<div class="config-section"><p class="config-title">Content screening pipeline</p>
+<div class="config-row"><div><p class="config-label">Blocklist pre-screen (layer 1)</p><p class="config-hint">Zero-cost pattern matching before classifier runs</p></div><div class="toggle"></div></div>
+<div class="config-row"><div><p class="config-label">LLM classifier (layer 2)</p><p class="config-hint">AI-powered content classification via orchestrator</p></div><div class="toggle"></div></div>
+<div class="config-row"><div><p class="config-label">Guardian agent (layer 3)</p><p class="config-hint">Context-aware screening with trajectory recording</p></div><div class="toggle"></div></div>
+<div class="config-row"><div><p class="config-label">Screen AI-generated output</p><p class="config-hint">Apply safety pipeline to AI responses (ADR-017)</p></div><div class="toggle"></div></div></div>
+<div class="config-section"><p class="config-title">Content rating tiers (COPPA)</p>
+<div class="tier-grid">
+<div class="tier-card"><p class="tier-label" style="color:var(--danger)">Level 1 — under 13</p><div class="tier-row"><span class="tier-row-label">Block at</span><span class="tier-row-val">Low</span></div><div class="tier-row"><span class="tier-row-label">Warn at</span><span class="tier-row-val">Low</span></div><div class="tier-row"><span class="tier-row-label">Escalate below</span><span class="tier-row-val">0.90</span></div></div>
+<div class="tier-card"><p class="tier-label" style="color:var(--warn)">Level 2 — age 13-17</p><div class="tier-row"><span class="tier-row-label">Block at</span><span class="tier-row-val">Medium</span></div><div class="tier-row"><span class="tier-row-label">Warn at</span><span class="tier-row-val">Low</span></div><div class="tier-row"><span class="tier-row-label">Escalate below</span><span class="tier-row-val">0.80</span></div></div>
+<div class="tier-card"><p class="tier-label" style="color:var(--success)">Level 3 — adult 18+</p><div class="tier-row"><span class="tier-row-label">Block at</span><span class="tier-row-val">High</span></div><div class="tier-row"><span class="tier-row-label">Warn at</span><span class="tier-row-val">Medium</span></div><div class="tier-row"><span class="tier-row-label">Escalate below</span><span class="tier-row-val">0.70</span></div></div>
+</div></div>
+<div class="config-section"><p class="config-title">Consequence ladder</p>
+<div class="ladder">
+<div class="ladder-step" style="height:40px;background:var(--success-bg);color:var(--success)">Warning<br><span style="font-weight:500">1 strike</span></div>
+<div class="ladder-step" style="height:56px;background:var(--warn-bg);color:var(--warn)">Restrict<br><span style="font-weight:500">3 strikes</span></div>
+<div class="ladder-step" style="height:72px;background:var(--danger-bg);color:var(--danger)">Suspend<br><span style="font-weight:500">5 strikes</span></div>
+<div class="ladder-step" style="height:88px;background:var(--danger-bg);color:var(--danger)">Ban<br><span style="font-weight:500">Severe or 7+</span></div>
+</div></div>
+<div class="config-section"><p class="config-title">Strike settings</p>
+<div class="config-row"><div><p class="config-label">Strike expiry (days)</p><p class="config-hint">Strikes older than this are no longer active</p></div><input class="config-input" type="number" value="90"></div>
+<div class="config-row"><div><p class="config-label">Restriction duration (hours)</p><p class="config-hint">How long a restricted account stays read-only</p></div><input class="config-input" type="number" value="24"></div>
+<div class="config-row"><div><p class="config-label">Suspension duration (hours)</p><p class="config-hint">How long before a suspended account can return</p></div><input class="config-input" type="number" value="168"></div>
+<div class="config-row"><div><p class="config-label">Ban requires human review</p><p class="config-hint">Bans cannot be lifted without manual admin action</p></div><div class="toggle"></div></div></div>
+<div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn-sm">Cancel</button><button class="btn-sm btn-primary">Save changes</button></div>
+</div></div>
+
+<div class="admin">
+<div class="admin-nav"><div class="admin-tab">General</div><div class="admin-tab">Social</div><div class="admin-tab">Safety</div><div class="admin-tab active">Agents</div></div>
+<div class="admin-body">
+<p class="screen-label" style="text-align:left;margin-bottom:16px">7. Agent dashboard</p>
+<div class="metric-bar"><div class="metric"><p class="metric-num">6</p><p class="metric-label">Registered</p></div><div class="metric"><p class="metric-num">0</p><p class="metric-label">Active now</p></div><div class="metric"><p class="metric-num">$0.00</p><p class="metric-label">Cost today</p></div><div class="metric"><p class="metric-num">0</p><p class="metric-label">Trajectories</p></div></div>
+<p class="config-title">Social agents</p>
+<div class="agent-grid">
+<div class="agent-card"><p class="agent-name"><span class="dot"></span>Guardian</p><p class="agent-role">Content safety</p><div class="agent-stat"><span class="agent-stat-label">Status</span><span class="agent-stat-val" style="color:var(--text3)">Registered</span></div><div class="agent-stat"><span class="agent-stat-label">Budget</span><span class="agent-stat-val">$5.00/day</span></div><div class="agent-stat"><span class="agent-stat-label">Runs</span><span class="agent-stat-val">0</span></div></div>
+<div class="agent-card"><p class="agent-name"><span class="dot"></span>Matchmaker</p><p class="agent-role">Group discovery</p><div class="agent-stat"><span class="agent-stat-label">Status</span><span class="agent-stat-val" style="color:var(--text3)">Registered</span></div><div class="agent-stat"><span class="agent-stat-label">Budget</span><span class="agent-stat-val">$5.00/day</span></div><div class="agent-stat"><span class="agent-stat-label">Runs</span><span class="agent-stat-val">0</span></div></div>
+<div class="agent-card"><p class="agent-name"><span class="dot"></span>Gatekeeper</p><p class="agent-role">Join evaluation</p><div class="agent-stat"><span class="agent-stat-label">Status</span><span class="agent-stat-val" style="color:var(--text3)">Registered</span></div><div class="agent-stat"><span class="agent-stat-label">Budget</span><span class="agent-stat-val">$5.00/day</span></div><div class="agent-stat"><span class="agent-stat-label">Runs</span><span class="agent-stat-val">0</span></div></div>
+<div class="agent-card"><p class="agent-name"><span class="dot"></span>Concierge</p><p class="agent-role">Onboarding</p><div class="agent-stat"><span class="agent-stat-label">Status</span><span class="agent-stat-val" style="color:var(--text3)">Registered</span></div><div class="agent-stat"><span class="agent-stat-label">Budget</span><span class="agent-stat-val">$5.00/day</span></div><div class="agent-stat"><span class="agent-stat-label">Runs</span><span class="agent-stat-val">0</span></div></div>
+<div class="agent-card"><p class="agent-name"><span class="dot"></span>Analyst</p><p class="agent-role">Group health</p><div class="agent-stat"><span class="agent-stat-label">Status</span><span class="agent-stat-val" style="color:var(--text3)">Registered</span></div><div class="agent-stat"><span class="agent-stat-label">Budget</span><span class="agent-stat-val">$5.00/day</span></div><div class="agent-stat"><span class="agent-stat-label">Runs</span><span class="agent-stat-val">0</span></div></div>
+<div class="agent-card"><p class="agent-name"><span class="dot"></span>Curator</p><p class="agent-role">Content digests</p><div class="agent-stat"><span class="agent-stat-label">Status</span><span class="agent-stat-val" style="color:var(--text3)">Registered</span></div><div class="agent-stat"><span class="agent-stat-label">Budget</span><span class="agent-stat-val">$5.00/day</span></div><div class="agent-stat"><span class="agent-stat-label">Runs</span><span class="agent-stat-val">0</span></div></div>
+</div>
+<p style="font-size:11px;color:var(--text3);margin:12px 0 0;text-align:center">All agents registered but not yet activated (Sprint 4b)</p>
+</div></div>
+
+<div class="footer">Datankare Confidential — Platform Foundation — Sprint 4a — April 29, 2026</div>
+</body>
+</html>
