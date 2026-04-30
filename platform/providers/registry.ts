@@ -26,6 +26,7 @@
  *   SONG_ID_PROVIDER      = "acrcloud" | "mock"   (default: "mock")
  *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
  *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
+   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
  *
  * @module platform/providers
  */
@@ -35,6 +36,11 @@ import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { createCognitoAuthProvider } from "@/platform/auth/cognito-provider";
 import { resetCache } from "@/platform/cache";
 import { SupabaseModerationStore, setModerationStore } from "@/platform/moderation/store";
+import {
+  setSocialStore,
+  InMemorySocialStore,
+  SupabaseSocialStore,
+} from "@/platform/social";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +58,7 @@ export type STTProviderType = "google" | "mock";
 export type SongIdProviderType = "acrcloud" | "mock";
 export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
 export type ModerationStoreType = "supabase" | "memory";
+export type SocialStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -65,6 +72,7 @@ export interface ProviderSelections {
   songId: SongIdProviderType;
   audioConverter: AudioConverterType;
   moderationStore: ModerationStoreType;
+  socialStore: SocialStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +94,7 @@ function getProviderSelections(): ProviderSelections {
     songId: (process.env.SONG_ID_PROVIDER as SongIdProviderType) ?? "mock",
     audioConverter: (process.env.AUDIO_CONVERTER as AudioConverterType) ?? "mock",
     moderationStore: (process.env.MODERATION_STORE as ModerationStoreType) ?? "memory",
+    socialStore: (process.env.SOCIAL_STORE as SocialStoreType) ?? "memory",
   };
 }
 
@@ -256,6 +265,26 @@ function initModerationStore(type: ModerationStoreType): void {
   }
 }
 
+function initSocialStore(type: SocialStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    if (!url || !key) {
+      logger.warn(
+        "SOCIAL_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
+      );
+      setSocialStore(new InMemorySocialStore());
+      return;
+    }
+
+    setSocialStore(new SupabaseSocialStore(url, key));
+    return;
+  }
+
+  setSocialStore(new InMemorySocialStore());
+}
+
 // ---------------------------------------------------------------------------
 // Central init
 // ---------------------------------------------------------------------------
@@ -282,6 +311,7 @@ export function initProviders(): ProviderSelections {
   initSongIdProvider(selections.songId);
   initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
+  initSocialStore(selections.socialStore);
 
   initialized = true;
 
@@ -297,6 +327,7 @@ export function initProviders(): ProviderSelections {
     songId: selections.songId,
     audioConverter: selections.audioConverter,
     moderationStore: selections.moderationStore,
+    socialStore: selections.socialStore,
   });
 
   return selections;

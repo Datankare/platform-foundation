@@ -155,6 +155,20 @@ export const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
   maxStepsPerTrajectory: 20,
 };
 
+// ── Effort Tier (P12) ──────────────────────────────────────────────────
+
+/**
+ * Effort tier for agent LLM calls.
+ *
+ * Controls how much thinking budget an agent gets per step.
+ * "low" for clear signals, "standard" for typical decisions,
+ * "max" for ambiguous or high-stakes evaluations.
+ *
+ * Informed by Rezvani 2026 "/powerup" analysis: not every
+ * classification needs Opus-max tokens.
+ */
+export type EffortTier = "low" | "standard" | "max";
+
 // ── Agent Config (P2) ─────────────────────────────────────────────────
 
 /**
@@ -175,6 +189,8 @@ export interface AgentConfig {
   readonly tools: readonly Tool[];
   /** Budget constraints */
   readonly budgetConfig: BudgetConfig;
+  /** Effort tier for LLM calls (P12) — defaults to "standard" */
+  readonly effortTier?: EffortTier;
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────

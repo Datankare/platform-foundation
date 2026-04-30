@@ -263,4 +263,20 @@ platform/input/
 
 ---
 
-_Last updated: April 24, 2026 (Sprint 3b — Sentinel agent added to roster)_
+## Sprint 4b delivery notes
+
+### Social agents — intentional structural similarity
+
+All 5 social agent workflows (matchmaker, gatekeeper, concierge, analyst, curator) follow the same 2-step pattern: Step 0 gathers context (rule-based, zero cost), Step 1 calls the LLM. This is intentional — each agent will diverge as multi-step reasoning, tool use, and memory are added in later sprints. The shared pattern makes the current behavior predictable and testable while preserving room for independent evolution.
+
+### Input agent swap
+
+AgentClassifier and AgentIntentResolver implement the existing InputClassifier and IntentResolver interfaces. The DefaultInputConductor accepts both via constructor injection — no conductor code changed. Non-mic events bypass the LLM entirely (delegated to rule-based fallback). Both agent implementations fall back to their rule-based counterparts on any LLM error (P11).
+
+### scopeKey bug fix
+
+Sprint 4a shipped a precedence bug: `(scopeId ?? scopeType === "platform")` evaluated as `(scopeId ?? (scopeType === "platform"))` due to `??` being lower precedence than `===`. This caused all scoped agent runs to use `"platform"` as their budget scope key, defeating per-group budget tracking. Fixed to `scopeId ?? scopeType`.
+
+---
+
+_Last updated: April 30, 2026 (Sprint 4b — 5 social agents + input agent swap delivered, scopeKey bug fixed)_
