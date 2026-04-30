@@ -38,6 +38,19 @@ export function registerAuthProvider(provider: AuthProvider): void {
  */
 export function getAuthProvider(): AuthProvider {
   if (!registeredProvider) {
+    // Lazy initialization: Next.js production builds may isolate
+    // instrumentation.ts and route handler module contexts (Gotcha 43).
+    // If initProviders() ran in a different context, the singleton
+    // is null here. Re-initialize to fix module isolation.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { initProviders } = require("@/platform/providers");
+      initProviders();
+    } catch {
+      // initProviders not available
+    }
+  }
+  if (!registeredProvider) {
     throw new Error(
       "No auth provider registered. Call registerAuthProvider() at app startup. " +
         "See platform/auth/AUTH_INTEGRATION_GUIDE.md for setup instructions."

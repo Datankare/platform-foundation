@@ -29,7 +29,7 @@ import type {
   TokenPayload,
 } from "@/platform/auth/types";
 
-const MOCK_USER_ID = "mock-user-001";
+const MOCK_USER_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const MOCK_EMAIL = "test@example.com";
 const MOCK_ACCESS_TOKEN = "mock-access-token";
 const MOCK_REFRESH_TOKEN = "mock-refresh-token";
