@@ -31,6 +31,7 @@ export { SupabaseSocialStore } from "./supabase-social-store";
 export { GroupService, GROUP_LIMITS } from "./group-service";
 export type { ScreenContentFn } from "./group-service";
 export { InviteService } from "./invite-service";
+export { createGuardianScreenFn } from "./guardian-adapter";
 
 // ---------------------------------------------------------------------------
 // Store singleton

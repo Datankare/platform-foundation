@@ -12,7 +12,7 @@
 export type { AgentIdentity } from "./types";
 export type { Trajectory, Step, TrajectoryStatus, StepBoundary } from "./types";
 export type { Tool } from "./types";
-export type { BudgetConfig, AgentConfig } from "./types";
+export type { BudgetConfig, AgentConfig, EffortTier } from "./types";
 export { DEFAULT_BUDGET_CONFIG } from "./types";
 
 // ── Utilities ─────────────────────────────────────────────────────────
@@ -70,3 +70,7 @@ export type {
   ExecutionResult,
 } from "./runtime";
 export { executeAgent } from "./runtime";
+
+// ── Agent Configs (Sprint 4b) ───────────────────────────────────────
+
+export { AGENT_CONFIGS, registerPlatformAgents } from "./agent-configs";
