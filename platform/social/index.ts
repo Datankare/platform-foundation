@@ -33,6 +33,22 @@ export type { ScreenContentFn } from "./group-service";
 export { InviteService } from "./invite-service";
 export { createGuardianScreenFn } from "./guardian-adapter";
 
+// Social agents (Sprint 4b)
+export {
+  createMatchmakerWorkflow,
+  createGatekeeperWorkflow,
+  createConciergeWorkflow,
+  createAnalystWorkflow,
+  createCuratorWorkflow,
+} from "./agents";
+export type {
+  MatchmakerResult,
+  GatekeeperResult,
+  ConciergeResult,
+  AnalystResult,
+  CuratorResult,
+} from "./agents";
+
 // ---------------------------------------------------------------------------
 // Store singleton
 // ---------------------------------------------------------------------------

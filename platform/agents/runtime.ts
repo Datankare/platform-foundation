@@ -125,7 +125,7 @@ export async function executeAgent(
     };
   }
 
-  const scopeKey = (scopeId ?? scopeType === "platform") ? "platform" : scopeType;
+  const scopeKey = scopeId ?? scopeType;
 
   // ── Create trajectory ───────────────────────────────────────────
   const record = await trajectoryStore.create(agentId, trigger, scopeType, scopeId);

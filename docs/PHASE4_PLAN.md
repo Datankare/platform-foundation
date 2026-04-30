@@ -186,9 +186,9 @@
 
 | Repo                | Floor  |
 | ------------------- | ------ |
-| Platform-Foundation | 86.47% |
+| Platform-Foundation | 86.83% |
 | Playform            | 86.03% |
 
 ---
 
-_Last updated: April 29, 2026 (Sprint 4a complete — social data model, agent runtime, SupabaseSocialStore)_
+_Last updated: April 30, 2026 (Sprint 4b complete — 5 social agents, input agent swap, 107 suites, 1683 tests, 86.83% coverage)_

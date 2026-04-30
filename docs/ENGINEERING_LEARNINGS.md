@@ -383,4 +383,12 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 ---
 
-_Last updated: April 26, 2026 (Sprint 3d — Gotcha 41 added: no copy-paste mocks)_
+**48. After file placement + format, read exact content before next edit.** Prettier may collapse multi-line imports to single-line. Match patterns constructed from memory or the original file content will fail. Use `cat -n file | sed -n 'Xp'` to capture the exact current content. Sprint 4b had a fix script fail because Prettier collapsed a multi-line import pattern.
+
+**49. Read exact function/property values before asserting in tests.** `DefaultIntentResolver.name` is `"default"`, not `"rule-based"`. `RuleBasedClassifier.name` is `"rule-based"`. Don't assume by analogy — `grep "name" file.ts` before writing expect(). Sprint 4b had a test failure from assuming resolvedBy would be "rule-based" when it was "default".
+
+**50. Verify target directories exist before writing files.** `platform/input/` exists but `platform/input/__tests__/` may not. A heredoc to a nonexistent directory silently fails in zsh with no error on the `cat >` line — only later when the file is referenced. Always `mkdir -p` the exact target directory, not just the parent.
+
+**51. Operator precedence: `??` is lower than `===`.** `(a ?? b === c)` evaluates as `(a ?? (b === c))`, not `((a ?? b) === c)`. Sprint 4b found a pre-existing bug where `(scopeId ?? scopeType === "platform")` always yielded `"platform"` when scopeId was defined, defeating per-group budget tracking. Always parenthesize mixed `??` and comparison operators.
+
+_Last updated: April 30, 2026 (Sprint 4b — Gotchas 48-51 added)_

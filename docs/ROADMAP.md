@@ -536,4 +536,6 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 4.2.0 | 2026-04-25 | Raman Sud | Sprint 3c catch-up. TASK-026 closed (ACRCloud rotation to paid project). SECURITY_DEBT.md scope narrowed to security-only; non-security tasks migrated to new TASKS.md. New ROTATION_RUNBOOK.md. Gotchas 38–40 added to ENGINEERING_LEARNINGS. platform/voice/GOTCHAS.md added (L17). 7 follow-up TASKs filed (038–044). |
 
-_Last updated: April 25, 2026 (Sprint 3c — changelog 4.2.0)_
+| 4.3.0 | 2026-04-30 | Raman Sud | Sprint 4b complete. 5 social agent workflows (matchmaker, gatekeeper, concierge, analyst, curator) with versioned prompts. AgentClassifier + AgentIntentResolver (LLM-backed with P11 fallback) swap rule-based impls via conductor DI. scopeKey precedence bug fixed in runtime. 107 suites, 1683 tests, 86.83% coverage. |
+
+_Last updated: April 30, 2026 (Sprint 4b — social agents + input agent swap, changelog 4.3.0)_
