@@ -186,9 +186,9 @@
 
 | Repo                | Floor  |
 | ------------------- | ------ |
-| Platform-Foundation | 82.54% |
+| Platform-Foundation | 86.83% |
 | Playform            | 86.03% |
 
 ---
 
-_Last updated: April 27, 2026 (Sprint 3d complete — profile screening, account-status guard, auth pipeline)_
+_Last updated: April 30, 2026 (Sprint 4b complete — 5 social agents, input agent swap, 107 suites, 1683 tests, 86.83% coverage)_

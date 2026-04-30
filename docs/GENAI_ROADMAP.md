@@ -185,5 +185,8 @@ If any statement is false at launch, GenAI-native is incomplete.
 | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.                                                                  |
 
 | 2026-04-27 | Raman Sud | Sprint 3c/3d. Song-ID duration config (P13). Health probe wired (P3). Profile field screening through Guardian (P4). Account-status guard (P4, P11). Auth on all routes. authFetch wrapper. 4 agents active (Guardian, Config Manager, Sentinel + health probe adapter). |
+| 2026-04-29 | Raman Sud | Sprint 4a. Social data model (groups, memberships, invites). Agent runtime (registry, tools, trajectory store, budget tracker, execution engine). 12 provider slots. ADR-021, ADR-022. Coverage 86.47%. |
 
-_Last updated: April 27, 2026 (Sprint 3d close — profile screening, account-status guard, auth pipeline)_
+| 2026-04-30 | Raman Sud | Sprint 4b. 5 social agent workflows (matchmaker, gatekeeper, concierge, analyst, curator) with versioned prompts. AgentClassifier + AgentIntentResolver swap rule-based impls via conductor DI. 7 prompt files, all with sanitizeForPrompt + fail-closed parsing. 16/18 GenAI principles active (P14 deferred to Phase 7, P16 schema-ready with optional previous-result fields). |
+
+_Last updated: April 30, 2026 (Sprint 4b — social agents + input agent swap, 16/18 principles active)_

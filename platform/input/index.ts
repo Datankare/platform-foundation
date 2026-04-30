@@ -26,9 +26,15 @@ export type {
 export type { InputClassifier } from "./classifier";
 export { RuleBasedClassifier, classificationToMode } from "./classifier";
 
+// Agent classifier (Sprint 4b)
+export { AgentClassifier } from "./agent-classifier";
+
 // Intent resolver
 export type { IntentResolver, IntentContext } from "./intent";
 export { DefaultIntentResolver } from "./intent";
+
+// Agent intent resolver (Sprint 4b)
+export { AgentIntentResolver } from "./agent-intent";
 
 // Conductor
 export type { InputConductor } from "./conductor";
