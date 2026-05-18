@@ -10,5 +10,6 @@ export type {
   AIProviderType,
   ErrorReporterType,
   ModerationStoreType,
+  EmbeddingProviderType,
   ProviderSelections,
 } from "./registry";

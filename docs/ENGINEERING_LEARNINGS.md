@@ -331,6 +331,27 @@ The root cause: every verification in the quality gate operates on code structur
 
 **Standing rule:** When adding a new persistence write, classify it: is it a side effect (fire-and-forget OK) or the primary function (must await and surface)? Document the classification in the JSDoc.
 
+### L20: Mid-Session Context Checkpoint
+
+**Source:** Phase 4, Sprint 5 -- Article review: Yazidi 2026 "14 Commands" (May 2026).
+
+**Problem it fixes:** Error rates climb in the back half of long sessions. Context pressure builds, earlier file reads go stale, and pre-flight rigor relaxes precisely when it should tighten. The Claude Code /cost command gives CLI users a "fuel gauge" for context consumption. Our Claude.ai workflow has no equivalent checkpoint.
+
+**The insight:** Claude Code's /compact (context compression) and /cost (context fuel gauge) solve the same problem we solve with handoff documents -- but within a single session. Our between-session discipline is strong (additive handoffs, pre-flight checklists). Our within-session discipline relies on L14's note that pre-flight "applies with MORE rigor late in long sessions," but this is aspirational without a concrete trigger.
+
+**The rule:** After every 3 committed features within a single session, pause and:
+
+1. Re-read the standing rules (Section 9 of the handoff).
+2. Run the full quality gate (format, typecheck, lint, test, coverage).
+3. Verify coverage has not dropped below the floor.
+4. For the next file, apply L14-STRICT even if you think you remember the signatures.
+
+This is the in-session equivalent of the between-session pre-flight checklist.
+
+**How we adopted it:** Added as standing rule. First applied in Sprint 5 (3+ features in a single session building RAG pipeline).
+
+**Standing rule:** After 3 committed features in one session, run the mid-session checkpoint before continuing.
+
 ---
 
 ### Workflow Gotchas (32–41) — Phase 4 + Sprint 3c/3d Session Scar Tissue
@@ -368,6 +389,23 @@ _Entries here are interesting but haven't passed the "changes how we build" test
 
 <!-- Add future candidates here with source link + one sentence on why it might matter -->
 
+### Yazidi 2026 "14 Commands" -- Validated by Existing Practices
+
+The article describes 14 Claude Code CLI commands for productivity. Our Claude.ai workflow already covers every concept, often more rigorously:
+
+| Article concept                    | Our equivalent                                                    | Assessment                                         |
+| ---------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
+| /init (auto-generate project docs) | Pre-flight checklist + additive handoff documents                 | Ours is more structured                            |
+| /memory (persistent preferences)   | userMemories + standing rules in handoff                          | Ours persists across sessions with full context    |
+| /compact (context compression)     | Additive handoff documents between sessions                       | Ours is more thorough -- full state reconstruction |
+| /cost (context fuel gauge)         | **Gap identified** -- adopted as L20 mid-session checkpoint       | New rule added                                     |
+| /review (systematic code review)   | L15 adversarial review (3 personas: Saboteur, New Hire, Security) | Ours is more rigorous                              |
+| ! (run shell inline)               | Batched commands pasted by engineer                               | Different model, same intent                       |
+| /model (switch models)             | Not applicable -- single model in Claude.ai                       | N/A                                                |
+| /pr_comments (load PR context)     | PR titles/descriptions provided before every merge                | Same intent                                        |
+
+**Verdict:** 1 of 14 concepts produced a new practice (L20). The remaining 13 validate existing workflow. No further action needed.
+
 ---
 
 ## Reading Queue
@@ -380,6 +418,7 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 | 2026-03-26 | [The Agent-Native Rewrite](https://thesequence.substack.com/) (Rodriguez, Opinion #840)                                                     | Agent-native architecture vs bolt-on    | ✅ Processed → L5, P15-P18                                                                                    |
 | 2026-04-18 | [Claude Code Skills Field Report](https://alirezarezvani.medium.com) (Rezvani)                                                              | Skills at small-team scale              | ✅ Processed → L15, L16, L17                                                                                  |
 | 2026-04-19 | [Claude Code /powerup: 10 Built-In Lessons](https://alirezarezvani.medium.com) (Rezvani)                                                    | In-tool discoverability, effort tiers   | ✅ Noted → PHASE4_PLAN (4b effort tier), AGENT_ARCHITECTURE (Concierge UI constraint), AdaptiveInput tooltips |
+| 2026-05-18 | [14 Commands That Changed Everything](https://medium.com) (Yazidi)                                                                          | Claude Code CLI productivity commands   | Processed: L20 (mid-session checkpoint); 13/14 validated by existing practices                                |
 
 ---
 
@@ -391,4 +430,8 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 **51. Operator precedence: `??` is lower than `===`.** `(a ?? b === c)` evaluates as `(a ?? (b === c))`, not `((a ?? b) === c)`. Sprint 4b found a pre-existing bug where `(scopeId ?? scopeType === "platform")` always yielded `"platform"` when scopeId was defined, defeating per-group budget tracking. Always parenthesize mixed `??` and comparison operators.
 
-_Last updated: April 30, 2026 (Sprint 4b — Gotchas 48-51 added)_
+**52. Never modify a PF-synced file in a consumer repo.** Fix in PF first OR add to sync excludes in same commit. Sprint close must verify. (Elevated from Sprint 4c error -- see handoff.)
+
+**53. Display-layer corruption of method calls.** When pasting terminal output through chat interfaces, method calls like .map( get auto-linked as markdown URLs. The file on disk may be correct even when the displayed output looks corrupted. Always verify with `od -c` or `cat -A`, never visual inspection alone. Sprint 5 had 3 false-alarm cycles before od confirmed files were clean.
+
+_Last updated: May 18, 2026 (Sprint 5 — L20 added, Gotchas 52-53 added, Yazidi article processed)_
