@@ -6,6 +6,11 @@
  */
 
 import { InMemoryEmbeddingStore } from "../memory-embedding-store";
+
+jest.mock("@/lib/logger", () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  generateRequestId: jest.fn(() => "test-request-id"),
+}));
 import type { Chunk } from "../types";
 
 function makeChunk(id: string, docId = "doc-1", content = "test"): Chunk {
@@ -116,6 +121,15 @@ describe("InMemoryEmbeddingStore", () => {
       });
       expect(results).toHaveLength(1);
       expect(results[0].chunk.id).toBe("ca");
+    });
+  });
+
+  describe("dimension mismatch", () => {
+    it("returns empty and warns on dimension mismatch", async () => {
+      await store.upsert("c1", normalizedVector(dims, 1), makeChunk("c1"));
+      const wrongDims = normalizedVector(16, 1);
+      const results = await store.search(wrongDims, 5, 0);
+      expect(results).toEqual([]);
     });
   });
 

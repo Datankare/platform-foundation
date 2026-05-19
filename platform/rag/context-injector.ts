@@ -25,6 +25,8 @@ export interface InjectionResult {
   readonly chunksIncluded: number;
   /** Total characters of chunk content included */
   readonly contentChars: number;
+  /** Characters consumed by sanitization wrapping (not content) */
+  readonly sanitizationOverhead: number;
   /** Chunk IDs that were included */
   readonly includedChunkIds: readonly string[];
 }
@@ -48,6 +50,7 @@ export function buildContextBlock(
       contextBlock: "",
       chunksIncluded: 0,
       contentChars: 0,
+      sanitizationOverhead: 0,
       includedChunkIds: [],
     };
   }
@@ -60,6 +63,7 @@ export function buildContextBlock(
       contextBlock: "",
       chunksIncluded: 0,
       contentChars: 0,
+      sanitizationOverhead: 0,
       includedChunkIds: [],
     };
   }
@@ -67,6 +71,7 @@ export function buildContextBlock(
   const parts: string[] = [];
   const includedIds: string[] = [];
   let usedChars = 0;
+  let rawChars = 0;
 
   for (const result of results) {
     const sanitized = sanitizeForPrompt(result.chunk.content);
@@ -77,6 +82,7 @@ export function buildContextBlock(
 
     parts.push(sanitized);
     includedIds.push(result.chunk.id);
+    rawChars += (parts.length > 1 ? 2 : 0) + result.chunk.content.length;
     usedChars += needed;
   }
 
@@ -90,6 +96,7 @@ export function buildContextBlock(
     contextBlock,
     chunksIncluded: parts.length,
     contentChars: usedChars,
+    sanitizationOverhead: usedChars - rawChars,
     includedChunkIds: includedIds,
   };
 }

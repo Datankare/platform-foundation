@@ -86,6 +86,13 @@ describe("buildContextBlock", () => {
     expect(result.contentChars).toBeGreaterThan(10);
   });
 
+  it("tracks sanitization overhead", () => {
+    const results = [makeResult("c1", "Hello")];
+    const result = buildContextBlock(results);
+    expect(result.sanitizationOverhead).toBeGreaterThan(0);
+    expect(result.contentChars).toBeGreaterThan(result.sanitizationOverhead);
+  });
+
   it("uses default config when none provided", () => {
     const results = [makeResult("c1", "Test content")];
     const result = buildContextBlock(results);

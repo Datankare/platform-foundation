@@ -99,7 +99,8 @@ export interface RetrievalQuery {
   /** Minimum similarity score (0–1) to include */
   readonly minScore: number;
   /** Optional metadata filters */
-  readonly filters?: Record<string, unknown>;
+  /** Optional metadata filters (primitive values only — prevents SQL injection in Supabase store) */
+  readonly filters?: Record<string, string | number | boolean>;
   /** ID of the user making the query (for context scoping) */
   readonly userId?: string;
 }
@@ -116,7 +117,7 @@ export const DEFAULT_RETRIEVAL_CONFIG = {
 export interface RetrievalResult {
   /** The matched chunk */
   readonly chunk: Chunk;
-  /** Similarity score (0–1, higher = more similar) */
+  /** Similarity score (0–1, higher = more similar). Clamped from raw cosine: negative similarities map to 0. */
   readonly score: number;
 }
 
@@ -233,7 +234,7 @@ export interface EmbeddingStore {
     queryEmbedding: readonly number[],
     topK: number,
     minScore: number,
-    filters?: Record<string, unknown>
+    filters?: Record<string, string | number | boolean>
   ): Promise<readonly RetrievalResult[]>;
 
   /** Delete all embeddings for a document. */

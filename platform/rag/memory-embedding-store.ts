@@ -11,6 +11,7 @@
  */
 
 import type { EmbeddingStore, Chunk, RetrievalResult } from "./types";
+import { logger } from "@/lib/logger";
 
 interface StoredEntry {
   readonly chunkId: string;
@@ -58,8 +59,19 @@ export class InMemoryEmbeddingStore implements EmbeddingStore {
     queryEmbedding: readonly number[],
     topK: number,
     minScore: number,
-    filters?: Record<string, unknown>
+    filters?: Record<string, string | number | boolean>
   ): Promise<readonly RetrievalResult[]> {
+    if (this.entries.length > 0) {
+      const storedDims = this.entries[0].embedding.length;
+      if (queryEmbedding.length !== storedDims) {
+        logger.warn("Embedding dimension mismatch", {
+          queryDimensions: queryEmbedding.length,
+          storedDimensions: storedDims,
+        });
+        return [];
+      }
+    }
+
     let candidates = this.entries;
 
     if (filters) {

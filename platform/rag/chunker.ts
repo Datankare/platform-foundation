@@ -87,6 +87,10 @@ function chunkBySlidingWindow(doc: Document, config: ChunkingConfig): readonly C
 
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
 
+// TODO: If a single sentence exceeds maxChunkSize, it is included whole.
+// This preserves semantic coherence for embeddings. If real document
+// ingestion reveals frequent oversized sentences, add sliding-window
+// fallback within sentence boundaries.
 function chunkBySentence(doc: Document, config: ChunkingConfig): readonly Chunk[] {
   const sentences = doc.content.split(SENTENCE_BOUNDARY);
   const chunks: Chunk[] = [];
