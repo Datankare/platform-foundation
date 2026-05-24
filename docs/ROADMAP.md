@@ -538,4 +538,8 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 4.3.0 | 2026-04-30 | Raman Sud | Sprint 4b complete. 5 social agent workflows (matchmaker, gatekeeper, concierge, analyst, curator) with versioned prompts. AgentClassifier + AgentIntentResolver (LLM-backed with P11 fallback) swap rule-based impls via conductor DI. scopeKey precedence bug fixed in runtime. 107 suites, 1683 tests, 86.83% coverage. |
 
-_Last updated: April 30, 2026 (Sprint 4b — social agents + input agent swap, changelog 4.3.0)_
+| 4.4.0 | 2026-04-30 | Raman Sud | Sprint 4c complete. Playform social UI: 4 components (GroupHealthBadge, GroupCard, GroupRecommendations, TeamPanel), 2 hooks (useSocialAgents, useGroupMembership), SpikeApp wiring. 127 Playform suites, 1962 tests, 89.46% coverage. Gotcha 52 (sync collision rule). |
+
+| 5.0.0 | 2026-05-18 | Raman Sud | Sprint 5 complete. RAG foundation in platform/rag/: document chunker (sliding-window + sentence), EmbeddingProvider interface (registry slot #13), InMemoryEmbeddingStore (cosine similarity), retrieval pipeline, context injector (sanitized, budget-aware), InMemoryUserContextStore (P16 cognitive memory), explainability builder. Migration 017 (pgvector tables). ADR-023. L20 (mid-session checkpoint). Gotchas 52-53. 115 suites, 1754 tests, 86.9% coverage. |
+
+_Last updated: May 18, 2026 (Sprint 5 — RAG foundation, changelog 5.0.0)_

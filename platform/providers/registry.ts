@@ -27,6 +27,7 @@
  *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
  *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
    SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
+ *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
  *
  * @module platform/providers
  */
@@ -42,6 +43,7 @@ import {
   SupabaseSocialStore,
 } from "@/platform/social";
 import { logger } from "@/lib/logger";
+import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +61,7 @@ export type SongIdProviderType = "acrcloud" | "mock";
 export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
 export type ModerationStoreType = "supabase" | "memory";
 export type SocialStoreType = "supabase" | "memory";
+export type EmbeddingProviderType = "openai" | "mock";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -73,6 +76,7 @@ export interface ProviderSelections {
   audioConverter: AudioConverterType;
   moderationStore: ModerationStoreType;
   socialStore: SocialStoreType;
+  embeddingProvider: EmbeddingProviderType;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +99,8 @@ function getProviderSelections(): ProviderSelections {
     audioConverter: (process.env.AUDIO_CONVERTER as AudioConverterType) ?? "mock",
     moderationStore: (process.env.MODERATION_STORE as ModerationStoreType) ?? "memory",
     socialStore: (process.env.SOCIAL_STORE as SocialStoreType) ?? "memory",
+    embeddingProvider:
+      (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
   };
 }
 
@@ -285,6 +291,24 @@ function initSocialStore(type: SocialStoreType): void {
   setSocialStore(new InMemorySocialStore());
 }
 
+function initEmbeddingProvider(type: EmbeddingProviderType): void {
+  if (type === "openai") {
+    const apiKey = process.env.OPENAI_API_KEY ?? "";
+    if (!apiKey) {
+      logger.warn(
+        "EMBEDDING_PROVIDER=openai but OPENAI_API_KEY missing — falling back to mock"
+      );
+      setEmbeddingProvider(createMockEmbeddingProvider());
+      return;
+    }
+    // Real OpenAI provider will be registered here in a future sprint
+    setEmbeddingProvider(createMockEmbeddingProvider());
+    return;
+  }
+
+  setEmbeddingProvider(createMockEmbeddingProvider());
+}
+
 // ---------------------------------------------------------------------------
 // Central init
 // ---------------------------------------------------------------------------
@@ -312,6 +336,7 @@ export function initProviders(): ProviderSelections {
   initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
   initSocialStore(selections.socialStore);
+  initEmbeddingProvider(selections.embeddingProvider);
 
   initialized = true;
 
@@ -328,6 +353,7 @@ export function initProviders(): ProviderSelections {
     audioConverter: selections.audioConverter,
     moderationStore: selections.moderationStore,
     socialStore: selections.socialStore,
+    embeddingProvider: selections.embeddingProvider,
   });
 
   return selections;
