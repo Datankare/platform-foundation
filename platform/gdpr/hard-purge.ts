@@ -106,13 +106,15 @@ export class PurgePipeline {
     }
 
     // Execute with overall timeout
-    const timeoutPromise = new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), this.config.timeoutMs)
-    );
+    let timeoutTimer: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      timeoutTimer = setTimeout(() => resolve("timeout"), this.config.timeoutMs);
+    });
 
     const executionPromise = this.executeHandlers(request.userId, dryRun, steps);
 
     const result = await Promise.race([executionPromise, timeoutPromise]);
+    clearTimeout(timeoutTimer!);
 
     if (result === "timeout") {
       overallStatus = "failed";

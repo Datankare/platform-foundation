@@ -280,3 +280,55 @@ Sprint 4a shipped a precedence bug: `(scopeId ?? scopeType === "platform")` eval
 ---
 
 _Last updated: April 30, 2026 (Sprint 4b — 5 social agents + input agent swap delivered, scopeKey bug fixed)_
+
+## Human review + reviewer-assist (Sprint 6)
+
+The human-oversight surface for moderation (P10), backed by `platform/moderation/`
+(review-types, review-store, review-service, review-assist) and surfaced via
+`components/ReviewDashboard` + `components/AppealForm`. See ADR-024 (queue +
+appeals) and ADR-025 (reviewer-assist).
+
+### Review queue
+
+A single `review_queue` (migration 018) collects items from three sources:
+
+| Source       | Producer                       | Trigger                                                              |
+| ------------ | ------------------------------ | -------------------------------------------------------------------- |
+| `escalation` | Guardian / safety middleware   | Classifier confidence below the per-level `escalate_below` threshold |
+| `ban_review` | Sentinel (intended)            | A ban consequence flagged for human confirmation                     |
+| `appeal`     | Appeals route (user-initiated) | A user contests a prior block within the appeal window               |
+
+Each item carries the full automated decision context — classifier output,
+severity, the layer that triggered it, context factors, reasoning, and (when
+present) the RAG explanation chain — plus `previous_account_status`, so an
+overturn restores the status that existed before the reviewed decision rather
+than blanket-resetting to active.
+
+### Lifecycle
+
+`pending → claimed → resolved`. A moderator claims an item (claim times out back
+to pending after `review_claim_timeout_hours`), then resolves it as **uphold**,
+**overturn** (reverse the decision, restore prior status, expire the linked
+strike), or **modify** (substitute a different moderation action). Reviewer notes
+are mandatory on every resolution, so each decision carries a human rationale.
+
+### RBAC
+
+All review/appeal-resolution routes are gated on the `can_moderate` permission
+(migration 018), granted to a new `moderator` role and to `admin`/`super_admin`.
+The reviewer identity comes from the session, never the request body; the appeals
+route resolves the user from the session and verifies ownership of the original
+decision before queuing.
+
+### Reviewer-assist (advisory)
+
+On demand, a reviewer can request an AI suggestion for an item
+(`POST /api/moderation/review/{id}/assist`). The assist reads the same recorded
+context and returns a non-binding `{ recommendation, rationale }` that may prefill
+the decision control. It is advisory only (P10 — never auto-resolves), on-demand
+(P12 — bounded token cost), and fail-open (P11 — any model/parse failure yields no
+suggestion, never an error that blocks the workflow). See ADR-025.
+
+_Follow-ups (not yet wired):_ Sentinel `ban_review` auto-submit is not connected
+(only escalation and appeals currently produce items); strike expiry on overturn
+is logged but there is no per-strike expire API yet.

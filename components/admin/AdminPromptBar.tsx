@@ -123,7 +123,7 @@ export default function AdminPromptBar({
         </button>
       </div>
       <p className="text-xs text-gray-600 mt-1.5 ml-1">
-        Try: &quot;Create a moderator role with can_play and can_view_audit&quot; or
+        Try: &quot;Create a moderator role with can_play and admin_view_audit&quot; or
         &quot;Show all roles&quot;
       </p>
     </div>

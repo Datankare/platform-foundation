@@ -69,6 +69,7 @@ function makeStrikeInput() {
     category: "harassment",
     severity: "medium" as const,
     moderationAuditId: "audit-1",
+    guardianDecisionId: "traj-1",
     trajectoryId: "traj-1",
     agentId: "sentinel-1",
     reason: "Blocked for harassment",

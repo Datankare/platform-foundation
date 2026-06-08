@@ -53,6 +53,10 @@ jest.mock("../config", () => ({
   }),
 }));
 
+jest.mock("../review-service", () => ({
+  submitForReview: jest.fn().mockResolvedValue({ success: true }),
+}));
+
 // ── Imports ─────────────────────────────────────────────────────────────
 
 import {
@@ -63,6 +67,7 @@ import {
   resetSentinel,
 } from "../sentinel";
 import { InMemoryStrikeStore, setStrikeStore, resetStrikeStore } from "../strikes";
+import { submitForReview } from "../review-service";
 import type { ModerationResult } from "../types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -289,5 +294,51 @@ describe("singleton", () => {
     resetSentinel();
     const sentinel = getSentinel();
     expect(sentinel.identity.agentRole).toBe("sentinel");
+  });
+});
+
+describe("processBlock — ban_review submission (ADR-024)", () => {
+  const submit = submitForReview as jest.Mock;
+
+  beforeEach(() => {
+    submit.mockReset();
+    submit.mockResolvedValue({ success: true });
+  });
+
+  // banAt = 4 (mocked thresholds); status is mocked "active" on each load.
+  async function driveToBan() {
+    const sentinel = getSentinel();
+    let result;
+    for (let i = 0; i < 4; i++) {
+      result = await sentinel.processBlock(makeBlockResult(), "user-1", "req-1");
+    }
+    return result!;
+  }
+
+  it("submits a ban_review with previousAccountStatus and strike link on ban", async () => {
+    const result = await driveToBan();
+
+    expect(result.newStatus).toBe("banned");
+    expect(submit).toHaveBeenCalledTimes(1);
+    const arg = submit.mock.calls[0][0];
+    expect(arg.source).toBe("ban_review");
+    expect(arg.targetUserId).toBe("user-1");
+    expect(arg.previousAccountStatus).toBe("active");
+    expect(typeof arg.relatedStrikeId).toBe("string");
+  });
+
+  it("does not submit a ban_review for a non-ban consequence", async () => {
+    const sentinel = getSentinel();
+    const result = await sentinel.processBlock(makeBlockResult(), "user-1", "req-1");
+
+    expect(result.newStatus).toBe("warned");
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("ban stands even if the ban_review submission throws (fail-open)", async () => {
+    submit.mockRejectedValueOnce(new Error("review service down"));
+    const result = await driveToBan();
+
+    expect(result.newStatus).toBe("banned");
   });
 });

@@ -26,6 +26,7 @@ const mockProvider = {
   confirmEmailVerification: jest.fn(),
   resendEmailVerification: jest.fn(),
   respondToMfaChallenge: jest.fn(),
+  respondToNewPasswordChallenge: jest.fn(),
   createGuestToken: jest.fn(),
   verifyToken: jest.fn(),
   refreshToken: jest.fn(),
@@ -361,6 +362,41 @@ describe("POST /api/auth/mfa-challenge", () => {
 
   it("returns 400 when fields missing", async () => {
     const res = await handler(makeRequest({ session: "mfa-session" }));
+    expect(res.status).toBe(400);
+  });
+});
+
+// ============================================================
+// POST /api/auth/new-password-challenge
+// ============================================================
+describe("POST /api/auth/new-password-challenge", () => {
+  let handler: (req: NextRequest) => Promise<Response>;
+
+  beforeEach(async () => {
+    const mod = await import("@/app/api/auth/new-password-challenge/route");
+    handler = mod.POST;
+  });
+
+  it("responds to new-password challenge", async () => {
+    mockProvider.respondToNewPasswordChallenge.mockResolvedValue({
+      success: true,
+      accessToken: "new-pass-tok",
+    });
+
+    const res = await handler(
+      makeRequest({
+        session: "np-session",
+        newPassword: "NewStrongPass123!",
+        username: "test@example.com",
+      })
+    );
+    const body = await res.json();
+
+    expect(body.success).toBe(true);
+  });
+
+  it("returns 400 when fields missing", async () => {
+    const res = await handler(makeRequest({ session: "np-session" }));
     expect(res.status).toBe(400);
   });
 });

@@ -131,6 +131,18 @@ export interface AuthProvider {
   respondToMfaChallenge(mfaSession: string, totpCode: string): Promise<AuthResult>;
 
   /**
+   * Complete a NEW_PASSWORD_REQUIRED challenge during sign-in.
+   * Called when signIn returns newPasswordRequired: true (e.g. admin-created
+   * users with a temporary password on first sign-in). Cognito requires the
+   * real username in the challenge response, so it is passed explicitly.
+   */
+  respondToNewPasswordChallenge(
+    challengeSession: string,
+    newPassword: string,
+    username: string
+  ): Promise<AuthResult>;
+
+  /**
    * Disable MFA for the authenticated user.
    */
   disableMfa(accessToken: AuthToken): Promise<{ success: boolean; error?: string }>;

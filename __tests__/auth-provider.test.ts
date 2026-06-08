@@ -47,6 +47,13 @@ describe("AuthProvider interface contract", () => {
       expect(result.mfaRequired).toBe(true);
       expect(result.mfaSession).toBeDefined();
     });
+
+    it("returns newPasswordRequired when a temporary password must be reset", async () => {
+      const result = await auth.signIn("test@example.com", "new-password-required");
+      expect(result.success).toBe(false);
+      expect(result.newPasswordRequired).toBe(true);
+      expect(result.challengeSession).toBeDefined();
+    });
   });
 
   describe("signOut", () => {
@@ -152,6 +159,26 @@ describe("AuthProvider interface contract", () => {
 
     it("rejects invalid MFA code", async () => {
       const result = await auth.respondToMfaChallenge("mock-mfa-session", "000000");
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it("responds to new-password challenge and returns tokens", async () => {
+      const result = await auth.respondToNewPasswordChallenge(
+        "mock-new-password-session",
+        "NewStrongPass123!",
+        "test@example.com"
+      );
+      expect(result.success).toBe(true);
+      expect(result.accessToken).toBeDefined();
+    });
+
+    it("rejects a weak new password", async () => {
+      const result = await auth.respondToNewPasswordChallenge(
+        "mock-new-password-session",
+        "weak",
+        "test@example.com"
+      );
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
     });
