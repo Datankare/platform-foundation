@@ -294,7 +294,7 @@ describe("resolvePermissions", () => {
       {
         table: "permissions",
         response: {
-          data: [{ code: "can_play" }, { code: "can_manage_roles" }],
+          data: [{ code: "can_play" }, { code: "admin_manage_roles" }],
           error: null,
         },
       },
@@ -312,7 +312,7 @@ describe("resolvePermissions", () => {
     expect(result!.userId).toBe("p1");
     expect(result!.roleName).toBe("admin");
     expect(result!.permissions).toContain("can_play");
-    expect(result!.permissions).toContain("can_manage_roles");
+    expect(result!.permissions).toContain("admin_manage_roles");
     expect(result!.entitlementGroups).toEqual([]);
   });
 });

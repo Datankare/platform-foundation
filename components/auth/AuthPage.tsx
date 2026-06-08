@@ -6,6 +6,7 @@ import LoginForm from "@/components/auth/LoginForm";
 import RegisterForm from "@/components/auth/RegisterForm";
 import ForgotPasswordForm from "@/components/auth/ForgotPasswordForm";
 import MfaChallengeForm from "@/components/auth/MfaChallengeForm";
+import NewPasswordForm from "@/components/auth/NewPasswordForm";
 import EmailVerificationForm from "@/components/auth/EmailVerificationForm";
 import { getAuthProvider } from "@/platform/auth/config";
 import { useAuth } from "@/platform/auth/context";
@@ -16,6 +17,7 @@ type AuthView =
   | "register"
   | "forgot-password"
   | "mfa-challenge"
+  | "new-password"
   | "email-verification";
 
 /**
@@ -34,6 +36,7 @@ export default function AuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [mfaSession, setMfaSession] = useState<string | null>(null);
+  const [challengeSession, setChallengeSession] = useState<string | null>(null);
   const [pendingEmail, setPendingEmail] = useState<string>("");
   const { setSession } = useAuth();
 
@@ -46,14 +49,21 @@ export default function AuthPage() {
       const auth = getAuthProvider();
       const result = await auth.signIn(email, password);
 
-      if (!result.success) {
-        setError(result.error || "Sign-in failed");
-        return;
-      }
-
       if (result.mfaRequired && result.mfaSession) {
         setMfaSession(result.mfaSession);
         setView("mfa-challenge");
+        return;
+      }
+
+      if (result.newPasswordRequired && result.challengeSession) {
+        setChallengeSession(result.challengeSession);
+        setPendingEmail(email);
+        setView("new-password");
+        return;
+      }
+
+      if (!result.success) {
+        setError(result.error || "Sign-in failed");
         return;
       }
 
@@ -271,6 +281,40 @@ export default function AuthPage() {
     }
   };
 
+  const handleNewPasswordSubmit = async (newPassword: string) => {
+    clearError();
+    setIsLoading(true);
+    try {
+      const auth = getAuthProvider();
+      const result = await auth.respondToNewPasswordChallenge(
+        challengeSession || "",
+        newPassword,
+        pendingEmail
+      );
+
+      if (!result.success) {
+        setError(result.error || "Could not set new password");
+        return;
+      }
+
+      if (result.accessToken && result.refreshToken && result.userId) {
+        setSession({
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken,
+          userId: result.userId,
+          email: pendingEmail,
+          emailVerified: true,
+        });
+      }
+    } catch {
+      /* justified */
+      // Auth errors shown to user via setError
+      setError("An unexpected error occurred. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const switchView = (newView: AuthView) => {
     clearError();
     setView(newView);
@@ -312,6 +356,15 @@ export default function AuthPage() {
       {view === "mfa-challenge" && (
         <MfaChallengeForm
           onSubmit={handleMfaChallenge}
+          onCancel={() => switchView("login")}
+          error={error}
+          isLoading={isLoading}
+        />
+      )}
+
+      {view === "new-password" && (
+        <NewPasswordForm
+          onSubmit={handleNewPasswordSubmit}
           onCancel={() => switchView("login")}
           error={error}
           isLoading={isLoading}

@@ -89,8 +89,8 @@ describe("GET /api/admin/roles", () => {
                 },
                 {
                   id: "p2",
-                  code: "can_manage_roles",
-                  display_name: "Can Manage Roles",
+                  code: "admin_manage_roles",
+                  display_name: "Manage Roles",
                   category: "admin",
                 },
               ],

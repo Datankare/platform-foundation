@@ -542,4 +542,6 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 5.0.0 | 2026-05-18 | Raman Sud | Sprint 5 complete. RAG foundation in platform/rag/: document chunker (sliding-window + sentence), EmbeddingProvider interface (registry slot #13), InMemoryEmbeddingStore (cosine similarity), retrieval pipeline, context injector (sanitized, budget-aware), InMemoryUserContextStore (P16 cognitive memory), explainability builder. Migration 017 (pgvector tables). ADR-023. L20 (mid-session checkpoint). Gotchas 52-53. 115 suites, 1754 tests, 86.9% coverage. |
 
-_Last updated: May 18, 2026 (Sprint 5 — RAG foundation, changelog 5.0.0)_
+| 6.0.0 | 2026-05-31 | Raman Sud | Sprint 6 complete. Human review + appeals in platform/moderation/: review-types, review-store (InMemory + Supabase), review-service (claim/unclaim/resolve, appeal intake, overturn side-effects restoring the prior account status), API routes (review list/submit, claim/unclaim/resolve, appeal submit/resolve) gated on a new can_moderate permission, and advisory AI reviewer-assist (on-demand, fail-open). UI: ReviewDashboard (reasoning-forward card + assist banner) and AppealForm. Migration 018 (review_queue + RLS/indexes, moderator role + can_moderate granted to moderator/admin/super_admin, appeal config seeds). ADR-024, ADR-025. 127 suites, 1929 tests, 88.73% coverage. |
+
+_Last updated: May 31, 2026 (Sprint 6 — human review + appeals, changelog 6.0.0)_

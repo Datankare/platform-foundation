@@ -24,19 +24,14 @@ CREATE INDEX IF NOT EXISTS idx_purge_log_user_id ON public.purge_log (user_id);
 -- Index for status-based queries (monitoring incomplete purges)
 CREATE INDEX IF NOT EXISTS idx_purge_log_status ON public.purge_log (status);
 
--- RLS: Only super_admin can read purge logs
+-- RLS: server-side access only. purge_log is written and read via the service
+-- role (the GDPR routes use the service client); super_admin gating is enforced
+-- at the API layer, consistent with the other server-side tables (review_queue,
+-- user_strikes, agent_*). NOTE: the original policy referenced a non-existent
+-- public.profiles table and would fail to create on any DB; replaced here.
 ALTER TABLE public.purge_log ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Super admins can read purge logs"
-  ON public.purge_log
-  FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid()
-      AND profiles.role = 'super_admin'
-    )
-  );
-
--- No INSERT/UPDATE/DELETE policies — writes happen via service role only
+DROP POLICY IF EXISTS purge_log_service_all ON public.purge_log;
+CREATE POLICY purge_log_service_all ON public.purge_log
+  FOR ALL USING (auth.role() = 'service_role');
 COMMENT ON TABLE public.purge_log IS 'GDPR purge audit trail. Records all data deletion operations for regulatory compliance.';

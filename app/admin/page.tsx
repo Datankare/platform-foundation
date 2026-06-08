@@ -38,7 +38,7 @@ const PANEL_TITLES: Record<string, string> = {
 
 const PANEL_HINTS: Record<string, string> = {
   users: 'Try: "Show all users" or "Change alice@example.com to admin role"',
-  roles: 'Try: "Create a moderator role with can_play and can_view_audit"',
+  roles: 'Try: "Create a moderator role with can_play and admin_view_audit"',
   entitlements: 'Try: "Create beta_access entitlement with can_translate"',
   audit: 'Try: "Show role changes from the last 7 days"',
   "guest-config": 'Try: "Set nudge to 5 sessions and lockout to 15"',

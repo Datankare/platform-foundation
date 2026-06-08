@@ -196,6 +196,10 @@ export interface ModerationAuditRecord {
   requestId: string;
   /** Timestamp */
   timestamp: string;
+  /** ID of human reviewer (if reviewed — Sprint 6) */
+  reviewerId?: string;
+  /** Appeal outcome (if appealed — Sprint 6) */
+  appealStatus?: "pending" | "upheld" | "overturned" | "dismissed";
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +322,15 @@ export interface StrikeRecord {
   readonly severity: SafetySeverity;
   /** Links to content_safety_audit record */
   readonly moderationAuditId: string | null;
+  /**
+   * The Guardian decision (moderationResult.trajectoryId) that caused this
+   * strike. CANONICAL link used to resolve the strike on overturn — a review
+   * item carries the same Guardian trajectory, so expiry matches on
+   * guardianDecisionId === item.moderationResult.trajectoryId. Distinct from
+   * trajectoryId below (the Sentinel agent's own trajectory). Nullable for
+   * strikes recorded before migration 020.
+   */
+  readonly guardianDecisionId: string | null;
   /** P18: Sentinel trajectory ID */
   readonly trajectoryId: string;
   /** P15: Sentinel agent ID */
@@ -472,6 +485,12 @@ export interface StrikeStore {
   /** Get all strikes for a user (including expired). */
   queryStrikes(options: StrikeQueryOptions): Promise<readonly StrikeRecord[]>;
 
-  /** Mark expired strikes. Returns count of newly expired strikes. */
+  /** Mark expired strikes (time-based sweep). Returns count of newly expired strikes. */
   expireStrikes(): Promise<number>;
+
+  /**
+   * Expire a single strike by id — used when a moderation decision is overturned
+   * on human review. Returns true if a matching active strike was expired.
+   */
+  expireStrike(strikeId: string): Promise<boolean>;
 }

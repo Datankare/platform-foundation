@@ -34,6 +34,7 @@ import type {
 } from "./types";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 import { getStrikeStore } from "./strikes";
+import { submitForReview } from "./review-service";
 import { loadStrikeThresholds } from "./config";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
@@ -245,6 +246,7 @@ export class Sentinel {
       category,
       severity,
       moderationAuditId: null,
+      guardianDecisionId: moderationResult.trajectoryId,
       trajectoryId,
       agentId: this.identity.actorId,
       reason: reasonParts[0],
@@ -367,6 +369,40 @@ export class Sentinel {
       },
     });
 
+    // ── Submit ban for human review (ADR-024) ──────────────────────
+    // Post-hoc: the ban was already applied in Step 4. A moderator may overturn
+    // it, which restores previousAccountStatus and expires the linked strike
+    // (resolved via the strike's guardianDecisionId — relatedStrikeId here is
+    // audit-only). Fail-open: a submission failure must never undo or break the
+    // ban that has already been committed.
+    if (consequence === "ban" && newStatus !== currentStatus) {
+      try {
+        const reviewResult = await submitForReview({
+          source: "ban_review",
+          moderationResult,
+          targetUserId: userId,
+          requestId,
+          previousAccountStatus: currentStatus,
+          relatedStrikeId: strikeResult.record?.id,
+        });
+        if (!reviewResult.success) {
+          logger.warn("Sentinel: ban_review submission did not succeed (ban stands)", {
+            userId,
+            requestId,
+            error: reviewResult.error,
+            route: "platform/moderation/sentinel",
+          });
+        }
+      } catch (err) {
+        logger.error("Sentinel: ban_review submission failed (ban stands)", {
+          userId,
+          requestId,
+          error: err instanceof Error ? err.message : String(err),
+          route: "platform/moderation/sentinel",
+        });
+      }
+    }
+
     return {
       strike: strikeResult.record ?? {
         id: "failed",
@@ -374,6 +410,7 @@ export class Sentinel {
         category,
         severity,
         moderationAuditId: null,
+        guardianDecisionId: moderationResult.trajectoryId,
         trajectoryId,
         agentId: this.identity.actorId,
         reason: reasonParts[0],

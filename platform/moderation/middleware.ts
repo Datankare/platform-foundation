@@ -47,6 +47,7 @@ import type {
 } from "./types";
 import { getGuardian } from "./guardian";
 import { getSentinel } from "./sentinel";
+import { submitForReview } from "./review-service";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -114,6 +115,11 @@ export async function screenContent(
     fireSentinel(result, mergedContext.userId, options.requestId);
   }
 
+  // Sprint 6: Auto-submit to review queue on escalate
+  if (result.action === "escalate" && mergedContext.userId) {
+    fireReviewSubmit(result, mergedContext.userId, options.requestId);
+  }
+
   return result;
 }
 
@@ -164,6 +170,55 @@ function fireSentinel(result: ModerationResult, userId: string, requestId: strin
         severity: result.classifierOutput?.severity ?? "unknown",
         categories: result.classifierOutput?.categories?.join(",") ?? "unknown",
         guardianTrajectoryId: result.trajectoryId,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/moderation/middleware",
+      });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Review queue hook (async, non-blocking)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fire review queue submission asynchronously after Guardian escalate.
+ *
+ * Non-blocking — the escalate response goes back to the user immediately.
+ * The review item is created in the background.
+ * Errors are logged but never thrown.
+ */
+function fireReviewSubmit(
+  result: ModerationResult,
+  userId: string,
+  requestId: string
+): void {
+  submitForReview({
+    source: "escalation",
+    moderationResult: result,
+    targetUserId: userId,
+    requestId,
+  })
+    .then((reviewResult) => {
+      if (reviewResult.success) {
+        logger.info("Review queue: escalation submitted", {
+          userId,
+          reviewItemId: reviewResult.item?.id,
+          requestId,
+          route: "platform/moderation/middleware",
+        });
+      } else {
+        logger.error("Review queue: escalation submit failed", {
+          userId,
+          requestId,
+          error: reviewResult.error,
+          route: "platform/moderation/middleware",
+        });
+      }
+    })
+    .catch((err) => {
+      logger.error("Review queue: escalation submit error", {
+        userId,
+        requestId,
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/middleware",
       });

@@ -138,6 +138,14 @@ export class InMemoryStrikeStore implements StrikeStore {
     return count;
   }
 
+  async expireStrike(strikeId: string): Promise<boolean> {
+    const idx = this.records.findIndex((r) => r.id === strikeId);
+    if (idx === -1 || this.records[idx].expired) return false;
+    // StrikeRecord is readonly — create replacement
+    this.records[idx] = { ...this.records[idx], expired: true };
+    return true;
+  }
+
   /** Test helper */
   getRecordCount(): number {
     return this.records.length;
@@ -161,6 +169,7 @@ interface StrikeRow {
   category: string;
   severity: string;
   moderation_audit_id: string | null;
+  guardian_decision_id: string | null;
   trajectory_id: string;
   agent_id: string;
   reason: string;
@@ -176,6 +185,7 @@ function mapRowToStrike(row: StrikeRow): StrikeRecord {
     category: row.category,
     severity: row.severity as SafetySeverity,
     moderationAuditId: row.moderation_audit_id,
+    guardianDecisionId: row.guardian_decision_id,
     trajectoryId: row.trajectory_id,
     agentId: row.agent_id,
     reason: row.reason,
@@ -198,6 +208,7 @@ export class SupabaseStrikeStore implements StrikeStore {
           category: strike.category,
           severity: strike.severity,
           moderation_audit_id: strike.moderationAuditId,
+          guardian_decision_id: strike.guardianDecisionId,
           trajectory_id: strike.trajectoryId,
           agent_id: strike.agentId,
           reason: strike.reason,
@@ -205,7 +216,7 @@ export class SupabaseStrikeStore implements StrikeStore {
           expired: false,
         } as never)
         .select(
-          "id, user_id, category, severity, moderation_audit_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
+          "id, user_id, category, severity, moderation_audit_id, guardian_decision_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
         )
         .single() as unknown as Promise<{
         data: StrikeRow | null;
@@ -242,7 +253,7 @@ export class SupabaseStrikeStore implements StrikeStore {
       const { data, error } = await (supabase
         .from("user_strikes" as never)
         .select(
-          "id, user_id, category, severity, moderation_audit_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
+          "id, user_id, category, severity, moderation_audit_id, guardian_decision_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
         )
         .eq("user_id", userId)
         .eq("expired", false)
@@ -274,7 +285,7 @@ export class SupabaseStrikeStore implements StrikeStore {
       let query = supabase
         .from("user_strikes" as never)
         .select(
-          "id, user_id, category, severity, moderation_audit_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
+          "id, user_id, category, severity, moderation_audit_id, guardian_decision_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
         )
         .eq("user_id", options.userId)
         .order("created_at", { ascending: false });
@@ -327,6 +338,35 @@ export class SupabaseStrikeStore implements StrikeStore {
       return data?.length ?? 0;
     } catch {
       return 0;
+    }
+  }
+
+  async expireStrike(strikeId: string): Promise<boolean> {
+    try {
+      const supabase = getSupabaseServiceClient();
+
+      const { data, error } = await (supabase
+        .from("user_strikes" as never)
+        .update({ expired: true } as never)
+        .eq("id", strikeId)
+        .eq("expired", false)
+        .select("id") as unknown as Promise<{
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      }>);
+
+      if (error) {
+        logger.error("Single strike expiry failed", {
+          strikeId,
+          error: error.message,
+          route: "platform/moderation/strikes",
+        });
+        return false;
+      }
+
+      return (data?.length ?? 0) > 0;
+    } catch {
+      return false;
     }
   }
 }
