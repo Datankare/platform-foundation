@@ -208,6 +208,14 @@ export class CognitoAuthProvider implements AuthProvider {
         };
       }
 
+      if (result.ChallengeName === "NEW_PASSWORD_REQUIRED") {
+        return {
+          success: false,
+          newPasswordRequired: true,
+          challengeSession: result.Session as string,
+        };
+      }
+
       const auth = result.AuthenticationResult as Record<string, unknown>;
       if (!auth) return { success: false, error: "No authentication result" };
 
@@ -453,6 +461,40 @@ export class CognitoAuthProvider implements AuthProvider {
       };
     } catch (error) {
       return this.handleAuthError(error, "respondToMfaChallenge");
+    }
+  }
+
+  async respondToNewPasswordChallenge(
+    challengeSession: string,
+    newPassword: string,
+    username: string
+  ): Promise<AuthResult> {
+    try {
+      const result = await callCognito(this.config, "RespondToAuthChallenge", {
+        ClientId: this.config.clientId,
+        ChallengeName: "NEW_PASSWORD_REQUIRED",
+        Session: challengeSession,
+        ChallengeResponses: {
+          USERNAME: username,
+          NEW_PASSWORD: newPassword,
+        },
+      });
+
+      const auth = result.AuthenticationResult as Record<string, unknown>;
+      if (!auth) return { success: false, error: "Password change failed" };
+
+      const decoded = decodeJwtPayload(auth.AccessToken as string);
+
+      return {
+        success: true,
+        userId: decoded?.sub as string,
+        accessToken: auth.AccessToken as string,
+        refreshToken: auth.RefreshToken as string,
+        idToken: auth.IdToken as string,
+        expiresIn: auth.ExpiresIn as number,
+      };
+    } catch (error) {
+      return this.handleAuthError(error, "respondToNewPasswordChallenge");
     }
   }
 

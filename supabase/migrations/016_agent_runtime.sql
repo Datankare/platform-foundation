@@ -115,13 +115,15 @@ CREATE POLICY budgets_service_all ON agent_budgets
 
 -- ── SEED CONFIG ENTRIES ─────────────────────────────────────────────────────
 
-INSERT INTO platform_config (key, value, description, updated_by) VALUES
-  ('agent.budget.default_tokens_per_month', '100000',
-   'Default monthly token budget per agent per scope', 'migration-016'),
-  ('agent.budget.default_usd_per_month', '5.00',
-   'Default monthly USD budget per agent per scope', 'migration-016'),
-  ('agent.trajectory.max_steps', '50',
-   'Maximum steps per trajectory before forced completion', 'migration-016'),
-  ('agent.trajectory.retention_days', '90',
-   'Days to retain completed trajectories before archival', 'migration-016')
+INSERT INTO platform_config
+  (key, value, default_value, description, category, value_type, permission_tier)
+VALUES
+  ('agent.budget.default_tokens_per_month', '100000', '100000',
+   'Default monthly token budget per agent per scope', 'limits', 'number', 'standard'),
+  ('agent.budget.default_usd_per_month', '5.00', '5.00',
+   'Default monthly USD budget per agent per scope', 'limits', 'number', 'standard'),
+  ('agent.trajectory.max_steps', '50', '50',
+   'Maximum steps per trajectory before forced completion', 'limits', 'number', 'standard'),
+  ('agent.trajectory.retention_days', '90', '90',
+   'Days to retain completed trajectories before archival', 'limits', 'number', 'standard')
 ON CONFLICT (key) DO NOTHING;

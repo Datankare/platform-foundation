@@ -26,6 +26,11 @@ export interface AuthResult {
   mfaRequired?: boolean;
   /** Session identifier for MFA challenge flow */
   mfaSession?: string;
+  /** True if the user must set a new password before access is granted
+   *  (e.g. admin-created accounts issued a temporary password) */
+  newPasswordRequired?: boolean;
+  /** Session identifier for the NEW_PASSWORD_REQUIRED challenge flow */
+  challengeSession?: string;
   /** True if email verification is pending */
   emailVerificationRequired?: boolean;
 }

@@ -57,6 +57,13 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
           mfaSession: "mock-mfa-session",
         };
       }
+      if (password === "new-password-required") {
+        return {
+          success: false,
+          newPasswordRequired: true,
+          challengeSession: "mock-new-password-session",
+        };
+      }
       return {
         success: true,
         userId: MOCK_USER_ID,
@@ -144,6 +151,23 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
     ): Promise<AuthResult> {
       if (totpCode === "000000") {
         return { success: false, error: "Invalid TOTP code" };
+      }
+      return {
+        success: true,
+        userId: MOCK_USER_ID,
+        accessToken: MOCK_ACCESS_TOKEN,
+        refreshToken: MOCK_REFRESH_TOKEN,
+        expiresIn: 3600,
+      };
+    },
+
+    async respondToNewPasswordChallenge(
+      _challengeSession: string,
+      newPassword: string,
+      _username: string
+    ): Promise<AuthResult> {
+      if (newPassword === "weak") {
+        return { success: false, error: "Password does not meet requirements" };
       }
       return {
         success: true,

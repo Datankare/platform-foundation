@@ -30,6 +30,10 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+afterEach(() => {
+  registerAuthProvider(createMockAuthProvider());
+});
+
 describe("AuthPage", () => {
   it("starts on login view", () => {
     render(<AuthPage />);
@@ -100,5 +104,76 @@ describe("AuthPage", () => {
     expect(screen.getByText("Continue with Google")).toBeDefined();
     expect(screen.getByText("Continue with Apple")).toBeDefined();
     expect(screen.getByText("Continue with Microsoft")).toBeDefined();
+  });
+
+  it("shows the new-password view when sign-in requires a new password", async () => {
+    render(<AuthPage />);
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "admin@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "new-password-required" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Set a New Password")).toBeDefined();
+  });
+
+  it("surfaces an error when setting the new password fails", async () => {
+    registerAuthProvider(
+      createMockAuthProvider({
+        respondToNewPasswordChallenge: jest.fn().mockResolvedValue({
+          success: false,
+          error: "Server rejected password",
+        }),
+      })
+    );
+    render(<AuthPage />);
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "admin@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "new-password-required" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    await screen.findByText("Set a New Password");
+
+    fireEvent.change(screen.getByPlaceholderText("New password"), {
+      target: { value: "StrongPass1" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Confirm new password"), {
+      target: { value: "StrongPass1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /set password/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toBe("Server rejected password");
+    });
+  });
+
+  it("completes sign-in after a successful new password", async () => {
+    render(<AuthPage />);
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "admin@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "new-password-required" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    await screen.findByText("Set a New Password");
+
+    fireEvent.change(screen.getByPlaceholderText("New password"), {
+      target: { value: "StrongPass1" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Confirm new password"), {
+      target: { value: "StrongPass1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /set password/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
   });
 });

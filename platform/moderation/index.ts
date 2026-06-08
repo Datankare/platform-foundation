@@ -80,3 +80,39 @@ export {
   InMemoryModerationStore,
   SupabaseModerationStore,
 } from "./store";
+
+// Sprint 6: Human review queue + appeals
+export type {
+  ReviewItemSource,
+  ReviewPriority,
+  ReviewStatus,
+  ReviewDecision,
+  ReviewQueueItem,
+  ReviewQueryOptions,
+  ReviewQueueStats,
+  ReviewQueueStore,
+} from "./review-types";
+
+export {
+  InMemoryReviewQueueStore,
+  SupabaseReviewQueueStore,
+  getReviewQueueStore,
+  setReviewQueueStore,
+  resetReviewQueueStore,
+} from "./review-store";
+
+export {
+  submitForReview,
+  submitAppeal,
+  claimItem,
+  unclaimItem,
+  resolveItem,
+  releaseExpiredClaims,
+  getQueue,
+  getQueueStats,
+} from "./review-service";
+export type {
+  SubmitReviewInput,
+  SubmitAppealInput,
+  ResolveInput,
+} from "./review-service";

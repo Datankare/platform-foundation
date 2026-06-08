@@ -90,6 +90,36 @@ describe("CognitoAuthProvider — signIn", () => {
     expect(result.mfaSession).toBe("mfa-session-123");
   });
 
+  it("returns newPasswordRequired when Cognito sends NEW_PASSWORD_REQUIRED", async () => {
+    mockFetch.mockResolvedValueOnce(
+      cognitoOk({
+        ChallengeName: "NEW_PASSWORD_REQUIRED",
+        Session: "new-pass-session-123",
+      })
+    );
+
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const result = await provider.signIn("test@example.com", "TempPass1!");
+
+    expect(result.success).toBe(false);
+    expect(result.newPasswordRequired).toBe(true);
+    expect(result.challengeSession).toBe("new-pass-session-123");
+  });
+
+  it("returns an error when the new-password response has no tokens", async () => {
+    mockFetch.mockResolvedValueOnce(cognitoOk({}));
+
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const result = await provider.respondToNewPasswordChallenge(
+      "new-pass-session-123",
+      "NewStrongPass123!",
+      "test@example.com"
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Password change failed");
+  });
+
   it("returns friendly error for invalid credentials", async () => {
     mockFetch.mockResolvedValueOnce(
       cognitoError("NotAuthorizedException", "Incorrect username or password.")

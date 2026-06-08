@@ -19,6 +19,7 @@ function makeStrikeInput(
     category: "harassment",
     severity: "medium",
     moderationAuditId: "audit-1",
+    guardianDecisionId: "traj-1",
     trajectoryId: "traj-1",
     agentId: "sentinel-1",
     reason: "Blocked for harassment",
@@ -249,5 +250,27 @@ describe("InMemoryStrikeStore", () => {
       const strikes = await store.getActiveStrikes("user-1");
       expect(strikes).toHaveLength(0);
     });
+  });
+});
+
+describe("InMemoryStrikeStore.expireStrike", () => {
+  it("expires a matching active strike and returns true", async () => {
+    const store = new InMemoryStrikeStore();
+    const rec = await store.recordStrike(makeStrikeInput());
+    const ok = await store.expireStrike(rec.record!.id);
+    expect(ok).toBe(true);
+    expect(await store.getActiveStrikes("user-1")).toHaveLength(0);
+  });
+
+  it("returns false for an unknown strike id", async () => {
+    const store = new InMemoryStrikeStore();
+    expect(await store.expireStrike("does-not-exist")).toBe(false);
+  });
+
+  it("returns false when the strike is already expired", async () => {
+    const store = new InMemoryStrikeStore();
+    const rec = await store.recordStrike(makeStrikeInput());
+    await store.expireStrike(rec.record!.id);
+    expect(await store.expireStrike(rec.record!.id)).toBe(false);
   });
 });
