@@ -138,7 +138,7 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ---
 
-## Phase 2 — Communication Foundation 🔄
+## Phase 2 — Communication Foundation ✅
 
 **Objective:** WebSocket/real-time infrastructure, plus the three cross-phase fabric foundations (observability, GenAI-native stack, content safety).
 
@@ -154,7 +154,7 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 | 4      | Redis + Infrastructure Hardening    | External: Upstash Redis             | ✅ Complete |
 | 4b     | Auth Wiring — Live Login Screen     | Sprint 4 (auth components exist)    | ✅ Complete |
 | 5      | Real-Time / WebSocket               | Sprint 4 (Redis for pub/sub)        | ✅ Complete |
-| 6      | Integration Tests + Phase Gate      | All prior sprints                   | ⏳ Upcoming |
+| 6      | Integration Tests + Phase Gate      | All prior sprints                   | ✅ Complete |
 
 ### Real-Time Communication
 
@@ -296,41 +296,51 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ## Phase 4 — Content Safety Foundation 🔄
 
-**Objective:** Full COPPA implementation, content moderation engine, and human review.
+**Objective:** Content moderation engine, COPPA enforcement, a user-group social system with autonomous agents, RAG foundation + cognitive memory, and a human review + appeals queue. Expanded scope per `PHASE4_PLAN.md`: Content Safety + Social System + Agent Runtime.
+**Start date:** 2026-04-18 — **Mid-phase release:** PF v1.5.0 (2026-06-09, Sprint 6 close)
 
-### Content Safety (ADR-016)
+### Sprints
 
-| Deliverable                                                      | Rationale                                               |
-| ---------------------------------------------------------------- | ------------------------------------------------------- |
-| `platform/moderation/` — full moderation engine                  | Placeholder README since Phase 0                        |
-| COPPA full implementation (enforcement, not just schema)         | coppa.ts: schema in Phase 1, enforcement in Phase 4     |
-| Parental consent workflows (email verification, status tracking) | coppa.ts                                                |
-| Age-gated content delivery based on content rating levels        | Content rating levels (1/2/3) exist but aren't enforced |
-| Human review queue — admin UI for edge cases and moderation      | No moderation queue exists                              |
-| Account consequences — strike counter: warn → suspend → ban      | Only response today is 422                              |
-| User reporting — report button, feeds moderation queue           | No reporting mechanism                                  |
-| Appeal workflow — user submits appeal, human reviewer decides    | No appeal path                                          |
+| Sprint | Scope                                                                                           | Status         |
+| ------ | ----------------------------------------------------------------------------------------------- | -------------- |
+| 0      | Entry housekeeping — Sentry, CodeQL fixes, Semgrep SAST, pgvector + ltree, intent-driven UX     | ✅ Complete    |
+| 1a     | PF input module + agent types (conductor, classifier, intent, AdaptiveInput)                    | ✅ Complete    |
+| 1b     | Playform SpikeApp rewrite on AdaptiveInput; all existing features preserved                     | ✅ Complete    |
+| 2      | Moderation engine — Guardian agentic content moderation (ADR-016)                               | ✅ Complete    |
+| 3a     | Config-management agent — 10 tools, confirmation gate, two-person approval                      | ✅ Complete    |
+| 3b     | Sentinel agent (strike ladder warn → suspend → ban) + COPPA consent gate                        | ✅ Complete    |
+| 3c     | ACRCloud rotation, recording-duration config, health probes, docs reorg                         | ✅ Complete    |
+| 3d     | Profile screening, account-status guard, route-guard util, authFetch, auth across all 7 routes  | ✅ Complete    |
+| 4a     | Social data model + core services + agent runtime (registry, tools, trajectory, budget)         | ✅ Complete    |
+| 4b     | Agent activation — 5 social agents; AgentClassifier + AgentIntentResolver swap rule-based impls | ✅ Complete    |
+| 4c     | Playform social wiring — Team panel, social UI components + hooks                               | ✅ Complete    |
+| 5      | RAG foundation — chunker, embedding store, retrieval, budget-aware context injector, memory     | ✅ Complete    |
+| 6      | Human review + appeals (P10) on Guardian → Sentinel; Cognito new-password; live DB reconcile    | ✅ Complete    |
+| 7      | Sync-cron hardening — Playform auto-sync reliability (pin refs, drift detection, exclude audit) | 🔄 In progress |
+| gate   | Phase 4 exit gate                                                                               | ⏳ Upcoming    |
 
-### Observability (ADR-014)
+### Delivered
 
-| Deliverable                                                                                                         | Rationale                                    |
-| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Content safety audit trail — every moderation decision with full classifier output, confidence, action, user rating | Legal defensibility for moderation decisions |
+- **Content Safety (ADR-016):** `platform/moderation/` engine, Guardian agentic moderation, COPPA enforcement + consent gate, age-gated content, strike ladder (warn → suspend → ban) via Sentinel, user reporting, human review queue + appeal workflow (P10). ✅
+- **Observability (ADR-014):** full content-safety audit trail per moderation decision — classifier output, confidence, action, direction. ✅
+- **GenAI-Native (ADR-015, ADR-017):** RAG foundation (chunking, retrieval, budget-aware context injection), pgvector embedding store, per-user AI context store / cognitive memory (P16), AI output explainability chain. ✅
+- **Social:** user/group system (groups, memberships, invites) + 6 social agents (Guardian, Matchmaker, Gatekeeper, Concierge, Analyst, Curator). ✅
+- **Agent runtime:** AgentRegistry, ToolRegistry, TrajectoryStore, BudgetTracker, `executeAgent()` loop; input agents (Conductor, audio classifier, intent). ✅
 
-### GenAI-Native (ADR-015, ADR-017)
+### ADRs & migrations
 
-| Deliverable                                                                          | Rationale                                                                                       |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| RAG foundation — document chunking, context injection, retrieval pipeline            | Domain knowledge and user history need to feed into AI interactions                             |
-| Embedding store — pgvector extension on Supabase                                     | Semantic search and personalization foundation                                                  |
-| User AI context store — per-user interaction history, learning patterns, preferences | Each AI interaction starts cold today; personalization requires persistent context (ADR-017 §5) |
-| AI output explainability — explanation chain for every AI decision                   | Audit trail logs what, not why; human review queue needs explainability (ADR-017 §6)            |
+ADR-021 through ADR-026. Supabase migrations through 021 (social 015–016, pgvector 017, review queue 018–021).
 
-### Social
+### Metrics (Sprint 6 close, PF v1.5.0)
 
-| Deliverable                                               | Rationale                         |
-| --------------------------------------------------------- | --------------------------------- |
-| Friends/groups system (profile "friends" visibility tier) | profile.ts: deferred from Phase 3 |
+| Repo                | Suites | Tests | Coverage (stmts) |
+| ------------------- | ------ | ----- | ---------------- |
+| platform-foundation | 128    | 1955  | 88.57%           |
+| Playform            | 148    | 2236  | 89.96%           |
+
+### In flight
+
+- **Sprint 7 — sync-cron hardening:** pin sync config + source refs (A), CI drift-detection for hand-ported excluded-shared files (B), exclude-anchor audit incl. ROADMAP.md protection (C), deletion policy (D), ops cleanup (E), Dependabot base branch (F). The `roadmap-consistency` CI check lands here so this section can never silently drift again.
 
 ---
 
@@ -523,16 +533,17 @@ These rules apply across all phases and are never deferred:
 
 All changes to this roadmap are logged here. Each entry includes date, author, and what changed.
 
-| Version | Date       | Author    | Change                                                                                                                                                                                                                                                                                                                        |
-| ------- | ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0.0   | 2026-04-03 | Raman Sud | Initial roadmap — all 10 phases defined. Phase 0–1 complete. Deferred items assigned to Phases 2–9.                                                                                                                                                                                                                           |
-| 1.1.0   | 2026-04-03 | Raman Sud | Pre-Phase 2 architectural review. Added ADR-014 (Observability), ADR-015 (GenAI-Native Stack), ADR-016 (Content Safety). All three woven into Phases 2–9 as cross-phase fabric with detailed per-phase deliverables. Added standing rules 9–11.                                                                               |
-| 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                                                                                                            |
-| 2.1.0   | 2026-04-05 | Raman Sud | GenAI-native surface map audit (ADR-017). 10 gaps identified and placed: output screening (P2), streaming (P2), multi-language AI (P3), eval framework (P3), user context (P4), explainability (P4), agentic framework (P5), multimodal (P5), A/B testing (P6), feedback loop (P7). Standing rules 11 updated, rule 12 added. |
-| 3.0.0   | 2026-04-16 | Raman Sud | Phase 3 complete. 4 sprints delivered: translation provider, voice providers + chunker, agentic voice pipeline, song ID + audio format. 150 tests added (863→1013). ADR-019, ADR-020. 10 provider slots. Tagged v1.4.0.                                                                                                       |
-| 4.1.0   | 2026-04-24 | Raman Sud | Sprint 3a+3b complete. Config management agent (10 tools, approval, impact). Sentinel agent (strikes, consequence ladder). COPPA consent gate. Migration 011+012. 87 suites, 1428 tests, 84.86% coverage. L19 added. Gotchas 32-37.                                                                                           |
-| 4.0.0   | 2026-04-18 | Raman Sud | Phase 4 started — Content Safety + Social System + Agent Runtime. Sprint 0: Sentry installed, instrumentation.ts wired, TASK-027/028/030 resolved, L14 added. 8 sprints planned, 6 agents, 3 new ADRs (021-023), embedding provider slot #11.                                                                                 |
-| 2.2.0   | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric (platform/observability/ — error tracking, tracing, metrics, health). TASK-018 resolved (player→user rename, 52 files + migration 008). Docs generalized. PF tests: 473→545.                                                                                                          |
+| Version | Date       | Author    | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------- | ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 6.1.0   | 2026-06-09 | Raman Sud | Sprint 6 formal close + PF v1.5.0 release (annotated tag on d118cab). Cognito NEW*PASSWORD_REQUIRED challenge shipped end-to-end to both repos. Live Supabase reconciliation: permission vocab renamed to admin* prefix, new super_admin role, migrations 009-fix / 015 / 016-fix / 021. NewPasswordForm a11y fix. Playwright bumped to 1.60.0 (CI install-hang fix). ADR-026. Sprint 7 opened (sync-cron hardening). ROADMAP reconciled: Phase 2 marked complete, Phase 4 brought current with sprint table + metrics; Playform game overlay (Phase 5 Game Engine Abstraction, Phase 8 Game 1 Implementation) and title restored after the 2026-04-28 whole-file sync clobber (commit ace9bbf). |
+| 1.0.0   | 2026-04-03 | Raman Sud | Initial roadmap — all 10 phases defined. Phase 0–1 complete. Deferred items assigned to Phases 2–9.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.1.0   | 2026-04-03 | Raman Sud | Pre-Phase 2 architectural review. Added ADR-014 (Observability), ADR-015 (GenAI-Native Stack), ADR-016 (Content Safety). All three woven into Phases 2–9 as cross-phase fabric with detailed per-phase deliverables. Added standing rules 9–11.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2.0.0   | 2026-04-03 | Raman Sud | Phase 2 started. 6-sprint plan added. Entry gate N1–N8 passed. Sprint order: LLM orchestration → content safety → observability → Redis hardening → real-time → integration tests.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2.1.0   | 2026-04-05 | Raman Sud | GenAI-native surface map audit (ADR-017). 10 gaps identified and placed: output screening (P2), streaming (P2), multi-language AI (P3), eval framework (P3), user context (P4), explainability (P4), agentic framework (P5), multimodal (P5), A/B testing (P6), feedback loop (P7). Standing rules 11 updated, rule 12 added.                                                                                                                                                                                                                                                                                                                                                                    |
+| 3.0.0   | 2026-04-16 | Raman Sud | Phase 3 complete. 4 sprints delivered: translation provider, voice providers + chunker, agentic voice pipeline, song ID + audio format. 150 tests added (863→1013). ADR-019, ADR-020. 10 provider slots. Tagged v1.4.0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 4.1.0   | 2026-04-24 | Raman Sud | Sprint 3a+3b complete. Config management agent (10 tools, approval, impact). Sentinel agent (strikes, consequence ladder). COPPA consent gate. Migration 011+012. 87 suites, 1428 tests, 84.86% coverage. L19 added. Gotchas 32-37.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 4.0.0   | 2026-04-18 | Raman Sud | Phase 4 started — Content Safety + Social System + Agent Runtime. Sprint 0: Sentry installed, instrumentation.ts wired, TASK-027/028/030 resolved, L14 added. 8 sprints planned, 6 agents, 3 new ADRs (021-023), embedding provider slot #11.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2.2.0   | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric (platform/observability/ — error tracking, tracing, metrics, health). TASK-018 resolved (player→user rename, 52 files + migration 008). Docs generalized. PF tests: 473→545.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 | 4.2.0 | 2026-04-25 | Raman Sud | Sprint 3c catch-up. TASK-026 closed (ACRCloud rotation to paid project). SECURITY_DEBT.md scope narrowed to security-only; non-security tasks migrated to new TASKS.md. New ROTATION_RUNBOOK.md. Gotchas 38–40 added to ENGINEERING_LEARNINGS. platform/voice/GOTCHAS.md added (L17). 7 follow-up TASKs filed (038–044). |
 
@@ -544,4 +555,4 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 6.0.0 | 2026-05-31 | Raman Sud | Sprint 6 complete. Human review + appeals in platform/moderation/: review-types, review-store (InMemory + Supabase), review-service (claim/unclaim/resolve, appeal intake, overturn side-effects restoring the prior account status), API routes (review list/submit, claim/unclaim/resolve, appeal submit/resolve) gated on a new can_moderate permission, and advisory AI reviewer-assist (on-demand, fail-open). UI: ReviewDashboard (reasoning-forward card + assist banner) and AppealForm. Migration 018 (review_queue + RLS/indexes, moderator role + can_moderate granted to moderator/admin/super_admin, appeal config seeds). ADR-024, ADR-025. 127 suites, 1929 tests, 88.73% coverage. |
 
-_Last updated: May 31, 2026 (Sprint 6 — human review + appeals, changelog 6.0.0)_
+_Last updated: 2026-06-09 (Sprint 6 close + PF v1.5.0; ROADMAP reconciled, changelog 6.1.0)_
