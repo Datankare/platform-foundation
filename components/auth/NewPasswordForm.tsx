@@ -46,8 +46,11 @@ export default function NewPasswordForm({
         Your account requires a new password before you can continue.
       </p>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">
         <div className="flex flex-col gap-3">
+          <label htmlFor="new-password" className="sr-only">
+            New password
+          </label>
           <input
             ref={inputRef}
             id="new-password"
@@ -59,6 +62,9 @@ export default function NewPasswordForm({
             disabled={isLoading}
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
+          <label htmlFor="confirm-password" className="sr-only">
+            Confirm new password
+          </label>
           <input
             id="confirm-password"
             type="password"
