@@ -37,15 +37,15 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ### TASK-044 — Per-environment ACRCloud projects for security isolation
 
-| Field        | Detail                          |
-| ------------ | ------------------------------- |
-| **ID**       | TASK-044                        |
-| **Type**     | Security — credential isolation |
-| **Severity** | Medium                          |
-| **Phase**    | When staging traffic begins     |
-| **Status**   | Open                            |
-| **Logged**   | 2026-04-25                      |
-| **Source**   | TASK-026 rotation               |
+| Field        | Detail                             |
+| ------------ | ---------------------------------- |
+| **ID**       | TASK-044                           |
+| **Type**     | Security — credential isolation    |
+| **Severity** | Medium                             |
+| **Phase**    | Phase 8 — Consumer App Integration |
+| **Status**   | Open                               |
+| **Logged**   | 2026-04-25                         |
+| **Source**   | TASK-026 rotation                  |
 
 **What:** All Vercel environments (Production, Preview, Development) currently share the same ACRCloud credentials (`playform-prod-songid`). This means: (1) preview/dev API calls consume production paid quota, (2) staging bugs that hammer the identify endpoint affect production rate limits, (3) compromised dev env credential exposes production usage. Best practice: create `playform-staging-songid` and `playform-dev-songid` projects with separate credentials scoped per Vercel environment.
 
@@ -89,4 +89,4 @@ The following items were migrated to TASKS.md (Sprint 3c) as they are not securi
 
 ---
 
-_Last updated: April 25, 2026 (Sprint 3c — scope narrowed to security-only, non-security items migrated to TASKS.md, TASK-026 closed, TASK-044 added)_
+_Last updated: June 11, 2026 (Phase 4 exit gate — TASK-044 assigned Phase 8 per E8; SEC-001 unchanged, deferred Phase 9)_

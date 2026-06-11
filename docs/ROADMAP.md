@@ -9,20 +9,20 @@
 
 ## Phase Summary
 
-| Phase | Name                         | Status         | PF Release | Started    | Completed  |
-| ----- | ---------------------------- | -------------- | ---------- | ---------- | ---------- |
-| 0     | Platform Scaffolding         | ✅ Complete    | —          | 2026-03-15 | 2026-03-18 |
-| 0.5   | Input Reliability Sprint     | ✅ Complete    | —          | 2026-03-18 | 2026-03-20 |
-| 0.75  | E2E Test Suite               | ✅ Complete    | —          | 2026-03-20 | 2026-03-22 |
-| 1     | Identity & Access Foundation | ✅ Complete    | v1.1.0     | 2026-03-22 | 2026-04-02 |
-| 2     | Communication Foundation     | ✅ Complete    | v1.3.0     | 2026-04-03 | 2026-04-13 |
-| 3     | Language & Voice Foundation  | ✅ Complete    | v1.4.0     | 2026-04-14 | 2026-04-16 |
-| 4     | Content Safety Foundation    | 🔄 In Progress | —          | 2026-04-18 | —          |
-| 5     | Application Framework + AUX  | ⏳ Upcoming    | —          | —          | —          |
-| 6     | Monetization Foundation      | ⏳ Upcoming    | —          | —          | —          |
-| 7     | Analytics Foundation         | ⏳ Upcoming    | —          | —          | —          |
-| 8     | Consumer App Integration     | ⏳ Upcoming    | —          | —          | —          |
-| 9     | Hardening & Launch           | ⏳ Upcoming    | —          | —          | —          |
+| Phase | Name                         | Status      | PF Release | Started    | Completed  |
+| ----- | ---------------------------- | ----------- | ---------- | ---------- | ---------- |
+| 0     | Platform Scaffolding         | ✅ Complete | —          | 2026-03-15 | 2026-03-18 |
+| 0.5   | Input Reliability Sprint     | ✅ Complete | —          | 2026-03-18 | 2026-03-20 |
+| 0.75  | E2E Test Suite               | ✅ Complete | —          | 2026-03-20 | 2026-03-22 |
+| 1     | Identity & Access Foundation | ✅ Complete | v1.1.0     | 2026-03-22 | 2026-04-02 |
+| 2     | Communication Foundation     | ✅ Complete | v1.3.0     | 2026-04-03 | 2026-04-13 |
+| 3     | Language & Voice Foundation  | ✅ Complete | v1.4.0     | 2026-04-14 | 2026-04-16 |
+| 4     | Content Safety Foundation    | ✅ Complete | v1.6.0     | 2026-04-18 | 2026-06-11 |
+| 5     | Application Framework + AUX  | ⏳ Upcoming | —          | —          | —          |
+| 6     | Monetization Foundation      | ⏳ Upcoming | —          | —          | —          |
+| 7     | Analytics Foundation         | ⏳ Upcoming | —          | —          | —          |
+| 8     | Consumer App Integration     | ⏳ Upcoming | —          | —          | —          |
+| 9     | Hardening & Launch           | ⏳ Upcoming | —          | —          | —          |
 
 ### Cross-Phase Fabric
 
@@ -294,30 +294,30 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ---
 
-## Phase 4 — Content Safety Foundation 🔄
+## Phase 4 — Content Safety Foundation ✅
 
 **Objective:** Content moderation engine, COPPA enforcement, a user-group social system with autonomous agents, RAG foundation + cognitive memory, and a human review + appeals queue. Expanded scope per `PHASE4_PLAN.md`: Content Safety + Social System + Agent Runtime.
-**Start date:** 2026-04-18 — **Mid-phase release:** PF v1.5.0 (2026-06-09, Sprint 6 close)
+**Start date:** 2026-04-18 — **Completed:** 2026-06-11 — **Releases:** PF v1.5.0 (Sprint 6 close), PF v1.6.0 (phase close)
 
 ### Sprints
 
-| Sprint | Scope                                                                                           | Status         |
-| ------ | ----------------------------------------------------------------------------------------------- | -------------- |
-| 0      | Entry housekeeping — Sentry, CodeQL fixes, Semgrep SAST, pgvector + ltree, intent-driven UX     | ✅ Complete    |
-| 1a     | PF input module + agent types (conductor, classifier, intent, AdaptiveInput)                    | ✅ Complete    |
-| 1b     | Playform SpikeApp rewrite on AdaptiveInput; all existing features preserved                     | ✅ Complete    |
-| 2      | Moderation engine — Guardian agentic content moderation (ADR-016)                               | ✅ Complete    |
-| 3a     | Config-management agent — 10 tools, confirmation gate, two-person approval                      | ✅ Complete    |
-| 3b     | Sentinel agent (strike ladder warn → suspend → ban) + COPPA consent gate                        | ✅ Complete    |
-| 3c     | ACRCloud rotation, recording-duration config, health probes, docs reorg                         | ✅ Complete    |
-| 3d     | Profile screening, account-status guard, route-guard util, authFetch, auth across all 7 routes  | ✅ Complete    |
-| 4a     | Social data model + core services + agent runtime (registry, tools, trajectory, budget)         | ✅ Complete    |
-| 4b     | Agent activation — 5 social agents; AgentClassifier + AgentIntentResolver swap rule-based impls | ✅ Complete    |
-| 4c     | Playform social wiring — Team panel, social UI components + hooks                               | ✅ Complete    |
-| 5      | RAG foundation — chunker, embedding store, retrieval, budget-aware context injector, memory     | ✅ Complete    |
-| 6      | Human review + appeals (P10) on Guardian → Sentinel; Cognito new-password; live DB reconcile    | ✅ Complete    |
-| 7      | Sync-cron hardening — Playform auto-sync reliability (pin refs, drift detection, exclude audit) | 🔄 In progress |
-| gate   | Phase 4 exit gate                                                                               | ⏳ Upcoming    |
+| Sprint | Scope                                                                                           | Status      |
+| ------ | ----------------------------------------------------------------------------------------------- | ----------- |
+| 0      | Entry housekeeping — Sentry, CodeQL fixes, Semgrep SAST, pgvector + ltree, intent-driven UX     | ✅ Complete |
+| 1a     | PF input module + agent types (conductor, classifier, intent, AdaptiveInput)                    | ✅ Complete |
+| 1b     | Playform SpikeApp rewrite on AdaptiveInput; all existing features preserved                     | ✅ Complete |
+| 2      | Moderation engine — Guardian agentic content moderation (ADR-016)                               | ✅ Complete |
+| 3a     | Config-management agent — 10 tools, confirmation gate, two-person approval                      | ✅ Complete |
+| 3b     | Sentinel agent (strike ladder warn → suspend → ban) + COPPA consent gate                        | ✅ Complete |
+| 3c     | ACRCloud rotation, recording-duration config, health probes, docs reorg                         | ✅ Complete |
+| 3d     | Profile screening, account-status guard, route-guard util, authFetch, auth across all 7 routes  | ✅ Complete |
+| 4a     | Social data model + core services + agent runtime (registry, tools, trajectory, budget)         | ✅ Complete |
+| 4b     | Agent activation — 5 social agents; AgentClassifier + AgentIntentResolver swap rule-based impls | ✅ Complete |
+| 4c     | Playform social wiring — Team panel, social UI components + hooks                               | ✅ Complete |
+| 5      | RAG foundation — chunker, embedding store, retrieval, budget-aware context injector, memory     | ✅ Complete |
+| 6      | Human review + appeals (P10) on Guardian → Sentinel; Cognito new-password; live DB reconcile    | ✅ Complete |
+| 7      | Sync-cron hardening + provider conformance kits (ADR-027) + gate guards                         | ✅ Complete |
+| gate   | Phase 4 exit gate (E1-E15)                                                                      | ✅ Complete |
 
 ### Delivered
 
@@ -331,14 +331,14 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ADR-021 through ADR-026. Supabase migrations through 021 (social 015–016, pgvector 017, review queue 018–021).
 
-### Metrics (Sprint 6 close, PF v1.5.0)
+### Metrics (Phase 4 close, PF v1.6.0)
 
-| Repo                | Suites | Tests | Coverage (stmts) |
-| ------------------- | ------ | ----- | ---------------- |
-| platform-foundation | 128    | 1955  | 88.57%           |
-| Playform            | 148    | 2236  | 89.96%           |
+| Repo                | Suites | Tests | Coverage (stmts / lines) |
+| ------------------- | ------ | ----- | ------------------------ |
+| platform-foundation | 154    | 2089  | 88.54% / 89.78%          |
+| Playform            | 174    | 2371  | 89.41% / 90.43%          |
 
-### In flight
+### Sprint 7 (delivered)
 
 - **Sprint 7 — sync-cron hardening:** pin sync config + source refs (A), CI drift-detection for hand-ported excluded-shared files (B), exclude-anchor audit incl. ROADMAP.md protection (C), deletion policy (D), ops cleanup (E), Dependabot base branch (F). The `roadmap-consistency` CI check lands here so this section can never silently drift again.
 - **Sprint 7 — provider conformance kits (ADR-027):** a provider-agnostic conformance kit (TCK) per abstraction, parametrized by a fixtures adapter, run against every reference impl and every concrete impl — Cognito as a consumer-owned arm; Google translate/TTS/STT, ACRCloud, Anthropic, Redis, and Supabase social/realtime as synced arms. A registry-driven meta-test (`conformance-coverage.test.ts`) fails CI if any provider slot lacks a kit, so the convention is machine-enforced rather than a checklist. Building the concrete arms surfaced and corrected six mock-biased contract assertions; reference impls added where missing (`MockAIProvider`, `createMockHealthProbe`). Standing rule L21 adopted.
@@ -558,4 +558,6 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 7.0.0 | 2026-06-11 | Raman Sud | Sprint 7 complete. Sync provenance hardening (SHA-pinned auto-sync, verified end-to-end via Playform PR #321) and the roadmap-consistency CI gate (items A/B). Provider conformance kit system per ADR-027 (Accepted): a provider-agnostic conformance kit (TCK) for all 16 abstractions under **tests**/contract/, a value-imported manifest, and a registry-driven meta-test (conformance-coverage) that fails CI if any provider slot lacks a kit. Reference mocks added where missing (MockAIProvider, createMockHealthProbe). Nine concrete-impl arms: Cognito (consumer-owned pattern), Google translate/TTS/STT, ACRCloud, Anthropic, Redis, Supabase social/realtime. Building the arms surfaced and fixed six mock-biased contract assertions; reconciliations: expiresAt pinned to epoch seconds (AuthSession/GuestTokenResult, mock converted, unit documented), challenge signIn now returns success:false consistently (mock aligned to Cognito). jest.setup.ts clears Sentry's version-keyed global carrier between suites, fixing a scheduling-dependent RangeError (roving victim suite). L21 adopted; registry doc fix. 153 suites, 2088 tests, 88.54% stmts / 89.78% lines. PF v1.6.0. |
 
-_Last updated: 2026-06-11 (Sprint 7 close + PF v1.6.0; conformance kit system ADR-027, changelog 7.0.0)_
+| 7.1.0 | 2026-06-11 | Raman Sud | Phase 4 closed via exit gate E1-E15. RAMPS_PHASE4_ASSESSMENT.md committed (all 5 pillars GREEN); Sprint 7 22-point gate passed (2 Low findings, justified + tracked). README rewritten to Phase 4 state. GENAI_ROADMAP Phase 4 marked complete. SECURITY_DEBT: TASK-044 assigned Phase 8; SEC-001 remains formally deferred to Phase 9. Phase 4 final metrics recorded. Phase 5 (Application Framework) opens next session with entry gate N1-N8. |
+
+_Last updated: 2026-06-11 (Phase 4 exit gate complete; changelog 7.1.0)_

@@ -26,7 +26,7 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 | 1     | ✅ Complete  | Admin AI command bar                                                                                                            |
 | 2     | ✅ Complete  | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry |
 | 3     | ✅ Complete  | Voice pipeline (P1-P18 agentic), song ID, translation/TTS/STT providers, canonical audio format                                 |
-| 4     | ⏳ Upcoming  | RAG, embeddings, user context, explainability                                                                                   |
+| 4     | ✅ Complete  | RAG, embeddings, cognitive memory, explainability, Guardian/Sentinel agents, agent runtime, conformance kits                    |
 | 5     | ⏳ Upcoming  | Adaptive AI behavior, content generation, agentic framework, multimodal                                                         |
 | 6     | ⏳ Upcoming  | Token budgets, cost attribution, A/B testing                                                                                    |
 | 7     | ⏳ Upcoming  | AI quality monitoring, personalization, feedback loop, NL analytics                                                             |
@@ -92,14 +92,14 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 
 ---
 
-## Phase 4 — Content Safety Foundation ⏳
+## Phase 4 — Content Safety Foundation ✅
 
-| Capability               | Status     | Detail                                                                                                  |
-| ------------------------ | ---------- | ------------------------------------------------------------------------------------------------------- |
-| RAG foundation           | ⏳ Planned | Document chunking, context injection, retrieval pipeline                                                |
-| Embedding store          | ⏳ Planned | pgvector extension on Supabase for semantic search and personalization                                  |
-| User AI context store    | ⏳ Planned | Per-user interaction history, learning patterns, preferences — injected into AI prompts (ADR-017 §5)    |
-| AI output explainability | ⏳ Planned | Explanation chain for every AI decision — why was content blocked, why did behavior adjust (ADR-017 §6) |
+| Capability               | Status      | Detail                                                                                                           |
+| ------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------- |
+| RAG foundation           | ✅ Sprint 5 | `platform/rag/` — sliding-window + sentence chunker, retrieval pipeline, budget-aware context injector (ADR-023) |
+| Embedding store          | ✅ Sprint 5 | EmbeddingProvider (registry slot) + InMemoryEmbeddingStore (cosine); pgvector migration 017                      |
+| User AI context store    | ✅ Sprint 5 | Per-user episodic/semantic/procedural cognitive memory (P16), injected into AI prompts (ADR-017 §5)              |
+| AI output explainability | ✅ Sprint 5 | Explainability chain builder for every AI decision (ADR-017 §6)                                                  |
 
 ---
 
@@ -177,12 +177,13 @@ If any statement is false at launch, GenAI-native is incomplete.
 
 ## Changelog
 
-| Date       | Author    | Change                                                                                                                                                                                                     |
-| ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete.                                                                                    |
-| 2026-04-06 | Raman Sud | Generalized for platform-foundation: player→user, game→application, Phase 8 app implementation moved to consumer repos. Phase 9→Phase 8 (hardening).                                                       |
-| 2026-04-16 | Raman Sud | Phase 3 complete. Translation, voice, pipeline, song ID providers delivered. 5 GenAI capabilities deferred to Phase 4/6 (caching, token tracking, enhanced moderation, multi-language AI, eval framework). |
-| 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.                                                                  |
+| Date       | Author    | Change                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete.                                                                                                                                                                                                                                                                                            |
+| 2026-04-06 | Raman Sud | Generalized for platform-foundation: player→user, game→application, Phase 8 app implementation moved to consumer repos. Phase 9→Phase 8 (hardening).                                                                                                                                                                                                                                                               |
+| 2026-04-16 | Raman Sud | Phase 3 complete. Translation, voice, pipeline, song ID providers delivered. 5 GenAI capabilities deferred to Phase 4/6 (caching, token tracking, enhanced moderation, multi-language AI, eval framework).                                                                                                                                                                                                         |
+| 2026-06-11 | Raman Sud | Phase 4 complete. RAG foundation, pgvector embedding store, cognitive memory (P16), explainability chain delivered (Sprint 5). Guardian/Sentinel moderation agents, human review + appeals (P10), config agent, 6 social agents, and the full agent runtime delivered across Sprints 1-6. Provider conformance kits (ADR-027) close the phase: executable behavioral contract per abstraction, meta-test enforced. |
+| 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.                                                                                                                                                                                                                                                                          |
 
 | 2026-04-27 | Raman Sud | Sprint 3c/3d. Song-ID duration config (P13). Health probe wired (P3). Profile field screening through Guardian (P4). Account-status guard (P4, P11). Auth on all routes. authFetch wrapper. 4 agents active (Guardian, Config Manager, Sentinel + health probe adapter). |
 | 2026-04-29 | Raman Sud | Sprint 4a. Social data model (groups, memberships, invites). Agent runtime (registry, tools, trajectory store, budget tracker, execution engine). 12 provider slots. ADR-021, ADR-022. Coverage 86.47%. |
