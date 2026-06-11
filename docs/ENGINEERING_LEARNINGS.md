@@ -354,6 +354,28 @@ This is the in-session equivalent of the between-session pre-flight checklist.
 
 ---
 
+### L21: Every Abstraction Ships a Conformance Kit
+
+Every provider abstraction registered in `platform/providers/registry.ts` must
+ship a **conformance kit** (`__tests__/contract/<x>-contract.ts`): a
+provider-agnostic behavioral contract, parametrized by a fixtures adapter
+(shared canonical inputs + impl-specific opaque values), run against the
+reference/mock impl in a synced arm and against every concrete impl in its own
+arm — consumer-owned for an abstraction a consumer reimplements (today
+auth/Cognito), a single synced arm for PF-shipped real impls.
+
+The convention is self-policing, not a remembered checklist: the registry-driven
+meta-test `__tests__/contract/conformance-coverage.test.ts` walks
+`getActiveProviders()` and fails CI if any registered slot has no kit in the
+manifest. A new provider slot cannot land without one. See ADR-027.
+
+Building the concrete arms is not ceremony. The first pass surfaced six
+mock-biased contract assertions that both signature-level typing and per-impl
+tests had missed: SSO redirect casing, two `expiresAt` ms-vs-epoch-seconds unit
+splits, an optional MFA-setup session, an internally inconsistent challenge
+`success` flag, and STT language normalization. The arm is the thing that proves
+a real implementation actually satisfies the contract.
+
 ### Workflow Gotchas (32–41) — Phase 4 + Sprint 3c/3d Session Scar Tissue
 
 > These are cross-cutting workflow issues, not module-specific (those go in module Gotchas sections per L17). They apply to every session regardless of which module is being built.

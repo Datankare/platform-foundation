@@ -52,7 +52,7 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
       }
       if (password === "mfa-required") {
         return {
-          success: true,
+          success: false,
           mfaRequired: true,
           mfaSession: "mock-mfa-session",
         };
@@ -95,7 +95,7 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
         userId: MOCK_USER_ID,
         accessToken: "mock-refreshed-token",
         refreshToken: MOCK_REFRESH_TOKEN,
-        expiresAt: Date.now() + 3600000,
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
       };
     },
 
@@ -140,7 +140,7 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
           userId: MOCK_USER_ID,
           accessToken: MOCK_ACCESS_TOKEN,
           refreshToken: MOCK_REFRESH_TOKEN,
-          expiresAt: Date.now() + 3600000,
+          expiresAt: Math.floor(Date.now() / 1000) + 3600,
         },
       };
     },
@@ -207,7 +207,7 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
         success: true,
         guestId: MOCK_GUEST_ID,
         token: "mock-guest-token",
-        expiresAt: Date.now() + 86400000,
+        expiresAt: Math.floor(Date.now() / 1000) + 86400,
       };
     },
 
