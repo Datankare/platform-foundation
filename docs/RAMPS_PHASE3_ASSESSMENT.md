@@ -139,4 +139,4 @@ Phase 3 delivered four sprints building the language and voice infrastructure: t
 _Assessed by: Raman Sud, CTO_
 _Date: April 16, 2026_
 
-_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_
+_Last updated: April 27, 2026 (Sprint 3d — TASK-026 marked closed, ROTATION_RUNBOOK.md referenced)_
