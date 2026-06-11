@@ -52,6 +52,7 @@ export interface AuthSession {
   accessToken: AuthToken;
   refreshToken: AuthToken;
   idToken?: AuthToken;
+  /** Absolute expiry as a UNIX timestamp in epoch seconds (contract unit; see ADR-027). */
   expiresAt: number;
 }
 
@@ -89,6 +90,7 @@ export interface GuestTokenResult {
   success: boolean;
   guestId: string;
   token: AuthToken;
+  /** Absolute expiry as a UNIX timestamp in epoch seconds (contract unit; see ADR-027). */
   expiresAt: number;
   error?: string;
 }

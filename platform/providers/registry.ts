@@ -26,7 +26,7 @@
  *   SONG_ID_PROVIDER      = "acrcloud" | "mock"   (default: "mock")
  *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
  *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
-   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
+ *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
  *
  * @module platform/providers
