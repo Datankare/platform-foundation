@@ -19,7 +19,7 @@
  * itself.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const ROOT = process.cwd();
@@ -80,8 +80,17 @@ describe("repository hygiene", () => {
     const offenders: string[] = [];
 
     for (const path of walk(ROOT)) {
-      if (statSync(path).size > MAX_FILE_BYTES) continue;
-      const content = readFileSync(path, "utf8");
+      // Size check and read go through ONE file descriptor (fstat on the open
+      // fd, then read from the same fd) so there is no stat-then-read window —
+      // CodeQL: potential file system race condition.
+      const fd = openSync(path, "r");
+      let content: string;
+      try {
+        if (fstatSync(fd).size > MAX_FILE_BYTES) continue;
+        content = readFileSync(fd, "utf8");
+      } finally {
+        closeSync(fd);
+      }
       if (!MARKERS.some((m) => content.includes(m))) continue;
 
       const lines = content.split("\n");

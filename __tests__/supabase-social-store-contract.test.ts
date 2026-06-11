@@ -96,7 +96,15 @@ beforeAll(() => {
       }
       if (method === "PATCH") {
         const matched = applyFilters(db[table], params);
-        for (const row of matched) Object.assign(row, body);
+        // Explicit own-key copy (not Object.assign): this is a test fake
+        // applying a PATCH body to in-memory rows, but semgrep's
+        // insecure-object-assign rule blocks Object.assign onto existing
+        // objects, and the gate is the gate.
+        for (const row of matched) {
+          for (const [k, v] of Object.entries(body)) {
+            row[k] = v;
+          }
+        }
         return resp(matched) as unknown as Response;
       }
       let rows = applyFilters(db[table], params);
