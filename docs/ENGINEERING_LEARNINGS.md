@@ -354,7 +354,6 @@ This is the in-session equivalent of the between-session pre-flight checklist.
 
 ---
 
-<<<<<<< HEAD
 ### L21: Every Abstraction Ships a Conformance Kit
 
 Every provider abstraction registered in `platform/providers/registry.ts` must
@@ -377,10 +376,7 @@ splits, an optional MFA-setup session, an internally inconsistent challenge
 `success` flag, and STT language normalization. The arm is the thing that proves
 a real implementation actually satisfies the contract.
 
-### Workflow Gotchas (32–41) — Phase 4 + Sprint 3c/3d Session Scar Tissue
-=======
-### Workflow Gotchas (32–44) — Phase 4 + Sprint 3c/3d Session Scar Tissue
->>>>>>> origin/staging
+### Workflow Gotchas (32–47) — Phase 4 + Sprint 3c/3d Session Scar Tissue
 
 > These are cross-cutting workflow issues, not module-specific (those go in module Gotchas sections per L17). They apply to every session regardless of which module is being built.
 
