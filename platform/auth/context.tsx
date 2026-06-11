@@ -117,21 +117,71 @@ function clearSessionCookie(): void {
   document.cookie = "pf_has_session=; path=/; max-age=0; SameSite=Lax";
 }
 
+/** Guest tokens of the form guest_<id>_<timestamp> are valid for 24h. */
+const GUEST_TOKEN_VALIDITY_MS = 86_400_000;
+
+/**
+ * Best-effort token expiry in epoch ms, or null when undeterminable.
+ * Handles: guest_<id>_<ts> (underscore scheme), JWTs, and guest.<jwt>.
+ * Null means "cannot tell" — hydration proceeds and the server remains the
+ * authority; a determinable past expiry means the stored session is stale.
+ */
+function getTokenExpiryMs(token: string): number | null {
+  if (token.startsWith("guest_")) {
+    const ts = parseInt(token.slice(token.lastIndexOf("_") + 1), 10);
+    return isNaN(ts) ? 0 : ts + GUEST_TOKEN_VALIDITY_MS;
+  }
+  const segments = token.split(".");
+  const payloadSegment =
+    segments.length === 3
+      ? segments[1]
+      : segments.length === 4 && segments[0] === "guest"
+        ? segments[2]
+        : null;
+  if (!payloadSegment) return null;
+  try {
+    const normalized = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(normalized)) as { exp?: number };
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    /* justified */
+    // Not a decodable JWT — cannot determine expiry client-side
+    return null;
+  }
+}
+
 export function AuthContextProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Restore session from localStorage on mount
+  // Restore session from localStorage on mount.
+  // Stale or undecodable-but-expired tokens are purged instead of hydrated:
+  // hydrating them leaves the client claiming a session while the
+  // pf_has_session cookie (max-age 3600) has expired, so middleware and the
+  // client disagree forever and auth pages render blank. On VALID hydration
+  // the cookie is re-issued so both sides agree again.
   useEffect(() => {
     const storedToken = getStoredValue(TOKEN_STORAGE_KEY);
     const storedUser = getStoredValue(USER_STORAGE_KEY);
 
     if (storedToken && storedUser) {
+      const expiryMs = getTokenExpiryMs(storedToken);
+      if (expiryMs !== null && expiryMs <= Date.now()) {
+        // Stale session — purge everything and start signed-out.
+        removeStoredValue(TOKEN_STORAGE_KEY);
+        removeStoredValue(REFRESH_STORAGE_KEY);
+        removeStoredValue(USER_STORAGE_KEY);
+        clearSessionCookie();
+        setIsLoading(false);
+        return;
+      }
       try {
         const parsed = JSON.parse(storedUser) as AuthUser;
         setUser(parsed);
         setAccessToken(storedToken);
+        // Re-sync the middleware cookie with the restored client session.
+        setSessionCookie(3600);
       } catch {
         /* justified */
         // localStorage unavailable — return safe default
