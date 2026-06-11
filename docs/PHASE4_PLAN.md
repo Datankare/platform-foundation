@@ -3,7 +3,7 @@
 **Objective:** Full content moderation engine, COPPA enforcement, user-group social system with nine autonomous agents (3 input + 2 processing wrappers + 6 social), RAG foundation, human review queue.
 
 **Start date:** 2026-04-18
-**PF release target:** v1.5.0
+**PF release target:** v1.5.0 — **Actual:** v1.5.0 (Sprint 6 close) + v1.6.0 (phase close, 2026-06-11). Phase closed via exit gate E1-E15.
 
 ---
 
@@ -191,4 +191,4 @@
 
 ---
 
-_Last updated: April 30, 2026 (Sprint 4b complete — 5 social agents, input agent swap, 107 suites, 1683 tests, 86.83% coverage)_
+_Last updated: June 11, 2026 (Phase 4 closed — exit gate E1-E15 complete, PF v1.6.0, 154 suites / 2089 tests / 88.54%)_

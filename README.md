@@ -45,7 +45,6 @@ from day one.
 - ✅ Observability fabric — distributed tracing, metrics sink, health registry, error reporting
 - ✅ Realtime foundation — provider-abstracted WebSocket layer (Supabase first, swappable)
 - ✅ Agentic-native message schema — agent identity (P15), intent enforcement (P17), trajectories (P18), memory hints (P16)
-- ✅ Provider registry — 10 swappable slots: auth, cache, AI, error reporter, realtime, translation, TTS, STT, song ID, audio converter
 - ✅ AI cache — prompt-hash keying, TTL by use case, hit/miss metrics, cost savings tracking
 - ✅ SSE streaming endpoint (`/api/stream`) + React hooks (`useRealtimeStream`, `useRealtimeChannel`)
 
@@ -62,7 +61,22 @@ from day one.
 - ✅ Canonical audio format — all audio normalized to WAV 16kHz mono s16 PCM
 - ✅ Privacy by design — metadata stripping, clip limits, no audio in logs
 - ✅ Health probes for all voice providers
-- ✅ Provider registry — 10 swappable slots: auth, cache, AI, error reporter, realtime, translation, TTS, STT, song ID, audio converter
+
+### Content Safety + Social + Agents (Phase 4 — complete)
+
+- ✅ Guardian agentic moderation — blocklist → LLM classifier → context-aware agent, fail-closed
+- ✅ Sentinel strike ladder — warn → suspend → ban, persisted, async off the request path
+- ✅ COPPA consent gate — structural safety (P4), config-driven feature blocking
+- ✅ Human review queue + appeals (P10) — claim/resolve workflow, overturn side-effects, advisory AI reviewer-assist
+- ✅ Account-status guard ordered auth → status → COPPA → Guardian; auth enforced on all API routes
+- ✅ Social system — groups, memberships, invites (InMemory + Supabase stores) + 6 social agents
+- ✅ Agent runtime — AgentRegistry, ToolRegistry, TrajectoryStore, BudgetTracker, `executeAgent()` loop
+- ✅ Input module — InputConductor, classifier, intent resolver, AdaptiveInput component
+- ✅ Config-management agent — 10 tools, confirmation gate, two-person approval, impact correlation
+- ✅ RAG foundation — chunker, pgvector embedding store, retrieval pipeline, budget-aware context injector
+- ✅ Cognitive memory (P16) — per-user episodic/semantic/procedural AI context store
+- ✅ AI output explainability — explanation chain for every AI decision
+- ✅ **Provider conformance kits (ADR-027)** — an executable behavioral contract (TCK) per abstraction, run against every reference and concrete implementation; a registry-driven meta-test fails CI if any provider slot lacks one
 
 See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability map.
 
@@ -70,50 +84,51 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 - ✅ Next.js 16 + TypeScript strict + Tailwind CSS
 - ✅ CI/CD pipeline (GitHub Actions) — format, typecheck, lint, test:coverage, build, dependency audit
-- ✅ CodeQL SAST + Dependabot dependency scanning
+- ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 89 suites, 1461 tests, 85.48% statement coverage
-- ✅ 10+ integration test suites covering all cross-module boundaries
+- ✅ 154 suites, 2,089 tests, 88.54% statement / 75.9% branch coverage
+- ✅ Conformance kits for all 16 platform abstractions, self-policing via meta-test
+- ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
-- ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8)
-- ✅ Versioned releases (v1.3.0)
+- ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
+- ✅ Versioned releases (v1.6.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
 
-- ✅ 14 migrations (001–014)
-- ✅ 14 tables
-- ✅ 20 Row-Level Security policies
-- ✅ Generic roles: guest, registered, admin, super_admin
-- ✅ Role inheritance chain: guest → registered → admin → super_admin
+- ✅ 21 migrations (001–021)
+- ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
+- ✅ Row-Level Security policies throughout; service-role gating at the API layer
+- ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
 
 ### Documentation
 
-| Document                           | Purpose                                                              |
-| ---------------------------------- | -------------------------------------------------------------------- |
-| `docs/adr/ADR-001–018`             | 18 Architecture Decision Records                                     |
-| `docs/TAD.md`                      | Technical Architecture Document                                      |
-| `docs/ROADMAP.md`                  | 10-phase product roadmap with versioned changelog                    |
-| `docs/GENAI_ROADMAP.md`            | GenAI-native capability map — accomplished and forthcoming           |
-| `docs/GENAI_MANIFESTO.md`          | The 18 GenAI-native principles — what "GenAI-native" means           |
-| `docs/ENGINEERING_LEARNINGS.md`    | Adopted engineering principles and learning log                      |
-| `docs/PHASE3_PLAN.md`              | Phase 3 sprint plan — Language & Voice Foundation                    |
-| `docs/RAMPS_PHASE1_ASSESSMENT.md`  | Phase 1 RAMPS assessment                                             |
-| `docs/RAMPS_PHASE2_ASSESSMENT.md`  | Phase 2 RAMPS assessment (all 5 pillars GREEN)                       |
-| `docs/SECURITY_DEBT.md`            | Tracked deferrals with phase assignments                             |
-| `docs/OWASP_CONTROLS.md`           | 23 verified OWASP Top 10 controls                                    |
-| `docs/SUSTAINABILITY_CHECKLIST.md` | 22-point gate + 8-point accessibility gate + phase boundary protocol |
-| `CONTRIBUTING.md`                  | Branch workflow, seed separation, standing rules                     |
+| Document                            | Purpose                                                              |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| `docs/adr/ADR-001–027`              | 27 Architecture Decision Records                                     |
+| `docs/TAD.md`                       | Technical Architecture Document                                      |
+| `docs/ROADMAP.md`                   | 10-phase product roadmap with versioned changelog                    |
+| `docs/GENAI_ROADMAP.md`             | GenAI-native capability map — accomplished and forthcoming           |
+| `docs/GENAI_MANIFESTO.md`           | The 18 GenAI-native principles — what "GenAI-native" means           |
+| `docs/ENGINEERING_LEARNINGS.md`     | Adopted engineering principles (L1–L21) and learning log             |
+| `docs/PHASE4_PLAN.md`               | Phase 4 sprint plan — Content Safety + Social + Agent Runtime        |
+| `docs/RAMPS_PHASE4_ASSESSMENT.md`   | Phase 4 RAMPS assessment (all 5 pillars GREEN)                       |
+| `docs/RAMPS_PHASE1–3_ASSESSMENT.md` | Earlier phase baselines                                              |
+| `docs/SECURITY_DEBT.md`             | Tracked deferrals with phase assignments                             |
+| `docs/OWASP_CONTROLS.md`            | Verified OWASP Top 10 controls                                       |
+| `docs/SUSTAINABILITY_CHECKLIST.md`  | 22-point gate + 8-point accessibility gate + phase boundary protocol |
+| `CONTRIBUTING.md`                   | Branch workflow, seed separation, standing rules                     |
 
 ### Consumer Inheritance
 
 Platform-foundation is designed for consumers to inherit via automated sync:
 
-- Consumer repos pull from PF on a schedule or manually
+- Consumer repos pull from PF on a schedule or manually (SHA-pinned, provenance recorded in the sync PR)
 - Versioned releases (tags) allow consumers to pin to a specific version
-- 53-file exclude list protects consumer-specific files
+- Exclude list protects consumer-specific files
 - Pull-based model — PF has no knowledge of consumers
+- **Conformance kits cross the sync boundary**: a consumer that reimplements an abstraction (e.g. auth) wires its implementation into the same synced kit in a repo-owned arm — tightening the contract in PF re-tests every consumer automatically (ADR-027)
 
 See `CONTRIBUTING.md` for the inheritance model.
 
@@ -121,26 +136,32 @@ See `CONTRIBUTING.md` for the inheritance model.
 
 ```
 platform-foundation/
-├── platform/ai/            ← LLM orchestration, streaming, provider abstraction (Phase 2 ✅)
-├── platform/auth/          ← Identity, permissions, RBAC, GDPR, COPPA (Phase 1 ✅)
-├── platform/cache/         ← Cache provider abstraction, AI cache, health probe (Phase 2 ✅)
-├── platform/moderation/    ← Content safety — blocklist, classifier, middleware (Phase 2 ✅)
+├── platform/ai/            ← LLM orchestration, streaming, provider + mock (Phase 2/4 ✅)
+├── platform/auth/          ← Identity, permissions, RBAC, GDPR, COPPA, Cognito (Phase 1 ✅)
+├── platform/cache/         ← Cache provider abstraction, Redis, AI cache (Phase 2 ✅)
+├── platform/moderation/    ← Guardian, Sentinel, review + appeals, blocklist (Phase 2/4 ✅)
 ├── platform/observability/ ← Error tracking, tracing, metrics, health registry (Phase 2 ✅)
-├── platform/providers/     ← Provider registry — 5 swappable slots (Phase 2 ✅)
+├── platform/providers/     ← Provider registry — 13 swappable slots (Phase 2–4 ✅)
 ├── platform/rate-limit/    ← Rate limiting — per-user, token-aware (Phase 2 ✅)
 ├── platform/realtime/      ← Realtime provider, agentic messaging, health (Phase 2 ✅)
-├── platform/translation/   ← Translation provider (Phase 3)
-├── platform/voice/         ← Voice pipeline — TTS, STT, song ID (Phase 3)
+├── platform/translation/   ← Translation provider (Phase 3 ✅)
+├── platform/voice/         ← Voice pipeline — TTS, STT, song ID (Phase 3 ✅)
+├── platform/input/         ← Input conductor, classifier, intent (Phase 4 ✅)
+├── platform/agents/        ← Agent runtime — registry, tools, trajectories, budgets (Phase 4 ✅)
+├── platform/social/        ← Groups, memberships, invites + social agents (Phase 4 ✅)
+├── platform/rag/           ← RAG — chunker, embeddings, retrieval, memory (Phase 4 ✅)
+├── platform/admin/         ← Config-management agent (Phase 4 ✅)
 ├── platform/game-engine/   ← Application framework (Phase 5)
 ├── platform/monetization/  ← Monetization (Phase 6)
 ├── platform/analytics/     ← Analytics engine (Phase 7)
 ├── prompts/                ← Versioned LLM prompt library with tests (Phase 2 ✅)
 ├── components/admin/       ← Admin UI (GenAI command bar, data views)
-├── components/auth/        ← Auth UI (login, register, profile, age gate)
+├── components/auth/        ← Auth UI (login, register, profile, age gate, review/appeals)
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
-├── app/api/                ← API routes (admin, auth, health, process, stream)
-├── supabase/migrations/    ← 14 database migrations
-├── docs/adr/               ← 18 ADRs
+├── app/api/                ← API routes (admin, auth, health, process, stream, review)
+├── __tests__/contract/     ← Conformance kits (TCK) for all 16 abstractions (ADR-027)
+├── supabase/migrations/    ← 21 database migrations
+├── docs/adr/               ← 27 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -170,7 +191,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 89 suites, 1461 tests, 85.48% coverage
+npm run test:coverage  # 154 suites, 2089 tests, 88.5% coverage
 npm run build          # Clean build
 ```
 
@@ -180,7 +201,8 @@ npm run build          # Clean build
 2. Clone and follow Quick Start above
 3. Add `.github/sync-config.json` + sync workflow to inherit future updates
 4. Add your app-specific roles via a custom migration (see `CONTRIBUTING.md`)
-5. Update ADRs and TAD with your stack choices
+5. If you reimplement a platform abstraction, wire it into the matching conformance kit in a repo-owned arm (see ADR-027)
+6. Update ADRs and TAD with your stack choices
 
 ## API Keys Required
 
@@ -191,9 +213,9 @@ npm run build          # Clean build
 
 ## Quality Assessments
 
-See [RAMPS Phase 2 Assessment](docs/RAMPS_PHASE2_ASSESSMENT.md) for the latest reliability, accessibility, maintainability, performance, and security report (all 5 pillars GREEN).
+See [RAMPS Phase 4 Assessment](docs/RAMPS_PHASE4_ASSESSMENT.md) for the latest reliability, accessibility, maintainability, performance, and security report (all 5 pillars GREEN).
 
-See [RAMPS Phase 1 Assessment](docs/RAMPS_PHASE1_ASSESSMENT.md) for the Phase 1 baseline.
+Earlier baselines: [Phase 3](docs/RAMPS_PHASE3_ASSESSMENT.md) · [Phase 2](docs/RAMPS_PHASE2_ASSESSMENT.md) · [Phase 1](docs/RAMPS_PHASE1_ASSESSMENT.md)
 
 ## Roadmap
 
@@ -207,6 +229,6 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 
 ---
 
-_Platform Foundation v1.3.0 — Datankare_
-_Phase 4 In Progress · 98 suites · 1616 tests · 86.47% coverage · 22 ADRs · 18 GenAI principles · 3 agents_
+_Platform Foundation v1.6.0 — Datankare_
+_Phase 4 Complete · 154 suites · 2,089 tests · 88.54% coverage · 27 ADRs · 18 GenAI principles · 16 conformance kits · 12+ agents_
 _Built with Foundation as Fabric · Continuous Confidence_
