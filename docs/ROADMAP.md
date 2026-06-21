@@ -18,7 +18,7 @@
 | 2     | Communication Foundation     | ✅ Complete | v1.3.0     | 2026-04-03 | 2026-04-13 |
 | 3     | Language & Voice Foundation  | ✅ Complete | v1.4.0     | 2026-04-14 | 2026-04-16 |
 | 4     | Content Safety Foundation    | ✅ Complete | v1.6.0     | 2026-04-18 | 2026-06-11 |
-| 5     | Application Framework + AUX  | ⏳ Upcoming | —          | —          | —          |
+| 5     | Application Framework + AUX  | 🔄 In Progress | —          | 2026-06-21 | —          |
 | 6     | Monetization Foundation      | ⏳ Upcoming | —          | —          | —          |
 | 7     | Analytics Foundation         | ⏳ Upcoming | —          | —          | —          |
 | 8     | Consumer App Integration     | ⏳ Upcoming | —          | —          | —          |
@@ -345,7 +345,7 @@ ADR-021 through ADR-026. Supabase migrations through 021 (social 015–016, pgve
 
 ---
 
-## Phase 5 — Application Framework ⏳
+## Phase 5 — Application Framework 🔄
 
 **Objective:** Extensible application framework — consumers implement their specific app type on top.
 
@@ -560,4 +560,6 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 7.1.0 | 2026-06-11 | Raman Sud | Phase 4 closed via exit gate E1-E15. RAMPS_PHASE4_ASSESSMENT.md committed (all 5 pillars GREEN); Sprint 7 22-point gate passed (2 Low findings, justified + tracked). README rewritten to Phase 4 state. GENAI_ROADMAP Phase 4 marked complete. SECURITY_DEBT: TASK-044 assigned Phase 8; SEC-001 remains formally deferred to Phase 9. Phase 4 final metrics recorded. Phase 5 (Application Framework) opens next session with entry gate N1-N8. |
 
-_Last updated: 2026-06-11 (Phase 4 exit gate complete; changelog 7.1.0)_
+| 8.0.0   | 2026-06-21 | Raman Sud | Phase 5 (Application Framework + AUX) started. Entry gate N1-N8 passed: prior exit gate complete (N1), deliverables confirmed (N2), deferred items reviewed and TASK-045 filed (N3), cross-phase fabric confirmed (N4), prerequisites verified (N5). 8-sprint plan (Sprint 0 housekeeping through Sprint 7 Playform adoption) plus exit gate; PHASE5_PLAN.md committed (N6). ADR-028 (app-framework), ADR-029 (agent workflow framework), ADR-030 (AUX) planned. AUX confirmed Phase 5 scope. |
+
+_Last updated: 2026-06-21 (Phase 5 started; entry gate N1-N8 complete; changelog 8.0.0)_
