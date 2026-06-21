@@ -297,6 +297,33 @@ audio samples (≥10s each).
 
 ---
 
+### TASK-045 — Rebase + maintain Playform GENAI_ROADMAP overlay
+
+| Field        | Detail                       |
+| ------------ | ---------------------------- |
+| **ID**       | TASK-045                     |
+| **Type**     | Documentation / process      |
+| **Severity** | Medium                       |
+| **Phase**    | Phase 5 (early sprint)       |
+| **Status**   | Open                         |
+| **Logged**   | 2026-06-21                   |
+| **Source**   | Phase 5 entry gate N3 review |
+
+**What:** Playform's docs/GENAI_ROADMAP.md is a sync-excluded
+overlay frozen at Sprint 3d (2026-04-27) — missing Sprints 4-7
+and the Phase 4 close. Rebase it on PF's current content as the
+base layer, then add Playform-specific GenAI content
+(AdaptiveInput intent resolution, song ID, translation pipeline,
+social-agent wiring, any Playform-only GenAI surfaces). Keep it
+sync-excluded.
+
+**Don't-rot guard:** extend the D3/D4 documentation gate so it
+runs against both GENAI_ROADMAPs whenever a consumer overlay
+exists. D3/D4 only ever ran against PF, which is why the overlay
+froze.
+
+---
+
 ## Unverified — Session Handoff Only
 
 > The following tasks appear in session handoff documents but
@@ -345,4 +372,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: April 26, 2026 (Sprint 3c close — TASK-038/040/041/043 resolved)_
+_Last updated: June 21, 2026 (Phase 5 entry gate — TASK-045 filed)_
