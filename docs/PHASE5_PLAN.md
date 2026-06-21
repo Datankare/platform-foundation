@@ -19,6 +19,7 @@
 - **Doc cleanups (PF):** GENAI_ROADMAP changelog reorder + literal `\u2705`/`\u2014` escape glitch in some Phase 2 rows.
 - **TASK-045 scheduled:** Playform GENAI_ROADMAP overlay rebase + D3/D4 dual-repo guard.
 - **TASKS.md hygiene:** add TASK-044 (Phase 8) to Open Items (referenced in ROADMAP/handoff but absent); verify or retire the unverified TASK-029/037; and confirm the true status of TASK-038/040/041/043 (the body lists them Open while the prior footer had claimed them resolved) — move to the Resolved table or keep Open accordingly.
+- **Playform Dependabot:** resolve the moderate vulnerability flagged on Playform's default branch (security/dependabot/34); fits the handoff Dependabot thread (item F).
 
 ### Sprint 1 — Application framework core (PF)
 
