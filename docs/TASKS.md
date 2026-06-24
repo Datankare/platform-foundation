@@ -328,6 +328,53 @@ Vercel cold start).
 
 ---
 
+### TASK-047 — Next 16 middleware → proxy file-convention deprecation
+
+| Field        | Detail                                               |
+| ------------ | ---------------------------------------------------- |
+| **ID**       | TASK-047                                             |
+| **Type**     | Tech debt — framework deprecation                    |
+| **Severity** | Low (warning now; hard error in a future Next major) |
+| **Phase**    | Phase 5+                                             |
+| **Status**   | Open                                                 |
+| **Logged**   | 2026-06-21                                           |
+| **Source**   | Sprint 0 dev-server warning (Next 16.2.6)            |
+
+**What:** Next 16 deprecated the `middleware.ts` file convention in favor of `proxy.ts` —
+the dev server logs the deprecation on startup, and request logs already show `proxy.ts`
+timings. PF-synced file, so both repos are affected. Becomes a hard error in a future Next major.
+
+**Resolution:** rename `middleware.ts` → `proxy.ts` per the Next 16 migration guide; verify
+auth + rate-limit middleware still applies on all routes; run the full gate. PF first (syncs
+to Playform).
+
+**Close when:** `middleware.ts` renamed to `proxy.ts` in PF, gate green, and the dev-server
+deprecation warning no longer appears.
+
+---
+
+### TASK-048 — Promote Playform Phase-5-open ROADMAP overlay to main
+
+| Field        | Detail                                       |
+| ------------ | -------------------------------------------- |
+| **ID**       | TASK-048                                     |
+| **Type**     | Process — release                            |
+| **Severity** | Low                                          |
+| **Phase**    | Phase 5 (Sprint 0 carry)                     |
+| **Status**   | Open                                         |
+| **Logged**   | 2026-06-21                                   |
+| **Source**   | Phase 5 entry — Playform N7/N8 overlay edits |
+
+**What:** Playform's Phase-5-open ROADMAP overlay edits (Phase 5 → In Progress, changelog)
+were committed to Playform `develop` (commit `2033172`) during the entry gate but not yet
+promoted. `ROADMAP.md` is a sync-excluded overlay, so it does NOT arrive via PF sync — it
+needs its own Playform develop → staging → main promotion.
+
+**Close when:** commit `2033172` (and any follow-on overlay edits) is merged to Playform
+`main` via the standard PR flow.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -367,4 +414,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 Sprint 0 — TASK-046 filed: auth-enable k6 + live re-baseline, Sprint 7 phase-exit; prior hygiene unchanged)_
+_Last updated: June 21, 2026 (Phase 5 Sprint 0 — follow-ups filed: TASK-047 (middleware→proxy), TASK-048 (Playform ROADMAP overlay promotion); TASK-046 k6 prior)_
