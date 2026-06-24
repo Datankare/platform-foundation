@@ -33,24 +33,6 @@ bump action versions in ci.yml and remove this entry.
 
 ---
 
-### TASK-019 — Rename `platform/game-engine/` → `platform/app-framework/`
-
-| Field          | Detail                                              |
-| -------------- | --------------------------------------------------- |
-| **ID**         | TASK-019                                            |
-| **Type**       | Technical debt — platform-game separation (ADR-001) |
-| **Severity**   | Low                                                 |
-| **Status**     | Tracked — placeholder directory, no code yet        |
-| **Logged**     | 2026-04-06                                          |
-| **Resolve by** | Phase 5 start                                       |
-
-**What:** Directory `platform/game-engine/` should be
-`platform/app-framework/` to reflect PF's consumer-agnostic nature.
-
-**Migrated from:** SECURITY_DEBT.md (Sprint 3c — not security-related)
-
----
-
 ### TASK-024 — Social Login (Google, Apple, Microsoft SSO)
 
 | Field        | Detail                                                  |
@@ -369,7 +351,8 @@ Sprint 3c. Flagged for awareness.
 | TASK-028 | Install @sentry/nextjs             | Phase 4, Sprint 0  | 2026-04-17 |
 | TASK-030 | (resolved per PHASE4_PLAN ln 16)   | Phase 4, Sprint 0  | 2026-04-18 |
 | TASK-034 | UX review — adaptive UI approved   | Phase 4, Sprint 0  | 2026-04-18 |
+| TASK-019 | Rename game-engine → app-framework | Phase 5, Sprint 0  | 2026-06-21 |
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 entry gate — TASK-045 filed)_
+_Last updated: June 21, 2026 (Phase 5 Sprint 0 — TASK-019 resolved: game-engine renamed to app-framework)_
