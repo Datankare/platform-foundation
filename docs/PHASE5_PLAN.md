@@ -14,7 +14,7 @@
 - **TASK-019:** rename `platform/game-engine/` → `platform/app-framework/` (ADR-001 platform-agnostic naming; placeholder dir, no code yet).
 - GenAI **P1–P18 mapping table** (L12) for the phase.
 - **N7/N8 ROADMAP edits:** Phase 5 → In Progress, start date, changelog 8.0.0 (applied this session).
-- **k6 live-burst re-baseline** against staging — moderation + agent layers now sit in request paths (handoff carry-in §5).
+- **k6 re-baseline (dry baseline captured; live deferred → TASK-046, Sprint 7):** dry run vs prod (`playform-inky.vercel.app`, 10 VUs, 1221 reqs) — 0% errors; process p95 76.9ms, stream p95 71.4ms, health p95 149ms; only health p99 tripped on a single ~2s Vercel cold start (benign). A live `DRY_RUN=0` run can't reach moderation/agent paths today — Sprint 3d auth-guards 401 every k6 request (the script sends no auth header), so its "~$5 live" note is stale. Live re-baseline needs an auth-enabled k6 script → **TASK-046** (Sprint 7, phase-exit expectation).
 - **ACRCloud Edge-Runtime warning fix** in PF — isolate the Node-only `createHmac` import from the Edge bundle (handoff carry-in §1).
 - **Doc cleanups (PF):** GENAI_ROADMAP changelog reorder + literal `\u2705`/`\u2014` escape glitch in some Phase 2 rows.
 - **TASK-045 scheduled:** Playform GENAI_ROADMAP overlay rebase + D3/D4 dual-repo guard.
@@ -58,12 +58,14 @@
 
 - Rewire SpikeApp onto `platform/app-framework`; consume the agent-native (AUX) contracts.
 - **TASK-045:** rebase + grow Playform's GENAI_ROADMAP overlay; install the D3/D4 dual-repo guard.
+- **TASK-046 (phase-exit expectation):** auth-enable `k6/api-load.js` (acquire a test-user JWT; send Bearer on `/process` + `/stream`), then run the live `DRY_RUN=0` re-baseline against **staging** — the first real moderation + agent latency baseline. Required before the Phase 5 exit gate.
 - Playform's "game engine abstraction" overlay framing lives here (consumer-side).
 
 ### gate — Phase 5 exit (E1–E15)
 
 - RAMPS Phase 5 assessment; **function coverage ≥ 84%** (RAMPS Phase 4 recommendation; currently PF 80.26%).
 - PF v1.7.0 tag + GitHub Release; Playform sync + promote.
+- **Live k6 re-baseline (TASK-046)** completed against staging — moderation + agent latency captured. Do not close the phase without it.
 
 ---
 
@@ -130,4 +132,4 @@ Function-coverage target ≥ 84% (phase goal). Coverage must never decrease betw
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 Sprint 0 — GenAI 18-principle mapping added; entry gate N1-N8, 8-sprint plan)_
+_Last updated: June 21, 2026 (Phase 5 Sprint 0 closed — k6 dry baseline recorded, live re-baseline deferred to Sprint 7 as TASK-046; GenAI 18-principle mapping; entry gate N1-N8)_

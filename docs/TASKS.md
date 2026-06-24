@@ -299,6 +299,35 @@ froze.
 
 ---
 
+### TASK-046 — Auth-enable k6 + live moderation/agent re-baseline
+
+| Field        | Detail                                        |
+| ------------ | --------------------------------------------- |
+| **ID**       | TASK-046                                      |
+| **Type**     | Testing infrastructure / performance baseline |
+| **Severity** | Medium                                        |
+| **Phase**    | Phase 5, Sprint 7 (phase-exit expectation)    |
+| **Status**   | Open                                          |
+| **Logged**   | 2026-06-21                                    |
+| **Source**   | Phase 5 Sprint 0 k6 re-baseline finding       |
+
+**What:** `k6/api-load.js`'s `DRY_RUN=0` ("live, ~$5") profile is stale — it predates
+Sprint 3d, which added `requireAuthWithStatus` to `/api/process` and `/api/stream`. The
+script sends no auth header, so every live request 401s at the guard before reaching
+moderation, translate/classify, or the orchestrator. A live run today costs ~$0 and
+measures only 401-rejection latency.
+
+**Resolution:** add auth to the k6 script — acquire a test-user JWT (sign in via
+`/api/auth/sign-in` or mint a token) and send it as `Authorization: Bearer …` on the
+`/process` and `/stream` calls. Then run `DRY_RUN=0` against **staging** for the first real
+moderation + agent latency baseline. Phase-exit expectation — do not close Phase 5 without it.
+
+**Dry baseline (Phase 5 Sprint 0, for reference):** prod, 10 VUs, 1221 reqs, 0% errors;
+process p95 76.9ms, stream p95 71.4ms, health p95 149ms (health p99 tripped on a single ~2s
+Vercel cold start).
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -338,4 +367,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 Sprint 0 — TASKS.md hygiene: TASK-029/040/043 resolved; TASK-037 promoted to Open (Phase 5); TASK-041/042 verified still-open; Unverified section cleared)_
+_Last updated: June 21, 2026 (Phase 5 Sprint 0 — TASK-046 filed: auth-enable k6 + live re-baseline, Sprint 7 phase-exit; prior hygiene unchanged)_
