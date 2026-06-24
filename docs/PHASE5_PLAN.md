@@ -18,7 +18,7 @@
 - **ACRCloud Edge-Runtime warning fix** in PF — isolate the Node-only `createHmac` import from the Edge bundle (handoff carry-in §1).
 - **Doc cleanups (PF):** GENAI_ROADMAP changelog reorder + literal `\u2705`/`\u2014` escape glitch in some Phase 2 rows.
 - **TASK-045 scheduled:** Playform GENAI_ROADMAP overlay rebase + D3/D4 dual-repo guard.
-- **TASKS.md hygiene:** add TASK-044 (Phase 8) to Open Items (referenced in ROADMAP/handoff but absent); verify or retire the unverified TASK-029/037; and confirm the true status of TASK-038/040/041/043 (the body lists them Open while the prior footer had claimed them resolved) — move to the Resolved table or keep Open accordingly.
+- **TASKS.md hygiene (done):** TASK-029 (dup of TASK-028), TASK-040, TASK-043 → Resolved; TASK-037 → Open (Phase 5, on the agentic workflow framework, ADR-029); TASK-041 + TASK-042 verified still-open; TASK-044 confirmed correctly tracked in SECURITY_DEBT (Phase 8).
 - **Playform Dependabot:** resolve the moderate vulnerability flagged on Playform's default branch (security/dependabot/34); fits the handoff Dependabot thread (item F).
 
 ### Sprint 1 — Application framework core (PF)
