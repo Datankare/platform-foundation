@@ -1,6 +1,6 @@
 # app-01
 
-First game — plugs into the platform via game-engine interface.
+First game — plugs into the platform via app-framework interface.
 
 ## Status
 

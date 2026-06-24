@@ -151,7 +151,7 @@ platform-foundation/
 ├── platform/social/        ← Groups, memberships, invites + social agents (Phase 4 ✅)
 ├── platform/rag/           ← RAG — chunker, embeddings, retrieval, memory (Phase 4 ✅)
 ├── platform/admin/         ← Config-management agent (Phase 4 ✅)
-├── platform/game-engine/   ← Application framework (Phase 5)
+├── platform/app-framework/   ← Application framework (Phase 5)
 ├── platform/monetization/  ← Monetization (Phase 6)
 ├── platform/analytics/     ← Analytics engine (Phase 7)
 ├── prompts/                ← Versioned LLM prompt library with tests (Phase 2 ✅)

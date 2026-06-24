@@ -28,6 +28,14 @@
  */
 
 export function register() {
+  // Next.js runs this hook in both the Node and Edge runtimes. Provider + observability
+  // init touch Node-only modules (crypto, Supabase, ffmpeg) via the provider registry;
+  // pulling them into the Edge pass logs warnings (and would fail at runtime). Skip Edge
+  // only — Node, and any context where NEXT_RUNTIME is unset, initialize as before.
+  if (process.env.NEXT_RUNTIME === "edge") {
+    return;
+  }
+
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { initProviders } = require("@/platform/providers");
