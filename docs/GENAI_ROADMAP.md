@@ -44,33 +44,33 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 
 ## Phase 2 — Communication Foundation ✅
 
-| Capability                     | Status           | Detail                                                                                                           |
-| ------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
-| LLM orchestration layer        | ✅ Sprint 1      | `platform/ai/orchestrator.ts` — provider abstraction, model tiering (Haiku/Sonnet), circuit breaker, retry       |
-| Provider interface             | ✅ Sprint 1      | `platform/ai/provider.ts` — Anthropic primary, pluggable fallback. No raw `fetch()` to LLM APIs.                 |
-| AI call instrumentation        | ✅ Sprint 1      | Every AI call auto-records: model, tokens in/out, latency, estimated cost, success/failure                       |
-| Prompt registry                | ✅ Sprint 1      | `prompts/` — versioned prompts with tests, registry with version resolution                                      |
-| Admin AI refactored            | ✅ Sprint 1      | Raw `fetch()` + inline prompt → orchestrator + prompt registry                                                   |
-| Safety classifier refactored   | ✅ Sprint 1      | Anthropic SDK direct call → orchestrator. Structured output: 6 categories, confidence, severity                  |
-| Blocklist pre-screen (Layer 1) | ✅ Sprint 2      | `platform/moderation/blocklist.ts` — instant, zero-cost pattern matching. safe-regex2 validated.                 |
-| LLM classifier (Layer 2)       | ✅ Sprint 2      | `platform/moderation/classifier.ts` — structured classification via orchestrator                                 |
-| Safety middleware              | ✅ Sprint 2      | `platform/moderation/middleware.ts` — universal pipeline for input AND output screening (ADR-017)                |
-| Moderation audit trail         | ✅ Sprint 2      | SHA-256 hashed input, full classifier output, action, direction logged per decision                              |
-| Guardian agent (Layer 3)       | \u2705 Sprint 2  | `platform/moderation/guardian.ts` \u2014 agentic screening with trajectories, reasoning, context-aware decisions |
-| Content rating (COPPA tiers)   | \u2705 Sprint 2  | Age-based thresholds: Level 1 (under 13), Level 2 (13-17), Level 3 (18+). Config-driven, fail-closed.            |
-| Config management agent        | \u2705 Sprint 3a | `platform/admin/` \u2014 10-tool agent with approval, impact correlation, trajectory recording                   |
-| Versioned config prompt        | \u2705 Sprint 3a | `prompts/admin/config-manager-v1.ts` \u2014 permission-aware system prompt with reconfirmation flow              |
-| Sentinel agent                 | \u2705 Sprint 3b | `platform/moderation/sentinel.ts` \u2014 strike recording, consequence ladder, 5-step trajectory                 |
-| COPPA consent gate             | \u2705 Sprint 3b | `platform/auth/coppa-gate.ts` \u2014 structural safety (P4), fail-closed, config-driven feature blocking         |
-| Strike persistence             | \u2705 Sprint 3b | `platform/moderation/strikes.ts` \u2014 InMemory + Supabase stores, L19 compliant (not fire-and-forget)          |
-| Sentinel middleware hook       | \u2705 Sprint 3b | Guardian block \u2192 Sentinel fires async \u2192 strike recorded \u2192 consequence evaluated                   |
-| Error tracking (Sentry)        | ✅ Sprint 3      | `platform/observability/error-reporting.ts` — ErrorReporter interface, Sentry + NoOp implementations             |
-| Distributed tracing            | ✅ Sprint 3      | `platform/observability/tracing.ts` — TraceProvider interface, trace/span lifecycle, header propagation          |
-| Metrics persistence            | ✅ Sprint 3      | `platform/observability/metrics-sink.ts` — MetricsSink interface, InMemory + Supabase implementations            |
-| Health monitoring              | ✅ Sprint 3      | `platform/observability/health.ts` — HealthRegistry + probes for Supabase, LLM provider, generic HTTP            |
-| AI metrics → MetricsSink       | ✅ Sprint 3      | AI instrumentation now delegates to MetricsSink for persistent storage alongside in-memory buffer                |
-| Logger trace context           | ✅ Sprint 3      | `lib/logger.ts` — traceId/spanId fields, withTrace() scoped logger, documented log entry schema                  |
-| Streaming responses            | ✅ Sprint 5      | `provider.stream()` + `orchestrator.stream()`, TTFT instrumentation, circuit breaker, fallback to complete()     |
+| Capability                     | Status       | Detail                                                                                                       |
+| ------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------ |
+| LLM orchestration layer        | ✅ Sprint 1  | `platform/ai/orchestrator.ts` — provider abstraction, model tiering (Haiku/Sonnet), circuit breaker, retry   |
+| Provider interface             | ✅ Sprint 1  | `platform/ai/provider.ts` — Anthropic primary, pluggable fallback. No raw `fetch()` to LLM APIs.             |
+| AI call instrumentation        | ✅ Sprint 1  | Every AI call auto-records: model, tokens in/out, latency, estimated cost, success/failure                   |
+| Prompt registry                | ✅ Sprint 1  | `prompts/` — versioned prompts with tests, registry with version resolution                                  |
+| Admin AI refactored            | ✅ Sprint 1  | Raw `fetch()` + inline prompt → orchestrator + prompt registry                                               |
+| Safety classifier refactored   | ✅ Sprint 1  | Anthropic SDK direct call → orchestrator. Structured output: 6 categories, confidence, severity              |
+| Blocklist pre-screen (Layer 1) | ✅ Sprint 2  | `platform/moderation/blocklist.ts` — instant, zero-cost pattern matching. safe-regex2 validated.             |
+| LLM classifier (Layer 2)       | ✅ Sprint 2  | `platform/moderation/classifier.ts` — structured classification via orchestrator                             |
+| Safety middleware              | ✅ Sprint 2  | `platform/moderation/middleware.ts` — universal pipeline for input AND output screening (ADR-017)            |
+| Moderation audit trail         | ✅ Sprint 2  | SHA-256 hashed input, full classifier output, action, direction logged per decision                          |
+| Guardian agent (Layer 3)       | ✅ Sprint 2  | `platform/moderation/guardian.ts` — agentic screening with trajectories, reasoning, context-aware decisions  |
+| Content rating (COPPA tiers)   | ✅ Sprint 2  | Age-based thresholds: Level 1 (under 13), Level 2 (13-17), Level 3 (18+). Config-driven, fail-closed.        |
+| Config management agent        | ✅ Sprint 3a | `platform/admin/` — 10-tool agent with approval, impact correlation, trajectory recording                    |
+| Versioned config prompt        | ✅ Sprint 3a | `prompts/admin/config-manager-v1.ts` — permission-aware system prompt with reconfirmation flow               |
+| Sentinel agent                 | ✅ Sprint 3b | `platform/moderation/sentinel.ts` — strike recording, consequence ladder, 5-step trajectory                  |
+| COPPA consent gate             | ✅ Sprint 3b | `platform/auth/coppa-gate.ts` — structural safety (P4), fail-closed, config-driven feature blocking          |
+| Strike persistence             | ✅ Sprint 3b | `platform/moderation/strikes.ts` — InMemory + Supabase stores, L19 compliant (not fire-and-forget)           |
+| Sentinel middleware hook       | ✅ Sprint 3b | Guardian block → Sentinel fires async → strike recorded → consequence evaluated                              |
+| Error tracking (Sentry)        | ✅ Sprint 3  | `platform/observability/error-reporting.ts` — ErrorReporter interface, Sentry + NoOp implementations         |
+| Distributed tracing            | ✅ Sprint 3  | `platform/observability/tracing.ts` — TraceProvider interface, trace/span lifecycle, header propagation      |
+| Metrics persistence            | ✅ Sprint 3  | `platform/observability/metrics-sink.ts` — MetricsSink interface, InMemory + Supabase implementations        |
+| Health monitoring              | ✅ Sprint 3  | `platform/observability/health.ts` — HealthRegistry + probes for Supabase, LLM provider, generic HTTP        |
+| AI metrics → MetricsSink       | ✅ Sprint 3  | AI instrumentation now delegates to MetricsSink for persistent storage alongside in-memory buffer            |
+| Logger trace context           | ✅ Sprint 3  | `lib/logger.ts` — traceId/spanId fields, withTrace() scoped logger, documented log entry schema              |
+| Streaming responses            | ✅ Sprint 5  | `provider.stream()` + `orchestrator.stream()`, TTFT instrumentation, circuit breaker, fallback to complete() |
 
 ---
 
@@ -181,13 +181,11 @@ If any statement is false at launch, GenAI-native is incomplete.
 | ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2026-04-06 | Raman Sud | Initial GenAI roadmap — extracted from ADR-015, ADR-017, and ROADMAP.md. Phase 1 complete, Phase 2 Sprint 1+2 complete.                                                                                                                                                                                                                                                                                            |
 | 2026-04-06 | Raman Sud | Generalized for platform-foundation: player→user, game→application, Phase 8 app implementation moved to consumer repos. Phase 9→Phase 8 (hardening).                                                                                                                                                                                                                                                               |
-| 2026-04-16 | Raman Sud | Phase 3 complete. Translation, voice, pipeline, song ID providers delivered. 5 GenAI capabilities deferred to Phase 4/6 (caching, token tracking, enhanced moderation, multi-language AI, eval framework).                                                                                                                                                                                                         |
-| 2026-06-11 | Raman Sud | Phase 4 complete. RAG foundation, pgvector embedding store, cognitive memory (P16), explainability chain delivered (Sprint 5). Guardian/Sentinel moderation agents, human review + appeals (P10), config agent, 6 social agents, and the full agent runtime delivered across Sprints 1-6. Provider conformance kits (ADR-027) close the phase: executable behavioral contract per abstraction, meta-test enforced. |
 | 2026-04-06 | Raman Sud | Sprint 3 complete: Observability fabric added (6 items). Streaming deferred to Sprint 5 (real-time). Phase 2 now 3 of 6 sprints complete.                                                                                                                                                                                                                                                                          |
+| 2026-04-16 | Raman Sud | Phase 3 complete. Translation, voice, pipeline, song ID providers delivered. 5 GenAI capabilities deferred to Phase 4/6 (caching, token tracking, enhanced moderation, multi-language AI, eval framework).                                                                                                                                                                                                         |
+| 2026-04-27 | Raman Sud | Sprint 3c/3d. Song-ID duration config (P13). Health probe wired (P3). Profile field screening through Guardian (P4). Account-status guard (P4, P11). Auth on all routes. authFetch wrapper. 4 agents active (Guardian, Config Manager, Sentinel + health probe adapter).                                                                                                                                           |
+| 2026-04-29 | Raman Sud | Sprint 4a. Social data model (groups, memberships, invites). Agent runtime (registry, tools, trajectory store, budget tracker, execution engine). 12 provider slots. ADR-021, ADR-022. Coverage 86.47%.                                                                                                                                                                                                            |
+| 2026-04-30 | Raman Sud | Sprint 4b. 5 social agent workflows (matchmaker, gatekeeper, concierge, analyst, curator) with versioned prompts. AgentClassifier + AgentIntentResolver swap rule-based impls via conductor DI. 7 prompt files, all with sanitizeForPrompt + fail-closed parsing. 16/18 GenAI principles active (P14 deferred to Phase 7, P16 schema-ready with optional previous-result fields).                                  |
+| 2026-06-11 | Raman Sud | Phase 4 complete. RAG foundation, pgvector embedding store, cognitive memory (P16), explainability chain delivered (Sprint 5). Guardian/Sentinel moderation agents, human review + appeals (P10), config agent, 6 social agents, and the full agent runtime delivered across Sprints 1-6. Provider conformance kits (ADR-027) close the phase: executable behavioral contract per abstraction, meta-test enforced. |
 
-| 2026-04-27 | Raman Sud | Sprint 3c/3d. Song-ID duration config (P13). Health probe wired (P3). Profile field screening through Guardian (P4). Account-status guard (P4, P11). Auth on all routes. authFetch wrapper. 4 agents active (Guardian, Config Manager, Sentinel + health probe adapter). |
-| 2026-04-29 | Raman Sud | Sprint 4a. Social data model (groups, memberships, invites). Agent runtime (registry, tools, trajectory store, budget tracker, execution engine). 12 provider slots. ADR-021, ADR-022. Coverage 86.47%. |
-
-| 2026-04-30 | Raman Sud | Sprint 4b. 5 social agent workflows (matchmaker, gatekeeper, concierge, analyst, curator) with versioned prompts. AgentClassifier + AgentIntentResolver swap rule-based impls via conductor DI. 7 prompt files, all with sanitizeForPrompt + fail-closed parsing. 16/18 GenAI principles active (P14 deferred to Phase 7, P16 schema-ready with optional previous-result fields). |
-
-_Last updated: June 11, 2026 (Phase 4 closed — RAG, cognitive memory (P16), explainability, and provider conformance kits delivered; 17/18 principles active, P14 feedback loop remains Phase 7)_
+_Last updated: June 21, 2026 (Phase 5 Sprint 0 — GENAI_ROADMAP cleanup: changelog reordered chronologically, Phase 2 escape-glitch rows fixed. Phase 4 closed; 17/18 principles active, P14 feedback loop remains Phase 7)_

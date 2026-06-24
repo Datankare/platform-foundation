@@ -25,9 +25,9 @@ platform-foundation/
 │   ├── moderation/
 │   ├── monetization/
 │   ├── analytics/
-│   └── game-engine/  ← The abstraction layer all games implement
+│   └── app-framework/  ← The abstraction layer all games implement
 ├── games/
-│   └── app-01/    ← First game — uses platform via game-engine interface
+│   └── app-01/    ← First game — uses platform via app-framework interface
 ├── shared/
 │   ├── ui-components/
 │   ├── utils/
@@ -77,5 +77,5 @@ monorepo is unambiguously the right choice.
 - Directory structure enforces the platform/game separation at the filesystem level
 - New games are added as new directories under games/
 - Platform modules are added as new directories under platform/
-- The game-engine/ directory defines the contract all games must implement
+- The app-framework/ directory defines the contract all games must implement
 - Lighthouse JSON excluded from Git (large generated file — summary kept in LIGHTHOUSE.md)

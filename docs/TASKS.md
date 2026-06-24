@@ -33,24 +33,6 @@ bump action versions in ci.yml and remove this entry.
 
 ---
 
-### TASK-019 — Rename `platform/game-engine/` → `platform/app-framework/`
-
-| Field          | Detail                                              |
-| -------------- | --------------------------------------------------- |
-| **ID**         | TASK-019                                            |
-| **Type**       | Technical debt — platform-game separation (ADR-001) |
-| **Severity**   | Low                                                 |
-| **Status**     | Tracked — placeholder directory, no code yet        |
-| **Logged**     | 2026-04-06                                          |
-| **Resolve by** | Phase 5 start                                       |
-
-**What:** Directory `platform/game-engine/` should be
-`platform/app-framework/` to reflect PF's consumer-agnostic nature.
-
-**Migrated from:** SECURITY_DEBT.md (Sprint 3c — not security-related)
-
----
-
 ### TASK-024 — Social Login (Google, Apple, Microsoft SSO)
 
 | Field        | Detail                                                  |
@@ -183,6 +165,31 @@ approvals that have not been acted on.
 
 ---
 
+### TASK-037 — Config-AI conversational endpoint is a keyword stub
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-037                                                |
+| **Type**     | Feature — agentic surface                               |
+| **Severity** | Medium                                                  |
+| **Phase**    | Phase 5 (Sprint 2/3, on the agentic workflow framework) |
+| **Status**   | Open                                                    |
+| **Logged**   | 2026-06-21                                              |
+| **Source**   | app/api/admin/config-ai/route.ts:179                    |
+
+**What:** The conversational config-AI endpoint (`config-ai/route.ts`)
+still returns `buildAcknowledgment()`, a keyword-matching stub — not
+LLM-driven. The `/execute` sub-route does real tool dispatch, but the
+conversational layer on top does not. The route comment cites "Sprint 4b",
+but 4b wired the social and input agents, not this surface.
+
+**Resolution:** build it ON the Phase 5 agentic workflow framework
+(`platform/ai/agent.ts`, ADR-029) — system prompt → LLM with the config
+tool definitions → tool calls via `executeAgent()` → response. Do not
+extend the keyword approach. Verified still-open Phase 5 Sprint 0.
+
+---
+
 ### TASK-038 — Verify useAudioRecorder records ≥10s
 
 | Field        | Detail                                 |
@@ -223,24 +230,6 @@ Estimated ~1.5 sprints. Write ADR-021 before implementation.
 
 ---
 
-### TASK-040 — Add ACRCLOUD placeholders to .env.example
-
-| Field        | Detail                                  |
-| ------------ | --------------------------------------- |
-| **ID**       | TASK-040                                |
-| **Type**     | Documentation / dev experience          |
-| **Severity** | Low                                     |
-| **Phase**    | Sprint 3c                               |
-| **Status**   | Open                                    |
-| **Logged**   | 2026-04-25                              |
-| **Source**   | TASK-026 rotation pre-flight finding F2 |
-
-**What:** `.env.example` in both PF and Playform lacks
-`ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`,
-`ACRCLOUD_ACCESS_SECRET` placeholders.
-
----
-
 ### TASK-041 — Verify song-ID health probe is registered
 
 | Field        | Detail                                  |
@@ -258,6 +247,8 @@ probe for `SongIdentificationProvider`, but pre-flight grep
 found no registration call in `initObservability()`.
 If unregistered, the probe is dead code (Gotcha #27).
 
+**Verified (Phase 5 Sprint 0):** confirmed unregistered — `health-probe.ts` defines the probe (type + class) but no registration call exists in `observability/`, `registry.ts`, or `instrumentation.ts`. Gotcha #27 confirmed; fix still Open.
+
 ---
 
 ### TASK-042 — Refactor dual ACRCloud env-var read sites
@@ -272,28 +263,12 @@ If unregistered, the probe is dead code (Gotcha #27).
 | **Logged**   | 2026-04-25                              |
 | **Source**   | TASK-026 rotation pre-flight finding F1 |
 
-**What:** Both `platform/providers/registry.ts` (lines 211–213)
+**What:** Both `platform/providers/registry.ts` (lines 226–228)
 and `platform/voice/acrcloud-identify.ts` (lines 87–89)
 independently read `process.env.ACRCLOUD_*`.
 Single source of truth violation.
 
----
-
-### TASK-043 — Commit known-good audio test fixtures
-
-| Field        | Detail                                    |
-| ------------ | ----------------------------------------- |
-| **ID**       | TASK-043                                  |
-| **Type**     | Testing infrastructure                    |
-| **Severity** | Low                                       |
-| **Phase**    | Sprint 3c                                 |
-| **Status**   | Open                                      |
-| **Logged**   | 2026-04-25                                |
-| **Source**   | TASK-026 rotation — no fixtures available |
-
-**What:** No `test-fixtures/audio/` directory exists. Future
-rotations and song-ID testing need committed, known-good
-audio samples (≥10s each).
+**Verified (Phase 5 Sprint 0):** both read sites confirmed present (registry.ts:226-228, acrcloud-identify.ts:87-89). Still Open.
 
 ---
 
@@ -324,16 +299,32 @@ froze.
 
 ---
 
-## Unverified — Session Handoff Only
+### TASK-046 — Auth-enable k6 + live moderation/agent re-baseline
 
-> The following tasks appear in session handoff documents but
-> were not found in any repo doc or code. Raman to verify
-> descriptions and add to Open Items if valid.
+| Field        | Detail                                        |
+| ------------ | --------------------------------------------- |
+| **ID**       | TASK-046                                      |
+| **Type**     | Testing infrastructure / performance baseline |
+| **Severity** | Medium                                        |
+| **Phase**    | Phase 5, Sprint 7 (phase-exit expectation)    |
+| **Status**   | Open                                          |
+| **Logged**   | 2026-06-21                                    |
+| **Source**   | Phase 5 Sprint 0 k6 re-baseline finding       |
 
-| ID       | Handoff description (unverified) |
-| -------- | -------------------------------- |
-| TASK-029 | (not found in repo — verify)     |
-| TASK-037 | (not found in repo — verify)     |
+**What:** `k6/api-load.js`'s `DRY_RUN=0` ("live, ~$5") profile is stale — it predates
+Sprint 3d, which added `requireAuthWithStatus` to `/api/process` and `/api/stream`. The
+script sends no auth header, so every live request 401s at the guard before reaching
+moderation, translate/classify, or the orchestrator. A live run today costs ~$0 and
+measures only 401-rejection latency.
+
+**Resolution:** add auth to the k6 script — acquire a test-user JWT (sign in via
+`/api/auth/sign-in` or mint a token) and send it as `Authorization: Bearer …` on the
+`/process` and `/stream` calls. Then run `DRY_RUN=0` against **staging** for the first real
+moderation + agent latency baseline. Phase-exit expectation — do not close Phase 5 without it.
+
+**Dry baseline (Phase 5 Sprint 0, for reference):** prod, 10 VUs, 1221 reqs, 0% errors;
+process p95 76.9ms, stream p95 71.4ms, health p95 149ms (health p99 tripped on a single ~2s
+Vercel cold start).
 
 ---
 
@@ -353,23 +344,27 @@ Sprint 3c. Flagged for awareness.
 
 ## Resolved Items
 
-| ID       | Description                        | Resolved In        | Date       |
-| -------- | ---------------------------------- | ------------------ | ---------- |
-| TASK-014 | Admin module coverage exclusions   | Phase 1, Sprint 7a | 2026-04-01 |
-| TASK-015 | Platform config table              | Phase 1, Sprint 7b | 2026-04-02 |
-| TASK-016 | Repo inheritance model             | Phase 1, Sprint 7b | 2026-04-02 |
-| TASK-017 | Seed data separation               | Phase 1, Sprint 7b | 2026-04-02 |
-| TASK-018 | Rename player → user               | Phase 2, Sprint 3  | 2026-04-06 |
-| TASK-020 | Redis CacheProvider                | Phase 2, Sprint 4  | 2026-04-07 |
-| TASK-020 | TTS chunking (numbering collision) | Phase 3, Sprint 2  | 2026-04-10 |
-| TASK-021 | Redis rate limiter                 | Phase 2, Sprint 4  | 2026-04-07 |
-| TASK-022 | Password enforcement               | Phase 2, Sprint 4  | 2026-04-07 |
-| TASK-023 | GDPR hard purge                    | Phase 2, Sprint 4  | 2026-04-07 |
-| TASK-027 | Narrow IAM permissions             | Phase 4, Sprint 0  | 2026-04-17 |
-| TASK-028 | Install @sentry/nextjs             | Phase 4, Sprint 0  | 2026-04-17 |
-| TASK-030 | (resolved per PHASE4_PLAN ln 16)   | Phase 4, Sprint 0  | 2026-04-18 |
-| TASK-034 | UX review — adaptive UI approved   | Phase 4, Sprint 0  | 2026-04-18 |
+| ID       | Description                                                | Resolved In        | Date       |
+| -------- | ---------------------------------------------------------- | ------------------ | ---------- |
+| TASK-014 | Admin module coverage exclusions                           | Phase 1, Sprint 7a | 2026-04-01 |
+| TASK-015 | Platform config table                                      | Phase 1, Sprint 7b | 2026-04-02 |
+| TASK-016 | Repo inheritance model                                     | Phase 1, Sprint 7b | 2026-04-02 |
+| TASK-017 | Seed data separation                                       | Phase 1, Sprint 7b | 2026-04-02 |
+| TASK-018 | Rename player → user                                       | Phase 2, Sprint 3  | 2026-04-06 |
+| TASK-020 | Redis CacheProvider                                        | Phase 2, Sprint 4  | 2026-04-07 |
+| TASK-020 | TTS chunking (numbering collision)                         | Phase 3, Sprint 2  | 2026-04-10 |
+| TASK-021 | Redis rate limiter                                         | Phase 2, Sprint 4  | 2026-04-07 |
+| TASK-022 | Password enforcement                                       | Phase 2, Sprint 4  | 2026-04-07 |
+| TASK-023 | GDPR hard purge                                            | Phase 2, Sprint 4  | 2026-04-07 |
+| TASK-027 | Narrow IAM permissions                                     | Phase 4, Sprint 0  | 2026-04-17 |
+| TASK-028 | Install @sentry/nextjs                                     | Phase 4, Sprint 0  | 2026-04-17 |
+| TASK-030 | (resolved per PHASE4_PLAN ln 16)                           | Phase 4, Sprint 0  | 2026-04-18 |
+| TASK-034 | UX review — adaptive UI approved                           | Phase 4, Sprint 0  | 2026-04-18 |
+| TASK-019 | Rename game-engine → app-framework                         | Phase 5, Sprint 0  | 2026-06-21 |
+| TASK-040 | ACRCLOUD placeholders in .env.example                      | Phase 5, Sprint 0  | 2026-06-21 |
+| TASK-043 | Known-good audio test fixtures                             | Phase 5, Sprint 0  | 2026-06-21 |
+| TASK-029 | Sentry/middleware build-warning tracking (dup of TASK-028) | Phase 5, Sprint 0  | 2026-06-21 |
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 entry gate — TASK-045 filed)_
+_Last updated: June 21, 2026 (Phase 5 Sprint 0 — TASK-046 filed: auth-enable k6 + live re-baseline, Sprint 7 phase-exit; prior hygiene unchanged)_
