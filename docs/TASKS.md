@@ -375,6 +375,71 @@ needs its own Playform develop → staging → main promotion.
 
 ---
 
+### TASK-050 — Jest worker crashes with stack overflow in soft-delete warning
+
+| Field        | Detail                                               |
+| ------------ | ---------------------------------------------------- |
+| **ID**       | TASK-050                                             |
+| **Type**     | Test infrastructure — latent crash                   |
+| **Severity** | Medium (does not fail the gate — exit code stays 0)  |
+| **Phase**    | Phase 5                                              |
+| **Status**   | Open                                                 |
+| **Logged**   | 2026-07-06                                           |
+| **Source**   | Playform `npx jest` output during the audit-fix gate |
+
+**What:** A Jest worker process hard-crashes with `RangeError: Maximum call stack size
+exceeded` inside `jest-util`'s soft-deleted-global warning path (`emitAccessWarning` →
+`originalSetter` → infinite recursion, jest-util/build/index.js:531-541). It is preceded by
+`[JEST-01] DeprecationWarning: 'version' property was accessed on [Object] after it was soft
+deleted` — something accesses a global after Jest tears it down between test files.
+
+**Why it matters:** the suite still reports all tests passing and jest exits 0, so **CI does
+not catch this**. A crashing worker can mask failures and will get worse: Jest has announced
+the soft-delete behavior becomes "on" (hard failure) in a future version.
+
+**Confirmed pre-existing (2026-07-06):** NOT caused by the `npm audit fix` OTel/Sentry bump —
+reproduced on the pre-bump lockfile (`865fedc`, 2 occurrences) and the post-bump lockfile
+(`d54163e`, 1 occurrence).
+
+**Resolution:** run with `--detect-open-handles` / `--runInBand` to isolate the offending
+suite; identify what accesses a global post-teardown (likely a module registering global
+instrumentation); fix the leak or set the Jest config option that controls soft-delete
+behavior. Check whether PF exhibits it too.
+
+**Close when:** `npx jest` in both repos completes with zero `Maximum call stack size
+exceeded` occurrences.
+
+---
+
+### TASK-051 — Pin Semgrep rulesets (stop `--config auto` drift)
+
+| Field        | Detail                         |
+| ------------ | ------------------------------ |
+| **ID**       | TASK-051                       |
+| **Type**     | CI / supply-chain hygiene      |
+| **Severity** | Low                            |
+| **Phase**    | Phase 5                        |
+| **Status**   | Open                           |
+| **Logged**   | 2026-07-06                     |
+| **Source**   | Semgrep CI failure, 2026-07-06 |
+
+**What:** Both repos run `semgrep scan --config auto --config p/owasp-top-ten --config
+p/typescript --error`. `--config auto` resolves to the _latest_ community rules on every run,
+so when Semgrep adds or promotes a rule, a previously-green build goes red with no change on
+our side. That is exactly what happened on 2026-07-06: 14 blocking findings appeared from two
+newly-active rules (`github-actions-mutable-action-tag`, `dependabot-missing-cooldown`) — the
+findings were legitimate, but the _timing_ was not under our control.
+
+**Resolution:** pin the Semgrep rulesets to explicit versions (or a committed `.semgrep.yml`
+rule set), and adopt a deliberate cadence for reviewing/adopting new upstream rules — so new
+rules are triaged on purpose rather than blocking a merge unannounced. Keep `--error` (we want
+blocking findings to block); the goal is controlling _when_ new rules arrive, not ignoring them.
+
+**Close when:** both repos' `semgrep.yml` reference pinned rulesets, and a documented cadence
+exists for reviewing upstream rule additions.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -414,4 +479,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 Sprint 0 — follow-ups filed: TASK-047 (middleware→proxy), TASK-048 (Playform ROADMAP overlay promotion); TASK-046 k6 prior)_
+_Last updated: July 6, 2026 (TASK-050 filed: Jest worker stack overflow, pre-existing; TASK-051 filed: pin Semgrep rulesets. CI hardening — actions SHA-pinned, dependabot cooldown added in both repos)_
