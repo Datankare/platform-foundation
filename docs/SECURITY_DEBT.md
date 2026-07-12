@@ -59,6 +59,34 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ---
 
+### TASK-049 — Playform Dependabot moderate vulnerability (security/dependabot/34)
+
+| Field        | Detail                              |
+| ------------ | ----------------------------------- |
+| **ID**       | TASK-049                            |
+| **Type**     | Security — dependency vulnerability |
+| **Severity** | Moderate                            |
+| **Phase**    | Phase 5 (Sprint 0 carry)            |
+| **Status**   | Open                                |
+| **Logged**   | 2026-06-21                          |
+| **Source**   | Playform Dependabot alert #34       |
+
+**What:** Dependabot flagged a moderate-severity vulnerability on Playform's default branch
+(alert `security/dependabot/34`). Playform-repo dependency item — does not ride PF sync;
+needs its own bump → gate → PR cycle in the Playform repo.
+
+**Resolution plan:**
+
+1. Read the advisory to identify the affected package + fixed version
+2. Bump the dependency in Playform (accept the Dependabot PR or bump manually)
+3. Run the full Playform gate (format, tsc, eslint, jest, coverage floor)
+4. Merge via develop → staging → main
+5. Remove this entry when the alert clears
+
+**Close when:** Dependabot alert #34 shows resolved on Playform's default branch.
+
+---
+
 ## Resolved Items
 
 _Items below have been resolved and are retained for audit trail only._
@@ -89,4 +117,4 @@ The following items were migrated to TASKS.md (Sprint 3c) as they are not securi
 
 ---
 
-_Last updated: June 11, 2026 (Phase 4 exit gate — TASK-044 assigned Phase 8 per E8; SEC-001 unchanged, deferred Phase 9)_
+_Last updated: June 21, 2026 (Phase 5 Sprint 0 — TASK-049 filed: Playform Dependabot moderate vuln #34; SEC-001 + TASK-044 unchanged)_
