@@ -25,11 +25,11 @@ jobs:
         run: pip install semgrep
 
       - name: Run Semgrep
-        run: semgrep scan --config auto --config p/owasp-top-ten --config p/typescript --error .
+        run: semgrep scan --config p/owasp-top-ten --config p/typescript --error .
 
       - name: Run Semgrep (artifact)
         if: always()
-        run: semgrep scan --config auto --config p/owasp-top-ten --config p/typescript --json --output semgrep-results.json . || true
+        run: semgrep scan --config p/owasp-top-ten --config p/typescript --json --output semgrep-results.json . || true
 
       - name: Upload results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
