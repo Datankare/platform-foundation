@@ -335,7 +335,7 @@ Vercel cold start).
 | **ID**       | TASK-047                                             |
 | **Type**     | Tech debt — framework deprecation                    |
 | **Severity** | Low (warning now; hard error in a future Next major) |
-| **Phase**    | Phase 5+                                             |
+| **Phase**    | Phase 5, Sprint 1                                    |
 | **Status**   | Open                                                 |
 | **Logged**   | 2026-06-21                                           |
 | **Source**   | Sprint 0 dev-server warning (Next 16.2.6)            |
@@ -382,7 +382,7 @@ needs its own Playform develop → staging → main promotion.
 | **ID**       | TASK-050                                             |
 | **Type**     | Test infrastructure — latent crash                   |
 | **Severity** | Medium (does not fail the gate — exit code stays 0)  |
-| **Phase**    | Phase 5                                              |
+| **Phase**    | Phase 5, Sprint 1                                    |
 | **Status**   | Open                                                 |
 | **Logged**   | 2026-07-06                                           |
 | **Source**   | Playform `npx jest` output during the audit-fix gate |
@@ -408,35 +408,6 @@ behavior. Check whether PF exhibits it too.
 
 **Close when:** `npx jest` in both repos completes with zero `Maximum call stack size
 exceeded` occurrences.
-
----
-
-### TASK-051 — Pin Semgrep rulesets (stop `--config auto` drift)
-
-| Field        | Detail                         |
-| ------------ | ------------------------------ |
-| **ID**       | TASK-051                       |
-| **Type**     | CI / supply-chain hygiene      |
-| **Severity** | Low                            |
-| **Phase**    | Phase 5                        |
-| **Status**   | Open                           |
-| **Logged**   | 2026-07-06                     |
-| **Source**   | Semgrep CI failure, 2026-07-06 |
-
-**What:** Both repos run `semgrep scan --config auto --config p/owasp-top-ten --config
-p/typescript --error`. `--config auto` resolves to the _latest_ community rules on every run,
-so when Semgrep adds or promotes a rule, a previously-green build goes red with no change on
-our side. That is exactly what happened on 2026-07-06: 14 blocking findings appeared from two
-newly-active rules (`github-actions-mutable-action-tag`, `dependabot-missing-cooldown`) — the
-findings were legitimate, but the _timing_ was not under our control.
-
-**Resolution:** pin the Semgrep rulesets to explicit versions (or a committed `.semgrep.yml`
-rule set), and adopt a deliberate cadence for reviewing/adopting new upstream rules — so new
-rules are triaged on purpose rather than blocking a merge unannounced. Keep `--error` (we want
-blocking findings to block); the goal is controlling _when_ new rules arrive, not ignoring them.
-
-**Close when:** both repos' `semgrep.yml` reference pinned rulesets, and a documented cadence
-exists for reviewing upstream rule additions.
 
 ---
 
@@ -473,10 +444,15 @@ Sprint 3c. Flagged for awareness.
 | TASK-030 | (resolved per PHASE4_PLAN ln 16)                           | Phase 4, Sprint 0  | 2026-04-18 |
 | TASK-034 | UX review — adaptive UI approved                           | Phase 4, Sprint 0  | 2026-04-18 |
 | TASK-019 | Rename game-engine → app-framework                         | Phase 5, Sprint 0  | 2026-06-21 |
+| TASK-051 | Drop semgrep --config auto (both repos)                    | Phase 5, Sprint 0  | 2026-07-12 |
+| TASK-052 | Sync-failure alerting (GitHub Issue on failure)            | Phase 5, Sprint 0  | 2026-07-12 |
+| TASK-053 | Stale game-engine refs in Playform overlays                | Phase 5, Sprint 0  | 2026-07-12 |
+| TASK-054 | platform/rag + platform/agents READMEs                     | Phase 5, Sprint 0  | 2026-07-12 |
+| TASK-055 | Prune stale auto-sync branches (14 removed)                | Phase 5, Sprint 0  | 2026-07-12 |
 | TASK-040 | ACRCLOUD placeholders in .env.example                      | Phase 5, Sprint 0  | 2026-06-21 |
 | TASK-043 | Known-good audio test fixtures                             | Phase 5, Sprint 0  | 2026-06-21 |
 | TASK-029 | Sentry/middleware build-warning tracking (dup of TASK-028) | Phase 5, Sprint 0  | 2026-06-21 |
 
 ---
 
-_Last updated: July 6, 2026 (TASK-050 filed: Jest worker stack overflow, pre-existing; TASK-051 filed: pin Semgrep rulesets. CI hardening — actions SHA-pinned, dependabot cooldown added in both repos)_
+_Last updated: July 12, 2026 (Sprint 0 tail — TASK-051/052/053/054/055 resolved; TASK-047 + TASK-050 scoped to Sprint 1; TASK-049 resolved in SECURITY_DEBT)_
