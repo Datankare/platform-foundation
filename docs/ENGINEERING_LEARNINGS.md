@@ -376,6 +376,44 @@ splits, an optional MFA-setup session, an internally inconsistent challenge
 `success` flag, and STT language normalization. The arm is the thing that proves
 a real implementation actually satisfies the contract.
 
+### L22: No Task Outlives Its Sprint
+
+Every open task in `TASKS.md` and `SECURITY_DEBT.md` carries a **specific sprint**, not a
+phase-shaped guess. "Phase 4+", "Phase 5+", "early sprint" are not schedules — they are
+deferrals with no owner and no boundary, and work parked there rots invisibly.
+
+**The gate:** a sprint cannot close while any open task is scheduled for a sprint or phase that
+has **already ended**. Re-scope at the boundary or close it; do not let it drift.
+
+Phase 5 Sprint 0 found eight open tasks still scheduled for Phase 4, Sprint 3c, and Sprint 4b —
+sprints that had closed months earlier. Nothing anywhere flagged it. Two of them (an
+unregistered health probe, a duplicated env-var read) were real defects sitting in the
+registry, silently past due, because "Phase 4" stopped being a schedule the moment Phase 4
+closed and no check noticed.
+
+The same failure mode killed the Playform sync for two weeks (a rotated PAT, no alert) and
+froze the module READMEs for a full phase (an unanchored rsync exclude). The pattern is
+constant: **a system that fails silently fails indefinitely.** Make the boundary check
+explicit, or the boundary does not exist.
+
+### L23: Every Promotion to Main Carries a Written PR
+
+No promotion to `main` merges on a bare title. Every PR uses
+`.github/pull_request_template.md` and states, at minimum:
+
+- **Summary** — one paragraph: what this delivers and why.
+- **Changes** — module-level, grouped, not a file list.
+- **Gate** — the actual result: suites, tests, coverage vs floor.
+
+For any **fix**, additionally state the **root cause** and the **failure mode** — not just what
+was changed. "SHA-pin the actions" is a diff; "mutable tags can be silently repointed by the
+action owner, as in the trivy-action compromise" is the reason the diff exists. The PR body is
+the durable record of _why_; six months on, the commit message will not tell you and neither
+will the code.
+
+The PR body is written for the person who has to understand this change after everyone has
+forgotten it — including its author.
+
 ### Workflow Gotchas (32–47) — Phase 4 + Sprint 3c/3d Session Scar Tissue
 
 > These are cross-cutting workflow issues, not module-specific (those go in module Gotchas sections per L17). They apply to every session regardless of which module is being built.
