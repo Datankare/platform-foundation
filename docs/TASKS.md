@@ -11,23 +11,34 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ### CI-001 — GitHub Actions Node.js 24 deprecation warning
 
-| Field          | Detail                                                     |
-| -------------- | ---------------------------------------------------------- |
-| **ID**         | CI-001                                                     |
-| **Type**       | External dependency                                        |
-| **Severity**   | Warning only — not a failure                               |
-| **Component**  | actions/checkout, actions/setup-node                       |
-| **Status**     | Blocked on GitHub releasing Node.js 24 compatible versions |
-| **Logged**     | 2026-03-19                                                 |
-| **Resolve by** | Before June 2nd 2026                                       |
+| Field          | Detail                                               |
+| -------------- | ---------------------------------------------------- |
+| **ID**         | CI-001                                               |
+| **Type**       | External dependency                                  |
+| **Severity**   | Warning only — not a failure                         |
+| **Component**  | actions/checkout, actions/setup-node                 |
+| **Status**     | Open — UNBLOCKED, compatible versions have shipped   |
+| **Logged**     | 2026-03-19                                           |
+| **Resolve by** | 2026-09-16 (Node 20 removed from runners) — Sprint 1 |
 
-**What:** GitHub's own actions have not yet released versions
-that natively run on Node.js 24. We have already set
-node-version: 24 and FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true.
+**What:** Our workflows pin action majors that still run on Node.js 20
+(checkout v4.2.2, setup-node v4.4.0, upload-artifact v4, codeql-action v3).
+Node 24 became the default runtime on 2026-06-02; **Node 20 is removed from
+GitHub runners on 2026-09-16**, after which these actions stop working.
+
+**Unblocked (verified 2026-07-12):** Node 24-compatible majors have shipped —
+`actions/checkout` v6/v7, `actions/setup-node` v6, `actions/upload-artifact` v5+/v7,
+`github/codeql-action` v4. Dependabot has already opened PRs for checkout 7.0.0
+and upload-artifact 7.0.1.
 
 **Resolution plan:**
-Monitor GitHub Actions changelog. When updated versions ship,
-bump action versions in ci.yml and remove this entry.
+
+1. Bump the action majors in both repos, keeping the SHA-pin + `# vX` comment convention
+2. Verify each workflow still passes (ci, codeql, semgrep, load-test, zap-scan, sync)
+3. Drop the `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` shim once everything is on Node 24
+4. Remove this entry
+
+**Close when:** no workflow runs a Node 20 action; no deprecation warning in CI output.
 
 **Migrated from:** SECURITY_DEBT.md (Sprint 3c — not security-related)
 
@@ -61,14 +72,14 @@ components/auth/SsoButtons.tsx
 
 ### TASK-025 — ALB for ffmpeg-service (stable URL)
 
-| Field        | Detail         |
-| ------------ | -------------- |
-| **ID**       | TASK-025       |
-| **Type**     | Infrastructure |
-| **Severity** | Medium         |
-| **Phase**    | 5              |
-| **Status**   | Open           |
-| **Logged**   | 2026-04-16     |
+| Field        | Detail            |
+| ------------ | ----------------- |
+| **ID**       | TASK-025          |
+| **Type**     | Infrastructure    |
+| **Severity** | Medium            |
+| **Phase**    | Phase 5, Sprint 6 |
+| **Status**   | Open              |
+| **Logged**   | 2026-04-16        |
 
 **What:** ECS Fargate public IP changes on task restart.
 Add ALB or Elastic IP for stable URL.
@@ -86,7 +97,7 @@ not production.
 | **ID**       | TASK-031               |
 | **Type**     | Documentation          |
 | **Severity** | Low                    |
-| **Phase**    | Phase 4                |
+| **Phase**    | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 88 |
@@ -103,7 +114,7 @@ useAudioRecorder components in Playform.
 | **ID**       | TASK-032               |
 | **Type**     | UX — contextual UI     |
 | **Severity** | Low                    |
-| **Phase**    | Phase 4                |
+| **Phase**    | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 85 |
@@ -120,7 +131,7 @@ identification mode (contextual UI behavior).
 | **ID**       | TASK-033               |
 | **Type**     | Feature                |
 | **Severity** | Low                    |
-| **Phase**    | Phase 4                |
+| **Phase**    | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 86 |
@@ -137,7 +148,7 @@ SongMatchCard component.
 | **ID**       | TASK-035               |
 | **Type**     | Feature                |
 | **Severity** | Low                    |
-| **Phase**    | Phase 4                |
+| **Phase**    | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 87 |
@@ -155,7 +166,7 @@ results.
 | **ID**       | TASK-036                                    |
 | **Type**     | Feature enhancement                         |
 | **Severity** | Low                                         |
-| **Phase**    | Phase 4+                                    |
+| **Phase**    | Phase 5, Sprint 2                           |
 | **Status**   | Open                                        |
 | **Logged**   | 2026-04-24                                  |
 | **Source**   | Code: platform/admin/config-approval.ts:425 |
@@ -197,7 +208,7 @@ extend the keyword approach. Verified still-open Phase 5 Sprint 0.
 | **ID**       | TASK-038                               |
 | **Type**     | Reliability verification               |
 | **Severity** | Medium                                 |
-| **Phase**    | Sprint 3c                              |
+| **Phase**    | Phase 5, Sprint 7                      |
 | **Status**   | Open                                   |
 | **Logged**   | 2026-04-25                             |
 | **Source**   | TASK-026 rotation — Gotcha G-VOICE-001 |
@@ -217,7 +228,7 @@ users will get `code: 1001 No Result` on valid songs.
 | **ID**       | TASK-039                     |
 | **Type**     | Feature evaluation           |
 | **Severity** | Low                          |
-| **Phase**    | Phase 5+                     |
+| **Phase**    | Phase 6+ (needs ADR)         |
 | **Status**   | Open — ADR-021 candidate     |
 | **Logged**   | 2026-04-25                   |
 | **Source**   | TASK-026 rotation discussion |
@@ -237,7 +248,7 @@ Estimated ~1.5 sprints. Write ADR-021 before implementation.
 | **ID**       | TASK-041                                |
 | **Type**     | Gotcha #27 verification                 |
 | **Severity** | Medium                                  |
-| **Phase**    | Sprint 3c                               |
+| **Phase**    | Phase 5, Sprint 1                       |
 | **Status**   | Open                                    |
 | **Logged**   | 2026-04-25                              |
 | **Source**   | TASK-026 rotation pre-flight finding F3 |
@@ -258,7 +269,7 @@ If unregistered, the probe is dead code (Gotcha #27).
 | **ID**       | TASK-042                                |
 | **Type**     | Refactor                                |
 | **Severity** | Low                                     |
-| **Phase**    | Sprint 4b                               |
+| **Phase**    | Phase 5, Sprint 1                       |
 | **Status**   | Open                                    |
 | **Logged**   | 2026-04-25                              |
 | **Source**   | TASK-026 rotation pre-flight finding F1 |
@@ -279,7 +290,7 @@ Single source of truth violation.
 | **ID**       | TASK-045                     |
 | **Type**     | Documentation / process      |
 | **Severity** | Medium                       |
-| **Phase**    | Phase 5 (early sprint)       |
+| **Phase**    | Phase 5, Sprint 7            |
 | **Status**   | Open                         |
 | **Logged**   | 2026-06-21                   |
 | **Source**   | Phase 5 entry gate N3 review |
@@ -455,4 +466,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 12, 2026 (Sprint 0 tail — TASK-051/052/053/054/055 resolved; TASK-047 + TASK-050 scoped to Sprint 1; TASK-049 resolved in SECURITY_DEBT)_
+_Last updated: July 12, 2026 (registry re-scoped to specific sprints — Sprint 1: CI-001 (unblocked, deadline 2026-09-16), TASK-041/042/047/050; Sprint 2: TASK-036; Sprint 6: TASK-025; Sprint 7: TASK-031/032/033/035/038/045; TASK-039 -> Phase 6+)_
