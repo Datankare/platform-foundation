@@ -6,9 +6,15 @@
 
 <!-- The business/architecture reason — which ADR, roadmap item, or principle drives this. -->
 
+## Root cause & failure mode
+
+<!-- FIXES ONLY (delete for features). What actually broke, why, and how it failed —
+     did it fail loudly, or silently? "What changed" is the diff; this is the reason
+     the diff exists. See L23. -->
+
 ## GenAI Principles
 
-<!-- Which principles this work satisfies (P1–P14), or "N/A — no GenAI surface." -->
+<!-- Which principles this work satisfies (P1–P18), or "N/A — no GenAI surface." -->
 
 ## Changes
 
@@ -16,14 +22,16 @@
 
 ## Tests
 
-<!-- New test count, key coverage changes. -->
+<!-- New test count, key coverage changes. Coverage must not decrease. -->
+
+## Gate
+
+<!-- Actual result: suites, tests, coverage vs floor. -->
+
+```bash
+npm run format:check && npx tsc --noEmit && npx eslint . && npx jest
+```
 
 ## Dependencies
 
 <!-- What must merge before this. What depends on this. -->
-
-## Verify
-
-```bash
-npm run format:check && npm run typecheck && npm run lint && npm test
-```
