@@ -59,48 +59,21 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ---
 
-### TASK-049 — Playform Dependabot moderate vulnerability (security/dependabot/34)
-
-| Field        | Detail                              |
-| ------------ | ----------------------------------- |
-| **ID**       | TASK-049                            |
-| **Type**     | Security — dependency vulnerability |
-| **Severity** | Moderate                            |
-| **Phase**    | Phase 5 (Sprint 0 carry)            |
-| **Status**   | Open                                |
-| **Logged**   | 2026-06-21                          |
-| **Source**   | Playform Dependabot alert #34       |
-
-**What:** Dependabot flagged a moderate-severity vulnerability on Playform's default branch
-(alert `security/dependabot/34`). Playform-repo dependency item — does not ride PF sync;
-needs its own bump → gate → PR cycle in the Playform repo.
-
-**Resolution plan:**
-
-1. Read the advisory to identify the affected package + fixed version
-2. Bump the dependency in Playform (accept the Dependabot PR or bump manually)
-3. Run the full Playform gate (format, tsc, eslint, jest, coverage floor)
-4. Merge via develop → staging → main
-5. Remove this entry when the alert clears
-
-**Close when:** Dependabot alert #34 shows resolved on Playform's default branch.
-
----
-
 ## Resolved Items
 
 _Items below have been resolved and are retained for audit trail only._
 
-| ID       | Description                                     | Resolved In                                                                                         | Date       |
-| -------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ---------- |
-| DS-001   | next/image disk cache vulnerability             | Phase 0 (Next.js 16 upgrade)                                                                        | 2026-03-18 |
-| SEC-002  | No rate limiting on API routes                  | Phase 1, Sprint 6                                                                                   | 2026-03-31 |
-| SEC-003  | No retry logic for external API calls           | Phase 1, Sprint 7a (fetchWithTimeout retry)                                                         | 2026-04-01 |
-| SEC-004  | No E2E tests — Playwright not integrated        | Phase 0.75                                                                                          | 2026-03-22 |
-| SEC-005  | SpeechRecognition hardcoded to en-US            | Phase 1                                                                                             | 2026-04-02 |
-| SEC-006  | Placeholder READMEs lack interface contracts    | Phase 1 (auth) + Phase 2 start (moderation, prompts)                                                | 2026-04-03 |
-| TASK-026 | Rotate ACRCloud access secret                   | Sprint 3c — paid project `playform-prod-songid`, trial 99216 deprovisioned. See ROTATION_RUNBOOK.md | 2026-04-25 |
-| TASK-027 | Narrow IAM permissions (scoped from FullAccess) | Phase 4 entry (confirmed via CLI)                                                                   | 2026-04-17 |
+| ID       | Description                                     | Resolved In                                                                                                     | Date       |
+| -------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------- |
+| DS-001   | next/image disk cache vulnerability             | Phase 0 (Next.js 16 upgrade)                                                                                    | 2026-03-18 |
+| SEC-002  | No rate limiting on API routes                  | Phase 1, Sprint 6                                                                                               | 2026-03-31 |
+| SEC-003  | No retry logic for external API calls           | Phase 1, Sprint 7a (fetchWithTimeout retry)                                                                     | 2026-04-01 |
+| SEC-004  | No E2E tests — Playwright not integrated        | Phase 0.75                                                                                                      | 2026-03-22 |
+| SEC-005  | SpeechRecognition hardcoded to en-US            | Phase 1                                                                                                         | 2026-04-02 |
+| SEC-006  | Placeholder READMEs lack interface contracts    | Phase 1 (auth) + Phase 2 start (moderation, prompts)                                                            | 2026-04-03 |
+| TASK-026 | Rotate ACRCloud access secret                   | Sprint 3c — paid project `playform-prod-songid`, trial 99216 deprovisioned. See ROTATION_RUNBOOK.md             | 2026-04-25 |
+| TASK-027 | Narrow IAM permissions (scoped from FullAccess) | Phase 4 entry (confirmed via CLI)                                                                               | 2026-04-17 |
+| TASK-049 | Playform Dependabot vulnerabilities (4 alerts)  | Phase 5, Sprint 0 — npm audit fix (@babel/core, @opentelemetry/core via @sentry/nextjs, js-yaml); 0 alerts open | 2026-07-12 |
 
 ---
 
@@ -117,4 +90,4 @@ The following items were migrated to TASKS.md (Sprint 3c) as they are not securi
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 Sprint 0 — TASK-049 filed: Playform Dependabot moderate vuln #34; SEC-001 + TASK-044 unchanged)_
+_Last updated: July 12, 2026 (TASK-049 resolved — 0 open Dependabot alerts on Playform main; SEC-001 + TASK-044 unchanged)_

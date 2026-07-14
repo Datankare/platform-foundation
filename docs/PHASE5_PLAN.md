@@ -98,6 +98,13 @@ Function-coverage target ≥ 84% (phase goal). Coverage must never decrease betw
 - **L12:** GenAI 18-principle mapping table before any code each sprint.
 - **Build order:** PF first; Playform inherits via SHA-pinned auto-sync from PF main. `ROADMAP.md` and `GENAI_ROADMAP.md` are Playform-owned overlays (sync-excluded).
 - **GOTCHA-52:** never modify a PF-synced file in Playform — fix in PF first.
+- **No overdue tasks (NEW, 2026-07-12):** a sprint cannot close while any open task in
+  `TASKS.md` or `SECURITY_DEBT.md` is scheduled for a sprint or phase that has **already
+  ended**. Every open task carries a _specific_ sprint, not a phase-shaped guess ("Phase 4+",
+  "Phase 5+", "early sprint" are not schedules). At each sprint boundary, re-scope anything
+  that slipped rather than letting it silently go stale. Rationale: Sprint 0 of Phase 5 found
+  eight tasks still scheduled for Phase 4 / Sprint 3c / Sprint 4b — sprints that closed months
+  earlier. Nothing flagged it.
 
 ---
 
