@@ -422,6 +422,47 @@ exceeded` occurrences.
 
 ---
 
+### TASK-056 — CI-signal parity for platform-foundation (the less-watched repo)
+
+| Field        | Detail                                       |
+| ------------ | -------------------------------------------- |
+| **ID**       | TASK-056                                     |
+| **Type**     | CI / build-model resilience                  |
+| **Severity** | Medium-High — silent drift, both repos       |
+| **Phase**    | Phase 5, Sprint 1                            |
+| **Status**   | Open                                         |
+| **Logged**   | 2026-07-21                                   |
+| **Source**   | PF audit drift + coverage-margin, 2026-07-21 |
+
+**What:** PF's CI failure/warning signals do not reach the maintainer the way Playform's do,
+so PF drifts silently. Two instances surfaced the same day:
+
+1. **Audit drift.** PF's `npm audit` had accumulated **9 advisories (2 high, 6 moderate, 1 low)**
+   while Playform showed 1 — because dependency audit-fix was only ever run on Playform, and the
+   two lockfiles are sync-excluded (independent). PF's `Layer 0d — Dependency audit` CI step was
+   presumably red without anyone watching.
+2. **Coverage margin.** After the fix PF sits at **88.59% vs its 88.54% floor — 0.05% headroom**.
+   One small untested addition breaches the floor, with no proximity warning.
+
+Same class as the sync outage (L22): a signal that fails silently fails indefinitely. Playform
+now has sync-failure alerting (TASK-052); PF has no equivalent for its own CI health.
+
+**Resolution:**
+
+1. **Audit alerting parity** — PF CI notifies on `Layer 0d` failure (issue-on-failure like the
+   sync alert, or GitHub Actions failure notification confirmed to reach the maintainer).
+2. **Coverage-proximity warning** — warn (not fail) when coverage is within a small margin
+   (e.g. <0.5%) of the floor, so a near-breach is visible before it becomes a hard failure.
+3. **Both-repo audit sweep** — a scheduled `npm audit` canary across BOTH repos (lockfiles are
+   sync-excluded, so "fixed in one" never means "fixed in both"), or a documented cadence.
+4. Confirm PF CI failures actually notify the maintainer at all — the root gap is that PF red
+   states were invisible.
+
+**Close when:** a PF CI failure (audit or gate) produces a notification that reaches the
+maintainer, and coverage-floor proximity emits a visible warning.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -466,4 +507,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 12, 2026 (registry re-scoped to specific sprints — Sprint 1: CI-001 (unblocked, deadline 2026-09-16), TASK-041/042/047/050; Sprint 2: TASK-036; Sprint 6: TASK-025; Sprint 7: TASK-031/032/033/035/038/045; TASK-039 -> Phase 6+)_
+_Last updated: July 21, 2026 (TASK-056 filed — CI-signal parity for PF; audit drift + coverage margin surfaced the less-watched-repo gap)_
