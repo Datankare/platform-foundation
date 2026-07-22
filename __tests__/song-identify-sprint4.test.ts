@@ -725,7 +725,7 @@ describe("Registry — Sprint 4a provider slots", () => {
 
   it("has 13 provider slots total", async () => {
     const { getActiveProviders } = await import("@/platform/providers/registry");
-    expect(Object.keys(getActiveProviders())).toHaveLength(13);
+    expect(Object.keys(getActiveProviders())).toHaveLength(14);
   });
 });
 

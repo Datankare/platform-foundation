@@ -44,6 +44,10 @@ import {
 } from "@/platform/social";
 import { logger } from "@/lib/logger";
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
+import {
+  setActivityStateStore,
+  SupabaseActivityStateStore,
+} from "@/platform/app-framework";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,6 +66,7 @@ export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
 export type ModerationStoreType = "supabase" | "memory";
 export type SocialStoreType = "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
+export type AppStateStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -77,6 +82,7 @@ export interface ProviderSelections {
   moderationStore: ModerationStoreType;
   socialStore: SocialStoreType;
   embeddingProvider: EmbeddingProviderType;
+  appStateStore: AppStateStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +107,7 @@ function getProviderSelections(): ProviderSelections {
     socialStore: (process.env.SOCIAL_STORE as SocialStoreType) ?? "memory",
     embeddingProvider:
       (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
+    appStateStore: (process.env.APP_STATE_STORE as AppStateStoreType) ?? "memory",
   };
 }
 
@@ -271,6 +278,23 @@ function initModerationStore(type: ModerationStoreType): void {
   }
 }
 
+function initAppStateStore(type: AppStateStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    if (!url || !key) {
+      logger.warn(
+        "APP_STATE_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
+      );
+      return;
+    }
+
+    setActivityStateStore(new SupabaseActivityStateStore(url, key));
+    return;
+  }
+}
+
 function initSocialStore(type: SocialStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -335,6 +359,7 @@ export function initProviders(): ProviderSelections {
   initSongIdProvider(selections.songId);
   initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
+  initAppStateStore(selections.appStateStore);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
@@ -352,6 +377,7 @@ export function initProviders(): ProviderSelections {
     songId: selections.songId,
     audioConverter: selections.audioConverter,
     moderationStore: selections.moderationStore,
+    appStateStore: selections.appStateStore,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
   });
