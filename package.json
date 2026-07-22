@@ -23,7 +23,7 @@
     "@supabase/supabase-js": "^2.103.0",
     "dotenv": "^17.4.2",
     "jose": "^6.2.2",
-    "next": "^16.2.6",
+    "next": "16.2.11",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "safe-regex2": "^5.1.0"
@@ -114,6 +114,7 @@
     ]
   },
   "overrides": {
-    "postcss": ">=8.5.10"
+    "postcss": ">=8.5.10",
+    "sharp": "^0.35.3"
   }
 }
