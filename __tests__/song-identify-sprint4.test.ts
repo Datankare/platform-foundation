@@ -485,16 +485,36 @@ describe("IdentifyCache interface (P16)", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("ACRCloudIdentifier — config validation", () => {
-  const originalEnv = process.env;
+  // TASK-050: do NOT reassign process.env — replacing Node's host object with a plain
+  // object makes later property access recurse in jest-util's soft-delete proxy
+  // (emitAccessWarning -> originalSetter -> ...), blowing the worker stack. Mutate keys.
+  const ACR_KEYS = [
+    "ACRCLOUD_HOST",
+    "ACRCLOUD_ACCESS_KEY",
+    "ACRCLOUD_ACCESS_SECRET",
+    "SONG_ID_PROVIDER",
+    "AUDIO_CONVERTER",
+    "AUDIO_CONVERTER_URL",
+    "AUDIO_CONVERTER_KEY",
+  ] as const;
+  const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     jest.resetModules();
-    process.env = { ...originalEnv };
+    for (const k of ACR_KEYS) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
   });
 
-  afterAll(() => {
-    process.env = originalEnv;
+  afterEach(() => {
+    for (const k of ACR_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
   });
+
+  afterAll(() => {});
 
   it("throws when ACRCLOUD_HOST is not configured", async () => {
     delete process.env.ACRCLOUD_HOST;
@@ -550,16 +570,36 @@ describe("ACRCloudIdentifier — config validation", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("FfmpegServiceConverter — config validation", () => {
-  const originalEnv = process.env;
+  // TASK-050: do NOT reassign process.env — replacing Node's host object with a plain
+  // object makes later property access recurse in jest-util's soft-delete proxy
+  // (emitAccessWarning -> originalSetter -> ...), blowing the worker stack. Mutate keys.
+  const ACR_KEYS = [
+    "ACRCLOUD_HOST",
+    "ACRCLOUD_ACCESS_KEY",
+    "ACRCLOUD_ACCESS_SECRET",
+    "SONG_ID_PROVIDER",
+    "AUDIO_CONVERTER",
+    "AUDIO_CONVERTER_URL",
+    "AUDIO_CONVERTER_KEY",
+  ] as const;
+  const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     jest.resetModules();
-    process.env = { ...originalEnv };
+    for (const k of ACR_KEYS) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
   });
 
-  afterAll(() => {
-    process.env = originalEnv;
+  afterEach(() => {
+    for (const k of ACR_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
   });
+
+  afterAll(() => {});
 
   it("throws when AUDIO_CONVERTER_URL is not configured", async () => {
     delete process.env.AUDIO_CONVERTER_URL;
@@ -675,16 +715,36 @@ describe("Health Probes — Audio Converter", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("Registry — Sprint 4a provider slots", () => {
-  const originalEnv = process.env;
+  // TASK-050: do NOT reassign process.env — replacing Node's host object with a plain
+  // object makes later property access recurse in jest-util's soft-delete proxy
+  // (emitAccessWarning -> originalSetter -> ...), blowing the worker stack. Mutate keys.
+  const ACR_KEYS = [
+    "ACRCLOUD_HOST",
+    "ACRCLOUD_ACCESS_KEY",
+    "ACRCLOUD_ACCESS_SECRET",
+    "SONG_ID_PROVIDER",
+    "AUDIO_CONVERTER",
+    "AUDIO_CONVERTER_URL",
+    "AUDIO_CONVERTER_KEY",
+  ] as const;
+  const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     jest.resetModules();
-    process.env = { ...originalEnv };
+    for (const k of ACR_KEYS) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
   });
 
-  afterAll(() => {
-    process.env = originalEnv;
+  afterEach(() => {
+    for (const k of ACR_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
   });
+
+  afterAll(() => {});
 
   it("includes songId and audioConverter in provider selections", async () => {
     const { getActiveProviders } = await import("@/platform/providers/registry");
