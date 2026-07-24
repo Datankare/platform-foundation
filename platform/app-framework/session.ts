@@ -14,7 +14,7 @@
  */
 
 import type { AgentIdentity, BudgetConfig, Step } from "@/platform/agents/types";
-import { generateId } from "@/platform/agents/utils";
+import { generateSecureId } from "@/platform/agents/utils";
 import { getTrajectoryStore } from "@/platform/agents";
 import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./actions";
 import { getActivityStateStore } from "./index";
@@ -116,7 +116,8 @@ export async function createSession<TState, TAction, TConfig>(
   args: CreateSessionArgs<TState, TAction, TConfig>
 ): Promise<ActivitySession<TState, TAction>> {
   const { definition, config, participants, budget } = args;
-  const sessionId = args.sessionId ?? `sess_${generateId()}`;
+  // 128-bit: sessionId gates access to session state (P4).
+  const sessionId = args.sessionId ?? `sess_${generateSecureId()}`;
 
   const store = getActivityStateStore<TState>();
   const initial = definition.initialState(config);
@@ -217,7 +218,8 @@ export async function dispatch<TState, TAction, TConfig>(
     );
   }
 
-  const operationId = `op_${generateId()}`;
+  // 128-bit: operationId is the audit + idempotency key (ADR-028 D3, ADR-031).
+  const operationId = `op_${generateSecureId()}`;
 
   // Ephemeral actions never touch durable state (D3 invariant) — no commit, no trajectory.
   if (tier === "ephemeral") {

@@ -34,6 +34,7 @@ import type {
   TokenPayload,
 } from "@/platform/auth/types";
 import { logger } from "@/lib/logger";
+import { generateSecureId } from "@/platform/agents/utils";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -579,7 +580,9 @@ export class CognitoAuthProvider implements AuthProvider {
   // ── Guest Mode ──
 
   async createGuestToken(): Promise<GuestTokenResult> {
-    const guestId = `guest_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    // 128-bit crypto-secure: a guessable guest id would let an attacker assume a
+    // guest identity (P4). Timestamp kept for readability/ordering only.
+    const guestId = `guest_${Date.now()}_${generateSecureId()}`;
     const expiresAt = Math.floor(Date.now() / 1000) + 72 * 3600;
     const token = b64urlEncode(
       JSON.stringify({

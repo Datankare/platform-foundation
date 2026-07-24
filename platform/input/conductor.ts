@@ -38,12 +38,12 @@ import type {
 } from "./types";
 import { type InputClassifier, RuleBasedClassifier } from "./classifier";
 import { type IntentResolver, type IntentContext, DefaultIntentResolver } from "./intent";
+import { generateId } from "@/platform/agents/utils";
 
 // ── Trajectory helpers ────────────────────────────────────────────────
 
-function generateId(): string {
-  return Math.random().toString(36).slice(2, 10);
-}
+// Uses the shared crypto-secure helper (A5: no duplicate ID generators).
+// See platform/agents/utils.ts.
 
 function makeStep(
   stepIndex: number,

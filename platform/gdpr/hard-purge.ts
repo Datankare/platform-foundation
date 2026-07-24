@@ -23,6 +23,7 @@ import type {
   PurgeStatus,
   PurgeStepResult,
 } from "./types";
+import { generateId } from "@/platform/agents/utils";
 
 /**
  * Generate a unique purge ID.
@@ -30,7 +31,9 @@ import type {
  */
 function generatePurgeId(): string {
   const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 8);
+  // Crypto-secure: a predictable anonymization suffix permits re-identification
+  // by correlation.
+  const rand = generateId();
   return `purge_${ts}_${rand}`;
 }
 
