@@ -13,6 +13,17 @@ export * from "./types";
 export * from "./state-store";
 export { InMemoryActivityStateStore } from "./memory-state-store";
 export { SupabaseActivityStateStore } from "./supabase-state-store";
+export * from "./actions";
+export * from "./turn";
+export {
+  createSession,
+  dispatch,
+  isConflict,
+  subscribeSessionEvents,
+  resetSessionEventSubscribers,
+  ActionRejectedError,
+} from "./session";
+export type { ConflictResult, DispatchOutcome } from "./session";
 
 import type { ActivityStateStore } from "./state-store";
 import { InMemoryActivityStateStore } from "./memory-state-store";
