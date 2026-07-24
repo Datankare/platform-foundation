@@ -43,6 +43,12 @@ import {
   SupabaseSocialStore,
 } from "@/platform/social";
 import { logger } from "@/lib/logger";
+import {
+  getAcrCloudConfig,
+  setSongIdProvider,
+  ACRCloudIdentifier,
+  MockSongIdentifier,
+} from "@/platform/voice";
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
 import {
   setActivityStateStore,
@@ -230,9 +236,16 @@ function initTranslationProvider(type: TranslationProviderType): void {
 
 function initSongIdProvider(type: SongIdProviderType): void {
   if (type === "acrcloud") {
-    const host = process.env.ACRCLOUD_HOST ?? "";
-    const key = process.env.ACRCLOUD_ACCESS_KEY ?? "";
-    const secret = process.env.ACRCLOUD_ACCESS_SECRET ?? "";
+    // TASK-042: single source of truth — do not read ACRCLOUD_* directly here.
+    const { host, accessKey: key, accessSecret: secret } = getAcrCloudConfig();
+
+    // TASK-041: construct and STORE the provider so the health probe (and anything
+    // else) uses the live instance rather than building its own.
+    if (host && key && secret) {
+      setSongIdProvider(new ACRCloudIdentifier());
+    } else {
+      setSongIdProvider(new MockSongIdentifier());
+    }
 
     if (!host || !key || !secret) {
       logger.warn(
@@ -241,6 +254,8 @@ function initSongIdProvider(type: SongIdProviderType): void {
     }
     return;
   }
+
+  setSongIdProvider(new MockSongIdentifier());
 }
 
 function initAudioConverter(type: AudioConverterType): void {
