@@ -23,6 +23,8 @@
  * @module platform/realtime
  */
 
+import { generateId } from "@/platform/agents/utils";
+
 // ---------------------------------------------------------------------------
 // Message Schema (agentic-native)
 // ---------------------------------------------------------------------------
@@ -282,7 +284,8 @@ export interface RealtimeProvider {
 
 /** Generate a unique message ID */
 export function generateMessageId(): string {
-  return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  // Crypto-secure: message ids are channel-visible correlation keys.
+  return `msg_${Date.now()}_${generateId()}`;
 }
 
 /** Create a RealtimeMessage with defaults */

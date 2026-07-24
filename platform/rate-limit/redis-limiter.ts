@@ -11,6 +11,7 @@
  */
 
 import type { RateLimiter, RateLimitResult, RateLimitRule } from "./types";
+import { generateId } from "@/platform/agents/utils";
 
 interface RedisResponse<T = unknown> {
   result: T;
@@ -107,7 +108,9 @@ export class RedisRateLimiter implements RateLimiter {
     const key = this.buildKey(identifier, rule);
     const now = Date.now();
     const windowStart = now - rule.windowSeconds * 1000;
-    const member = `${now}:${Math.random().toString(36).slice(2, 8)}`;
+    // Crypto-secure: a member collision would drop a rate-limit entry and
+    // under-count the window (bypass). See platform/agents/utils.
+    const member = `${now}:${generateId()}`;
 
     // Atomic pipeline:
     // 1. Remove expired entries (before window start)

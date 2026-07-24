@@ -84,9 +84,10 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
   private readonly accessSecret: string;
 
   constructor() {
-    this.host = process.env.ACRCLOUD_HOST ?? "";
-    this.accessKey = process.env.ACRCLOUD_ACCESS_KEY ?? "";
-    this.accessSecret = process.env.ACRCLOUD_ACCESS_SECRET ?? "";
+    const config = getAcrCloudConfig();
+    this.host = config.host;
+    this.accessKey = config.accessKey;
+    this.accessSecret = config.accessSecret;
   }
 
   async identify(request: IdentifyRequest): Promise<IdentifyResult> {
@@ -284,4 +285,32 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
       genres: music.genres?.map((g) => g.name),
     };
   }
+}
+
+// ── Configuration (TASK-042 — single source of truth) ───────────────────────
+
+/** ACRCloud credentials read from the environment. */
+export interface AcrCloudConfig {
+  readonly host: string;
+  readonly accessKey: string;
+  readonly accessSecret: string;
+}
+
+/**
+ * The ONLY place ACRCLOUD_* environment variables are read (TASK-042).
+ * Both the provider registry and ACRCloudIdentifier call this — do not read
+ * process.env.ACRCLOUD_* anywhere else.
+ */
+export function getAcrCloudConfig(): AcrCloudConfig {
+  return {
+    host: process.env.ACRCLOUD_HOST ?? "",
+    accessKey: process.env.ACRCLOUD_ACCESS_KEY ?? "",
+    accessSecret: process.env.ACRCLOUD_ACCESS_SECRET ?? "",
+  };
+}
+
+/** True when all three ACRCloud credentials are present. */
+export function isAcrCloudConfigured(): boolean {
+  const c = getAcrCloudConfig();
+  return Boolean(c.host && c.accessKey && c.accessSecret);
 }

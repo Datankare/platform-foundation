@@ -134,4 +134,36 @@ Function-coverage target ≥ 84% (phase goal). Coverage must never decrease betw
 
 ---
 
+## GenAI 18-Principle Mapping — Sprint 1 (L12 pre-code gate)
+
+> Mapped against the Sprint 1 deliverables (ADR-028): ActivitySession, ActivityDefinition, state
+> store (slot #14), action pipeline (D3), trajectory append (D4), concurrency (D5), turn-based
+> core (D6), AUX-shaped returns (D7), session events (D8). Core = Sprint 1 primary deliverer.
+
+| #   | Principle             | Sprint 1 | How                                                                     |
+| --- | --------------------- | -------- | ----------------------------------------------------------------------- |
+| 1   | Intent-Driven         | Extend   | Actions carry intent; `nextActions` (D7) exposes affordances            |
+| 2   | Agentic Execution     | **Core** | Action pipeline (D3) — bounded, instrumented, tiered execution          |
+| 3   | Total Observability   | Extend   | Every mutation → trajectory Step (D4); SessionEvent stream (D8)         |
+| 4   | Structural Safety     | **Core** | D3 effects-as-capability, risk floors, `max()` — trust nothing declared |
+| 5   | Versioned Artifacts   | Extend   | `ActivityDefinition` additive-only contract (D9); state-store kit       |
+| 6   | Structured Outputs    | Extend   | AUX-shaped returns (D7) schema-validated                                |
+| 7   | Provider-Aware        | Extend   | State store = registry slot #14 (D2), swappable                         |
+| 8   | Context & Memory      | Extend   | Versioned session state (D2); trajectory as history (D4)                |
+| 9   | Automated Eval        | Extend   | Conformance kit incl. concurrency tests (D5)                            |
+| 10  | Human Oversight       | Extend   | Two-phase propose→commit gating (D3); approval-request events (D8)      |
+| 11  | Resilient Degradation | Extend   | Conflict reject-to-caller (D5); memory-store fallback (D2)              |
+| 12  | Economic Transparency | **Core** | `cost` in every return (D7); most-restrictive budget (D10)              |
+| 13  | Control Plane         | Extend   | Risk-policy layer + budget ceilings centrally enforced                  |
+| 14  | Feedback Loops        | —        | Phase 7 — no Sprint 1 work                                              |
+| 15  | Agent Identity        | **Core** | `ActionContext` carries actor + delegation lineage (D3); one pipeline   |
+| 16  | Cognitive Memory      | Extend   | Session state layers; user context reused (Phase 4)                     |
+| 17  | Cognition-Commitment  | **Core** | D3 tiered durability; `operationId` propose→commit boundary             |
+| 18  | Durable Trajectories  | **Core** | `operationId` spine; checkpointed/reconstructible trajectory (D4/D5)    |
+
+**Summary:** Sprint 1 makes **P2 / P4 / P12 / P15 / P17 / P18** core-structural (built into the
+framework, not conventional). P14 is the only gap (Phase 7). 18/18 accounted for.
+
+---
+
 _Last updated: June 21, 2026 (Phase 5 Sprint 0 closed — k6 dry baseline recorded, live re-baseline deferred to Sprint 7 as TASK-046; GenAI 18-principle mapping; entry gate N1-N8)_

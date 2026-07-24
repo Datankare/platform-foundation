@@ -1,5 +1,5 @@
 /**
- * middleware.ts — Next.js edge middleware for route protection
+ * proxy.ts — Next.js proxy for route protection (Next 16 convention)
  *
  * GenAI Principles:
  *   P3 — Protected routes screened before access
@@ -15,7 +15,7 @@
  *   /            — protected (redirects to /auth if no session)
  *
  * Client-side token is stored in localStorage (not cookies),
- * so this middleware checks for a lightweight session indicator cookie
+ * so this proxy checks for a lightweight session indicator cookie
  * set by the auth API routes. The actual JWT validation happens
  * in the API route handlers via requireAuth().
  */
@@ -34,7 +34,7 @@ function isPublicRoute(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Public routes — pass through

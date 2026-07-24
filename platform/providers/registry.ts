@@ -43,7 +43,17 @@ import {
   SupabaseSocialStore,
 } from "@/platform/social";
 import { logger } from "@/lib/logger";
+import {
+  getAcrCloudConfig,
+  setSongIdProvider,
+  ACRCloudIdentifier,
+  MockSongIdentifier,
+} from "@/platform/voice";
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
+import {
+  setActivityStateStore,
+  SupabaseActivityStateStore,
+} from "@/platform/app-framework";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,6 +72,7 @@ export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
 export type ModerationStoreType = "supabase" | "memory";
 export type SocialStoreType = "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
+export type AppStateStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -77,6 +88,7 @@ export interface ProviderSelections {
   moderationStore: ModerationStoreType;
   socialStore: SocialStoreType;
   embeddingProvider: EmbeddingProviderType;
+  appStateStore: AppStateStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +113,7 @@ function getProviderSelections(): ProviderSelections {
     socialStore: (process.env.SOCIAL_STORE as SocialStoreType) ?? "memory",
     embeddingProvider:
       (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
+    appStateStore: (process.env.APP_STATE_STORE as AppStateStoreType) ?? "memory",
   };
 }
 
@@ -223,9 +236,16 @@ function initTranslationProvider(type: TranslationProviderType): void {
 
 function initSongIdProvider(type: SongIdProviderType): void {
   if (type === "acrcloud") {
-    const host = process.env.ACRCLOUD_HOST ?? "";
-    const key = process.env.ACRCLOUD_ACCESS_KEY ?? "";
-    const secret = process.env.ACRCLOUD_ACCESS_SECRET ?? "";
+    // TASK-042: single source of truth — do not read ACRCLOUD_* directly here.
+    const { host, accessKey: key, accessSecret: secret } = getAcrCloudConfig();
+
+    // TASK-041: construct and STORE the provider so the health probe (and anything
+    // else) uses the live instance rather than building its own.
+    if (host && key && secret) {
+      setSongIdProvider(new ACRCloudIdentifier());
+    } else {
+      setSongIdProvider(new MockSongIdentifier());
+    }
 
     if (!host || !key || !secret) {
       logger.warn(
@@ -234,6 +254,8 @@ function initSongIdProvider(type: SongIdProviderType): void {
     }
     return;
   }
+
+  setSongIdProvider(new MockSongIdentifier());
 }
 
 function initAudioConverter(type: AudioConverterType): void {
@@ -267,6 +289,23 @@ function initModerationStore(type: ModerationStoreType): void {
     }
 
     setModerationStore(new SupabaseModerationStore(url, key));
+    return;
+  }
+}
+
+function initAppStateStore(type: AppStateStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    if (!url || !key) {
+      logger.warn(
+        "APP_STATE_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
+      );
+      return;
+    }
+
+    setActivityStateStore(new SupabaseActivityStateStore(url, key));
     return;
   }
 }
@@ -335,6 +374,7 @@ export function initProviders(): ProviderSelections {
   initSongIdProvider(selections.songId);
   initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
+  initAppStateStore(selections.appStateStore);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
@@ -352,6 +392,7 @@ export function initProviders(): ProviderSelections {
     songId: selections.songId,
     audioConverter: selections.audioConverter,
     moderationStore: selections.moderationStore,
+    appStateStore: selections.appStateStore,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
   });
