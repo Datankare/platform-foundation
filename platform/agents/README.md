@@ -25,15 +25,16 @@ executeAgent(agentId, workflowFn, ctx)
 
 ## Public API
 
-| Export                                                            | Purpose                           |
-| ----------------------------------------------------------------- | --------------------------------- |
-| `executeAgent()`                                                  | Run a workflow as a bounded agent |
-| `registerAgent()` / `getAgent()` / `listAgents()` / `hasAgent()`  | Agent registry                    |
-| `registerTool()` / `getTool()` / `listTools()` / `resolveTools()` | Tool registry                     |
-| `InMemoryTrajectoryStore`, `getTrajectoryStore()`                 | Durable execution trajectories    |
-| `BudgetTracker`, `getBudgetTracker()`                             | Token / cost enforcement per run  |
-| `AGENT_CONFIGS`, `registerPlatformAgents()`                       | Built-in agent configs            |
-| `generateId()`                                                    | Trajectory / step identifiers     |
+| Export                                                            | Purpose                                                  |
+| ----------------------------------------------------------------- | -------------------------------------------------------- |
+| `executeAgent()`                                                  | Run a workflow as a bounded agent                        |
+| `registerAgent()` / `getAgent()` / `listAgents()` / `hasAgent()`  | Agent registry                                           |
+| `registerTool()` / `getTool()` / `listTools()` / `resolveTools()` | Tool registry                                            |
+| `InMemoryTrajectoryStore`, `getTrajectoryStore()`                 | Durable execution trajectories                           |
+| `BudgetTracker`, `getBudgetTracker()`                             | Token / cost enforcement per run                         |
+| `AGENT_CONFIGS`, `registerPlatformAgents()`                       | Built-in agent configs                                   |
+| `generateId()`                                                    | Trajectory / step identifiers (64-bit, crypto-secure)    |
+| `generateSecureId()`                                              | Session / guest / operation ids (128-bit, crypto-secure) |
 
 Types: `AgentIdentity`, `AgentConfig`, `BudgetConfig`, `EffortTier`, `Trajectory`, `Step`,
 `Tool`, `WorkflowContext`, `WorkflowFn`, `ExecutionResult`. Defaults: `DEFAULT_BUDGET_CONFIG`.

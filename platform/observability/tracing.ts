@@ -28,20 +28,23 @@ import type {
 // ---------------------------------------------------------------------------
 
 function generateId(bytes: number): string {
-  // Node.js crypto for server-side, Math.random fallback for edge/test
-  if (typeof globalThis.crypto?.getRandomValues === "function") {
-    const buf = new Uint8Array(bytes);
-    globalThis.crypto.getRandomValues(buf);
-    return Array.from(buf)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+  // Web Crypto only — available in Node 18+, the Edge runtime, and jsdom. There is
+  // deliberately NO Math.random() fallback: trace/span ids are correlation keys in audit
+  // output, and a silent downgrade to non-cryptographic randomness is the vulnerability.
+  // Fail closed (P4), consistent with platform/agents/utils.
+  const webcrypto = globalThis.crypto;
+  if (typeof webcrypto?.getRandomValues !== "function") {
+    throw new Error(
+      "platform/observability: secure random source unavailable " +
+        "(globalThis.crypto.getRandomValues). Refusing to generate trace ids with " +
+        "non-cryptographic randomness."
+    );
   }
-  // Fallback — not cryptographically secure, but functional in tests
-  return Array.from({ length: bytes }, () =>
-    Math.floor(Math.random() * 256)
-      .toString(16)
-      .padStart(2, "0")
-  ).join("");
+  const buf = new Uint8Array(bytes);
+  webcrypto.getRandomValues(buf);
+  return Array.from(buf)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /** Generate a 16-byte (128-bit) trace ID. */

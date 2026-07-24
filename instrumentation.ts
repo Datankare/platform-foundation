@@ -27,6 +27,8 @@
  * @module instrumentation
  */
 
+import type { HealthProbe } from "@/platform/observability/types";
+
 export function register() {
   // Next.js runs this hook in both the Node and Edge runtimes. Provider + observability
   // init touch Node-only modules (crypto, Supabase, ffmpeg) via the provider registry;
@@ -41,6 +43,16 @@ export function register() {
     const { initProviders } = require("@/platform/providers");
     initProviders();
 
+    // TASK-041: register the song-ID health probe. The adapter existed but was never
+    // registered, so the probe was dead code (Gotcha #27). It wraps the LIVE provider
+    // stored by initProviders() above — not a freshly constructed duplicate — so the
+    // probe reports on the instance actually serving traffic.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getSongIdProvider, SongIdHealthProbeAdapter } = require("@/platform/voice");
+    const healthProbes: HealthProbe[] = [
+      new SongIdHealthProbeAdapter(getSongIdProvider()),
+    ];
+
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { initObservability } = require("@/platform/observability");
     initObservability({
@@ -48,6 +60,7 @@ export function register() {
       environment: process.env.NODE_ENV ?? "development",
       version: process.env.npm_package_version ?? "0.0.0",
       traceSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
+      healthProbes,
     });
 
     console.log("[instrumentation] Observability initialized", {
