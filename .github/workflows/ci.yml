@@ -10,7 +10,6 @@ jobs:
   ci:
     name: CI Pipeline
     runs-on: ubuntu-latest
-    env:
 
     steps:
       - name: Checkout
