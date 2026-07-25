@@ -463,6 +463,84 @@ maintainer, and coverage-floor proximity emits a visible warning.
 
 ---
 
+### TASK-057 — /api/health returns a static payload; registered probes never run
+
+| Field        | Detail                                     |
+| ------------ | ------------------------------------------ |
+| **ID**       | TASK-057                                   |
+| **Type**     | Observability / reliability defect         |
+| **Severity** | High — fails open (silent-failure pattern) |
+| **Phase**    | Phase 5, Sprint 2                          |
+| **Status**   | Open                                       |
+| **Logged**   | 2026-07-24                                 |
+
+**What:** `/api/health` returns a static `{ status: "ok", service, timestamp }` and never
+executes the probes registered in the observability `HealthRegistry`. TASK-041 registered the
+song-ID probe correctly, but nothing _runs_ it — the endpoint reports healthy regardless of
+whether ACRCloud, Supabase, the LLM provider, cache, or realtime are actually reachable. This
+is the same fail-open pattern as the dead sync, the frozen READMEs, and the audit drift: a
+signal that is a constant.
+
+**Consequences:**
+
+1. Deployment/uptime readiness gates are meaningless — the endpoint reports ready before
+   providers are functional.
+2. The k6 baseline is invalid — recorded `health_latency` measured a static JSON response with
+   no I/O, so it says nothing about system health. Affects the TASK-046 re-baseline premise.
+3. Every future probe inherits the problem — registered, never executed.
+
+**Resolution (correct + complete — no half-fix):**
+
+1. Split liveness from readiness: `/api/health` stays cheap/static (process up — for LB polling);
+   `/api/health/ready` (or `?deep=1`) runs the registered probes.
+2. Deep endpoint: per-probe timeout (a slow dependency must not hang the endpoint) + a short
+   result cache (15–30s) so frequent polls don't hammer providers (e.g. ACRCloud rate limits).
+3. Wire the existing `HealthRegistry` consumers — the abstraction exists; the endpoint must use it.
+4. Re-baseline k6 against the deep endpoint (fold into TASK-046).
+
+**Close when:** the deep endpoint executes all registered probes with per-probe timeouts and a
+result cache; a failing provider makes it report unhealthy; k6 re-baselined against it.
+
+---
+
+### TASK-058 — Dependency-advisory handling is a CI tripwire, not a process
+
+| Field        | Detail                                |
+| ------------ | ------------------------------------- |
+| **ID**       | TASK-058                              |
+| **Type**     | CI / supply-chain process             |
+| **Severity** | Medium — recurring manual toil + risk |
+| **Phase**    | Phase 5, Sprint 2                     |
+| **Status**   | Open                                  |
+| **Logged**   | 2026-07-24                            |
+
+**What:** Four high-severity advisories in three days (brace-expansion, sharp/fast-uri,
+postcss, plus the Next middleware CVE) were each discovered only when CI went red, and each
+needed manual judgment because `npm audit fix --force` proposed a destructive downgrade
+(Next → 14, or 9.3.3) every time. The audit gate is a tripwire, not a managed process.
+
+**Contributing factors:**
+
+- `package-lock.json` is sync-excluded, so the two repos' lockfiles drift independently —
+  "fixed in one" never means "fixed in both".
+- `--force` is almost always wrong here (it satisfies a transitive advisory by downgrading a
+  top-level framework); the correct move is usually an `overrides` entry, but that pattern is
+  undocumented and rediscovered each time.
+
+**Resolution:**
+
+1. Scheduled both-repo `npm audit` sweep (canary) so advisories surface proactively, not at the
+   next unrelated push.
+2. Document the "override the transitive, don't --force the framework" procedure with the
+   verify-before-patching step (check the registry for the patched version) as a runbook.
+3. Consider a shared/synced overrides baseline so a fix in one repo is not silently absent in
+   the other.
+
+**Close when:** advisories surface via a scheduled sweep before they block an unrelated PR, and
+the override procedure is documented.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -507,4 +585,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 21, 2026 (TASK-056 filed — CI-signal parity for PF; audit drift + coverage margin surfaced the less-watched-repo gap)_
+_Last updated: July 24, 2026 (filed TASK-057 health endpoint fails open + TASK-058 dependency-advisory process; both Sprint 2)_
