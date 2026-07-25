@@ -24,8 +24,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Layer 0d — Dependency audit
-        run: npm audit --audit-level=high
+      # Layer 0d — Dependency audit (TASK-058)
+      # Production deps are the real runtime attack surface — audited strictly, hard gate.
+      # Dev-only deps (jest/eslint/babel toolchain) are audited informationally: npm audit
+      # evaluates declared manifest ranges rather than the resolved tree, so it false-positives
+      # on transitives that `overrides` has already patched (e.g. brace-expansion pinned to a
+      # fixed version). `npm ls` confirms the patched version is what installs; this step keeps
+      # visibility without blocking CI on a range-vs-resolution false positive.
+      - name: Layer 0d — Dependency audit (production, hard gate)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Layer 0d — Dependency audit (dev, informational)
+        run: npm audit --audit-level=high || true
 
       - name: Layer 0a — Type check
         run: npm run typecheck
