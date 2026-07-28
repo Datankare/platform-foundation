@@ -28,10 +28,13 @@
 - **ADR-028** (Application Framework Architecture).
 - 18-principle mapping before code.
 
-### Sprint 2 — Agentic workflow framework (PF)
+### Sprint 2 — Agentic workflow framework + action lifecycle protocol (PF)
 
 - `platform/ai/agent.ts`: tool registry (extends the Phase 4 agent runtime), multi-step execution, durable state, rollback (ADR-017 §7).
 - Conformance kit; **ADR-029** (Agentic Workflow Framework).
+- **ADR-031** (Action Identity & Lifecycle Protocol) authored in full, superseding the Sprint 1 stub. ADR-029's propose→approve→commit lifecycle cannot be specified without it — the dedup handles, stale-approval reconciliation, and crash-window repair are its subject matter, so it is a Sprint 2 dependency rather than a parallel deliverable.
+- **Scope note:** AUX (ADR-030) was considered for a Sprint 2 start and stays in Sprint 3. AUX wraps the AUX-shaped returns the framework already emits (ADR-028 D7) and has no dependency on ADR-029, whereas ADR-031 blocks it. Deferring AUX also gives the TASK-061 function-coverage ratchet one sprint to work before the phase's largest function-count additions land.
+- Process defects due this sprint: **TASK-057** (health endpoint fails open), **TASK-058** (advisory handling), **TASK-059** (prettier version drift), **TASK-060** (PR backlog + branch staleness), **TASK-061** (function-coverage ratchet).
 
 ### Sprint 3 — Agent User Experience / AUX (PF)
 
@@ -63,7 +66,7 @@
 
 ### gate — Phase 5 exit (E1–E15)
 
-- RAMPS Phase 5 assessment; **function coverage ≥ 84%** (RAMPS Phase 4 recommendation; currently PF 80.26%).
+- RAMPS Phase 5 assessment; **function coverage ≥ 84%** (RAMPS Phase 4 recommendation; PF 80.68% as of Sprint 1 close). Enforced per-sprint by the TASK-061 ratchet rather than checked once here.
 - PF v1.7.0 tag + GitHub Release; Playform sync + promote.
 - **Live k6 re-baseline (TASK-046)** completed against staging — moderation + agent latency captured. Do not close the phase without it.
 
@@ -71,13 +74,14 @@
 
 ## ADR roster (planned)
 
-| ADR     | Subject                            |
-| ------- | ---------------------------------- |
-| ADR-028 | Application Framework Architecture |
-| ADR-029 | Agentic Workflow Framework         |
-| ADR-030 | Agent User Experience (AUX)        |
+| ADR     | Subject                              |
+| ------- | ------------------------------------ |
+| ADR-028 | Application Framework Architecture   |
+| ADR-029 | Agentic Workflow Framework           |
+| ADR-030 | Agent User Experience (AUX)          |
+| ADR-031 | Action Identity & Lifecycle Protocol |
 
-> Next sequential ADR is **028**. Note: TASK-039's "ADR-021 candidate" tag is stale — ADR-021 is the social system.
+> Next sequential ADR is **032** (028 and the 031 stub shipped in Sprint 1). ADR-031 was minted in Sprint 1 as a stub and is authored in full in Sprint 2; it was absent from this roster until then. Note: TASK-039's "ADR-021 candidate" tag is stale — ADR-021 is the social system.
 
 ---
 
@@ -88,7 +92,16 @@
 | platform-foundation | 88.54%        |
 | Playform            | 89.45%        |
 
-Function-coverage target ≥ 84% (phase goal). Coverage must never decrease between sprints.
+Function-coverage target ≥ 84% (phase goal).
+
+| Repo                | Function floor (Sprint 1 close) |
+| ------------------- | ------------------------------- |
+| platform-foundation | 80.68%                          |
+| Playform            | 81.18%                          |
+
+Coverage must never decrease between sprints — statements **or** functions. Function floors
+ratchet up at each sprint close to whatever the sprint achieved, and each sprint's new modules
+land at ≥ 84% so the average climbs rather than merely holding (**TASK-061**).
 
 ---
 
@@ -166,4 +179,42 @@ framework, not conventional). P14 is the only gap (Phase 7). 18/18 accounted for
 
 ---
 
-_Last updated: June 21, 2026 (Phase 5 Sprint 0 closed — k6 dry baseline recorded, live re-baseline deferred to Sprint 7 as TASK-046; GenAI 18-principle mapping; entry gate N1-N8)_
+## GenAI 18-Principle Mapping — Sprint 2 (L12 pre-code gate)
+
+> Mapped against the Sprint 2 deliverables before any code (L12): the agentic workflow
+> framework (ADR-029 — tool registry over the Phase 4 agent runtime, multi-step execution,
+> durable state, rollback, two-phase propose→approve→commit) and the full action identity &
+> lifecycle protocol (ADR-031 — five-stage state machine, per-edge dedup, stale-approval
+> reconciliation, crash-window repair, external-effect idempotency). Sprint 1 built the
+> single-actor action pipeline; Sprint 2 makes it multi-step, resumable, and safe across a
+> crash. Core = Sprint 2 primary deliverer.
+
+| #   | Principle             | Sprint 2 | How                                                                       |
+| --- | --------------------- | -------- | ------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | Extend   | Workflow entry is an intent; `operationId` minted at intent (ADR-031)     |
+| 2   | Agentic Execution     | **Core** | ADR-029 multi-step bounded execution — flips P2 planned → built           |
+| 3   | Total Observability   | Extend   | Every workflow step appends a trajectory Step (D4); step-level events     |
+| 4   | Structural Safety     | **Core** | Risk floors govern each step, not just the call; `max()` across the plan  |
+| 5   | Versioned Artifacts   | Extend   | Tool definitions versioned in the registry; ADR-029 conformance kit (L21) |
+| 6   | Structured Outputs    | Advance  | Tool calls schema-validated per step; invalid output retried, not trusted |
+| 7   | Provider-Aware        | Extend   | Workflow steps route by capability/cost over existing provider slots      |
+| 8   | Context & Memory      | Extend   | Durable workflow state across steps; trajectory as resumable history      |
+| 9   | Automated Eval        | Extend   | Conformance kit incl. crash/resume + dedup arms (ADR-031 guarantees)      |
+| 10  | Human Oversight       | **Core** | Two-phase approve gate above the risk threshold; stale-approval semantics |
+| 11  | Resilient Degradation | Advance  | Rollback + crash-window repair; partial completion never silently lost    |
+| 12  | Economic Transparency | Extend   | Budget ceilings enforced per step; most-restrictive-wins (D10) per plan   |
+| 13  | Control Plane         | Extend   | Bounded-autonomy policy governs multi-step execution centrally            |
+| 14  | Feedback Loops        | —        | Phase 7 — no Sprint 2 work                                                |
+| 15  | Agent Identity        | **Core** | Delegation lineage carried across every step; scoped, revocable           |
+| 16  | Cognitive Memory      | Extend   | Working memory across steps atop Phase 4 user context                     |
+| 17  | Cognition-Commitment  | **Core** | ADR-031 makes the propose→commit boundary an explicit state machine       |
+| 18  | Durable Trajectories  | **Core** | Checkpointed, resumable, inspectable multi-step execution + rollback      |
+
+**Summary:** Sprint 2 makes **P2 / P4 / P10 / P15 / P17 / P18** core-structural and advances the
+**P6 / P11** partials. P14 remains the only gap (Phase 7). 18/18 accounted for.
+
+**Pre-code gate satisfied** — this table precedes any Sprint 2 implementation (L12).
+
+---
+
+_Last updated: July 26, 2026 (Phase 5 Sprint 2 opened — L12 mapping recorded as the pre-code gate; ADR-031 promoted into the roster and into Sprint 2 scope; AUX/ADR-030 confirmed in Sprint 3; function floors added per TASK-061)_
