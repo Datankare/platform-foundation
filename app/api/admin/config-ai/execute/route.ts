@@ -22,6 +22,7 @@ import { logger, generateRequestId } from "@/lib/logger";
 import { dispatchConfigTool } from "@/platform/admin/config-handlers";
 import { getPermissionTier } from "@/platform/auth/platform-config";
 import type { ToolExecutionContext } from "@/platform/admin/types";
+import { generateId } from "@/platform/agents/utils";
 
 // ---------------------------------------------------------------------------
 // Permission routing
@@ -116,8 +117,8 @@ export async function POST(request: NextRequest) {
 
     // P3/P15/P18: Create trajectory context for this request
     const trajectoryContext: ToolExecutionContext = {
-      trajectoryId: `traj-\${Date.now().toString(36)}-\${Math.random().toString(36).slice(2, 8)}`,
-      agentId: `config-manager-\${Date.now().toString(36)}`,
+      trajectoryId: `traj-${Date.now().toString(36)}-${generateId()}`,
+      agentId: `config-manager-${Date.now().toString(36)}`,
       onBehalfOf: actorId,
       steps: [],
     };
