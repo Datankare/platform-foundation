@@ -33,6 +33,7 @@ import { CONFIG_TOOLS } from "@/platform/admin/config-handlers";
 import { isApprovalRequired } from "@/platform/admin/config-approval";
 import type { Step } from "@/platform/agents/types";
 import type { ConfigToolResult } from "@/platform/admin/types";
+import { generateId } from "@/platform/agents/utils";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Build trajectory for this turn
-    const trajectoryId = `traj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const trajectoryId = `traj-${Date.now().toString(36)}-${generateId()}`;
     const steps: Step[] = [];
     const toolResults: ConfigToolResult[] = [];
 

@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { RealtimeMessage, PresenceEntry } from "@/platform/realtime/types";
+import { generateId } from "@/platform/agents/utils";
 
 export interface UseRealtimeChannelResult {
   /** Messages received on this channel */
@@ -60,7 +61,7 @@ export function useRealtimeChannel(channelName: string): UseRealtimeChannelResul
     async (message: Partial<Omit<RealtimeMessage, "id" | "timestamp" | "channel">>) => {
       // Will delegate to RealtimeProvider when wired
       const fullMessage: RealtimeMessage = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        id: `msg_${Date.now()}_${generateId()}`,
         timestamp: Date.now(),
         channel: channelRef.current,
         type: message.type ?? "notification",
