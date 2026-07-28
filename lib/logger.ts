@@ -1,3 +1,4 @@
+import { generateId } from "@/platform/agents/utils";
 /**
  * lib/logger.ts — Structured platform logger
  *
@@ -157,5 +158,5 @@ export const logger = {
 
 /** Generate a short request ID for correlating log entries */
 export function generateRequestId(): string {
-  return Math.random().toString(36).slice(2, 10);
+  return generateId();
 }

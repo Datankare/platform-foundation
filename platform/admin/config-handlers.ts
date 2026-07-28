@@ -966,7 +966,7 @@ export async function dispatchConfigTool(
         toolId,
         success: false,
         data: null,
-        error: `Unknown tool: \${toolId}`,
+        error: `Unknown tool: ${toolId}`,
         durationMs: 0,
       };
   }
