@@ -541,6 +541,128 @@ the override procedure is documented.
 
 ---
 
+### TASK-059 — Prettier version drift between repos; every sync PR fails format:check
+
+| Field        | Detail                                              |
+| ------------ | --------------------------------------------------- |
+| **ID**       | TASK-059                                            |
+| **Type**     | CI / repo-inheritance process defect                |
+| **Severity** | Medium — red-by-default sync PRs mask real failures |
+| **Phase**    | Phase 5, Sprint 2                                   |
+| **Status**   | Open                                                |
+| **Logged**   | 2026-07-26                                          |
+
+**What:** Every PF→Playform sync re-triggers `format:check` failures on the same shared files.
+The Sprint 1 handoff attributed this to `.prettierrc` drift. It is not: the two configs are
+**byte-identical**. The drift is in the **formatter binary** — PF resolves prettier 3.8.2,
+Playform 3.9.6. Same config, different version, different output on the same input.
+
+Root cause is the mechanism TASK-058 identified for lockfiles: `package*.json` is
+sync-excluded, so each repo owns its devDependency ranges and a caret range lets the two
+resolve to different minors. Playform sync PR #390 is currently red on `Continuous Confidence`
+for exactly this.
+
+**Consequences:**
+
+1. Sync PRs are red by default, so red stops carrying information — the same fail-open,
+   constant-signal pattern as TASK-057's health endpoint.
+2. Manual reformat churn on every sync, which is how the 13-PR backlog in Sprint 1 grew.
+3. Any formatter-version-sensitive change silently reformats large diffs on the next sync.
+
+**Resolution (correct + complete — no half-fix):**
+
+1. Pin prettier to an identical **exact** version (no caret) in both repos.
+2. Add a check that fails when the two repos' resolved formatter versions diverge — the
+   sync-excluded manifest means nothing else can catch it.
+3. Run one convergence format pass across both repos so the shared files agree.
+4. Extend the same treatment to the rest of the shared toolchain (eslint, typescript), which
+   has identical exposure and has simply not bitten yet.
+
+**Close when:** a PF→Playform sync PR passes `format:check` with no manual reformatting, and a
+divergence in formatter version between the repos fails a check rather than a sync PR.
+
+---
+
+### TASK-060 — PR backlog accumulates unmerged; branch staleness goes unnoticed
+
+| Field        | Detail                                     |
+| ------------ | ------------------------------------------ |
+| **ID**       | TASK-060                                   |
+| **Type**     | Repo hygiene / process defect              |
+| **Severity** | Medium — stale bases and hidden sync state |
+| **Phase**    | Phase 5, Sprint 2                          |
+| **Status**   | Open                                       |
+| **Logged**   | 2026-07-26                                 |
+
+**What:** Two related accumulations, neither of which anything alerts on.
+
+_Unmerged PRs._ PF carries 11 open Dependabot PRs, the oldest from 2026-04-20 — over three
+months. At least two are already superseded by CI-001 (#229 actions/checkout 7.0.0, #163
+setup-node 6.4.0), so merging them would reintroduce changes that landed by another route.
+Playform carries a red sync PR (#390) plus a Dependabot PR. Sprint 1 cleared a 13-PR sync
+backlog; the backlog re-formed because nothing prevents it, only periodic manual attention.
+
+_Branch staleness._ Separately, PF `develop` sat 38 commits behind `main` with a divergent
+`package.json` / `package-lock.json`, and Playform `staging` sat 439 behind. Promotions run
+develop→staging→main and nothing back-merges, so the lower branches trail indefinitely. This
+session had to cut a fix branch from `main` rather than `develop` as a result.
+
+**Consequences:**
+
+1. Superseded PRs consume review attention and can revert completed work if merged.
+2. A red sync PR sitting past its supersede window hides the next real sync failure.
+3. New work branched from `develop` starts on a stale base — a defect waiting to happen, and
+   the reason the branch base had to be overridden this session.
+
+**Resolution:**
+
+1. Auto-close-on-supersede in the sync workflow, so only the newest sync PR is ever open.
+2. Staleness alert when any sync PR ages past N days.
+3. Scheduled Dependabot triage cadence, with auto-close for bumps already satisfied elsewhere.
+4. Back-merge `main` → `develop` after every promotion so `develop` never trails `main`.
+5. A check that reports branch divergence, so trailing branches are visible without asking.
+
+**Close when:** no PR is older than N days without an explicit hold label; `develop` equals
+`main` after each promotion; superseded bumps close automatically.
+
+---
+
+### TASK-061 — Function coverage is a target, not a floor; the gap widens by default
+
+| Field        | Detail                          |
+| ------------ | ------------------------------- |
+| **ID**       | TASK-061                        |
+| **Type**     | Quality gate                    |
+| **Severity** | Medium — Phase 5 exit-gate risk |
+| **Phase**    | Phase 5, Sprint 2               |
+| **Status**   | Open                            |
+| **Logged**   | 2026-07-26                      |
+
+**What:** PF function coverage is 80.68% against the ≥84% Phase 5 exit target. Statement
+coverage has an enforced floor; function coverage has only a target, and nothing fails when it
+drops. The Sprint 1 handoff recorded it as a watch item.
+
+A watch item is the wrong instrument. Sprints 2–6 add the largest function counts of the phase
+— agentic workflows, AUX endpoints, adaptive behavior, application RAG, multimodal — so the gap
+widens by default, and the correction arrives at the Sprint 7 exit gate where it is most
+expensive and most likely to be waived. That is precisely the shape **L22** exists to prevent:
+an item that outlives every sprint because no sprint owns it.
+
+**Resolution:**
+
+1. Treat functions exactly like statements: record a per-repo function floor (PF 80.68%,
+   Playform 81.18%) and fail the gate on any decrease.
+2. Ratchet the floor up at each sprint close to whatever the sprint actually achieved, so
+   progress cannot be clawed back.
+3. Require each sprint's **new** modules to land at or above 84%, so the average climbs rather
+   than holding — a floor alone prevents regression, it does not close a 3.3-point gap.
+4. Enforce in the same gate step as statements, not as a separate manual reading.
+
+**Close when:** function floors are enforced and ratcheted per sprint, and PF is ≥84% at the
+Phase 5 exit gate.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
