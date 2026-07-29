@@ -149,9 +149,10 @@ export async function executeAgent(
     // ── Step loop ─────────────────────────────────────────────────
     while (true) {
       // Budget check before each step
-      const budgetCheck = budgetTracker.checkBudget(
+      const budgetCheck = await budgetTracker.checkBudget(
         agentId,
-        scopeKey,
+        scopeType,
+        scopeId,
         agentConfig.budgetConfig
       );
 
@@ -200,7 +201,13 @@ export async function executeAgent(
       await trajectoryStore.addStep(trajectoryId, step);
 
       // Consume budget
-      budgetTracker.consume(agentId, scopeKey, outcome.costUsd, agentConfig.budgetConfig);
+      await budgetTracker.consume(
+        agentId,
+        scopeType,
+        scopeId,
+        outcome.costUsd,
+        agentConfig.budgetConfig
+      );
 
       stepCount += 1;
       totalCostUsd += outcome.costUsd;
