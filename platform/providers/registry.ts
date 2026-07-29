@@ -29,6 +29,7 @@
  *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
  *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory")
+ *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory")
  *
  * @module platform/providers
  */
@@ -53,6 +54,8 @@ import {
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
 import { setTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { SupabaseTrajectoryStore } from "@/platform/agents/supabase-trajectory-store";
+import { BudgetTracker, setBudgetTracker } from "@/platform/agents/budget-tracker";
+import { SupabaseBudgetStore } from "@/platform/agents/supabase-budget-store";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -77,6 +80,7 @@ export type SocialStoreType = "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
 export type AppStateStoreType = "supabase" | "memory";
 export type TrajectoryStoreType = "supabase" | "memory";
+export type BudgetStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -94,6 +98,7 @@ export interface ProviderSelections {
   embeddingProvider: EmbeddingProviderType;
   appStateStore: AppStateStoreType;
   trajectoryStore: TrajectoryStoreType;
+  budgetStore: BudgetStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +125,7 @@ function getProviderSelections(): ProviderSelections {
       (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
     appStateStore: (process.env.APP_STATE_STORE as AppStateStoreType) ?? "memory",
     trajectoryStore: (process.env.TRAJECTORY_STORE as TrajectoryStoreType) ?? "memory",
+    budgetStore: (process.env.BUDGET_STORE as BudgetStoreType) ?? "memory",
   };
 }
 
@@ -337,6 +343,27 @@ function initTrajectoryStore(type: TrajectoryStoreType): void {
   }
 }
 
+function initBudgetStore(type: BudgetStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed, as slot #15 does. Degrading to an in-process counter is precisely
+    // the TASK-063 condition: maxCostPerDay never accumulates across instances, so the
+    // cap is unenforced and nothing says so. An unbounded-spend exposure is not a
+    // degraded mode.
+    if (!url || !key) {
+      throw new Error(
+        "BUDGET_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to in-process budget accumulation."
+      );
+    }
+
+    setBudgetTracker(new BudgetTracker(new SupabaseBudgetStore(url, key)));
+    return;
+  }
+}
+
 function initSocialStore(type: SocialStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -403,6 +430,7 @@ export function initProviders(): ProviderSelections {
   initModerationStore(selections.moderationStore);
   initAppStateStore(selections.appStateStore);
   initTrajectoryStore(selections.trajectoryStore);
+  initBudgetStore(selections.budgetStore);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
@@ -422,6 +450,7 @@ export function initProviders(): ProviderSelections {
     moderationStore: selections.moderationStore,
     appStateStore: selections.appStateStore,
     trajectoryStore: selections.trajectoryStore,
+    budgetStore: selections.budgetStore,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
   });
