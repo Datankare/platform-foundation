@@ -711,6 +711,102 @@ via a default.
 
 ---
 
+### TASK-062 — Trajectories are not durable; nothing writes to agent_trajectories
+
+| Field        | Detail                                    |
+| ------------ | ----------------------------------------- |
+| **ID**       | TASK-062                                  |
+| **Type**     | Durability gap — unbacked principle       |
+| **Severity** | High — P18 is claimed and not implemented |
+| **Phase**    | Phase 5, Sprint 2                         |
+| **Status**   | Open — migration 022 lands the schema     |
+| **Logged**   | 2026-07-29                                |
+
+**What:** `InMemoryTrajectoryStore` is the only implementation, no non-test caller of
+`setTrajectoryStore` exists, there is no registry slot for trajectories, and live introspection
+confirms `agent_trajectories` holds zero rows. Trajectories live in process memory; on Vercel
+serverless they do not reliably survive a request boundary, let alone a crash.
+
+P18 "durable execution trajectories" is asserted in the manifesto readiness table and in the
+module header, and is not implemented. ADR-029 D5 (resume) and ADR-031 D6 (crash-window repair)
+are unimplementable until it is — resume against an in-memory store is theatre.
+
+**Resolution:** `SupabaseTrajectoryStore` behind registry slot #15, with an ADR-027 conformance
+kit. Migration 022 reshapes the table; the store follows in Sprint 2 step 2b.
+
+**Close when:** a trajectory survives a process restart, and the conformance kit asserts it.
+
+---
+
+### TASK-063 — Budgets are not durable, and the daily cap is not a daily cap
+
+| Field        | Detail                               |
+| ------------ | ------------------------------------ |
+| **ID**       | TASK-063                             |
+| **Type**     | Cost-control defect + durability gap |
+| **Severity** | High — unbounded-spend exposure      |
+| **Phase**    | Phase 5, Sprint 2                    |
+| **Status**   | Open                                 |
+| **Logged**   | 2026-07-29                           |
+
+**What:** Three defects that compound.
+
+_Not durable._ `BudgetTracker` holds a `Map` and `agent_budgets` has zero rows, so nothing
+accumulates across instances. On serverless each invocation starts at zero spend, which means
+`maxCostPerDay` is effectively unenforced in production.
+
+_The period is monthly, the cap is daily._ `getCurrentPeriod()` returns `YYYY-MM`, and that
+monthly accumulator is compared against `config.maxCostPerDay`. The field name and the
+enforcement window disagree by roughly thirty times.
+
+_The step cap counts the wrong thing._ `usedSteps` accumulates per agent per scope per period
+and is compared against `maxStepsPerTrajectory`. With the seeded `agent.trajectory.max_steps`
+of 50, an agent gets 50 steps per period in total rather than per trajectory, then is blocked
+until the period rolls. A per-trajectory limit belongs to the runtime, which is where the
+trajectory is.
+
+**Resolution:** budget persistence behind registry slot #16 with atomic increment
+(`used_usd = used_usd + $1`, never read-modify-write); period becomes `YYYY-MM-DD`; the step
+cap moves out of the budget tracker to the runtime.
+
+**Close when:** spend accumulates across instances, the cap window matches the config field
+name, and the step limit is enforced per trajectory.
+
+---
+
+### TASK-065 — Duplicate migration numbers, with no tracking table to disambiguate
+
+| Field        | Detail                              |
+| ------------ | ----------------------------------- |
+| **ID**       | TASK-065                            |
+| **Type**     | Schema-management defect            |
+| **Severity** | Medium — silent partial application |
+| **Phase**    | Phase 5, Sprint 2                   |
+| **Status**   | Open                                |
+| **Logged**   | 2026-07-29                          |
+
+**What:** Two migrations are numbered `018` in both repos — `018_app_framework.sql` and
+`018_human_review.sql` — and Playform additionally has two numbered `007`. The live database
+has no `supabase_migrations.schema_migrations` table (Gotcha 60), so applied state is knowable
+only by introspecting objects.
+
+The consequence is not hypothetical: `review_queue` from `018_human_review.sql` is present and
+`app_sessions` from `018_app_framework.sql` is not. One of the two 018s applied and the other
+did not, and nothing recorded which. "Apply in numeric order" is ambiguous at exactly the point
+where the gap already exists.
+
+**Resolution:**
+
+1. Renumber the colliding migrations forward, or adopt a timestamp prefix so collision is
+   impossible by construction.
+2. Adopt migration tracking, so applied state is a query rather than an audit.
+3. Until tracking exists, a CI check that every migration's principal objects are present in
+   the live DB — the introspection done by hand this sprint, automated.
+
+**Close when:** no two migrations share a number, and applied state is queryable.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
