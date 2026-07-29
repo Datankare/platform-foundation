@@ -28,6 +28,7 @@
  *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
  *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
+ *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory")
  *
  * @module platform/providers
  */
@@ -50,6 +51,8 @@ import {
   MockSongIdentifier,
 } from "@/platform/voice";
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
+import { setTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { SupabaseTrajectoryStore } from "@/platform/agents/supabase-trajectory-store";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -73,6 +76,7 @@ export type ModerationStoreType = "supabase" | "memory";
 export type SocialStoreType = "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
 export type AppStateStoreType = "supabase" | "memory";
+export type TrajectoryStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -89,6 +93,7 @@ export interface ProviderSelections {
   socialStore: SocialStoreType;
   embeddingProvider: EmbeddingProviderType;
   appStateStore: AppStateStoreType;
+  trajectoryStore: TrajectoryStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +119,7 @@ function getProviderSelections(): ProviderSelections {
     embeddingProvider:
       (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
     appStateStore: (process.env.APP_STATE_STORE as AppStateStoreType) ?? "memory",
+    trajectoryStore: (process.env.TRAJECTORY_STORE as TrajectoryStoreType) ?? "memory",
   };
 }
 
@@ -310,6 +316,27 @@ function initAppStateStore(type: AppStateStoreType): void {
   }
 }
 
+function initTrajectoryStore(type: TrajectoryStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed (TASK-062). The other slots warn and degrade to memory; for
+    // trajectories that silently recreates the condition this slot exists to close —
+    // P18 durability asserted, in-memory storage in fact, and no signal. Asking for
+    // supabase and not getting it is a misconfiguration, not a degraded mode.
+    if (!url || !key) {
+      throw new Error(
+        "TRAJECTORY_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to in-memory trajectories."
+      );
+    }
+
+    setTrajectoryStore(new SupabaseTrajectoryStore(url, key));
+    return;
+  }
+}
+
 function initSocialStore(type: SocialStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -375,6 +402,7 @@ export function initProviders(): ProviderSelections {
   initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
   initAppStateStore(selections.appStateStore);
+  initTrajectoryStore(selections.trajectoryStore);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
@@ -393,6 +421,7 @@ export function initProviders(): ProviderSelections {
     audioConverter: selections.audioConverter,
     moderationStore: selections.moderationStore,
     appStateStore: selections.appStateStore,
+    trajectoryStore: selections.trajectoryStore,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
   });

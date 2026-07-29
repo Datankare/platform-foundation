@@ -29,6 +29,7 @@ import { runTraceProviderContract } from "./trace-provider-contract";
 import { runMetricsSinkContract } from "./metrics-sink-contract";
 import { runHealthProbeContract } from "./health-probe-contract";
 import { runAppStateStoreContract } from "./app-state-store-contract";
+import { runTrajectoryStoreContract } from "./trajectory-store-contract";
 
 export type ContractKind = "registry" | "fabric";
 
@@ -64,6 +65,7 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   socialStore: { kind: "registry", kit: runSocialStoreContract },
   embeddingProvider: { kind: "registry", kit: runEmbeddingProviderContract },
   appStateStore: { kind: "registry", kit: runAppStateStoreContract },
+  trajectoryStore: { kind: "registry", kit: runTrajectoryStoreContract },
 
   // ── Observability fabric (not registry slots; folded in by ADR-027) ──
   traceProvider: { kind: "fabric", kit: runTraceProviderContract },
