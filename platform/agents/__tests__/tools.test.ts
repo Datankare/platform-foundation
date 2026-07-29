@@ -24,6 +24,8 @@ function makeTool(overrides: Partial<Tool> = {}): Tool {
     description: "A test tool",
     inputSchema: { type: "object" },
     outputSchema: { type: "object" },
+    effects: [],
+    execute: async () => ({ ok: true }),
     ...overrides,
   };
 }
@@ -78,16 +80,28 @@ describe("Tool Registry", () => {
       expect(resolved[0].name).toBe("Tool A");
     });
 
-    it("skips unregistered IDs", () => {
+    it("throws on an unregistered ID rather than skipping it", () => {
       registerTool(makeTool({ id: "a" }));
 
-      const resolved = resolveTools(["a", "missing"]);
-      expect(resolved).toHaveLength(1);
+      expect(() => resolveTools(["a", "missing"])).toThrow(/not registered: missing/);
     });
 
-    it("returns empty for all-missing IDs", () => {
-      const resolved = resolveTools(["x", "y"]);
-      expect(resolved).toEqual([]);
+    it("throws on the first missing ID when none are registered", () => {
+      expect(() => resolveTools(["x", "y"])).toThrow(/not registered: x/);
+    });
+
+    it("resolves nothing and throws rather than returning a short list", () => {
+      registerTool(makeTool({ id: "a" }));
+
+      let resolvedLength = -1;
+      try {
+        resolvedLength = resolveTools(["a", "missing"]).length;
+      } catch {
+        /* justified */
+        // The assertion is that no partial result escapes — resolvedLength must remain
+        // untouched, which distinguishes throwing from returning a shortened array.
+      }
+      expect(resolvedLength).toBe(-1);
     });
   });
 

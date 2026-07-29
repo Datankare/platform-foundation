@@ -123,7 +123,11 @@ export async function createSession<TState, TAction, TConfig>(
   const initial = definition.initialState(config);
   const current = await store.create(sessionId, initial);
 
-  const record = await getTrajectoryStore().create(sessionId, "session-created", "user");
+  const record = await getTrajectoryStore().create(
+    { kind: "session", id: sessionId },
+    "session-created",
+    "user"
+  );
 
   const turnBased = definition.capabilities.includes("turn-based");
 
@@ -232,7 +236,11 @@ export async function dispatch<TState, TAction, TConfig>(
     };
   }
 
-  assembleActionContext({
+  // ADR-031 D9: the assembled context is the justification record for this action and is
+  // carried into the trajectory step and the emitted event. Previously this call was made
+  // for effect and its result discarded — and the function is pure, so the whole call was a
+  // no-op that computed effectiveRisk and threw it away.
+  const context = assembleActionContext({
     spec,
     actor,
     sessionId: session.sessionId,
@@ -278,7 +286,12 @@ export async function dispatch<TState, TAction, TConfig>(
     cost,
     durationMs: 0,
     timestamp: new Date().toISOString(),
-    boundary: "commitment",
+    boundary: context.boundary,
+    operationId: context.operationId,
+    proposalId: context.proposalId,
+    actor: context.actor,
+    effects: context.effects,
+    effectiveRisk: context.effectiveRisk,
   };
   const record = await getTrajectoryStore().addStep(
     session.trajectory.trajectoryId,
@@ -288,9 +301,14 @@ export async function dispatch<TState, TAction, TConfig>(
   emit({
     type: "state-change",
     sessionId: session.sessionId,
-    operationId,
+    operationId: context.operationId,
     trajectoryId: session.trajectory.trajectoryId,
     stepIndex: step.stepIndex,
+    proposalId: context.proposalId,
+    actor: context.actor,
+    boundary: context.boundary,
+    effects: context.effects,
+    effectiveRisk: context.effectiveRisk,
     intent: "commit",
     at: step.timestamp,
   });

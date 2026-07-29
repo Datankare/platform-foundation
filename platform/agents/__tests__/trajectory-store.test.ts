@@ -35,7 +35,12 @@ describe("InMemoryTrajectoryStore", () => {
 
   describe("create", () => {
     it("creates a running trajectory", async () => {
-      const record = await store.create("guardian", "content-screen", "group", "group-1");
+      const record = await store.create(
+        { kind: "agent", id: "guardian" },
+        "content-screen",
+        "group",
+        "group-1"
+      );
 
       expect(record.trajectory.agentId).toBe("guardian");
       expect(record.trajectory.status).toBe("running");
@@ -47,22 +52,38 @@ describe("InMemoryTrajectoryStore", () => {
     });
 
     it("assigns unique trajectory IDs", async () => {
-      const firstRecord = await store.create("guardian", "a", "platform");
-      const secondRecord = await store.create("guardian", "b", "platform");
+      const firstRecord = await store.create(
+        { kind: "agent", id: "guardian" },
+        "a",
+        "platform"
+      );
+      const secondRecord = await store.create(
+        { kind: "agent", id: "guardian" },
+        "b",
+        "platform"
+      );
       expect(firstRecord.trajectory.trajectoryId).not.toBe(
         secondRecord.trajectory.trajectoryId
       );
     });
 
     it("defaults scopeId to null", async () => {
-      const record = await store.create("guardian", "trigger", "platform");
+      const record = await store.create(
+        { kind: "agent", id: "guardian" },
+        "trigger",
+        "platform"
+      );
       expect(record.scopeId).toBeNull();
     });
   });
 
   describe("addStep", () => {
     it("appends a step to the trajectory", async () => {
-      const record = await store.create("guardian", "trigger", "platform");
+      const record = await store.create(
+        { kind: "agent", id: "guardian" },
+        "trigger",
+        "platform"
+      );
       const updated = await store.addStep(record.trajectory.trajectoryId, makeStep());
 
       expect(updated).toBeDefined();
@@ -71,7 +92,11 @@ describe("InMemoryTrajectoryStore", () => {
     });
 
     it("accumulates cost across steps", async () => {
-      const record = await store.create("guardian", "trigger", "platform");
+      const record = await store.create(
+        { kind: "agent", id: "guardian" },
+        "trigger",
+        "platform"
+      );
       const tid = record.trajectory.trajectoryId;
 
       await store.addStep(tid, makeStep({ cost: 0.01 }));
@@ -89,7 +114,11 @@ describe("InMemoryTrajectoryStore", () => {
 
   describe("updateStatus", () => {
     it("updates status to completed", async () => {
-      const record = await store.create("guardian", "trigger", "platform");
+      const record = await store.create(
+        { kind: "agent", id: "guardian" },
+        "trigger",
+        "platform"
+      );
       const updated = await store.updateStatus(
         record.trajectory.trajectoryId,
         "completed"
@@ -99,7 +128,11 @@ describe("InMemoryTrajectoryStore", () => {
     });
 
     it("updates status to failed", async () => {
-      const record = await store.create("guardian", "trigger", "platform");
+      const record = await store.create(
+        { kind: "agent", id: "guardian" },
+        "trigger",
+        "platform"
+      );
       const updated = await store.updateStatus(record.trajectory.trajectoryId, "failed");
 
       expect(updated!.trajectory.status).toBe("failed");
@@ -113,7 +146,11 @@ describe("InMemoryTrajectoryStore", () => {
 
   describe("getById", () => {
     it("returns the trajectory record", async () => {
-      const record = await store.create("guardian", "trigger", "platform");
+      const record = await store.create(
+        { kind: "agent", id: "guardian" },
+        "trigger",
+        "platform"
+      );
       const found = await store.getById(record.trajectory.trajectoryId);
 
       expect(found).toBeDefined();
@@ -128,8 +165,8 @@ describe("InMemoryTrajectoryStore", () => {
 
   describe("query", () => {
     it("filters by agentId", async () => {
-      await store.create("guardian", "a", "platform");
-      await store.create("matchmaker", "b", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "a", "platform");
+      await store.create({ kind: "agent", id: "matchmaker" }, "b", "platform");
 
       const results = await store.query({
         agentId: "guardian",
@@ -139,9 +176,9 @@ describe("InMemoryTrajectoryStore", () => {
     });
 
     it("filters by scopeType and scopeId", async () => {
-      await store.create("guardian", "a", "group", "group-1");
-      await store.create("guardian", "b", "group", "group-2");
-      await store.create("guardian", "c", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "a", "group", "group-1");
+      await store.create({ kind: "agent", id: "guardian" }, "b", "group", "group-2");
+      await store.create({ kind: "agent", id: "guardian" }, "c", "platform");
 
       const results = await store.query({
         scopeType: "group",
@@ -151,8 +188,8 @@ describe("InMemoryTrajectoryStore", () => {
     });
 
     it("filters by status", async () => {
-      const r1 = await store.create("guardian", "a", "platform");
-      await store.create("guardian", "b", "platform");
+      const r1 = await store.create({ kind: "agent", id: "guardian" }, "a", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "b", "platform");
       await store.updateStatus(r1.trajectory.trajectoryId, "completed");
 
       const results = await store.query({
@@ -162,19 +199,19 @@ describe("InMemoryTrajectoryStore", () => {
     });
 
     it("respects limit", async () => {
-      await store.create("guardian", "a", "platform");
-      await store.create("guardian", "b", "platform");
-      await store.create("guardian", "c", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "a", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "b", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "c", "platform");
 
       const results = await store.query({ limit: 2 });
       expect(results).toHaveLength(2);
     });
 
     it("returns most recent first", async () => {
-      await store.create("guardian", "first", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "first", "platform");
       // Small delay so timestamps differ
       await new Promise((r) => setTimeout(r, 5));
-      await store.create("guardian", "second", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "second", "platform");
 
       const results = await store.query({});
       expect(results[0].trigger).toBe("second");
@@ -185,12 +222,12 @@ describe("InMemoryTrajectoryStore", () => {
   describe("test helpers", () => {
     it("tracks count", async () => {
       expect(store.getRecordCount()).toBe(0);
-      await store.create("guardian", "a", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "a", "platform");
       expect(store.getRecordCount()).toBe(1);
     });
 
     it("clear removes all", async () => {
-      await store.create("guardian", "a", "platform");
+      await store.create({ kind: "agent", id: "guardian" }, "a", "platform");
       store.clear();
       expect(store.getRecordCount()).toBe(0);
     });

@@ -17,9 +17,33 @@ import { generateId } from "./utils";
 // Query types
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Trajectory subject (ADR-029 D4)
+// ---------------------------------------------------------------------------
+
+/** Whether a trajectory belongs to an agent run or to an application session. */
+export type TrajectorySubjectKind = "agent" | "session";
+
+/**
+ * Who or what the trajectory is about.
+ *
+ * Before ADR-029 D4, session trajectories were created by passing a sessionId into the
+ * `agentId` parameter. It type-checked and was semantically wrong: session trajectories
+ * were indistinguishable from agent trajectories and no query could retrieve them by
+ * session.
+ */
+export interface TrajectorySubject {
+  readonly kind: TrajectorySubjectKind;
+  readonly id: string;
+}
+
 /** Options for querying trajectories */
 export interface TrajectoryQuery {
   readonly agentId?: string;
+  /** Filter to agent trajectories or session trajectories (ADR-029 D4). */
+  readonly subjectKind?: TrajectorySubjectKind;
+  /** Filter to one subject id — the sessionId for session trajectories. */
+  readonly subjectId?: string;
   readonly scopeType?: "group" | "user" | "platform";
   readonly scopeId?: string;
   readonly status?: TrajectoryStatus;
@@ -36,6 +60,8 @@ export interface TrajectoryCost {
 /** Full trajectory record with persistence metadata */
 export interface TrajectoryRecord {
   readonly trajectory: Trajectory;
+  /** What this trajectory is about — agent run or session (ADR-029 D4). */
+  readonly subject: TrajectorySubject;
   readonly trigger: string;
   readonly scopeType: "group" | "user" | "platform";
   readonly scopeId: string | null;
@@ -47,9 +73,15 @@ export interface TrajectoryRecord {
 // ---------------------------------------------------------------------------
 
 export interface TrajectoryStore {
-  /** Create a new trajectory. Returns the record. */
+  /**
+   * Create a new trajectory for an explicit subject. Returns the record.
+   *
+   * The subject is a discriminator, not a renamed agentId (ADR-029 D4): a session
+   * trajectory and an agent trajectory are now distinguishable without inspecting the
+   * trigger string.
+   */
   create(
-    agentId: string,
+    subject: TrajectorySubject,
     trigger: string,
     scopeType: "group" | "user" | "platform",
     scopeId?: string
@@ -79,7 +111,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
   private records: TrajectoryRecord[] = [];
 
   async create(
-    agentId: string,
+    subject: TrajectorySubject,
     trigger: string,
     scopeType: "group" | "user" | "platform",
     scopeId?: string
@@ -87,7 +119,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     const now = new Date().toISOString();
     const trajectory: Trajectory = {
       trajectoryId: generateId(),
-      agentId,
+      agentId: subject.id,
       steps: [],
       status: "running",
       totalCost: 0,
@@ -96,6 +128,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     };
     const record: TrajectoryRecord = {
       trajectory,
+      subject,
       trigger,
       scopeType,
       scopeId: scopeId ?? null,
@@ -165,6 +198,12 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
 
     if (options.agentId) {
       filtered = filtered.filter((r) => r.trajectory.agentId === options.agentId);
+    }
+    if (options.subjectKind) {
+      filtered = filtered.filter((r) => r.subject.kind === options.subjectKind);
+    }
+    if (options.subjectId) {
+      filtered = filtered.filter((r) => r.subject.id === options.subjectId);
     }
     if (options.scopeType) {
       filtered = filtered.filter((r) => r.scopeType === options.scopeType);

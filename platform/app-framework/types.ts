@@ -20,9 +20,18 @@
 import type {
   AgentIdentity,
   BudgetConfig,
+  EffectType,
+  RiskLevel,
   StepBoundary,
   Trajectory,
 } from "@/platform/agents/types";
+
+/**
+ * Re-exported, not re-declared (ADR-029 D1). These are the ADR-028 vocabulary; they moved
+ * to platform/agents so `Tool` can carry `effects` without closing an import cycle. Every
+ * existing importer of these three from this module is unchanged.
+ */
+export type { ActionContext, EffectType, RiskLevel } from "@/platform/agents/types";
 
 // ── Capabilities (ADR-028 D6) ─────────────────────────────────────────
 
@@ -33,20 +42,6 @@ import type {
 export type Capability = "turn-based" | "real-time" | "persistent" | "multi-agent";
 
 // ── Effects & Risk (ADR-028 D3) ───────────────────────────────────────
-
-/**
- * The unit of both capability grant and risk floor. An action declares the effects
- * it performs; effects grant the ability to act AND source the minimum risk level.
- * Declaring an effect cannot be gamed — a mutation to versioned state requires the
- * `stateWrite` effect, which is unreachable from an ephemeral context.
- */
-export type EffectType = "stateWrite" | "externalCall" | "sendMessage" | "restricted";
-
-/**
- * Risk level of an action. `effectiveRisk = max(declaredRisk, max(effectFloors))` —
- * a consumer may raise risk, never lower it below the effect floor (P4).
- */
-export type RiskLevel = "ordinary" | "consequential" | "restricted";
 
 /** Framework-owned minimum risk floor per effect type (D3 seed set; grow per consumer). */
 export const EFFECT_RISK_FLOOR: Readonly<Record<EffectType, RiskLevel>> = {
@@ -71,27 +66,10 @@ export type DurabilityTier = "ephemeral" | "durable" | "two-phase";
 
 // ── Action Context (ADR-028 D3) ───────────────────────────────────────
 
-/**
- * Assembled by the coordinator (SessionService), not the consumer. The consumer
- * supplies intent + actor + payload; the framework fills lineage, operationId,
- * session binding, boundary, and effectiveRisk. One pipeline for all actor types.
- */
-export interface ActionContext {
-  /** Stable identity of the logical action across propose→commit→effect→trajectory (D3). */
-  readonly operationId: string;
-  /** Scoped under operationId; present only for revisable gated actions. */
-  readonly proposalId?: string;
-  /** Who is acting (reused from platform/agents, P15). */
-  readonly actor: AgentIdentity;
-  /** The session this action belongs to. */
-  readonly sessionId: string;
-  /** Cognition (held) vs commitment (durable) — reused from platform/agents (P17). */
-  readonly boundary: StepBoundary;
-  /** Effects this action performs — capability grant + risk-floor source. */
-  readonly effects: readonly EffectType[];
-  /** max(declaredRisk, max(effect floors)) — computed by the coordinator. */
-  readonly effectiveRisk: RiskLevel;
-}
+// ActionContext is declared in platform/agents/types.ts and re-exported above. It is
+// assembled by the coordinator (SessionService), never by a consumer: the consumer supplies
+// intent + actor + payload; the framework fills lineage, operationId, session binding,
+// boundary and effectiveRisk. One pipeline for all actor types.
 
 // ── Session State (ADR-028 D2, D5) ────────────────────────────────────
 
@@ -234,6 +212,15 @@ export interface SessionEvent {
   /** Trajectory linkage (D4). */
   readonly trajectoryId: string;
   readonly stepIndex?: number;
+  /**
+   * The justification record, carried from the ActionContext (ADR-031 D9). Optional for
+   * the same additive reason as the Step fields; the coordinator always populates them.
+   */
+  readonly proposalId?: string;
+  readonly actor?: AgentIdentity;
+  readonly boundary?: StepBoundary;
+  readonly effects?: readonly EffectType[];
+  readonly effectiveRisk?: RiskLevel;
   /** Optional intent/memory hints, native to the event (D8). */
   readonly intent?: string;
   readonly memoryHint?: string;

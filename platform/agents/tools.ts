@@ -57,15 +57,23 @@ export function listTools(): readonly string[] {
 
 /**
  * Get tool definitions for a list of tool IDs.
- * Skips IDs that are not registered (logs warning).
+ *
+ * Throws on an unregistered ID (ADR-029 D1). A missing tool is a misconfiguration, and an
+ * agent silently running with reduced capability is worse than an agent that refuses to
+ * start: the first produces wrong answers indefinitely, the second produces one loud
+ * failure at registration.
+ *
+ * The previous implementation skipped unknown IDs, and the docstring claimed it logged a
+ * warning it never logged — the same fail-open shape as TASK-057.
  */
 export function resolveTools(toolIds: readonly string[]): readonly Tool[] {
   const resolved: Tool[] = [];
   for (const id of toolIds) {
     const tool = tools.get(id);
-    if (tool) {
-      resolved.push(tool);
+    if (!tool) {
+      throw new Error(`Tool not registered: ${id}`);
     }
+    resolved.push(tool);
   }
   return resolved;
 }

@@ -11,7 +11,7 @@
 
 export type { AgentIdentity } from "./types";
 export type { Trajectory, Step, TrajectoryStatus, StepBoundary } from "./types";
-export type { Tool } from "./types";
+export type { Tool, ToolExecute, EffectType, RiskLevel, ActionContext } from "./types";
 export type { BudgetConfig, AgentConfig, EffortTier } from "./types";
 export { DEFAULT_BUDGET_CONFIG } from "./types";
 
