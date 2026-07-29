@@ -807,6 +807,51 @@ where the gap already exists.
 
 ---
 
+### TASK-067 — Nothing checks that the schema a store writes actually exists
+
+| Field        | Detail                                          |
+| ------------ | ----------------------------------------------- |
+| **ID**       | TASK-067                                        |
+| **Type**     | Test-coverage gap / schema drift                |
+| **Severity** | Medium — passes green, fails at first real call |
+| **Phase**    | Phase 5, Sprint 2                               |
+| **Status**   | Open                                            |
+| **Logged**   | 2026-07-29                                      |
+
+**What:** Migration 023 shipped a Postgres function referencing `agent_budgets.used_steps`,
+a column that did not exist. The full gate was green, both conformance arms passed, and the
+failure appeared on the first real call. Migration 024 fixes it forward.
+
+The gate could not have caught it. Each Supabase conformance arm fakes `global.fetch` with an
+in-memory PostgREST that stores whatever keys the store sends and returns them — it validates
+the store against itself. Column existence, column types, constraints, enum membership and
+function signatures are all structurally invisible to it. That is a real bound on what the
+Supabase arms of `socialStore`, `realtime`, `trajectoryStore` and `budgetStore` prove: they
+prove the store's URL building, filter construction and row mapping are self-consistent, not
+that the schema on the other end matches.
+
+Compounding it, there is no migration-tracking table (TASK-065), so "the migration applied"
+is itself only knowable by introspection.
+
+Two dead columns are the standing evidence: `agent_budgets.used_tokens` and `budget_tokens`
+came from migration 016 and nothing has ever written either. The code counts steps and spend;
+the table was built for tokens and spend. Nothing flagged the divergence for three phases.
+
+**Resolution:**
+
+1. A schema-parity check that asserts, against the live database, that every column and
+   function each Supabase store references exists with the expected type — the introspection
+   done by hand this sprint, automated.
+2. Decide `used_tokens` / `budget_tokens`: populate them from trajectory cost, or drop them.
+   A column nothing writes is a claim the schema makes and the code does not honour.
+3. Consider generating the row types from the live schema so a missing column is a compile
+   error rather than a runtime one.
+
+**Close when:** a referenced-but-absent column or function fails a check rather than a
+production call, and no budget column is unwritten.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -851,4 +896,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 29, 2026 (renumbered the ToolBoundary defect to TASK-064; TASK-062 and TASK-063 are reserved for trajectory and budget durability per the Sprint 2 order)_
+_Last updated: July 29, 2026 (filed TASK-067 — nothing checks that the schema a store writes actually exists; migration 024 fixes 023 forward)_
