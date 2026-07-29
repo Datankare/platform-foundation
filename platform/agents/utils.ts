@@ -60,3 +60,25 @@ export function generateId(): string {
 export function generateSecureId(): string {
   return randomHex(SECURE_ID_BYTES);
 }
+
+/**
+ * Generate an RFC 4122 v4 UUID.
+ *
+ * For identifiers that must satisfy a `uuid` database column — `agent_trajectories.id`
+ * is one. `generateId()` returns 16 hex characters and `generateSecureId()` 32, neither
+ * of which Postgres accepts as a uuid, so a store supplying either fails at insert.
+ *
+ * Uses `globalThis.crypto.randomUUID`, whose availability is identical to
+ * `getRandomValues` (Node 18+, Edge, jsdom), and fails closed for the same reason: a
+ * silent downgrade to non-cryptographic randomness is the vulnerability.
+ */
+export function generateUuid(): string {
+  const webcrypto = globalThis.crypto;
+  if (typeof webcrypto?.randomUUID !== "function") {
+    throw new Error(
+      "platform/agents: crypto.randomUUID unavailable. " +
+        "Refusing to generate identifiers with non-cryptographic randomness."
+    );
+  }
+  return webcrypto.randomUUID();
+}
