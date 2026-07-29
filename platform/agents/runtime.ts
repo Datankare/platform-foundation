@@ -128,7 +128,12 @@ export async function executeAgent(
   const scopeKey = scopeId ?? scopeType;
 
   // ── Create trajectory ───────────────────────────────────────────
-  const record = await trajectoryStore.create(agentId, trigger, scopeType, scopeId);
+  const record = await trajectoryStore.create(
+    { kind: "agent", id: agentId },
+    trigger,
+    scopeType,
+    scopeId
+  );
   const trajectoryId = record.trajectory.trajectoryId;
 
   const identity: AgentIdentity = {

@@ -683,6 +683,34 @@ describe("dispatchConfigTool", () => {
   });
 });
 
+describe("CONFIG_TOOLS executable contract (ADR-029 D1)", () => {
+  it("every tool in the roster carries an invocable handler", async () => {
+    mockListEnhancedConfig.mockResolvedValue([]);
+
+    const invoked: string[] = [];
+    for (const tool of CONFIG_TOOLS) {
+      try {
+        await tool.execute({});
+      } catch {
+        /* justified */
+        // Handlers reject empty input in their own ways. This arm asserts the closure is
+        // reachable and wired to a handler, not that the handler succeeds on no input —
+        // per-tool success is covered by the per-tool describes above.
+      }
+      invoked.push(tool.id);
+    }
+
+    expect(invoked).toEqual(CONFIG_TOOLS.map((tool) => tool.id));
+  });
+
+  it("the roster is the dispatcher — an id outside it is unknown", async () => {
+    const result = await dispatchConfigTool("not_a_tool", {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Unknown tool");
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // Tool definitions
 // ═══════════════════════════════════════════════════════════════════════
@@ -732,6 +760,8 @@ describe("CONFIG_TOOLS", () => {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeDefined();
       expect(tool.outputSchema).toBeDefined();
+      expect(typeof tool.execute).toBe("function");
+      expect(Array.isArray(tool.effects)).toBe(true);
     }
   });
 

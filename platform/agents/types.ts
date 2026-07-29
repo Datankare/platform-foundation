@@ -84,6 +84,58 @@ export interface Trajectory {
  */
 export type StepBoundary = "cognition" | "commitment";
 
+// ── Effects & Risk (ADR-028 D3 vocabulary, declared here per ADR-029 D1) ──
+
+/**
+ * The unit of both capability grant and risk floor. An action or a tool declares the
+ * effects it performs; effects grant the ability to act AND source the minimum risk
+ * level. Declaring an effect cannot be gamed (P4).
+ *
+ * Declared in platform/agents rather than platform/app-framework because ADR-029 D1 puts
+ * `effects` on `Tool`, and the dependency runs one way: platform/agents imports nothing,
+ * while app-framework, admin, input and moderation all import from it. Declaring these in
+ * app-framework and importing them here would close a cycle; re-declaring them here would
+ * be the parallel vocabulary ADR-029 D1 rules out. platform/app-framework/types.ts
+ * re-exports both, so every existing consumer is unchanged and there is one declaration.
+ */
+export type EffectType = "stateWrite" | "externalCall" | "sendMessage" | "restricted";
+
+/**
+ * Risk level of an action or tool call. `effectiveRisk = max(declaredRisk,
+ * max(effectFloors))` — a consumer may raise risk, never lower it below the effect
+ * floor (P4). The floors themselves stay in app-framework: they are policy, not
+ * vocabulary.
+ */
+export type RiskLevel = "ordinary" | "consequential" | "restricted";
+
+// ── Action Context (ADR-028 D3, ADR-031 D9) ───────────────────────────
+
+/**
+ * The justification record for an action, assembled by the coordinator — never by a
+ * consumer and never by a domain hook. Carried across propose → commit → effect →
+ * trajectory (ADR-031 D9).
+ *
+ * Declared here so `Tool.execute` can receive one without platform/agents importing the
+ * app-framework. Re-exported from platform/app-framework/types.ts, which remains its
+ * conceptual home.
+ */
+export interface ActionContext {
+  /** Stable identity of the logical action across all five stages (ADR-031 D1). */
+  readonly operationId: string;
+  /** Scoped under operationId; present only for revisable gated actions (ADR-031 D3). */
+  readonly proposalId?: string;
+  /** Who is acting (P15). */
+  readonly actor: AgentIdentity;
+  /** The session this action belongs to. */
+  readonly sessionId: string;
+  /** Cognition (held) vs commitment (durable) — P17. */
+  readonly boundary: StepBoundary;
+  /** Effects this action performs — capability grant + risk-floor source. */
+  readonly effects: readonly EffectType[];
+  /** max(declaredRisk, max(effect floors)) — computed by the coordinator. */
+  readonly effectiveRisk: RiskLevel;
+}
+
 /**
  * A single step within a trajectory.
  *
@@ -109,6 +161,21 @@ export interface Step {
   readonly timestamp: string;
   /** Whether this step is cognition (revisable) or commitment (durable) — P17 */
   readonly boundary: StepBoundary;
+  /**
+   * Stable identity of the logical action this step belongs to (ADR-031 D1).
+   *
+   * The identity fields below are optional so Phase 4 callers compile unchanged
+   * (ADR-029 D4 — additive). The framework always populates them.
+   */
+  readonly operationId?: string;
+  /** Present only for revisable gated actions (ADR-031 D3). */
+  readonly proposalId?: string;
+  /** Who performed this step (P15) — carried from the ActionContext. */
+  readonly actor?: AgentIdentity;
+  /** Effects this step performed — capability grant + risk-floor source. */
+  readonly effects?: readonly EffectType[];
+  /** max(declaredRisk, max(effect floors)) as computed for this step. */
+  readonly effectiveRisk?: RiskLevel;
 }
 
 // ── Tool (P5) ─────────────────────────────────────────────────────────
@@ -119,6 +186,23 @@ export interface Step {
  * Tools are versioned artifacts registered in the agent runtime.
  * Each tool has explicit input/output schemas for validation.
  */
+/**
+ * The handler a tool runs (ADR-029 D1).
+ *
+ * `input` is validated against `inputSchema` before the call and the return value against
+ * `outputSchema` after (ADR-029 D3) — invalid output is retried within the step budget,
+ * never coerced.
+ *
+ * `context` is optional in Sprint 2 step 1 and becomes required when ADR-029 D2 routes tool
+ * invocation through the ADR-028 D3 pipeline. Nothing assembles an ActionContext for a tool
+ * call before D2, and a call site synthesising one would be minting an operationId outside
+ * the coordinator, which ADR-031 D1 forbids.
+ */
+export type ToolExecute = (
+  input: Record<string, unknown>,
+  context?: ActionContext
+) => Promise<Record<string, unknown>>;
+
 export interface Tool {
   /** Unique tool identifier */
   readonly id: string;
@@ -130,6 +214,15 @@ export interface Tool {
   readonly inputSchema: Record<string, unknown>;
   /** JSON Schema for tool output */
   readonly outputSchema: Record<string, unknown>;
+  /**
+   * The handler (ADR-029 D1). A registered tool is invocable, not merely declared — the
+   * registry no longer stores declarations that nothing can call.
+   */
+  readonly execute: ToolExecute;
+  /** What this tool does to the world, in the ADR-028 D3 vocabulary (ADR-029 D1). */
+  readonly effects: readonly EffectType[];
+  /** Advisory and upward-only from the effect floor, exactly as ActionSpec (ADR-029 D1). */
+  readonly declaredRisk?: RiskLevel;
 }
 
 // ── Budget (P12) ──────────────────────────────────────────────────────
