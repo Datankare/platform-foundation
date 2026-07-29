@@ -774,39 +774,6 @@ name, and the step limit is enforced per trajectory.
 
 ---
 
-### TASK-065 — Duplicate migration numbers, with no tracking table to disambiguate
-
-| Field        | Detail                              |
-| ------------ | ----------------------------------- |
-| **ID**       | TASK-065                            |
-| **Type**     | Schema-management defect            |
-| **Severity** | Medium — silent partial application |
-| **Phase**    | Phase 5, Sprint 2                   |
-| **Status**   | Open                                |
-| **Logged**   | 2026-07-29                          |
-
-**What:** Two migrations are numbered `018` in both repos — `018_app_framework.sql` and
-`018_human_review.sql` — and Playform additionally has two numbered `007`. The live database
-has no `supabase_migrations.schema_migrations` table (Gotcha 60), so applied state is knowable
-only by introspecting objects.
-
-The consequence is not hypothetical: `review_queue` from `018_human_review.sql` is present and
-`app_sessions` from `018_app_framework.sql` is not. One of the two 018s applied and the other
-did not, and nothing recorded which. "Apply in numeric order" is ambiguous at exactly the point
-where the gap already exists.
-
-**Resolution:**
-
-1. Renumber the colliding migrations forward, or adopt a timestamp prefix so collision is
-   impossible by construction.
-2. Adopt migration tracking, so applied state is a query rather than an audit.
-3. Until tracking exists, a CI check that every migration's principal objects are present in
-   the live DB — the introspection done by hand this sprint, automated.
-
-**Close when:** no two migrations share a number, and applied state is queryable.
-
----
-
 ### TASK-067 — Nothing checks that the schema a store writes actually exists
 
 | Field        | Detail                                          |
@@ -893,7 +860,8 @@ Sprint 3c. Flagged for awareness.
 | TASK-040 | ACRCLOUD placeholders in .env.example                      | Phase 5, Sprint 0  | 2026-06-21 |
 | TASK-043 | Known-good audio test fixtures                             | Phase 5, Sprint 0  | 2026-06-21 |
 | TASK-029 | Sentry/middleware build-warning tracking (dup of TASK-028) | Phase 5, Sprint 0  | 2026-06-21 |
+| TASK-065 | Migration tracking table (applied_migrations)              | Phase 5, Sprint 2  | 2026-07-29 |
 
 ---
 
-_Last updated: July 29, 2026 (filed TASK-067 — nothing checks that the schema a store writes actually exists; migration 024 fixes 023 forward)_
+_Last updated: July 29, 2026 (TASK-065 resolved — public.applied_migrations created and backfilled by migration 025)_
