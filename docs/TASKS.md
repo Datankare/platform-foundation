@@ -663,11 +663,11 @@ Phase 5 exit gate.
 
 ---
 
-### TASK-062 — ToolBoundary duplicates StepBoundary, and the boundary lookup fails open
+### TASK-064 — ToolBoundary duplicates StepBoundary, and the boundary lookup fails open
 
 | Field        | Detail                                                  |
 | ------------ | ------------------------------------------------------- |
-| **ID**       | TASK-062                                                |
+| **ID**       | TASK-064                                                |
 | **Type**     | Duplicate vocabulary + fail-open default                |
 | **Severity** | Medium — misclassified P17 boundary in the audit record |
 | **Phase**    | Phase 5, Sprint 2                                       |
@@ -755,4 +755,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 29, 2026 (filed TASK-062 ToolBoundary duplicates StepBoundary and its lookup fails open; Phase 5 Sprint 2)_
+_Last updated: July 29, 2026 (renumbered the ToolBoundary defect to TASK-064; TASK-062 and TASK-063 are reserved for trajectory and budget durability per the Sprint 2 order)_
