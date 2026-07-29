@@ -663,6 +663,54 @@ Phase 5 exit gate.
 
 ---
 
+### TASK-062 — ToolBoundary duplicates StepBoundary, and the boundary lookup fails open
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-062                                                |
+| **Type**     | Duplicate vocabulary + fail-open default                |
+| **Severity** | Medium — misclassified P17 boundary in the audit record |
+| **Phase**    | Phase 5, Sprint 2                                       |
+| **Status**   | Open                                                    |
+| **Logged**   | 2026-07-29                                              |
+
+**What:** `platform/admin/types.ts` declares `ToolBoundary = "cognition" | "commitment"` plus a
+`TOOL_BOUNDARIES: Record<string, ToolBoundary>` map. `platform/agents/types.ts` declares
+`StepBoundary` with the identical union. `config-handlers.ts` bridges the two by annotation:
+`const boundary: StepBoundary = TOOL_BOUNDARIES[toolId] ?? "cognition"`. That single line
+carries two defects.
+
+_Duplicate vocabulary._ Two declarations of one union in two modules, with nothing tying them
+together — they agree today by coincidence, and a future member added to one will not appear in
+the other. This is the shape ADR-029 D1 rules out for `EffectType` and `RiskLevel`, and Sprint 2
+step 1 collapsed those to a single declaration for exactly this reason. The boundary union was
+left because D1 sanctions three additions to `Tool` and `boundary` is not among them.
+
+_Fail-open default._ A tool id absent from `TOOL_BOUNDARIES` records as `cognition` — the
+revisable, non-durable side of the P17 boundary. A commitment misfiled as cognition is an
+action that looks reversible in the audit record and is not. The default is silent, so the
+misclassification is indistinguishable from a correct classification at every point downstream.
+Same fail-open shape as TASK-057's health endpoint and the pre-Sprint-2 `resolveTools`.
+
+**Why step 1 did not fix it:** ADR-029 D2 assembles an `ActionContext` per tool invocation and
+the boundary belongs there, not on the `Tool` declaration. Fixing it in step 1 would have meant
+inventing a field the ADR does not specify and then removing it two steps later.
+
+**Resolution:**
+
+1. Delete `ToolBoundary`; use `StepBoundary` from `platform/agents/types.ts` as the one union.
+2. When D2 lands, the boundary is carried on the `ActionContext` — delete `TOOL_BOUNDARIES`
+   rather than repointing it.
+3. Until D2, make the lookup fail closed: an unmapped tool id is a misconfiguration, not a
+   cognition step.
+4. Add a conformance arm asserting every `CONFIG_TOOLS` id resolves a boundary without falling
+   through to a default, so the map and the roster cannot drift apart unnoticed.
+
+**Close when:** one boundary union exists in the codebase, and no tool id resolves its boundary
+via a default.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -707,4 +755,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 24, 2026 (filed TASK-057 health endpoint fails open + TASK-058 dependency-advisory process; both Sprint 2)_
+_Last updated: July 29, 2026 (filed TASK-062 ToolBoundary duplicates StepBoundary and its lookup fails open; Phase 5 Sprint 2)_
