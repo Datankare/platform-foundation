@@ -2,7 +2,11 @@
  * platform/agents/__tests__/budget-tracker.test.ts
  *
  * Tests for BudgetTracker. Covers: check, consume, exhaustion,
- * step limit, period tracking, custom config, reset.
+ * period tracking, custom config, reset.
+ *
+ * Not covered here by design: the per-trajectory step limit. It is enforced by
+ * runtime.ts inside the execution loop and tested there; this tracker counts steps for
+ * observability only.
  */
 
 import { BudgetTracker } from "../budget-tracker";
@@ -39,14 +43,17 @@ describe("BudgetTracker", () => {
       expect(result.reason).toMatch(/budget exhausted/i);
     });
 
-    it("blocks when step limit reached", () => {
-      tracker.consume("guardian", "group-1", 0.001, TIGHT_CONFIG);
-      tracker.consume("guardian", "group-1", 0.001, TIGHT_CONFIG);
-      tracker.consume("guardian", "group-1", 0.001, TIGHT_CONFIG);
+    it("does not block on step count — that is the runtime's per-trajectory limit", () => {
+      // TIGHT_CONFIG.maxStepsPerTrajectory is 3. Four cheap steps used to trip a step
+      // gate here, which capped the agent for the whole period rather than for one
+      // trajectory. Spend is what this tracker enforces.
+      for (let i = 0; i < 4; i++) {
+        tracker.consume("guardian", "group-1", 0.001, TIGHT_CONFIG);
+      }
 
       const result = tracker.checkBudget("guardian", "group-1", TIGHT_CONFIG);
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toMatch(/step limit/i);
+      expect(result.allowed).toBe(true);
+      expect(tracker.getStatus("guardian", "group-1", TIGHT_CONFIG).usedSteps).toBe(4);
     });
   });
 
@@ -109,9 +116,19 @@ describe("BudgetTracker", () => {
   });
 
   describe("getCurrentPeriod", () => {
-    it("returns YYYY-MM format", () => {
+    it("returns YYYY-MM-DD format", () => {
       const period = tracker.getCurrentPeriod();
-      expect(period).toMatch(/^\d{4}-\d{2}$/);
+      expect(period).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    it("is today, so maxCostPerDay is enforced over a day", () => {
+      const now = new Date();
+      const expected = [
+        String(now.getFullYear()),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      ].join("-");
+      expect(tracker.getCurrentPeriod()).toBe(expected);
     });
   });
 

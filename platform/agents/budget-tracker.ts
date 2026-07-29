@@ -4,6 +4,12 @@
  * Tracks and enforces per-agent per-scope cost budgets.
  * Prevents runaway costs by checking before each step.
  *
+ * Scope of what this enforces: spend only. The period is a calendar day, matching
+ * BudgetConfig.maxCostPerDay. The per-trajectory step limit is NOT enforced here — it
+ * belongs where the trajectory is, and runtime.ts enforces it inside the execution loop.
+ * This tracker previously compared a per-agent-per-period step count against a
+ * per-trajectory limit, which capped an agent's total steps for the whole period.
+ *
  * P12: Economic transparency — every cost is tracked
  * P13: Control plane — budgets are configurable limits
  * P11: Resilient degradation — budget exhausted → degrade, don't crash
@@ -25,8 +31,8 @@ export interface BudgetStatus {
   readonly period: string;
   readonly usedUsd: number;
   readonly budgetUsd: number;
+  /** Observability only (P12) — steps do not gate. See the module header. */
   readonly usedSteps: number;
-  readonly maxSteps: number;
   readonly exhausted: boolean;
   readonly remainingUsd: number;
 }
@@ -66,13 +72,19 @@ export class BudgetTracker {
   }
 
   /**
-   * Get current period in YYYY-MM format.
+   * Get the current period as YYYY-MM-DD.
+   *
+   * Daily, because the ceiling it accumulates against is BudgetConfig.maxCostPerDay.
+   * This returned YYYY-MM, so a "daily" cap was in fact enforced over a calendar month
+   * — roughly thirty times more permissive than every agent-configs value was written
+   * to mean.
    */
   getCurrentPeriod(): string {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, "0");
-    return `${year}-${month}`;
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   }
 
   /**
@@ -104,9 +116,9 @@ export class BudgetTracker {
    * Build a BudgetStatus from a record.
    */
   private toStatus(record: BudgetRecord): BudgetStatus {
-    const exhausted =
-      record.usedUsd >= record.config.maxCostPerDay ||
-      record.usedSteps >= record.config.maxStepsPerTrajectory;
+    // Spend only. A step count accumulated per agent per period says nothing about
+    // whether any one trajectory has run too long.
+    const exhausted = record.usedUsd >= record.config.maxCostPerDay;
     return {
       agentId: record.agentId,
       scopeKey: record.scopeKey,
@@ -114,7 +126,6 @@ export class BudgetTracker {
       usedUsd: record.usedUsd,
       budgetUsd: record.config.maxCostPerDay,
       usedSteps: record.usedSteps,
-      maxSteps: record.config.maxStepsPerTrajectory,
       exhausted,
       remainingUsd: Math.max(0, record.config.maxCostPerDay - record.usedUsd),
     };
@@ -141,14 +152,8 @@ export class BudgetTracker {
       };
     }
 
-    if (record.usedSteps >= record.config.maxStepsPerTrajectory) {
-      return {
-        allowed: false,
-        reason: `Step limit reached: ${record.usedSteps} / ${record.config.maxStepsPerTrajectory}`,
-        status,
-      };
-    }
-
+    // No step gate here. maxStepsPerTrajectory is enforced by runtime.ts inside the
+    // execution loop, where stepCount is the count for THIS trajectory.
     return { allowed: true, status };
   }
 
