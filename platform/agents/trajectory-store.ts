@@ -11,6 +11,24 @@
  */
 
 import type { Trajectory, TrajectoryStatus, Step } from "./types";
+// The contract moved to platform/kernel: the action pipeline appends trajectory
+// steps and cannot import platform/agents (ADR-029 D2). Implementations and the
+// singleton stay here; this re-export keeps every existing importer working.
+export type {
+  TrajectorySubjectKind,
+  TrajectorySubject,
+  TrajectoryQuery,
+  TrajectoryCost,
+  TrajectoryRecord,
+  TrajectoryStore,
+} from "@/platform/kernel/types";
+import type {
+  TrajectorySubject,
+  TrajectoryQuery,
+  TrajectoryCost,
+  TrajectoryRecord,
+  TrajectoryStore,
+} from "@/platform/kernel/types";
 import { generateId } from "./utils";
 
 // ---------------------------------------------------------------------------
@@ -21,87 +39,9 @@ import { generateId } from "./utils";
 // Trajectory subject (ADR-029 D4)
 // ---------------------------------------------------------------------------
 
-/** Whether a trajectory belongs to an agent run or to an application session. */
-export type TrajectorySubjectKind = "agent" | "session";
-
-/**
- * Who or what the trajectory is about.
- *
- * Before ADR-029 D4, session trajectories were created by passing a sessionId into the
- * `agentId` parameter. It type-checked and was semantically wrong: session trajectories
- * were indistinguishable from agent trajectories and no query could retrieve them by
- * session.
- */
-export interface TrajectorySubject {
-  readonly kind: TrajectorySubjectKind;
-  readonly id: string;
-}
-
-/** Options for querying trajectories */
-export interface TrajectoryQuery {
-  readonly agentId?: string;
-  /** Filter to agent trajectories or session trajectories (ADR-029 D4). */
-  readonly subjectKind?: TrajectorySubjectKind;
-  /** Filter to one subject id — the sessionId for session trajectories. */
-  readonly subjectId?: string;
-  readonly scopeType?: "group" | "user" | "platform";
-  readonly scopeId?: string;
-  readonly status?: TrajectoryStatus;
-  readonly limit?: number;
-}
-
-/** Cost summary stored alongside trajectory */
-export interface TrajectoryCost {
-  readonly tokens: number;
-  readonly apiCalls: number;
-  readonly usd: number;
-}
-
-/** Full trajectory record with persistence metadata */
-export interface TrajectoryRecord {
-  readonly trajectory: Trajectory;
-  /** What this trajectory is about — agent run or session (ADR-029 D4). */
-  readonly subject: TrajectorySubject;
-  readonly trigger: string;
-  readonly scopeType: "group" | "user" | "platform";
-  readonly scopeId: string | null;
-  readonly costSummary: TrajectoryCost;
-}
-
 // ---------------------------------------------------------------------------
 // TrajectoryStore interface
 // ---------------------------------------------------------------------------
-
-export interface TrajectoryStore {
-  /**
-   * Create a new trajectory for an explicit subject. Returns the record.
-   *
-   * The subject is a discriminator, not a renamed agentId (ADR-029 D4): a session
-   * trajectory and an agent trajectory are now distinguishable without inspecting the
-   * trigger string.
-   */
-  create(
-    subject: TrajectorySubject,
-    trigger: string,
-    scopeType: "group" | "user" | "platform",
-    scopeId?: string
-  ): Promise<TrajectoryRecord>;
-
-  /** Add a step to a trajectory. Returns updated record. */
-  addStep(trajectoryId: string, step: Step): Promise<TrajectoryRecord | undefined>;
-
-  /** Update trajectory status. */
-  updateStatus(
-    trajectoryId: string,
-    status: TrajectoryStatus
-  ): Promise<TrajectoryRecord | undefined>;
-
-  /** Get a trajectory by ID. */
-  getById(trajectoryId: string): Promise<TrajectoryRecord | undefined>;
-
-  /** Query trajectories with filters. */
-  query(options: TrajectoryQuery): Promise<readonly TrajectoryRecord[]>;
-}
 
 // ---------------------------------------------------------------------------
 // InMemoryTrajectoryStore
