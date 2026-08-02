@@ -86,6 +86,13 @@ export interface PipelineRequest<TState> {
    */
   readonly computeNextState: (() => TState) | null;
 
+  /**
+   * The execution callback: runs after gating, budget and identity, before any commit.
+   * A session action has none — its effect IS the state transition. A tool call has one,
+   * and its return value becomes part of the trajectory step's output.
+   */
+  readonly perform?: () => Promise<Record<string, unknown>>;
+
   /** Session or agent ceiling in USD; absent = unbounded. */
   readonly budgetCeiling?: number;
   /**
@@ -182,7 +189,12 @@ export async function executeActionPipeline<TState>(
     boundary: req.boundary,
   });
 
-  // 6. Commit managed state, if this action writes any.
+  // 6. Execute, for adapters whose action does something other than transition state.
+  // Runs after gating so a refused call never executes, and before commit so a failing
+  // execution leaves no committed state behind it.
+  const performed = req.perform ? await req.perform() : undefined;
+
+  // 7. Commit managed state, if this action writes any.
   let committed: VersionedState<TState> | null = null;
   if (req.computeNextState) {
     const nextState = req.computeNextState();
@@ -223,6 +235,7 @@ export async function executeActionPipeline<TState>(
     input: { operationId, actorId: req.actor.actorId, ...(req.stepInput ?? {}) },
     output: {
       ...(committed ? { version: committed.version } : {}),
+      ...(performed ?? {}),
       ...(req.stepOutput ?? {}),
     },
     cost: req.cost,
