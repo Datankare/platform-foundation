@@ -70,6 +70,9 @@ export type {
   ExecutionResult,
 } from "./runtime";
 export { executeAgent } from "./runtime";
+export { invokeTool, DEFAULT_OUTPUT_RETRIES } from "./tool-invoker";
+export type { InvokeToolArgs, InvokeToolResult } from "./tool-invoker";
+export { assertValidSchema, isValidSchema, SchemaValidationError } from "./schema";
 
 // ── Agent Configs (Sprint 4b) ───────────────────────────────────────
 

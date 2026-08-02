@@ -31,6 +31,7 @@ import { runHealthProbeContract } from "./health-probe-contract";
 import { runAppStateStoreContract } from "./app-state-store-contract";
 import { runTrajectoryStoreContract } from "./trajectory-store-contract";
 import { runBudgetStoreContract } from "./budget-store-contract";
+import { runToolInvocationContract } from "./tool-invocation-contract";
 
 export type ContractKind = "registry" | "fabric";
 
@@ -70,6 +71,8 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   budgetStore: { kind: "registry", kit: runBudgetStoreContract },
 
   // ── Observability fabric (not registry slots; folded in by ADR-027) ──
+  // ADR-029 D9: tool execution is in-process — nothing to swap, so no registry slot.
+  toolInvocation: { kind: "fabric", kit: runToolInvocationContract },
   traceProvider: { kind: "fabric", kit: runTraceProviderContract },
   metricsSink: { kind: "fabric", kit: runMetricsSinkContract },
   healthProbe: { kind: "fabric", kit: runHealthProbeContract },
