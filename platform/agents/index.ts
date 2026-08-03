@@ -69,7 +69,15 @@ export type {
   WorkflowFn,
   ExecutionResult,
 } from "./runtime";
-export { executeAgent } from "./runtime";
+export { executeAgent, resumeAgent } from "./runtime";
+export type { ResumeAgentArgs } from "./runtime";
+export {
+  InMemoryProposalStore,
+  getProposalStore,
+  setProposalStore,
+  resetProposalStore,
+} from "./proposal-store";
+export { SupabaseProposalStore } from "./supabase-proposal-store";
 export { invokeTool, DEFAULT_OUTPUT_RETRIES } from "./tool-invoker";
 export type { InvokeToolArgs, InvokeToolResult } from "./tool-invoker";
 export { assertValidSchema, isValidSchema, SchemaValidationError } from "./schema";

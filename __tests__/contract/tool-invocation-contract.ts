@@ -144,6 +144,42 @@ export function runToolInvocationContract(fx: ToolInvocationContractFixtures): v
       ).rejects.toThrow(/exceeds agent ceiling/);
     });
 
+    it("commits managed state through the pipeline's CAS when a tool writes", async () => {
+      // The only path where a tool call writes managed state, and therefore the only place
+      // optimistic concurrency applies to a tool — D2 promises it comes free from the
+      // shared pipeline rather than being reimplemented in the adapter.
+      const committed: Array<Record<string, unknown>> = [];
+      const stateStore = {
+        create: async () => ({ sessionId: "s", state: {}, version: 1 }),
+        get: async () => ({ sessionId: "s", state: {}, version: 1 }),
+        commit: async (
+          _sessionId: string,
+          _expected: number,
+          state: Record<string, unknown>
+        ) => {
+          committed.push(state);
+          return { ok: true as const, state, version: 2 };
+        },
+        reduceCommit: async () => ({ sessionId: "s", state: {}, version: 2 }),
+      };
+
+      const res = await call(
+        makeTool(),
+        { text: "hi" },
+        {
+          stateStore,
+          expectedVersion: 1,
+          computeNextState: (output: Record<string, unknown>) => ({
+            lastEcho: output.echoed,
+          }),
+        }
+      );
+
+      expect(res.output).toEqual({ echoed: "hi" });
+      expect(committed).toHaveLength(1);
+      expect(committed[0]).toEqual({ lastEcho: "hi" });
+    });
+
     it("accepts a caller-supplied operationId (ADR-031 D1)", async () => {
       const res = await call(makeTool(), { text: "hi" }, { operationId: "op_fixed" });
       expect(res.operationId).toBe("op_fixed");

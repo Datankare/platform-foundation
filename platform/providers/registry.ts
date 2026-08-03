@@ -30,6 +30,7 @@
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
  *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory")
  *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory")
+ *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
  *
  * @module platform/providers
  */
@@ -56,6 +57,8 @@ import { setTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { SupabaseTrajectoryStore } from "@/platform/agents/supabase-trajectory-store";
 import { BudgetTracker, setBudgetTracker } from "@/platform/agents/budget-tracker";
 import { SupabaseBudgetStore } from "@/platform/agents/supabase-budget-store";
+import { setProposalStore } from "@/platform/agents/proposal-store";
+import { SupabaseProposalStore } from "@/platform/agents/supabase-proposal-store";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -81,6 +84,7 @@ export type EmbeddingProviderType = "openai" | "mock";
 export type AppStateStoreType = "supabase" | "memory";
 export type TrajectoryStoreType = "supabase" | "memory";
 export type BudgetStoreType = "supabase" | "memory";
+export type ProposalStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -99,6 +103,7 @@ export interface ProviderSelections {
   appStateStore: AppStateStoreType;
   trajectoryStore: TrajectoryStoreType;
   budgetStore: BudgetStoreType;
+  proposalStore: ProposalStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +131,7 @@ function getProviderSelections(): ProviderSelections {
     appStateStore: (process.env.APP_STATE_STORE as AppStateStoreType) ?? "memory",
     trajectoryStore: (process.env.TRAJECTORY_STORE as TrajectoryStoreType) ?? "memory",
     budgetStore: (process.env.BUDGET_STORE as BudgetStoreType) ?? "memory",
+    proposalStore: (process.env.PROPOSAL_STORE as ProposalStoreType) ?? "memory",
   };
 }
 
@@ -364,6 +370,25 @@ function initBudgetStore(type: BudgetStoreType): void {
   }
 }
 
+function initProposalStore(type: ProposalStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed, as slots #15 and #16 do. An in-memory proposal store means a held
+    // action disappears on restart — the approval never arrives and nothing says so.
+    if (!url || !key) {
+      throw new Error(
+        "PROPOSAL_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to in-memory proposals."
+      );
+    }
+
+    setProposalStore(new SupabaseProposalStore(url, key));
+    return;
+  }
+}
+
 function initSocialStore(type: SocialStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -431,6 +456,7 @@ export function initProviders(): ProviderSelections {
   initAppStateStore(selections.appStateStore);
   initTrajectoryStore(selections.trajectoryStore);
   initBudgetStore(selections.budgetStore);
+  initProposalStore(selections.proposalStore);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
@@ -451,6 +477,7 @@ export function initProviders(): ProviderSelections {
     appStateStore: selections.appStateStore,
     trajectoryStore: selections.trajectoryStore,
     budgetStore: selections.budgetStore,
+    proposalStore: selections.proposalStore,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
   });
