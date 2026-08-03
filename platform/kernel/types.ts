@@ -647,3 +647,79 @@ export interface TrajectoryStore {
   /** Query trajectories with filters. */
   query(options: TrajectoryQuery): Promise<readonly TrajectoryRecord[]>;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Proposal persistence contract (ADR-031 D2/D3/D8)
+// Implementations and the singleton live in platform/agents.
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Lifecycle of a held action (ADR-031 D2).
+ *
+ * `rejected` and `superseded` are TERMINAL and produce a trajectory with no stateVersion
+ * (D8). They are deliberately distinct from TrajectoryStatus: a trajectory can be paused
+ * while its proposal is still `proposed`, and conflating the two would lose that.
+ */
+export type ProposalStatus = "proposed" | "approved" | "rejected" | "superseded";
+
+/** A held gated action awaiting a decision. */
+export interface ProposalRecord {
+  readonly proposalId: string;
+  /** One operationId may carry many proposals; at most one is live (D3). */
+  readonly operationId: string;
+  readonly sessionId: string;
+  readonly trajectoryId: string;
+  /** Action type or tool id. */
+  readonly label: string;
+  readonly status: ProposalStatus;
+  readonly actor: AgentIdentity;
+  readonly effects: readonly EffectType[];
+  readonly effectiveRisk: RiskLevel;
+  readonly payload: Record<string, unknown>;
+  /** State version observed at proposal time — the stale-approval anchor (D5). */
+  readonly observedVersion?: number;
+  readonly decidedBy?: string;
+  readonly decidedAt?: string;
+  readonly decisionNote?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ProposalQuery {
+  readonly operationId?: string;
+  readonly trajectoryId?: string;
+  readonly status?: ProposalStatus;
+  readonly limit?: number;
+}
+
+export interface CreateProposalArgs {
+  readonly operationId: string;
+  readonly sessionId: string;
+  readonly trajectoryId: string;
+  readonly label: string;
+  readonly actor: AgentIdentity;
+  readonly effects: readonly EffectType[];
+  readonly effectiveRisk: RiskLevel;
+  readonly payload?: Record<string, unknown>;
+  readonly observedVersion?: number;
+}
+
+/**
+ * Durable proposal storage.
+ *
+ * `decide` MUST be atomic on the proposal's current status: a second approval of the same
+ * proposal is a no-op returning the original (ADR-031 D4), and two concurrent decisions
+ * must not both win.
+ */
+export interface ProposalStore {
+  create(args: CreateProposalArgs): Promise<ProposalRecord>;
+  getById(proposalId: string): Promise<ProposalRecord | undefined>;
+  /** Transition a proposal, only from `proposed`. Returns undefined if it already moved. */
+  decide(
+    proposalId: string,
+    status: Exclude<ProposalStatus, "proposed">,
+    decidedBy: string,
+    note?: string
+  ): Promise<ProposalRecord | undefined>;
+  query(options: ProposalQuery): Promise<readonly ProposalRecord[]>;
+}

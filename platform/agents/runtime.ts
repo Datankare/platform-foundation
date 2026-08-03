@@ -258,3 +258,158 @@ export async function executeAgent(
     };
   }
 }
+
+// ── Resume (ADR-029 D5) ───────────────────────────────────────────────
+
+export interface ResumeAgentArgs {
+  readonly trajectoryId: string;
+  readonly workflow: WorkflowFn;
+  readonly trajectoryStore?: TrajectoryStore;
+  readonly budgetTracker?: BudgetTracker;
+}
+
+/**
+ * Resume a paused trajectory.
+ *
+ * Replays from the trajectory: steps already recorded are NOT re-executed. The workflow is
+ * called with stepCount already advanced past them, so a workflow that branches on
+ * stepCount continues where it stopped rather than repeating work — which is the D5
+ * guarantee, and the reason `paused` is a real state rather than a decorated failure.
+ *
+ * Refuses anything not `paused`: resuming a completed or failed trajectory would append
+ * steps to a finished record, and resuming a running one would double-execute.
+ */
+export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResult> {
+  const trajectoryStore = args.trajectoryStore ?? getTrajectoryStore();
+  const budgetTracker = args.budgetTracker ?? getBudgetTracker();
+
+  const record = await trajectoryStore.getById(args.trajectoryId);
+  if (!record) {
+    return {
+      success: false,
+      trajectoryId: args.trajectoryId,
+      stepsCompleted: 0,
+      totalCostUsd: 0,
+      finalStatus: "failed",
+      error: `Trajectory not found: ${args.trajectoryId}`,
+    };
+  }
+
+  if (record.trajectory.status !== "paused") {
+    return {
+      success: false,
+      trajectoryId: args.trajectoryId,
+      stepsCompleted: record.trajectory.steps.length,
+      totalCostUsd: record.trajectory.totalCost,
+      finalStatus: "failed",
+      error: `Trajectory is ${record.trajectory.status}, not paused — nothing to resume`,
+    };
+  }
+
+  const agentId = record.subject.id;
+  const agentConfig = getAgent(agentId);
+  if (!agentConfig) {
+    return {
+      success: false,
+      trajectoryId: args.trajectoryId,
+      stepsCompleted: record.trajectory.steps.length,
+      totalCostUsd: record.trajectory.totalCost,
+      finalStatus: "failed",
+      error: `Agent not registered: ${agentId}`,
+    };
+  }
+
+  const identity: AgentIdentity = {
+    actorType: "agent",
+    actorId: agentId,
+    agentRole: agentConfig.name,
+  };
+
+  // Already-recorded steps are the resume anchor: execution continues AFTER them.
+  let stepCount = record.trajectory.steps.length;
+  let totalCostUsd = record.trajectory.totalCost;
+  const scopeType = record.scopeType;
+  const scopeId = record.scopeId ?? undefined;
+  const scopeKey = scopeId ?? scopeType;
+
+  await trajectoryStore.updateStatus(args.trajectoryId, "running");
+
+  try {
+    while (true) {
+      const budgetCheck = await budgetTracker.checkBudget(
+        agentId,
+        scopeType,
+        scopeId,
+        agentConfig.budgetConfig
+      );
+
+      if (!budgetCheck.allowed) {
+        await trajectoryStore.updateStatus(args.trajectoryId, "paused");
+        return {
+          success: false,
+          trajectoryId: args.trajectoryId,
+          stepsCompleted: stepCount,
+          totalCostUsd,
+          finalStatus: "paused",
+          error: budgetCheck.reason,
+        };
+      }
+
+      const context: WorkflowContext = {
+        trajectoryId: args.trajectoryId,
+        identity,
+        stepCount,
+        totalCostUsd,
+        scopeKey,
+      };
+
+      const startMs = Date.now();
+      const outcome = await args.workflow(context);
+      const durationMs = Date.now() - startMs;
+
+      await trajectoryStore.addStep(args.trajectoryId, {
+        stepIndex: stepCount,
+        action: outcome.action,
+        boundary: outcome.boundary,
+        input: outcome.input,
+        output: outcome.output,
+        cost: outcome.costUsd,
+        durationMs,
+        timestamp: new Date().toISOString(),
+      });
+
+      await budgetTracker.consume(
+        agentId,
+        scopeType,
+        scopeId,
+        outcome.costUsd,
+        agentConfig.budgetConfig
+      );
+
+      stepCount += 1;
+      totalCostUsd += outcome.costUsd;
+
+      if (!outcome.continueExecution) break;
+      if (stepCount >= agentConfig.budgetConfig.maxStepsPerTrajectory) break;
+    }
+
+    await trajectoryStore.updateStatus(args.trajectoryId, "completed");
+    return {
+      success: true,
+      trajectoryId: args.trajectoryId,
+      stepsCompleted: stepCount,
+      totalCostUsd,
+      finalStatus: "completed",
+    };
+  } catch (err) {
+    await trajectoryStore.updateStatus(args.trajectoryId, "failed");
+    return {
+      success: false,
+      trajectoryId: args.trajectoryId,
+      stepsCompleted: stepCount,
+      totalCostUsd,
+      finalStatus: "failed",
+      error: err instanceof Error ? err.message : "Unknown error",
+    };
+  }
+}

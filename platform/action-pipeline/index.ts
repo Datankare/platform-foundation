@@ -37,6 +37,8 @@ import type {
   Trajectory,
   TrajectoryStore,
   VersionedState,
+  ProposalRecord,
+  ProposalStore,
 } from "@/platform/kernel";
 import { generateSecureId } from "@/platform/agents/utils";
 import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk";
@@ -273,6 +275,164 @@ export async function executeActionPipeline<TState>(
     step,
     trajectory: record?.trajectory ?? null,
   };
+}
+
+// ── Gating: propose / approve / reject (ADR-029 D7, ADR-031 D2) ───────
+
+/**
+ * Hold a gated action instead of refusing it.
+ *
+ * executeActionPipeline throws on a two-phase action: the caller asked for immediate
+ * execution and cannot have it. This is the other option — the caller can wait for a human.
+ * Both exist deliberately; an application picks per action.
+ *
+ * Records the proposal, emits an approval-request event, pauses the trajectory. Nothing
+ * executes and nothing commits: a proposal has an operationId and a trajectory, and never a
+ * stateVersion (ADR-031 D8).
+ */
+export async function proposeAction(req: ProposeRequest): Promise<ProposalRecord> {
+  const operationId = req.operationId ?? `op_${generateSecureId()}`;
+  const context = assembleActionContext({
+    spec: req.spec,
+    actor: req.actor,
+    sessionId: req.sessionId,
+    operationId,
+    boundary: "cognition",
+  });
+
+  const proposal = await req.proposalStore.create({
+    operationId,
+    sessionId: req.sessionId,
+    trajectoryId: req.trajectoryId,
+    label: req.label,
+    actor: req.actor,
+    effects: context.effects,
+    effectiveRisk: context.effectiveRisk,
+    payload: req.payload,
+    observedVersion: req.observedVersion,
+  });
+
+  // The cognition step: what was proposed is recorded whether or not it is ever approved.
+  await req.trajectoryStore.addStep(req.trajectoryId, {
+    stepIndex: req.stepIndex,
+    action: req.label,
+    input: { operationId, actorId: req.actor.actorId, ...(req.payload ?? {}) },
+    output: { proposalId: proposal.proposalId, status: "proposed" },
+    cost: 0,
+    durationMs: 0,
+    timestamp: new Date().toISOString(),
+    boundary: "cognition",
+    operationId,
+    proposalId: proposal.proposalId,
+    actor: context.actor,
+    effects: context.effects,
+    effectiveRisk: context.effectiveRisk,
+  });
+
+  await req.trajectoryStore.updateStatus(req.trajectoryId, "paused");
+
+  req.emit?.({
+    type: "approval-request",
+    sessionId: req.sessionId,
+    operationId,
+    trajectoryId: req.trajectoryId,
+    stepIndex: req.stepIndex,
+    proposalId: proposal.proposalId,
+    actor: context.actor,
+    boundary: "cognition",
+    effects: context.effects,
+    effectiveRisk: context.effectiveRisk,
+    intent: "approval-request",
+    at: proposal.createdAt,
+  });
+
+  return proposal;
+}
+
+export interface ProposeRequest {
+  readonly spec: ActionSpec;
+  readonly actor: AgentIdentity;
+  readonly sessionId: string;
+  readonly trajectoryId: string;
+  readonly stepIndex: number;
+  readonly label: string;
+  readonly operationId?: string;
+  readonly payload?: Record<string, unknown>;
+  readonly observedVersion?: number;
+  readonly proposalStore: ProposalStore;
+  readonly trajectoryStore: TrajectoryStore;
+  readonly emit?: (event: SessionEvent) => void;
+}
+
+export interface DecideRequest {
+  readonly proposalId: string;
+  readonly decidedBy: string;
+  readonly note?: string;
+  readonly proposalStore: ProposalStore;
+  readonly trajectoryStore: TrajectoryStore;
+  readonly emit?: (event: SessionEvent) => void;
+}
+
+/**
+ * Approve a held proposal and return the trajectory to `running` so it can be resumed
+ * (ADR-029 D7 — approval resumes via D5).
+ *
+ * Returns undefined if the proposal already moved: a second approval is a no-op, not an
+ * error, and not a second commit (ADR-031 D4).
+ */
+export async function approveProposal(
+  req: DecideRequest
+): Promise<ProposalRecord | undefined> {
+  const decided = await req.proposalStore.decide(
+    req.proposalId,
+    "approved",
+    req.decidedBy,
+    req.note
+  );
+  if (!decided) return undefined;
+
+  await req.trajectoryStore.updateStatus(decided.trajectoryId, "running");
+  return decided;
+}
+
+/**
+ * Reject a held proposal. Terminal: the trajectory records what was proposed and why it was
+ * refused, and no stateVersion is ever produced (ADR-031 D8). A protocol that discards
+ * rejected proposals cannot answer why an action did not happen.
+ */
+export async function rejectProposal(
+  req: DecideRequest
+): Promise<ProposalRecord | undefined> {
+  const decided = await req.proposalStore.decide(
+    req.proposalId,
+    "rejected",
+    req.decidedBy,
+    req.note
+  );
+  if (!decided) return undefined;
+
+  await req.trajectoryStore.addStep(decided.trajectoryId, {
+    stepIndex: 0,
+    action: decided.label,
+    input: { operationId: decided.operationId, actorId: decided.actor.actorId },
+    output: {
+      proposalId: decided.proposalId,
+      status: "rejected",
+      decidedBy: req.decidedBy,
+      note: req.note ?? "",
+    },
+    cost: 0,
+    durationMs: 0,
+    timestamp: new Date().toISOString(),
+    boundary: "cognition",
+    operationId: decided.operationId,
+    proposalId: decided.proposalId,
+    actor: decided.actor,
+    effects: decided.effects,
+    effectiveRisk: decided.effectiveRisk,
+  });
+  await req.trajectoryStore.updateStatus(decided.trajectoryId, "failed");
+  return decided;
 }
 
 export * from "./risk";

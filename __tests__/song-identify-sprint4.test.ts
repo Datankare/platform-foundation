@@ -806,6 +806,7 @@ describe("Registry — Sprint 4a provider slots", () => {
       "appStateStore",
       "trajectoryStore",
       "budgetStore",
+      "proposalStore",
     ]);
   });
 });
