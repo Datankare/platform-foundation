@@ -31,6 +31,7 @@
  *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory")
  *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory")
  *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
+ *   EFFECT_LEDGER          = "supabase" | "memory"  (default: "memory")
  *
  * @module platform/providers
  */
@@ -59,6 +60,8 @@ import { BudgetTracker, setBudgetTracker } from "@/platform/agents/budget-tracke
 import { SupabaseBudgetStore } from "@/platform/agents/supabase-budget-store";
 import { setProposalStore } from "@/platform/agents/proposal-store";
 import { SupabaseProposalStore } from "@/platform/agents/supabase-proposal-store";
+import { setEffectLedger } from "@/platform/agents/effect-ledger";
+import { SupabaseEffectLedger } from "@/platform/agents/supabase-effect-ledger";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -85,6 +88,7 @@ export type AppStateStoreType = "supabase" | "memory";
 export type TrajectoryStoreType = "supabase" | "memory";
 export type BudgetStoreType = "supabase" | "memory";
 export type ProposalStoreType = "supabase" | "memory";
+export type EffectLedgerType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -104,6 +108,7 @@ export interface ProviderSelections {
   trajectoryStore: TrajectoryStoreType;
   budgetStore: BudgetStoreType;
   proposalStore: ProposalStoreType;
+  effectLedger: EffectLedgerType;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +137,7 @@ function getProviderSelections(): ProviderSelections {
     trajectoryStore: (process.env.TRAJECTORY_STORE as TrajectoryStoreType) ?? "memory",
     budgetStore: (process.env.BUDGET_STORE as BudgetStoreType) ?? "memory",
     proposalStore: (process.env.PROPOSAL_STORE as ProposalStoreType) ?? "memory",
+    effectLedger: (process.env.EFFECT_LEDGER as EffectLedgerType) ?? "memory",
   };
 }
 
@@ -389,6 +395,26 @@ function initProposalStore(type: ProposalStoreType): void {
   }
 }
 
+function initEffectLedger(type: EffectLedgerType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed. An in-memory effect ledger means a retry after restart finds no entry
+    // and re-fires an external effect that may already have succeeded — the at-least-once
+    // violation ADR-031 D7 exists to prevent.
+    if (!url || !key) {
+      throw new Error(
+        "EFFECT_LEDGER=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to an in-memory effect ledger."
+      );
+    }
+
+    setEffectLedger(new SupabaseEffectLedger(url, key));
+    return;
+  }
+}
+
 function initSocialStore(type: SocialStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -457,6 +483,7 @@ export function initProviders(): ProviderSelections {
   initTrajectoryStore(selections.trajectoryStore);
   initBudgetStore(selections.budgetStore);
   initProposalStore(selections.proposalStore);
+  initEffectLedger(selections.effectLedger);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
@@ -478,6 +505,7 @@ export function initProviders(): ProviderSelections {
     trajectoryStore: selections.trajectoryStore,
     budgetStore: selections.budgetStore,
     proposalStore: selections.proposalStore,
+    effectLedger: selections.effectLedger,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
   });

@@ -124,6 +124,19 @@ export function runProposalStoreContract(fx: ProposalStoreContractFixtures): voi
       expect(await store.query({ trajectoryId: "traj_2" })).toHaveLength(1);
     });
 
+    it("filters by trajectoryId alone, across operations", async () => {
+      // Two operations sharing one trajectory: the trajectoryId filter must stand on its
+      // own, not only as a narrowing of an operationId match.
+      await store.create({ ...base, operationId: "op_1", trajectoryId: "traj_shared" });
+      await store.create({ ...base, operationId: "op_2", trajectoryId: "traj_shared" });
+      await store.create({ ...base, operationId: "op_3", trajectoryId: "traj_other" });
+
+      const shared = await store.query({ trajectoryId: "traj_shared" });
+
+      expect(shared).toHaveLength(2);
+      expect(shared.map((p) => p.operationId).sort()).toEqual(["op_1", "op_2"]);
+    });
+
     it("applies operationId and trajectoryId together, not either-or", async () => {
       await store.create({ ...base, operationId: "op_1", trajectoryId: "traj_1" });
       await store.create({ ...base, operationId: "op_2", trajectoryId: "traj_1" });

@@ -20,6 +20,8 @@ import type { AgentIdentity, Step, StepBoundary } from "./types";
 import type { TrajectoryStore } from "./trajectory-store";
 import { getTrajectoryStore } from "./trajectory-store";
 import { getBudgetTracker } from "./budget-tracker";
+import { getEffectLedger } from "./effect-ledger";
+import type { EffectLedger } from "@/platform/kernel";
 import type { BudgetTracker } from "./budget-tracker";
 import { getAgent } from "./registry";
 import { logger } from "@/lib/logger";
@@ -76,7 +78,7 @@ export interface ExecutionResult {
   readonly trajectoryId: string;
   readonly stepsCompleted: number;
   readonly totalCostUsd: number;
-  readonly finalStatus: "completed" | "failed" | "paused";
+  readonly finalStatus: "completed" | "failed" | "paused" | "indeterminate";
   readonly error?: string;
 }
 
@@ -99,6 +101,7 @@ export interface ExecutionResult {
  * @param workflow — the step function to execute
  * @param store — override trajectory store (testing)
  * @param budget — override budget tracker (testing)
+ * @param ledger — override effect ledger (testing)
  */
 export async function executeAgent(
   agentId: string,
@@ -107,10 +110,14 @@ export async function executeAgent(
   scopeId: string | undefined,
   workflow: WorkflowFn,
   store?: TrajectoryStore,
-  budget?: BudgetTracker
+  budget?: BudgetTracker,
+  ledger?: EffectLedger
 ): Promise<ExecutionResult> {
   const trajectoryStore = store ?? getTrajectoryStore();
   const budgetTracker = budget ?? getBudgetTracker();
+  // ADR-029 D10: consulted before completion is declared. Optional and last, matching the
+  // store/budget override shape, so every existing positional call site is unaffected.
+  const effectLedger = ledger ?? getEffectLedger();
 
   // ── Look up agent ───────────────────────────────────────────────
   const agentConfig = getAgent(agentId);
@@ -229,6 +236,23 @@ export async function executeAgent(
     }
 
     // ── Complete ────────────────────────────────────────────────────
+    // ADR-029 D10: an unresolved external effect makes the whole workflow
+    // indeterminate. Reporting completed here would be an at-least-once violation
+    // if the effect did fire, and the guess would leave no trace.
+    const unresolved = await effectLedger.listUnresolved();
+    const mine = unresolved.filter((e) => e.operationId === trajectoryId);
+    if (mine.length > 0) {
+      await trajectoryStore.updateStatus(trajectoryId, "indeterminate");
+      return {
+        success: false,
+        trajectoryId,
+        stepsCompleted: stepCount,
+        totalCostUsd,
+        finalStatus: "indeterminate",
+        error: `${mine.length} external effect(s) unresolved — needs human resolution`,
+      };
+    }
+
     await trajectoryStore.updateStatus(trajectoryId, "completed");
 
     return {
@@ -266,6 +290,7 @@ export interface ResumeAgentArgs {
   readonly workflow: WorkflowFn;
   readonly trajectoryStore?: TrajectoryStore;
   readonly budgetTracker?: BudgetTracker;
+  readonly effectLedger?: EffectLedger;
 }
 
 /**
@@ -282,6 +307,7 @@ export interface ResumeAgentArgs {
 export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResult> {
   const trajectoryStore = args.trajectoryStore ?? getTrajectoryStore();
   const budgetTracker = args.budgetTracker ?? getBudgetTracker();
+  const effectLedger = args.effectLedger ?? getEffectLedger();
 
   const record = await trajectoryStore.getById(args.trajectoryId);
   if (!record) {
@@ -391,6 +417,23 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
 
       if (!outcome.continueExecution) break;
       if (stepCount >= agentConfig.budgetConfig.maxStepsPerTrajectory) break;
+    }
+
+    // ADR-029 D10, same guard as executeAgent. Resume runs after a crash or a pause,
+    // which is exactly when an external effect was left in flight — so this path is the
+    // likeliest to meet an unresolved one, not the least.
+    const unresolved = await effectLedger.listUnresolved();
+    const mine = unresolved.filter((e) => e.operationId === args.trajectoryId);
+    if (mine.length > 0) {
+      await trajectoryStore.updateStatus(args.trajectoryId, "indeterminate");
+      return {
+        success: false,
+        trajectoryId: args.trajectoryId,
+        stepsCompleted: stepCount,
+        totalCostUsd,
+        finalStatus: "indeterminate",
+        error: `${mine.length} external effect(s) unresolved — needs human resolution`,
+      };
     }
 
     await trajectoryStore.updateStatus(args.trajectoryId, "completed");

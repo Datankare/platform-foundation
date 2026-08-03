@@ -70,6 +70,14 @@ export type {
   ExecutionResult,
 } from "./runtime";
 export { executeAgent, resumeAgent } from "./runtime";
+export {
+  InMemoryEffectLedger,
+  getEffectLedger,
+  setEffectLedger,
+  resetEffectLedger,
+  idempotencyKeyFor,
+} from "./effect-ledger";
+export { SupabaseEffectLedger } from "./supabase-effect-ledger";
 export type { ResumeAgentArgs } from "./runtime";
 export {
   InMemoryProposalStore,
