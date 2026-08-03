@@ -28,6 +28,10 @@
  *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
  *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
+ *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory")
+ *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory")
+ *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
+ *   EFFECT_LEDGER          = "supabase" | "memory"  (default: "memory")
  *
  * @module platform/providers
  */
@@ -50,6 +54,14 @@ import {
   MockSongIdentifier,
 } from "@/platform/voice";
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
+import { setTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { SupabaseTrajectoryStore } from "@/platform/agents/supabase-trajectory-store";
+import { BudgetTracker, setBudgetTracker } from "@/platform/agents/budget-tracker";
+import { SupabaseBudgetStore } from "@/platform/agents/supabase-budget-store";
+import { setProposalStore } from "@/platform/agents/proposal-store";
+import { SupabaseProposalStore } from "@/platform/agents/supabase-proposal-store";
+import { setEffectLedger } from "@/platform/agents/effect-ledger";
+import { SupabaseEffectLedger } from "@/platform/agents/supabase-effect-ledger";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -73,6 +85,10 @@ export type ModerationStoreType = "supabase" | "memory";
 export type SocialStoreType = "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
 export type AppStateStoreType = "supabase" | "memory";
+export type TrajectoryStoreType = "supabase" | "memory";
+export type BudgetStoreType = "supabase" | "memory";
+export type ProposalStoreType = "supabase" | "memory";
+export type EffectLedgerType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -89,6 +105,10 @@ export interface ProviderSelections {
   socialStore: SocialStoreType;
   embeddingProvider: EmbeddingProviderType;
   appStateStore: AppStateStoreType;
+  trajectoryStore: TrajectoryStoreType;
+  budgetStore: BudgetStoreType;
+  proposalStore: ProposalStoreType;
+  effectLedger: EffectLedgerType;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +134,10 @@ function getProviderSelections(): ProviderSelections {
     embeddingProvider:
       (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
     appStateStore: (process.env.APP_STATE_STORE as AppStateStoreType) ?? "memory",
+    trajectoryStore: (process.env.TRAJECTORY_STORE as TrajectoryStoreType) ?? "memory",
+    budgetStore: (process.env.BUDGET_STORE as BudgetStoreType) ?? "memory",
+    proposalStore: (process.env.PROPOSAL_STORE as ProposalStoreType) ?? "memory",
+    effectLedger: (process.env.EFFECT_LEDGER as EffectLedgerType) ?? "memory",
   };
 }
 
@@ -310,6 +334,87 @@ function initAppStateStore(type: AppStateStoreType): void {
   }
 }
 
+function initTrajectoryStore(type: TrajectoryStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed (TASK-062). The other slots warn and degrade to memory; for
+    // trajectories that silently recreates the condition this slot exists to close —
+    // P18 durability asserted, in-memory storage in fact, and no signal. Asking for
+    // supabase and not getting it is a misconfiguration, not a degraded mode.
+    if (!url || !key) {
+      throw new Error(
+        "TRAJECTORY_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to in-memory trajectories."
+      );
+    }
+
+    setTrajectoryStore(new SupabaseTrajectoryStore(url, key));
+    return;
+  }
+}
+
+function initBudgetStore(type: BudgetStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed, as slot #15 does. Degrading to an in-process counter is precisely
+    // the TASK-063 condition: maxCostPerDay never accumulates across instances, so the
+    // cap is unenforced and nothing says so. An unbounded-spend exposure is not a
+    // degraded mode.
+    if (!url || !key) {
+      throw new Error(
+        "BUDGET_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to in-process budget accumulation."
+      );
+    }
+
+    setBudgetTracker(new BudgetTracker(new SupabaseBudgetStore(url, key)));
+    return;
+  }
+}
+
+function initProposalStore(type: ProposalStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed, as slots #15 and #16 do. An in-memory proposal store means a held
+    // action disappears on restart — the approval never arrives and nothing says so.
+    if (!url || !key) {
+      throw new Error(
+        "PROPOSAL_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to in-memory proposals."
+      );
+    }
+
+    setProposalStore(new SupabaseProposalStore(url, key));
+    return;
+  }
+}
+
+function initEffectLedger(type: EffectLedgerType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed. An in-memory effect ledger means a retry after restart finds no entry
+    // and re-fires an external effect that may already have succeeded — the at-least-once
+    // violation ADR-031 D7 exists to prevent.
+    if (!url || !key) {
+      throw new Error(
+        "EFFECT_LEDGER=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to an in-memory effect ledger."
+      );
+    }
+
+    setEffectLedger(new SupabaseEffectLedger(url, key));
+    return;
+  }
+}
+
 function initSocialStore(type: SocialStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -375,6 +480,10 @@ export function initProviders(): ProviderSelections {
   initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
   initAppStateStore(selections.appStateStore);
+  initTrajectoryStore(selections.trajectoryStore);
+  initBudgetStore(selections.budgetStore);
+  initProposalStore(selections.proposalStore);
+  initEffectLedger(selections.effectLedger);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
@@ -393,6 +502,10 @@ export function initProviders(): ProviderSelections {
     audioConverter: selections.audioConverter,
     moderationStore: selections.moderationStore,
     appStateStore: selections.appStateStore,
+    trajectoryStore: selections.trajectoryStore,
+    budgetStore: selections.budgetStore,
+    proposalStore: selections.proposalStore,
+    effectLedger: selections.effectLedger,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
   });

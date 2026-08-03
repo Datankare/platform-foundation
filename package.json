@@ -21,6 +21,7 @@
     "@anthropic-ai/sdk": "^0.98.0",
     "@sentry/nextjs": "^10.49.0",
     "@supabase/supabase-js": "^2.103.0",
+    "ajv": "8.20.0",
     "dotenv": "^17.4.2",
     "jose": "^6.2.2",
     "next": "16.2.11",

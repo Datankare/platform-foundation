@@ -661,6 +661,11 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         count: { type: "number" },
       },
     },
+    effects: [],
+    execute: async (input: Record<string, unknown>) =>
+      (await handleSearchConfig(
+        input as unknown as SearchConfigInput
+      )) as unknown as Record<string, unknown>,
   },
   {
     id: "get_config",
@@ -681,6 +686,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         entry: { type: "object" },
       },
     },
+    effects: [],
+    execute: async (input: Record<string, unknown>) =>
+      (await handleGetConfig(input as unknown as GetConfigInput)) as unknown as Record<
+        string,
+        unknown
+      >,
   },
   {
     id: "update_config",
@@ -708,6 +719,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         requiresApproval: { type: "boolean" },
       },
     },
+    effects: ["stateWrite"],
+    declaredRisk: "consequential",
+    execute: async (input: Record<string, unknown>) =>
+      (await handleUpdateConfig(
+        input as unknown as UpdateConfigInput
+      )) as unknown as Record<string, unknown>,
   },
   {
     id: "get_history",
@@ -739,6 +756,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         count: { type: "number" },
       },
     },
+    effects: [],
+    execute: async (input: Record<string, unknown>) =>
+      (await handleGetHistory(input as unknown as GetHistoryInput)) as unknown as Record<
+        string,
+        unknown
+      >,
   },
   {
     id: "compare_to_defaults",
@@ -763,6 +786,11 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         driftedCount: { type: "number" },
       },
     },
+    effects: [],
+    execute: async (input: Record<string, unknown>) =>
+      (await handleCompareToDefaults(
+        input as unknown as CompareToDefaultsInput
+      )) as unknown as Record<string, unknown>,
   },
   {
     id: "impact_report",
@@ -787,6 +815,11 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         message: { type: "string" },
       },
     },
+    effects: [],
+    execute: async (input: Record<string, unknown>) =>
+      (await handleImpactReport(
+        input as unknown as ImpactReportInput
+      )) as unknown as Record<string, unknown>,
   },
   {
     id: "bulk_review",
@@ -812,6 +845,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         categories: { type: "array" },
       },
     },
+    effects: [],
+    execute: async (input: Record<string, unknown>) =>
+      (await handleBulkReview(input as unknown as BulkReviewInput)) as unknown as Record<
+        string,
+        unknown
+      >,
   },
   {
     id: "request_approval",
@@ -835,6 +874,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         record: { type: "object" },
       },
     },
+    effects: ["stateWrite"],
+    declaredRisk: "consequential",
+    execute: async (input: Record<string, unknown>) =>
+      (await handleRequestApproval(
+        input as unknown as RequestApprovalInput
+      )) as unknown as Record<string, unknown>,
   },
   {
     id: "approve_change",
@@ -857,6 +902,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         applied: { type: "boolean" },
       },
     },
+    effects: ["stateWrite"],
+    declaredRisk: "consequential",
+    execute: async (input: Record<string, unknown>) =>
+      (await handleApproveChange(
+        input as unknown as ApproveChangeInput
+      )) as unknown as Record<string, unknown>,
   },
   {
     id: "reject_change",
@@ -879,6 +930,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         record: { type: "object" },
       },
     },
+    effects: ["stateWrite"],
+    declaredRisk: "consequential",
+    execute: async (input: Record<string, unknown>) =>
+      (await handleRejectChange(
+        input as unknown as RejectChangeInput
+      )) as unknown as Record<string, unknown>,
   },
 ] as const;
 
@@ -907,6 +964,11 @@ const REQUIRED_FIELDS: Record<string, readonly string[]> = {
  *     tool schema level (P6) + handler validation (validateConfigValue).
  *     See Gotcha #3.
  */
+/** Roster lookup — CONFIG_TOOLS is the single source of truth for what is dispatchable. */
+const CONFIG_TOOL_BY_ID: ReadonlyMap<string, Tool> = new Map(
+  CONFIG_TOOLS.map((tool) => [tool.id, tool])
+);
+
 export async function dispatchConfigTool(
   toolId: string,
   input: Record<string, unknown>,
@@ -929,47 +991,21 @@ export async function dispatchConfigTool(
     }
   }
 
-  let result: ConfigToolResult;
-  switch (toolId) {
-    case "search_config":
-      result = await handleSearchConfig(input as unknown as SearchConfigInput);
-      break;
-    case "get_config":
-      result = await handleGetConfig(input as unknown as GetConfigInput);
-      break;
-    case "update_config":
-      result = await handleUpdateConfig(input as unknown as UpdateConfigInput);
-      break;
-    case "get_history":
-      result = await handleGetHistory(input as unknown as GetHistoryInput);
-      break;
-    case "compare_to_defaults":
-      result = await handleCompareToDefaults(input as unknown as CompareToDefaultsInput);
-      break;
-    case "impact_report":
-      result = await handleImpactReport(input as unknown as ImpactReportInput);
-      break;
-    case "bulk_review":
-      result = await handleBulkReview(input as unknown as BulkReviewInput);
-      break;
-    case "request_approval":
-      result = await handleRequestApproval(input as unknown as RequestApprovalInput);
-      break;
-    case "approve_change":
-      result = await handleApproveChange(input as unknown as ApproveChangeInput);
-      break;
-    case "reject_change":
-      result = await handleRejectChange(input as unknown as RejectChangeInput);
-      break;
-    default:
-      return {
-        toolId,
-        success: false,
-        data: null,
-        error: `Unknown tool: ${toolId}`,
-        durationMs: 0,
-      };
+  // ADR-029 D1: the roster is the dispatcher. A tool is invocable because it carries its
+  // handler, not because a switch elsewhere happens to name it — the switch and the roster
+  // could previously disagree, and nothing would have said so.
+  const tool = CONFIG_TOOL_BY_ID.get(toolId);
+  if (!tool) {
+    return {
+      toolId,
+      success: false,
+      data: null,
+      error: `Unknown tool: ${toolId}`,
+      durationMs: 0,
+    };
   }
+
+  const result = (await tool.execute(input)) as unknown as ConfigToolResult;
 
   // P17/P18: Record step in trajectory after execution
   if (context && result) {

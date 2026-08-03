@@ -663,6 +663,162 @@ Phase 5 exit gate.
 
 ---
 
+### TASK-064 — ToolBoundary duplicates StepBoundary, and the boundary lookup fails open
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-064                                                |
+| **Type**     | Duplicate vocabulary + fail-open default                |
+| **Severity** | Medium — misclassified P17 boundary in the audit record |
+| **Phase**    | Phase 5, Sprint 2                                       |
+| **Status**   | Open                                                    |
+| **Logged**   | 2026-07-29                                              |
+
+**What:** `platform/admin/types.ts` declares `ToolBoundary = "cognition" | "commitment"` plus a
+`TOOL_BOUNDARIES: Record<string, ToolBoundary>` map. `platform/agents/types.ts` declares
+`StepBoundary` with the identical union. `config-handlers.ts` bridges the two by annotation:
+`const boundary: StepBoundary = TOOL_BOUNDARIES[toolId] ?? "cognition"`. That single line
+carries two defects.
+
+_Duplicate vocabulary._ Two declarations of one union in two modules, with nothing tying them
+together — they agree today by coincidence, and a future member added to one will not appear in
+the other. This is the shape ADR-029 D1 rules out for `EffectType` and `RiskLevel`, and Sprint 2
+step 1 collapsed those to a single declaration for exactly this reason. The boundary union was
+left because D1 sanctions three additions to `Tool` and `boundary` is not among them.
+
+_Fail-open default._ A tool id absent from `TOOL_BOUNDARIES` records as `cognition` — the
+revisable, non-durable side of the P17 boundary. A commitment misfiled as cognition is an
+action that looks reversible in the audit record and is not. The default is silent, so the
+misclassification is indistinguishable from a correct classification at every point downstream.
+Same fail-open shape as TASK-057's health endpoint and the pre-Sprint-2 `resolveTools`.
+
+**Why step 1 did not fix it:** ADR-029 D2 assembles an `ActionContext` per tool invocation and
+the boundary belongs there, not on the `Tool` declaration. Fixing it in step 1 would have meant
+inventing a field the ADR does not specify and then removing it two steps later.
+
+**Resolution:**
+
+1. Delete `ToolBoundary`; use `StepBoundary` from `platform/agents/types.ts` as the one union.
+2. When D2 lands, the boundary is carried on the `ActionContext` — delete `TOOL_BOUNDARIES`
+   rather than repointing it.
+3. Until D2, make the lookup fail closed: an unmapped tool id is a misconfiguration, not a
+   cognition step.
+4. Add a conformance arm asserting every `CONFIG_TOOLS` id resolves a boundary without falling
+   through to a default, so the map and the roster cannot drift apart unnoticed.
+
+**Close when:** one boundary union exists in the codebase, and no tool id resolves its boundary
+via a default.
+
+---
+
+### TASK-062 — Trajectories are not durable; nothing writes to agent_trajectories
+
+| Field        | Detail                                    |
+| ------------ | ----------------------------------------- |
+| **ID**       | TASK-062                                  |
+| **Type**     | Durability gap — unbacked principle       |
+| **Severity** | High — P18 is claimed and not implemented |
+| **Phase**    | Phase 5, Sprint 2                         |
+| **Status**   | Open — migration 022 lands the schema     |
+| **Logged**   | 2026-07-29                                |
+
+**What:** `InMemoryTrajectoryStore` is the only implementation, no non-test caller of
+`setTrajectoryStore` exists, there is no registry slot for trajectories, and live introspection
+confirms `agent_trajectories` holds zero rows. Trajectories live in process memory; on Vercel
+serverless they do not reliably survive a request boundary, let alone a crash.
+
+P18 "durable execution trajectories" is asserted in the manifesto readiness table and in the
+module header, and is not implemented. ADR-029 D5 (resume) and ADR-031 D6 (crash-window repair)
+are unimplementable until it is — resume against an in-memory store is theatre.
+
+**Resolution:** `SupabaseTrajectoryStore` behind registry slot #15, with an ADR-027 conformance
+kit. Migration 022 reshapes the table; the store follows in Sprint 2 step 2b.
+
+**Close when:** a trajectory survives a process restart, and the conformance kit asserts it.
+
+---
+
+### TASK-063 — Budgets are not durable, and the daily cap is not a daily cap
+
+| Field        | Detail                               |
+| ------------ | ------------------------------------ |
+| **ID**       | TASK-063                             |
+| **Type**     | Cost-control defect + durability gap |
+| **Severity** | High — unbounded-spend exposure      |
+| **Phase**    | Phase 5, Sprint 2                    |
+| **Status**   | Open                                 |
+| **Logged**   | 2026-07-29                           |
+
+**What:** Three defects that compound.
+
+_Not durable._ `BudgetTracker` holds a `Map` and `agent_budgets` has zero rows, so nothing
+accumulates across instances. On serverless each invocation starts at zero spend, which means
+`maxCostPerDay` is effectively unenforced in production.
+
+_The period is monthly, the cap is daily._ `getCurrentPeriod()` returns `YYYY-MM`, and that
+monthly accumulator is compared against `config.maxCostPerDay`. The field name and the
+enforcement window disagree by roughly thirty times.
+
+_The step cap counts the wrong thing._ `usedSteps` accumulates per agent per scope per period
+and is compared against `maxStepsPerTrajectory`. With the seeded `agent.trajectory.max_steps`
+of 50, an agent gets 50 steps per period in total rather than per trajectory, then is blocked
+until the period rolls. A per-trajectory limit belongs to the runtime, which is where the
+trajectory is.
+
+**Resolution:** budget persistence behind registry slot #16 with atomic increment
+(`used_usd = used_usd + $1`, never read-modify-write); period becomes `YYYY-MM-DD`; the step
+cap moves out of the budget tracker to the runtime.
+
+**Close when:** spend accumulates across instances, the cap window matches the config field
+name, and the step limit is enforced per trajectory.
+
+---
+
+### TASK-067 — Nothing checks that the schema a store writes actually exists
+
+| Field        | Detail                                          |
+| ------------ | ----------------------------------------------- |
+| **ID**       | TASK-067                                        |
+| **Type**     | Test-coverage gap / schema drift                |
+| **Severity** | Medium — passes green, fails at first real call |
+| **Phase**    | Phase 5, Sprint 2                               |
+| **Status**   | Open                                            |
+| **Logged**   | 2026-07-29                                      |
+
+**What:** Migration 023 shipped a Postgres function referencing `agent_budgets.used_steps`,
+a column that did not exist. The full gate was green, both conformance arms passed, and the
+failure appeared on the first real call. Migration 024 fixes it forward.
+
+The gate could not have caught it. Each Supabase conformance arm fakes `global.fetch` with an
+in-memory PostgREST that stores whatever keys the store sends and returns them — it validates
+the store against itself. Column existence, column types, constraints, enum membership and
+function signatures are all structurally invisible to it. That is a real bound on what the
+Supabase arms of `socialStore`, `realtime`, `trajectoryStore` and `budgetStore` prove: they
+prove the store's URL building, filter construction and row mapping are self-consistent, not
+that the schema on the other end matches.
+
+Compounding it, there is no migration-tracking table (TASK-065), so "the migration applied"
+is itself only knowable by introspection.
+
+Two dead columns are the standing evidence: `agent_budgets.used_tokens` and `budget_tokens`
+came from migration 016 and nothing has ever written either. The code counts steps and spend;
+the table was built for tokens and spend. Nothing flagged the divergence for three phases.
+
+**Resolution:**
+
+1. A schema-parity check that asserts, against the live database, that every column and
+   function each Supabase store references exists with the expected type — the introspection
+   done by hand this sprint, automated.
+2. Decide `used_tokens` / `budget_tokens`: populate them from trajectory cost, or drop them.
+   A column nothing writes is a claim the schema makes and the code does not honour.
+3. Consider generating the row types from the live schema so a missing column is a compile
+   error rather than a runtime one.
+
+**Close when:** a referenced-but-absent column or function fails a check rather than a
+production call, and no budget column is unwritten.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -704,7 +860,8 @@ Sprint 3c. Flagged for awareness.
 | TASK-040 | ACRCLOUD placeholders in .env.example                      | Phase 5, Sprint 0  | 2026-06-21 |
 | TASK-043 | Known-good audio test fixtures                             | Phase 5, Sprint 0  | 2026-06-21 |
 | TASK-029 | Sentry/middleware build-warning tracking (dup of TASK-028) | Phase 5, Sprint 0  | 2026-06-21 |
+| TASK-065 | Migration tracking table (applied_migrations)              | Phase 5, Sprint 2  | 2026-07-29 |
 
 ---
 
-_Last updated: July 24, 2026 (filed TASK-057 health endpoint fails open + TASK-058 dependency-advisory process; both Sprint 2)_
+_Last updated: July 29, 2026 (TASK-065 resolved — public.applied_migrations created and backfilled by migration 025)_

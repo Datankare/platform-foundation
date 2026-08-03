@@ -11,65 +11,37 @@
  */
 
 import type { Trajectory, TrajectoryStatus, Step } from "./types";
+// The contract moved to platform/kernel: the action pipeline appends trajectory
+// steps and cannot import platform/agents (ADR-029 D2). Implementations and the
+// singleton stay here; this re-export keeps every existing importer working.
+export type {
+  TrajectorySubjectKind,
+  TrajectorySubject,
+  TrajectoryQuery,
+  TrajectoryCost,
+  TrajectoryRecord,
+  TrajectoryStore,
+} from "@/platform/kernel/types";
+import type {
+  TrajectorySubject,
+  TrajectoryQuery,
+  TrajectoryCost,
+  TrajectoryRecord,
+  TrajectoryStore,
+} from "@/platform/kernel/types";
 import { generateId } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Query types
 // ---------------------------------------------------------------------------
 
-/** Options for querying trajectories */
-export interface TrajectoryQuery {
-  readonly agentId?: string;
-  readonly scopeType?: "group" | "user" | "platform";
-  readonly scopeId?: string;
-  readonly status?: TrajectoryStatus;
-  readonly limit?: number;
-}
-
-/** Cost summary stored alongside trajectory */
-export interface TrajectoryCost {
-  readonly tokens: number;
-  readonly apiCalls: number;
-  readonly usd: number;
-}
-
-/** Full trajectory record with persistence metadata */
-export interface TrajectoryRecord {
-  readonly trajectory: Trajectory;
-  readonly trigger: string;
-  readonly scopeType: "group" | "user" | "platform";
-  readonly scopeId: string | null;
-  readonly costSummary: TrajectoryCost;
-}
+// ---------------------------------------------------------------------------
+// Trajectory subject (ADR-029 D4)
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // TrajectoryStore interface
 // ---------------------------------------------------------------------------
-
-export interface TrajectoryStore {
-  /** Create a new trajectory. Returns the record. */
-  create(
-    agentId: string,
-    trigger: string,
-    scopeType: "group" | "user" | "platform",
-    scopeId?: string
-  ): Promise<TrajectoryRecord>;
-
-  /** Add a step to a trajectory. Returns updated record. */
-  addStep(trajectoryId: string, step: Step): Promise<TrajectoryRecord | undefined>;
-
-  /** Update trajectory status. */
-  updateStatus(
-    trajectoryId: string,
-    status: TrajectoryStatus
-  ): Promise<TrajectoryRecord | undefined>;
-
-  /** Get a trajectory by ID. */
-  getById(trajectoryId: string): Promise<TrajectoryRecord | undefined>;
-
-  /** Query trajectories with filters. */
-  query(options: TrajectoryQuery): Promise<readonly TrajectoryRecord[]>;
-}
 
 // ---------------------------------------------------------------------------
 // InMemoryTrajectoryStore
@@ -79,7 +51,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
   private records: TrajectoryRecord[] = [];
 
   async create(
-    agentId: string,
+    subject: TrajectorySubject,
     trigger: string,
     scopeType: "group" | "user" | "platform",
     scopeId?: string
@@ -87,7 +59,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     const now = new Date().toISOString();
     const trajectory: Trajectory = {
       trajectoryId: generateId(),
-      agentId,
+      agentId: subject.id,
       steps: [],
       status: "running",
       totalCost: 0,
@@ -96,6 +68,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     };
     const record: TrajectoryRecord = {
       trajectory,
+      subject,
       trigger,
       scopeType,
       scopeId: scopeId ?? null,
@@ -165,6 +138,12 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
 
     if (options.agentId) {
       filtered = filtered.filter((r) => r.trajectory.agentId === options.agentId);
+    }
+    if (options.subjectKind) {
+      filtered = filtered.filter((r) => r.subject.kind === options.subjectKind);
+    }
+    if (options.subjectId) {
+      filtered = filtered.filter((r) => r.subject.id === options.subjectId);
     }
     if (options.scopeType) {
       filtered = filtered.filter((r) => r.scopeType === options.scopeType);

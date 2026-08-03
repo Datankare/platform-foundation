@@ -11,7 +11,7 @@
 
 export type { AgentIdentity } from "./types";
 export type { Trajectory, Step, TrajectoryStatus, StepBoundary } from "./types";
-export type { Tool } from "./types";
+export type { Tool, ToolExecute, EffectType, RiskLevel, ActionContext } from "./types";
 export type { BudgetConfig, AgentConfig, EffortTier } from "./types";
 export { DEFAULT_BUDGET_CONFIG } from "./types";
 
@@ -69,7 +69,26 @@ export type {
   WorkflowFn,
   ExecutionResult,
 } from "./runtime";
-export { executeAgent } from "./runtime";
+export { executeAgent, resumeAgent } from "./runtime";
+export {
+  InMemoryEffectLedger,
+  getEffectLedger,
+  setEffectLedger,
+  resetEffectLedger,
+  idempotencyKeyFor,
+} from "./effect-ledger";
+export { SupabaseEffectLedger } from "./supabase-effect-ledger";
+export type { ResumeAgentArgs } from "./runtime";
+export {
+  InMemoryProposalStore,
+  getProposalStore,
+  setProposalStore,
+  resetProposalStore,
+} from "./proposal-store";
+export { SupabaseProposalStore } from "./supabase-proposal-store";
+export { invokeTool, DEFAULT_OUTPUT_RETRIES } from "./tool-invoker";
+export type { InvokeToolArgs, InvokeToolResult } from "./tool-invoker";
+export { assertValidSchema, isValidSchema, SchemaValidationError } from "./schema";
 
 // ── Agent Configs (Sprint 4b) ───────────────────────────────────────
 
