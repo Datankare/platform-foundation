@@ -24,6 +24,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # TEMPORARY — remove once the audit discrepancy is understood.
+      # Every artefact checkable outside CI says brace-expansion resolves to 5.0.9 and the
+      # audit is clean, while this pipeline reports it vulnerable. This step asks the runner
+      # to report its own state rather than continuing to infer it from outside.
+      - name: TEMP diagnostic — what did CI actually install?
+        continue-on-error: true
+        run: |
+          echo "=== versions ==="
+          node --version
+          npm --version
+          echo "=== package.json overrides ==="
+          node -e "console.log(JSON.stringify(require('./package.json').overrides, null, 2))"
+          echo "=== lockfile brace-expansion entries ==="
+          grep -B1 -A3 '"brace-expansion"' package-lock.json | head -40 || true
+          echo "=== installed tree ==="
+          npm ls brace-expansion --omit=dev || true
+          echo "=== audit, non-fatal ==="
+          npm audit --omit=dev --audit-level=high || true
+          echo "=== audit json, first 60 lines ==="
+          npm audit --omit=dev --json | head -60 || true
+
       # Layer 0d — Dependency audit (TASK-058)
       # Production deps are the real runtime attack surface — audited strictly, hard gate.
       # Dev-only deps (jest/eslint/babel toolchain) are audited informationally: npm audit
