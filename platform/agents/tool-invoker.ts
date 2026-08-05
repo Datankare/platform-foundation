@@ -48,6 +48,15 @@ export interface InvokeToolArgs<TState = unknown> {
   readonly cost?: number;
   /** Agent budget ceiling in USD; absent = unbounded. */
   readonly budgetCeiling?: number;
+  /**
+   * Session ceiling in USD, when this tool call happens inside a session (ADR-029 D8).
+   *
+   * The effective limit is the minimum of this and budgetCeiling. It is supplied
+   * explicitly rather than read from a session, because a tool call has no session to
+   * read — an agent on a cron has an agent budget and no session at all, and inventing
+   * one to satisfy the signature is what D2 declined to do.
+   */
+  readonly sessionCeiling?: number;
   readonly trajectoryStore?: TrajectoryStore;
   /** Required only for a tool that writes managed state. */
   readonly stateStore?: ActivityStateStore<TState>;
@@ -143,8 +152,14 @@ export async function invokeTool<TState = unknown>(
       args.computeNextState && args.stateStore
         ? () => (args.computeNextState as (o: Record<string, unknown>) => TState)(output)
         : null,
-    budgetCeiling: args.budgetCeiling,
-    ceilingLabel: "agent ceiling",
+    ceilings: [
+      ...(args.budgetCeiling !== undefined
+        ? [{ limit: args.budgetCeiling, label: "agent ceiling" }]
+        : []),
+      ...(args.sessionCeiling !== undefined
+        ? [{ limit: args.sessionCeiling, label: "session ceiling" }]
+        : []),
+    ],
     emit: args.emit,
     stepInput: { toolId: tool.id },
     eventIntent: "tool-call",
