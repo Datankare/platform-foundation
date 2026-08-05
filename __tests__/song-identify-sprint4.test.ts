@@ -783,9 +783,32 @@ describe("Registry — Sprint 4a provider slots", () => {
     expect(getActiveProviders().audioConverter).toBe("passthrough");
   });
 
-  it("has 13 provider slots total", async () => {
+  it("exposes exactly the registered provider slots", async () => {
     const { getActiveProviders } = await import("@/platform/providers/registry");
-    expect(Object.keys(getActiveProviders())).toHaveLength(14);
+    // An exact key set rather than a count. A length cannot distinguish an added slot
+    // from a renamed or removed one, and it fails without naming what changed. The
+    // previous assertion had already drifted: the test was named "has 13 provider slots
+    // total" while asserting 14, because slot #14 updated the number and not the name.
+    expect(Object.keys(getActiveProviders())).toEqual([
+      "auth",
+      "cache",
+      "ai",
+      "errorReporter",
+      "realtime",
+      "translation",
+      "tts",
+      "stt",
+      "songId",
+      "audioConverter",
+      "moderationStore",
+      "socialStore",
+      "embeddingProvider",
+      "appStateStore",
+      "trajectoryStore",
+      "budgetStore",
+      "proposalStore",
+      "effectLedger",
+    ]);
   });
 });
 

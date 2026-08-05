@@ -13,10 +13,14 @@
  * @module platform/app-framework
  */
 
-import type { AgentIdentity, BudgetConfig, Step } from "@/platform/agents/types";
+import type { AgentIdentity, BudgetConfig } from "@/platform/agents/types";
 import { generateSecureId } from "@/platform/agents/utils";
 import { getTrajectoryStore } from "@/platform/agents";
-import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./actions";
+import {
+  executeActionPipeline,
+  isPipelineConflict,
+  PipelineRejectedError,
+} from "@/platform/action-pipeline";
 import { getActivityStateStore } from "./index";
 import type {
   Action,
@@ -123,7 +127,11 @@ export async function createSession<TState, TAction, TConfig>(
   const initial = definition.initialState(config);
   const current = await store.create(sessionId, initial);
 
-  const record = await getTrajectoryStore().create(sessionId, "session-created", "user");
+  const record = await getTrajectoryStore().create(
+    { kind: "session", id: sessionId },
+    "session-created",
+    "user"
+  );
 
   const turnBased = definition.capabilities.includes("turn-based");
 
@@ -155,6 +163,15 @@ export interface DispatchArgs<TState, TAction, TConfig> {
   readonly actor: AgentIdentity;
   /** Cost incurred by this action in USD (0 for rule-based) — charged against budget (D10). */
   readonly cost?: number;
+  /**
+   * ADR-031 D1: supply this to make the call a retry of an existing logical action. When
+   * absent the pipeline mints one, which is the behaviour every current caller gets.
+   *
+   * A caller wanting retry safety must mint-and-retain before its first attempt — a
+   * coordinator-minted-only identity makes every retry a new action by construction, which
+   * is why the D4 dedup guarantees were unreachable through this API before now.
+   */
+  readonly operationId?: string;
   readonly options?: DispatchOptions;
 }
 
@@ -182,13 +199,8 @@ export async function dispatch<TState, TAction, TConfig>(
     );
   }
 
-  const tier = resolveTier(spec);
-  if (tier === "two-phase") {
-    throw new ActionRejectedError(
-      `action ${action.type} requires approval (effectiveRisk=${computeEffectiveRisk(spec)}) — use propose/approve (ADR-031)`,
-      "requires-approval"
-    );
-  }
+  // ── Session-specific checks. These belong to the adapter, not the pipeline: an agent
+  // ── tool call has no turn order and no ActivityDefinition to validate against.
 
   // Turn enforcement (D6 core)
   if (session.turn) {
@@ -201,15 +213,6 @@ export async function dispatch<TState, TAction, TConfig>(
     }
   }
 
-  // Budget: most-restrictive-wins (D10). Session ceiling checked here; agent-scope
-  // ceilings are enforced by the agents BudgetTracker on the agent path.
-  if (session.budget && cost > session.budget.maxCostPerTrajectory) {
-    throw new ActionRejectedError(
-      `cost ${cost} exceeds session ceiling ${session.budget.maxCostPerTrajectory}`,
-      "budget-exceeded"
-    );
-  }
-
   // Domain policy (D1 — the definition owns validity)
   if (!definition.validateAction(session.current.state, action)) {
     throw new ActionRejectedError(
@@ -218,11 +221,46 @@ export async function dispatch<TState, TAction, TConfig>(
     );
   }
 
-  // 128-bit: operationId is the audit + idempotency key (ADR-028 D3, ADR-031).
-  const operationId = `op_${generateSecureId()}`;
+  // ── The governed sequence, shared with every other adapter (ADR-029 D2).
+  let outcome;
+  try {
+    outcome = await executeActionPipeline<TState>({
+      spec,
+      actor,
+      sessionId: session.sessionId,
+      operationId: args.operationId,
+      label: action.type,
+      cost,
+      boundary: "commitment",
+      stateStore: getActivityStateStore<TState>(),
+      trajectoryStore: getTrajectoryStore(),
+      trajectoryId: session.trajectory.trajectoryId,
+      stepIndex: session.trajectory.steps.length,
+      expectedVersion: session.current.version,
+      computeNextState: () => definition.applyAction(session.current.state, action),
+      budgetCeiling: session.budget?.maxCostPerTrajectory,
+      ceilingLabel: "session ceiling",
+      emit,
+    });
+  } catch (err) {
+    // The pipeline's vocabulary is translated into the session's, so consumers keep the
+    // one error type they already catch.
+    if (err instanceof PipelineRejectedError) {
+      throw new ActionRejectedError(err.message, err.reason);
+    }
+    throw err;
+  }
 
-  // Ephemeral actions never touch durable state (D3 invariant) — no commit, no trajectory.
-  if (tier === "ephemeral") {
+  if (isPipelineConflict(outcome)) {
+    return {
+      conflict: true,
+      currentVersion: outcome.currentVersion,
+      currentState: outcome.currentState,
+    };
+  }
+
+  // Ephemeral: state advanced in memory, nothing persisted (D3 tier semantics).
+  if (outcome.tier === "ephemeral") {
     const next = definition.applyAction(session.current.state, action);
     return {
       result: { ...session.current, state: next },
@@ -232,72 +270,10 @@ export async function dispatch<TState, TAction, TConfig>(
     };
   }
 
-  assembleActionContext({
-    spec,
-    actor,
-    sessionId: session.sessionId,
-    operationId,
-    boundary: "commitment",
-  });
-
-  const nextState = definition.applyAction(session.current.state, action);
-  const store = getActivityStateStore<TState>();
-
-  // Commutative actions bypass the version precondition (D5 hotspot path).
-  let committed: VersionedState<TState>;
-  if (spec.commutative) {
-    committed = await store.reduceCommit(session.sessionId, () => nextState, operationId);
-  } else {
-    const res = await store.commit(
-      session.sessionId,
-      session.current.version,
-      nextState,
-      operationId
-    );
-    if (!res.ok) {
-      return {
-        conflict: true,
-        currentVersion: res.currentVersion,
-        currentState: res.currentState,
-      };
-    }
-    committed = {
-      sessionId: session.sessionId,
-      state: res.state,
-      version: res.version,
-      producedBy: operationId,
-    };
-  }
-
-  // Trajectory append — derived from the authoritative commit, idempotent by operationId (D4).
-  const step: Step = {
-    stepIndex: session.trajectory.steps.length,
-    action: action.type,
-    input: { operationId, actorId: actor.actorId },
-    output: { version: committed.version },
-    cost,
-    durationMs: 0,
-    timestamp: new Date().toISOString(),
-    boundary: "commitment",
-  };
-  const record = await getTrajectoryStore().addStep(
-    session.trajectory.trajectoryId,
-    step
-  );
-
-  emit({
-    type: "state-change",
-    sessionId: session.sessionId,
-    operationId,
-    trajectoryId: session.trajectory.trajectoryId,
-    stepIndex: step.stepIndex,
-    intent: "commit",
-    at: step.timestamp,
-  });
-
+  const committed = outcome.committed as VersionedState<TState>;
   return {
     result: committed,
-    trajectory: record?.trajectory ?? session.trajectory,
+    trajectory: outcome.trajectory ?? session.trajectory,
     nextActions: enumerateNextActions(definition, committed.state, args.options),
     cost,
   };
@@ -324,7 +300,10 @@ function enumerateNextActions<TState, TAction, TConfig>(
 
 // ── Gotchas ───────────────────────────────────────────────────────────
 //
-// 1. operationId is minted HERE, never by a consumer (D3). Do not accept one as an argument.
+// 1. operationId is minted by the pipeline when absent, and MAY be supplied by a caller
+//    (ADR-031 D1). This reverses the Sprint 1 rule: without a caller-supplied id every
+//    retry is a new logical action, so the D4 per-edge dedup guarantees could not be
+//    expressed through the public API. Supplying one asserts "this is that same action".
 //
 // 2. On CAS conflict the function returns a ConflictResult and mutates NOTHING — no
 //    trajectory append, no event. Use isConflict() to branch; do not auto-retry (D5).

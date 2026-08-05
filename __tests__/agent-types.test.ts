@@ -185,10 +185,28 @@ describe("Tool (P5)", () => {
           detectedLanguage: { type: "string" },
         },
       },
+      effects: ["externalCall"],
+      declaredRisk: "consequential",
+      execute: async (input) => ({ translation: String(input.text) }),
     };
     expect(tool.id).toBe("translate-text");
     expect(tool.inputSchema).toBeDefined();
     expect(tool.outputSchema).toBeDefined();
+  });
+
+  it("carries an executable handler and declared effects (ADR-029 D1)", async () => {
+    const tool: Tool = {
+      id: "echo",
+      name: "Echo",
+      description: "Returns its input",
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      effects: [],
+      execute: async (input) => input,
+    };
+    await expect(tool.execute({ a: 1 })).resolves.toEqual({ a: 1 });
+    expect(tool.effects).toEqual([]);
+    expect(tool.declaredRisk).toBeUndefined();
   });
 });
 
