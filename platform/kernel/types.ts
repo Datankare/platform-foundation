@@ -197,6 +197,14 @@ export interface Step {
   readonly effects?: readonly EffectType[];
   /** max(declaredRisk, max(effect floors)) as computed for this step. */
   readonly effectiveRisk?: RiskLevel;
+  /**
+   * The operationId this step compensates (ADR-029 D6).
+   *
+   * Present only on compensating steps. The original step is never modified or removed —
+   * both remain, so the trajectory says what happened AND what was done about it. A history
+   * rewritten to claim the first thing never happened cannot be audited.
+   */
+  readonly compensates?: string;
 }
 
 // ── Tool (P5) ─────────────────────────────────────────────────────────
@@ -244,6 +252,26 @@ export interface Tool {
   readonly effects: readonly EffectType[];
   /** Advisory and upward-only from the effect floor, exactly as ActionSpec (ADR-029 D1). */
   readonly declaredRisk?: RiskLevel;
+  /**
+   * Whether this tool's effects can be compensated (ADR-029 D6). Absent means true.
+   *
+   * An agent whose tools include a non-compensable one is refused at registration. That is
+   * deliberate and early: discovering irreversibility part-way through a rollback is
+   * discovering it too late.
+   */
+  readonly compensable?: boolean;
+  /**
+   * The handler that undoes this tool's effect, if one exists. Takes the ORIGINAL input and
+   * the recorded output, and performs a new action that cancels the first — a refund for a
+   * charge, a retraction for a notice.
+   *
+   * Its absence is not a claim of irreversibility: a caller may supply a compensating plan
+   * per trajectory instead. `compensable: false` is the claim.
+   */
+  readonly compensate?: (
+    originalInput: Record<string, unknown>,
+    originalOutput: Record<string, unknown>
+  ) => Promise<Record<string, unknown>>;
 }
 
 // ── Budget (P12) ──────────────────────────────────────────────────────
@@ -413,6 +441,17 @@ export interface ActionSpec {
   readonly ephemeral?: boolean;
   /** Commutative reducer for hotspot keys — applied against latest, no conflict (D5). */
   readonly commutative?: boolean;
+  /**
+   * Whether this action can be compensated (ADR-029 D6). Absent means true.
+   *
+   * Declaring `false` means the effects cannot be undone by any subsequent action — a
+   * physical dispatch, an irrevocable transfer, a message that cannot be recalled. A
+   * workflow containing one is refused at registration rather than discovered mid-rollback.
+   *
+   * Note the direction: rollback does not reverse a committed transition, it APPENDS a
+   * compensating one. `compensable: false` says no such compensating action exists.
+   */
+  readonly compensable?: boolean;
 }
 
 // ── Activity Definition (ADR-028 D1, D9) ──────────────────────────────
