@@ -435,6 +435,156 @@ export async function rejectProposal(
   return decided;
 }
 
+// ── Compensation (ADR-029 D6) ─────────────────────────────────────────
+
+/**
+ * What to run to cancel one recorded step.
+ *
+ * The caller builds this from the step, because only the caller knows how to undo its own
+ * domain action. The pipeline owns the identity, ordering and recording; it does not know
+ * what a refund is.
+ */
+export interface CompensationPlan {
+  readonly spec: ActionSpec;
+  readonly label: string;
+  readonly perform: () => Promise<Record<string, unknown>>;
+}
+
+export interface CompensateRequest {
+  readonly trajectoryId: string;
+  readonly trajectoryStore: TrajectoryStore;
+  readonly actor: AgentIdentity;
+  readonly sessionId: string;
+  /**
+   * Given a recorded step, return how to cancel it — or null for steps that need no
+   * compensation (cognition steps, reads, anything already compensated).
+   */
+  readonly plan: (step: Step) => CompensationPlan | null;
+  readonly emit?: (event: SessionEvent) => void;
+}
+
+export interface CompensationOutcome {
+  readonly compensated: number;
+  readonly skipped: number;
+  readonly failures: readonly { operationId: string; error: string }[];
+}
+
+/**
+ * Compensate a trajectory: append actions that cancel what was committed.
+ *
+ * Nothing is undone and nothing is deleted. Each compensating action gets its own
+ * operationId and a `compensates` link to the step it cancels, and both remain in the
+ * history — so the trajectory answers "what happened" and "what was done about it"
+ * separately, which a rewritten history cannot.
+ *
+ * Steps are compensated in REVERSE order. If step 2 depended on step 1, undoing 1 first
+ * would leave 2's compensation acting against a state that no longer holds.
+ *
+ * A compensation that itself fails is recorded and the walk CONTINUES: stopping would
+ * leave the remaining steps both uncompensated and unrecorded, which is strictly worse
+ * than a partial unwind with a complete account of it.
+ */
+export async function compensateTrajectory(
+  req: CompensateRequest
+): Promise<CompensationOutcome> {
+  const record = await req.trajectoryStore.getById(req.trajectoryId);
+  if (!record) {
+    throw new Error(`Trajectory not found: ${req.trajectoryId}`);
+  }
+
+  const steps = [...record.trajectory.steps].reverse();
+  const alreadyCompensated = new Set(
+    record.trajectory.steps
+      .map((s) => s.compensates)
+      .filter((id): id is string => typeof id === "string")
+  );
+
+  let compensated = 0;
+  let skipped = 0;
+  const failures: { operationId: string; error: string }[] = [];
+  let nextIndex = record.trajectory.steps.length;
+
+  for (const step of steps) {
+    // Never compensate a compensation, and never compensate twice.
+    if (
+      step.compensates ||
+      (step.operationId && alreadyCompensated.has(step.operationId))
+    ) {
+      skipped += 1;
+      continue;
+    }
+
+    const plan = req.plan(step);
+    if (!plan) {
+      skipped += 1;
+      continue;
+    }
+
+    if (plan.spec.compensable === false) {
+      // Registration should have caught this. If it reaches here the declaration was added
+      // after the fact, and refusing loudly beats pretending the unwind was complete.
+      failures.push({
+        operationId: step.operationId ?? "(none)",
+        error: `${plan.label} is declared non-compensable`,
+      });
+      continue;
+    }
+
+    const operationId = `op_${generateSecureId()}`;
+    const context = assembleActionContext({
+      spec: plan.spec,
+      actor: req.actor,
+      sessionId: req.sessionId,
+      operationId,
+      boundary: "commitment",
+    });
+
+    let output: Record<string, unknown> = {};
+    let error: string | undefined;
+    try {
+      output = await plan.perform();
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Unknown error";
+      failures.push({ operationId: step.operationId ?? "(none)", error });
+    }
+
+    await req.trajectoryStore.addStep(req.trajectoryId, {
+      stepIndex: nextIndex,
+      action: plan.label,
+      input: { operationId, actorId: req.actor.actorId, compensating: step.action },
+      output: error ? { error, compensated: false } : { ...output, compensated: true },
+      cost: 0,
+      durationMs: 0,
+      timestamp: new Date().toISOString(),
+      boundary: "commitment",
+      operationId,
+      actor: context.actor,
+      effects: context.effects,
+      effectiveRisk: context.effectiveRisk,
+      compensates: step.operationId,
+    });
+    nextIndex += 1;
+
+    req.emit?.({
+      type: "state-change",
+      sessionId: req.sessionId,
+      operationId,
+      trajectoryId: req.trajectoryId,
+      stepIndex: nextIndex - 1,
+      actor: context.actor,
+      boundary: "commitment",
+      effects: context.effects,
+      effectiveRisk: context.effectiveRisk,
+      intent: "compensate",
+      at: new Date().toISOString(),
+    });
+
+    if (!error) compensated += 1;
+  }
+
+  return { compensated, skipped, failures };
+}
+
 export * from "./risk";
 
 // ── Gotchas ───────────────────────────────────────────────────────────
