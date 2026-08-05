@@ -819,6 +819,44 @@ production call, and no budget column is unwritten.
 
 ---
 
+### TASK-070 — Overrides are unaudited; one of them pinned us to a vulnerable version
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-070                                                     |
+| **Type**     | Dependency hygiene                                           |
+| **Severity** | Medium — the failure mode is silent and points the wrong way |
+| **Phase**    | Phase 5, Sprint 2                                            |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-08-04                                                   |
+
+**What:** `package.json` currently overrides `postcss`, `sharp` and `brace-expansion@5`.
+Nothing records why any of them exist, when they were added, or what would allow their
+removal.
+
+That is not academic: `"brace-expansion@5": "5.0.8"` was added as the fix for
+CVE-2026-14257, and when GHSA-rgw5-rvv9-x895 disclosed that 5.0.8 bypasses that mitigation,
+the override held the tree at the vulnerable version. The audit gate failed for a day and the
+override read as inert, because a second broader override added alongside it was silently
+losing to the more specific entry.
+
+An override is a claim that a dependency's own choice is wrong. Claims expire, and an expired
+override is worse than none: it is invisible, it survives `npm update`, and it points
+diagnosis away from itself.
+
+**Resolution:**
+
+1. Annotate each override with why it exists and what would let it go — a comment block above
+   the `overrides` key, or a short section in the security docs.
+2. Give each one a removal task, as TASK-069 does for `brace-expansion`.
+3. Add a periodic check that every override is still necessary: remove it, install, audit,
+   and see whether anything breaks.
+
+**Close when:** every override in `package.json` has a recorded reason and a removal
+condition.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -864,4 +902,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 29, 2026 (TASK-065 resolved — public.applied_migrations created and backfilled by migration 025)_
+_Last updated: August 4, 2026 (filed TASK-070 — overrides are unaudited; one pinned the tree to a vulnerable version)_
