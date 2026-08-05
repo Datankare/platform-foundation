@@ -78,6 +78,8 @@ export {
   idempotencyKeyFor,
 } from "./effect-ledger";
 export { SupabaseEffectLedger } from "./supabase-effect-ledger";
+export { performExternalEffect } from "./external-effect";
+export type { ExternalEffectArgs, ExternalEffectOutcome } from "./external-effect";
 export type { ResumeAgentArgs } from "./runtime";
 export {
   InMemoryProposalStore,

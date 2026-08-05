@@ -932,6 +932,36 @@ ends without any of them and the entry is closed as "invoked is sufficient".
 
 ---
 
+### TASK-071 — There is no session load path, so crash repair must be called explicitly
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-071                                    |
+| **Type**     | Missing lifecycle hook                      |
+| **Severity** | Medium — repair exists and nothing calls it |
+| **Phase**    | Phase 5, Sprint 2                           |
+| **Status**   | Open                                        |
+| **Logged**   | 2026-08-04                                  |
+
+**What:** ADR-031 D6 specifies crash-window repair "on session load". `repairSession()` now
+implements the repair, but there is no session load path to call it from: `createSession()`
+creates, and nothing in the framework loads an existing session. `ActivityStateStore.load()`
+exists on the contract and only the stores themselves call it.
+
+Rather than invent a lifecycle hook to satisfy the ADR's wording, `repairSession` is an
+explicit entry point. That is honest but incomplete: a repair nothing calls repairs nothing,
+and the crash window stays open in practice.
+
+**Resolution:** add `loadSession()` to the app framework — reconstructing an ActivitySession
+from persisted state plus its trajectory — and call `repairSession` from it before returning.
+That is where the ADR intends the check, and it is also the natural home for the reconstruct
+path the framework currently lacks.
+
+**Close when:** a session loaded after an interrupted commit has its trajectory tail
+completed without the caller asking.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -977,4 +1007,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: July 29, 2026 (filed TASK-066 SupabaseActivityStateStore transport realignment and TASK-068 automatic-unwind decision criteria; Phase 5 Sprint 2)_
+_Last updated: August 4, 2026 (filed TASK-071 — no session load path, so crash repair must be called explicitly)_
