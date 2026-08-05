@@ -47,6 +47,30 @@ import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk
 
 export type PipelineRejectionReason = "requires-approval" | "budget-exceeded";
 
+/** One applicable spending limit, and whose it is (ADR-029 D8). */
+export interface BudgetCeiling {
+  /** Limit in USD. */
+  readonly limit: number;
+  /** Whose limit — "session ceiling", "agent ceiling". Named in the rejection. */
+  readonly label: string;
+}
+
+/**
+ * The binding ceiling: the lowest of every applicable limit.
+ *
+ * Returns undefined when nothing applies, which means unbounded — deliberately NOT zero.
+ * A missing budget must not read as a budget of nothing.
+ */
+export function mostRestrictiveCeiling(
+  ceilings: readonly BudgetCeiling[]
+): BudgetCeiling | undefined {
+  let lowest: BudgetCeiling | undefined;
+  for (const c of ceilings) {
+    if (!lowest || c.limit < lowest.limit) lowest = c;
+  }
+  return lowest;
+}
+
 /** Raised when the pipeline refuses before any state mutation. */
 export class PipelineRejectedError extends Error {
   constructor(
@@ -95,7 +119,7 @@ export interface PipelineRequest<TState> {
    */
   readonly perform?: () => Promise<Record<string, unknown>>;
 
-  /** Session or agent ceiling in USD; absent = unbounded. */
+  /** Session or agent ceiling in USD; absent = unbounded. Shorthand for a single ceiling. */
   readonly budgetCeiling?: number;
   /**
    * Names whose ceiling this is, for the rejection message — "session ceiling",
@@ -103,6 +127,19 @@ export interface PipelineRequest<TState> {
    * does, and a caller needs to know which one rejected it.
    */
   readonly ceilingLabel?: string;
+  /**
+   * Every applicable ceiling (ADR-029 D8). The effective ceiling is the MINIMUM, and the
+   * rejection names whichever one bound the call.
+   *
+   * An agent step inside a session is bound by both the agent's BudgetConfig and the
+   * session's ceiling. Taking the maximum would let the more generous budget defeat the
+   * stricter one — which is why this is a minimum while effectiveRisk is a maximum. The
+   * conservative direction differs by quantity: for risk, higher is safer; for spend,
+   * lower is.
+   *
+   * Folded together with budgetCeiling/ceilingLabel, so a caller may supply either form.
+   */
+  readonly ceilings?: readonly BudgetCeiling[];
   readonly emit?: (event: SessionEvent) => void;
   readonly stepInput?: Record<string, unknown>;
   readonly stepOutput?: Record<string, unknown>;
@@ -152,10 +189,22 @@ export async function executeActionPipeline<TState>(
     );
   }
 
-  // 2. Budget ceiling — most-restrictive-wins (ADR-028 D10).
-  if (req.budgetCeiling !== undefined && req.cost > req.budgetCeiling) {
+  // 2. Budget — most-restrictive-wins across every applicable ceiling (ADR-029 D8).
+  // The minimum, not the maximum: a session ceiling of 0.01 must bind a tool whose agent
+  // ceiling is 1.00, or the more generous budget defeats the stricter one.
+  const applicable: BudgetCeiling[] = [...(req.ceilings ?? [])];
+  if (req.budgetCeiling !== undefined) {
+    applicable.push({
+      limit: req.budgetCeiling,
+      label: req.ceilingLabel ?? "ceiling",
+    });
+  }
+  const binding = mostRestrictiveCeiling(applicable);
+  if (binding && req.cost > binding.limit) {
+    // Naming the binding ceiling matters: a caller told only "over budget" cannot tell
+    // whether to raise the agent's allowance or the session's.
     throw new PipelineRejectedError(
-      `cost ${req.cost} exceeds ${req.ceilingLabel ?? "ceiling"} ${req.budgetCeiling}`,
+      `cost ${req.cost} exceeds ${binding.label} ${binding.limit}`,
       "budget-exceeded"
     );
   }
