@@ -14,6 +14,7 @@ import {
 import { resumeAgent } from "@/platform/agents/runtime";
 import { InMemoryTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { InMemoryProposalStore } from "@/platform/agents/proposal-store";
+import { InMemoryEffectLedger } from "@/platform/agents/effect-ledger";
 import { registerAgent, resetAgentRegistry } from "@/platform/agents/registry";
 import { BudgetTracker } from "@/platform/agents/budget-tracker";
 import type { ActionSpec, AgentIdentity, SessionEvent } from "@/platform/kernel";
@@ -209,6 +210,43 @@ describe("D5 — resume re-executes no recorded step", () => {
     expect(executed).not.toContain(1);
     expect(executed[0]).toBe(2);
     expect(result.finalStatus).toBe("completed");
+  });
+
+  it("reports indeterminate on resume when an effect is unresolved (D10)", async () => {
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const ledger = new InMemoryEffectLedger();
+    const rec = await trajectoryStore.create(
+      { kind: "agent", id: "guardian" },
+      "screen",
+      "platform"
+    );
+    const trajectoryId = rec.trajectory.trajectoryId;
+    await trajectoryStore.updateStatus(trajectoryId, "paused");
+
+    // An effect left in flight by whatever paused this run — the crash case.
+    await ledger.begin({
+      operationId: trajectoryId,
+      effectKey: "charge",
+      effectType: "externalCall",
+    });
+
+    const result = await resumeAgent({
+      trajectoryId,
+      workflow: async () => ({
+        action: "finish",
+        boundary: "cognition",
+        input: {},
+        output: {},
+        costUsd: 0,
+        continueExecution: false,
+      }),
+      trajectoryStore,
+      effectLedger: ledger,
+    });
+
+    expect(result.finalStatus).toBe("indeterminate");
+    const after = await trajectoryStore.getById(trajectoryId);
+    expect(after?.trajectory.status).toBe("indeterminate");
   });
 
   it("refuses to resume a trajectory that is not paused", async () => {

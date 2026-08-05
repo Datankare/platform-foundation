@@ -64,7 +64,14 @@ export interface AgentIdentity {
  * - failed: a step failed and the trajectory was not recovered
  * - paused: checkpointed and waiting for resume or human approval
  */
-export type TrajectoryStatus = "running" | "completed" | "failed" | "paused";
+export type TrajectoryStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "paused"
+  // ADR-029 D10: an external effect neither confirmed nor denied. A workflow
+  // containing one is itself indeterminate and MUST NOT report completed.
+  | "indeterminate";
 
 /**
  * A durable execution trajectory.
@@ -722,4 +729,68 @@ export interface ProposalStore {
     note?: string
   ): Promise<ProposalRecord | undefined>;
   query(options: ProposalQuery): Promise<readonly ProposalRecord[]>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Effect ledger contract (ADR-031 D7, ADR-029 D10)
+// Implementations and the singleton live in platform/agents.
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Outcome of one external effect.
+ *
+ * `indeterminate` is terminal and real: the downstream neither confirmed nor denied.
+ * It MUST NOT be collapsed into confirmed or failed — that is an at-most-once or
+ * at-least-once violation depending on the direction of the guess, and the guess is
+ * invisible afterwards (ADR-031 D7).
+ */
+export type EffectStatus = "pending" | "confirmed" | "failed" | "indeterminate";
+
+/** The subset of EffectType that reaches outside the system. */
+export type ExternalEffectType = "externalCall" | "sendMessage";
+
+export interface EffectLedgerEntry {
+  readonly entryId: string;
+  readonly operationId: string;
+  /** Distinguishes multiple effects within one operation. */
+  readonly effectKey: string;
+  readonly effectType: ExternalEffectType;
+  readonly status: EffectStatus;
+  /** Derived from operationId — handed to downstreams that accept one. */
+  readonly idempotencyKey: string;
+  readonly request: Record<string, unknown>;
+  readonly receipt?: Record<string, unknown>;
+  readonly error?: string;
+  readonly attempts: number;
+  readonly createdAt: string;
+  readonly resolvedAt?: string;
+}
+
+export interface BeginEffectArgs {
+  readonly operationId: string;
+  readonly effectKey: string;
+  readonly effectType: ExternalEffectType;
+  readonly request?: Record<string, unknown>;
+}
+
+/**
+ * Durable record of external effects.
+ *
+ * `begin` MUST be idempotent on (operationId, effectKey): a retry returns the EXISTING
+ * entry rather than creating a second one, which is what makes "does not re-fire"
+ * expressible at all.
+ */
+export interface EffectLedger {
+  /** Write before the call. Returns the existing entry on retry, with `attempts` raised. */
+  begin(args: BeginEffectArgs): Promise<EffectLedgerEntry>;
+  /** Resolve after the call. Only from `pending`; returns undefined if already resolved. */
+  resolve(
+    operationId: string,
+    effectKey: string,
+    status: Exclude<EffectStatus, "pending">,
+    detail?: { receipt?: Record<string, unknown>; error?: string }
+  ): Promise<EffectLedgerEntry | undefined>;
+  get(operationId: string, effectKey: string): Promise<EffectLedgerEntry | undefined>;
+  /** Everything still pending or indeterminate — the human-resolution queue. */
+  listUnresolved(limit?: number): Promise<readonly EffectLedgerEntry[]>;
 }
