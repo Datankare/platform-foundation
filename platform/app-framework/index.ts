@@ -17,13 +17,20 @@ export * from "./actions";
 export * from "./turn";
 export {
   createSession,
+  loadSession,
+  updateSessionMeta,
   dispatch,
   isConflict,
   subscribeSessionEvents,
   resetSessionEventSubscribers,
   ActionRejectedError,
 } from "./session";
-export type { ConflictResult, DispatchOutcome } from "./session";
+export type {
+  ConflictResult,
+  DispatchOutcome,
+  LoadSessionArgs,
+  LoadedSession,
+} from "./session";
 
 import type { ActivityStateStore } from "./state-store";
 import { InMemoryActivityStateStore } from "./memory-state-store";

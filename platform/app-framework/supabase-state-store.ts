@@ -12,7 +12,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { ActivityStateStore, StateReducer } from "./state-store";
-import type { CommitResult, VersionedState } from "./types";
+import type { CommitResult, SessionMeta, VersionedState } from "./types";
 
 const TABLE = "app_sessions";
 const MAX_REDUCE_RETRIES = 10;
@@ -113,6 +113,37 @@ export class SupabaseActivityStateStore<TState> implements ActivityStateStore<TS
     throw new Error(
       `app-framework: reduceCommit exhausted ${MAX_REDUCE_RETRIES} retries for ${sessionId}`
     );
+  }
+
+  async saveMeta(sessionId: string, meta: SessionMeta): Promise<void> {
+    // Deliberately NOT version-guarded: meta moves on a different cadence than state, and
+    // making a participant change contend with a state commit would be a conflict nobody
+    // asked for.
+    const { error } = await this.db
+      .from(TABLE)
+      .update({ meta, updated_at: new Date().toISOString() })
+      .eq("id", sessionId);
+    if (error) {
+      throw new Error(
+        `app-framework: saveMeta failed for ${sessionId}: ${error.message}`
+      );
+    }
+  }
+
+  async loadMeta(sessionId: string): Promise<SessionMeta | null> {
+    const { data, error } = await this.db
+      .from(TABLE)
+      .select("meta")
+      .eq("id", sessionId)
+      .maybeSingle<{ meta: unknown }>();
+    if (error) {
+      throw new Error(
+        `app-framework: loadMeta failed for ${sessionId}: ${error.message}`
+      );
+    }
+    const meta = data?.meta;
+    if (!meta || typeof meta !== "object" || !Object.keys(meta).length) return null;
+    return meta as SessionMeta;
   }
 
   async delete(sessionId: string): Promise<void> {
