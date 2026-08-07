@@ -962,6 +962,34 @@ completed without the caller asking.
 
 ---
 
+### TASK-072 — Turn advancement is not durable until the coordinator owns it
+
+| Field        | Detail                                                |
+| ------------ | ----------------------------------------------------- |
+| **ID**       | TASK-072                                              |
+| **Type**     | Partial durability                                    |
+| **Severity** | Low — correct when callers cooperate, silent when not |
+| **Phase**    | Phase 5, Sprint 2                                     |
+| **Status**   | Open                                                  |
+| **Logged**   | 2026-08-04                                            |
+
+**What:** Migration 029 and `SessionMeta` make turn state durable, so a turn-based session no
+longer loses whose turn it is on restart. But `dispatch()` only CHECKS turn order — it does
+not advance it. Advancement lives in `turn.ts` and is the caller's to invoke, so the caller
+must also call `updateSessionMeta()` afterwards or the persisted turn goes stale.
+
+Durability that depends on the caller remembering is durability only when they remember.
+
+**Resolution:** move turn advancement into the coordinator, so `dispatch()` advances the turn
+and persists it in the same sequence that commits the state. That is where ADR-028 D6's
+turn-based core belongs; it sits outside today because turn advancement predates the pipeline
+extraction.
+
+**Close when:** a turn-based session advanced through `dispatch()` and reloaded reports the
+correct current actor without the caller persisting anything.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1007,4 +1035,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (filed TASK-071 — no session load path, so crash repair must be called explicitly)_
+_Last updated: August 4, 2026 (closed TASK-071 with loadSession; filed TASK-072 — turn advancement is not durable until the coordinator owns it)_

@@ -833,3 +833,27 @@ export interface EffectLedger {
   /** Everything still pending or indeterminate — the human-resolution queue. */
   listUnresolved(limit?: number): Promise<readonly EffectLedgerEntry[]>;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Session metadata (TASK-071)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * The part of a session that is not its state.
+ *
+ * `state` answers what is true; this answers what this session IS. None of it was persisted
+ * before, so an ActivitySession could be created and never reconstructed — and ADR-031 D6's
+ * repair, which the ADR places "on session load", had no load to run in.
+ */
+export interface SessionMeta {
+  readonly definitionId: string;
+  readonly status: SessionStatus;
+  readonly capabilities: readonly Capability[];
+  readonly participants: readonly AgentIdentity[];
+  readonly budget?: BudgetConfig;
+  /**
+   * Persisted so a turn-based session does not lose whose turn it is on restart.
+   * Advancement remains the caller's — see updateSessionMeta and TASK-072.
+   */
+  readonly turn?: TurnState;
+}
