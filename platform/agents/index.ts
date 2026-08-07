@@ -17,7 +17,7 @@ export { DEFAULT_BUDGET_CONFIG } from "./types";
 
 // ── Utilities ─────────────────────────────────────────────────────────
 
-export { generateId } from "./utils";
+export { generateId, generateSecureId, generateUuid } from "./utils";
 
 // ── Agent Registry (Sprint 4a) ──────────────────────────────────────
 
@@ -88,6 +88,10 @@ export {
   resetProposalStore,
 } from "./proposal-store";
 export { SupabaseProposalStore } from "./supabase-proposal-store";
+export { SupabaseTrajectoryStore } from "./supabase-trajectory-store";
+export { SupabaseBudgetStore } from "./supabase-budget-store";
+export { InMemoryBudgetStore, setBudgetTracker } from "./budget-tracker";
+export { UndeclaredExternalEffectError } from "./tool-invoker";
 export { invokeTool, DEFAULT_OUTPUT_RETRIES } from "./tool-invoker";
 export type { InvokeToolArgs, InvokeToolResult } from "./tool-invoker";
 export { assertValidSchema, isValidSchema, SchemaValidationError } from "./schema";

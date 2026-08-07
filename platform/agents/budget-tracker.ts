@@ -246,8 +246,10 @@ export function getBudgetTracker(): BudgetTracker {
 }
 
 /** Set the active tracker (called by the provider registry in 2c-2b). */
-export function setBudgetTracker(next: BudgetTracker): void {
+export function setBudgetTracker(next: BudgetTracker): BudgetTracker {
+  const previous = tracker;
   tracker = next;
+  return previous;
 }
 
 export function resetBudgetTracker(): void {
