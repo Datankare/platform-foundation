@@ -121,9 +121,23 @@ export function runToolInvocationContract(fx: ToolInvocationContractFixtures): v
     });
 
     it("carries the justification record into the step (ADR-031 D9)", async () => {
-      await call(makeTool({ effects: ["externalCall"], declaredRisk: "consequential" }), {
-        text: "hi",
-      });
+      // The declared effect is required by ADR-031 D7 now that effects grant capability
+      // and impose obligation symmetrically; this arm is still about effectiveRisk
+      // reaching the step, not about the effect itself.
+      await call(
+        makeTool({
+          effects: ["externalCall"],
+          declaredRisk: "consequential",
+          externalEffects: [
+            {
+              key: "ping",
+              type: "externalCall",
+              call: async () => ({ ok: true }),
+            },
+          ],
+        }),
+        { text: "hi" }
+      );
       const rec = await store.getById(trajectoryId);
       const step = rec?.trajectory.steps[0];
       expect(step?.effects).toEqual(["externalCall"]);

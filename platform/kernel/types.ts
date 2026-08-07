@@ -210,12 +210,6 @@ export interface Step {
 // ── Tool (P5) ─────────────────────────────────────────────────────────
 
 /**
- * A typed tool definition that an agent can use.
- *
- * Tools are versioned artifacts registered in the agent runtime.
- * Each tool has explicit input/output schemas for validation.
- */
-/**
  * The handler a tool runs (ADR-029 D1).
  *
  * `input` is validated against `inputSchema` before the call and the return value against
@@ -272,6 +266,50 @@ export interface Tool {
     originalInput: Record<string, unknown>,
     originalOutput: Record<string, unknown>
   ) => Promise<Record<string, unknown>>;
+  /**
+   * The external effects this tool fires, each routed through the effect ledger
+   * (ADR-031 D7).
+   *
+   * A LIST, not a single call: a tool that charges a card and sends a receipt has two
+   * effects with two idempotency keys, and discovering that after shipping a single-call
+   * field would mean a second contract change.
+   *
+   * Declaring `externalCall` or `sendMessage` in `effects` and leaving this empty is a
+   * contract violation the adapter refuses. `effects` already grants capability
+   * structurally, so leaving the corresponding obligation voluntary would be inconsistent
+   * (P4) — and a ledger nothing writes to cannot prevent a double-fire.
+   */
+  readonly externalEffects?: readonly ToolExternalEffect[];
+}
+
+/**
+ * One external effect a tool fires, declared so the platform can wrap it in a ledger entry
+ * rather than trusting the tool to do so (ADR-031 D7).
+ */
+export interface ToolExternalEffect {
+  /** Distinguishes this effect from others in the same invocation. */
+  readonly key: string;
+  readonly type: "externalCall" | "sendMessage";
+  /**
+   * Performs the downstream call. Receives the tool's input and the idempotency key derived
+   * from the operationId — hand that key to downstreams that accept one; the ledger exists
+   * for those that do not.
+   */
+  readonly call: (
+    input: Record<string, unknown>,
+    idempotencyKey: string
+  ) => Promise<Record<string, unknown>>;
+  /**
+   * Asks the downstream whether a previous attempt landed, for a retry that finds an
+   * unresolved ledger entry. Omit when it cannot be asked — the operation then surfaces as
+   * indeterminate rather than being guessed at.
+   *
+   * This stays with the tool because it is per-downstream: asking Stripe whether a charge
+   * landed is Stripe-specific, and the platform can carry the question but not answer it.
+   */
+  readonly reconcile?: (
+    idempotencyKey: string
+  ) => Promise<Record<string, unknown> | undefined>;
 }
 
 // ── Budget (P12) ──────────────────────────────────────────────────────
