@@ -19,6 +19,7 @@
  */
 
 import type { BudgetScope, BudgetStore, BudgetUsage } from "./budget-tracker";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const TABLE = "agent_budgets";
 const RPC = "agent_budget_consume";
@@ -77,9 +78,17 @@ export class SupabaseBudgetStore implements BudgetStore {
   }
 
   async read(scope: BudgetScope): Promise<BudgetUsage> {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${this.url}/rest/v1/${TABLE}?${this.scopeFilters(scope)}&select=used_usd,used_steps`,
-      { method: "GET", headers: headers(this.key) }
+      {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
+        method: "GET",
+        headers: headers(this.key),
+      }
     );
     if (!res.ok) {
       throw new Error(`agents: budget read failed (${res.status}): ${await res.text()}`);
@@ -93,7 +102,12 @@ export class SupabaseBudgetStore implements BudgetStore {
     deltaUsd: number,
     deltaSteps: number
   ): Promise<BudgetUsage> {
-    const res = await fetch(`${this.url}/rest/v1/rpc/${RPC}`, {
+    const res = await fetchWithTimeout(`${this.url}/rest/v1/rpc/${RPC}`, {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "POST",
       headers: headers(this.key),
       body: JSON.stringify({
@@ -118,10 +132,18 @@ export class SupabaseBudgetStore implements BudgetStore {
   async reset(): Promise<void> {
     // period is NOT NULL, so this matches every row. PostgREST refuses an unfiltered
     // DELETE, which is a guard worth keeping rather than working around with a wildcard.
-    const res = await fetch(`${this.url}/rest/v1/${TABLE}?period=not.is.null`, {
-      method: "DELETE",
-      headers: headers(this.key),
-    });
+    const res = await fetchWithTimeout(
+      `${this.url}/rest/v1/${TABLE}?period=not.is.null`,
+      {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
+        method: "DELETE",
+        headers: headers(this.key),
+      }
+    );
     if (!res.ok) {
       throw new Error(`agents: budget reset failed (${res.status}): ${await res.text()}`);
     }

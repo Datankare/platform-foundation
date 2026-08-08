@@ -21,6 +21,7 @@ import type {
   CacheProvider,
   CacheSetOptions,
 } from "./types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 /** Redis command response from Upstash REST API */
 interface RedisResponse<T = unknown> {
@@ -75,7 +76,12 @@ export class RedisCacheProvider implements CacheProvider {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const response = await fetch(`${this.url}`, {
+      const response = await fetchWithTimeout(`${this.url}`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.token}`,
@@ -104,7 +110,12 @@ export class RedisCacheProvider implements CacheProvider {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const response = await fetch(`${this.url}/pipeline`, {
+      const response = await fetchWithTimeout(`${this.url}/pipeline`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.token}`,

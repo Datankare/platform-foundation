@@ -12,6 +12,7 @@
 
 import type { ModerationStore, ModerationAuditRecord, AuditQueryOptions } from "./types";
 import { logger } from "@/lib/logger";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 // ---------------------------------------------------------------------------
 // InMemoryModerationStore
@@ -104,38 +105,46 @@ export class SupabaseModerationStore implements ModerationStore {
 
   async logAudit(record: ModerationAuditRecord): Promise<void> {
     try {
-      const response = await fetch(`${this.supabaseUrl}/rest/v1/content_safety_audit`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: this.supabaseKey,
-          Authorization: `Bearer ${this.supabaseKey}`,
-          Prefer: "return=minimal",
-        },
-        body: JSON.stringify({
-          input_hash: record.inputHash,
-          direction: record.direction,
-          content_type: record.contentType,
-          content_rating_level: record.contentRatingLevel,
-          user_id: record.userId ?? null,
-          triggered_by: record.triggeredBy,
-          classifier_output: record.classifierOutput ?? null,
-          categories_flagged: record.categoriesFlagged,
-          confidence: record.confidence,
-          severity: record.severity,
-          action_taken: record.actionTaken,
-          reasoning: record.reasoning,
-          severity_adjustment: record.severityAdjustment,
-          context_factors: record.contextFactors,
-          attribute_to_user: record.attributeToUser,
-          classifier_cost_usd: record.classifierCostUsd,
-          trajectory_id: record.trajectoryId,
-          agent_id: record.agentId,
-          pipeline_latency_ms: record.pipelineLatencyMs,
-          request_id: record.requestId,
-          created_at: record.timestamp,
-        }),
-      });
+      const response = await fetchWithTimeout(
+        `${this.supabaseUrl}/rest/v1/content_safety_audit`,
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: this.supabaseKey,
+            Authorization: `Bearer ${this.supabaseKey}`,
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({
+            input_hash: record.inputHash,
+            direction: record.direction,
+            content_type: record.contentType,
+            content_rating_level: record.contentRatingLevel,
+            user_id: record.userId ?? null,
+            triggered_by: record.triggeredBy,
+            classifier_output: record.classifierOutput ?? null,
+            categories_flagged: record.categoriesFlagged,
+            confidence: record.confidence,
+            severity: record.severity,
+            action_taken: record.actionTaken,
+            reasoning: record.reasoning,
+            severity_adjustment: record.severityAdjustment,
+            context_factors: record.contextFactors,
+            attribute_to_user: record.attributeToUser,
+            classifier_cost_usd: record.classifierCostUsd,
+            trajectory_id: record.trajectoryId,
+            agent_id: record.agentId,
+            pipeline_latency_ms: record.pipelineLatencyMs,
+            request_id: record.requestId,
+            created_at: record.timestamp,
+          }),
+        }
+      );
 
       if (!response.ok) {
         logger.error("Moderation store: failed to persist audit record", {
@@ -173,9 +182,14 @@ export class SupabaseModerationStore implements ModerationStore {
       if (options?.before) params.append("created_at", `lt.${options.before}`);
       if (options?.limit && options.limit > 0) params.set("limit", String(options.limit));
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/content_safety_audit?${params.toString()}`,
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "GET",
           headers: {
             apikey: this.supabaseKey,
@@ -198,9 +212,14 @@ export class SupabaseModerationStore implements ModerationStore {
       params.set("input_hash", `eq.${inputHash}`);
       params.set("order", "created_at.desc");
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/content_safety_audit?${params.toString()}`,
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "GET",
           headers: {
             apikey: this.supabaseKey,

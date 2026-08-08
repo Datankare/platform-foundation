@@ -35,6 +35,7 @@ import type {
 } from "@/platform/auth/types";
 import { logger } from "@/lib/logger";
 import { generateSecureId } from "@/platform/agents/utils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -93,7 +94,12 @@ async function callCognito(
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "POST",
       headers: {
         "Content-Type": "application/x-amz-json-1.1",
@@ -545,7 +551,12 @@ export class CognitoAuthProvider implements AuthProvider {
     const domain = `${this.config.userPoolId.split("_")[1]?.toLowerCase()}.auth.${this.config.region}.amazoncognito.com`;
 
     try {
-      const response = await fetch(`https://${domain}/oauth2/token`, {
+      const response = await fetchWithTimeout(`https://${domain}/oauth2/token`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({

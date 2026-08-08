@@ -23,6 +23,7 @@ import type {
   ReviewItemSource,
   ReviewPriority,
 } from "./review-types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 // ---------------------------------------------------------------------------
 // Priority ordering (for queue sort)
@@ -346,11 +347,19 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
     item: Omit<ReviewQueueItem, "id" | "createdAt" | "updatedAt">
   ): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
     try {
-      const response = await fetch(`${this.supabaseUrl}/rest/v1/review_queue`, {
-        method: "POST",
-        headers: { ...this.headers, Prefer: "return=representation" },
-        body: JSON.stringify(itemToRow(item)),
-      });
+      const response = await fetchWithTimeout(
+        `${this.supabaseUrl}/rest/v1/review_queue`,
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          method: "POST",
+          headers: { ...this.headers, Prefer: "return=representation" },
+          body: JSON.stringify(itemToRow(item)),
+        }
+      );
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "Unknown");
@@ -379,9 +388,16 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
 
   async getById(id: string): Promise<ReviewQueueItem | undefined> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${id}`,
-        { headers: this.headers }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: this.headers,
+        }
       );
       if (!response.ok) return undefined;
       const rows = await response.json();
@@ -402,9 +418,16 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
       params.set("status", "neq.resolved");
       params.set("limit", "1");
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue?${params.toString()}`,
-        { headers: this.headers }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: this.headers,
+        }
       );
       if (!response.ok) return undefined;
       const rows = await response.json();
@@ -447,9 +470,14 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
       if (fields.modifiedAction !== undefined)
         dbFields.modified_action = fields.modifiedAction;
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${id}`,
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "PATCH",
           headers: { ...this.headers, Prefer: "return=representation" },
           body: JSON.stringify(dbFields),
@@ -487,9 +515,16 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
       if (options?.before) params.append("created_at", `lt.${options.before}`);
       if (options?.limit && options.limit > 0) params.set("limit", String(options.limit));
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue?${params.toString()}`,
-        { headers: this.headers }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: this.headers,
+        }
       );
 
       if (!response.ok) return [];
@@ -504,9 +539,16 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
 
   async getStats(): Promise<ReviewQueueStats> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue?order=created_at.desc&limit=10000`,
-        { headers: this.headers }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: this.headers,
+        }
       );
       if (!response.ok) {
         return buildStats([]);
@@ -524,9 +566,14 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
   async releaseExpiredClaims(timeoutMs: number): Promise<number> {
     try {
       const cutoff = new Date(Date.now() - timeoutMs).toISOString();
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue?status=eq.claimed&claimed_at=lt.${cutoff}`,
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "PATCH",
           headers: { ...this.headers, Prefer: "return=representation" },
           body: JSON.stringify({

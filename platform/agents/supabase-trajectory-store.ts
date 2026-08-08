@@ -30,6 +30,7 @@ import type {
   TrajectoryCost,
 } from "./trajectory-store";
 import { generateUuid } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const TABLE = "agent_trajectories";
 const MAX_CAS_RETRIES = 10;
@@ -115,7 +116,12 @@ export class SupabaseTrajectoryStore implements TrajectoryStore {
   }
 
   private async readRows(query: string): Promise<TrajectoryRow[]> {
-    const res = await fetch(this.endpoint(query), {
+    const res = await fetchWithTimeout(this.endpoint(query), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "GET",
       headers: headers(this.key),
     });
@@ -151,7 +157,12 @@ export class SupabaseTrajectoryStore implements TrajectoryStore {
       created_at: now,
       updated_at: now,
     };
-    const res = await fetch(this.endpoint(), {
+    const res = await fetchWithTimeout(this.endpoint(), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "POST",
       headers: headers(this.key, "return=representation"),
       body: JSON.stringify(body),
@@ -189,11 +200,16 @@ export class SupabaseTrajectoryStore implements TrajectoryStore {
         updated_at: new Date().toISOString(),
       };
 
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         this.endpoint(
           `?id=eq.${encodeURIComponent(trajectoryId)}&version=eq.${current.version}`
         ),
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "PATCH",
           headers: headers(this.key, "return=representation"),
           body: JSON.stringify(patch),
