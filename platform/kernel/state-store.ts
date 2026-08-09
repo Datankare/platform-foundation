@@ -37,7 +37,7 @@
  * @module platform/kernel
  */
 
-import type { CommitResult, VersionedState } from "./types";
+import type { CommitResult, SessionMeta, VersionedState } from "./types";
 
 /**
  * A pure reducer applied atomically against the latest state (D5). Used for
@@ -86,6 +86,19 @@ export interface ActivityStateStore<TState> {
     reducer: StateReducer<TState>,
     producedBy: string
   ): Promise<VersionedState<TState>>;
+
+  /**
+   * Persist the session's non-state metadata (TASK-071).
+   *
+   * Optional on the interface: a store that cannot carry meta is still a valid state store,
+   * and loadSession reports the absence rather than failing. Separate from commit() because
+   * meta moves on a different cadence — participants change rarely, state every action, and
+   * versioning them together would make a participant change contend with a state commit.
+   */
+  saveMeta?(sessionId: string, meta: SessionMeta): Promise<void>;
+
+  /** Read the session's metadata, or null when absent. */
+  loadMeta?(sessionId: string): Promise<SessionMeta | null>;
 
   /** Hard-purge all state for a session (GDPR / lifecycle, D2 checklist step 8). */
   delete(sessionId: string): Promise<void>;

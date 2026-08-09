@@ -47,6 +47,30 @@ import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk
 
 export type PipelineRejectionReason = "requires-approval" | "budget-exceeded";
 
+/** One applicable spending limit, and whose it is (ADR-029 D8). */
+export interface BudgetCeiling {
+  /** Limit in USD. */
+  readonly limit: number;
+  /** Whose limit — "session ceiling", "agent ceiling". Named in the rejection. */
+  readonly label: string;
+}
+
+/**
+ * The binding ceiling: the lowest of every applicable limit.
+ *
+ * Returns undefined when nothing applies, which means unbounded — deliberately NOT zero.
+ * A missing budget must not read as a budget of nothing.
+ */
+export function mostRestrictiveCeiling(
+  ceilings: readonly BudgetCeiling[]
+): BudgetCeiling | undefined {
+  let lowest: BudgetCeiling | undefined;
+  for (const c of ceilings) {
+    if (!lowest || c.limit < lowest.limit) lowest = c;
+  }
+  return lowest;
+}
+
 /** Raised when the pipeline refuses before any state mutation. */
 export class PipelineRejectedError extends Error {
   constructor(
@@ -95,7 +119,7 @@ export interface PipelineRequest<TState> {
    */
   readonly perform?: () => Promise<Record<string, unknown>>;
 
-  /** Session or agent ceiling in USD; absent = unbounded. */
+  /** Session or agent ceiling in USD; absent = unbounded. Shorthand for a single ceiling. */
   readonly budgetCeiling?: number;
   /**
    * Names whose ceiling this is, for the rejection message — "session ceiling",
@@ -103,6 +127,19 @@ export interface PipelineRequest<TState> {
    * does, and a caller needs to know which one rejected it.
    */
   readonly ceilingLabel?: string;
+  /**
+   * Every applicable ceiling (ADR-029 D8). The effective ceiling is the MINIMUM, and the
+   * rejection names whichever one bound the call.
+   *
+   * An agent step inside a session is bound by both the agent's BudgetConfig and the
+   * session's ceiling. Taking the maximum would let the more generous budget defeat the
+   * stricter one — which is why this is a minimum while effectiveRisk is a maximum. The
+   * conservative direction differs by quantity: for risk, higher is safer; for spend,
+   * lower is.
+   *
+   * Folded together with budgetCeiling/ceilingLabel, so a caller may supply either form.
+   */
+  readonly ceilings?: readonly BudgetCeiling[];
   readonly emit?: (event: SessionEvent) => void;
   readonly stepInput?: Record<string, unknown>;
   readonly stepOutput?: Record<string, unknown>;
@@ -152,10 +189,22 @@ export async function executeActionPipeline<TState>(
     );
   }
 
-  // 2. Budget ceiling — most-restrictive-wins (ADR-028 D10).
-  if (req.budgetCeiling !== undefined && req.cost > req.budgetCeiling) {
+  // 2. Budget — most-restrictive-wins across every applicable ceiling (ADR-029 D8).
+  // The minimum, not the maximum: a session ceiling of 0.01 must bind a tool whose agent
+  // ceiling is 1.00, or the more generous budget defeats the stricter one.
+  const applicable: BudgetCeiling[] = [...(req.ceilings ?? [])];
+  if (req.budgetCeiling !== undefined) {
+    applicable.push({
+      limit: req.budgetCeiling,
+      label: req.ceilingLabel ?? "ceiling",
+    });
+  }
+  const binding = mostRestrictiveCeiling(applicable);
+  if (binding && req.cost > binding.limit) {
+    // Naming the binding ceiling matters: a caller told only "over budget" cannot tell
+    // whether to raise the agent's allowance or the session's.
     throw new PipelineRejectedError(
-      `cost ${req.cost} exceeds ${req.ceilingLabel ?? "ceiling"} ${req.budgetCeiling}`,
+      `cost ${req.cost} exceeds ${binding.label} ${binding.limit}`,
       "budget-exceeded"
     );
   }
@@ -433,6 +482,373 @@ export async function rejectProposal(
   });
   await req.trajectoryStore.updateStatus(decided.trajectoryId, "failed");
   return decided;
+}
+
+// ── Compensation (ADR-029 D6) ─────────────────────────────────────────
+
+/**
+ * What to run to cancel one recorded step.
+ *
+ * The caller builds this from the step, because only the caller knows how to undo its own
+ * domain action. The pipeline owns the identity, ordering and recording; it does not know
+ * what a refund is.
+ */
+export interface CompensationPlan {
+  readonly spec: ActionSpec;
+  readonly label: string;
+  readonly perform: () => Promise<Record<string, unknown>>;
+}
+
+export interface CompensateRequest {
+  readonly trajectoryId: string;
+  readonly trajectoryStore: TrajectoryStore;
+  readonly actor: AgentIdentity;
+  readonly sessionId: string;
+  /**
+   * Given a recorded step, return how to cancel it — or null for steps that need no
+   * compensation (cognition steps, reads, anything already compensated).
+   */
+  readonly plan: (step: Step) => CompensationPlan | null;
+  readonly emit?: (event: SessionEvent) => void;
+}
+
+export interface CompensationOutcome {
+  readonly compensated: number;
+  readonly skipped: number;
+  readonly failures: readonly { operationId: string; error: string }[];
+}
+
+/**
+ * Compensate a trajectory: append actions that cancel what was committed.
+ *
+ * Nothing is undone and nothing is deleted. Each compensating action gets its own
+ * operationId and a `compensates` link to the step it cancels, and both remain in the
+ * history — so the trajectory answers "what happened" and "what was done about it"
+ * separately, which a rewritten history cannot.
+ *
+ * Steps are compensated in REVERSE order. If step 2 depended on step 1, undoing 1 first
+ * would leave 2's compensation acting against a state that no longer holds.
+ *
+ * A compensation that itself fails is recorded and the walk CONTINUES: stopping would
+ * leave the remaining steps both uncompensated and unrecorded, which is strictly worse
+ * than a partial unwind with a complete account of it.
+ */
+export async function compensateTrajectory(
+  req: CompensateRequest
+): Promise<CompensationOutcome> {
+  const record = await req.trajectoryStore.getById(req.trajectoryId);
+  if (!record) {
+    throw new Error(`Trajectory not found: ${req.trajectoryId}`);
+  }
+
+  const steps = [...record.trajectory.steps].reverse();
+  const alreadyCompensated = new Set(
+    record.trajectory.steps
+      .map((s) => s.compensates)
+      .filter((id): id is string => typeof id === "string")
+  );
+
+  let compensated = 0;
+  let skipped = 0;
+  const failures: { operationId: string; error: string }[] = [];
+  let nextIndex = record.trajectory.steps.length;
+
+  for (const step of steps) {
+    // Never compensate a compensation, and never compensate twice.
+    if (
+      step.compensates ||
+      (step.operationId && alreadyCompensated.has(step.operationId))
+    ) {
+      skipped += 1;
+      continue;
+    }
+
+    const plan = req.plan(step);
+    if (!plan) {
+      skipped += 1;
+      continue;
+    }
+
+    if (plan.spec.compensable === false) {
+      // Registration should have caught this. If it reaches here the declaration was added
+      // after the fact, and refusing loudly beats pretending the unwind was complete.
+      failures.push({
+        operationId: step.operationId ?? "(none)",
+        error: `${plan.label} is declared non-compensable`,
+      });
+      continue;
+    }
+
+    const operationId = `op_${generateSecureId()}`;
+    const context = assembleActionContext({
+      spec: plan.spec,
+      actor: req.actor,
+      sessionId: req.sessionId,
+      operationId,
+      boundary: "commitment",
+    });
+
+    let output: Record<string, unknown> = {};
+    let error: string | undefined;
+    try {
+      output = await plan.perform();
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Unknown error";
+      failures.push({ operationId: step.operationId ?? "(none)", error });
+    }
+
+    await req.trajectoryStore.addStep(req.trajectoryId, {
+      stepIndex: nextIndex,
+      action: plan.label,
+      input: { operationId, actorId: req.actor.actorId, compensating: step.action },
+      output: error ? { error, compensated: false } : { ...output, compensated: true },
+      cost: 0,
+      durationMs: 0,
+      timestamp: new Date().toISOString(),
+      boundary: "commitment",
+      operationId,
+      actor: context.actor,
+      effects: context.effects,
+      effectiveRisk: context.effectiveRisk,
+      compensates: step.operationId,
+    });
+    nextIndex += 1;
+
+    req.emit?.({
+      type: "state-change",
+      sessionId: req.sessionId,
+      operationId,
+      trajectoryId: req.trajectoryId,
+      stepIndex: nextIndex - 1,
+      actor: context.actor,
+      boundary: "commitment",
+      effects: context.effects,
+      effectiveRisk: context.effectiveRisk,
+      intent: "compensate",
+      at: new Date().toISOString(),
+    });
+
+    if (!error) compensated += 1;
+  }
+
+  return { compensated, skipped, failures };
+}
+
+// ── ADR-031 D3/D4/D5 — revision, dedup, stale-approval reconciliation ──
+
+/**
+ * Propose, deduplicated on operationId (ADR-031 D4, intent -> proposed edge).
+ *
+ * A retry of the same logical action returns the EXISTING live proposal rather than minting
+ * a second. Two live proposals for one operation would mean two things an approver could
+ * approve for a single action, which D3 calls a protocol violation rather than a variant.
+ */
+export async function proposeOnce(req: ProposeRequest): Promise<ProposalRecord> {
+  if (req.operationId) {
+    const live = await req.proposalStore.query({
+      operationId: req.operationId,
+      status: "proposed",
+    });
+    if (live.length > 0) return live[0];
+  }
+  return proposeAction(req);
+}
+
+export interface ReviseRequest extends ProposeRequest {
+  /** The operation being revised. Required — a revision has something to revise. */
+  readonly operationId: string;
+  readonly revisedBy: string;
+  readonly reason?: string;
+}
+
+/**
+ * Revise a held proposal (ADR-031 D3).
+ *
+ * Supersedes the live proposal and mints a NEW proposalId under the SAME operationId. The
+ * audit trail then shows one logical action with a revision, rather than two unrelated
+ * attempts — which is the difference between "we changed our minds about this" and "someone
+ * tried twice".
+ *
+ * `superseded` was a declared status with nothing able to reach it before this.
+ */
+export async function reviseProposal(req: ReviseRequest): Promise<ProposalRecord> {
+  const live = await req.proposalStore.query({
+    operationId: req.operationId,
+    status: "proposed",
+  });
+  for (const prior of live) {
+    await req.proposalStore.decide(
+      prior.proposalId,
+      "superseded",
+      req.revisedBy,
+      req.reason ?? "revised"
+    );
+  }
+  return proposeAction(req);
+}
+
+/** Why an approval did not commit. */
+export type ApprovalOutcomeKind = "approved" | "stale" | "already-decided";
+
+export interface ApprovalOutcome {
+  readonly kind: ApprovalOutcomeKind;
+  readonly proposal?: ProposalRecord;
+  /** On `stale`: the version now, versus what the approver saw. */
+  readonly observedVersion?: number;
+  readonly currentVersion?: number;
+}
+
+export interface ReconciledApprovalRequest extends DecideRequest {
+  /** Reads the current version for the stale check. Omit to skip reconciliation. */
+  readonly stateStore?: ActivityStateStore<unknown>;
+  /**
+   * The spec of the action being approved. A commutative action applies against latest by
+   * construction, so an advanced version does not invalidate its approval (ADR-031 D5).
+   */
+  readonly spec?: ActionSpec;
+}
+
+/**
+ * Approve a proposal, reconciling against state that may have moved (ADR-031 D5).
+ *
+ *   version unchanged            -> approve
+ *   advanced, commutative        -> approve; reduceCommit applies against latest
+ *   advanced, non-commutative    -> SUPERSEDE, and the operation returns to `proposed`
+ *
+ * Stale approvals are never silently re-applied against newer state. An approver approved a
+ * specific transition from a specific state; applying it to a different state is a different
+ * action wearing the same approval.
+ *
+ * Without a stateStore this degrades to plain approveProposal — deliberately explicit, so a
+ * caller that cannot reconcile has said so rather than silently skipping the check.
+ */
+export async function approveWithReconciliation(
+  req: ReconciledApprovalRequest
+): Promise<ApprovalOutcome> {
+  const proposal = await req.proposalStore.getById(req.proposalId);
+  if (!proposal || proposal.status !== "proposed") {
+    return { kind: "already-decided", proposal: proposal ?? undefined };
+  }
+
+  if (req.stateStore && proposal.observedVersion !== undefined) {
+    const current = await req.stateStore.load(proposal.sessionId);
+    const currentVersion = current?.version;
+
+    if (currentVersion !== undefined && currentVersion !== proposal.observedVersion) {
+      // Commutative actions are exempt: reduceCommit applies against latest by
+      // construction, so a moved version does not change what the approval means.
+      if (!req.spec?.commutative) {
+        await req.proposalStore.decide(
+          req.proposalId,
+          "superseded",
+          req.decidedBy,
+          `state advanced ${proposal.observedVersion} -> ${currentVersion}; approval is stale`
+        );
+        await req.trajectoryStore.updateStatus(proposal.trajectoryId, "paused");
+        return {
+          kind: "stale",
+          proposal,
+          observedVersion: proposal.observedVersion,
+          currentVersion,
+        };
+      }
+    }
+  }
+
+  const approved = await approveProposal(req);
+  return approved
+    ? { kind: "approved", proposal: approved }
+    : { kind: "already-decided", proposal };
+}
+
+// ── ADR-031 D6 — crash-window repair ──────────────────────────────────
+
+export interface RepairRequest<TState> {
+  readonly sessionId: string;
+  readonly trajectoryId: string;
+  readonly actor: AgentIdentity;
+  readonly stateStore: ActivityStateStore<TState>;
+  readonly trajectoryStore: TrajectoryStore;
+  readonly emit?: (event: SessionEvent) => void;
+}
+
+export interface RepairOutcome {
+  readonly repaired: boolean;
+  readonly operationId?: string;
+  readonly reason: string;
+}
+
+/**
+ * Complete an operation interrupted between commit and trajectory append (ADR-031 D6).
+ *
+ * The protocol is commit-first, record-after: the reverse would allow a recorded action that
+ * never happened, which is strictly worse than an unrecorded action that did. That leaves
+ * one window where durable state can exist without an audit record, and this closes it.
+ *
+ * Forward-only, and driven by the state store, which is the authority:
+ *   1. read producedBy from the committed state — the repair anchor
+ *   2. if no trajectory step carries that operationId, the operation was interrupted
+ *   3. append the missing tail from the committed state
+ *
+ * It NEVER re-applies the state transition and NEVER re-fires the external effect. An
+ * interrupted operation is completed, not rolled back: rollback would undo a committed
+ * transition other actors may already have observed.
+ *
+ * The ADR says this runs "on session load". There is no session load path in the framework
+ * today — createSession creates, and nothing loads — so this is an explicit entry point
+ * rather than an invented lifecycle hook. TASK-071 records that a load path should call it.
+ */
+export async function repairSession<TState>(
+  req: RepairRequest<TState>
+): Promise<RepairOutcome> {
+  const state = await req.stateStore.load(req.sessionId);
+  if (!state) {
+    return { repaired: false, reason: "no state for session" };
+  }
+  const operationId = state.producedBy;
+  if (!operationId) {
+    // Pre-D2 state, or a session that has never committed. Nothing to reconcile against.
+    return { repaired: false, reason: "committed state carries no producedBy" };
+  }
+
+  const record = await req.trajectoryStore.getById(req.trajectoryId);
+  if (!record) {
+    return { repaired: false, operationId, reason: "trajectory not found" };
+  }
+
+  const recorded = record.trajectory.steps.some((s) => s.operationId === operationId);
+  if (recorded) {
+    return { repaired: false, operationId, reason: "already recorded" };
+  }
+
+  // The tail: the trajectory step and the event that the interrupted operation never wrote.
+  const timestamp = new Date().toISOString();
+  await req.trajectoryStore.addStep(req.trajectoryId, {
+    stepIndex: record.trajectory.steps.length,
+    action: "repaired-commit",
+    input: { operationId, actorId: req.actor.actorId },
+    output: { version: state.version, repaired: true },
+    cost: 0,
+    durationMs: 0,
+    timestamp,
+    boundary: "commitment",
+    operationId,
+    actor: req.actor,
+  });
+
+  req.emit?.({
+    type: "state-change",
+    sessionId: req.sessionId,
+    operationId,
+    trajectoryId: req.trajectoryId,
+    stepIndex: record.trajectory.steps.length,
+    actor: req.actor,
+    boundary: "commitment",
+    intent: "repair",
+    at: timestamp,
+  });
+
+  return { repaired: true, operationId, reason: "missing tail appended" };
 }
 
 export * from "./risk";

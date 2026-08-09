@@ -31,6 +31,21 @@ export function registerAgent(config: AgentConfig): void {
   if (agents.has(config.id)) {
     throw new Error(`Agent already registered: ${config.id}`);
   }
+
+  // ADR-029 D6: a workflow containing a non-compensable step is refused HERE, not
+  // discovered mid-rollback. The compensation model requires every irreversible step to be
+  // declared as such, and the ADR is explicit that this will be got wrong at least once —
+  // which is an argument for failing at registration, where it is cheap, rather than
+  // part-way through an unwind, where it is not.
+  const irreversible = config.tools.filter((t) => t.compensable === false);
+  if (irreversible.length > 0) {
+    throw new Error(
+      `Agent ${config.id} declares non-compensable tool(s): ` +
+        `${irreversible.map((t) => t.id).join(", ")}. ` +
+        "A workflow containing an uncompensable step cannot be rolled back (ADR-029 D6)."
+    );
+  }
+
   agents.set(config.id, config);
 }
 

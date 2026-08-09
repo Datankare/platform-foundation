@@ -25,6 +25,7 @@ import type {
   RiskLevel,
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const TABLE = "proposals";
 
@@ -117,7 +118,12 @@ export class SupabaseProposalStore implements ProposalStore {
       created_at: now,
       updated_at: now,
     };
-    const res = await fetch(this.endpoint(), {
+    const res = await fetchWithTimeout(this.endpoint(), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "POST",
       headers: headers(this.key, "return=representation"),
       body: JSON.stringify(body),
@@ -133,10 +139,18 @@ export class SupabaseProposalStore implements ProposalStore {
   }
 
   async getById(proposalId: string): Promise<ProposalRecord | undefined> {
-    const res = await fetch(this.endpoint(`?id=eq.${encodeURIComponent(proposalId)}`), {
-      method: "GET",
-      headers: headers(this.key),
-    });
+    const res = await fetchWithTimeout(
+      this.endpoint(`?id=eq.${encodeURIComponent(proposalId)}`),
+      {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
+        method: "GET",
+        headers: headers(this.key),
+      }
+    );
     if (!res.ok) {
       throw new Error(
         `agents: proposal read failed (${res.status}): ${await res.text()}`
@@ -153,9 +167,14 @@ export class SupabaseProposalStore implements ProposalStore {
     note?: string
   ): Promise<ProposalRecord | undefined> {
     // status=eq.proposed is the guard: a second decision matches no row.
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       this.endpoint(`?id=eq.${encodeURIComponent(proposalId)}&status=eq.proposed`),
       {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "PATCH",
         headers: headers(this.key, "return=representation"),
         body: JSON.stringify({
@@ -186,7 +205,12 @@ export class SupabaseProposalStore implements ProposalStore {
     params.push("order=created_at.desc");
     if (options.limit && options.limit > 0) params.push(`limit=${options.limit}`);
 
-    const res = await fetch(this.endpoint(`?${params.join("&")}`), {
+    const res = await fetchWithTimeout(this.endpoint(`?${params.join("&")}`), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "GET",
       headers: headers(this.key),
     });
