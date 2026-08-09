@@ -14,7 +14,7 @@
 - **TASK-019:** rename `platform/game-engine/` → `platform/app-framework/` (ADR-001 platform-agnostic naming; placeholder dir, no code yet).
 - GenAI **P1–P18 mapping table** (L12) for the phase.
 - **N7/N8 ROADMAP edits:** Phase 5 → In Progress, start date, changelog 8.0.0 (applied this session).
-- **k6 re-baseline (dry baseline captured; live deferred → TASK-046, Sprint 7):** dry run vs prod (`playform-inky.vercel.app`, 10 VUs, 1221 reqs) — 0% errors; process p95 76.9ms, stream p95 71.4ms, health p95 149ms; only health p99 tripped on a single ~2s Vercel cold start (benign). A live `DRY_RUN=0` run can't reach moderation/agent paths today — Sprint 3d auth-guards 401 every k6 request (the script sends no auth header), so its "~$5 live" note is stale. Live re-baseline needs an auth-enabled k6 script → **TASK-046** (Sprint 7, phase-exit expectation).
+- **k6 re-baseline (dry baseline captured; live deferred → TASK-046, Sprint 7):** dry run vs prod (`playform-inky.vercel.app`, 10 VUs, 1221 reqs) — 0% errors; process p95 76.9ms, stream p95 71.4ms, health p95 149ms; only health p99 tripped on a single ~~2s Vercel cold start (benign). A live `DRY_RUN=0` run can't reach moderation/agent paths today — Sprint 3d auth-guards 401 every k6 request (the script sends no auth header), so its "~~$5 live" note is stale. Live re-baseline needs an auth-enabled k6 script → **TASK-046** (Sprint 7, phase-exit expectation).
 - **ACRCloud Edge-Runtime warning fix** in PF — isolate the Node-only `createHmac` import from the Edge bundle (handoff carry-in §1).
 - **Doc cleanups (PF):** GENAI_ROADMAP changelog reorder + literal `\u2705`/`\u2014` escape glitch in some Phase 2 rows.
 - **TASK-045 scheduled:** Playform GENAI_ROADMAP overlay rebase + D3/D4 dual-repo guard.
