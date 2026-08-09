@@ -348,6 +348,27 @@ ADR-021 through ADR-026. Supabase migrations through 021 (social 015–016, pgve
 ## Phase 5 — Application Framework 🔄
 
 **Objective:** Extensible application framework — consumers implement their specific app type on top.
+**Start date:** 2026-06-21 — **In progress**
+
+### Sprints
+
+| Sprint | Scope                                                                                    | Status      |
+| ------ | ---------------------------------------------------------------------------------------- | ----------- |
+| 0      | Entry housekeeping — security advisories, CI audit split, Playform sync backlog          | ✅ Complete |
+| 1      | ADR-028 application framework — state stores, session coordinator, action pipeline, CAS  | ✅ Complete |
+| 2      | ADR-029 + ADR-031 agentic workflow — tool contract, durable stores, gating, compensation | ✅ Complete |
+
+**Sprint 2 delivered.** ADR-029 D1–D10 and ADR-031 D1–D9 implemented. Tool invocation
+routes through the same governed pipeline as session actions (D2); schemas enforced at
+both edges with retry, never coercion (D3); trajectories and budgets made durable;
+gated actions held rather than refused, with approval reconciled against the state the
+approver saw (ADR-031 D5); rollback appends compensating actions rather than rewriting
+history (D6); failure is three-valued, and an unresolved external effect propagates as
+`indeterminate` rather than being guessed at (D10). Migrations 022–029.
+
+**Carried, explicitly:** TASK-068 (automatic unwind — deferred on stated criteria),
+TASK-072 (turn advancement belongs in the coordinator), TASK-069/070 (override
+hygiene). See TASKS.md.
 
 ### Application Framework
 
@@ -562,4 +583,6 @@ All changes to this roadmap are logged here. Each entry includes date, author, a
 
 | 8.0.0 | 2026-06-21 | Raman Sud | Phase 5 (Application Framework + AUX) started. Entry gate N1-N8 passed: prior exit gate complete (N1), deliverables confirmed (N2), deferred items reviewed and TASK-045 filed (N3), cross-phase fabric confirmed (N4), prerequisites verified (N5). 8-sprint plan (Sprint 0 housekeeping through Sprint 7 Playform adoption) plus exit gate; PHASE5_PLAN.md committed (N6). ADR-028 (app-framework), ADR-029 (agent workflow framework), ADR-030 (AUX) planned. AUX confirmed Phase 5 scope. |
 
-_Last updated: 2026-06-21 (Phase 5 started; entry gate N1-N8 complete; changelog 8.0.0)_
+| 8.1.0 | 2026-08-04 | Raman Sud | Phase 5 Sprint 2 (agentic workflow framework) complete. ADR-029 D1–D10 and ADR-031 D1–D9 delivered: executable tool contract, action-pipeline extraction shared by the session and tool adapters, ajv schema enforcement, durable trajectory/budget/proposal/effect-ledger stores (registry slots 15–18), resume, held proposals with stale-approval reconciliation, compensation, most-restrictive-wins budgets, and three-valued failure. platform/kernel and platform/action-pipeline added as layers. Migrations 022–029. Coverage thresholds raised to functions 84 / branches 75. All 186 suites, 2407 tests green. Three security advisories closed (brace-expansion, fast-uri, nanoid). A11 finding closed: 55 bare fetch call sites routed through fetchWithTimeout. |
+
+_Last updated: 2026-08-04 (Phase 5 Sprint 2 complete; changelog 8.1.0)_

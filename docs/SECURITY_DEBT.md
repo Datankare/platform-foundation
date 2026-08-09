@@ -63,17 +63,21 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 _Items below have been resolved and are retained for audit trail only._
 
-| ID       | Description                                     | Resolved In                                                                                                     | Date       |
-| -------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------- |
-| DS-001   | next/image disk cache vulnerability             | Phase 0 (Next.js 16 upgrade)                                                                                    | 2026-03-18 |
-| SEC-002  | No rate limiting on API routes                  | Phase 1, Sprint 6                                                                                               | 2026-03-31 |
-| SEC-003  | No retry logic for external API calls           | Phase 1, Sprint 7a (fetchWithTimeout retry)                                                                     | 2026-04-01 |
-| SEC-004  | No E2E tests — Playwright not integrated        | Phase 0.75                                                                                                      | 2026-03-22 |
-| SEC-005  | SpeechRecognition hardcoded to en-US            | Phase 1                                                                                                         | 2026-04-02 |
-| SEC-006  | Placeholder READMEs lack interface contracts    | Phase 1 (auth) + Phase 2 start (moderation, prompts)                                                            | 2026-04-03 |
-| TASK-026 | Rotate ACRCloud access secret                   | Sprint 3c — paid project `playform-prod-songid`, trial 99216 deprovisioned. See ROTATION_RUNBOOK.md             | 2026-04-25 |
-| TASK-027 | Narrow IAM permissions (scoped from FullAccess) | Phase 4 entry (confirmed via CLI)                                                                               | 2026-04-17 |
-| TASK-049 | Playform Dependabot vulnerabilities (4 alerts)  | Phase 5, Sprint 0 — npm audit fix (@babel/core, @opentelemetry/core via @sentry/nextjs, js-yaml); 0 alerts open | 2026-07-12 |
+| ID       | Description                                                                                  | Resolved In                                                                                                     | Date       |
+| -------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------- |
+| DS-001   | next/image disk cache vulnerability                                                          | Phase 0 (Next.js 16 upgrade)                                                                                    | 2026-03-18 |
+| SEC-002  | No rate limiting on API routes                                                               | Phase 1, Sprint 6                                                                                               | 2026-03-31 |
+| SEC-003  | No retry logic for external API calls                                                        | Phase 1, Sprint 7a (fetchWithTimeout retry)                                                                     | 2026-04-01 |
+| SEC-004  | No E2E tests — Playwright not integrated                                                     | Phase 0.75                                                                                                      | 2026-03-22 |
+| SEC-005  | SpeechRecognition hardcoded to en-US                                                         | Phase 1                                                                                                         | 2026-04-02 |
+| SEC-006  | Placeholder READMEs lack interface contracts                                                 | Phase 1 (auth) + Phase 2 start (moderation, prompts)                                                            | 2026-04-03 |
+| TASK-026 | Rotate ACRCloud access secret                                                                | Sprint 3c — paid project `playform-prod-songid`, trial 99216 deprovisioned. See ROTATION_RUNBOOK.md             | 2026-04-25 |
+| TASK-027 | Narrow IAM permissions (scoped from FullAccess)                                              | Phase 4 entry (confirmed via CLI)                                                                               | 2026-04-17 |
+| SEC-008  | brace-expansion DoS (GHSA-rgw5-rvv9-x895) — override pinned the tree to the vulnerable 5.0.8 | Phase 5, Sprint 2 — override corrected to 5.0.9; TASK-069/070 filed for override hygiene                        | 2026-08-03 |
+| SEC-009  | fast-uri host confusion (GHSA-7p8r-x3mc-p8w7)                                                | Phase 5, Sprint 2 — npm update to 3.1.5, in-range, no override needed                                           | 2026-08-04 |
+| SEC-010  | nanoid infinite loop (GHSA-2v37-7h3g-55p8)                                                   | Phase 5, Sprint 2 — npm update to 3.3.18 via postcss, in-range                                                  | 2026-08-04 |
+| SEC-011  | 55 external calls without timeouts (A11)                                                     | Phase 5, Sprint 2 — all routed through fetchWithTimeout, maxRetries 0 to protect CAS                            | 2026-08-04 |
+| TASK-049 | Playform Dependabot vulnerabilities (4 alerts)                                               | Phase 5, Sprint 0 — npm audit fix (@babel/core, @opentelemetry/core via @sentry/nextjs, js-yaml); 0 alerts open | 2026-07-12 |
 
 ---
 
@@ -90,4 +94,4 @@ The following items were migrated to TASKS.md (Sprint 3c) as they are not securi
 
 ---
 
-_Last updated: July 12, 2026 (TASK-049 resolved — 0 open Dependabot alerts on Playform main; SEC-001 + TASK-044 unchanged)_
+_Last updated: August 4, 2026 (Phase 5 Sprint 2 — SEC-008/009/010 dependency advisories closed, SEC-011 fetch timeouts closed; SEC-001 and TASK-044 unchanged)_
