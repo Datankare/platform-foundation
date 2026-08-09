@@ -162,7 +162,12 @@ export class AnthropicProvider implements AIProvider {
       body.temperature = options?.temperature ?? request.temperature;
     }
 
-    const response = await fetch(`${this.baseUrl}/v1/messages`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/v1/messages`, {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "POST",
       headers: {
         "Content-Type": "application/json",

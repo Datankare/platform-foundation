@@ -22,6 +22,7 @@ import type {
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
 import { idempotencyKeyFor } from "./effect-ledger";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const TABLE = "effect_ledger";
 
@@ -88,12 +89,17 @@ export class SupabaseEffectLedger implements EffectLedger {
   async begin(args: BeginEffectArgs): Promise<EffectLedgerEntry> {
     const existing = await this.get(args.operationId, args.effectKey);
     if (existing) {
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         this.endpoint(
           `?operation_id=eq.${encodeURIComponent(args.operationId)}` +
             `&effect_key=eq.${encodeURIComponent(args.effectKey)}`
         ),
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "PATCH",
           headers: headers(this.key, "return=representation"),
           body: JSON.stringify({ attempts: existing.attempts + 1 }),
@@ -121,7 +127,12 @@ export class SupabaseEffectLedger implements EffectLedger {
       attempts: 1,
       created_at: new Date().toISOString(),
     };
-    const res = await fetch(this.endpoint(), {
+    const res = await fetchWithTimeout(this.endpoint(), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "POST",
       headers: headers(this.key, "return=representation"),
       body: JSON.stringify(body),
@@ -140,12 +151,17 @@ export class SupabaseEffectLedger implements EffectLedger {
     status: Exclude<EffectStatus, "pending">,
     detail?: { receipt?: Record<string, unknown>; error?: string }
   ): Promise<EffectLedgerEntry | undefined> {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       this.endpoint(
         `?operation_id=eq.${encodeURIComponent(operationId)}` +
           `&effect_key=eq.${encodeURIComponent(effectKey)}&status=eq.pending`
       ),
       {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "PATCH",
         headers: headers(this.key, "return=representation"),
         body: JSON.stringify({
@@ -169,12 +185,20 @@ export class SupabaseEffectLedger implements EffectLedger {
     operationId: string,
     effectKey: string
   ): Promise<EffectLedgerEntry | undefined> {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       this.endpoint(
         `?operation_id=eq.${encodeURIComponent(operationId)}` +
           `&effect_key=eq.${encodeURIComponent(effectKey)}`
       ),
-      { method: "GET", headers: headers(this.key) }
+      {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
+        method: "GET",
+        headers: headers(this.key),
+      }
     );
     if (!res.ok) {
       throw new Error(`agents: ledger read failed (${res.status}): ${await res.text()}`);
@@ -186,7 +210,12 @@ export class SupabaseEffectLedger implements EffectLedger {
   async listUnresolved(limit?: number): Promise<readonly EffectLedgerEntry[]> {
     const params = ["status=in.(pending,indeterminate)", "order=created_at.asc"];
     if (limit && limit > 0) params.push(`limit=${limit}`);
-    const res = await fetch(this.endpoint(`?${params.join("&")}`), {
+    const res = await fetchWithTimeout(this.endpoint(`?${params.join("&")}`), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "GET",
       headers: headers(this.key),
     });

@@ -22,6 +22,7 @@
 
 import type { ActivityStateStore, StateReducer } from "./state-store";
 import type { CommitResult, SessionMeta, VersionedState } from "./types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 const TABLE = "app_sessions";
 
@@ -64,7 +65,12 @@ export class SupabaseActivityStateStore<TState> implements ActivityStateStore<TS
   }
 
   private async rows(query: string): Promise<Row[]> {
-    const res = await fetch(this.endpoint(query), {
+    const res = await fetchWithTimeout(this.endpoint(query), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "GET",
       headers: headers(this.key),
     });
@@ -75,7 +81,12 @@ export class SupabaseActivityStateStore<TState> implements ActivityStateStore<TS
   }
 
   async create(sessionId: string, initialState: TState): Promise<VersionedState<TState>> {
-    const res = await fetch(this.endpoint(), {
+    const res = await fetchWithTimeout(this.endpoint(), {
+      timeoutMs: 10_000,
+      // Retry is the caller's: reduceCommit loops on version conflict and the effect
+      // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+      // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+      maxRetries: 0,
       method: "POST",
       headers: headers(this.key, "return=representation"),
       body: JSON.stringify({ id: sessionId, state: initialState, version: 1, meta: {} }),
@@ -111,11 +122,16 @@ export class SupabaseActivityStateStore<TState> implements ActivityStateStore<TS
   ): Promise<CommitResult<TState>> {
     // The CAS: the version filter is part of the query, so a moved version matches no row.
     // Do NOT split this into read-then-update — that reopens the race it closes.
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       this.endpoint(
         `?id=eq.${encodeURIComponent(sessionId)}&version=eq.${expectedVersion}`
       ),
       {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "PATCH",
         headers: headers(this.key, "return=representation"),
         body: JSON.stringify({
@@ -172,11 +188,19 @@ export class SupabaseActivityStateStore<TState> implements ActivityStateStore<TS
     // Deliberately NOT version-guarded: meta moves on a different cadence than state, and
     // making a participant change contend with a state commit would be a conflict nobody
     // asked for.
-    const res = await fetch(this.endpoint(`?id=eq.${encodeURIComponent(sessionId)}`), {
-      method: "PATCH",
-      headers: headers(this.key, "return=representation"),
-      body: JSON.stringify({ meta, updated_at: new Date().toISOString() }),
-    });
+    const res = await fetchWithTimeout(
+      this.endpoint(`?id=eq.${encodeURIComponent(sessionId)}`),
+      {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
+        method: "PATCH",
+        headers: headers(this.key, "return=representation"),
+        body: JSON.stringify({ meta, updated_at: new Date().toISOString() }),
+      }
+    );
     if (!res.ok) {
       throw new Error(
         `app-framework: saveMeta failed for ${sessionId} (${res.status}): ${await res.text()}`
@@ -192,10 +216,18 @@ export class SupabaseActivityStateStore<TState> implements ActivityStateStore<TS
   }
 
   async delete(sessionId: string): Promise<void> {
-    const res = await fetch(this.endpoint(`?id=eq.${encodeURIComponent(sessionId)}`), {
-      method: "DELETE",
-      headers: headers(this.key),
-    });
+    const res = await fetchWithTimeout(
+      this.endpoint(`?id=eq.${encodeURIComponent(sessionId)}`),
+      {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
+        method: "DELETE",
+        headers: headers(this.key),
+      }
+    );
     if (!res.ok) {
       throw new Error(
         `app-framework: delete failed for ${sessionId} (${res.status}): ${await res.text()}`

@@ -12,6 +12,7 @@
 
 import type { RateLimiter, RateLimitResult, RateLimitRule } from "./types";
 import { generateId } from "@/platform/agents/utils";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 interface RedisResponse<T = unknown> {
   result: T;
@@ -57,7 +58,12 @@ export class RedisRateLimiter implements RateLimiter {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const response = await fetch(`${this.url}/pipeline`, {
+      const response = await fetchWithTimeout(`${this.url}/pipeline`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.token}`,
@@ -83,7 +89,12 @@ export class RedisRateLimiter implements RateLimiter {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const response = await fetch(`${this.url}`, {
+      const response = await fetchWithTimeout(`${this.url}`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.token}`,

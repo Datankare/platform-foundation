@@ -14,6 +14,7 @@
 
 import type { HealthProbe, HealthCheckResult, HealthReport, HealthStatus } from "./types";
 import { logger } from "@/lib/logger";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 // ---------------------------------------------------------------------------
 // Health Registry — aggregates probes into a report
@@ -127,7 +128,12 @@ export class SupabaseHealthProbe implements HealthProbe {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-      const response = await fetch(`${this.url}/rest/v1/`, {
+      const response = await fetchWithTimeout(`${this.url}/rest/v1/`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         headers: {
           apikey: this.key,
           Authorization: `Bearer ${this.key}`,
@@ -192,7 +198,12 @@ export class LLMProviderHealthProbe implements HealthProbe {
       // Anthropic: POST /v1/messages with empty body returns 400, not 401.
       // A 400 means the API key is valid and the service is reachable.
       // A 401 means invalid key. A network error means service is down.
-      const response = await fetch(`${this.baseUrl}/v1/messages`, {
+      const response = await fetchWithTimeout(`${this.baseUrl}/v1/messages`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: {
           "x-api-key": this.apiKey,
@@ -260,7 +271,12 @@ export class HttpHealthProbe implements HealthProbe {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-      const response = await fetch(this.url, {
+      const response = await fetchWithTimeout(this.url, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         headers: this.headers,
         signal: controller.signal,
       });

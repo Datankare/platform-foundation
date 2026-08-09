@@ -17,6 +17,7 @@
 
 import type { MetricsSink, MetricEvent, MetricsQueryOptions } from "./types";
 import { logger } from "@/lib/logger";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 // ---------------------------------------------------------------------------
 // In-Memory implementation — tests, dev, fallback
@@ -168,7 +169,12 @@ export class SupabaseMetricsSink implements MetricsSink {
     }));
 
     try {
-      const response = await fetch(`${this.supabaseUrl}/rest/v1/ai_metrics`, {
+      const response = await fetchWithTimeout(`${this.supabaseUrl}/rest/v1/ai_metrics`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -214,9 +220,14 @@ export class SupabaseMetricsSink implements MetricsSink {
     }
 
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/ai_metrics?${params.toString()}`,
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           headers: {
             apikey: this.supabaseKey,
             Authorization: `Bearer ${this.supabaseKey}`,
