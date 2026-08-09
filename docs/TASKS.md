@@ -990,6 +990,39 @@ correct current actor without the caller persisting anything.
 
 ---
 
+### TASK-073 — ADR-030 is reserved for AUX and not yet written
+
+| Field        | Detail                                     |
+| ------------ | ------------------------------------------ |
+| **ID**       | TASK-073                                   |
+| **Type**     | Documentation reservation                  |
+| **Severity** | Low — a known hole, not a missing decision |
+| **Phase**    | Phase 5                                    |
+| **Status**   | Open — reserved                            |
+| **Logged**   | 2026-08-04                                 |
+
+**What:** `docs/adr/` runs 029 → 031. ADR-030 is reserved for AUX (Agent-Usable eXperience),
+named in the ROADMAP changelog entry that opened Phase 5 alongside ADR-028 and ADR-029.
+ADR-031 (action identity and lifecycle) was written ahead of it because Sprint 2 needed the
+protocol, so the number was consumed before the document existed.
+
+The phase exit gate E6 asks for ADRs "committed and numbered sequentially" and will find this
+hole. It is a reservation, not an omission: no decision is undocumented, and AUX is scheduled
+later in Phase 5.
+
+**Not renumbering.** ADR-031 is cited in roughly forty places across code comments, tests,
+commit messages and docs. Moving it would break every one of those references to tidy a
+number, and a broken citation is worse than a gap in a sequence.
+
+**Resolution:** write ADR-030 when AUX is designed, which closes the gap in the natural order.
+If Phase 5 reaches its exit gate with AUX still unbuilt, record the reservation against E6
+rather than treating it as a failure — the gate's intent is that no decision goes
+undocumented, and none has.
+
+**Close when:** ADR-030 exists, or Phase 5 exits with the reservation explicitly recorded.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1035,4 +1068,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (closed TASK-071 with loadSession; filed TASK-072 — turn advancement is not durable until the coordinator owns it)_
+_Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
