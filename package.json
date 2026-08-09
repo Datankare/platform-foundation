@@ -75,8 +75,8 @@
     "coverageThreshold": {
       "global": {
         "lines": 80,
-        "functions": 80,
-        "branches": 70
+        "functions": 84,
+        "branches": 75
       }
     },
     "setupFilesAfterEnv": [

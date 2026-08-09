@@ -11,7 +11,7 @@
  */
 
 import type { ActivityStateStore, StateReducer } from "./state-store";
-import type { CommitResult, VersionedState } from "./types";
+import type { CommitResult, SessionMeta, VersionedState } from "./types";
 
 interface Entry<TState> {
   state: TState;
@@ -21,6 +21,7 @@ interface Entry<TState> {
 
 export class InMemoryActivityStateStore<TState> implements ActivityStateStore<TState> {
   private readonly store = new Map<string, Entry<TState>>();
+  private readonly meta = new Map<string, SessionMeta>();
 
   async create(sessionId: string, initialState: TState): Promise<VersionedState<TState>> {
     if (this.store.has(sessionId)) {
@@ -74,6 +75,18 @@ export class InMemoryActivityStateStore<TState> implements ActivityStateStore<TS
     const version = entry.version + 1;
     this.store.set(sessionId, { state, version, producedBy });
     return { sessionId, state, version, producedBy };
+  }
+
+  async saveMeta(sessionId: string, meta: SessionMeta): Promise<void> {
+    const entry = this.store.get(sessionId);
+    if (!entry) {
+      throw new Error(`app-framework: session not found: ${sessionId}`);
+    }
+    this.meta.set(sessionId, meta);
+  }
+
+  async loadMeta(sessionId: string): Promise<SessionMeta | null> {
+    return this.meta.get(sessionId) ?? null;
   }
 
   async delete(sessionId: string): Promise<void> {

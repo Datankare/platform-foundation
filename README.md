@@ -87,7 +87,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 154 suites, 2,089 tests, 88.54% statement / 75.9% branch coverage
+- ✅ 186 suites, 2,407 tests, 89.18% statement / 76.96% branch / 91.91% function coverage
 - ✅ Conformance kits for all 16 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
@@ -97,7 +97,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 21 migrations (001–021)
+- ✅ 30 migrations (001–029), tracked in `applied_migrations`
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -160,8 +160,8 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 16 abstractions (ADR-027)
-├── supabase/migrations/    ← 21 database migrations
-├── docs/adr/               ← 27 ADRs
+├── supabase/migrations/    ← 30 database migrations
+├── docs/adr/               ← 30 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -230,5 +230,5 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v1.6.0 — Datankare_
-_Phase 4 Complete · 154 suites · 2,089 tests · 88.54% coverage · 27 ADRs · 18 GenAI principles · 16 conformance kits · 12+ agents_
+_Phase 5 Sprint 2 · 186 suites · 2,407 tests · 89.18% coverage · 30 ADRs · 18 GenAI principles · 23 conformance kits · 18 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_

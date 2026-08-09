@@ -25,6 +25,7 @@ import type {
   CreateInviteInput,
 } from "./types";
 import type { AgentIdentity } from "@/platform/agents/types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -104,7 +105,12 @@ export class SupabaseSocialStore implements SocialStore {
     _actor?: AgentIdentity
   ): Promise<GroupResult> {
     try {
-      const response = await fetch(`${this.url}/rest/v1/groups`, {
+      const response = await fetchWithTimeout(`${this.url}/rest/v1/groups`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: headers(this.key, "return=representation"),
         body: JSON.stringify({
@@ -145,9 +151,16 @@ export class SupabaseSocialStore implements SocialStore {
 
   async getGroupById(groupId: string): Promise<Group | undefined> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.url}/rest/v1/groups?id=eq.${groupId}&limit=1`,
-        { headers: headers(this.key) }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: headers(this.key),
+        }
       );
       if (!response.ok) return undefined;
       const rows = await response.json();
@@ -161,9 +174,16 @@ export class SupabaseSocialStore implements SocialStore {
   async listGroupsForUser(userId: string): Promise<readonly Group[]> {
     try {
       // Get active membership group IDs
-      const memResponse = await fetch(
+      const memResponse = await fetchWithTimeout(
         `${this.url}/rest/v1/group_memberships?user_id=eq.${userId}&left_at=is.null&select=group_id`,
-        { headers: headers(this.key) }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: headers(this.key),
+        }
       );
       if (!memResponse.ok) return [];
       const memberships = await memResponse.json();
@@ -173,9 +193,17 @@ export class SupabaseSocialStore implements SocialStore {
         .map((m: Record<string, unknown>) => String(m.group_id))
         .join(",");
 
-      const grpResponse = await fetch(`${this.url}/rest/v1/groups?id=in.(${groupIds})`, {
-        headers: headers(this.key),
-      });
+      const grpResponse = await fetchWithTimeout(
+        `${this.url}/rest/v1/groups?id=in.(${groupIds})`,
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: headers(this.key),
+        }
+      );
       if (!grpResponse.ok) return [];
       const rows = await grpResponse.json();
       return Array.isArray(rows) ? rows.map(mapGroupRow) : [];
@@ -190,11 +218,19 @@ export class SupabaseSocialStore implements SocialStore {
     _actor?: AgentIdentity
   ): Promise<GroupResult> {
     try {
-      const response = await fetch(`${this.url}/rest/v1/groups?id=eq.${groupId}`, {
-        method: "PATCH",
-        headers: headers(this.key, "return=representation"),
-        body: JSON.stringify({ status }),
-      });
+      const response = await fetchWithTimeout(
+        `${this.url}/rest/v1/groups?id=eq.${groupId}`,
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          method: "PATCH",
+          headers: headers(this.key, "return=representation"),
+          body: JSON.stringify({ status }),
+        }
+      );
       if (!response.ok) {
         return {
           success: false,
@@ -220,7 +256,12 @@ export class SupabaseSocialStore implements SocialStore {
     _actor?: AgentIdentity
   ): Promise<MembershipResult> {
     try {
-      const response = await fetch(`${this.url}/rest/v1/group_memberships`, {
+      const response = await fetchWithTimeout(`${this.url}/rest/v1/group_memberships`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: headers(this.key, "return=representation"),
         body: JSON.stringify({
@@ -260,9 +301,14 @@ export class SupabaseSocialStore implements SocialStore {
     _actor?: AgentIdentity
   ): Promise<MembershipResult> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.url}/rest/v1/group_memberships?group_id=eq.${groupId}&user_id=eq.${userId}&left_at=is.null`,
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "PATCH",
           headers: headers(this.key, "return=representation"),
           body: JSON.stringify({
@@ -297,9 +343,16 @@ export class SupabaseSocialStore implements SocialStore {
 
   async getMembers(groupId: string): Promise<readonly Membership[]> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.url}/rest/v1/group_memberships?group_id=eq.${groupId}&left_at=is.null`,
-        { headers: headers(this.key) }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: headers(this.key),
+        }
       );
       if (!response.ok) return [];
       const rows = await response.json();
@@ -311,9 +364,16 @@ export class SupabaseSocialStore implements SocialStore {
 
   async getMembership(groupId: string, userId: string): Promise<Membership | undefined> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.url}/rest/v1/group_memberships?group_id=eq.${groupId}&user_id=eq.${userId}&order=joined_at.desc&limit=1`,
-        { headers: headers(this.key) }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: headers(this.key),
+        }
       );
       if (!response.ok) return undefined;
       const rows = await response.json();
@@ -331,7 +391,12 @@ export class SupabaseSocialStore implements SocialStore {
     _actor?: AgentIdentity
   ): Promise<InviteResult> {
     try {
-      const response = await fetch(`${this.url}/rest/v1/group_invites`, {
+      const response = await fetchWithTimeout(`${this.url}/rest/v1/group_invites`, {
+        timeoutMs: 10_000,
+        // Retry is the caller's: reduceCommit loops on version conflict and the effect
+        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        maxRetries: 0,
         method: "POST",
         headers: headers(this.key, "return=representation"),
         body: JSON.stringify({
@@ -372,9 +437,14 @@ export class SupabaseSocialStore implements SocialStore {
   ): Promise<InviteResult> {
     try {
       // Only resolve pending invites
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.url}/rest/v1/group_invites?id=eq.${inviteId}&status=eq.pending`,
         {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
           method: "PATCH",
           headers: headers(this.key, "return=representation"),
           body: JSON.stringify({
@@ -410,9 +480,16 @@ export class SupabaseSocialStore implements SocialStore {
 
   async listPendingInvites(userId: string): Promise<readonly GroupInvite[]> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.url}/rest/v1/group_invites?invitee_id=eq.${userId}&status=eq.pending&order=created_at.desc`,
-        { headers: headers(this.key) }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: headers(this.key),
+        }
       );
       if (!response.ok) return [];
       const rows = await response.json();
@@ -424,9 +501,16 @@ export class SupabaseSocialStore implements SocialStore {
 
   async getInviteById(inviteId: string): Promise<GroupInvite | undefined> {
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${this.url}/rest/v1/group_invites?id=eq.${inviteId}&limit=1`,
-        { headers: headers(this.key) }
+        {
+          timeoutMs: 10_000,
+          // Retry is the caller's: reduceCommit loops on version conflict and the effect
+          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
+          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+          maxRetries: 0,
+          headers: headers(this.key),
+        }
       );
       if (!response.ok) return undefined;
       const rows = await response.json();

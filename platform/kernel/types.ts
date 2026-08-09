@@ -197,16 +197,18 @@ export interface Step {
   readonly effects?: readonly EffectType[];
   /** max(declaredRisk, max(effect floors)) as computed for this step. */
   readonly effectiveRisk?: RiskLevel;
+  /**
+   * The operationId this step compensates (ADR-029 D6).
+   *
+   * Present only on compensating steps. The original step is never modified or removed —
+   * both remain, so the trajectory says what happened AND what was done about it. A history
+   * rewritten to claim the first thing never happened cannot be audited.
+   */
+  readonly compensates?: string;
 }
 
 // ── Tool (P5) ─────────────────────────────────────────────────────────
 
-/**
- * A typed tool definition that an agent can use.
- *
- * Tools are versioned artifacts registered in the agent runtime.
- * Each tool has explicit input/output schemas for validation.
- */
 /**
  * The handler a tool runs (ADR-029 D1).
  *
@@ -244,6 +246,70 @@ export interface Tool {
   readonly effects: readonly EffectType[];
   /** Advisory and upward-only from the effect floor, exactly as ActionSpec (ADR-029 D1). */
   readonly declaredRisk?: RiskLevel;
+  /**
+   * Whether this tool's effects can be compensated (ADR-029 D6). Absent means true.
+   *
+   * An agent whose tools include a non-compensable one is refused at registration. That is
+   * deliberate and early: discovering irreversibility part-way through a rollback is
+   * discovering it too late.
+   */
+  readonly compensable?: boolean;
+  /**
+   * The handler that undoes this tool's effect, if one exists. Takes the ORIGINAL input and
+   * the recorded output, and performs a new action that cancels the first — a refund for a
+   * charge, a retraction for a notice.
+   *
+   * Its absence is not a claim of irreversibility: a caller may supply a compensating plan
+   * per trajectory instead. `compensable: false` is the claim.
+   */
+  readonly compensate?: (
+    originalInput: Record<string, unknown>,
+    originalOutput: Record<string, unknown>
+  ) => Promise<Record<string, unknown>>;
+  /**
+   * The external effects this tool fires, each routed through the effect ledger
+   * (ADR-031 D7).
+   *
+   * A LIST, not a single call: a tool that charges a card and sends a receipt has two
+   * effects with two idempotency keys, and discovering that after shipping a single-call
+   * field would mean a second contract change.
+   *
+   * Declaring `externalCall` or `sendMessage` in `effects` and leaving this empty is a
+   * contract violation the adapter refuses. `effects` already grants capability
+   * structurally, so leaving the corresponding obligation voluntary would be inconsistent
+   * (P4) — and a ledger nothing writes to cannot prevent a double-fire.
+   */
+  readonly externalEffects?: readonly ToolExternalEffect[];
+}
+
+/**
+ * One external effect a tool fires, declared so the platform can wrap it in a ledger entry
+ * rather than trusting the tool to do so (ADR-031 D7).
+ */
+export interface ToolExternalEffect {
+  /** Distinguishes this effect from others in the same invocation. */
+  readonly key: string;
+  readonly type: "externalCall" | "sendMessage";
+  /**
+   * Performs the downstream call. Receives the tool's input and the idempotency key derived
+   * from the operationId — hand that key to downstreams that accept one; the ledger exists
+   * for those that do not.
+   */
+  readonly call: (
+    input: Record<string, unknown>,
+    idempotencyKey: string
+  ) => Promise<Record<string, unknown>>;
+  /**
+   * Asks the downstream whether a previous attempt landed, for a retry that finds an
+   * unresolved ledger entry. Omit when it cannot be asked — the operation then surfaces as
+   * indeterminate rather than being guessed at.
+   *
+   * This stays with the tool because it is per-downstream: asking Stripe whether a charge
+   * landed is Stripe-specific, and the platform can carry the question but not answer it.
+   */
+  readonly reconcile?: (
+    idempotencyKey: string
+  ) => Promise<Record<string, unknown> | undefined>;
 }
 
 // ── Budget (P12) ──────────────────────────────────────────────────────
@@ -413,6 +479,17 @@ export interface ActionSpec {
   readonly ephemeral?: boolean;
   /** Commutative reducer for hotspot keys — applied against latest, no conflict (D5). */
   readonly commutative?: boolean;
+  /**
+   * Whether this action can be compensated (ADR-029 D6). Absent means true.
+   *
+   * Declaring `false` means the effects cannot be undone by any subsequent action — a
+   * physical dispatch, an irrevocable transfer, a message that cannot be recalled. A
+   * workflow containing one is refused at registration rather than discovered mid-rollback.
+   *
+   * Note the direction: rollback does not reverse a committed transition, it APPENDS a
+   * compensating one. `compensable: false` says no such compensating action exists.
+   */
+  readonly compensable?: boolean;
 }
 
 // ── Activity Definition (ADR-028 D1, D9) ──────────────────────────────
@@ -793,4 +870,28 @@ export interface EffectLedger {
   get(operationId: string, effectKey: string): Promise<EffectLedgerEntry | undefined>;
   /** Everything still pending or indeterminate — the human-resolution queue. */
   listUnresolved(limit?: number): Promise<readonly EffectLedgerEntry[]>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Session metadata (TASK-071)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * The part of a session that is not its state.
+ *
+ * `state` answers what is true; this answers what this session IS. None of it was persisted
+ * before, so an ActivitySession could be created and never reconstructed — and ADR-031 D6's
+ * repair, which the ADR places "on session load", had no load to run in.
+ */
+export interface SessionMeta {
+  readonly definitionId: string;
+  readonly status: SessionStatus;
+  readonly capabilities: readonly Capability[];
+  readonly participants: readonly AgentIdentity[];
+  readonly budget?: BudgetConfig;
+  /**
+   * Persisted so a turn-based session does not lose whose turn it is on restart.
+   * Advancement remains the caller's — see updateSessionMeta and TASK-072.
+   */
+  readonly turn?: TurnState;
 }

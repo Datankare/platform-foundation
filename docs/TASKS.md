@@ -857,6 +857,139 @@ condition.
 
 ---
 
+### TASK-066 — SupabaseActivityStateStore is built on the JS client and cannot be conformance-tested
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-066                                                  |
+| **Type**     | Test-coverage gap / pattern divergence                    |
+| **Severity** | Medium — it shipped dead for a sprint and nothing said so |
+| **Phase**    | Phase 5, Sprint 2                                         |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-07-29                                                |
+
+**What:** Two Supabase transport patterns exist in this codebase. The social, moderation,
+trajectory, budget, proposal and effect-ledger stores use raw `fetch` against `/rest/v1/`,
+and each has a conformance arm that runs the real class against an in-memory PostgREST fake
+— the mapper, filters and URL building all execute. `SupabaseActivityStateStore` uses
+`createClient` from `@supabase/supabase-js`, and is the only registry slot with no Supabase
+conformance arm.
+
+That is not a coincidence. A fetch-level fake cannot intercept the JS client, so the arm was
+never written, so nothing exercised the store — and it shipped in Sprint 1 against a table
+(`app_sessions`) that had never been created, staying dead for a full sprint behind a green
+gate. Migration 022 created the table; the store still has no arm.
+
+**Resolution:** realign `SupabaseActivityStateStore` to raw `fetch`, matching its six
+siblings, and add the missing conformance arm. The CAS commit maps to
+`PATCH ?id=eq.X&version=eq.N` with `Prefer: return=representation`, exactly as
+`SupabaseTrajectoryStore` does — zero rows returned is the conflict signal.
+
+**Close when:** every registry slot with a Supabase implementation has a Supabase
+conformance arm.
+
+---
+
+### TASK-068 — Decide whether compensation should unwind automatically
+
+| Field        | Detail                                             |
+| ------------ | -------------------------------------------------- |
+| **ID**       | TASK-068                                           |
+| **Type**     | Deferred design decision                           |
+| **Severity** | Low — a decision to make on evidence, not a defect |
+| **Phase**    | Phase 5, Sprint 2                                  |
+| **Status**   | Open — deliberately                                |
+| **Logged**   | 2026-07-29                                         |
+
+**What:** ADR-029 D6 says rollback appends compensating actions but does not say who triggers
+it. Sprint 2 implemented `compensateTrajectory()` as an **invoked** entry point: a caller
+decides to unwind. The alternative — the runtime unwinding automatically when a workflow
+fails — is more useful and considerably larger, and needs semantics no current use case
+constrains: what happens when a compensation itself fails, whether unwinding is ordered or
+parallel, whether a partially-unwound trajectory is `failed` or something new.
+
+Deferring is deliberate. This entry exists so that decision is made on evidence rather than
+on the feeling that the system ought to do it by itself.
+
+**Signals that automatic unwinding is now needed**, roughly in order of likelihood:
+
+1. **Callers wrapping every workflow in the same try/catch.** Consumer code doing
+   `catch { await compensateTrajectory(id) }` at every call site is the invoked path being
+   used as if it were automatic, duplicated per consumer. Visible in code review.
+2. **Failed trajectories that were never compensated.** Query `status = 'failed'` intersected
+   with trajectories having commitment-boundary steps and no step carrying `compensates`. A
+   growing set means someone forgot, and forgetting is what automation prevents. Measurable
+   today.
+3. **A compensation that itself needs a policy.** The first time a compensation fails,
+   someone decides ad hoc: retry, escalate, mark indeterminate. Once two callers decide
+   differently for the same situation, the policy belongs in the platform.
+
+**Not a signal:** "it feels like the system should do this itself." That is how unwinding
+semantics nobody asked for get built.
+
+**Close when:** one of the three signals is observed and the decision is recorded, or Phase 5
+ends without any of them and the entry is closed as "invoked is sufficient".
+
+---
+
+### TASK-071 — There is no session load path, so crash repair must be called explicitly
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-071                                    |
+| **Type**     | Missing lifecycle hook                      |
+| **Severity** | Medium — repair exists and nothing calls it |
+| **Phase**    | Phase 5, Sprint 2                           |
+| **Status**   | Open                                        |
+| **Logged**   | 2026-08-04                                  |
+
+**What:** ADR-031 D6 specifies crash-window repair "on session load". `repairSession()` now
+implements the repair, but there is no session load path to call it from: `createSession()`
+creates, and nothing in the framework loads an existing session. `ActivityStateStore.load()`
+exists on the contract and only the stores themselves call it.
+
+Rather than invent a lifecycle hook to satisfy the ADR's wording, `repairSession` is an
+explicit entry point. That is honest but incomplete: a repair nothing calls repairs nothing,
+and the crash window stays open in practice.
+
+**Resolution:** add `loadSession()` to the app framework — reconstructing an ActivitySession
+from persisted state plus its trajectory — and call `repairSession` from it before returning.
+That is where the ADR intends the check, and it is also the natural home for the reconstruct
+path the framework currently lacks.
+
+**Close when:** a session loaded after an interrupted commit has its trajectory tail
+completed without the caller asking.
+
+---
+
+### TASK-072 — Turn advancement is not durable until the coordinator owns it
+
+| Field        | Detail                                                |
+| ------------ | ----------------------------------------------------- |
+| **ID**       | TASK-072                                              |
+| **Type**     | Partial durability                                    |
+| **Severity** | Low — correct when callers cooperate, silent when not |
+| **Phase**    | Phase 5, Sprint 2                                     |
+| **Status**   | Open                                                  |
+| **Logged**   | 2026-08-04                                            |
+
+**What:** Migration 029 and `SessionMeta` make turn state durable, so a turn-based session no
+longer loses whose turn it is on restart. But `dispatch()` only CHECKS turn order — it does
+not advance it. Advancement lives in `turn.ts` and is the caller's to invoke, so the caller
+must also call `updateSessionMeta()` afterwards or the persisted turn goes stale.
+
+Durability that depends on the caller remembering is durability only when they remember.
+
+**Resolution:** move turn advancement into the coordinator, so `dispatch()` advances the turn
+and persists it in the same sequence that commits the state. That is where ADR-028 D6's
+turn-based core belongs; it sits outside today because turn advancement predates the pipeline
+extraction.
+
+**Close when:** a turn-based session advanced through `dispatch()` and reloaded reports the
+correct current actor without the caller persisting anything.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -902,4 +1035,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (filed TASK-070 — overrides are unaudited; one pinned the tree to a vulnerable version)_
+_Last updated: August 4, 2026 (closed TASK-071 with loadSession; filed TASK-072 — turn advancement is not durable until the coordinator owns it)_

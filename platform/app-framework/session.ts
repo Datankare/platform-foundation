@@ -18,6 +18,8 @@ import { generateSecureId } from "@/platform/agents/utils";
 import { getTrajectoryStore } from "@/platform/agents";
 import {
   executeActionPipeline,
+  repairSession,
+  type RepairOutcome,
   isPipelineConflict,
   PipelineRejectedError,
 } from "@/platform/action-pipeline";
@@ -134,6 +136,26 @@ export async function createSession<TState, TAction, TConfig>(
   );
 
   const turnBased = definition.capabilities.includes("turn-based");
+  const turn = turnBased
+    ? {
+        order: participants.map((p) => p.actorId),
+        currentIndex: 0,
+        turnNumber: 1,
+      }
+    : undefined;
+
+  // Persisted so the session can be reconstructed later (TASK-071). Without it,
+  // state exists and the session shape does not.
+  if (store.saveMeta) {
+    await store.saveMeta(sessionId, {
+      definitionId: definition.id,
+      status: "active",
+      capabilities: definition.capabilities as readonly Capability[],
+      participants,
+      budget,
+      turn,
+    });
+  }
 
   return {
     sessionId,
@@ -144,13 +166,7 @@ export async function createSession<TState, TAction, TConfig>(
     current,
     trajectory: record.trajectory,
     budget,
-    turn: turnBased
-      ? {
-          order: participants.map((p) => p.actorId),
-          currentIndex: 0,
-          turnNumber: 1,
-        }
-      : undefined,
+    turn,
   };
 }
 
@@ -277,6 +293,133 @@ export async function dispatch<TState, TAction, TConfig>(
     nextActions: enumerateNextActions(definition, committed.state, args.options),
     cost,
   };
+}
+
+// ── Session load (TASK-071, ADR-031 D6) ───────────────────────────────
+
+export interface LoadSessionArgs<TState, TAction, TConfig> {
+  readonly sessionId: string;
+  /**
+   * The definition is supplied rather than persisted: it carries functions
+   * (initialState, validateAction, applyAction) that cannot be serialised. Only its ID is
+   * stored, and it is checked against the loaded meta.
+   */
+  readonly definition: ActivityDefinition<TState, TAction, TConfig>;
+  readonly actor: AgentIdentity;
+  /** Skip the D6 repair check. Only for tests that assert the unrepaired state. */
+  readonly skipRepair?: boolean;
+}
+
+export interface LoadedSession<TState, TAction> {
+  readonly session: ActivitySession<TState, TAction>;
+  /** What the D6 repair found. Absent when repair was skipped. */
+  readonly repair?: RepairOutcome;
+}
+
+/**
+ * Reconstruct a session from its id, and complete any interrupted operation before handing
+ * it back (ADR-031 D6).
+ *
+ * The framework could create a session and never resume one. That is why repairSession had
+ * no caller: the ADR places repair "on session load", and there was no load path. This is
+ * that path.
+ *
+ * Returns null when the session does not exist. Throws when it exists but its metadata does
+ * not — that combination means the state was written by something that did not persist meta,
+ * and silently inventing participants would be worse than refusing.
+ */
+export async function loadSession<TState, TAction, TConfig>(
+  args: LoadSessionArgs<TState, TAction, TConfig>
+): Promise<LoadedSession<TState, TAction> | null> {
+  const store = getActivityStateStore<TState>();
+  const current = await store.load(args.sessionId);
+  if (!current) return null;
+
+  if (!store.loadMeta) {
+    throw new Error(
+      `app-framework: the active state store cannot load session metadata; ` +
+        `${args.sessionId} cannot be reconstructed`
+    );
+  }
+  const meta = await store.loadMeta(args.sessionId);
+  if (!meta) {
+    throw new Error(
+      `app-framework: no metadata for session ${args.sessionId}. State exists but the ` +
+        `session shape does not — it was written before migration 029, or by a path that ` +
+        `does not persist meta.`
+    );
+  }
+  if (meta.definitionId !== args.definition.id) {
+    throw new Error(
+      `app-framework: session ${args.sessionId} belongs to definition ` +
+        `${meta.definitionId}, not ${args.definition.id}`
+    );
+  }
+
+  const trajectories = await getTrajectoryStore().query({
+    subjectKind: "session",
+    subjectId: args.sessionId,
+    limit: 1,
+  });
+  const record = trajectories[0];
+  if (!record) {
+    throw new Error(`app-framework: no trajectory for session ${args.sessionId}`);
+  }
+
+  let repair: RepairOutcome | undefined;
+  if (!args.skipRepair) {
+    // The crash window: state committed, process died before the trajectory append. This is
+    // the only place that window is closed automatically.
+    repair = await repairSession<TState>({
+      sessionId: args.sessionId,
+      trajectoryId: record.trajectory.trajectoryId,
+      actor: args.actor,
+      stateStore: store,
+      trajectoryStore: getTrajectoryStore(),
+      emit,
+    });
+  }
+
+  const refreshed = repair?.repaired
+    ? await getTrajectoryStore().getById(record.trajectory.trajectoryId)
+    : record;
+
+  return {
+    session: {
+      sessionId: args.sessionId,
+      definitionId: meta.definitionId,
+      status: meta.status,
+      capabilities: meta.capabilities,
+      participants: meta.participants,
+      current,
+      trajectory: (refreshed ?? record).trajectory,
+      budget: meta.budget,
+      turn: meta.turn,
+    },
+    repair,
+  };
+}
+
+/**
+ * Persist a session's metadata after it changes.
+ *
+ * Needed because dispatch() checks turn order and does not advance it — advancement lives in
+ * turn.ts and is the caller's, so the caller must persist afterwards or the stored turn goes
+ * stale. TASK-072 records that this belongs in the coordinator.
+ */
+export async function updateSessionMeta<TState, TAction>(
+  session: ActivitySession<TState, TAction>
+): Promise<void> {
+  const store = getActivityStateStore<TState>();
+  if (!store.saveMeta) return;
+  await store.saveMeta(session.sessionId, {
+    definitionId: session.definitionId,
+    status: session.status,
+    capabilities: session.capabilities,
+    participants: session.participants,
+    budget: session.budget,
+    turn: session.turn,
+  });
 }
 
 // ── AUX affordances (D7) ──────────────────────────────────────────────
