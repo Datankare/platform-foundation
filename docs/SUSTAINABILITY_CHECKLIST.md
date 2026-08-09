@@ -300,7 +300,7 @@ Then paste Part A and Part B below.
 | B10 | Static Analysis in CI  |                |             |         |
 | B11 | Edge Case Testing      |                |             |         |
 
-**Summary:** **_ of 22 pass. _** findings (**_ Critical, _** High, **_ Medium, _** Low).
+**Summary:** **\_ of 22 pass. _** findings (**\_ Critical, _** High, **\_ Medium, _** Low).
 
 ---
 
