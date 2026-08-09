@@ -14,12 +14,7 @@ import { sanitizeForPrompt } from "@/lib/sanitize";
 
 /** Safety classification categories per ADR-016 */
 export type SafetyCategory =
-  | "harassment"
-  | "sexual"
-  | "violence"
-  | "self-harm"
-  | "hate"
-  | "dangerous";
+  "harassment" | "sexual" | "violence" | "self-harm" | "hate" | "dangerous";
 
 /** Severity levels per ADR-016 */
 export type SafetySeverity = "low" | "medium" | "high" | "critical";

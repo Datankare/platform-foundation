@@ -15,11 +15,9 @@ import type { SongIdentificationProvider } from "@/platform/voice/identify-types
 
 export interface SongIdContractFixtures {
   makeMatchingProvider: () =>
-    | SongIdentificationProvider
-    | Promise<SongIdentificationProvider>;
+    SongIdentificationProvider | Promise<SongIdentificationProvider>;
   makeNoMatchProvider: () =>
-    | SongIdentificationProvider
-    | Promise<SongIdentificationProvider>;
+    SongIdentificationProvider | Promise<SongIdentificationProvider>;
   /** Impl-specific: audio the implementation accepts (canonical WAV bytes). */
   sampleAudio: Buffer;
   durationSeconds: number;
