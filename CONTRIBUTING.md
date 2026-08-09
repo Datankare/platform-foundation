@@ -13,11 +13,11 @@ Welcome to Platform Foundation. This guide gets you from zero to productive as f
 
 Install these before you start:
 
-| Tool    | Version    | Install                                                                   |
+| Tool | Version | Install |
 | ------- | ---------- | ------------------------------------------------------------------------- | ----- |
-| Node.js | 24.x       | Via NVM (see below)                                                       |
-| NVM     | Latest     | `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash` |
-| Git     | Any recent | Pre-installed on Mac                                                      |
+| Node.js | 24.x | Via NVM (see below) |
+| NVM | Latest | `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash` |
+| Git | Any recent | Pre-installed on Mac |
 
 ### Install Node.js via NVM
 

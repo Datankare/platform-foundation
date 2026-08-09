@@ -250,8 +250,7 @@ function mapRowToRecord(row: Record<string, unknown>): ModerationAuditRecord {
     userId: row.user_id ? String(row.user_id) : undefined,
     triggeredBy: (row.triggered_by as ModerationAuditRecord["triggeredBy"]) ?? "none",
     classifierOutput: row.classifier_output as
-      | ModerationAuditRecord["classifierOutput"]
-      | undefined,
+      ModerationAuditRecord["classifierOutput"] | undefined,
     categoriesFlagged: Array.isArray(row.categories_flagged)
       ? (row.categories_flagged as string[])
       : [],

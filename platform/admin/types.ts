@@ -41,11 +41,7 @@ import type { Step } from "@/platform/agents/types";
  *   json_array  — JSON array (e.g., supported_languages)
  */
 export type ConfigValueType =
-  | "string"
-  | "number"
-  | "boolean"
-  | "string_enum"
-  | "json_array";
+  "string" | "number" | "boolean" | "string_enum" | "json_array";
 
 // ---------------------------------------------------------------------------
 // Permission tiers — who can change what (Migration 011)
@@ -137,11 +133,7 @@ export interface ConfigChangeRequest {
  * Source of a config change. Tracks how the change was made.
  */
 export type ConfigChangeSource =
-  | "admin_ui"
-  | "config_agent"
-  | "api"
-  | "migration"
-  | "system";
+  "admin_ui" | "config_agent" | "api" | "migration" | "system";
 
 /**
  * A single config change history record.

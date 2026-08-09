@@ -56,12 +56,7 @@ export interface TTSResult {
 // ── STT Types ───────────────────────────────────────────────────────────
 
 export type AudioEncoding =
-  | "WEBM_OPUS"
-  | "OGG_OPUS"
-  | "MP3"
-  | "WAV"
-  | "FLAC"
-  | "LINEAR16";
+  "WEBM_OPUS" | "OGG_OPUS" | "MP3" | "WAV" | "FLAC" | "LINEAR16";
 
 export interface STTRequest {
   /** Base64-encoded audio content */

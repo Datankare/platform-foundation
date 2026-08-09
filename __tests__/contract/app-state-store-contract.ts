@@ -16,8 +16,7 @@ interface CounterState {
 export interface AppStateStoreContractFixtures {
   /** Fresh store per test. Generic collapsed to CounterState for concrete fixtures. */
   makeStore: () =>
-    | ActivityStateStore<CounterState>
-    | Promise<ActivityStateStore<CounterState>>;
+    ActivityStateStore<CounterState> | Promise<ActivityStateStore<CounterState>>;
 }
 
 export function runAppStateStoreContract(fx: AppStateStoreContractFixtures): void {
