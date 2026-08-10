@@ -1196,4 +1196,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (Target field added, distinct from Phase; twelve tasks retargeted with stated reasons; register integrity now enforced by **tests**/task-register-integrity.test.ts and npm run sprint:check)_
+_Last updated: August 4, 2026 (TASK-059 resolved — prettier pinned to exactly 3.9.6; the cause was a caret in BOTH repos, not a version gap)_
+_Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
