@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "sprint:check": "node scripts/sprint-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
