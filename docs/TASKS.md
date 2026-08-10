@@ -273,16 +273,16 @@ Estimated ~1.5 sprints. Write ADR-021 before implementation.
 
 ### TASK-041 — Verify song-ID health probe is registered
 
-| Field        | Detail                                  |
-| ------------ | --------------------------------------- |
-| **ID**       | TASK-041                                |
-| **Type**     | Gotcha #27 verification                 |
-| **Severity** | Medium                                  |
-| **Phase**    | Phase 5, Sprint 1                       |
-| **Target**   | Phase 5, Sprint 3                       |
-| **Status**   | Open                                    |
-| **Logged**   | 2026-04-25                              |
-| **Source**   | TASK-026 rotation pre-flight finding F3 |
+| Field        | Detail                                                                     |
+| ------------ | -------------------------------------------------------------------------- |
+| **ID**       | TASK-041                                                                   |
+| **Type**     | Gotcha #27 verification                                                    |
+| **Severity** | Medium                                                                     |
+| **Phase**    | Phase 5, Sprint 1                                                          |
+| **Target**   | Phase 5, Sprint 3                                                          |
+| **Status**   | Resolved — verified registered in PF instrumentation; Playform is TASK-074 |
+| **Logged**   | 2026-04-25                                                                 |
+| **Source**   | TASK-026 rotation pre-flight finding F3                                    |
 
 **What:** `platform/voice/health-probe.ts` defines a health
 probe for `SongIdentificationProvider`, but pre-flight grep
@@ -519,15 +519,15 @@ maintainer, and coverage-floor proximity emits a visible warning.
 
 ### TASK-057 — /api/health returns a static payload; registered probes never run
 
-| Field        | Detail                                     |
-| ------------ | ------------------------------------------ |
-| **ID**       | TASK-057                                   |
-| **Type**     | Observability / reliability defect         |
-| **Severity** | High — fails open (silent-failure pattern) |
-| **Phase**    | Phase 5, Sprint 2                          |
-| **Target**   | Phase 5, Sprint 3                          |
-| **Status**   | Open                                       |
-| **Logged**   | 2026-07-24                                 |
+| Field        | Detail                                                           |
+| ------------ | ---------------------------------------------------------------- |
+| **ID**       | TASK-057                                                         |
+| **Type**     | Observability / reliability defect                               |
+| **Severity** | High — fails open (silent-failure pattern)                       |
+| **Phase**    | Phase 5, Sprint 2                                                |
+| **Target**   | Phase 5, Sprint 3                                                |
+| **Status**   | Resolved — route runs the registry; detail to the error reporter |
+| **Logged**   | 2026-07-24                                                       |
 
 **What:** `/api/health` returns a static `{ status: "ok", service, timestamp }` and never
 executes the probes registered in the observability `HealthRegistry`. TASK-041 registered the
@@ -1151,6 +1151,38 @@ entry in `overrides`.
 
 **Retargeted Phase 5, Sprint 4:** Filed during Sprint 2 as a stopgap to remove later, not as Sprint 2 work.
 
+### TASK-074 — Playform's song-ID probe reports on an instance nothing serves traffic from
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-074                                                  |
+| **Type**     | Observability defect (consumer repo)                      |
+| **Severity** | Medium — the probe can report healthy while traffic fails |
+| **Phase**    | Phase 5, Sprint 3a                                        |
+| **Target**   | Phase 5, Sprint 3a                                        |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-08-04                                                |
+
+**What:** Playform's `instrumentation.ts` calls `initProviders()`, then constructs a **second**
+`ACRCloudIdentifier` and registers the health probe around that new instance. The probe
+therefore reports on an object nothing is using. If the live provider is misconfigured and
+the freshly constructed one happens to work, the probe says healthy while every request
+fails.
+
+platform-foundation already fixed exactly this and left the reason in a comment: the probe
+must wrap "the LIVE provider stored by `initProviders()` — not a freshly constructed
+duplicate — so the probe reports on the instance actually serving traffic" (TASK-041,
+Gotcha 27). `instrumentation.ts` does not sync between repos, so the fix did not travel.
+
+**Resolution:** use `getSongIdProvider()` in Playform as platform-foundation does, and add a
+guard so the consumer cannot drift back — a test asserting `instrumentation.ts` constructs no
+provider directly.
+
+**Close when:** Playform's probe wraps the registered provider, with a test that fails if a
+provider is constructed inside `instrumentation.ts`.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1196,5 +1228,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (TASK-059 resolved — prettier pinned to exactly 3.9.6; the cause was a caret in BOTH repos, not a version gap)_
+_Last updated: August 4, 2026 (TASK-057 and TASK-041 resolved; TASK-074 filed — Playform's probe wraps a duplicate provider instance)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
