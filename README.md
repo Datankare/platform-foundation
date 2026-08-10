@@ -232,3 +232,5 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 _Platform Foundation v1.6.0 — Datankare_
 _Phase 5 Sprint 2 · 186 suites · 2,407 tests · 89.18% coverage · 30 ADRs · 18 GenAI principles · 23 conformance kits · 18 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
+
+_Last updated: August 4, 2026 (Phase 5 Sprint 2 — agentic workflow framework)_

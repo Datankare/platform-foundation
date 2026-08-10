@@ -52,6 +52,7 @@ and upload-artifact 7.0.1.
 | **Type**     | Feature deferral                                        |
 | **Severity** | Medium                                                  |
 | **Phase**    | 8–9 (Production Hardening)                              |
+| **Target**   | Phase 8-9 (Production Hardening)                        |
 | **Status**   | Deferred — infrastructure ready, console config pending |
 | **Logged**   | 2026-04-06                                              |
 
@@ -70,6 +71,8 @@ components/auth/SsoButtons.tsx
 
 ---
 
+**Retargeted Phase 8-9 (Production Hardening):** Target recorded explicitly; Phase already named it.
+
 ### TASK-025 — ALB for ffmpeg-service (stable URL)
 
 | Field        | Detail            |
@@ -78,6 +81,7 @@ components/auth/SsoButtons.tsx
 | **Type**     | Infrastructure    |
 | **Severity** | Medium            |
 | **Phase**    | Phase 5, Sprint 6 |
+| **Target**   | Phase 5, Sprint 6 |
 | **Status**   | Open              |
 | **Logged**   | 2026-04-16        |
 
@@ -90,6 +94,8 @@ not production.
 
 ---
 
+**Retargeted Phase 5, Sprint 6:** Target recorded explicitly; Phase already named it.
+
 ### TASK-031 — File-level docstrings on SongMatchCard + useAudioRecorder
 
 | Field        | Detail                 |
@@ -98,6 +104,7 @@ not production.
 | **Type**     | Documentation          |
 | **Severity** | Low                    |
 | **Phase**    | Phase 5, Sprint 7      |
+| **Target**   | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 88 |
@@ -107,6 +114,8 @@ useAudioRecorder components in Playform.
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Target recorded explicitly; Phase already named it.
+
 ### TASK-032 — Language picker hidden during identification
 
 | Field        | Detail                 |
@@ -115,6 +124,7 @@ useAudioRecorder components in Playform.
 | **Type**     | UX — contextual UI     |
 | **Severity** | Low                    |
 | **Phase**    | Phase 5, Sprint 7      |
+| **Target**   | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 85 |
@@ -124,6 +134,8 @@ identification mode (contextual UI behavior).
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Target recorded explicitly; Phase already named it.
+
 ### TASK-033 — Song language displayed on SongMatchCard
 
 | Field        | Detail                 |
@@ -132,6 +144,7 @@ identification mode (contextual UI behavior).
 | **Type**     | Feature                |
 | **Severity** | Low                    |
 | **Phase**    | Phase 5, Sprint 7      |
+| **Target**   | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 86 |
@@ -141,6 +154,8 @@ SongMatchCard component.
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Target recorded explicitly; Phase already named it.
+
 ### TASK-035 — Streaming service search links
 
 | Field        | Detail                 |
@@ -149,6 +164,7 @@ SongMatchCard component.
 | **Type**     | Feature                |
 | **Severity** | Low                    |
 | **Phase**    | Phase 5, Sprint 7      |
+| **Target**   | Phase 5, Sprint 7      |
 | **Status**   | Open                   |
 | **Logged**   | 2026-04-18             |
 | **Source**   | PHASE4_PLAN.md line 87 |
@@ -159,6 +175,8 @@ results.
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Target recorded explicitly; Phase already named it.
+
 ### TASK-036 — Expire stale config approvals
 
 | Field        | Detail                                      |
@@ -167,6 +185,7 @@ results.
 | **Type**     | Feature enhancement                         |
 | **Severity** | Low                                         |
 | **Phase**    | Phase 5, Sprint 2                           |
+| **Target**   | Phase 5, Sprint 6                           |
 | **Status**   | Open                                        |
 | **Logged**   | 2026-04-24                                  |
 | **Source**   | Code: platform/admin/config-approval.ts:425 |
@@ -176,6 +195,8 @@ approvals that have not been acted on.
 
 ---
 
+**Retargeted Phase 5, Sprint 6:** Low severity, no dependency, no urgency. Grouped with the other Sprint 6 housekeeping.
+
 ### TASK-037 — Config-AI conversational endpoint is a keyword stub
 
 | Field        | Detail                                                  |
@@ -184,6 +205,7 @@ approvals that have not been acted on.
 | **Type**     | Feature — agentic surface                               |
 | **Severity** | Medium                                                  |
 | **Phase**    | Phase 5 (Sprint 2/3, on the agentic workflow framework) |
+| **Target**   | Phase 5, Sprint 4                                       |
 | **Status**   | Open                                                    |
 | **Logged**   | 2026-06-21                                              |
 | **Source**   | app/api/admin/config-ai/route.ts:179                    |
@@ -201,6 +223,8 @@ extend the keyword approach. Verified still-open Phase 5 Sprint 0.
 
 ---
 
+**Retargeted Phase 5, Sprint 4:** Depends on the agentic framework, which now exists. Sprint 4 is the first sprint it can be done properly.
+
 ### TASK-038 — Verify useAudioRecorder records ≥10s
 
 | Field        | Detail                                 |
@@ -209,6 +233,7 @@ extend the keyword approach. Verified still-open Phase 5 Sprint 0.
 | **Type**     | Reliability verification               |
 | **Severity** | Medium                                 |
 | **Phase**    | Phase 5, Sprint 7                      |
+| **Target**   | Phase 5, Sprint 7                      |
 | **Status**   | Open                                   |
 | **Logged**   | 2026-04-25                             |
 | **Source**   | TASK-026 rotation — Gotcha G-VOICE-001 |
@@ -221,6 +246,8 @@ users will get `code: 1001 No Result` on valid songs.
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Target recorded explicitly; Phase already named it.
+
 ### TASK-039 — Evaluate ACRCloud Humming Identification
 
 | Field        | Detail                       |
@@ -229,6 +256,7 @@ users will get `code: 1001 No Result` on valid songs.
 | **Type**     | Feature evaluation           |
 | **Severity** | Low                          |
 | **Phase**    | Phase 6+ (needs ADR)         |
+| **Target**   | Phase 6+ (needs ADR)         |
 | **Status**   | Open — ADR-021 candidate     |
 | **Logged**   | 2026-04-25                   |
 | **Source**   | TASK-026 rotation discussion |
@@ -241,6 +269,8 @@ Estimated ~1.5 sprints. Write ADR-021 before implementation.
 
 ---
 
+**Retargeted Phase 6+ (needs ADR):** Target recorded explicitly; Phase already named it.
+
 ### TASK-041 — Verify song-ID health probe is registered
 
 | Field        | Detail                                  |
@@ -249,6 +279,7 @@ Estimated ~1.5 sprints. Write ADR-021 before implementation.
 | **Type**     | Gotcha #27 verification                 |
 | **Severity** | Medium                                  |
 | **Phase**    | Phase 5, Sprint 1                       |
+| **Target**   | Phase 5, Sprint 3                       |
 | **Status**   | Open                                    |
 | **Logged**   | 2026-04-25                              |
 | **Source**   | TASK-026 rotation pre-flight finding F3 |
@@ -262,6 +293,8 @@ If unregistered, the probe is dead code (Gotcha #27).
 
 ---
 
+**Retargeted Phase 5, Sprint 3:** Same endpoint as TASK-057, which leads Sprint 3. Verifying a probe is registered while fixing the thing that runs probes is one piece of work, not two.
+
 ### TASK-042 — Refactor dual ACRCloud env-var read sites
 
 | Field        | Detail                                  |
@@ -270,6 +303,7 @@ If unregistered, the probe is dead code (Gotcha #27).
 | **Type**     | Refactor                                |
 | **Severity** | Low                                     |
 | **Phase**    | Phase 5, Sprint 1                       |
+| **Target**   | Phase 5, Sprint 6                       |
 | **Status**   | Open                                    |
 | **Logged**   | 2026-04-25                              |
 | **Source**   | TASK-026 rotation pre-flight finding F1 |
@@ -283,6 +317,8 @@ Single source of truth violation.
 
 ---
 
+**Retargeted Phase 5, Sprint 6:** Tidiness with no correctness or timing pressure. Grouped with TASK-025, the same subject area.
+
 ### TASK-045 — Rebase + maintain Playform GENAI_ROADMAP overlay
 
 | Field        | Detail                       |
@@ -291,6 +327,7 @@ Single source of truth violation.
 | **Type**     | Documentation / process      |
 | **Severity** | Medium                       |
 | **Phase**    | Phase 5, Sprint 7            |
+| **Target**   | Phase 5, Sprint 7            |
 | **Status**   | Open                         |
 | **Logged**   | 2026-06-21                   |
 | **Source**   | Phase 5 entry gate N3 review |
@@ -310,6 +347,8 @@ froze.
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Target recorded explicitly; Phase already named it.
+
 ### TASK-046 — Auth-enable k6 + live moderation/agent re-baseline
 
 | Field        | Detail                                        |
@@ -318,6 +357,7 @@ froze.
 | **Type**     | Testing infrastructure / performance baseline |
 | **Severity** | Medium                                        |
 | **Phase**    | Phase 5, Sprint 7 (phase-exit expectation)    |
+| **Target**   | Phase 5, Sprint 7                             |
 | **Status**   | Open                                          |
 | **Logged**   | 2026-06-21                                    |
 | **Source**   | Phase 5 Sprint 0 k6 re-baseline finding       |
@@ -339,6 +379,8 @@ Vercel cold start).
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Phase-exit expectation; target recorded explicitly.
+
 ### TASK-047 — Next 16 middleware → proxy file-convention deprecation
 
 | Field        | Detail                                               |
@@ -347,6 +389,7 @@ Vercel cold start).
 | **Type**     | Tech debt — framework deprecation                    |
 | **Severity** | Low (warning now; hard error in a future Next major) |
 | **Phase**    | Phase 5, Sprint 1                                    |
+| **Target**   | Phase 5, Sprint 3                                    |
 | **Status**   | Open                                                 |
 | **Logged**   | 2026-06-21                                           |
 | **Source**   | Sprint 0 dev-server warning (Next 16.2.6)            |
@@ -364,6 +407,8 @@ deprecation warning no longer appears.
 
 ---
 
+**Retargeted Phase 5, Sprint 3:** The only open item with an external clock: a warning today, a build failure in a future Next release. The cost of deferring rises without us choosing it.
+
 ### TASK-048 — Promote Playform Phase-5-open ROADMAP overlay to main
 
 | Field        | Detail                                       |
@@ -372,6 +417,7 @@ deprecation warning no longer appears.
 | **Type**     | Process — release                            |
 | **Severity** | Low                                          |
 | **Phase**    | Phase 5 (Sprint 0 carry)                     |
+| **Target**   | Phase 5, Sprint 3                            |
 | **Status**   | Open                                         |
 | **Logged**   | 2026-06-21                                   |
 | **Source**   | Phase 5 entry — Playform N7/N8 overlay edits |
@@ -386,6 +432,8 @@ needs its own Playform develop → staging → main promotion.
 
 ---
 
+**Retargeted Phase 5, Sprint 3:** Cheapest item open, and a documentation inconsistency between repos — the class this sprint spent a day on. Done while the habit is fresh.
+
 ### TASK-050 — Jest worker crashes with stack overflow in soft-delete warning
 
 | Field        | Detail                                               |
@@ -394,6 +442,7 @@ needs its own Playform develop → staging → main promotion.
 | **Type**     | Test infrastructure — latent crash                   |
 | **Severity** | Medium (does not fail the gate — exit code stays 0)  |
 | **Phase**    | Phase 5, Sprint 1                                    |
+| **Target**   | Phase 5, Sprint 4                                    |
 | **Status**   | Open                                                 |
 | **Logged**   | 2026-07-06                                           |
 | **Source**   | Playform `npx jest` output during the audit-fix gate |
@@ -422,6 +471,8 @@ exceeded` occurrences.
 
 ---
 
+**Retargeted Phase 5, Sprint 4:** Does not fail the suite; it is noise in the output. Real, because noise hides signal, but nothing depends on it.
+
 ### TASK-056 — CI-signal parity for platform-foundation (the less-watched repo)
 
 | Field        | Detail                                       |
@@ -430,6 +481,7 @@ exceeded` occurrences.
 | **Type**     | CI / build-model resilience                  |
 | **Severity** | Medium-High — silent drift, both repos       |
 | **Phase**    | Phase 5, Sprint 1                            |
+| **Target**   | Phase 5, Sprint 3                            |
 | **Status**   | Open                                         |
 | **Logged**   | 2026-07-21                                   |
 | **Source**   | PF audit drift + coverage-margin, 2026-07-21 |
@@ -463,6 +515,8 @@ maintainer, and coverage-floor proximity emits a visible warning.
 
 ---
 
+**Retargeted Phase 5, Sprint 3:** Silent CI drift in the less-watched repo; same class as TASK-057 and older.
+
 ### TASK-057 — /api/health returns a static payload; registered probes never run
 
 | Field        | Detail                                     |
@@ -471,6 +525,7 @@ maintainer, and coverage-floor proximity emits a visible warning.
 | **Type**     | Observability / reliability defect         |
 | **Severity** | High — fails open (silent-failure pattern) |
 | **Phase**    | Phase 5, Sprint 2                          |
+| **Target**   | Phase 5, Sprint 3                          |
 | **Status**   | Open                                       |
 | **Logged**   | 2026-07-24                                 |
 
@@ -503,6 +558,8 @@ result cache; a failing provider makes it report unhealthy; k6 re-baselined agai
 
 ---
 
+**Retargeted Phase 5, Sprint 3:** Highest-severity open item: the health endpoint reports healthy without running its probes, in production, today. Leads Sprint 3.
+
 ### TASK-058 — Dependency-advisory handling is a CI tripwire, not a process
 
 | Field        | Detail                                |
@@ -511,6 +568,7 @@ result cache; a failing provider makes it report unhealthy; k6 re-baselined agai
 | **Type**     | CI / supply-chain process             |
 | **Severity** | Medium — recurring manual toil + risk |
 | **Phase**    | Phase 5, Sprint 2                     |
+| **Target**   | Phase 5, Sprint 4                     |
 | **Status**   | Open                                  |
 | **Logged**   | 2026-07-24                            |
 
@@ -540,6 +598,8 @@ needed manual judgment because `npm audit fix --force` proposed a destructive do
 the override procedure is documented.
 
 ---
+
+**Retargeted Phase 5, Sprint 4:** Three advisories in three days cost roughly a day. Real, but it needs a process design rather than a code fix.
 
 ### TASK-059 — Prettier version drift between repos; every sync PR fails format:check
 
@@ -591,6 +651,7 @@ divergence in formatter version between the repos fails a check rather than a sy
 | **Type**     | Repo hygiene / process defect              |
 | **Severity** | Medium — stale bases and hidden sync state |
 | **Phase**    | Phase 5, Sprint 2                          |
+| **Target**   | Phase 5, Sprint 4                          |
 | **Status**   | Open                                       |
 | **Logged**   | 2026-07-26                                 |
 
@@ -627,6 +688,8 @@ session had to cut a fix branch from `main` rather than `develop` as a result.
 
 ---
 
+**Retargeted Phase 5, Sprint 4:** Partly addressed — 30 stale sync branches deleted. What remains is the Dependabot backlog, which is review time rather than engineering.
+
 ### TASK-061 — Function coverage is a target, not a floor; the gap widens by default
 
 | Field        | Detail                          |
@@ -635,6 +698,7 @@ session had to cut a fix branch from `main` rather than `develop` as a result.
 | **Type**     | Quality gate                    |
 | **Severity** | Medium — Phase 5 exit-gate risk |
 | **Phase**    | Phase 5, Sprint 2               |
+| **Target**   | Phase 5, Sprint 4               |
 | **Status**   | Open                            |
 | **Logged**   | 2026-07-26                      |
 
@@ -663,6 +727,8 @@ Phase 5 exit gate.
 
 ---
 
+**Retargeted Phase 5, Sprint 4:** Thresholds are now 84/75 and enforced. The auto-ratchet is the remaining piece and no longer urgent.
+
 ### TASK-064 — ToolBoundary duplicates StepBoundary, and the boundary lookup fails open
 
 | Field        | Detail                                                  |
@@ -671,6 +737,7 @@ Phase 5 exit gate.
 | **Type**     | Duplicate vocabulary + fail-open default                |
 | **Severity** | Medium — misclassified P17 boundary in the audit record |
 | **Phase**    | Phase 5, Sprint 2                                       |
+| **Target**   | Phase 5, Sprint 3                                       |
 | **Status**   | Open                                                    |
 | **Logged**   | 2026-07-29                                              |
 
@@ -710,6 +777,8 @@ inventing a field the ADR does not specify and then removing it two steps later.
 via a default.
 
 ---
+
+**Retargeted Phase 5, Sprint 3:** ADR-029 surface, and the boundary lookup fails open. Sprint 3 touches the agent runtime again — cheaper with the context loaded than on a cold return.
 
 ### TASK-062 — Trajectories are not durable; nothing writes to agent_trajectories
 
@@ -782,6 +851,7 @@ name, and the step limit is enforced per trajectory.
 | **Type**     | Test-coverage gap / schema drift                |
 | **Severity** | Medium — passes green, fails at first real call |
 | **Phase**    | Phase 5, Sprint 2                               |
+| **Target**   | Phase 5, Sprint 3                               |
 | **Status**   | Open                                            |
 | **Logged**   | 2026-07-29                                      |
 
@@ -819,6 +889,8 @@ production call, and no budget column is unwritten.
 
 ---
 
+**Retargeted Phase 5, Sprint 3:** The gap that let migration 023 ship a column that did not exist. Four durable stores landed in Sprint 2, so the exposure grew rather than held.
+
 ### TASK-070 — Overrides are unaudited; one of them pinned us to a vulnerable version
 
 | Field        | Detail                                                       |
@@ -827,6 +899,7 @@ production call, and no budget column is unwritten.
 | **Type**     | Dependency hygiene                                           |
 | **Severity** | Medium — the failure mode is silent and points the wrong way |
 | **Phase**    | Phase 5, Sprint 2                                            |
+| **Target**   | Phase 5, Sprint 4                                            |
 | **Status**   | Open                                                         |
 | **Logged**   | 2026-08-04                                                   |
 
@@ -856,6 +929,8 @@ diagnosis away from itself.
 condition.
 
 ---
+
+**Retargeted Phase 5, Sprint 4:** Filed during Sprint 2 as follow-on hygiene, not as Sprint 2 work.
 
 ### TASK-066 — SupabaseActivityStateStore is built on the JS client and cannot be conformance-tested
 
@@ -898,6 +973,7 @@ conformance arm.
 | **Type**     | Deferred design decision                           |
 | **Severity** | Low — a decision to make on evidence, not a defect |
 | **Phase**    | Phase 5, Sprint 2                                  |
+| **Target**   | Phase 5, Sprint 4                                  |
 | **Status**   | Open — deliberately                                |
 | **Logged**   | 2026-07-29                                         |
 
@@ -931,6 +1007,8 @@ semantics nobody asked for get built.
 ends without any of them and the entry is closed as "invoked is sufficient".
 
 ---
+
+**Retargeted Phase 5, Sprint 4:** Open by decision. Target is when the trigger criteria are re-reviewed, not when it must be built.
 
 ### TASK-071 — There is no session load path, so crash repair must be called explicitly
 
@@ -970,6 +1048,7 @@ completed without the caller asking.
 | **Type**     | Partial durability                                    |
 | **Severity** | Low — correct when callers cooperate, silent when not |
 | **Phase**    | Phase 5, Sprint 2                                     |
+| **Target**   | Phase 5, Sprint 4                                     |
 | **Status**   | Open                                                  |
 | **Logged**   | 2026-08-04                                            |
 
@@ -990,6 +1069,8 @@ correct current actor without the caller persisting anything.
 
 ---
 
+**Retargeted Phase 5, Sprint 4:** Filed during Sprint 2 as what Sprint 2 deliberately left; the fix belongs with the coordinator work.
+
 ### TASK-073 — ADR-030 is reserved for AUX and not yet written
 
 | Field        | Detail                                     |
@@ -998,6 +1079,7 @@ correct current actor without the caller persisting anything.
 | **Type**     | Documentation reservation                  |
 | **Severity** | Low — a known hole, not a missing decision |
 | **Phase**    | Phase 5                                    |
+| **Target**   | Phase 5, Sprint 7                          |
 | **Status**   | Open — reserved                            |
 | **Logged**   | 2026-08-04                                 |
 
@@ -1023,6 +1105,8 @@ undocumented, and none has.
 
 ---
 
+**Retargeted Phase 5, Sprint 7:** Reserved. Target is the phase exit, where E6 will encounter the ADR gap.
+
 ### TASK-069 — Remove the brace-expansion override once upstream ships a clean tree
 
 | Field        | Detail                                      |
@@ -1031,6 +1115,7 @@ undocumented, and none has.
 | **Type**     | Dependency stopgap                          |
 | **Severity** | Low — correct today, and should not persist |
 | **Phase**    | Phase 5, Sprint 2                           |
+| **Target**   | Phase 5, Sprint 4                           |
 | **Status**   | Open                                        |
 | **Logged**   | 2026-08-04 (backfilled — see below)         |
 
@@ -1063,6 +1148,8 @@ override. Same for the jest and istanbul toolchain entries.
 entry in `overrides`.
 
 ---
+
+**Retargeted Phase 5, Sprint 4:** Filed during Sprint 2 as a stopgap to remove later, not as Sprint 2 work.
 
 ## Known Issue — TASK-020 numbering collision
 
@@ -1109,4 +1196,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (five Sprint 2 statuses reconciled — 059, 062, 063, 066, 071 were resolved and still read Open; TASK-069 filed, having been referenced in three commit messages without existing)_
+_Last updated: August 4, 2026 (Target field added, distinct from Phase; twelve tasks retargeted with stated reasons; register integrity now enforced by **tests**/task-register-integrity.test.ts and npm run sprint:check)_
