@@ -543,14 +543,14 @@ the override procedure is documented.
 
 ### TASK-059 — Prettier version drift between repos; every sync PR fails format:check
 
-| Field        | Detail                                              |
-| ------------ | --------------------------------------------------- |
-| **ID**       | TASK-059                                            |
-| **Type**     | CI / repo-inheritance process defect                |
-| **Severity** | Medium — red-by-default sync PRs mask real failures |
-| **Phase**    | Phase 5, Sprint 2                                   |
-| **Status**   | Open                                                |
-| **Logged**   | 2026-07-26                                          |
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-059                                                  |
+| **Type**     | CI / repo-inheritance process defect                      |
+| **Severity** | Medium — red-by-default sync PRs mask real failures       |
+| **Phase**    | Phase 5, Sprint 2                                         |
+| **Status**   | Resolved — prettier pinned to exactly 3.9.6 in both repos |
+| **Logged**   | 2026-07-26                                                |
 
 **What:** Every PF→Playform sync re-triggers `format:check` failures on the same shared files.
 The Sprint 1 handoff attributed this to `.prettierrc` drift. It is not: the two configs are
@@ -713,14 +713,14 @@ via a default.
 
 ### TASK-062 — Trajectories are not durable; nothing writes to agent_trajectories
 
-| Field        | Detail                                    |
-| ------------ | ----------------------------------------- |
-| **ID**       | TASK-062                                  |
-| **Type**     | Durability gap — unbacked principle       |
-| **Severity** | High — P18 is claimed and not implemented |
-| **Phase**    | Phase 5, Sprint 2                         |
-| **Status**   | Open — migration 022 lands the schema     |
-| **Logged**   | 2026-07-29                                |
+| Field        | Detail                                                      |
+| ------------ | ----------------------------------------------------------- |
+| **ID**       | TASK-062                                                    |
+| **Type**     | Durability gap — unbacked principle                         |
+| **Severity** | High — P18 is claimed and not implemented                   |
+| **Phase**    | Phase 5, Sprint 2                                           |
+| **Status**   | Resolved — SupabaseTrajectoryStore, migration 022, slot #15 |
+| **Logged**   | 2026-07-29                                                  |
 
 **What:** `InMemoryTrajectoryStore` is the only implementation, no non-test caller of
 `setTrajectoryStore` exists, there is no registry slot for trajectories, and live introspection
@@ -740,14 +740,14 @@ kit. Migration 022 reshapes the table; the store follows in Sprint 2 step 2b.
 
 ### TASK-063 — Budgets are not durable, and the daily cap is not a daily cap
 
-| Field        | Detail                               |
-| ------------ | ------------------------------------ |
-| **ID**       | TASK-063                             |
-| **Type**     | Cost-control defect + durability gap |
-| **Severity** | High — unbounded-spend exposure      |
-| **Phase**    | Phase 5, Sprint 2                    |
-| **Status**   | Open                                 |
-| **Logged**   | 2026-07-29                           |
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-063                                                     |
+| **Type**     | Cost-control defect + durability gap                         |
+| **Severity** | High — unbounded-spend exposure                              |
+| **Phase**    | Phase 5, Sprint 2                                            |
+| **Status**   | Resolved — SupabaseBudgetStore, migrations 023/024, slot #16 |
+| **Logged**   | 2026-07-29                                                   |
 
 **What:** Three defects that compound.
 
@@ -865,7 +865,7 @@ condition.
 | **Type**     | Test-coverage gap / pattern divergence                    |
 | **Severity** | Medium — it shipped dead for a sprint and nothing said so |
 | **Phase**    | Phase 5, Sprint 2                                         |
-| **Status**   | Open                                                      |
+| **Status**   | Resolved — realigned to raw fetch, conformance arm added  |
 | **Logged**   | 2026-07-29                                                |
 
 **What:** Two Supabase transport patterns exist in this codebase. The social, moderation,
@@ -934,14 +934,14 @@ ends without any of them and the entry is closed as "invoked is sufficient".
 
 ### TASK-071 — There is no session load path, so crash repair must be called explicitly
 
-| Field        | Detail                                      |
-| ------------ | ------------------------------------------- |
-| **ID**       | TASK-071                                    |
-| **Type**     | Missing lifecycle hook                      |
-| **Severity** | Medium — repair exists and nothing calls it |
-| **Phase**    | Phase 5, Sprint 2                           |
-| **Status**   | Open                                        |
-| **Logged**   | 2026-08-04                                  |
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-071                                                  |
+| **Type**     | Missing lifecycle hook                                    |
+| **Severity** | Medium — repair exists and nothing calls it               |
+| **Phase**    | Phase 5, Sprint 2                                         |
+| **Status**   | Resolved — loadSession calls repairSession; migration 029 |
+| **Logged**   | 2026-08-04                                                |
 
 **What:** ADR-031 D6 specifies crash-window repair "on session load". `repairSession()` now
 implements the repair, but there is no session load path to call it from: `createSession()`
@@ -1023,6 +1023,47 @@ undocumented, and none has.
 
 ---
 
+### TASK-069 — Remove the brace-expansion override once upstream ships a clean tree
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-069                                    |
+| **Type**     | Dependency stopgap                          |
+| **Severity** | Low — correct today, and should not persist |
+| **Phase**    | Phase 5, Sprint 2                           |
+| **Status**   | Open                                        |
+| **Logged**   | 2026-08-04 (backfilled — see below)         |
+
+**What:** Both repos override `brace-expansion@5` to `5.0.9` to clear GHSA-rgw5-rvv9-x895,
+which reaches production through `@sentry/nextjs` → `@sentry/bundler-plugin-core` → `glob` →
+`minimatch`. Sprint 2 added four more override entries for the 1.x and 2.x lines and for
+`js-yaml`, clearing the dev audit.
+
+Every cleaner option was checked: `npm audit fix` re-reports the advisory because npm will
+not replace a nested pin; `@sentry/nextjs` 10.68 and 10.69 both still require
+`bundler-plugin-core ^5.3.0`, the only published release; and moving Sentry to
+devDependencies would silence the gate while misrepresenting a dependency that
+`platform/observability/error-reporting.ts` imports at runtime.
+
+An override forces a version a dependency did not choose. Acceptable for a package this
+small with a stable API; not acceptable indefinitely, because an override left in place
+quietly pins a transitive dependency long after the reason has gone.
+
+**Backfill note:** this entry is dated 2026-08-04 but describes work done on 08-03. The
+commit that would have filed it aborted at the audit gate, the rerun filed TASK-070 only, and
+"TASK-069/070, the override hygiene pair" then appeared in three commit messages and in
+SPRINT2_ASSESSMENT.md referring to a task that did not exist. Recorded here rather than
+renumbering TASK-070, and noted rather than quietly backdated.
+
+**Resolution:** watch for a `@sentry/bundler-plugin-core` release whose `glob`/`minimatch`
+chain resolves `brace-expansion` outside the vulnerable range, upgrade, and delete the
+override. Same for the jest and istanbul toolchain entries.
+
+**Close when:** `npm audit --audit-level=high` passes with no `brace-expansion` or `js-yaml`
+entry in `overrides`.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1068,4 +1109,4 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (TASK-059 resolved — prettier pinned to exactly 3.9.6; the cause was a caret in BOTH repos, not a version gap)_
+_Last updated: August 4, 2026 (five Sprint 2 statuses reconciled — 059, 062, 063, 066, 071 were resolved and still read Open; TASK-069 filed, having been referenced in three commit messages without existing)_
