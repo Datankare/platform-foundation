@@ -32,6 +32,7 @@ import {
 import { AnthropicProvider, AIProviderError } from "./provider";
 import { estimateCost, recordMetrics } from "./instrumentation";
 import { logger } from "@/lib/logger";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Circuit breaker
@@ -446,14 +447,25 @@ function recordFailureMetrics(
 // Singleton — shared orchestrator instance for the application
 // ---------------------------------------------------------------------------
 
-let defaultOrchestrator: Orchestrator | null = null;
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const ORCHESTRATOR_KEY = "platform.ai.orchestrator";
+function readDefaultOrchestrator(): Orchestrator | null {
+  return getSingleton<Orchestrator | null>(ORCHESTRATOR_KEY, () => null);
+}
+function writeDefaultOrchestrator(next: Orchestrator | null): void {
+  setSingleton<Orchestrator | null>(ORCHESTRATOR_KEY, next);
+}
 
 /** Get the shared orchestrator instance — lazily created */
 export function getOrchestrator(): Orchestrator {
-  if (!defaultOrchestrator) {
-    defaultOrchestrator = createOrchestrator();
-  }
-  return defaultOrchestrator;
+  // Read once into a local: narrowing flows through a binding, not through a call, so
+  // `return readDefaultOrchestrator()` would still be `Orchestrator | null`. This also
+  // avoids a second registry lookup per call.
+  const existing = readDefaultOrchestrator();
+  if (existing) return existing;
+  const created = createOrchestrator();
+  writeDefaultOrchestrator(created);
+  return created;
 }
 
 /**
@@ -461,7 +473,7 @@ export function getOrchestrator(): Orchestrator {
  * Returns the previous orchestrator for cleanup.
  */
 export function setOrchestrator(orchestrator: Orchestrator): Orchestrator | null {
-  const previous = defaultOrchestrator;
-  defaultOrchestrator = orchestrator;
+  const previous = readDefaultOrchestrator();
+  writeDefaultOrchestrator(orchestrator);
   return previous;
 }

@@ -34,22 +34,33 @@ export type {
 
 import type { ActivityStateStore } from "./state-store";
 import { InMemoryActivityStateStore } from "./memory-state-store";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // Type-erased singleton — the registry registers a concrete store; the session
 // coordinator re-parameterizes at the call site (the ActivityDefinition knows TState).
-let activeStore: ActivityStateStore<unknown> = new InMemoryActivityStateStore<unknown>();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const STATESTORE_KEY = "platform.appFramework.stateStore";
+function readActiveStore(): ActivityStateStore<unknown> {
+  return getSingleton<ActivityStateStore<unknown>>(
+    STATESTORE_KEY,
+    () => new InMemoryActivityStateStore<unknown>()
+  );
+}
+function writeActiveStore(next: ActivityStateStore<unknown>): void {
+  setSingleton<ActivityStateStore<unknown>>(STATESTORE_KEY, next);
+}
 
 /** Set the active application state store (called by the provider registry, D2). */
 export function setActivityStateStore(store: ActivityStateStore<unknown>): void {
-  activeStore = store;
+  writeActiveStore(store);
 }
 
 /** Get the active application state store. */
 export function getActivityStateStore<TState>(): ActivityStateStore<TState> {
-  return activeStore as ActivityStateStore<TState>;
+  return readActiveStore() as ActivityStateStore<TState>;
 }
 
 /** Reset to a fresh in-memory store (testing only). */
 export function resetActivityStateStore(): void {
-  activeStore = new InMemoryActivityStateStore<unknown>();
+  writeActiveStore(new InMemoryActivityStateStore<unknown>());
 }

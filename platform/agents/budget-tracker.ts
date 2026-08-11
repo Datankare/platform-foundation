@@ -1,5 +1,5 @@
 /**
- * platform/agents/budget-tracker.ts — Agent budget enforcement
+ * platform/agents/budget-readTracker().ts — Agent budget enforcement
  *
  * Tracks and enforces per-agent per-scope cost budgets.
  * Prevents runaway costs by checking before each step.
@@ -21,6 +21,7 @@
 
 import type { BudgetConfig } from "./types";
 import { DEFAULT_BUDGET_CONFIG } from "./types";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Budget state types
@@ -239,19 +240,26 @@ export class BudgetTracker {
 // Singleton
 // ---------------------------------------------------------------------------
 
-let tracker = new BudgetTracker();
-
-export function getBudgetTracker(): BudgetTracker {
-  return tracker;
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const BUDGETTRACKER_KEY = "platform.agents.budgetTracker";
+function readTracker(): BudgetTracker {
+  return getSingleton<BudgetTracker>(BUDGETTRACKER_KEY, () => new BudgetTracker());
+}
+function writeTracker(next: BudgetTracker): void {
+  setSingleton<BudgetTracker>(BUDGETTRACKER_KEY, next);
 }
 
-/** Set the active tracker (called by the provider registry in 2c-2b). */
+export function getBudgetTracker(): BudgetTracker {
+  return readTracker();
+}
+
+/** Set the active readTracker() (called by the provider registry in 2c-2b). */
 export function setBudgetTracker(next: BudgetTracker): BudgetTracker {
-  const previous = tracker;
-  tracker = next;
+  const previous = readTracker();
+  writeTracker(next);
   return previous;
 }
 
 export function resetBudgetTracker(): void {
-  tracker = new BudgetTracker();
+  writeTracker(new BudgetTracker());
 }

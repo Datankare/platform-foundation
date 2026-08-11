@@ -16,6 +16,7 @@ import type {
   ProposalStore,
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 export type {
   CreateProposalArgs,
@@ -96,18 +97,28 @@ export class InMemoryProposalStore implements ProposalStore {
   }
 }
 
-let currentStore: ProposalStore = new InMemoryProposalStore();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const PROPOSALSTORE_KEY = "platform.agents.proposalStore";
+function readCurrentStore(): ProposalStore {
+  return getSingleton<ProposalStore>(
+    PROPOSALSTORE_KEY,
+    () => new InMemoryProposalStore()
+  );
+}
+function writeCurrentStore(next: ProposalStore): void {
+  setSingleton<ProposalStore>(PROPOSALSTORE_KEY, next);
+}
 
 export function getProposalStore(): ProposalStore {
-  return currentStore;
+  return readCurrentStore();
 }
 
 export function setProposalStore(store: ProposalStore): ProposalStore {
-  const previous = currentStore;
-  currentStore = store;
+  const previous = readCurrentStore();
+  writeCurrentStore(store);
   return previous;
 }
 
 export function resetProposalStore(): void {
-  currentStore = new InMemoryProposalStore();
+  writeCurrentStore(new InMemoryProposalStore());
 }

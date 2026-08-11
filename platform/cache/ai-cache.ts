@@ -26,6 +26,7 @@
 
 import type { CacheProvider } from "./types";
 import type { AIRequest, AIResponse } from "@/platform/ai";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Cache key generation
@@ -231,29 +232,37 @@ export class AICache {
 // Singleton
 // ---------------------------------------------------------------------------
 
-let aiCacheInstance: AICache | null = null;
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const AICACHE_KEY = "platform.cache.aiCache";
+function readAiCacheInstance(): AICache | null {
+  return getSingleton<AICache | null>(AICACHE_KEY, () => null);
+}
+function writeAiCacheInstance(next: AICache | null): void {
+  setSingleton<AICache | null>(AICACHE_KEY, next);
+}
 
 /**
  * Get the singleton AI cache.
  * Requires the generic cache to be available (auto-detected from env).
  */
 export function getAICache(config?: Partial<AICacheConfig>): AICache {
-  if (!aiCacheInstance) {
-    // Lazy import to avoid circular dependency at module load
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getCache } = require("./index") as { getCache: () => CacheProvider };
-    aiCacheInstance = new AICache({
-      cache: config?.cache ?? getCache(),
-      defaultTTLSeconds: config?.defaultTTLSeconds,
-      ttlByUseCase: config?.ttlByUseCase,
-      enabled: config?.enabled,
-      metrics: config?.metrics,
-    });
-  }
-  return aiCacheInstance;
+  const existing = readAiCacheInstance();
+  if (existing) return existing;
+  // Lazy import to avoid circular dependency at module load
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getCache } = require("./index") as { getCache: () => CacheProvider };
+  const created = new AICache({
+    cache: config?.cache ?? getCache(),
+    defaultTTLSeconds: config?.defaultTTLSeconds,
+    ttlByUseCase: config?.ttlByUseCase,
+    enabled: config?.enabled,
+    metrics: config?.metrics,
+  });
+  writeAiCacheInstance(created);
+  return created;
 }
 
 /** Reset singleton (testing only) */
 export function resetAICache(): void {
-  aiCacheInstance = null;
+  writeAiCacheInstance(null);
 }

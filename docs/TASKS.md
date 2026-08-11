@@ -1249,6 +1249,40 @@ than assumed.
 
 ---
 
+### TASK-077 — Provider accessors do not warn when configuration did not arrive
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-077                                                     |
+| **Type**     | Observability of configuration                               |
+| **Severity** | Medium — this is the property that let ADR-032's defect hide |
+| **Phase**    | Phase 5, Sprint 3a                                           |
+| **Target**   | Phase 5, Sprint 4                                            |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-08-11                                                   |
+
+**What:** ADR-032 D5 says a fallback that fires because configuration did not arrive is an
+error, not a default. The startup self-check now logs what each slot resolved to, which
+catches the common case at boot — but the twenty accessors themselves still return an
+in-memory default silently when nothing was registered.
+
+That silence is what made the bundle-split defect invisible for months: `getTrajectoryStore()`
+returning an in-memory store when `TRAJECTORY_STORE=supabase` is set is not graceful
+degradation, it is a silent substitution of something the operator did not ask for.
+
+**Not folded into the conversion commit** because it is twenty more edits on top of twenty
+conversions, and the combined diff would not be reviewable.
+
+**Resolution:** each accessor consults the resolved-provider map. If the environment selected
+a provider for that slot and the registry holds nothing, warn once with the slot name and the
+requested provider. Once, not per call — a per-request warning becomes noise and noise is
+another way to be invisible.
+
+**Close when:** setting `TRAJECTORY_STORE=supabase` without a working Supabase config produces
+a warning naming the slot, rather than silent in-memory behaviour.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1294,5 +1328,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (ADR-032 bundle-safe singletons; TASK-075 durable stores not switched on, TASK-076 nothing detects telemetry silence)_
+_Last updated: August 11, 2026 (twenty singletons converted to the bundle-safe registry; TASK-077 filed — accessors still fall back silently)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_

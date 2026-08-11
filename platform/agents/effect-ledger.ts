@@ -19,6 +19,7 @@ import type {
   EffectStatus,
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 export type {
   BeginEffectArgs,
@@ -108,18 +109,25 @@ export class InMemoryEffectLedger implements EffectLedger {
   }
 }
 
-let currentLedger: EffectLedger = new InMemoryEffectLedger();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const EFFECTLEDGER_KEY = "platform.agents.effectLedger";
+function readCurrentLedger(): EffectLedger {
+  return getSingleton<EffectLedger>(EFFECTLEDGER_KEY, () => new InMemoryEffectLedger());
+}
+function writeCurrentLedger(next: EffectLedger): void {
+  setSingleton<EffectLedger>(EFFECTLEDGER_KEY, next);
+}
 
 export function getEffectLedger(): EffectLedger {
-  return currentLedger;
+  return readCurrentLedger();
 }
 
 export function setEffectLedger(ledger: EffectLedger): EffectLedger {
-  const previous = currentLedger;
-  currentLedger = ledger;
+  const previous = readCurrentLedger();
+  writeCurrentLedger(ledger);
   return previous;
 }
 
 export function resetEffectLedger(): void {
-  currentLedger = new InMemoryEffectLedger();
+  writeCurrentLedger(new InMemoryEffectLedger());
 }

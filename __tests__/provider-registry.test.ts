@@ -12,8 +12,12 @@ jest.mock("@/lib/logger", () => ({
 describe("Provider Registry", () => {
   const origEnv = { ...process.env };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.resetModules();
+    // ADR-032: resetProviders() now clears the slots as well as the flag; module
+    // re-import stopped being the clearing mechanism.
+    const { resetProviders } = await import("@/platform/providers/registry");
+    resetProviders();
     process.env = { ...origEnv };
     delete process.env.AUTH_PROVIDER;
     delete process.env.CACHE_PROVIDER;
