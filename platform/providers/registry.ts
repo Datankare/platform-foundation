@@ -66,6 +66,7 @@ import {
   setActivityStateStore,
   SupabaseActivityStateStore,
 } from "@/platform/app-framework";
+import { getSingleton, resetSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -457,14 +458,20 @@ function initEmbeddingProvider(type: EmbeddingProviderType): void {
 // Central init
 // ---------------------------------------------------------------------------
 
-let initialized = false;
-
+/** ADR-032: the flag is duplicated per bundle entry like any other module binding. */
+const INITIALIZED_KEY = "platform.providers.initialized";
+function readInitialized(): boolean {
+  return getSingleton<boolean>(INITIALIZED_KEY, () => false);
+}
+function writeInitialized(next: boolean): void {
+  setSingleton<boolean>(INITIALIZED_KEY, next);
+}
 /**
  * Initialize all platform providers from environment.
  * Safe to call multiple times — skips if already initialized.
  */
 export function initProviders(): ProviderSelections {
-  if (initialized) return getProviderSelections();
+  if (readInitialized()) return getProviderSelections();
 
   const selections = getProviderSelections();
 
@@ -487,8 +494,7 @@ export function initProviders(): ProviderSelections {
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
 
-  initialized = true;
-
+  writeInitialized(true);
   logger.info("Platform providers initialized", {
     auth: selections.auth,
     cache: selections.cache,
@@ -524,5 +530,41 @@ export function getActiveProviders(): ProviderSelections {
  * Reset (testing only).
  */
 export function resetProviders(): void {
-  initialized = false;
+  writeInitialized(false);
+  // Clearing the flag is not clearing the providers. Until ADR-032 this function set the
+  // flag alone and tests appeared to work, because jest.resetModules() was doing the real
+  // clearing — a module-scope binding vanished with the module. The registry outlives module
+  // re-import by design, so a reset that does not clear leaves the previous run's providers
+  // registered and the next test inherits them.
+  for (const key of PROVIDER_SINGLETON_KEYS) {
+    resetSingleton(key);
+  }
 }
+
+/**
+ * Every singleton this registry writes to. Listed explicitly rather than derived: a slot
+ * missing from here is a slot resetProviders() silently fails to clear, and an explicit list
+ * can be checked against the registry's own selections by a test.
+ */
+export const PROVIDER_SINGLETON_KEYS: readonly string[] = [
+  "platform.auth.provider",
+  "platform.cache.provider",
+  "platform.cache.aiCache",
+  "platform.ai.orchestrator",
+  "platform.rateLimit.limiter",
+  "platform.moderation.store",
+  "platform.moderation.guardian",
+  "platform.moderation.sentinel",
+  "platform.moderation.strikeStore",
+  "platform.moderation.reviewQueueStore",
+  "platform.social.store",
+  "platform.voice.songIdProvider",
+  "platform.agents.trajectoryStore",
+  "platform.agents.budgetTracker",
+  "platform.agents.proposalStore",
+  "platform.agents.effectLedger",
+  "platform.appFramework.stateStore",
+  "platform.rag.embeddingStore",
+  "platform.rag.embeddingProvider",
+  "platform.rag.userContextStore",
+];

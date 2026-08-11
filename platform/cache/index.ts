@@ -38,9 +38,17 @@ export type { AICacheConfig, AICacheMetricsCallback } from "./ai-cache";
 import { InMemoryCacheProvider } from "./memory-cache";
 import { RedisCacheProvider } from "./redis-cache";
 import type { CacheConfig, CacheProvider } from "./types";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 /** Singleton cache instance */
-let cacheInstance: CacheProvider | null = null;
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const PROVIDER_KEY = "platform.cache.provider";
+function readCacheInstance(): CacheProvider | null {
+  return getSingleton<CacheProvider | null>(PROVIDER_KEY, () => null);
+}
+function writeCacheInstance(next: CacheProvider | null): void {
+  setSingleton<CacheProvider | null>(PROVIDER_KEY, next);
+}
 
 /**
  * Create a cache provider from explicit config.
@@ -75,17 +83,18 @@ export function createCacheProvider(config?: Partial<CacheConfig>): CacheProvide
  * Auto-detects Redis from environment, falls back to in-memory.
  */
 export function getCache(): CacheProvider {
-  if (!cacheInstance) {
-    cacheInstance = createCacheProvider();
-  }
-  return cacheInstance;
+  const existing = readCacheInstance();
+  if (existing) return existing;
+  const created = createCacheProvider();
+  writeCacheInstance(created);
+  return created;
 }
 
 /**
  * Reset the singleton (for testing only).
  */
 export function resetCache(): void {
-  cacheInstance = null;
+  writeCacheInstance(null);
 }
 
 function getRedisUrl(): string | undefined {

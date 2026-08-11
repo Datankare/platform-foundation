@@ -40,6 +40,7 @@ import { getConfig } from "@/platform/auth/platform-config";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { writeAuditLog } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Trajectory helpers (same pattern as guardian.ts)
@@ -521,20 +522,27 @@ function parseAccountStatus(raw: string): AccountStatus {
 // Module-level singleton
 // ---------------------------------------------------------------------------
 
-let sentinelInstance: Sentinel = new Sentinel();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const SENTINEL_KEY = "platform.moderation.sentinel";
+function readSentinelInstance(): Sentinel {
+  return getSingleton<Sentinel>(SENTINEL_KEY, () => new Sentinel());
+}
+function writeSentinelInstance(next: Sentinel): void {
+  setSingleton<Sentinel>(SENTINEL_KEY, next);
+}
 
 export function getSentinel(): Sentinel {
-  return sentinelInstance;
+  return readSentinelInstance();
 }
 
 export function setSentinel(sentinel: Sentinel): Sentinel {
-  const previous = sentinelInstance;
-  sentinelInstance = sentinel;
+  const previous = readSentinelInstance();
+  writeSentinelInstance(sentinel);
   return previous;
 }
 
 export function resetSentinel(): void {
-  sentinelInstance = new Sentinel();
+  writeSentinelInstance(new Sentinel());
 }
 
 // ---------------------------------------------------------------------------
