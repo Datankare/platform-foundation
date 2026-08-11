@@ -1183,6 +1183,72 @@ provider is constructed inside `instrumentation.ts`.
 
 ---
 
+### TASK-075 — Durable stores are not switched on
+
+| Field        | Detail                                                        |
+| ------------ | ------------------------------------------------------------- |
+| **ID**       | TASK-075                                                      |
+| **Type**     | Deployment configuration                                      |
+| **Severity** | High — Sprint 2's durability work is inert until this is done |
+| **Phase**    | Phase 5, Sprint 3a                                            |
+| **Target**   | Phase 5, Sprint 3a                                            |
+| **Status**   | Open                                                          |
+| **Logged**   | 2026-08-11                                                    |
+
+**What:** `TRAJECTORY_STORE`, `BUDGET_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER` and
+`APP_STATE_STORE` are unset, so every one falls back to its in-memory implementation.
+Trajectories, budgets, held proposals and the effect ledger do not survive a request.
+
+Until ADR-032 this could not have been fixed by setting them: the registry was writing to a
+bundle copy no route read, so the value would have been ignored anyway. Now it can.
+
+**Consequence while open:** agent runs leave no durable trace, the daily spend cap resets on
+every request rather than accumulating (the exposure TASK-063 was filed for, reintroduced by
+a different route), and held proposals cannot be approved by a later request.
+
+**Resolution:** set the five variables to `supabase` in the deployment environment, redeploy,
+and verify against the running build rather than the dashboard:
+
+```
+curl -s https://<host>/api/health | python3 -m json.tool
+```
+
+with the startup self-check from commit 2 logging the resolved provider for each slot.
+
+**Close when:** a trajectory written by one request is readable by another.
+
+---
+
+### TASK-076 — Nothing detects sustained silence from telemetry
+
+| Field        | Detail                                                     |
+| ------------ | ---------------------------------------------------------- |
+| **ID**       | TASK-076                                                   |
+| **Type**     | Operational monitoring                                     |
+| **Severity** | Medium — the failure mode is indistinguishable from health |
+| **Phase**    | Phase 5, Sprint 3a                                         |
+| **Target**   | Phase 5, Sprint 4                                          |
+| **Status**   | Open                                                       |
+| **Logged**   | 2026-08-11                                                 |
+
+**What:** Sentry has been configured and receiving nothing, because observability was
+initialised on a bundle copy no route read. Nobody noticed, because an absence of errors looks
+exactly like an absence of problems.
+
+An application that cannot report is also unable to report that it cannot. The check therefore
+has to live outside the process.
+
+**Resolution:** two alerts, both console configuration rather than code.
+
+1. A Sentry alert rule on "no events received in 24 hours" for the production project.
+2. An uptime monitor polling `/api/health` and alerting on a 503 or a non-200, now that the
+   endpoint reports the truth (TASK-057).
+
+**Close when:** stopping telemetry produces an alert within a day, verified by test rather
+than assumed.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1228,5 +1294,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (TASK-057 and TASK-041 resolved; TASK-074 filed — Playform's probe wraps a duplicate provider instance)_
+_Last updated: August 11, 2026 (ADR-032 bundle-safe singletons; TASK-075 durable stores not switched on, TASK-076 nothing detects telemetry silence)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
