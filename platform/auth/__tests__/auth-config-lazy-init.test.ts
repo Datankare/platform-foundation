@@ -16,8 +16,13 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 describe("getAuthProvider lazy init", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.resetModules();
+    // ADR-032: the provider lives on the globalThis registry now, so re-importing the
+    // module no longer clears it. Isolation is an explicit reset, which is what the
+    // absence of resetAuthProvider() had been hiding.
+    const { resetAuthProvider } = await import("@/platform/auth/config");
+    resetAuthProvider();
   });
 
   it("recovers via lazy init when no provider is registered", async () => {

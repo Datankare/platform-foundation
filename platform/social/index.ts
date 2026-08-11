@@ -55,22 +55,30 @@ export type {
 
 import type { SocialStore } from "./types";
 import { InMemorySocialStore } from "./memory-social-store";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
-let currentStore: SocialStore = new InMemorySocialStore();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const STORE_KEY = "platform.social.store";
+function readCurrentStore(): SocialStore {
+  return getSingleton<SocialStore>(STORE_KEY, () => new InMemorySocialStore());
+}
+function writeCurrentStore(next: SocialStore): void {
+  setSingleton<SocialStore>(STORE_KEY, next);
+}
 
 /** Get the current social store. */
 export function getSocialStore(): SocialStore {
-  return currentStore;
+  return readCurrentStore();
 }
 
 /** Set the social store (for provider init or testing). */
 export function setSocialStore(store: SocialStore): SocialStore {
-  const previous = currentStore;
-  currentStore = store;
+  const previous = readCurrentStore();
+  writeCurrentStore(store);
   return previous;
 }
 
 /** Reset to default InMemorySocialStore (testing only). */
 export function resetSocialStore(): void {
-  currentStore = new InMemorySocialStore();
+  writeCurrentStore(new InMemorySocialStore());
 }
