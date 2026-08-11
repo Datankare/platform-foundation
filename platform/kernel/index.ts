@@ -8,3 +8,14 @@
 
 export * from "./types";
 export * from "./state-store";
+
+// Bundle-safe singletons (ADR-032). A module-scope `let` is not one value per
+// process: the bundler duplicates modules across entries, and each copy gets its own.
+export {
+  getSingleton,
+  setSingleton,
+  hasSingleton,
+  resetSingleton,
+  resetAllSingletons,
+  singletonKeys,
+} from "./singleton";
