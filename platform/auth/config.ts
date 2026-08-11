@@ -57,21 +57,17 @@ export function resetAuthProvider(): void {
  * Throws if no provider has been registered — fail-fast on misconfiguration.
  */
 export function getAuthProvider(): AuthProvider {
-  if (!readRegisteredProvider()) {
-    // Lazy initialization: Next.js production builds may isolate
-    // instrumentation.ts and route handler module contexts (Gotcha 43).
-    // If initProviders() ran in a different context, the singleton
-    // is null here. Re-initialize to fix module isolation.
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { initProviders } = require("@/platform/providers");
-      initProviders();
-    } catch {
-      // initProviders not available
-    }
-  }
   const provider = readRegisteredProvider();
   if (!provider) {
+    // No recovery path here, deliberately. This function used to re-require
+    // @/platform/providers and call initProviders() again, because instrumentation.ts and a
+    // route handler saw different module instances (the comment cited "Gotcha 43").
+    //
+    // ADR-032 fixed that cause: singletons live on a globalThis registry keyed by
+    // Symbol.for, so the provider registered at startup IS the one a route reads. Retrying
+    // initialisation from inside a request would now re-read every env var and re-register
+    // every slot mid-flight, and would hide a genuine misconfiguration behind a silent
+    // repair — the opposite of the fail-fast this function documents.
     throw new Error(
       "No auth provider registered. Call registerAuthProvider() at app startup. " +
         "See platform/auth/AUTH_INTEGRATION_GUIDE.md for setup instructions."
