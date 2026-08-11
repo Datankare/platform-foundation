@@ -845,15 +845,15 @@ name, and the step limit is enforced per trajectory.
 
 ### TASK-067 — Nothing checks that the schema a store writes actually exists
 
-| Field        | Detail                                          |
-| ------------ | ----------------------------------------------- |
-| **ID**       | TASK-067                                        |
-| **Type**     | Test-coverage gap / schema drift                |
-| **Severity** | Medium — passes green, fails at first real call |
-| **Phase**    | Phase 5, Sprint 2                               |
-| **Target**   | Phase 5, Sprint 3                               |
-| **Status**   | Open                                            |
-| **Logged**   | 2026-07-29                                      |
+| Field        | Detail                                                               |
+| ------------ | -------------------------------------------------------------------- |
+| **ID**       | TASK-067                                                             |
+| **Type**     | Test-coverage gap / schema drift                                     |
+| **Severity** | Medium — passes green, fails at first real call                      |
+| **Phase**    | Phase 5, Sprint 2                                                    |
+| **Target**   | Phase 5, Sprint 3                                                    |
+| **Status**   | Resolved — npm run schema:check, derived from source, enforced in CI |
+| **Logged**   | 2026-07-29                                                           |
 
 **What:** Migration 023 shipped a Postgres function referencing `agent_budgets.used_steps`,
 a column that did not exist. The full gate was green, both conformance arms passed, and the
@@ -1328,5 +1328,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (TASK-064 resolved — ToolBoundary removed, the boundary lookup fails closed, coverage asserted)_
+_Last updated: August 11, 2026 (TASK-067 resolved — schema parity derived from source and enforced in CI)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
