@@ -731,15 +731,15 @@ Phase 5 exit gate.
 
 ### TASK-064 — ToolBoundary duplicates StepBoundary, and the boundary lookup fails open
 
-| Field        | Detail                                                  |
-| ------------ | ------------------------------------------------------- |
-| **ID**       | TASK-064                                                |
-| **Type**     | Duplicate vocabulary + fail-open default                |
-| **Severity** | Medium — misclassified P17 boundary in the audit record |
-| **Phase**    | Phase 5, Sprint 2                                       |
-| **Target**   | Phase 5, Sprint 3                                       |
-| **Status**   | Open                                                    |
-| **Logged**   | 2026-07-29                                              |
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-064                                                  |
+| **Type**     | Duplicate vocabulary + fail-open default                  |
+| **Severity** | Medium — misclassified P17 boundary in the audit record   |
+| **Phase**    | Phase 5, Sprint 2                                         |
+| **Target**   | Phase 5, Sprint 3                                         |
+| **Status**   | Resolved — one vocabulary, fail closed, coverage asserted |
+| **Logged**   | 2026-07-29                                                |
 
 **What:** `platform/admin/types.ts` declares `ToolBoundary = "cognition" | "commitment"` plus a
 `TOOL_BOUNDARIES: Record<string, ToolBoundary>` map. `platform/agents/types.ts` declares
@@ -1328,5 +1328,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (twenty singletons converted to the bundle-safe registry; TASK-077 filed — accessors still fall back silently)_
+_Last updated: August 11, 2026 (TASK-064 resolved — ToolBoundary removed, the boundary lookup fails closed, coverage asserted)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
