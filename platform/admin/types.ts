@@ -24,7 +24,7 @@
  * @module platform/admin
  */
 
-import type { Step } from "@/platform/agents/types";
+import type { Step, StepBoundary } from "@/platform/agents/types";
 
 // ---------------------------------------------------------------------------
 // Config value types — drives UI widget + validation (Migration 011)
@@ -313,11 +313,20 @@ export interface ToolExecutionContext {
   readonly steps: Step[];
 }
 
-/** Whether a tool is a read (cognition) or write (commitment) */
-export type ToolBoundary = "cognition" | "commitment";
-
-/** Classification of each tool's boundary */
-export const TOOL_BOUNDARIES: Record<string, ToolBoundary> = {
+/**
+ * Classification of each tool's boundary.
+ *
+ * Typed as the kernel's StepBoundary rather than a local duplicate. This file previously
+ * declared `ToolBoundary = "cognition" | "commitment"` — character for character the kernel's
+ * definition — and config-handlers.ts assigned from this map to a StepBoundary, compiling
+ * only because the two happened to coincide. One definition, in the layer that owns the
+ * vocabulary (TASK-064).
+ *
+ * Every registered config tool must appear here. __tests__/tool-boundary-coverage.test.ts
+ * asserts that, because an unlisted tool is the only way the fallback in executeConfigTool
+ * ever fires.
+ */
+export const TOOL_BOUNDARIES: Record<string, StepBoundary> = {
   search_config: "cognition",
   get_config: "cognition",
   get_history: "cognition",
