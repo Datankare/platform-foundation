@@ -16,7 +16,8 @@
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "sprint:check": "node scripts/sprint-check.mjs"
+    "sprint:check": "node scripts/sprint-check.mjs",
+    "schema:check": "node scripts/schema-parity.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
