@@ -24,6 +24,7 @@ import type {
   StrikeSummary,
 } from "./types";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Severity ordering (for highestSeverity in summary)
@@ -375,20 +376,27 @@ export class SupabaseStrikeStore implements StrikeStore {
 // Store singleton
 // ---------------------------------------------------------------------------
 
-let currentStore: StrikeStore = new InMemoryStrikeStore();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const STRIKESTORE_KEY = "platform.moderation.strikeStore";
+function readCurrentStore(): StrikeStore {
+  return getSingleton<StrikeStore>(STRIKESTORE_KEY, () => new InMemoryStrikeStore());
+}
+function writeCurrentStore(next: StrikeStore): void {
+  setSingleton<StrikeStore>(STRIKESTORE_KEY, next);
+}
 
 export function getStrikeStore(): StrikeStore {
-  return currentStore;
+  return readCurrentStore();
 }
 
 export function setStrikeStore(store: StrikeStore): StrikeStore {
-  const previous = currentStore;
-  currentStore = store;
+  const previous = readCurrentStore();
+  writeCurrentStore(store);
   return previous;
 }
 
 export function resetStrikeStore(): void {
-  currentStore = new InMemoryStrikeStore();
+  writeCurrentStore(new InMemoryStrikeStore());
 }
 
 // ---------------------------------------------------------------------------

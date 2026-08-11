@@ -17,8 +17,16 @@
  */
 
 import type { AuthProvider } from "@/platform/auth/provider";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
-let registeredProvider: AuthProvider | null = null;
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const PROVIDER_KEY = "platform.auth.provider";
+function readRegisteredProvider(): AuthProvider | null {
+  return getSingleton<AuthProvider | null>(PROVIDER_KEY, () => null);
+}
+function writeRegisteredProvider(next: AuthProvider | null): void {
+  setSingleton<AuthProvider | null>(PROVIDER_KEY, next);
+}
 
 /**
  * Register the auth provider implementation.
@@ -29,7 +37,19 @@ let registeredProvider: AuthProvider | null = null;
  *   registerAuthProvider(createAuth0Provider({ ... }));
  */
 export function registerAuthProvider(provider: AuthProvider): void {
-  registeredProvider = provider;
+  writeRegisteredProvider(provider);
+}
+
+/**
+ * Forget the registered provider.
+ *
+ * Test affordance, and its absence was a real gap: with no supported way to say "nothing is
+ * registered", tests reached for jest.resetModules() and depended on a module-scope binding
+ * vanishing. That stopped being true when the value moved to the globalThis registry
+ * (ADR-032), and it was never a property worth depending on.
+ */
+export function resetAuthProvider(): void {
+  writeRegisteredProvider(null);
 }
 
 /**
@@ -37,26 +57,23 @@ export function registerAuthProvider(provider: AuthProvider): void {
  * Throws if no provider has been registered — fail-fast on misconfiguration.
  */
 export function getAuthProvider(): AuthProvider {
-  if (!registeredProvider) {
-    // Lazy initialization: Next.js production builds may isolate
-    // instrumentation.ts and route handler module contexts (Gotcha 43).
-    // If initProviders() ran in a different context, the singleton
-    // is null here. Re-initialize to fix module isolation.
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { initProviders } = require("@/platform/providers");
-      initProviders();
-    } catch {
-      // initProviders not available
-    }
-  }
-  if (!registeredProvider) {
+  const provider = readRegisteredProvider();
+  if (!provider) {
+    // No recovery path here, deliberately. This function used to re-require
+    // @/platform/providers and call initProviders() again, because instrumentation.ts and a
+    // route handler saw different module instances (the comment cited "Gotcha 43").
+    //
+    // ADR-032 fixed that cause: singletons live on a globalThis registry keyed by
+    // Symbol.for, so the provider registered at startup IS the one a route reads. Retrying
+    // initialisation from inside a request would now re-read every env var and re-register
+    // every slot mid-flight, and would hide a genuine misconfiguration behind a silent
+    // repair — the opposite of the fail-fast this function documents.
     throw new Error(
       "No auth provider registered. Call registerAuthProvider() at app startup. " +
         "See platform/auth/AUTH_INTEGRATION_GUIDE.md for setup instructions."
     );
   }
-  return registeredProvider;
+  return provider;
 }
 
 /**
@@ -64,5 +81,5 @@ export function getAuthProvider(): AuthProvider {
  * Useful for conditional logic during startup.
  */
 export function hasAuthProvider(): boolean {
-  return registeredProvider !== null;
+  return readRegisteredProvider() !== null;
 }

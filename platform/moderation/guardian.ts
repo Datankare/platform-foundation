@@ -41,6 +41,7 @@ import { classify } from "./classifier";
 import { loadContentRatingThresholds } from "./config";
 import { evaluateContext, reduceSeverity } from "./context";
 import { logModerationAudit } from "./audit";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Severity comparison
@@ -438,21 +439,28 @@ export class Guardian {
 // Module-level singleton
 // ---------------------------------------------------------------------------
 
-let guardianInstance: Guardian = new Guardian();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const GUARDIAN_KEY = "platform.moderation.guardian";
+function readGuardianInstance(): Guardian {
+  return getSingleton<Guardian>(GUARDIAN_KEY, () => new Guardian());
+}
+function writeGuardianInstance(next: Guardian): void {
+  setSingleton<Guardian>(GUARDIAN_KEY, next);
+}
 
 /** Get the current Guardian agent instance */
 export function getGuardian(): Guardian {
-  return guardianInstance;
+  return readGuardianInstance();
 }
 
 /** Set the Guardian instance (for tests) — returns previous */
 export function setGuardian(guardian: Guardian): Guardian {
-  const previous = guardianInstance;
-  guardianInstance = guardian;
+  const previous = readGuardianInstance();
+  writeGuardianInstance(guardian);
   return previous;
 }
 
 /** Reset to a fresh Guardian instance */
 export function resetGuardian(): void {
-  guardianInstance = new Guardian();
+  writeGuardianInstance(new Guardian());
 }

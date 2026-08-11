@@ -30,6 +30,7 @@ import type {
   TrajectoryStore,
 } from "@/platform/kernel/types";
 import { generateId } from "./utils";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Query types
@@ -180,18 +181,28 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
 // Singleton
 // ---------------------------------------------------------------------------
 
-let currentStore: TrajectoryStore = new InMemoryTrajectoryStore();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const TRAJECTORYSTORE_KEY = "platform.agents.trajectoryStore";
+function readCurrentStore(): TrajectoryStore {
+  return getSingleton<TrajectoryStore>(
+    TRAJECTORYSTORE_KEY,
+    () => new InMemoryTrajectoryStore()
+  );
+}
+function writeCurrentStore(next: TrajectoryStore): void {
+  setSingleton<TrajectoryStore>(TRAJECTORYSTORE_KEY, next);
+}
 
 export function getTrajectoryStore(): TrajectoryStore {
-  return currentStore;
+  return readCurrentStore();
 }
 
 export function setTrajectoryStore(store: TrajectoryStore): TrajectoryStore {
-  const previous = currentStore;
-  currentStore = store;
+  const previous = readCurrentStore();
+  writeCurrentStore(store);
   return previous;
 }
 
 export function resetTrajectoryStore(): void {
-  currentStore = new InMemoryTrajectoryStore();
+  writeCurrentStore(new InMemoryTrajectoryStore());
 }

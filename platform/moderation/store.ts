@@ -13,6 +13,7 @@
 import type { ModerationStore, ModerationAuditRecord, AuditQueryOptions } from "./types";
 import { logger } from "@/lib/logger";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // InMemoryModerationStore
@@ -279,18 +280,25 @@ function mapRowToRecord(row: Record<string, unknown>): ModerationAuditRecord {
 // Store singleton
 // ---------------------------------------------------------------------------
 
-let currentStore: ModerationStore = new InMemoryModerationStore();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const STORE_KEY = "platform.moderation.store";
+function readCurrentStore(): ModerationStore {
+  return getSingleton<ModerationStore>(STORE_KEY, () => new InMemoryModerationStore());
+}
+function writeCurrentStore(next: ModerationStore): void {
+  setSingleton<ModerationStore>(STORE_KEY, next);
+}
 
 export function getModerationStore(): ModerationStore {
-  return currentStore;
+  return readCurrentStore();
 }
 
 export function setModerationStore(store: ModerationStore): ModerationStore {
-  const previous = currentStore;
-  currentStore = store;
+  const previous = readCurrentStore();
+  writeCurrentStore(store);
   return previous;
 }
 
 export function resetModerationStore(): void {
-  currentStore = new InMemoryModerationStore();
+  writeCurrentStore(new InMemoryModerationStore());
 }

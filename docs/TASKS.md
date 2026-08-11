@@ -273,16 +273,16 @@ Estimated ~1.5 sprints. Write ADR-021 before implementation.
 
 ### TASK-041 — Verify song-ID health probe is registered
 
-| Field        | Detail                                  |
-| ------------ | --------------------------------------- |
-| **ID**       | TASK-041                                |
-| **Type**     | Gotcha #27 verification                 |
-| **Severity** | Medium                                  |
-| **Phase**    | Phase 5, Sprint 1                       |
-| **Target**   | Phase 5, Sprint 3                       |
-| **Status**   | Open                                    |
-| **Logged**   | 2026-04-25                              |
-| **Source**   | TASK-026 rotation pre-flight finding F3 |
+| Field        | Detail                                                                     |
+| ------------ | -------------------------------------------------------------------------- |
+| **ID**       | TASK-041                                                                   |
+| **Type**     | Gotcha #27 verification                                                    |
+| **Severity** | Medium                                                                     |
+| **Phase**    | Phase 5, Sprint 1                                                          |
+| **Target**   | Phase 5, Sprint 3                                                          |
+| **Status**   | Resolved — verified registered in PF instrumentation; Playform is TASK-074 |
+| **Logged**   | 2026-04-25                                                                 |
+| **Source**   | TASK-026 rotation pre-flight finding F3                                    |
 
 **What:** `platform/voice/health-probe.ts` defines a health
 probe for `SongIdentificationProvider`, but pre-flight grep
@@ -519,15 +519,15 @@ maintainer, and coverage-floor proximity emits a visible warning.
 
 ### TASK-057 — /api/health returns a static payload; registered probes never run
 
-| Field        | Detail                                     |
-| ------------ | ------------------------------------------ |
-| **ID**       | TASK-057                                   |
-| **Type**     | Observability / reliability defect         |
-| **Severity** | High — fails open (silent-failure pattern) |
-| **Phase**    | Phase 5, Sprint 2                          |
-| **Target**   | Phase 5, Sprint 3                          |
-| **Status**   | Open                                       |
-| **Logged**   | 2026-07-24                                 |
+| Field        | Detail                                                           |
+| ------------ | ---------------------------------------------------------------- |
+| **ID**       | TASK-057                                                         |
+| **Type**     | Observability / reliability defect                               |
+| **Severity** | High — fails open (silent-failure pattern)                       |
+| **Phase**    | Phase 5, Sprint 2                                                |
+| **Target**   | Phase 5, Sprint 3                                                |
+| **Status**   | Resolved — route runs the registry; detail to the error reporter |
+| **Logged**   | 2026-07-24                                                       |
 
 **What:** `/api/health` returns a static `{ status: "ok", service, timestamp }` and never
 executes the probes registered in the observability `HealthRegistry`. TASK-041 registered the
@@ -1151,6 +1151,138 @@ entry in `overrides`.
 
 **Retargeted Phase 5, Sprint 4:** Filed during Sprint 2 as a stopgap to remove later, not as Sprint 2 work.
 
+### TASK-074 — Playform's song-ID probe reports on an instance nothing serves traffic from
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-074                                                  |
+| **Type**     | Observability defect (consumer repo)                      |
+| **Severity** | Medium — the probe can report healthy while traffic fails |
+| **Phase**    | Phase 5, Sprint 3a                                        |
+| **Target**   | Phase 5, Sprint 3a                                        |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-08-04                                                |
+
+**What:** Playform's `instrumentation.ts` calls `initProviders()`, then constructs a **second**
+`ACRCloudIdentifier` and registers the health probe around that new instance. The probe
+therefore reports on an object nothing is using. If the live provider is misconfigured and
+the freshly constructed one happens to work, the probe says healthy while every request
+fails.
+
+platform-foundation already fixed exactly this and left the reason in a comment: the probe
+must wrap "the LIVE provider stored by `initProviders()` — not a freshly constructed
+duplicate — so the probe reports on the instance actually serving traffic" (TASK-041,
+Gotcha 27). `instrumentation.ts` does not sync between repos, so the fix did not travel.
+
+**Resolution:** use `getSongIdProvider()` in Playform as platform-foundation does, and add a
+guard so the consumer cannot drift back — a test asserting `instrumentation.ts` constructs no
+provider directly.
+
+**Close when:** Playform's probe wraps the registered provider, with a test that fails if a
+provider is constructed inside `instrumentation.ts`.
+
+---
+
+### TASK-075 — Durable stores are not switched on
+
+| Field        | Detail                                                        |
+| ------------ | ------------------------------------------------------------- |
+| **ID**       | TASK-075                                                      |
+| **Type**     | Deployment configuration                                      |
+| **Severity** | High — Sprint 2's durability work is inert until this is done |
+| **Phase**    | Phase 5, Sprint 3a                                            |
+| **Target**   | Phase 5, Sprint 3a                                            |
+| **Status**   | Open                                                          |
+| **Logged**   | 2026-08-11                                                    |
+
+**What:** `TRAJECTORY_STORE`, `BUDGET_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER` and
+`APP_STATE_STORE` are unset, so every one falls back to its in-memory implementation.
+Trajectories, budgets, held proposals and the effect ledger do not survive a request.
+
+Until ADR-032 this could not have been fixed by setting them: the registry was writing to a
+bundle copy no route read, so the value would have been ignored anyway. Now it can.
+
+**Consequence while open:** agent runs leave no durable trace, the daily spend cap resets on
+every request rather than accumulating (the exposure TASK-063 was filed for, reintroduced by
+a different route), and held proposals cannot be approved by a later request.
+
+**Resolution:** set the five variables to `supabase` in the deployment environment, redeploy,
+and verify against the running build rather than the dashboard:
+
+```
+curl -s https://<host>/api/health | python3 -m json.tool
+```
+
+with the startup self-check from commit 2 logging the resolved provider for each slot.
+
+**Close when:** a trajectory written by one request is readable by another.
+
+---
+
+### TASK-076 — Nothing detects sustained silence from telemetry
+
+| Field        | Detail                                                     |
+| ------------ | ---------------------------------------------------------- |
+| **ID**       | TASK-076                                                   |
+| **Type**     | Operational monitoring                                     |
+| **Severity** | Medium — the failure mode is indistinguishable from health |
+| **Phase**    | Phase 5, Sprint 3a                                         |
+| **Target**   | Phase 5, Sprint 4                                          |
+| **Status**   | Open                                                       |
+| **Logged**   | 2026-08-11                                                 |
+
+**What:** Sentry has been configured and receiving nothing, because observability was
+initialised on a bundle copy no route read. Nobody noticed, because an absence of errors looks
+exactly like an absence of problems.
+
+An application that cannot report is also unable to report that it cannot. The check therefore
+has to live outside the process.
+
+**Resolution:** two alerts, both console configuration rather than code.
+
+1. A Sentry alert rule on "no events received in 24 hours" for the production project.
+2. An uptime monitor polling `/api/health` and alerting on a 503 or a non-200, now that the
+   endpoint reports the truth (TASK-057).
+
+**Close when:** stopping telemetry produces an alert within a day, verified by test rather
+than assumed.
+
+---
+
+### TASK-077 — Provider accessors do not warn when configuration did not arrive
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-077                                                     |
+| **Type**     | Observability of configuration                               |
+| **Severity** | Medium — this is the property that let ADR-032's defect hide |
+| **Phase**    | Phase 5, Sprint 3a                                           |
+| **Target**   | Phase 5, Sprint 4                                            |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-08-11                                                   |
+
+**What:** ADR-032 D5 says a fallback that fires because configuration did not arrive is an
+error, not a default. The startup self-check now logs what each slot resolved to, which
+catches the common case at boot — but the twenty accessors themselves still return an
+in-memory default silently when nothing was registered.
+
+That silence is what made the bundle-split defect invisible for months: `getTrajectoryStore()`
+returning an in-memory store when `TRAJECTORY_STORE=supabase` is set is not graceful
+degradation, it is a silent substitution of something the operator did not ask for.
+
+**Not folded into the conversion commit** because it is twenty more edits on top of twenty
+conversions, and the combined diff would not be reviewable.
+
+**Resolution:** each accessor consults the resolved-provider map. If the environment selected
+a provider for that slot and the registry holds nothing, warn once with the slot name and the
+requested provider. Once, not per call — a per-request warning becomes noise and noise is
+another way to be invisible.
+
+**Close when:** setting `TRAJECTORY_STORE=supabase` without a working Supabase config produces
+a warning naming the slot, rather than silent in-memory behaviour.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1196,5 +1328,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 4, 2026 (TASK-059 resolved — prettier pinned to exactly 3.9.6; the cause was a caret in BOTH repos, not a version gap)_
+_Last updated: August 11, 2026 (twenty singletons converted to the bundle-safe registry; TASK-077 filed — accessors still fall back silently)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_

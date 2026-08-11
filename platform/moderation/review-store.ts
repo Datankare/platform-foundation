@@ -24,6 +24,7 @@ import type {
   ReviewPriority,
 } from "./review-types";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Priority ordering (for queue sort)
@@ -598,20 +599,30 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
 // Store singleton
 // ---------------------------------------------------------------------------
 
-let currentStore: ReviewQueueStore = new InMemoryReviewQueueStore();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const REVIEWQUEUESTORE_KEY = "platform.moderation.reviewQueueStore";
+function readCurrentStore(): ReviewQueueStore {
+  return getSingleton<ReviewQueueStore>(
+    REVIEWQUEUESTORE_KEY,
+    () => new InMemoryReviewQueueStore()
+  );
+}
+function writeCurrentStore(next: ReviewQueueStore): void {
+  setSingleton<ReviewQueueStore>(REVIEWQUEUESTORE_KEY, next);
+}
 
 export function getReviewQueueStore(): ReviewQueueStore {
-  return currentStore;
+  return readCurrentStore();
 }
 
 export function setReviewQueueStore(store: ReviewQueueStore): ReviewQueueStore {
-  const previous = currentStore;
-  currentStore = store;
+  const previous = readCurrentStore();
+  writeCurrentStore(store);
   return previous;
 }
 
 export function resetReviewQueueStore(): void {
-  currentStore = new InMemoryReviewQueueStore();
+  writeCurrentStore(new InMemoryReviewQueueStore());
 }
 
 // ---------------------------------------------------------------------------

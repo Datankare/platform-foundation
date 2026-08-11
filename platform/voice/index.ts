@@ -102,20 +102,31 @@ export {
 
 import type { SongIdentificationProvider } from "./identify-types";
 import { MockSongIdentifier } from "./mock-identify";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
-let currentSongIdProvider: SongIdentificationProvider = new MockSongIdentifier();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const SONGIDPROVIDER_KEY = "platform.voice.songIdProvider";
+function readCurrentSongIdProvider(): SongIdentificationProvider {
+  return getSingleton<SongIdentificationProvider>(
+    SONGIDPROVIDER_KEY,
+    () => new MockSongIdentifier()
+  );
+}
+function writeCurrentSongIdProvider(next: SongIdentificationProvider): void {
+  setSingleton<SongIdentificationProvider>(SONGIDPROVIDER_KEY, next);
+}
 
 /** Set the active song identification provider (called by the provider registry). */
 export function setSongIdProvider(provider: SongIdentificationProvider): void {
-  currentSongIdProvider = provider;
+  writeCurrentSongIdProvider(provider);
 }
 
 /** Get the active song identification provider. */
 export function getSongIdProvider(): SongIdentificationProvider {
-  return currentSongIdProvider;
+  return readCurrentSongIdProvider();
 }
 
 /** Reset to the mock provider (testing only). */
 export function resetSongIdProvider(): void {
-  currentSongIdProvider = new MockSongIdentifier();
+  writeCurrentSongIdProvider(new MockSongIdentifier());
 }

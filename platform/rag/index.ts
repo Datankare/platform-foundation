@@ -61,50 +61,80 @@ import { InMemoryEmbeddingStore } from "./memory-embedding-store";
 import { createMockEmbeddingProvider } from "./mock-embedding-provider";
 import type { UserContextStore } from "./types";
 import { InMemoryUserContextStore } from "./memory-user-context-store";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
-let currentEmbeddingStore: EmbeddingStore = new InMemoryEmbeddingStore();
-let currentEmbeddingProvider: EmbeddingProvider = createMockEmbeddingProvider();
-let currentUserContextStore: UserContextStore = new InMemoryUserContextStore();
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const EMBEDDINGSTORE_KEY = "platform.rag.embeddingStore";
+function readCurrentEmbeddingStore(): EmbeddingStore {
+  return getSingleton<EmbeddingStore>(
+    EMBEDDINGSTORE_KEY,
+    () => new InMemoryEmbeddingStore()
+  );
+}
+function writeCurrentEmbeddingStore(next: EmbeddingStore): void {
+  setSingleton<EmbeddingStore>(EMBEDDINGSTORE_KEY, next);
+}
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const EMBEDDINGPROVIDER_KEY = "platform.rag.embeddingProvider";
+function readCurrentEmbeddingProvider(): EmbeddingProvider {
+  return getSingleton<EmbeddingProvider>(EMBEDDINGPROVIDER_KEY, () =>
+    createMockEmbeddingProvider()
+  );
+}
+function writeCurrentEmbeddingProvider(next: EmbeddingProvider): void {
+  setSingleton<EmbeddingProvider>(EMBEDDINGPROVIDER_KEY, next);
+}
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const USERCONTEXTSTORE_KEY = "platform.rag.userContextStore";
+function readCurrentUserContextStore(): UserContextStore {
+  return getSingleton<UserContextStore>(
+    USERCONTEXTSTORE_KEY,
+    () => new InMemoryUserContextStore()
+  );
+}
+function writeCurrentUserContextStore(next: UserContextStore): void {
+  setSingleton<UserContextStore>(USERCONTEXTSTORE_KEY, next);
+}
 
 /** Get the current embedding store. */
 export function getEmbeddingStore(): EmbeddingStore {
-  return currentEmbeddingStore;
+  return readCurrentEmbeddingStore();
 }
 
 /** Set the embedding store (for provider init or testing). */
 export function setEmbeddingStore(store: EmbeddingStore): EmbeddingStore {
-  const previous = currentEmbeddingStore;
-  currentEmbeddingStore = store;
+  const previous = readCurrentEmbeddingStore();
+  writeCurrentEmbeddingStore(store);
   return previous;
 }
 
 /** Get the current embedding provider. */
 export function getEmbeddingProvider(): EmbeddingProvider {
-  return currentEmbeddingProvider;
+  return readCurrentEmbeddingProvider();
 }
 
 /** Set the embedding provider (for provider init or testing). */
 export function setEmbeddingProvider(provider: EmbeddingProvider): EmbeddingProvider {
-  const previous = currentEmbeddingProvider;
-  currentEmbeddingProvider = provider;
+  const previous = readCurrentEmbeddingProvider();
+  writeCurrentEmbeddingProvider(provider);
   return previous;
 }
 
 /** Get the current user context store. */
 export function getUserContextStore(): UserContextStore {
-  return currentUserContextStore;
+  return readCurrentUserContextStore();
 }
 
 /** Set the user context store (for provider init or testing). */
 export function setUserContextStore(store: UserContextStore): UserContextStore {
-  const previous = currentUserContextStore;
-  currentUserContextStore = store;
+  const previous = readCurrentUserContextStore();
+  writeCurrentUserContextStore(store);
   return previous;
 }
 
 /** Reset all RAG singletons to defaults (testing only). */
 export function resetRAG(): void {
-  currentEmbeddingStore = new InMemoryEmbeddingStore();
-  currentEmbeddingProvider = createMockEmbeddingProvider();
-  currentUserContextStore = new InMemoryUserContextStore();
+  writeCurrentEmbeddingStore(new InMemoryEmbeddingStore());
+  writeCurrentEmbeddingProvider(createMockEmbeddingProvider());
+  writeCurrentUserContextStore(new InMemoryUserContextStore());
 }

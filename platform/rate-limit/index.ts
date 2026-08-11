@@ -33,9 +33,17 @@ export type { RedisRateLimiterConfig } from "./redis-limiter";
 import { InMemoryRateLimiter } from "./memory-limiter";
 import { RedisRateLimiter } from "./redis-limiter";
 import type { RateLimiter } from "./types";
+import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 /** Singleton rate limiter instance */
-let limiterInstance: RateLimiter | null = null;
+/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
+const LIMITER_KEY = "platform.rateLimit.limiter";
+function readLimiterInstance(): RateLimiter | null {
+  return getSingleton<RateLimiter | null>(LIMITER_KEY, () => null);
+}
+function writeLimiterInstance(next: RateLimiter | null): void {
+  setSingleton<RateLimiter | null>(LIMITER_KEY, next);
+}
 
 /**
  * Create a rate limiter from environment config.
@@ -66,16 +74,20 @@ export function createRateLimiter(config?: {
 
 /** Get the singleton rate limiter. */
 export function getRateLimiter(): RateLimiter {
-  if (!limiterInstance) {
-    limiterInstance = createRateLimiter();
-  }
-  return limiterInstance;
+  const existing = readLimiterInstance();
+  if (existing) return existing;
+  const created = createRateLimiter();
+  writeLimiterInstance(created);
+  return created;
 }
 
 /** Reset the singleton (for testing only). */
 export function resetRateLimiter(): void {
-  if (limiterInstance && "destroy" in limiterInstance) {
-    (limiterInstance as InMemoryRateLimiter).destroy();
+  // Three reads became one: the second `in` check could not be narrowed by the first, and
+  // each call is a registry lookup.
+  const existing = readLimiterInstance();
+  if (existing && "destroy" in existing) {
+    (existing as InMemoryRateLimiter).destroy();
   }
-  limiterInstance = null;
+  writeLimiterInstance(null);
 }
