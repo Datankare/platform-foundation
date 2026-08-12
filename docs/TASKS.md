@@ -411,16 +411,16 @@ deprecation warning no longer appears.
 
 ### TASK-048 — Promote Playform Phase-5-open ROADMAP overlay to main
 
-| Field        | Detail                                       |
-| ------------ | -------------------------------------------- |
-| **ID**       | TASK-048                                     |
-| **Type**     | Process — release                            |
-| **Severity** | Low                                          |
-| **Phase**    | Phase 5 (Sprint 0 carry)                     |
-| **Target**   | Phase 5, Sprint 3                            |
-| **Status**   | Open                                         |
-| **Logged**   | 2026-06-21                                   |
-| **Source**   | Phase 5 entry — Playform N7/N8 overlay edits |
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-048                                                           |
+| **Type**     | Process — release                                                  |
+| **Severity** | Low                                                                |
+| **Phase**    | Phase 5 (Sprint 0 carry)                                           |
+| **Target**   | Phase 5, Sprint 3                                                  |
+| **Status**   | Resolved — commit 2033172 verified as an ancestor of Playform main |
+| **Logged**   | 2026-06-21                                                         |
+| **Source**   | Phase 5 entry — Playform N7/N8 overlay edits                       |
 
 **What:** Playform's Phase-5-open ROADMAP overlay edits (Phase 5 → In Progress, changelog)
 were committed to Playform `develop` (commit `2033172`) during the entry gate but not yet
@@ -475,16 +475,16 @@ exceeded` occurrences.
 
 ### TASK-056 — CI-signal parity for platform-foundation (the less-watched repo)
 
-| Field        | Detail                                       |
-| ------------ | -------------------------------------------- |
-| **ID**       | TASK-056                                     |
-| **Type**     | CI / build-model resilience                  |
-| **Severity** | Medium-High — silent drift, both repos       |
-| **Phase**    | Phase 5, Sprint 1                            |
-| **Target**   | Phase 5, Sprint 3                            |
-| **Status**   | Open                                         |
-| **Logged**   | 2026-07-21                                   |
-| **Source**   | PF audit drift + coverage-margin, 2026-07-21 |
+| Field        | Detail                                                                       |
+| ------------ | ---------------------------------------------------------------------------- |
+| **ID**       | TASK-056                                                                     |
+| **Type**     | CI / build-model resilience                                                  |
+| **Severity** | Medium-High — silent drift, both repos                                       |
+| **Phase**    | Phase 5, Sprint 1                                                            |
+| **Target**   | Phase 5, Sprint 3                                                            |
+| **Status**   | Resolved — CodeQL, thresholds and sprint:check brought to parity in Playform |
+| **Logged**   | 2026-07-21                                                                   |
+| **Source**   | PF audit drift + coverage-margin, 2026-07-21                                 |
 
 **What:** PF's CI failure/warning signals do not reach the maintainer the way Playform's do,
 so PF drifts silently. Two instances surfaced the same day:
@@ -692,15 +692,15 @@ session had to cut a fix branch from `main` rather than `develop` as a result.
 
 ### TASK-061 — Function coverage is a target, not a floor; the gap widens by default
 
-| Field        | Detail                          |
-| ------------ | ------------------------------- |
-| **ID**       | TASK-061                        |
-| **Type**     | Quality gate                    |
-| **Severity** | Medium — Phase 5 exit-gate risk |
-| **Phase**    | Phase 5, Sprint 2               |
-| **Target**   | Phase 5, Sprint 4               |
-| **Status**   | Open                            |
-| **Logged**   | 2026-07-26                      |
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-061                                                           |
+| **Type**     | Quality gate                                                       |
+| **Severity** | Medium — Phase 5 exit-gate risk                                    |
+| **Phase**    | Phase 5, Sprint 2                                                  |
+| **Target**   | Phase 5, Sprint 4                                                  |
+| **Status**   | Resolved — floor raised to 84 by decision; the ratchet is TASK-080 |
+| **Logged**   | 2026-07-26                                                         |
 
 **What:** PF function coverage is 80.68% against the ≥84% Phase 5 exit target. Statement
 coverage has an enforced floor; function coverage has only a target, and nothing fails when it
@@ -728,6 +728,15 @@ Phase 5 exit gate.
 ---
 
 **Retargeted Phase 5, Sprint 4:** Thresholds are now 84/75 and enforced. The auto-ratchet is the remaining piece and no longer urgent.
+
+**Closed with a decision, not silently.** The title admits two readings. _Raise the floor_ is
+done: 80 → 84, enforced in CI. _Stop the gap reopening_ is not, and cannot be closed by
+changing a number — function coverage now sits at 91.9% against a gate of 84%, and that slack
+can absorb a genuine regression without failing.
+
+The slack is deliberate. 84 was chosen over 90 so that ordinary variation does not turn the
+gate into noise. What the title actually asks for is a mechanism that lifts the floor as
+coverage rises, which is different work: **TASK-080**.
 
 ### TASK-064 — ToolBoundary duplicates StepBoundary, and the boundary lookup fails open
 
@@ -1153,15 +1162,15 @@ entry in `overrides`.
 
 ### TASK-074 — Playform's song-ID probe reports on an instance nothing serves traffic from
 
-| Field        | Detail                                                    |
-| ------------ | --------------------------------------------------------- |
-| **ID**       | TASK-074                                                  |
-| **Type**     | Observability defect (consumer repo)                      |
-| **Severity** | Medium — the probe can report healthy while traffic fails |
-| **Phase**    | Phase 5, Sprint 3a                                        |
-| **Target**   | Phase 5, Sprint 3a                                        |
-| **Status**   | Open                                                      |
-| **Logged**   | 2026-08-04                                                |
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-074                                                           |
+| **Type**     | Observability defect (consumer repo)                               |
+| **Severity** | Medium — the probe can report healthy while traffic fails          |
+| **Phase**    | Phase 5, Sprint 3a                                                 |
+| **Target**   | Phase 5, Sprint 3a                                                 |
+| **Status**   | Resolved — Playform probes getSongIdProvider(), with a drift guard |
+| **Logged**   | 2026-08-04                                                         |
 
 **What:** Playform's `instrumentation.ts` calls `initProviders()`, then constructs a **second**
 `ACRCloudIdentifier` and registers the health probe around that new instance. The probe
@@ -1353,6 +1362,44 @@ person solving that problem finds the prior attempt rather than repeating it.
 
 ---
 
+### TASK-080 — Nothing stops coverage slack from re-accumulating
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-080                                                  |
+| **Type**     | Quality-gate mechanism                                    |
+| **Severity** | Low — the gate works today; it degrades quietly over time |
+| **Phase**    | Phase 5, Sprint 3a                                        |
+| **Target**   | Phase 5, Sprint 4                                         |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-08-11                                                |
+
+**What:** platform-foundation holds 89.2% statements and 91.9% functions against gates of 80
+and 84. Playform holds 89.9 and 91.5 against the same. That is five to eight points of slack on
+every axis, and slack is what a gate cannot see: a sprint that adds untested code and drops
+function coverage from 91.9% to 85% passes.
+
+TASK-061 named this and was closed by raising the floor once, which fixes the instance and not
+the mechanism. The gap it described has already begun re-accumulating from a higher base.
+
+**Why it is not simply "set the gate to 90":** a gate immediately below the current figure
+fails on ordinary variation — a refactor that removes covered lines, a dependency bump that
+changes what instruments. The gate then gets raised, lowered, or ignored, and an ignored gate
+is worse than a loose one.
+
+**Resolution:** a ratchet with hysteresis. Record the achieved figure per axis when a sprint
+closes; if the next run exceeds it by more than a margin, raise the floor to the achieved
+figure minus that margin. Never lower it automatically — a fall is a finding, not a new
+baseline.
+
+Where it lives is part of the decision: a committed baseline file that CI compares against, or
+a step in the closure script. The first is enforced on every commit; the second only when a
+sprint closes.
+
+**Close when:** slack above the margin raises the floor without anyone editing package.json.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1398,5 +1445,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (TASK-079 resolved — platform/input is a public surface with five callers; the README claim that nothing imported it was wrong)_
+_Last updated: August 11, 2026 (TASK-048/056/061/074 closed after re-running their conditions; TASK-080 filed — nothing stops coverage slack re-accumulating)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
