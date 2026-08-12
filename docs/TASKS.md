@@ -383,16 +383,16 @@ Vercel cold start).
 
 ### TASK-047 — Next 16 middleware → proxy file-convention deprecation
 
-| Field        | Detail                                               |
-| ------------ | ---------------------------------------------------- |
-| **ID**       | TASK-047                                             |
-| **Type**     | Tech debt — framework deprecation                    |
-| **Severity** | Low (warning now; hard error in a future Next major) |
-| **Phase**    | Phase 5, Sprint 1                                    |
-| **Target**   | Phase 5, Sprint 3                                    |
-| **Status**   | Open                                                 |
-| **Logged**   | 2026-06-21                                           |
-| **Source**   | Sprint 0 dev-server warning (Next 16.2.6)            |
+| Field        | Detail                                                         |
+| ------------ | -------------------------------------------------------------- |
+| **ID**       | TASK-047                                                       |
+| **Type**     | Tech debt — framework deprecation                              |
+| **Severity** | Low (warning now; hard error in a future Next major)           |
+| **Phase**    | Phase 5, Sprint 1                                              |
+| **Target**   | Phase 5, Sprint 3                                              |
+| **Status**   | Resolved — was already done in Sprint 1; verified, not assumed |
+| **Logged**   | 2026-06-21                                                     |
+| **Source**   | Sprint 0 dev-server warning (Next 16.2.6)                      |
 
 **What:** Next 16 deprecated the `middleware.ts` file convention in favor of `proxy.ts` —
 the dev server logs the deprecation on startup, and request logs already show `proxy.ts`
@@ -1317,6 +1317,42 @@ reports, run it on a schedule and publish the output somewhere a human sees it.
 
 ---
 
+### TASK-079 — platform/input is imported by nothing; decide what it is
+
+| Field        | Detail                                              |
+| ------------ | --------------------------------------------------- |
+| **ID**       | TASK-079                                            |
+| **Type**     | Unresolved module status                            |
+| **Severity** | Low — nothing is broken; nothing is using it either |
+| **Phase**    | Phase 5, Sprint 3a                                  |
+| **Target**   | Phase 5, Sprint 4                                   |
+| **Status**   | Open                                                |
+| **Logged**   | 2026-08-11                                          |
+
+**What:** `grep -rn "@/platform/input" platform/` returns nothing. Seven files — rule-based and
+LLM-backed classification, rule-based and LLM-backed intent resolution, and a conductor that
+orchestrates them — and no module in the platform imports any of it.
+
+That is either fine or a problem, and which one it is has never been decided:
+
+- **A public surface.** A consuming application calls `platform/input` directly to classify an
+  inbound request before dispatching it. If so, the module needs a consumer example in its
+  README and at least one integration test proving the path works end to end.
+- **Unreached.** It was built for a pipeline that took a different shape. If so, it is
+  ~1,400 lines carrying maintenance cost, appearing in coverage figures, and syncing to
+  Playform on every run.
+
+Playform does not import it either, which is the stronger signal: the one consuming
+application does not use the module built for consuming applications.
+
+**Resolution:** determine whether anything is meant to call it. If yes, document the entry
+point and add the integration test. If no, remove it — and record what it was for, so the next
+person solving that problem finds the prior attempt rather than repeating it.
+
+**Close when:** `platform/input` has a documented caller, or is gone.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1362,5 +1398,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (TASK-078 filed — the sustainability gate script is wired into neither CI)_
+_Last updated: August 11, 2026 (TASK-047 closed — already done in Sprint 1; TASK-079 filed — platform/input has no caller)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
