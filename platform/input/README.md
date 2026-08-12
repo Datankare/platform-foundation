@@ -18,15 +18,36 @@ Each concern has a **rule-based and an LLM-backed** implementation. The rule-bas
 a mock — it is a cheaper, deterministic path for the cases that do not need a model, and the
 distinction matters for both cost and latency.
 
-## Status
+## Who calls it
 
-**No module in `platform/` imports this.** It is either a public surface a consuming
-application calls directly, or it is unreached. That is recorded here rather than left for
-someone to discover: if it is the former, a consumer example belongs in this file; if the
-latter, the module needs a decision.
+This is a **public surface**: no other `platform/` module imports it, and consuming
+applications call it directly. That is the intended shape rather than an accident.
 
-The importer inventory is mechanical — `grep -rn "@/platform/input" platform/` returns
-nothing — so this is a fact rather than an impression.
+| Repo                | Caller                                       | Uses                                         |
+| ------------------- | -------------------------------------------- | -------------------------------------------- |
+| platform-foundation | `components/AdaptiveInput/AdaptiveInput.tsx` | `InputMode`, `ConductorOutput`, `ActionItem` |
+| playform            | `lib/usePlayformConductor.ts`                | the conductor, per-request                   |
+| playform            | `lib/playformIntentResolver.ts`              | intent resolution                            |
+| playform            | `components/SpikeApp.tsx`                    | `InputMode`                                  |
+| playform            | `components/AdaptiveInput/AdaptiveInput.tsx` | the same types                               |
+
+An earlier revision of this file claimed nothing imported the module. That was wrong: the
+importer search covered `platform/` and was reported as though it covered the repository.
+Recorded here because a reader who believed it would reasonably have concluded the module was
+dead.
+
+## Using it from an application
+
+```typescript
+import { usePlayformConductor } from "@/lib/usePlayformConductor";
+
+// The conductor classifies the input, resolves an intent, and returns the
+// affordances the UI should offer next.
+const { mode, output, actions } = usePlayformConductor();
+```
+
+`lib/usePlayformConductor.ts` in playform is the worked example: it wires the conductor to a
+React surface and is the closest thing to a reference consumer.
 
 ## Dependencies
 

@@ -1319,15 +1319,15 @@ reports, run it on a schedule and publish the output somewhere a human sees it.
 
 ### TASK-079 — platform/input is imported by nothing; decide what it is
 
-| Field        | Detail                                              |
-| ------------ | --------------------------------------------------- |
-| **ID**       | TASK-079                                            |
-| **Type**     | Unresolved module status                            |
-| **Severity** | Low — nothing is broken; nothing is using it either |
-| **Phase**    | Phase 5, Sprint 3a                                  |
-| **Target**   | Phase 5, Sprint 4                                   |
-| **Status**   | Open                                                |
-| **Logged**   | 2026-08-11                                          |
+| Field        | Detail                                                                  |
+| ------------ | ----------------------------------------------------------------------- |
+| **ID**       | TASK-079                                                                |
+| **Type**     | Unresolved module status                                                |
+| **Severity** | Low — nothing is broken; nothing is using it either                     |
+| **Phase**    | Phase 5, Sprint 3a                                                      |
+| **Target**   | Phase 5, Sprint 4                                                       |
+| **Status**   | Resolved — a public surface; five callers across both repos, documented |
+| **Logged**   | 2026-08-11                                                              |
 
 **What:** `grep -rn "@/platform/input" platform/` returns nothing. Seven files — rule-based and
 LLM-backed classification, rule-based and LLM-backed intent resolution, and a conductor that
@@ -1398,5 +1398,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (TASK-047 closed — already done in Sprint 1; TASK-079 filed — platform/input has no caller)_
+_Last updated: August 11, 2026 (TASK-079 resolved — platform/input is a public surface with five callers; the README claim that nothing imported it was wrong)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
