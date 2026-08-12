@@ -1,6 +1,18 @@
 version: 2
+
+# Dependabot targets `develop`, not the default branch.
+#
+# Without this, Dependabot branches from `main` while every commit is authored on `develop`,
+# so each bump is tested against a base that lags by however long since the last promotion.
+# That is not hypothetical: Playform's eleven open PRs all failed Layer 3 on a fix that had
+# been on develop for weeks, and clearing them took a promotion plus eleven recreate requests.
+#
+# The cost, stated: a bump landing on develop reaches production only at the next promotion,
+# so a security fix is slower to deploy. Promotion here is frequent and manual, and that delay
+# is smaller than the cost of every bump being tested against the wrong base.
 updates:
   - package-ecosystem: "npm"
+    target-branch: "develop"
     directory: "/"
     cooldown:
       default-days: 7
@@ -18,6 +30,7 @@ updates:
         update-types:
           - "patch"
   - package-ecosystem: "github-actions"
+    target-branch: "develop"
     directory: "/"
     cooldown:
       default-days: 7
