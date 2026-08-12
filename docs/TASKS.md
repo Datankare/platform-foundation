@@ -1440,6 +1440,43 @@ lives.
 
 ---
 
+### TASK-082 — Six major-version bumps, each needing work rather than a merge
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-082                                    |
+| **Type**     | Dependency upgrades                         |
+| **Severity** | Low for most; Medium for eslint-config-next |
+| **Phase**    | Phase 5, Sprint 3a                          |
+| **Target**   | Phase 5, Sprint 4                           |
+| **Status**   | Open                                        |
+| **Logged**   | 2026-08-12                                  |
+
+**What:** the Dependabot triage separated patches and minors — merged — from majors, which
+change behaviour by definition and may pass CI while doing so.
+
+| Bump                                                                                              | Repos    | Note                                                                                                              |
+| ------------------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `eslint-config-next` 15 → 16                                                                      | both     | **Both repos run Next 16 and pin the v15 config.** The linter's rules lag the framework by a major. Not optional. |
+| `eslint` 9 → 10                                                                                   | both     | Flat-config changes likely; `eslint.config.mjs` will need review                                                  |
+| `typescript` 5.9 → 6                                                                              | PF       | **Already fails PF's type-check.** Code work, not a merge                                                         |
+| `typescript` 5.9 → 7                                                                              | Playform | Two majors ahead; do PF's 6 first                                                                                 |
+| `@types/node` 20 → 26                                                                             | Playform | Six majors; likely surfaces type errors the runtime never hits                                                    |
+| `dotenv` 16 → 17, `@napi-rs/canvas` 0.1 → 1.0, `jest-dom` 6 → 7, `@anthropic-ai/sdk` 0.98 → 0.115 | Playform | Pass CI. `0.x` packages break at any version by convention                                                        |
+
+**Sequence, and why it matters:** one at a time, each in its own commit. A major that breaks
+something subtle needs to be identifiable — six merged together produce a failure nobody can
+attribute. Start with `eslint-config-next`, which is a real mismatch rather than an optional
+upgrade, then ESLint 10 (they interact), then TypeScript, then the rest.
+
+**Why not now:** this is a day of work, not a merge session. TypeScript 6 alone means fixing
+whatever it flags across 190 test suites.
+
+**Close when:** each bump is merged or explicitly declined with a reason, and no major sits
+open untriaged.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1485,5 +1522,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 12, 2026 (TASK-081 filed — CodeQL on Playform deferred on cost at $30/month, not overlooked)_
+_Last updated: August 12, 2026 (TASK-082 filed — six major-version bumps needing work rather than merges; Dependabot now targets develop)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
