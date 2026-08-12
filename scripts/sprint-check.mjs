@@ -125,7 +125,7 @@ const adrNums = readdirSync(join(ROOT, "docs/adr"))
 const adrGaps = [];
 for (let n = 1; n <= adrNums.at(-1); n++) if (!adrNums.includes(n)) adrGaps.push(n);
 console.log(
-  `ADRs: ${adrNums.length}   gaps: ${adrGaps.length ? adrGaps.join(", ") : "none"}`
+  `ADRs: ${adrNums.length}   gap(s) at: ${adrGaps.length ? adrGaps.join(", ") : "none"}`
 );
 for (const g of adrGaps) {
   const tag = `ADR-${String(g).padStart(3, "0")}`;
@@ -142,7 +142,7 @@ const migs = readdirSync(join(ROOT, "supabase/migrations"))
 const migNums = migs.map((n) => Number(/^(\d+)/.exec(n)[1]));
 const dupes = [...new Set(migNums.filter((n, i) => migNums.indexOf(n) !== i))];
 console.log(
-  `files: ${migs.length}   highest: ${Math.max(...migNums)}   duplicate numbers: ${dupes.length ? dupes.join(", ") : "none"}`
+  `files: ${migs.length}   highest: ${Math.max(...migNums)}   ${dupes.length} duplicate number(s): ${dupes.length ? dupes.join(", ") : "none"}`
 );
 const notSelfRecording = migs.filter(
   (n) =>

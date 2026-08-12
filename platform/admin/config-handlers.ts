@@ -57,6 +57,7 @@ import type {
 } from "./types";
 import { TOOL_BOUNDARIES } from "./types";
 import type { Tool, StepBoundary } from "@/platform/agents/types";
+import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
 // Tool execution wrapper
@@ -1009,7 +1010,19 @@ export async function dispatchConfigTool(
 
   // P17/P18: Record step in trajectory after execution
   if (context && result) {
-    const boundary: StepBoundary = TOOL_BOUNDARIES[toolId] ?? "cognition";
+    // Fail closed. An unclassified tool gets the STRICTER boundary, not the lower one:
+    // recording a state-changing tool as cognition would place it below the governance a
+    // commitment receives. Not a throw — this is a recording concern, and refusing to run a
+    // working tool because its boundary is unlisted is a worse failure than recording it
+    // conservatively (TASK-064).
+    const classified = TOOL_BOUNDARIES[toolId];
+    if (!classified) {
+      logger.warn("Tool has no boundary classification — recording as commitment", {
+        route: "platform/admin/config-handlers",
+        toolId,
+      });
+    }
+    const boundary: StepBoundary = classified ?? "commitment";
     context.steps.push({
       stepIndex: context.steps.length,
       action: toolId,
