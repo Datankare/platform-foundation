@@ -1400,6 +1400,46 @@ sprint closes.
 
 ---
 
+### TASK-081 — CodeQL on Playform is deferred on cost, not overlooked
+
+| Field        | Detail                                                          |
+| ------------ | --------------------------------------------------------------- |
+| **ID**       | TASK-081                                                        |
+| **Type**     | Security tooling — deferred spend                               |
+| **Severity** | Low while nobody deploys from Playform; Medium once anyone does |
+| **Phase**    | Phase 5, Sprint 3a                                              |
+| **Target**   | When Playform carries real traffic                              |
+| **Status**   | Open — deferred by decision                                     |
+| **Logged**   | 2026-08-12                                                      |
+
+**What:** CodeQL SAST runs on platform-foundation and not on Playform. The CI-parity work
+(TASK-056) copied the workflow across, and it fails at its upload step: GitHub Code Security
+must be enabled for the repository, which is free for public repos and billed per active
+committer for private ones — **$30/month** here.
+
+The workflow has been removed rather than left failing. A permanently red check trains everyone
+to ignore a failing pipeline, and the next genuine failure then looks the same.
+
+**Why deferred rather than paid:**
+
+- Playform's source is overwhelmingly synced from platform-foundation, which has CodeQL and
+  scans the same code. The Playform-only surface is the UI, `lib/` and the route handlers.
+- Semgrep runs on both repos, so neither is unscanned — this is a second opinion, not the
+  only one.
+- Nothing deploys from Playform yet.
+
+**Why it should not stay deferred forever:** Playform is the repo that handles authentication,
+user content and API keys. Once it carries traffic, the argument reverses — the deployed
+application is exactly where a second SAST opinion earns its cost.
+
+**Resolution:** enable Code Security on the Playform repository and restore
+`.github/workflows/codeql.yml` from platform-foundation, which is where the working copy
+lives.
+
+**Close when:** CodeQL runs green on Playform, or the repo is public and it costs nothing.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1445,5 +1485,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (TASK-048/056/061/074 closed after re-running their conditions; TASK-080 filed — nothing stops coverage slack re-accumulating)_
+_Last updated: August 12, 2026 (TASK-081 filed — CodeQL on Playform deferred on cost at $30/month, not overlooked)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
