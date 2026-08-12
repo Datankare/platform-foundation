@@ -1283,6 +1283,40 @@ a warning naming the slot, rather than silent in-memory behaviour.
 
 ---
 
+### TASK-078 — sustainability-gate.sh is wired into neither CI
+
+| Field        | Detail                                              |
+| ------------ | --------------------------------------------------- |
+| **ID**       | TASK-078                                            |
+| **Type**     | Automation that is not automated                    |
+| **Severity** | Medium — the gate runs only when somebody remembers |
+| **Phase**    | Phase 5, Sprint 3a                                  |
+| **Target**   | Phase 5, Sprint 4                                   |
+| **Status**   | Open                                                |
+| **Logged**   | 2026-08-11                                          |
+
+**What:** `scripts/sustainability-gate.sh` exists in both repositories and is referenced by
+neither `ci.yml`. The 22-point sustainability gate — the one the closure checklist says no
+sprint ships without — is a script nobody runs.
+
+At Sprint 2 closure it was executed by hand, via a Python script written for the occasion that
+re-implemented much of what this shell script already does. Nobody noticed the script existed,
+which is the ordinary outcome for automation that no pipeline invokes.
+
+**Why not fixed alongside the CI parity work:** the gate's 22 points are not all machine
+checkable. Roughly half are judgement — whether names are intent-based, whether an
+abstraction earns its place — so wiring it in as a hard gate would either fail constantly or
+have to be reduced to the countable subset. Which of those it should be is a decision, not a
+mechanical fix.
+
+**Resolution:** decide whether the script gates or reports. If it gates, split the countable
+points into a blocking step and leave the judged ones as an artifact a reviewer reads. If it
+reports, run it on a schedule and publish the output somewhere a human sees it.
+
+**Close when:** the sustainability gate runs without anyone remembering to run it.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1328,5 +1362,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 11, 2026 (TASK-067 resolved — schema parity derived from source and enforced in CI)_
+_Last updated: August 11, 2026 (TASK-078 filed — the sustainability gate script is wired into neither CI)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
