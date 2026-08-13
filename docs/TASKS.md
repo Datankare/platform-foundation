@@ -1477,6 +1477,45 @@ open untriaged.
 
 ---
 
+### TASK-083 — Sync cannot tell an orphan from a Playform file
+
+| Field        | Detail                                                |
+| ------------ | ----------------------------------------------------- |
+| **ID**       | TASK-083                                              |
+| **Type**     | Sync tooling                                          |
+| **Severity** | Low — the sync is correct; the reviewer is uninformed |
+| **Phase**    | Phase 5, Sprint 3a                                    |
+| **Target**   | Phase 5, Sprint 4                                     |
+| **Status**   | Open                                                  |
+| **Logged**   | 2026-08-13                                            |
+
+**What:** the sync runs `rsync` without `--delete` by design (Sprint 7, item D), so a file
+platform-foundation deletes stays in Playform indefinitely. That has cost a debugging cycle
+once already: `__tests__/auth-config-lazy-init.test.ts` was removed upstream, the orphan
+remained, and it failed the sync PR's own CI.
+
+An attempt to report those files via `rsync --dry-run --delete` was made and reverted. It
+listed roughly forty files on its first run, nearly all of them Playform's own application —
+`lib/usePlayformConductor.ts`, `components/SongMatchCard.tsx`, `app/api/profile/`,
+`supabase/migrations/007_playform_subscription_tiers.sql`. That is not a bug in the flag: a
+dry run compares the whole target against the whole source, and for a PARTIAL sync a
+consumer-owned file is byte-for-byte the same observation as an upstream deletion.
+
+**Why no filter fixes it:** the two cases are indistinguishable from a single snapshot. The
+question "did this exist upstream last time?" needs last time's answer.
+
+**Resolution:** have the workflow record the source's file list on each successful sync — a
+committed manifest, or an artifact keyed by the synced SHA. The next run diffs against it, and
+the difference IS the deletion set. Genuine orphans, no noise.
+
+Roughly: `git -C source ls-files > .github/sync-manifest.txt` written on each sync, and the
+next run reporting `comm -23 previous current`.
+
+**Close when:** a file deleted in platform-foundation appears in the next sync PR, and nothing
+else does.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1522,5 +1561,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 12, 2026 (TASK-082 filed — six major-version bumps needing work rather than merges; Dependabot now targets develop)_
+_Last updated: August 13, 2026 (TASK-083 filed — the sync cannot distinguish an upstream deletion from a Playform-owned file)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_
