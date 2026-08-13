@@ -22,18 +22,18 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
     "@sentry/nextjs": "^10.49.0",
-    "@supabase/supabase-js": "^2.103.0",
+    "@supabase/supabase-js": "^2.112.1",
     "ajv": "8.20.0",
     "dotenv": "^17.4.2",
-    "jose": "^6.2.2",
-    "next": "16.2.11",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "safe-regex2": "^5.1.0"
+    "jose": "^6.2.8",
+    "next": "16.2.12",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "safe-regex2": "^5.1.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
-    "@eslint/eslintrc": "^3.3.5",
+    "@eslint/eslintrc": "^3.3.6",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
@@ -46,12 +46,12 @@
     "eslint": "^9",
     "eslint-config-next": "15.3.3",
     "eslint-config-prettier": "^10.1.5",
-    "eslint-plugin-regexp": "^3.1.0",
+    "eslint-plugin-regexp": "^3.1.1",
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.3.0",
     "prettier": "3.9.6",
     "tailwindcss": "^4",
-    "ts-jest": "^29.4.9",
+    "ts-jest": "^29.4.12",
     "typescript": "^5"
   },
   "jest": {
