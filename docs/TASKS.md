@@ -1200,7 +1200,7 @@ provider is constructed inside `instrumentation.ts`.
 | **Type**     | Deployment configuration                                      |
 | **Severity** | High — Sprint 2's durability work is inert until this is done |
 | **Phase**    | Phase 5, Sprint 3a                                            |
-| **Target**   | Phase 5, Sprint 3a                                            |
+| **Target**   | Phase 5, Sprint 3b — BEFORE any AUX work                      |
 | **Status**   | Open                                                          |
 | **Logged**   | 2026-08-11                                                    |
 
@@ -1227,6 +1227,14 @@ with the startup self-check from commit 2 logging the resolved provider for each
 **Close when:** a trajectory written by one request is readable by another.
 
 ---
+
+**Retargeted to the start of Sprint 3b.** Filed as Sprint 3a and left there, which was wrong.
+Sprint 3b's deliverable is a demo whose story is: an agent proposes an action, a human
+approves it, the work resumes after a crash, and the record proves what happened. Every one of
+those needs a durable store. With TRAJECTORY_STORE unset a trajectory lives in memory for one
+request and vanishes, so the demo would show an agent acting and no evidence it did.
+
+This is a prerequisite, not a follow-up.
 
 ### TASK-076 — Nothing detects sustained silence from telemetry
 
