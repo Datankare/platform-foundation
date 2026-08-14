@@ -1089,10 +1089,10 @@ correct current actor without the caller persisting anything.
 | **Severity** | Low — a known hole, not a missing decision |
 | **Phase**    | Phase 5                                    |
 | **Target**   | Phase 5, Sprint 7                          |
-| **Status**   | Open — reserved                            |
+| **Status**   | Closed 2026-08-14                          |
 | **Logged**   | 2026-08-04                                 |
 
-**What:** `docs/adr/` runs 029 → 031. ADR-030 is reserved for AUX (Agent-Usable eXperience),
+**What:** `docs/adr/` runs 029 → 031. ADR-030 is reserved for AUX (Agent User Experience),
 named in the ROADMAP changelog entry that opened Phase 5 alongside ADR-028 and ADR-029.
 ADR-031 (action identity and lifecycle) was written ahead of it because Sprint 2 needed the
 protocol, so the number was consumed before the document existed.
@@ -1111,6 +1111,10 @@ rather than treating it as a failure — the gate's intent is that no decision g
 undocumented, and none has.
 
 **Close when:** ADR-030 exists, or Phase 5 exits with the reservation explicitly recorded.
+
+**Closed 2026-08-14:** ADR-030 written in full at `docs/adr/ADR-030-agent-user-experience.md`, ratifying the AUX_DESIGN Sprint 3b
+rewrite. The 029 → 031 gap is filled. This entry is retained (not deleted) so the
+ADR-030 reference that keeps the sequence explained stays in place (GOTCHA-70).
 
 ---
 
