@@ -1192,49 +1192,123 @@ provider is constructed inside `instrumentation.ts`.
 
 ---
 
-### TASK-075 — Durable stores are not switched on
+### TASK-075 — Superseded by TASK-075a and TASK-075b
 
-| Field        | Detail                                                        |
-| ------------ | ------------------------------------------------------------- |
-| **ID**       | TASK-075                                                      |
-| **Type**     | Deployment configuration                                      |
-| **Severity** | High — Sprint 2's durability work is inert until this is done |
-| **Phase**    | Phase 5, Sprint 3a                                            |
-| **Target**   | Phase 5, Sprint 3b — BEFORE any AUX work                      |
-| **Status**   | Open                                                          |
-| **Logged**   | 2026-08-11                                                    |
+| Field        | Detail                   |
+| ------------ | ------------------------ |
+| **ID**       | TASK-075                 |
+| **Type**     | Deployment configuration |
+| **Severity** | Superseded               |
+| **Phase**    | Phase 5, Sprint 3a       |
+| **Target**   | Phase 5, Sprint 3b       |
+| **Status**   | Superseded 2026-08-14    |
+| **Logged**   | 2026-08-11               |
 
-**What:** `TRAJECTORY_STORE`, `BUDGET_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER` and
-`APP_STATE_STORE` are unset, so every one falls back to its in-memory implementation.
-Trajectories, budgets, held proposals and the effect ledger do not survive a request.
+Split on 2026-08-14 after investigation found its premise wrong. The store-arm verification
+became TASK-075a and closed; the cross-request durability check became TASK-075b and carries
+to Sprint 3b.
 
-Until ADR-032 this could not have been fixed by setting them: the registry was writing to a
-bundle copy no route read, so the value would have been ignored anyway. Now it can.
-
-**Consequence while open:** agent runs leave no durable trace, the daily spend cap resets on
-every request rather than accumulating (the exposure TASK-063 was filed for, reintroduced by
-a different route), and held proposals cannot be approved by a later request.
-
-**Resolution:** set the five variables to `supabase` in the deployment environment, redeploy,
-and verify against the running build rather than the dashboard:
-
-```
-curl -s https://<host>/api/health | python3 -m json.tool
-```
-
-with the startup self-check from commit 2 logging the resolved provider for each slot.
-
-**Close when:** a trajectory written by one request is readable by another.
+This entry is retained rather than deleted because the id is cited elsewhere — ADR-032 among
+them — and a cited id with no entry is a dangling reference the register-integrity suite
+fails on. Recording the supersession where the gate looks is cheaper than editing every
+citation (Gotcha 70).
 
 ---
 
-**Retargeted to the start of Sprint 3b.** Filed as Sprint 3a and left there, which was wrong.
-Sprint 3b's deliverable is a demo whose story is: an agent proposes an action, a human
-approves it, the work resumes after a crash, and the record proves what happened. Every one of
-those needs a durable store. With TRAJECTORY_STORE unset a trajectory lives in memory for one
-request and vanishes, so the demo would show an agent acting and no evidence it did.
+### TASK-075a — Supabase store arms had never executed
 
-This is a prerequisite, not a follow-up.
+| Field        | Detail                                                   |
+| ------------ | -------------------------------------------------------- |
+| **ID**       | TASK-075a                                                |
+| **Type**     | Verification                                             |
+| **Severity** | Medium — five code paths with no execution outside stubs |
+| **Phase**    | Phase 5, Sprint 3a                                       |
+| **Target**   | Phase 5, Sprint 3b                                       |
+| **Status**   | Closed 2026-08-14                                        |
+| **Logged**   | 2026-08-11                                               |
+
+**What:** TASK-075 was filed as "five variables are unset in the deployment environment."
+Investigation on 2026-08-14 found the premise wrong in three ways.
+
+`TRAJECTORY_STORE`, `BUDGET_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER` and `APP_STATE_STORE`
+are set in **no** environment — not production, not `.env.local`. The registry has therefore
+never selected a Supabase arm anywhere, localhost included. What has run on localhost is the
+voice pipeline (`/api/extract`, `/api/identify`, `/api/process`, `/api/transcribe`,
+`/api/tts` in Playform), which calls providers directly and touches no store.
+
+Nor were the credentials present: no Supabase variable existed in any of the four Vercel
+projects. The stores could not have been switched on had the variables been set.
+
+And nothing serves traffic. The four Vercel projects are build targets; the only running
+instance has ever been localhost.
+
+**What was actually at risk:** the five Supabase store implementations had executed only
+against conformance kits, which verify stores rather than wiring — the same gap that hid the
+ADR-032 defect for twenty-one singleton families.
+
+**Resolution:** each of the five exercised against the live database, writing then reading
+back through a **second instance** of the store, which is cross-instance evidence without
+needing an HTTP layer. All five pass.
+
+| Store                        | Proof                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `SupabaseTrajectoryStore`    | `create` then `getById` and `query` from a fresh instance                             |
+| `SupabaseBudgetStore`        | `increment` then `read`; `usedSteps` advanced by exactly 1                            |
+| `SupabaseProposalStore`      | `create` then `getById` from a fresh instance                                         |
+| `SupabaseEffectLedger`       | `begin` twice on one (operationId, effectKey); same `entryId`, `attempts` incremented |
+| `SupabaseActivityStateStore` | `create` then `load` and `delete` from a fresh instance                               |
+
+Schema confirmed first by introspection rather than from the migration ledger: all five
+tables present, every `NOT NULL` column without a default supplied by its insert body, the
+`agent_budget_consume` RPC present with its six arguments, and `trajectory_status` carrying
+the `running` label the code writes.
+
+**Close condition (met):** every Supabase store arm completes a write-then-read round trip
+against the live database from a separate instance.
+
+**Out of scope, deliberately:** `MODERATION_STORE` and `SOCIAL_STORE` are also
+durable-capable and also unset. They are not agent stores and Sprint 3b does not need them.
+Recorded here so the omission is a decision rather than an oversight.
+
+**Decision — Vercel provisioning deferred.** Nothing serves traffic, and four projects would
+each need credentials. Provisioning happens when a deployment first serves a request, not
+before. `lib/supabase/server.ts` requires `NEXT_PUBLIC_SUPABASE_URL` specifically and
+`getSupabaseBrowserClient` requires `NEXT_PUBLIC_SUPABASE_ANON_KEY`, which TASK-075 never
+mentioned and which PF's `.env.local` still lacks.
+
+---
+
+### TASK-075b — Cross-request durability is unprovable until an agent endpoint exists
+
+| Field        | Detail                                                        |
+| ------------ | ------------------------------------------------------------- |
+| **ID**       | TASK-075b                                                     |
+| **Type**     | Verification                                                  |
+| **Severity** | Medium — the demo's premise depends on it                     |
+| **Phase**    | Phase 5, Sprint 3a                                            |
+| **Target**   | Phase 5, Sprint 3b — with the B-layer endpoint, not before it |
+| **Status**   | Open                                                          |
+| **Logged**   | 2026-08-14                                                    |
+
+**What:** TASK-075's close condition — a trajectory written by one request is readable by
+another — cannot be run today. Nothing in `app/` calls `executeAgent`, and nothing in `app/`
+imports `platform/app-framework`. The agent runtime and the session lifecycle are both
+platform code with no HTTP caller in either repo.
+
+`/api/health` cannot substitute: `instrumentation.ts` registers one probe, for song
+identification. No probe reports a store. The only slot-level signal in existence is the
+`Platform providers initialized` log line.
+
+**Why this is not a blocker for Sprint 3b:** the store arms are proven (TASK-075a). What is
+unproven is the path from a request to a store, and that path is precisely what the B-layer
+builds. Filing it as a prerequisite made a piece of the work look like a predecessor to it.
+
+**Resolution:** when `/api/agent/process-content` lands, set the five variables in
+`.env.local`, run one agent call, then confirm the trajectory is readable by a second
+request. That is the same curl the demo depends on.
+
+**Close when:** an agent invoked over HTTP writes a trajectory that a subsequent request
+reads back.
 
 ### TASK-076 — Nothing detects sustained silence from telemetry
 
