@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 680 540" role="img" font-family="sans-serif">
+  <title>AUX choreography path: an agent driving the identify-translate-speak workflow step by step</title>
+  <desc>An external agent makes separate calls to the PF-B workflow layer. Each step returns a result plus nextActions, and the agent chooses the next hop. All steps append to one shared trajectory. Every step is gated by risk floor, budget check, content safety and trajectory append.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect x="40" y="40" width="150" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="115" y="64" text-anchor="middle" font-size="14" font-weight="500" fill="#3C3489">Agent</text>
+  <text x="115" y="82" text-anchor="middle" font-size="12" fill="#534AB7">chooses each step</text>
+
+  <rect x="270" y="30" width="180" height="44" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="360" y="56" text-anchor="middle" font-size="14" font-weight="500" fill="#085041">identify</text>
+  <rect x="270" y="130" width="180" height="44" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="360" y="156" text-anchor="middle" font-size="14" font-weight="500" fill="#085041">translate</text>
+  <rect x="270" y="230" width="180" height="44" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="360" y="256" text-anchor="middle" font-size="14" font-weight="500" fill="#085041">speak</text>
+
+  <rect x="510" y="30" width="130" height="44" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="575" y="49" text-anchor="middle" font-size="12" fill="#633806">SongMatch +</text>
+  <text x="575" y="63" text-anchor="middle" font-size="12" fill="#633806">nextActions</text>
+  <rect x="510" y="130" width="130" height="44" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="575" y="149" text-anchor="middle" font-size="12" fill="#633806">translations +</text>
+  <text x="575" y="163" text-anchor="middle" font-size="12" fill="#633806">nextActions</text>
+  <rect x="510" y="230" width="130" height="44" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="575" y="249" text-anchor="middle" font-size="12" fill="#633806">audio +</text>
+  <text x="575" y="263" text-anchor="middle" font-size="12" fill="#633806">nextActions</text>
+
+  <line x1="190" y1="58" x2="268" y2="52" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="52" x2="508" y2="52" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M575 74 L575 108 L115 108 L115 130" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="190" y1="130" x2="268" y2="152" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="152" x2="508" y2="152" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M575 174 L575 208 L115 208 L115 230" fill="none" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="190" y1="205" x2="268" y2="252" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="450" y1="252" x2="508" y2="252" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <text x="230" y="124" text-anchor="middle" font-size="12" fill="#5F5E5A">picks next</text>
+  <text x="230" y="224" text-anchor="middle" font-size="12" fill="#5F5E5A">picks next</text>
+
+  <rect x="40" y="340" width="600" height="70" rx="12" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="340" y="368" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">One trajectory — every step appends here</text>
+  <text x="340" y="390" text-anchor="middle" font-size="12" fill="#444441">agent_trajectories · same trajectoryId across all three calls</text>
+
+  <line x1="360" y1="74" x2="200" y2="338" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <line x1="360" y1="174" x2="340" y2="338" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <line x1="360" y1="274" x2="480" y2="338" stroke="#888780" stroke-width="0.5" stroke-dasharray="4 3"/>
+
+  <rect x="40" y="450" width="600" height="60" rx="12" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+  <text x="340" y="472" text-anchor="middle" font-size="12" fill="#444441">Every step is gated: risk floor · budget check · content safety · trajectory append</text>
+  <text x="340" y="492" text-anchor="middle" font-size="12" fill="#444441">L21 conformance kit fails CI if a response omits result, trajectory, nextActions or cost</text>
+</svg>
