@@ -113,8 +113,8 @@ The provider calls themselves — `ACRCloudIdentifier`, the translation and TTS 
 ```typescript
 interface AgentResponse<T> {
   result: T;
-  trajectory: TrajectoryResult; // id + steps + latency; the durable record
-  nextActions: NextAction[]; // what the agent can do next
+  trajectory: Trajectory; // the kernel type; identified by trajectoryId, never id
+  nextActions: readonly NextAction[]; // what the agent can do next
   cost: CostSummary; // so the agent can budget
 }
 
@@ -123,7 +123,7 @@ interface NextAction {
   description: string; // human-readable, for debugging
   endpoint: string | null; // where to call; null for terminal actions
   requiredParams: string[];
-  estimatedCost: string; // "$0.002"
+  estimatedCostUSD: number; // numeric so an agent can sum it against its ceiling
 }
 
 interface CostSummary {
@@ -180,7 +180,7 @@ interface ProcessContentResponse {
     audio?: { [languageCode: string]: string };
     safety?: { passed: boolean; reason?: string };
   };
-  trajectory: { id: string; steps: PipelineStepResult[]; totalLatencyMs: number };
+  trajectory: Trajectory; // totalLatencyMs is derived by the loop from Step.durationMs
   nextActions: NextAction[];
   cost: CostSummary;
 }
@@ -209,7 +209,7 @@ The April draft listed these as review questions. In this design they are a **ru
 | 1   | One-call    | The complete workflow finishes in one call for orchestrated goals                                  |
 | 2   | NextActions | `nextActions` is present and non-empty (terminal actions included)                                 |
 | 3   | Cost        | `cost` is present with a numeric `estimatedCostUSD`                                                |
-| 4   | Trajectory  | `trajectory.id` resolves to a durable record with a step per gated action                          |
+| 4   | Trajectory  | `trajectory.trajectoryId` resolves to a durable record with a step per gated action                |
 | 5   | Capability  | The goal is discoverable via `/api/agent/capabilities`                                             |
 | 6   | Gate parity | The trajectory of a `full-pipeline` run shows the same gated steps as the choreographed equivalent |
 | 7   | Budget      | A `budgetMaxUSD` ceiling is respected and reported                                                 |

@@ -97,7 +97,7 @@ A response-conformance kit asserts, for every `/api/agent/*` endpoint:
 2. **Envelope** — the response is a well-formed `AgentResponse<T>`; missing `result`, `trajectory`, `nextActions`, or `cost` fails CI.
 3. **NextActions** — present and non-empty; every `action` names a reachable goal or a terminal.
 4. **Cost** — `cost.estimatedCostUSD` is numeric and is the sum of the steps' `estimatedCostUsd`.
-5. **Trajectory** — `trajectory.id` resolves to a durable record (TASK-075a) with one step per gated action.
+5. **Trajectory** — `trajectory.trajectoryId` resolves to a durable record (TASK-075a) with one step per gated action.
 6. **Gate parity** — a `full-pipeline` run and its choreographed equivalent produce trajectories with the same gated steps. This is the mechanical proof of D2/D4.
 7. **Budget** — a `budgetMaxUSD` ceiling is respected and reported.
 8. **Discoverability** — every implemented goal appears in `/api/agent/capabilities` (D8).
@@ -132,6 +132,46 @@ Gate 6 is the one that cannot be satisfied by inspecting a single response — i
 | 18  | Durable Trajectories  | **Core** | Trajectory is a first-class return backed by the durable store (D5, TASK-075a)                  |
 
 **Summary:** AUX makes **P1 / P2 / P4 / P6 / P17 / P18** core-structural and advances the **P11 / P12** partials. P14 is the only principle with no Sprint 3b deliverable (Phase 7). 18/18 accounted for. Pre-code gate satisfied (L12).
+
+---
+
+## Amendments
+
+### 2026-08-15 — the envelope is a distinct type, and the trajectory keeps its own name
+
+Implementation of the L21 kit required reading `ActionResult` (ADR-028 D7), which already
+returns `{result, trajectory, nextActions, cost}`. The four field names match `AgentResponse`
+and three of the four types do not:
+
+| Field         | `ActionResult` (ADR-028 D7)        | `AgentResponse<T>` (D5) |
+| ------------- | ---------------------------------- | ----------------------- |
+| `result`      | `VersionedState<TState>`           | `T`                     |
+| `trajectory`  | `Trajectory`                       | `Trajectory` — shared   |
+| `nextActions` | `readonly string[]` — action types | `readonly NextAction[]` |
+| `cost`        | `number`                           | `CostSummary`           |
+
+The populations differ permanently, not incidentally: `enumerateNextActions` filters an
+`ActivityDefinition`'s action types against current state, while an agent response enumerates
+workflow goals. A session dispatch will never legitimately offer `translate`, and a goal
+response will never offer `submit-guess`. Requirement 3 above — every `action` names a
+reachable goal or a terminal — is therefore false for every session-layer response, so a
+single shared type could not carry it.
+
+`AgentResponse<T>` is accordingly a distinct type sharing only `Trajectory`. ADR-028 D7's
+contract is unchanged, and the workflow loop maps between the layers. The mapping is the
+drift surface this creates, and it is pinned by requirement 8: every goal offered as an
+affordance must appear on the capabilities surface, so a loop that invents an affordance
+fails CI rather than shipping.
+
+Two smaller corrections in the same commit:
+
+- **`trajectory.id` was wrong** in requirement 5 and in AUX_DESIGN's core types. The field
+  is `trajectoryId`, on `Trajectory` and one level down on `TrajectoryRecord`. Shipping an
+  `id` synonym would have built GOTCHA-78 into the contract on the day that gotcha predicted
+  Sprint 3b's agent-native contracts would be where it next bit.
+- **`NextAction.estimatedCost` becomes `estimatedCostUSD`, numeric.** A `"$0.002"` string
+  cannot be summed or compared against `budgetMaxUSD` without every agent parsing currency,
+  and requirement 4 already establishes cost as numeric.
 
 ---
 

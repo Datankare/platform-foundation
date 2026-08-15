@@ -1602,6 +1602,40 @@ else does.
 
 ---
 
+### TASK-084 — The L21 response kit has no arm until the workflow loop exists
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-084                                                |
+| **Type**     | Conformance coverage                                    |
+| **Severity** | Medium — an unrun kit is the checklist ADR-027 replaced |
+| **Phase**    | Phase 5, Sprint 3b                                      |
+| **Target**   | Phase 5, Sprint 3b                                      |
+| **Status**   | Open                                                    |
+| **Logged**   | 2026-08-15                                              |
+
+**What:** `__tests__/contract/agent-response-contract.ts` ships with eight arms and nothing
+invokes it. Its fixtures require both entry points of the PF-B workflow loop —
+`runOrchestrated` and `runChoreographed` — and that loop is the next commit. The manifest
+entry exists, so `conformance-coverage.test.ts` is satisfied; that test asserts a kit is
+present and callable, not that anything calls it.
+
+**Why this is a real gap and not bookkeeping:** ADR-027 exists because
+`auth-provider.test.ts` described a contract and instructed a human to run it against the
+real provider, and nobody ever did. A kit with no arm is that same artifact. Every assertion
+in it is unexecuted, so a typo in an arm typechecks and never fires.
+
+**Resolution:** the workflow loop commit adds `__tests__/agent-response-conformance.test.ts`,
+wiring the kit against the in-memory trajectory store and the loop's two entry points, in the
+shape `agentic-workflow-conformance.test.ts` already uses. Arms R6 (gate parity) and R7
+(budget) are the ones that only become meaningful there — both compare or constrain real
+runs, and neither can be satisfied by a stub.
+
+**Close when:** `agent-response-conformance.test.ts` exists, runs all eight arms green, and
+R6 compares two trajectories with at least two gated steps each.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:

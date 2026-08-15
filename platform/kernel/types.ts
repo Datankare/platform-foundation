@@ -623,6 +623,80 @@ export interface DispatchOptions {
   readonly computeNextActions?: boolean;
 }
 
+// ── Agent response envelope (ADR-030 D5) ──────────────────────────────
+
+/**
+ * The workflow an agent asks for. Request-level (ADR-030 D1).
+ *
+ * NOT the provider layer's `intent` (IDENTIFY_INTENT, STEP_INTENT_MAP), which is
+ * step-level and annotates what one internal step is doing. Two layers, two names,
+ * deliberately: `goal` names what was asked, `intent` names what a step does. Neither
+ * name is ever used for the other.
+ */
+export type AgentGoal =
+  | "identify-song"
+  | "translate"
+  | "transcribe"
+  | "speak"
+  | "translate-and-speak"
+  | "full-pipeline"
+  | "analyze";
+
+/** An affordance that ends the workflow rather than naming a further goal (D3). */
+export type TerminalAction = "done" | "retry";
+
+/**
+ * One thing the agent can do next. `nextActions` is never empty — a finished workflow
+ * offers `done` rather than nothing, which is the difference between an agent surface
+ * and an RPC (ADR-030 D3).
+ */
+export interface NextAction {
+  readonly action: AgentGoal | TerminalAction;
+  /** Human-readable, for debugging and for an agent's own reasoning trace. */
+  readonly description: string;
+  /** Where to call. Null for a terminal action. */
+  readonly endpoint: string | null;
+  readonly requiredParams: readonly string[];
+  /** Numeric so an agent can sum and compare it against its ceiling (P12). */
+  readonly estimatedCostUSD: number;
+}
+
+/**
+ * Response-level cost attribution (P12, ADR-030 D5).
+ *
+ * Distinct from TrajectoryCost below, which is the PERSISTED view — `{tokens, apiCalls,
+ * usd}` on the trajectory record. This is the returned view, and it carries two fields
+ * the persisted one does not (cache attribution). The workflow loop maps between them;
+ * neither is derived from the other by renaming.
+ */
+export interface CostSummary {
+  readonly apiCalls: number;
+  readonly tokensUsed: number;
+  readonly estimatedCostUSD: number;
+  readonly cachedResults: number;
+  readonly costSavedFromCache: number;
+}
+
+/**
+ * The fixed envelope every /api/agent/* response carries (ADR-030 D5), enforced at
+ * runtime by the L21 kit at __tests__/contract/agent-response-contract.ts.
+ *
+ * Structurally parallel to ActionResult above, and deliberately NOT the same type. They
+ * share `Trajectory` and nothing else: `result` here is the goal's own result rather
+ * than versioned session state, `nextActions` enumerates workflow goals rather than
+ * activity action types valid from a state, and `cost` is a summary rather than one
+ * action's number. Widening ActionResult to serve both would put an always-null
+ * `endpoint` and an always-zero `estimatedCostUSD` on every session dispatch, and would
+ * break ADR-028 D7's promise that nextActions is a synchronous filter over the declared
+ * action schema. See the ADR-030 amendment of 2026-08-15.
+ */
+export interface AgentResponse<T> {
+  readonly result: T;
+  readonly trajectory: Trajectory;
+  readonly nextActions: readonly NextAction[];
+  readonly cost: CostSummary;
+}
+
 // ── Gotchas ───────────────────────────────────────────────────────────
 //
 // (L17) Module-level gotchas — add as discovered.
@@ -648,6 +722,18 @@ export interface DispatchOptions {
 //
 // 6. VersionedState.version is monotonic. A commit passes expectedVersion; a stale
 //    version is rejected with fresh state (D5) — never mutate version out of band.
+//
+// 7. ActionResult and AgentResponse are NOT interchangeable, despite four fields with
+//    the same names. ActionResult.nextActions is string[] of activity action types;
+//    AgentResponse.nextActions is NextAction[] of workflow goals. A function taking
+//    one will accept neither the other's nextActions nor its cost. Check which layer
+//    you are on before reaching for either.
+//
+// 8. A trajectory identifies itself as `trajectoryId`, never `id`, at every level —
+//    on Trajectory, and one level down inside TrajectoryRecord (GOTCHA-78). Do not add
+//    an `id` synonym to any agent-facing type: reading the wrong one yields undefined
+//    rather than a type error, which is how a correctly written row presented as a
+//    broken store in TASK-075a.
 
 // ═══════════════════════════════════════════════════════════════════
 // Trajectory persistence contract (was platform/agents/trajectory-store.ts)
