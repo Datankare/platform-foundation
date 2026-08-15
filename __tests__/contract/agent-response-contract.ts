@@ -52,6 +52,28 @@ export interface AgentResponseFixtures {
   readonly orchestratedRun: AgentGoalRun;
   /** A ceiling below the cost of orchestratedRun (R7). */
   readonly infeasibleBudgetUSD: number;
+
+  /**
+   * Gating fixtures (R9, R10) — optional. A consumer whose surface has no gated goal omits
+   * these, and the gating arms skip rather than pass vacuously. A consumer WITH a gated
+   * action supplies them, and the held-state contract is enforced.
+   */
+  readonly gating?: {
+    /** Run a goal whose first step is gated; the response must carry `held`. */
+    readonly runGated: () => Promise<AgentResponse<unknown>>;
+    /**
+     * Attempt to commit the held step WITHOUT approving it, by resuming directly. Must be
+     * refused — this is the arm that proves the approved-commit path is not a bypass.
+     * Returns the error thrown, or undefined if it wrongly succeeded.
+     */
+    readonly resumeWithoutApproval: (
+      response: AgentResponse<unknown>
+    ) => Promise<{ refused: boolean; completed: boolean }>;
+    /** Approve the held step, then resume. Must reach completed. */
+    readonly approveThenResume: (
+      response: AgentResponse<unknown>
+    ) => Promise<AgentResponse<unknown>>;
+  };
 }
 
 /** Affordances that end a workflow rather than naming a further goal (ADR-030 D3). */
@@ -241,6 +263,57 @@ export function runAgentResponseContract(fx: AgentResponseFixtures): void {
       for (const goal of offered) {
         expect(published).toContain(goal);
       }
+    });
+  });
+
+  describe("R9 — a gated step surfaces a HeldAction, not an agent-takeable affordance", () => {
+    it("carries `held` naming the proposal and who may approve", async () => {
+      if (!fx.gating) return;
+      const gated = await fx.gating.runGated();
+
+      expect(gated.held).toBeDefined();
+      expect(typeof gated.held?.proposalId).toBe("string");
+      expect(typeof gated.held?.operationId).toBe("string");
+      // The approver is an identity with a type — the policy seam. Not a boolean flag.
+      expect(gated.held?.approver.actorType).toBeDefined();
+      expect(["user", "agent", "system"]).toContain(gated.held?.approver.actorType);
+    });
+
+    it("does not offer the agent `approve` as one of its own affordances", async () => {
+      if (!fx.gating) return;
+      const gated = await fx.gating.runGated();
+      // Approval is the approver's, surfaced in `held` — never handed to the agent in
+      // nextActions. An agent approving its own held action is the boundary ADR-031 draws.
+      const offered = gated.nextActions.map((n) => n.action);
+      expect(offered).not.toContain("approve");
+    });
+
+    it("pauses rather than completes while held", async () => {
+      if (!fx.gating) return;
+      const gated = await fx.gating.runGated();
+      expect(gated.trajectory.status).not.toBe("completed");
+    });
+  });
+
+  describe("R10 — the approved-commit path is not a bypass", () => {
+    it("refuses to commit a held step that was never approved", async () => {
+      if (!fx.gating) return;
+      const gated = await fx.gating.runGated();
+      const attempt = await fx.gating.resumeWithoutApproval(gated);
+      // The whole point: resuming an unapproved held step must be refused, and must not
+      // complete. A green here on a bypass would be a hole in the gate (P4).
+      expect(attempt.refused).toBe(true);
+      expect(attempt.completed).toBe(false);
+    });
+
+    it("commits the held step once it is approved", async () => {
+      if (!fx.gating) return;
+      const gated = await fx.gating.runGated();
+      const resumed = await fx.gating.approveThenResume(gated);
+      expect(resumed.trajectory.status).toBe("completed");
+      // After approval the workflow finishes: `held` is gone, `done` is offered.
+      expect(resumed.held).toBeUndefined();
+      expect(resumed.nextActions.map((n) => n.action)).toContain("done");
     });
   });
 }

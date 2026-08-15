@@ -22,6 +22,7 @@ import {
   type PipelineOutcome,
 } from "@/platform/action-pipeline";
 import type {
+  ProposalStore,
   ActionSpec,
   ActivityStateStore,
   AgentIdentity,
@@ -94,6 +95,13 @@ export interface InvokeToolArgs<TState = unknown> {
   readonly emit?: (event: SessionEvent) => void;
   /** Override the ledger the declared external effects are written to (testing). */
   readonly effectLedger?: EffectLedger;
+  /**
+   * Satisfies the gate for an already-approved two-phase action (ADR-030 D6, ADR-031 D2).
+   * The pipeline verifies the proposal is approved for operationId; an unapproved or
+   * mismatched id is refused. Requires proposalStore.
+   */
+  readonly approvedProposalId?: string;
+  readonly proposalStore?: ProposalStore;
 }
 
 export interface InvokeToolResult<TState = unknown> {
@@ -219,7 +227,7 @@ export async function invokeTool<TState = unknown>(
     spec: specFor(tool),
     actor,
     sessionId: args.sessionId,
-    operationId: pendingOperationId,
+    operationId: args.approvedProposalId ? args.operationId : pendingOperationId,
     label: tool.id,
     cost: args.cost ?? 0,
     boundary: "commitment",
@@ -244,6 +252,8 @@ export async function invokeTool<TState = unknown>(
     emit: args.emit,
     stepInput: { toolId: tool.id },
     eventIntent: "tool-call",
+    approvedProposalId: args.approvedProposalId,
+    proposalStore: args.proposalStore,
   });
 
   if (isPipelineConflict(outcome)) {

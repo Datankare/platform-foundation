@@ -144,6 +144,10 @@ export interface PipelineRequest<TState> {
   readonly stepInput?: Record<string, unknown>;
   readonly stepOutput?: Record<string, unknown>;
   readonly eventIntent?: string;
+  /** When set with proposalStore, satisfies the gate for an approved two-phase action. */
+  readonly approvedProposalId?: string;
+  /** Required alongside approvedProposalId to verify approval (ADR-031 D2). */
+  readonly proposalStore?: ProposalStore;
 }
 
 export interface PipelineConflict<TState> {
@@ -183,10 +187,32 @@ export async function executeActionPipeline<TState>(
   // 1. Tier + gating. Computed from the spec so no caller can smuggle a lower risk (P4).
   const tier = resolveTier(req.spec);
   if (tier === "two-phase") {
-    throw new PipelineRejectedError(
-      `${req.label} requires approval (effectiveRisk=${computeEffectiveRisk(req.spec)}) — use propose/approve (ADR-031)`,
-      "requires-approval"
-    );
+    // A two-phase action executes ONLY when a real approved proposal for THIS operationId
+    // is presented. The gate is SATISFIED by approval, never skipped on the caller's word:
+    // effectiveRisk is untouched (P4 holds), and a caller with no approved proposal is
+    // refused exactly as before. This is the one path by which an approved held action
+    // reaches commit — the loop's resume-after-approval (ADR-030 D6, ADR-031 D2).
+    if (!req.approvedProposalId || !req.proposalStore || !req.operationId) {
+      throw new PipelineRejectedError(
+        `${req.label} requires approval (effectiveRisk=${computeEffectiveRisk(req.spec)}) — use propose/approve (ADR-031)`,
+        "requires-approval"
+      );
+    }
+    const proposal = await req.proposalStore.getById(req.approvedProposalId);
+    if (
+      !proposal ||
+      proposal.status !== "approved" ||
+      proposal.operationId !== req.operationId
+    ) {
+      // Not approved, or approved for a different operation. Refuse — an unapproved bypass
+      // is the exact hole this guard exists to close.
+      throw new PipelineRejectedError(
+        `${req.label}: no approved proposal for operation ${req.operationId} — cannot commit a gated action without approval (ADR-031 D2)`,
+        "requires-approval"
+      );
+    }
+    // Approved and matched: fall through to execute + commit. The tier stays two-phase for
+    // the trajectory record's truth; it simply no longer blocks.
   }
 
   // 2. Budget — most-restrictive-wins across every applicable ceiling (ADR-029 D8).

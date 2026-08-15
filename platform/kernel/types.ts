@@ -678,6 +678,37 @@ export interface CostSummary {
 }
 
 /**
+ * A workflow step held for approval (ADR-030 D6, ADR-031 D2).
+ *
+ * Present on AgentResponse.held when a step's effectiveRisk reached the gating threshold:
+ * a proposal was minted, the trajectory paused, and this names WHAT is held and WHO may
+ * approve it. It is a STATE the caller observes, not an affordance the agent itself takes —
+ * which is why it is a distinct field and not a NextAction. Modelling approval as just
+ * another agent affordance would blur the propose->commit boundary ADR-031 exists to draw,
+ * and would let an agent approve its own held action.
+ *
+ * `approver` is an AgentIdentity carrying an actorType ("user" | "agent" | "system"). It is
+ * deliberately NOT a human-only flag: the requirement that a human approve is a POLICY
+ * default (platform/agents/gating.ts approvalPolicy), not a property of this type. Moving a
+ * class of action to agent approval is a policy change, never an envelope change, because
+ * actorType "agent" was always a legal value here. See the ADR-030 amendment of 2026-08-15.
+ */
+export interface HeldAction {
+  readonly proposalId: string;
+  readonly operationId: string;
+  /** The action type / tool id that is held. */
+  readonly label: string;
+  readonly effectiveRisk: RiskLevel;
+  readonly effects: readonly EffectType[];
+  /** Who may approve — an identity with a type, not a human-only flag (policy seam). */
+  readonly approver: AgentIdentity;
+  /** Where a decision is recorded. */
+  readonly approvalEndpoint: string;
+  /** State version observed at proposal time — the stale-approval anchor (ADR-031 D5). */
+  readonly observedVersion?: number;
+}
+
+/**
  * The fixed envelope every /api/agent/* response carries (ADR-030 D5), enforced at
  * runtime by the L21 kit at __tests__/contract/agent-response-contract.ts.
  *
@@ -695,6 +726,8 @@ export interface AgentResponse<T> {
   readonly trajectory: Trajectory;
   readonly nextActions: readonly NextAction[];
   readonly cost: CostSummary;
+  /** Present only when a step is held for approval (ADR-030 D6). A state, not an affordance. */
+  readonly held?: HeldAction;
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────

@@ -2,15 +2,20 @@
  * __tests__/agent-response-conformance.test.ts
  *
  * Runs the AUX response kit (ADR-030 L21) against the PF-B workflow loop wired to the
- * in-memory trajectory store. Closes TASK-084 — the kit shipped one commit ago with no
- * arm, which is the artifact ADR-027 exists to eliminate.
+ * in-memory trajectory + proposal stores. Closes TASK-084 — the kit shipped with no arm,
+ * which is the artifact ADR-027 exists to eliminate.
  *
  * Playform runs this same kit against its own /api/agent/* surface to learn whether its
  * responses conform. That portability is what the kit is for; this file is our invocation.
+ *
+ * R9/R10 (gating) are wired here too: a gated goal whose first step carries a `restricted`
+ * effect forces two-phase, so the loop holds it, and the fixtures exercise the held-state
+ * contract and the approved-commit path (including that an UNapproved resume is refused).
  */
 
 import { runAgentResponseContract } from "./contract/agent-response-contract";
 import { InMemoryTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { InMemoryProposalStore } from "@/platform/agents/proposal-store";
 import {
   advanceGoal,
   listWorkflowGoals,
@@ -19,9 +24,11 @@ import {
   runGoal,
   type WorkflowDefinition,
 } from "@/platform/agents/workflow-loop";
+import { approveHeldAction } from "@/platform/agents/gating";
 import type { AgentIdentity, AgentResponse, Tool } from "@/platform/kernel";
 
 const store = new InMemoryTrajectoryStore();
+const proposals = new InMemoryProposalStore();
 
 const ACTOR: AgentIdentity = {
   actorType: "agent",
@@ -46,7 +53,18 @@ function stepTool(id: string): Tool {
       required: ["text"],
     },
     effects: [],
-    execute: async (input) => ({ text: `${id}:${String(input.text)}` }),
+    execute: async (input: Record<string, unknown>) => ({
+      text: `${id}:${String(input.text)}`,
+    }),
+  };
+}
+
+/** A tool whose `restricted` effect forces effectiveRisk to the gating threshold. */
+function gatedTool(id: string): Tool {
+  return {
+    ...stepTool(id),
+    effects: ["restricted"],
+    declaredRisk: "restricted",
   };
 }
 
@@ -62,8 +80,6 @@ const FULL_PIPELINE: WorkflowDefinition = {
       input: (ctx) => ({ text: String(ctx.input.text ?? "hum") }),
     },
     {
-      // Reads the previous step's output, which is what proves the choreographed path
-      // reconstructs context from the trajectory rather than losing it between hops.
       tool: stepTool("speak"),
       intent: "inform",
       estimatedCostUSD: 0.001,
@@ -86,9 +102,25 @@ const TRANSLATE: WorkflowDefinition = {
   ],
 };
 
+/** A goal whose one step is gated — the loop holds it for approval. */
+const ANALYZE: WorkflowDefinition = {
+  goal: "analyze",
+  description: "a gated single step",
+  endpoint: "/api/agent/process-content",
+  steps: [
+    {
+      tool: gatedTool("analyze"),
+      intent: "inform",
+      estimatedCostUSD: 0.001,
+      input: (ctx) => ({ text: String(ctx.input.text ?? "") }),
+    },
+  ],
+};
+
 resetWorkflowRegistry();
 registerWorkflow(FULL_PIPELINE);
 registerWorkflow(TRANSLATE);
+registerWorkflow(ANALYZE);
 
 describe("AUX response envelope — conformance (in-memory wiring)", () => {
   runAgentResponseContract({
@@ -99,13 +131,12 @@ describe("AUX response envelope — conformance (in-memory wiring)", () => {
         actor: ACTOR,
         budgetMaxUSD: run.budgetMaxUSD,
         trajectoryStore: store,
+        proposalStore: proposals,
       }),
 
     runChoreographed: async (run) => {
       const hops: AgentResponse<unknown>[] = [];
       let trajectoryId: string | undefined;
-      // Bounded: a hop that appends no step would otherwise loop forever, and the loop's
-      // own gotcha 1 says that is the failure mode to guard against.
       for (let i = 0; i < FULL_PIPELINE.steps.length + 2; i += 1) {
         const hop = await advanceGoal({
           goal: run.goal,
@@ -114,10 +145,11 @@ describe("AUX response envelope — conformance (in-memory wiring)", () => {
           budgetMaxUSD: run.budgetMaxUSD,
           trajectoryId,
           trajectoryStore: store,
+          proposalStore: proposals,
         });
         hops.push(hop);
         trajectoryId = hop.trajectory.trajectoryId;
-        if (hop.nextActions.every((a) => a.action === "done")) break;
+        if (hop.nextActions.every((a: { action: string }) => a.action === "done")) break;
       }
       return hops;
     },
@@ -126,5 +158,52 @@ describe("AUX response envelope — conformance (in-memory wiring)", () => {
     publishedGoals: () => listWorkflowGoals(),
     orchestratedRun: { goal: "full-pipeline", input: { text: "hum" } },
     infeasibleBudgetUSD: 0.0001,
+
+    gating: {
+      runGated: () =>
+        runGoal({
+          goal: "analyze",
+          input: { text: "gate me" },
+          actor: ACTOR,
+          trajectoryStore: store,
+          proposalStore: proposals,
+        }),
+
+      resumeWithoutApproval: async (response) => {
+        // Resume the held trajectory WITHOUT approving. The gated step re-holds; it must
+        // not commit or complete.
+        const resumed = await runGoal({
+          goal: "analyze",
+          input: { text: "gate me" },
+          actor: ACTOR,
+          trajectoryId: response.trajectory.trajectoryId,
+          trajectoryStore: store,
+          proposalStore: proposals,
+        });
+        return {
+          refused: resumed.trajectory.status !== "completed",
+          completed: resumed.trajectory.status === "completed",
+        };
+      },
+
+      approveThenResume: async (response) => {
+        const proposalId = response.held?.proposalId;
+        if (!proposalId) throw new Error("no held proposal to approve");
+        await approveHeldAction({
+          proposalId,
+          decidedBy: "human-reviewer",
+          proposalStore: proposals,
+          trajectoryStore: store,
+        });
+        return runGoal({
+          goal: "analyze",
+          input: { text: "gate me" },
+          actor: ACTOR,
+          trajectoryId: response.trajectory.trajectoryId,
+          trajectoryStore: store,
+          proposalStore: proposals,
+        });
+      },
+    },
   });
 });

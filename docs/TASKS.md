@@ -1731,6 +1731,35 @@ probe result, not a live check.
 
 ---
 
+### TASK-087 — Admin-governed approval policy (Sprint 3c)
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-087                                                |
+| **Type**     | Feature / sprint                                        |
+| **Severity** | Medium — the seam exists; governance of it does not yet |
+| **Phase**    | Phase 5, Sprint 3c                                      |
+| **Target**   | Phase 5, Sprint 3c                                      |
+| **Status**   | Open                                                    |
+| **Logged**   | 2026-08-15                                              |
+
+**What:** Sprint 3b shipped the approval-policy SEAM — approvalPolicy() in gating.ts returns
+a human approver by default, and HeldAction.approver is a typed identity so an agent approver
+is expressible without an envelope change. What does not yet exist is the governance: a
+durable policy store, a privileged mutation to change it, and an admin surface to drive that
+mutation.
+
+**Why a sprint, not a task line:** it is two-repo (PF-B abstraction + PF admin surface;
+Playform-A extension) with its own security and accessibility gates. Folding it into a task
+would repeat the L22 failure — a task outliving its sprint. Filed as Sprint 3c in
+PHASE5_PLAN with the full breakdown and GenAI anchors (P10/P17/P4/P13/P3/P18).
+
+**Close when:** Sprint 3c completes — policy store + kit + privileged audited mutation + PF
+admin route/panel behind admin_manage_approval_policy, and the agent-approver path proven
+reachable and governed end to end.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:

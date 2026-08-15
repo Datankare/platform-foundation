@@ -42,6 +42,31 @@
 - **ADR-030** (Agent User Experience).
 - Reflect AUX deliverables into the ROADMAP Phase 5 body (currently only "+ AUX" in the summary row) once AUX_DESIGN.md is worked in full.
 
+### Sprint 3c — Admin-governed approval policy (PF + Playform)
+
+The gating contract (Sprint 3b) makes the approver an identity and human review a policy
+default in gating.ts approvalPolicy(). Sprint 3c makes that policy admin-governed and
+per-action-class, so approval can move from human to agent under governance as the system
+earns trust — without an envelope change.
+
+PF-B owns the abstraction and, following PF's existing admin pattern (adminGuard, admin_*
+scopes, config panels), the admin surface:
+
+- a durable approval-policy store (who-may-approve per action class, versioned) + reference
+  impl + conformance kit;
+- the privileged mutation that changes the policy — itself a commitment-boundary action
+  (P17), gated and audited, with loosening (human->agent) higher-risk than tightening (P4);
+- the PF admin route + panel behind a new admin_manage_approval_policy scope.
+
+Playform-A extends the admin surface into Playform's own admin where required, with A1-A8 on
+any new UI.
+
+Cross-cutting: the agent-approver path proven reachable AND governed end to end.
+
+GenAI anchors: P10 (the control surface for human oversight), P17 (policy change is a
+commitment), P4 (loosening is higher-risk), P13 (bounded autonomy governed centrally),
+P3/P18 (every change audited and reconstructable).
+
 ### Sprint 4 — Adaptive behavior + dynamic content generation (PF)
 
 - LLM-driven adaptive AI behavior framework — consumers implement app-specific logic (opponents, tutors, assistants).

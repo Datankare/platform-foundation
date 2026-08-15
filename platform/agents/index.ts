@@ -114,5 +114,7 @@ export type {
   WorkflowStepContext,
   RunGoalArgs,
 } from "./workflow-loop";
+export { approvalPolicy, approveHeldAction, rejectHeldAction } from "./gating";
+export type { ApproveHeldActionArgs } from "./gating";
 export { buildCapabilities } from "./capabilities";
 export type { Capabilities, GoalCapability, CapabilityStep } from "./capabilities";

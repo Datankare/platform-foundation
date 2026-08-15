@@ -137,6 +137,38 @@ Gate 6 is the one that cannot be satisfied by inspecting a single response — i
 
 ## Amendments
 
+### 2026-08-15 — the gating contract: held actions, and the approver as an identity
+
+A gated workflow step (effectiveRisk at the threshold) is HELD, not refused. The response
+carries a new optional field, `held: HeldAction`, naming the proposal and WHO may approve.
+
+`held` is a distinct field, NOT a NextAction. Approval is not an affordance the agent takes
+on its own behalf: modelling it as one would blur the propose->commit boundary ADR-031
+draws and would let an agent approve its own held action. nextActions offers the agent only
+what the agent may do — poll or abandon — never `approve`.
+
+**The approver is an identity, and human review is a policy default, not a welded property.**
+HeldAction.approver is an AgentIdentity whose actorType is "user" | "agent" | "system".
+platform/agents/gating.ts approvalPolicy() returns actorType "user" for everything today —
+human review, the P10 default and the only policy Sprint 3b ships. Moving a class of action
+to agent approval later is a change to that policy (and, in Sprint 3c, to an admin-governed
+policy store), NEVER a change to this envelope: actorType "agent" was always a legal value
+of the field. The seam is deliberate so the agent-approver path stays reachable as the
+system earns trust. Recorded here so a future planner finds it where they look (GOTCHA-70).
+
+**Approval satisfies the gate; it does not skip it (P4).** The pipeline's execute path gains
+an approvedProposalId that, with a proposalStore, verifies a real approved proposal for the
+operation before committing a two-phase action. effectiveRisk is untouched; a caller with no
+approved proposal is refused exactly as before. The L21 kit's R10 arm asserts an UNapproved
+resume is refused — the arm exists precisely so the approved-commit path can never quietly
+become a bypass.
+
+Resume after approval reuses the loop's trajectoryId re-entry (ADR-029 D5). The resume index
+counts COMMITMENT steps, not total steps: a held step leaves a `cognition` proposal step that
+is bookkeeping, not progress, so counting it would skip the very step awaiting approval.
+
+---
+
 ### 2026-08-15 — the envelope is a distinct type, and the trajectory keeps its own name
 
 Implementation of the L21 kit required reading `ActionResult` (ADR-028 D7), which already

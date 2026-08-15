@@ -25,16 +25,22 @@ import type {
   AgentIdentity,
   AgentResponse,
   CostSummary,
+  HeldAction,
   NextAction,
+  ProposalStore,
+  RiskLevel,
   Step,
   Tool,
   TrajectoryRecord,
   TrajectoryStore,
 } from "@/platform/kernel";
+import { EFFECT_RISK_FLOOR } from "@/platform/kernel";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
-import { PipelineRejectedError } from "@/platform/action-pipeline";
+import { PipelineRejectedError, proposeOnce } from "@/platform/action-pipeline";
 import { invokeTool } from "./tool-invoker";
 import { getTrajectoryStore } from "./trajectory-store";
+import { getProposalStore } from "./proposal-store";
+import { approvalPolicy } from "./gating";
 
 // ── Definition ────────────────────────────────────────────────────────
 
@@ -145,10 +151,39 @@ export interface RunGoalArgs {
   /** Continue an existing trajectory — this is what makes choreography one workflow. */
   readonly trajectoryId?: string;
   readonly trajectoryStore?: TrajectoryStore;
+  readonly proposalStore?: ProposalStore;
 }
 
-/** Where a run stopped and why. */
-type RunStop = "completed" | "paused";
+/**
+ * Where a run stopped and, when held, what is held.
+ *
+ * `held` is a STATE the caller observes (ADR-030 D6), carried up to AgentResponse.held. It
+ * is not an affordance in nextActions: an agent must not be handed "approve" for its own
+ * held action, because the approver may be — and by policy default is — a human (P10).
+ */
+interface RunResult {
+  readonly stop: "completed" | "paused" | "held";
+  readonly held?: HeldAction;
+}
+
+/**
+ * Completed WORKFLOW steps, which is what resume counts.
+ *
+ * A held step leaves a `cognition` proposal step in the trajectory (proposeAction appends
+ * one) but performs no work. Counting total steps would resume PAST the held step and skip
+ * it; counting commitment steps resumes AT it, so an approved held step re-executes exactly
+ * once. This is the load-bearing distinction in the whole gating path.
+ */
+function commitmentCount(steps: readonly Step[]): number {
+  return steps.filter((s: Step) => s.boundary === "commitment").length;
+}
+
+/** The proposal step for a held operation, if one was appended. */
+function heldProposalStep(steps: readonly Step[]): Step | undefined {
+  return steps.find(
+    (s: Step) => s.boundary === "cognition" && s.proposalId !== undefined
+  );
+}
 
 async function openTrajectory(
   args: RunGoalArgs,
@@ -170,6 +205,10 @@ async function openTrajectory(
  * The single runner. Orchestration passes the whole remaining range; choreography passes
  * one step. Nothing else differs, which is what makes the two trajectories comparable
  * (ADR-030 requirement 6).
+ *
+ * `from` is a COMMITMENT count, not a step count — see commitmentCount. A step whose index
+ * is `from` is re-attempted; if it was previously held and now has an approved proposal, it
+ * commits through the approved path, otherwise it re-holds.
  */
 async function runSteps(
   definition: WorkflowDefinition,
@@ -179,11 +218,11 @@ async function runSteps(
   from: number,
   to: number,
   priorOutputs: readonly Record<string, unknown>[]
-): Promise<RunStop> {
-  // Seeded from the trajectory, not from this call. A choreographed hop is a fresh
-  // process invocation and knows nothing of the previous one, so a step whose input
-  // reads an earlier step's output would see nothing and the two entry points would
-  // silently compute different things (ADR-029 D5: resume replays from the trajectory).
+): Promise<RunResult> {
+  // Seeded from the trajectory, not from this call. A choreographed hop is a fresh process
+  // invocation and knows nothing of the previous one, so a step whose input reads an
+  // earlier step's output would see nothing and the two entry points would silently
+  // compute different things (ADR-029 D5: resume replays from the trajectory).
   const outputs: Record<string, unknown>[] = [...priorOutputs];
 
   for (let i = from; i < to; i += 1) {
@@ -196,6 +235,10 @@ async function runSteps(
       outputs,
     };
 
+    // Is this step already held with an approved proposal? Then commit it through the
+    // approved path rather than re-attempting a fresh gated call.
+    const approved = await approvedProposalForStep(args, store, trajectoryId);
+
     try {
       const result = await invokeTool({
         tool: step.tool,
@@ -207,23 +250,118 @@ async function runSteps(
         cost: step.estimatedCostUSD,
         budgetCeiling: args.budgetMaxUSD,
         trajectoryStore: store,
+        proposalStore: args.proposalStore,
+        approvedProposalId: approved?.proposalId,
+        operationId: approved?.operationId,
       });
       outputs.push(result.output);
     } catch (err) {
-      // ADR-029 D8: budget exhaustion PAUSES rather than fails — with resume (D5) a
-      // pause is recoverable, and a caller that raised its ceiling can continue the
-      // same trajectory rather than starting a second one and paying twice.
-      // A gated step (requires-approval) pauses for D7's reason: it is held, not refused.
       if (err instanceof PipelineRejectedError) {
+        if (err.reason === "requires-approval") {
+          // Hold: mint a proposal (idempotent via proposeOnce) and surface who must approve.
+          const held = await holdStep(
+            definition,
+            step,
+            i,
+            ctx,
+            args,
+            store,
+            trajectoryId
+          );
+          await store.updateStatus(trajectoryId, "paused");
+          return { stop: "held", held };
+        }
+        // budget-exceeded: pause, recoverable by raising the ceiling (ADR-029 D8).
         await store.updateStatus(trajectoryId, "paused");
-        return "paused";
+        return { stop: "paused" };
       }
       await store.updateStatus(trajectoryId, "failed");
       throw err;
     }
   }
 
-  return "completed";
+  return { stop: "completed" };
+}
+
+/**
+ * The approved proposal awaiting execution on this trajectory, if any.
+ *
+ * A resume after approval finds the trajectory's held proposal now `approved`; its
+ * operationId is what the pipeline's approved-commit path verifies against.
+ */
+async function approvedProposalForStep(
+  args: RunGoalArgs,
+  store: TrajectoryStore,
+  trajectoryId: string
+): Promise<{ proposalId: string; operationId: string } | undefined> {
+  const record = await store.getById(trajectoryId);
+  const proposalStep = record ? heldProposalStep(record.trajectory.steps) : undefined;
+  if (!proposalStep?.proposalId || !args.proposalStore) return undefined;
+
+  const proposal = await args.proposalStore.getById(proposalStep.proposalId);
+  if (!proposal || proposal.status !== "approved") return undefined;
+  return { proposalId: proposal.proposalId, operationId: proposal.operationId };
+}
+
+/**
+ * Mint the proposal for a gated step and build the HeldAction naming who may approve.
+ *
+ * proposeOnce is idempotent per operationId (ADR-031 D3), so a re-hold on the same step
+ * does not create a second proposal.
+ */
+async function holdStep(
+  definition: WorkflowDefinition,
+  step: WorkflowStep,
+  stepIndex: number,
+  ctx: WorkflowStepContext,
+  args: RunGoalArgs,
+  store: TrajectoryStore,
+  trajectoryId: string
+): Promise<HeldAction> {
+  const proposalStore = args.proposalStore ?? getProposalStore();
+  const effectiveRisk = computeToolRisk(step.tool);
+  const operationId = `op_${trajectoryId}_${stepIndex}`;
+
+  const proposal = await proposeOnce({
+    spec: {
+      type: step.tool.id,
+      effects: step.tool.effects,
+      declaredRisk: step.tool.declaredRisk,
+      ephemeral: false,
+      commutative: false,
+    },
+    actor: args.actor,
+    sessionId: args.sessionId ?? trajectoryId,
+    operationId,
+    label: step.tool.id,
+    payload: step.input(ctx),
+    trajectoryId,
+    stepIndex,
+    proposalStore,
+    trajectoryStore: store,
+  });
+
+  return {
+    proposalId: proposal.proposalId,
+    operationId: proposal.operationId,
+    label: proposal.label,
+    effectiveRisk: proposal.effectiveRisk,
+    effects: proposal.effects,
+    approver: approvalPolicy(effectiveRisk, step.tool.effects),
+    approvalEndpoint: `${definition.endpoint}/approve`,
+    observedVersion: proposal.observedVersion,
+  };
+}
+
+/** Effective risk of a tool, mirroring the pipeline's computation (ADR-029). */
+function computeToolRisk(tool: Tool): RiskLevel {
+  const order: RiskLevel[] = ["ordinary", "consequential", "restricted"];
+  let max: RiskLevel = tool.declaredRisk ?? "ordinary";
+  for (const effect of tool.effects) {
+    const floor = EFFECT_RISK_FLOOR[effect];
+    if (order.indexOf(floor) > order.indexOf(max)) max = floor;
+  }
+  return max;
 }
 
 function summariseCost(steps: readonly Step[]): CostSummary {
@@ -241,21 +379,34 @@ function summariseCost(steps: readonly Step[]): CostSummary {
 /**
  * Affordances after a run (ADR-030 D3).
  *
- * Never empty: a finished workflow offers `done` rather than nothing, which is the
- * difference between an agent surface and an RPC. Every non-terminal affordance names a
- * REGISTERED goal, so requirement 8's discoverability check cannot be satisfied by an
- * invented action.
+ * Never empty: a finished workflow offers `done` rather than nothing. When held, the agent
+ * is offered ONLY what the agent may legitimately do — poll the held state, or abandon —
+ * never "approve". Approval is a human's by policy default (P10), surfaced in
+ * AgentResponse.held, not handed to the agent as its own affordance (ADR-031 boundary).
  */
 function affordances(
   definition: WorkflowDefinition,
   remaining: number,
-  stop: RunStop
+  result: RunResult
 ): readonly NextAction[] {
-  if (stop === "paused") {
+  if (result.stop === "held") {
     return [
       {
         action: "retry",
-        description: `Resume ${definition.goal} — raise the ceiling or approve the held step`,
+        description: `Held for approval by ${result.held?.approver.actorType ?? "an approver"} — poll or resume after a decision`,
+        endpoint: definition.endpoint,
+        requiredParams: ["trajectoryId"],
+        estimatedCostUSD: 0,
+      },
+      terminal(),
+    ];
+  }
+
+  if (result.stop === "paused") {
+    return [
+      {
+        action: "retry",
+        description: `Resume ${definition.goal} — raise the ceiling and retry`,
         endpoint: definition.endpoint,
         requiredParams: ["trajectoryId"],
         estimatedCostUSD: 0,
@@ -296,7 +447,7 @@ async function assemble(
   definition: WorkflowDefinition,
   store: TrajectoryStore,
   trajectoryId: string,
-  stop: RunStop
+  result: RunResult
 ): Promise<AgentResponse<unknown>> {
   const record = await store.getById(trajectoryId);
   if (!record) {
@@ -304,9 +455,10 @@ async function assemble(
   }
 
   const steps = record.trajectory.steps;
-  const remaining = Math.max(definition.steps.length - steps.length, 0);
+  // Remaining is over WORKFLOW steps, so a held proposal step does not count as progress.
+  const remaining = Math.max(definition.steps.length - commitmentCount(steps), 0);
 
-  if (stop === "completed" && remaining === 0) {
+  if (result.stop === "completed" && remaining === 0) {
     await store.updateStatus(trajectoryId, "completed");
   }
 
@@ -319,8 +471,9 @@ async function assemble(
       output: steps.at(-1)?.output ?? {},
     },
     trajectory,
-    nextActions: affordances(definition, remaining, stop),
+    nextActions: affordances(definition, remaining, result),
     cost: summariseCost(trajectory.steps),
+    ...(result.held ? { held: result.held } : {}),
   };
 }
 
@@ -336,18 +489,20 @@ export async function runGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>
   const store = args.trajectoryStore ?? getTrajectoryStore();
   const record = await openTrajectory(args, store);
   const trajectoryId = record.trajectory.trajectoryId;
-  const from = record.trajectory.steps.length;
+  const from = commitmentCount(record.trajectory.steps);
 
-  const stop = await runSteps(
+  const result = await runSteps(
     definition,
     args,
     store,
     trajectoryId,
     from,
     definition.steps.length,
-    record.trajectory.steps.map((s) => s.output)
+    record.trajectory.steps
+      .filter((s: Step) => s.boundary === "commitment")
+      .map((s: Step) => s.output)
   );
-  return assemble(definition, store, trajectoryId, stop);
+  return assemble(definition, store, trajectoryId, result);
 }
 
 /**
@@ -360,11 +515,11 @@ export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unkn
   const store = args.trajectoryStore ?? getTrajectoryStore();
   const record = await openTrajectory(args, store);
   const trajectoryId = record.trajectory.trajectoryId;
-  const from = record.trajectory.steps.length;
+  const from = commitmentCount(record.trajectory.steps);
 
-  const stop =
+  const result =
     from >= definition.steps.length
-      ? "completed"
+      ? ({ stop: "completed" } as RunResult)
       : await runSteps(
           definition,
           args,
@@ -372,10 +527,12 @@ export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unkn
           trajectoryId,
           from,
           from + 1,
-          record.trajectory.steps.map((s) => s.output)
+          record.trajectory.steps
+            .filter((s: Step) => s.boundary === "commitment")
+            .map((s: Step) => s.output)
         );
 
-  return assemble(definition, store, trajectoryId, stop);
+  return assemble(definition, store, trajectoryId, result);
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────
