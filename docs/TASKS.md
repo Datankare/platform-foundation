@@ -1611,7 +1611,8 @@ else does.
 | **Severity** | Medium — an unrun kit is the checklist ADR-027 replaced |
 | **Phase**    | Phase 5, Sprint 3b                                      |
 | **Target**   | Phase 5, Sprint 3b                                      |
-| **Status**   | Open                                                    |
+| **Status**   | Closed — arm landed, all eight requirements run         |
+| **Closed**   | 2026-08-15                                              |
 | **Logged**   | 2026-08-15                                              |
 
 **What:** `__tests__/contract/agent-response-contract.ts` ships with eight arms and nothing
@@ -1633,6 +1634,55 @@ runs, and neither can be satisfied by a stub.
 
 **Close when:** `agent-response-conformance.test.ts` exists, runs all eight arms green, and
 R6 compares two trajectories with at least two gated steps each.
+
+**Resolution (2026-08-15):** `__tests__/agent-response-conformance.test.ts` wires the kit to
+the workflow loop over `InMemoryTrajectoryStore`, registering a two-step `full-pipeline` and a
+one-step `translate`. All eight requirements run. R6 compares a `runGoal` trajectory against
+the `advanceGoal` sequence for the same input: two gated steps each, identical signatures.
+
+Writing the arm found a defect in the kit itself, fixed in the same commit: `getTrajectory`
+was typed `Promise<TrajectoryRecord | null>` and asserted with `not.toBeNull()`, but
+`TrajectoryStore.getById` returns `undefined` for a miss — so R5 would have passed against a
+trajectory that never persisted, which is the exact condition it exists to detect. GOTCHA-78's
+rule two (read the returned interface, not the prose describing it) applied one commit after
+that gotcha was cited in the same file.
+
+---
+
+### TASK-085 — Declared step cost and provider-reported cost are not reconciled
+
+| Field        | Detail                                             |
+| ------------ | -------------------------------------------------- |
+| **ID**       | TASK-085                                           |
+| **Type**     | Cost accounting                                    |
+| **Severity** | Medium — budget decisions are made on the estimate |
+| **Phase**    | Phase 5, Sprint 3b                                 |
+| **Target**   | Phase 5, Sprint 4                                  |
+| **Status**   | Open                                               |
+| **Logged**   | 2026-08-15                                         |
+
+**What:** `WorkflowStep.estimatedCostUSD` is a static declaration, and it is what the budget
+ceiling is checked against and what the trajectory records. The providers already emit their
+own `estimatedCostUsd` per call (`platform/voice/identify-types.ts`), and nothing compares the
+two. A step declared at $0.002 that actually costs $0.02 passes a $0.005 ceiling and records
+$0.002 in the trajectory.
+
+**Why the estimate exists:** the pipeline checks the ceiling BEFORE the step runs
+(`executeActionPipeline` step 2, before `perform()` at step 6), which is the correct order —
+a refused call must not execute. So a pre-execution figure is structurally required; the gap
+is that no post-execution figure ever replaces it.
+
+**Consequence today:** ADR-030 requirement 4 — `cost.estimatedCostUSD` is the sum of the
+steps' cost — passes trivially, because both sides come from the same declaration. The arm is
+real only once the recorded cost is the provider's.
+
+**Resolution:** have `invokeTool` accept a post-execution cost from the tool's output and
+record that on the Step, with the declared figure kept for the pre-check. Then requirement 4
+compares two independently produced numbers, and a declaration that drifts from reality
+surfaces as a failing conformance arm rather than as a quiet underbill.
+
+**Close when:** a step whose tool reports a cost different from its declaration records the
+reported figure in the trajectory, and the conformance arm still passes.
 
 ---
 

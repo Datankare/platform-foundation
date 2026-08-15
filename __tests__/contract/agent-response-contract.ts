@@ -45,7 +45,7 @@ export interface AgentResponseFixtures {
    * GOTCHA-78: the id is passed in, and the record does NOT return it at the top level —
    * it lives at record.trajectory.trajectoryId. Do not assert record.trajectoryId.
    */
-  readonly getTrajectory: (trajectoryId: string) => Promise<TrajectoryRecord | null>;
+  readonly getTrajectory: (trajectoryId: string) => Promise<TrajectoryRecord | undefined>;
   /** The goals published on the capabilities surface (ADR-030 D8, R8). */
   readonly publishedGoals: () => Promise<readonly AgentGoal[]> | readonly AgentGoal[];
   /** A composite goal whose workflow gates at least two steps. */
@@ -155,7 +155,10 @@ export function runAgentResponseContract(fx: AgentResponseFixtures): void {
   describe("R5 — the trajectory resolves to a durable record", () => {
     it("is readable from the store by its id", async () => {
       const record = await fx.getTrajectory(response.trajectory.trajectoryId);
-      expect(record).not.toBeNull();
+      // toBeDefined, not toBeNull: the store returns undefined for a miss, and
+      // expect(undefined).not.toBeNull() passes -- this arm would have gone green on a
+      // trajectory that never persisted. Read the interface, not the prose (GOTCHA-78).
+      expect(record).toBeDefined();
       expect(record?.trajectory.trajectoryId).toBe(response.trajectory.trajectoryId);
     });
 
