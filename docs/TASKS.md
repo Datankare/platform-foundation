@@ -1760,6 +1760,41 @@ reachable and governed end to end.
 
 ---
 
+### TASK-088 — Three Phase-5 modules are outside coverage measurement
+
+| Field        | Detail                                                     |
+| ------------ | ---------------------------------------------------------- |
+| **ID**       | TASK-088                                                   |
+| **Type**     | Coverage integrity                                         |
+| **Severity** | Medium — the reported floor does not cover the newest code |
+| **Phase**    | Phase 5                                                    |
+| **Target**   | Phase 5, Sprint 4 (with TASK-080)                          |
+| **Status**   | Open                                                       |
+| **Logged**   | 2026-08-15                                                 |
+
+**What:** `collectCoverageFrom` lists lib, app/api, components, and four platform modules
+(auth, agents, input, moderation). It does NOT list platform/kernel, platform/app-framework
+or platform/action-pipeline — the three modules Phase 5 Sprints 1-2 built. Everything in
+them (session coordinator, action pipeline, state stores, the kernel types and the risk
+floor) is unmeasured, and the ~89% floor reported per sprint is computed without them.
+
+**Why it matters now:** the gating contract (32a0598) put safety-critical logic — the
+approved-commit path that must never bypass the gate — partly in platform/action-pipeline,
+which is unmeasured. Its guard is tested (kit R10, and the reconcile paths in
+gating.test.ts), but the coverage NUMBER does not reflect that module, so the tool cannot
+catch a future untested branch there.
+
+**Why it is a task, not a one-line fix:** adding the three trees to collectCoverageFrom
+surfaces their real coverage, which may fall below the global floor and turn the gate red
+across three mature modules at once. That is a ratchet effort — measure, then raise the
+floor to the measured level, then hold it — which is exactly TASK-080's scope. Doing it
+inside an unrelated commit would be the coverage-on-red hazard the sprint already documented.
+
+**Close when:** the three modules are in collectCoverageFrom, the global floor is re-derived
+to include them, and CI is green at the new floor (coordinated with TASK-080).
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
