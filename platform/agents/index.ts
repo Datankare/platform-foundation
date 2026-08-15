@@ -99,3 +99,20 @@ export { assertValidSchema, isValidSchema, SchemaValidationError } from "./schem
 // ── Agent Configs (Sprint 4b) ───────────────────────────────────────
 
 export { AGENT_CONFIGS, registerPlatformAgents } from "./agent-configs";
+export {
+  registerWorkflow,
+  resolveWorkflow,
+  listWorkflowGoals,
+  listWorkflows,
+  resetWorkflowRegistry,
+  runGoal,
+  advanceGoal,
+} from "./workflow-loop";
+export type {
+  WorkflowDefinition,
+  WorkflowStep,
+  WorkflowStepContext,
+  RunGoalArgs,
+} from "./workflow-loop";
+export { buildCapabilities } from "./capabilities";
+export type { Capabilities, GoalCapability, CapabilityStep } from "./capabilities";

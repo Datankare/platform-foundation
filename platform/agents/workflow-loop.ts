@@ -39,7 +39,7 @@ import { getTrajectoryStore } from "./trajectory-store";
 // ── Definition ────────────────────────────────────────────────────────
 
 /** What the steps executed so far produced, for the next step's input. */
-export interface WorkflowContext {
+export interface WorkflowStepContext {
   readonly goal: AgentGoal;
   readonly input: Record<string, unknown>;
   /** Outputs of completed steps, in order. */
@@ -64,7 +64,7 @@ export interface WorkflowStep {
    * against the provider's own estimatedCostUsd is TASK-085.
    */
   readonly estimatedCostUSD: number;
-  readonly input: (ctx: WorkflowContext) => Record<string, unknown>;
+  readonly input: (ctx: WorkflowStepContext) => Record<string, unknown>;
 }
 
 export interface WorkflowDefinition {
@@ -118,6 +118,11 @@ export function resolveWorkflow(goal: AgentGoal): WorkflowDefinition {
 /** The goals this platform implements — the data behind /api/agent/capabilities (D8). */
 export function listWorkflowGoals(): readonly AgentGoal[] {
   return [...registry().keys()] as readonly AgentGoal[];
+}
+
+/** The registered definitions in full — what buildCapabilities reads (D8). */
+export function listWorkflows(): readonly WorkflowDefinition[] {
+  return [...registry().values()];
 }
 
 /** Clear the registry (testing only). */
@@ -185,7 +190,7 @@ async function runSteps(
     const step = definition.steps[i];
     if (!step) break;
 
-    const ctx: WorkflowContext = {
+    const ctx: WorkflowStepContext = {
       goal: definition.goal,
       input: args.input,
       outputs,

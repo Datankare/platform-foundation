@@ -1686,6 +1686,51 @@ reported figure in the trajectory, and the conformance arm still passes.
 
 ---
 
+### TASK-086 — Capabilities reports configured providers, not the full D8 list
+
+| Field        | Detail                                           |
+| ------------ | ------------------------------------------------ |
+| **ID**       | TASK-086                                         |
+| **Type**     | Discovery completeness                           |
+| **Severity** | Low — the endpoint is honest about what it omits |
+| **Phase**    | Phase 5, Sprint 3b                               |
+| **Target**   | Phase 5, Sprint 4                                |
+| **Status**   | Open                                             |
+| **Logged**   | 2026-08-15                                       |
+
+**What:** ADR-030 D8 lists capabilities as reporting goals, params, cost AND latency
+ranges, languages, limits, and resolved provider names. The shipped endpoint reports the
+first set (goals, steps, per-goal estimated cost, provider selection names) and names the
+rest in a `notReported` array rather than inventing empty fields for them:
+`latencyMsRange`, `languages`, `limits`, `providerLiveness`.
+
+**Why reported this way and not filled with nulls:** a field present but always empty is
+the `nextActions: ["$0"]` shape — it looks complete and lies. `notReported` lets a
+discovering agent distinguish absent-by-design from absent-by-omission.
+
+**The three deferrals, each a real decision the next planner must keep:**
+
+1. **latencyMsRange / languages / limits** — not on `WorkflowDefinition` today. Adding
+   them is additive; they populate where known (languages from the translation/TTS
+   provider capability lists) and stay omitted where not.
+
+2. **providerLiveness — deferred deliberately, not overlooked.** D8's prose says
+   capabilities feeds off "the registry and health probes." The endpoint reports the
+   configured provider per slot but runs NO health probe. `health.check()` runs live
+   network probes at 5s timeout each; behind an unauthenticated discovery GET that is a
+   DoS lever, and it couples discovery to dependency liveness. An agent learns
+   reachability at call time through the trajectory and nextActions (P11), where the
+   answer is current rather than stale-at-discovery. If liveness is wanted here later, it
+   goes through a CACHED probe result with an explicit max-age, never a live check on the
+   request path. This option is recorded so it stays available; it was weighed and
+   deferred, not missed (GOTCHA-70).
+
+**Close when:** capabilities reports latency, languages and limits for goals that have
+them, `notReported` shrinks accordingly, and any liveness added is served from a cached
+probe result, not a live check.
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
