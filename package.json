@@ -20,7 +20,7 @@
     "schema:check": "node scripts/schema-parity.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0",
+    "@anthropic-ai/sdk": "^0.116.0",
     "@sentry/nextjs": "^10.49.0",
     "@supabase/supabase-js": "^2.112.1",
     "ajv": "8.20.0",
