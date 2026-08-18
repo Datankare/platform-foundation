@@ -65,6 +65,19 @@ const EXPECTED_EXPORTS = [
   "setProposalStore",
   "setTrajectoryStore",
   "unregisterAgent",
+  // ADR-030 AUX gating (Sprint 3b step 4)
+  "approveHeldAction",
+  "rejectHeldAction",
+  "approvalPolicy",
+  // ADR-030 AUX: workflow loop + capabilities (this commit)
+  "advanceGoal",
+  "buildCapabilities",
+  "listWorkflowGoals",
+  "listWorkflows",
+  "registerWorkflow",
+  "resetWorkflowRegistry",
+  "resolveWorkflow",
+  "runGoal",
 ].sort();
 
 describe("platform/agents — public API surface", () => {

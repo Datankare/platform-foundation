@@ -25,6 +25,8 @@ const ROOT = process.cwd();
  * Each needs a reason: an unexplained exemption is how a list stops being trustworthy.
  */
 const EXEMPT: Record<string, string> = {
+  "platform.agents.workflows.v1":
+    "The AUX workflow registry (ADR-030). Cleared by resetWorkflowRegistry(), not by initProviders() — it is not a provider slot.",
   "platform.observability.state":
     "Observability is initialised by instrumentation.ts, not by initProviders(). It has its own resetObservability().",
   "platform.providers.initialized":

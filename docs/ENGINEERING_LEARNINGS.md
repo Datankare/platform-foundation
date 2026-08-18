@@ -548,6 +548,31 @@ _Articles Raman has flagged for discussion. Processed entries move to "Adopted" 
 
 **77. The commit that does the work updates the register — nobody else will.** Four open tasks turned out to be satisfied, and two of them, TASK-056 and TASK-074, had been completed hours earlier by commits in the same session that never touched their entries. Sprint 2 ended with five statuses stale for exactly the same reason. The pattern is not that the register drifts over months; it is that closing work and recording it closed are two actions, and the second is skipped because the first felt like completion. TASK-048 shows the cost compounding: it sat open for two months, was retargeted with a written justification about being the cheapest item available, and was already done — so the register caused planning effort on work that did not exist. Rules: (1) a commit that satisfies a close condition edits the task in the same commit, and the script asserts the status took (a bare `replace()` failed silently five times in Sprint 2); (2) when a task is picked up, run its close condition first — four of four picked up this sprint were already complete; (3) a close condition that cannot be expressed as a command is too vague to close against, and rewriting it is cheaper than the repeated rediscovery it causes.
 
+**78. An accessor that takes an id need not return it — check the interface, not the call signature.** `TrajectoryStore.getById(trajectoryId)` takes the id as a string, but the `TrajectoryRecord` it returns has no `trajectoryId` field: the id lives one level down at `record.trajectory.trajectoryId`. Reading `rec.trajectoryId` therefore yields `undefined` rather than a type error, because the access is on an interface that simply lacks the property. The TASK-075a store round-trip failed on exactly this and presented as a broken Supabase arm — the row was in the database, correctly written, and the assertion was reading a field that does not exist. Four sibling stores return their id at top level (`proposalId`, `entryId`), which is what makes the asymmetry read as consistency. Rules: (1) when a call takes an id and the assertion on its result fails with `undefined`, suspect the shape of the result before suspecting the call; (2) read the returned interface's declaration rather than inferring its fields from the argument list — this is Gotcha 76's "prefer the declaration over the proxy" applied to a type; (3) Sprint 3b's agent-native contracts expose trajectory identity to callers, which is the next place this shape will bite.
+
+_Last updated: August 14, 2026 (Phase 5 Sprint 3b — Gotcha 78 added; an accessor that takes an id need not return it)_
 _Last updated: August 11, 2026 (Phase 5 Sprint 3a — Gotcha 77 added; the commit that does the work updates the register)_
 _Last updated: August 4, 2026 (Phase 5 Sprint 2 — Gotcha 71 added; pin the formatter exactly, its version is the check)_
 _Last updated: August 4, 2026 (Phase 5 Sprint 2 — Gotcha 70 added; a reserved ADR number is a number owed, recorded where the gate will look)_
+
+**79. A route added to `collectCoverageFrom` without a test is a silent floor breach — and a piped gate hides it.** Sprint 3b's endpoint commit added `app/api/agent/process-content/route.ts` and `.../capabilities/route.ts` to the covered set with zero tests (both 0%), dropping Playform develop from 89.91% to 88.88% — below the 89.45% floor — while the two `lib/agent-*` files it shipped alongside were fully covered. The handoff still recorded 3b as "all green". The drag was invisible because the aggregate only moves a point and no single command was checking it at commit time. It compounded once: a fix-script ran `npx jest 2>&1 | tail -6` and checked the pipeline's exit code — `tail`'s 0, not jest's — so a run with one failing suite reported OK and committed on red. Rules: (1) a source file added to `collectCoverageFrom` lands in the SAME commit as its test, or the floor moves under you; (2) never pipe a gate command whose exit code you are checking — `cmd | tail` returns tail's status; redirect to a file and read it, or check `cmd` alone; (3) "all green" in a handoff is a claim to re-run, not a fact to inherit — the baseline-vs-current coverage diff is one command and settles it.
+
+_Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Gotcha 79 added; a route in collectCoverageFrom without a test is a silent floor breach)_
+
+## The capability contract (ADR-030 D9) — integrator seam
+
+Any consumer of platform-foundation (Playform is one) governs agent workflows through the
+capability seam, not by editing the loop:
+
+- A workflow declares an opaque `requiredCapability` name in its `WorkflowDefinition`.
+- The consumer supplies `checkCapability(name, actor) => Promise<boolean>` in `RunGoalArgs`,
+  resolving the name against ITS OWN permission model. PF never learns the consumer's
+  permission strings.
+- The loop checks up front: undeclared -> runs (state `none`); declared + true -> runs
+  (`granted`); declared + false, OR no callback supplied -> denied, nothing runs, trajectory
+  `failed`. Fail-closed: a governed workflow with no checker is denied, never run ungoverned.
+- Every outcome is on `AgentResponse.capabilityCheck` (`none` is a value, not an absence) so
+  the consumer logs all three states and a discovering agent sees denials in-band.
+
+A third-party integrator therefore needs only: name capabilities on their workflows, and
+supply one callback. The admin UI to define capabilities and edit the mapping is Sprint 3c.

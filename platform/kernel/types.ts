@@ -43,6 +43,26 @@
  * Every agent action carries identity — the delegation chain from user
  * through planner to executor is fully reconstructible.
  */
+/**
+ * Attested delegation binding (ADR-033, "rung 2"). ABSENT at rung 1, where an agent's
+ * authorization is a conservative registry allowlist and identity is derived from a
+ * verified credential (never a request-body claim — that is the T9 impersonation hole).
+ *
+ * When present, this carries the verifiable binding of agent + user + consented scope that
+ * Sprint 3c's identity work populates. Deliberately minimal: the wire format (OAuth 2.1
+ * delegation token, SPIFFE SVID) is not yet ratified, so this holds the RESOLVED binding,
+ * not the credential format. Rung 2 populates it; it does not change this type — the
+ * forward-compatibility that lets the sync-carried kernel stay untouched when it lands.
+ */
+export interface AgentDelegation {
+  /** The verified user this agent acts for — the attested form of onBehalfOf. */
+  readonly onBehalfOf: string;
+  /** The capability scope the user consented to for this agent. */
+  readonly scope: readonly string[];
+  /** How the binding was verified, for audit (e.g. "registry-allowlist", "oauth2.1-pkce"). */
+  readonly method: string;
+}
+
 export interface AgentIdentity {
   /** What kind of actor: user, agent, or system */
   readonly actorType: "user" | "agent" | "system";
@@ -50,8 +70,13 @@ export interface AgentIdentity {
   readonly actorId: string;
   /** Role this agent is playing (e.g., "conductor", "guardian", "classifier") */
   readonly agentRole: string;
-  /** If this agent is acting on behalf of someone, their ID */
+  /** If this agent is acting on behalf of someone, their ID (simple reference). */
   readonly onBehalfOf?: string;
+  /**
+   * Attested delegation binding (rung 2, ADR-033). Absent at rung 1. Forward-compatible
+   * container populated by Sprint 3c's identity work — see AgentDelegation.
+   */
+  readonly delegation?: AgentDelegation;
 }
 
 // ── Trajectory (P18) ──────────────────────────────────────────────────
@@ -623,6 +648,127 @@ export interface DispatchOptions {
   readonly computeNextActions?: boolean;
 }
 
+// ── Agent response envelope (ADR-030 D5) ──────────────────────────────
+
+/**
+ * The workflow an agent asks for. Request-level (ADR-030 D1).
+ *
+ * NOT the provider layer's `intent` (IDENTIFY_INTENT, STEP_INTENT_MAP), which is
+ * step-level and annotates what one internal step is doing. Two layers, two names,
+ * deliberately: `goal` names what was asked, `intent` names what a step does. Neither
+ * name is ever used for the other.
+ */
+export type AgentGoal =
+  | "identify-song"
+  | "translate"
+  | "transcribe"
+  | "speak"
+  | "translate-and-speak"
+  | "full-pipeline"
+  | "analyze";
+
+/** An affordance that ends the workflow rather than naming a further goal (D3). */
+export type TerminalAction = "done" | "retry";
+
+/**
+ * One thing the agent can do next. `nextActions` is never empty — a finished workflow
+ * offers `done` rather than nothing, which is the difference between an agent surface
+ * and an RPC (ADR-030 D3).
+ */
+export interface NextAction {
+  readonly action: AgentGoal | TerminalAction;
+  /** Human-readable, for debugging and for an agent's own reasoning trace. */
+  readonly description: string;
+  /** Where to call. Null for a terminal action. */
+  readonly endpoint: string | null;
+  readonly requiredParams: readonly string[];
+  /** Numeric so an agent can sum and compare it against its ceiling (P12). */
+  readonly estimatedCostUSD: number;
+}
+
+/**
+ * Response-level cost attribution (P12, ADR-030 D5).
+ *
+ * Distinct from TrajectoryCost below, which is the PERSISTED view — `{tokens, apiCalls,
+ * usd}` on the trajectory record. This is the returned view, and it carries two fields
+ * the persisted one does not (cache attribution). The workflow loop maps between them;
+ * neither is derived from the other by renaming.
+ */
+export interface CostSummary {
+  readonly apiCalls: number;
+  readonly tokensUsed: number;
+  readonly estimatedCostUSD: number;
+  readonly cachedResults: number;
+  readonly costSavedFromCache: number;
+}
+
+/**
+ * A workflow step held for approval (ADR-030 D6, ADR-031 D2).
+ *
+ * Present on AgentResponse.held when a step's effectiveRisk reached the gating threshold:
+ * a proposal was minted, the trajectory paused, and this names WHAT is held and WHO may
+ * approve it. It is a STATE the caller observes, not an affordance the agent itself takes —
+ * which is why it is a distinct field and not a NextAction. Modelling approval as just
+ * another agent affordance would blur the propose->commit boundary ADR-031 exists to draw,
+ * and would let an agent approve its own held action.
+ *
+ * `approver` is an AgentIdentity carrying an actorType ("user" | "agent" | "system"). It is
+ * deliberately NOT a human-only flag: the requirement that a human approve is a POLICY
+ * default (platform/agents/gating.ts approvalPolicy), not a property of this type. Moving a
+ * class of action to agent approval is a policy change, never an envelope change, because
+ * actorType "agent" was always a legal value here. See the ADR-030 amendment of 2026-08-15.
+ */
+export interface HeldAction {
+  readonly proposalId: string;
+  readonly operationId: string;
+  /** The action type / tool id that is held. */
+  readonly label: string;
+  readonly effectiveRisk: RiskLevel;
+  readonly effects: readonly EffectType[];
+  /** Who may approve — an identity with a type, not a human-only flag (policy seam). */
+  readonly approver: AgentIdentity;
+  /** Where a decision is recorded. */
+  readonly approvalEndpoint: string;
+  /** State version observed at proposal time — the stale-approval anchor (ADR-031 D5). */
+  readonly observedVersion?: number;
+}
+
+/**
+ * The fixed envelope every /api/agent/* response carries (ADR-030 D5), enforced at
+ * runtime by the L21 kit at __tests__/contract/agent-response-contract.ts.
+ *
+ * Structurally parallel to ActionResult above, and deliberately NOT the same type. They
+ * share `Trajectory` and nothing else: `result` here is the goal's own result rather
+ * than versioned session state, `nextActions` enumerates workflow goals rather than
+ * activity action types valid from a state, and `cost` is a summary rather than one
+ * action's number. Widening ActionResult to serve both would put an always-null
+ * `endpoint` and an always-zero `estimatedCostUSD` on every session dispatch, and would
+ * break ADR-028 D7's promise that nextActions is a synchronous filter over the declared
+ * action schema. See the ADR-030 amendment of 2026-08-15.
+ */
+/**
+ * The capability decision for a run (ADR-030 D9). Always present on a response from the
+ * workflow loop — "none" is an affirmative state, not the absence of a check. A consumer
+ * logs all three states; a discovering agent reads "denied" here rather than inferring a
+ * refusal from a failed trajectory it cannot see the reason for.
+ */
+export interface CapabilityCheck {
+  /** The opaque capability name the workflow required, or null when it required none. */
+  readonly capability: string | null;
+  readonly state: "none" | "granted" | "denied";
+}
+
+export interface AgentResponse<T> {
+  readonly result: T;
+  readonly trajectory: Trajectory;
+  readonly nextActions: readonly NextAction[];
+  readonly cost: CostSummary;
+  /** Present only when a step is held for approval (ADR-030 D6). A state, not an affordance. */
+  readonly held?: HeldAction;
+  /** The capability decision (ADR-030 D9). Present on every workflow-loop response. */
+  readonly capabilityCheck?: CapabilityCheck;
+}
+
 // ── Gotchas ───────────────────────────────────────────────────────────
 //
 // (L17) Module-level gotchas — add as discovered.
@@ -648,6 +794,18 @@ export interface DispatchOptions {
 //
 // 6. VersionedState.version is monotonic. A commit passes expectedVersion; a stale
 //    version is rejected with fresh state (D5) — never mutate version out of band.
+//
+// 7. ActionResult and AgentResponse are NOT interchangeable, despite four fields with
+//    the same names. ActionResult.nextActions is string[] of activity action types;
+//    AgentResponse.nextActions is NextAction[] of workflow goals. A function taking
+//    one will accept neither the other's nextActions nor its cost. Check which layer
+//    you are on before reaching for either.
+//
+// 8. A trajectory identifies itself as `trajectoryId`, never `id`, at every level —
+//    on Trajectory, and one level down inside TrajectoryRecord (GOTCHA-78). Do not add
+//    an `id` synonym to any agent-facing type: reading the wrong one yields undefined
+//    rather than a type error, which is how a correctly written row presented as a
+//    broken store in TASK-075a.
 
 // ═══════════════════════════════════════════════════════════════════
 // Trajectory persistence contract (was platform/agents/trajectory-store.ts)
