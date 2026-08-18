@@ -1752,7 +1752,7 @@ mutation.
 **Why a sprint, not a task line:** it is two-repo (PF-B abstraction + PF admin surface;
 Playform-A extension) with its own security and accessibility gates. Folding it into a task
 would repeat the L22 failure — a task outliving its sprint. Filed as Sprint 3c in
-PHASE5_PLAN with the full breakdown and GenAI anchors (P10/P17/P4/P13/P3/P18).
+PHASE5_PLAN with the full breakdown and GenAI anchors (P10/P17/P4/P13/P3/P18). The Sprint 3b demo UI + A1-A8, deferred here, is 3c's acceptance gate (see PHASE5_PLAN Sprint 3c).
 
 **Close when:** Sprint 3c completes — policy store + kit + privileged audited mutation + PF
 admin route/panel behind admin_manage_approval_policy, and the agent-approver path proven

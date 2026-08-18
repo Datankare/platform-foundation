@@ -42,6 +42,34 @@
 - **ADR-030** (Agent User Experience).
 - Reflect AUX deliverables into the ROADMAP Phase 5 body (currently only "+ AUX" in the summary row) once AUX_DESIGN.md is worked in full.
 
+### Sprint 3b — AUX implementation + gating, capability, and identity (PF + Playform)
+
+Shipped the agent-native execution stack that Sprint 3's contracts specified:
+
+- **AUX envelope** — every `/api/agent/*` response is a well-formed `AgentResponse<T>`
+  (`result` + `trajectory` + `nextActions` + `cost`), validated on the way out by the L21
+  conformance kit. Goal (workflow-level) and intent (step-level) kept as distinct names.
+- **Gating contract** — a gated step is held (`AgentResponse.held`), the approver is a typed
+  `AgentIdentity`, and human review is a policy default in `gating.ts approvalPolicy()`, not
+  a welded property. Approval satisfies the gate without bypassing the risk floor.
+- **Per-workflow capability enforcement (ADR-030 D9)** — checked up front, three explicit
+  states (`none` / `granted` / `denied`, never silent) on `AgentResponse.capabilityCheck`,
+  fail-closed. PF owns the seam; the consumer supplies `checkCapability`.
+- **Two-principal agent identity (ADR-033, rung 1)** — the acting agent is resolved from a
+  verified credential (never a body claim), authorized against a conservative first-party
+  allowlist; `AgentIdentity.delegation` added forward-compatibly for rung 2.
+
+Playform consumes this via `/api/agent/process-content` (two-principal: user gate via
+`checkAccountStatus` AND agent gate via the rung-1 allowlist).
+
+**Demo deferred to Sprint 3c (acceptance gate).** 3b's exit originally included a Playform
+demo UI + A1-A8. A demo faithful to the stack needs live approve/reject with resume and the
+admin surfaces that govern policy, capabilities, workflow permissions, and agent identity —
+all of which are 3c backend (TASK-087, ADR-033 rung 2). Building it against 3b alone would
+have to fake those surfaces. The demo is therefore folded into 3c as its acceptance gate,
+where it exercises a real governed backend. Recorded here so the next planner finds it
+(GOTCHA-70), not left as an unexplained hole in 3b.
+
 ### Sprint 3c — Admin-governed approval policy AND capability definition (PF + Playform)
 
 The gating contract (Sprint 3b) makes the approver an identity and human review a policy
@@ -70,6 +98,11 @@ Capability governance (folded in — same admin-governance surface, ADR-030 D9):
 - Playform admin surface to MAP Playform permissions to PF capability names;
 - third-party integrator documentation for the name -> permission mapping workflow;
 - A1-A8 on any new UI. The mechanism ships in 3b (ADR-030 D9); 3c is its governance.
+
+- **Acceptance (the 3b demo, folded in):** the AgentConsole demo + the new admin surfaces
+  (approval policy, capability definition/mapping, agent registry, per-account restriction)
+  exercised end to end with A1-A8 — the agent-approver path proven reachable AND governed
+  through a working UI, not only by kit.
 
 GenAI anchors: P10 (the control surface for human oversight), P17 (policy change is a
 commitment), P4 (loosening is higher-risk), P13 (bounded autonomy governed centrally),
@@ -251,3 +284,5 @@ framework, not conventional). P14 is the only gap (Phase 7). 18/18 accounted for
 ---
 
 _Last updated: July 26, 2026 (Phase 5 Sprint 2 opened — L12 mapping recorded as the pre-code gate; ADR-031 promoted into the roster and into Sprint 2 scope; AUX/ADR-030 confirmed in Sprint 3; function floors added per TASK-061)_
+
+_Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Sprint 3b section added recording the AUX/gating/capability/identity stack as shipped; the demo UI + A1-A8 folded into Sprint 3c as its acceptance gate)_

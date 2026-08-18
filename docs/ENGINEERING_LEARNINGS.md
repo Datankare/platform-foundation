@@ -555,6 +555,10 @@ _Last updated: August 11, 2026 (Phase 5 Sprint 3a — Gotcha 77 added; the commi
 _Last updated: August 4, 2026 (Phase 5 Sprint 2 — Gotcha 71 added; pin the formatter exactly, its version is the check)_
 _Last updated: August 4, 2026 (Phase 5 Sprint 2 — Gotcha 70 added; a reserved ADR number is a number owed, recorded where the gate will look)_
 
+**79. A route added to `collectCoverageFrom` without a test is a silent floor breach — and a piped gate hides it.** Sprint 3b's endpoint commit added `app/api/agent/process-content/route.ts` and `.../capabilities/route.ts` to the covered set with zero tests (both 0%), dropping Playform develop from 89.91% to 88.88% — below the 89.45% floor — while the two `lib/agent-*` files it shipped alongside were fully covered. The handoff still recorded 3b as "all green". The drag was invisible because the aggregate only moves a point and no single command was checking it at commit time. It compounded once: a fix-script ran `npx jest 2>&1 | tail -6` and checked the pipeline's exit code — `tail`'s 0, not jest's — so a run with one failing suite reported OK and committed on red. Rules: (1) a source file added to `collectCoverageFrom` lands in the SAME commit as its test, or the floor moves under you; (2) never pipe a gate command whose exit code you are checking — `cmd | tail` returns tail's status; redirect to a file and read it, or check `cmd` alone; (3) "all green" in a handoff is a claim to re-run, not a fact to inherit — the baseline-vs-current coverage diff is one command and settles it.
+
+_Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Gotcha 79 added; a route in collectCoverageFrom without a test is a silent floor breach)_
+
 ## The capability contract (ADR-030 D9) — integrator seam
 
 Any consumer of platform-foundation (Playform is one) governs agent workflows through the
