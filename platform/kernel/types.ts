@@ -43,6 +43,26 @@
  * Every agent action carries identity — the delegation chain from user
  * through planner to executor is fully reconstructible.
  */
+/**
+ * Attested delegation binding (ADR-033, "rung 2"). ABSENT at rung 1, where an agent's
+ * authorization is a conservative registry allowlist and identity is derived from a
+ * verified credential (never a request-body claim — that is the T9 impersonation hole).
+ *
+ * When present, this carries the verifiable binding of agent + user + consented scope that
+ * Sprint 3c's identity work populates. Deliberately minimal: the wire format (OAuth 2.1
+ * delegation token, SPIFFE SVID) is not yet ratified, so this holds the RESOLVED binding,
+ * not the credential format. Rung 2 populates it; it does not change this type — the
+ * forward-compatibility that lets the sync-carried kernel stay untouched when it lands.
+ */
+export interface AgentDelegation {
+  /** The verified user this agent acts for — the attested form of onBehalfOf. */
+  readonly onBehalfOf: string;
+  /** The capability scope the user consented to for this agent. */
+  readonly scope: readonly string[];
+  /** How the binding was verified, for audit (e.g. "registry-allowlist", "oauth2.1-pkce"). */
+  readonly method: string;
+}
+
 export interface AgentIdentity {
   /** What kind of actor: user, agent, or system */
   readonly actorType: "user" | "agent" | "system";
@@ -50,8 +70,13 @@ export interface AgentIdentity {
   readonly actorId: string;
   /** Role this agent is playing (e.g., "conductor", "guardian", "classifier") */
   readonly agentRole: string;
-  /** If this agent is acting on behalf of someone, their ID */
+  /** If this agent is acting on behalf of someone, their ID (simple reference). */
   readonly onBehalfOf?: string;
+  /**
+   * Attested delegation binding (rung 2, ADR-033). Absent at rung 1. Forward-compatible
+   * container populated by Sprint 3c's identity work — see AgentDelegation.
+   */
+  readonly delegation?: AgentDelegation;
 }
 
 // ── Trajectory (P18) ──────────────────────────────────────────────────
