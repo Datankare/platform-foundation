@@ -1731,7 +1731,7 @@ probe result, not a live check.
 
 ---
 
-### TASK-087 — Admin-governed approval policy (Sprint 3c)
+### TASK-087 — Admin-governed approval policy AND capability definition (Sprint 3c)
 
 | Field        | Detail                                                  |
 | ------------ | ------------------------------------------------------- |

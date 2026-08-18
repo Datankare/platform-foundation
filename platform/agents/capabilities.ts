@@ -37,6 +37,11 @@ export interface GoalCapability {
   readonly steps: readonly CapabilityStep[];
   /** Sum of the steps' declared estimates. Pre-execution; see TASK-085. */
   readonly estimatedCostUSD: number;
+  /**
+   * The opaque capability name this goal requires (ADR-030 D9), or null when it requires
+   * none. A discovering agent reads this to know which capability to hold before invoking.
+   */
+  readonly requiredCapability: string | null;
 }
 
 /**
@@ -83,6 +88,7 @@ export function buildCapabilities(
       estimatedCostUSD: s.estimatedCostUSD,
     })),
     estimatedCostUSD: def.steps.reduce((sum, s) => sum + s.estimatedCostUSD, 0),
+    requiredCapability: def.requiredCapability ?? null,
   }));
 
   return {

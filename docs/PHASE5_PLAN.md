@@ -42,7 +42,7 @@
 - **ADR-030** (Agent User Experience).
 - Reflect AUX deliverables into the ROADMAP Phase 5 body (currently only "+ AUX" in the summary row) once AUX_DESIGN.md is worked in full.
 
-### Sprint 3c — Admin-governed approval policy (PF + Playform)
+### Sprint 3c — Admin-governed approval policy AND capability definition (PF + Playform)
 
 The gating contract (Sprint 3b) makes the approver an identity and human review a policy
 default in gating.ts approvalPolicy(). Sprint 3c makes that policy admin-governed and
@@ -62,6 +62,14 @@ Playform-A extends the admin surface into Playform's own admin where required, w
 any new UI.
 
 Cross-cutting: the agent-approver path proven reachable AND governed end to end.
+
+Capability governance (folded in — same admin-governance surface, ADR-030 D9):
+
+- PF admin surface to DEFINE capabilities (name + intent), following the same
+  adminGuard/admin_* pattern, behind a new admin_manage_capabilities scope;
+- Playform admin surface to MAP Playform permissions to PF capability names;
+- third-party integrator documentation for the name -> permission mapping workflow;
+- A1-A8 on any new UI. The mechanism ships in 3b (ADR-030 D9); 3c is its governance.
 
 GenAI anchors: P10 (the control surface for human oversight), P17 (policy change is a
 commitment), P4 (loosening is higher-risk), P13 (bounded autonomy governed centrally),

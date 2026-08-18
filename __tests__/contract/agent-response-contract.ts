@@ -74,6 +74,19 @@ export interface AgentResponseFixtures {
       response: AgentResponse<unknown>
     ) => Promise<AgentResponse<unknown>>;
   };
+
+  /**
+   * Capability fixtures (R11) — optional. A consumer with a capability-gated workflow
+   * supplies these; without them the arm skips rather than passing vacuously.
+   */
+  readonly capability?: {
+    /** Run a goal requiring a capability the caller LACKS. Must be denied, nothing run. */
+    readonly runDenied: () => Promise<AgentResponse<unknown>>;
+    /** Run a goal requiring a capability the caller HAS. Must run. */
+    readonly runGranted: () => Promise<AgentResponse<unknown>>;
+    /** Run a goal that requires NO capability. Must run, state "none". */
+    readonly runNoCapability: () => Promise<AgentResponse<unknown>>;
+  };
 }
 
 /** Affordances that end a workflow rather than naming a further goal (ADR-030 D3). */
@@ -314,6 +327,36 @@ export function runAgentResponseContract(fx: AgentResponseFixtures): void {
       // After approval the workflow finishes: `held` is gone, `done` is offered.
       expect(resumed.held).toBeUndefined();
       expect(resumed.nextActions.map((n) => n.action)).toContain("done");
+    });
+  });
+  describe("R11 — capability is checked up front, and the three states are explicit", () => {
+    it("denies a goal whose capability the caller lacks, running nothing", async () => {
+      if (!fx.capability) return;
+      const denied = await fx.capability.runDenied();
+
+      expect(denied.capabilityCheck?.state).toBe("denied");
+      // Nothing ran: no committed step, and the trajectory is not completed.
+      const committed = denied.trajectory.steps.filter(
+        (s: Step) => s.boundary === "commitment"
+      );
+      expect(committed).toHaveLength(0);
+      expect(denied.trajectory.status).not.toBe("completed");
+    });
+
+    it("runs a goal whose capability the caller holds, state granted", async () => {
+      if (!fx.capability) return;
+      const granted = await fx.capability.runGranted();
+      expect(granted.capabilityCheck?.state).toBe("granted");
+      expect(typeof granted.capabilityCheck?.capability).toBe("string");
+    });
+
+    it("runs a no-capability goal with an AFFIRMATIVE none state, not a silent absence", async () => {
+      if (!fx.capability) return;
+      const open = await fx.capability.runNoCapability();
+      // The whole point of the "none" state: it is present and explicit, so a run with no
+      // capability gate is an auditable fact rather than an inferred one.
+      expect(open.capabilityCheck?.state).toBe("none");
+      expect(open.capabilityCheck?.capability).toBeNull();
     });
   });
 }

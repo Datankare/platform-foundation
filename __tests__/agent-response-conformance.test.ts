@@ -118,9 +118,26 @@ const ANALYZE: WorkflowDefinition = {
 };
 
 resetWorkflowRegistry();
+/** Requires a capability, for R11. Its single step is ungated (capability is the gate). */
+const TRANSCRIBE_PREMIUM: WorkflowDefinition = {
+  goal: "transcribe",
+  description: "a capability-gated goal",
+  endpoint: "/api/agent/process-content",
+  requiredCapability: "premium-transcribe",
+  steps: [
+    {
+      tool: stepTool("transcribe"),
+      intent: "inform",
+      estimatedCostUSD: 0.001,
+      input: (ctx) => ({ text: String(ctx.input.text ?? "") }),
+    },
+  ],
+};
+
 registerWorkflow(FULL_PIPELINE);
 registerWorkflow(TRANSLATE);
 registerWorkflow(ANALYZE);
+registerWorkflow(TRANSCRIBE_PREMIUM);
 
 describe("AUX response envelope — conformance (in-memory wiring)", () => {
   runAgentResponseContract({
@@ -204,6 +221,36 @@ describe("AUX response envelope — conformance (in-memory wiring)", () => {
           proposalStore: proposals,
         });
       },
+    },
+
+    capability: {
+      runDenied: () =>
+        runGoal({
+          goal: "transcribe",
+          input: { text: "x" },
+          actor: ACTOR,
+          trajectoryStore: store,
+          proposalStore: proposals,
+          // Caller lacks the capability.
+          checkCapability: async () => false,
+        }),
+      runGranted: () =>
+        runGoal({
+          goal: "transcribe",
+          input: { text: "x" },
+          actor: ACTOR,
+          trajectoryStore: store,
+          proposalStore: proposals,
+          checkCapability: async () => true,
+        }),
+      runNoCapability: () =>
+        runGoal({
+          goal: "translate",
+          input: { text: "x" },
+          actor: ACTOR,
+          trajectoryStore: store,
+          proposalStore: proposals,
+        }),
     },
   });
 });

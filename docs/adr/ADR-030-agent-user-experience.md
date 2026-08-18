@@ -135,7 +135,47 @@ Gate 6 is the one that cannot be satisfied by inspecting a single response — i
 
 ---
 
+### D9 — Capability enforcement is up front, grouped, and never silent
+
+A workflow may declare a single OPAQUE `requiredCapability` name — workflow-centric: one
+name standing for the whole permission set the workflow needs. PF knows only the name; the
+consumer maps it to its own permissions via a `checkCapability` callback. PF never contains
+a consumer's permission strings, so the dependency stays one-way.
+
+The check is UP FRONT, before any step runs. Permissions are fully known before execution
+(unlike budget and gating, whose triggers surface only mid-run), so a caller who cannot
+finish is refused at the entrance rather than after partial work. Refused = trajectory
+`failed`, zero steps, and a durable, auditable record (P18).
+
+Three states, all EXPLICIT on `AgentResponse.capabilityCheck` and logged by the consumer —
+none is a silent default:
+
+- `none` — the workflow declared no capability. Affirmative: an un-gated run is a fact, not
+  an absence.
+- `granted` — declared, and the caller satisfied it.
+- `denied` — declared, and the caller failed it OR no `checkCapability` was supplied
+  (fail-closed, P11: a governed workflow with no way to check is denied, not run ungoverned).
+
+A discovering agent reads the required capability from `/api/agent/capabilities` and, on
+refusal, reads `denied` in the response rather than inferring it from a failed trajectory it
+cannot see the reason for.
+
 ## Amendments
+
+### 2026-08-15 — capabilityCheck: the third envelope field, and why it is never silent
+
+D9 adds `AgentResponse.capabilityCheck` — the third optional field on the envelope after
+`held`. Optional, so non-breaking; the L21 kit's R11 arm asserts all three states.
+
+The design point worth recording: `state: "none"` is deliberately a VALUE, not the absence
+of the field. A run that required no capability reports `{ capability: null, state: "none" }`,
+not a missing `capabilityCheck`. This is so a consumer's telemetry logs an un-gated run as an
+affirmative fact, and an auditor can never confuse "ran without a capability gate" with
+"the field was dropped". Silence was the failure mode we were asked to design out.
+
+The capability NAME is opaque to PF and grouped per workflow. The name -> permission
+mapping, and the admin UI to define both the capabilities (PF side) and the mapping
+(consumer side), are Sprint 3c — the same admin-governance surface as the approval policy.
 
 ### 2026-08-15 — the gating contract: held actions, and the approver as an identity
 

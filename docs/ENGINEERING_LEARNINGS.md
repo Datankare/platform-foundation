@@ -554,3 +554,21 @@ _Last updated: August 14, 2026 (Phase 5 Sprint 3b — Gotcha 78 added; an access
 _Last updated: August 11, 2026 (Phase 5 Sprint 3a — Gotcha 77 added; the commit that does the work updates the register)_
 _Last updated: August 4, 2026 (Phase 5 Sprint 2 — Gotcha 71 added; pin the formatter exactly, its version is the check)_
 _Last updated: August 4, 2026 (Phase 5 Sprint 2 — Gotcha 70 added; a reserved ADR number is a number owed, recorded where the gate will look)_
+
+## The capability contract (ADR-030 D9) — integrator seam
+
+Any consumer of platform-foundation (Playform is one) governs agent workflows through the
+capability seam, not by editing the loop:
+
+- A workflow declares an opaque `requiredCapability` name in its `WorkflowDefinition`.
+- The consumer supplies `checkCapability(name, actor) => Promise<boolean>` in `RunGoalArgs`,
+  resolving the name against ITS OWN permission model. PF never learns the consumer's
+  permission strings.
+- The loop checks up front: undeclared -> runs (state `none`); declared + true -> runs
+  (`granted`); declared + false, OR no callback supplied -> denied, nothing runs, trajectory
+  `failed`. Fail-closed: a governed workflow with no checker is denied, never run ungoverned.
+- Every outcome is on `AgentResponse.capabilityCheck` (`none` is a value, not an absence) so
+  the consumer logs all three states and a discovering agent sees denials in-band.
+
+A third-party integrator therefore needs only: name capabilities on their workflows, and
+supply one callback. The admin UI to define capabilities and edit the mapping is Sprint 3c.

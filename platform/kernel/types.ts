@@ -721,6 +721,18 @@ export interface HeldAction {
  * break ADR-028 D7's promise that nextActions is a synchronous filter over the declared
  * action schema. See the ADR-030 amendment of 2026-08-15.
  */
+/**
+ * The capability decision for a run (ADR-030 D9). Always present on a response from the
+ * workflow loop — "none" is an affirmative state, not the absence of a check. A consumer
+ * logs all three states; a discovering agent reads "denied" here rather than inferring a
+ * refusal from a failed trajectory it cannot see the reason for.
+ */
+export interface CapabilityCheck {
+  /** The opaque capability name the workflow required, or null when it required none. */
+  readonly capability: string | null;
+  readonly state: "none" | "granted" | "denied";
+}
+
 export interface AgentResponse<T> {
   readonly result: T;
   readonly trajectory: Trajectory;
@@ -728,6 +740,8 @@ export interface AgentResponse<T> {
   readonly cost: CostSummary;
   /** Present only when a step is held for approval (ADR-030 D6). A state, not an affordance. */
   readonly held?: HeldAction;
+  /** The capability decision (ADR-030 D9). Present on every workflow-loop response. */
+  readonly capabilityCheck?: CapabilityCheck;
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────

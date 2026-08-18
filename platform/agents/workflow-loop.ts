@@ -79,6 +79,14 @@ export interface WorkflowDefinition {
   readonly steps: readonly WorkflowStep[];
   /** Endpoint an agent calls to continue or re-enter this workflow. */
   readonly endpoint: string;
+  /**
+   * An OPAQUE capability name this workflow requires (ADR-030 D9). PF knows the name only;
+   * a consumer maps it to its own permission set via RunGoalArgs.checkCapability. Absent
+   * means the workflow requires no capability beyond endpoint auth — a deliberate, logged
+   * state ("none"), never a silent default. The name is workflow-centric: one name stands
+   * for the whole permission set the workflow needs, resolved consumer-side.
+   */
+  readonly requiredCapability?: string;
 }
 
 // ── Registry ──────────────────────────────────────────────────────────
@@ -152,6 +160,17 @@ export interface RunGoalArgs {
   readonly trajectoryId?: string;
   readonly trajectoryStore?: TrajectoryStore;
   readonly proposalStore?: ProposalStore;
+  /**
+   * Resolves whether `actor` satisfies an opaque capability name (ADR-030 D9). Supplied by
+   * the consumer, which owns the name -> permission mapping (PF does not know the consumer's
+   * permission strings). Absent when the caller has no capability model; a workflow that
+   * declares requiredCapability but is given no checkCapability is DENIED (fail-closed, P11)
+   * rather than run ungoverned.
+   */
+  readonly checkCapability?: (
+    capability: string,
+    actor: AgentIdentity
+  ) => Promise<boolean>;
 }
 
 /**
@@ -162,8 +181,18 @@ export interface RunGoalArgs {
  * held action, because the approver may be — and by policy default is — a human (P10).
  */
 interface RunResult {
-  readonly stop: "completed" | "paused" | "held";
+  readonly stop: "completed" | "paused" | "held" | "denied";
   readonly held?: HeldAction;
+  /**
+   * The capability decision for this run (ADR-030 D9). Always set — "none" is affirmative,
+   * not the absence of a check. Carried to AgentResponse.capabilityCheck and logged by the
+   * consumer at all three states, so a run that required no capability is an explicit fact,
+   * never an inferred one.
+   */
+  readonly capability: {
+    readonly capability: string | null;
+    readonly state: "none" | "granted" | "denied";
+  };
 }
 
 /**
@@ -218,7 +247,7 @@ async function runSteps(
   from: number,
   to: number,
   priorOutputs: readonly Record<string, unknown>[]
-): Promise<RunResult> {
+): Promise<Omit<RunResult, "capability">> {
   // Seeded from the trajectory, not from this call. A choreographed hop is a fresh process
   // invocation and knows nothing of the previous one, so a step whose input reads an
   // earlier step's output would see nothing and the two entry points would silently
@@ -415,6 +444,13 @@ function affordances(
     ];
   }
 
+  if (result.stop === "denied") {
+    // Denied for lack of capability: nothing ran and nothing will without the capability.
+    // The only affordance is terminal — retry would just be denied again. The WHY is in
+    // AgentResponse.capabilityCheck, not buried here.
+    return [terminal()];
+  }
+
   if (remaining > 0) {
     return [
       {
@@ -474,6 +510,7 @@ async function assemble(
     nextActions: affordances(definition, remaining, result),
     cost: summariseCost(trajectory.steps),
     ...(result.held ? { held: result.held } : {}),
+    capabilityCheck: result.capability,
   };
 }
 
@@ -484,14 +521,78 @@ async function assemble(
  * gates, the same trajectory. That equivalence is asserted, not asserted-to-be-true, by
  * the L21 kit's requirement 6.
  */
+/**
+ * Resolve the capability decision for a workflow BEFORE any step runs (ADR-030 D9).
+ *
+ * Three states, all explicit:
+ *   none    — the workflow declares no requiredCapability. Runs; logged as none.
+ *   granted — declared, and checkCapability returned true. Runs.
+ *   denied  — declared, and either checkCapability returned false OR no checkCapability was
+ *             supplied at all. Fail-closed (P11): a governed workflow with no way to check
+ *             its capability is denied, not run ungoverned.
+ *
+ * Permissions are fully known before execution, so this gates at the entrance rather than
+ * mid-run (unlike budget and gating, whose triggers are only discoverable while running).
+ */
+async function decideCapability(
+  definition: WorkflowDefinition,
+  args: RunGoalArgs
+): Promise<RunResult["capability"]> {
+  const cap = definition.requiredCapability;
+  if (cap === undefined) {
+    return { capability: null, state: "none" };
+  }
+  if (!args.checkCapability) {
+    return { capability: cap, state: "denied" };
+  }
+  const ok = await args.checkCapability(cap, args.actor);
+  return { capability: cap, state: ok ? "granted" : "denied" };
+}
+
+/**
+ * Build the denied response WITHOUT running any step. A denial is recorded durably: a
+ * trajectory is created and marked failed (P18 — the refusal is auditable), zero steps, and
+ * capabilityCheck.state is "denied" so a discovering agent sees WHY in the response, not
+ * only in server logs it cannot read.
+ */
+async function denyResponse(
+  definition: WorkflowDefinition,
+  args: RunGoalArgs,
+  store: TrajectoryStore,
+  capability: RunResult["capability"]
+): Promise<AgentResponse<unknown>> {
+  const record = await store.create(
+    { kind: "agent", id: args.actor.actorId },
+    args.goal,
+    "platform"
+  );
+  const trajectoryId = record.trajectory.trajectoryId;
+  await store.updateStatus(trajectoryId, "failed");
+  const settled = await store.getById(trajectoryId);
+  const trajectory = (settled ?? record).trajectory;
+  return {
+    result: { goal: definition.goal, output: {} },
+    trajectory,
+    nextActions: affordances(definition, 0, { stop: "denied", capability }),
+    cost: summariseCost(trajectory.steps),
+    capabilityCheck: capability,
+  };
+}
+
 export async function runGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>> {
   const definition = resolveWorkflow(args.goal);
   const store = args.trajectoryStore ?? getTrajectoryStore();
+
+  const capability = await decideCapability(definition, args);
+  if (capability.state === "denied") {
+    return denyResponse(definition, args, store, capability);
+  }
+
   const record = await openTrajectory(args, store);
   const trajectoryId = record.trajectory.trajectoryId;
   const from = commitmentCount(record.trajectory.steps);
 
-  const result = await runSteps(
+  const stepResult = await runSteps(
     definition,
     args,
     store,
@@ -502,7 +603,7 @@ export async function runGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>
       .filter((s: Step) => s.boundary === "commitment")
       .map((s: Step) => s.output)
   );
-  return assemble(definition, store, trajectoryId, result);
+  return assemble(definition, store, trajectoryId, { ...stepResult, capability });
 }
 
 /**
@@ -513,13 +614,19 @@ export async function runGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>
 export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>> {
   const definition = resolveWorkflow(args.goal);
   const store = args.trajectoryStore ?? getTrajectoryStore();
+
+  const capability = await decideCapability(definition, args);
+  if (capability.state === "denied") {
+    return denyResponse(definition, args, store, capability);
+  }
+
   const record = await openTrajectory(args, store);
   const trajectoryId = record.trajectory.trajectoryId;
   const from = commitmentCount(record.trajectory.steps);
 
-  const result =
+  const stepResult =
     from >= definition.steps.length
-      ? ({ stop: "completed" } as RunResult)
+      ? ({ stop: "completed" } as Omit<RunResult, "capability">)
       : await runSteps(
           definition,
           args,
@@ -532,7 +639,7 @@ export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unkn
             .map((s: Step) => s.output)
         );
 
-  return assemble(definition, store, trajectoryId, result);
+  return assemble(definition, store, trajectoryId, { ...stepResult, capability });
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────
