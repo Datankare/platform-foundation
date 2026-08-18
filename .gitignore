@@ -53,3 +53,4 @@ k6-results/
 
 # Session handoff docs (kept out of the repo)
 SESSION_HANDOFF_*.md
+.env*

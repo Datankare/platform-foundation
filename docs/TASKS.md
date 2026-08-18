@@ -1089,10 +1089,10 @@ correct current actor without the caller persisting anything.
 | **Severity** | Low — a known hole, not a missing decision |
 | **Phase**    | Phase 5                                    |
 | **Target**   | Phase 5, Sprint 7                          |
-| **Status**   | Open — reserved                            |
+| **Status**   | Closed 2026-08-14                          |
 | **Logged**   | 2026-08-04                                 |
 
-**What:** `docs/adr/` runs 029 → 031. ADR-030 is reserved for AUX (Agent-Usable eXperience),
+**What:** `docs/adr/` runs 029 → 031. ADR-030 is reserved for AUX (Agent User Experience),
 named in the ROADMAP changelog entry that opened Phase 5 alongside ADR-028 and ADR-029.
 ADR-031 (action identity and lifecycle) was written ahead of it because Sprint 2 needed the
 protocol, so the number was consumed before the document existed.
@@ -1111,6 +1111,10 @@ rather than treating it as a failure — the gate's intent is that no decision g
 undocumented, and none has.
 
 **Close when:** ADR-030 exists, or Phase 5 exits with the reservation explicitly recorded.
+
+**Closed 2026-08-14:** ADR-030 written in full at `docs/adr/ADR-030-agent-user-experience.md`, ratifying the AUX_DESIGN Sprint 3b
+rewrite. The 029 → 031 gap is filled. This entry is retained (not deleted) so the
+ADR-030 reference that keeps the sequence explained stays in place (GOTCHA-70).
 
 ---
 
@@ -1192,41 +1196,123 @@ provider is constructed inside `instrumentation.ts`.
 
 ---
 
-### TASK-075 — Durable stores are not switched on
+### TASK-075 — Superseded by TASK-075a and TASK-075b
+
+| Field        | Detail                   |
+| ------------ | ------------------------ |
+| **ID**       | TASK-075                 |
+| **Type**     | Deployment configuration |
+| **Severity** | Superseded               |
+| **Phase**    | Phase 5, Sprint 3a       |
+| **Target**   | Phase 5, Sprint 3b       |
+| **Status**   | Superseded 2026-08-14    |
+| **Logged**   | 2026-08-11               |
+
+Split on 2026-08-14 after investigation found its premise wrong. The store-arm verification
+became TASK-075a and closed; the cross-request durability check became TASK-075b and carries
+to Sprint 3b.
+
+This entry is retained rather than deleted because the id is cited elsewhere — ADR-032 among
+them — and a cited id with no entry is a dangling reference the register-integrity suite
+fails on. Recording the supersession where the gate looks is cheaper than editing every
+citation (Gotcha 70).
+
+---
+
+### TASK-075a — Supabase store arms had never executed
+
+| Field        | Detail                                                   |
+| ------------ | -------------------------------------------------------- |
+| **ID**       | TASK-075a                                                |
+| **Type**     | Verification                                             |
+| **Severity** | Medium — five code paths with no execution outside stubs |
+| **Phase**    | Phase 5, Sprint 3a                                       |
+| **Target**   | Phase 5, Sprint 3b                                       |
+| **Status**   | Closed 2026-08-14                                        |
+| **Logged**   | 2026-08-11                                               |
+
+**What:** TASK-075 was filed as "five variables are unset in the deployment environment."
+Investigation on 2026-08-14 found the premise wrong in three ways.
+
+`TRAJECTORY_STORE`, `BUDGET_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER` and `APP_STATE_STORE`
+are set in **no** environment — not production, not `.env.local`. The registry has therefore
+never selected a Supabase arm anywhere, localhost included. What has run on localhost is the
+voice pipeline (`/api/extract`, `/api/identify`, `/api/process`, `/api/transcribe`,
+`/api/tts` in Playform), which calls providers directly and touches no store.
+
+Nor were the credentials present: no Supabase variable existed in any of the four Vercel
+projects. The stores could not have been switched on had the variables been set.
+
+And nothing serves traffic. The four Vercel projects are build targets; the only running
+instance has ever been localhost.
+
+**What was actually at risk:** the five Supabase store implementations had executed only
+against conformance kits, which verify stores rather than wiring — the same gap that hid the
+ADR-032 defect for twenty-one singleton families.
+
+**Resolution:** each of the five exercised against the live database, writing then reading
+back through a **second instance** of the store, which is cross-instance evidence without
+needing an HTTP layer. All five pass.
+
+| Store                        | Proof                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `SupabaseTrajectoryStore`    | `create` then `getById` and `query` from a fresh instance                             |
+| `SupabaseBudgetStore`        | `increment` then `read`; `usedSteps` advanced by exactly 1                            |
+| `SupabaseProposalStore`      | `create` then `getById` from a fresh instance                                         |
+| `SupabaseEffectLedger`       | `begin` twice on one (operationId, effectKey); same `entryId`, `attempts` incremented |
+| `SupabaseActivityStateStore` | `create` then `load` and `delete` from a fresh instance                               |
+
+Schema confirmed first by introspection rather than from the migration ledger: all five
+tables present, every `NOT NULL` column without a default supplied by its insert body, the
+`agent_budget_consume` RPC present with its six arguments, and `trajectory_status` carrying
+the `running` label the code writes.
+
+**Close condition (met):** every Supabase store arm completes a write-then-read round trip
+against the live database from a separate instance.
+
+**Out of scope, deliberately:** `MODERATION_STORE` and `SOCIAL_STORE` are also
+durable-capable and also unset. They are not agent stores and Sprint 3b does not need them.
+Recorded here so the omission is a decision rather than an oversight.
+
+**Decision — Vercel provisioning deferred.** Nothing serves traffic, and four projects would
+each need credentials. Provisioning happens when a deployment first serves a request, not
+before. `lib/supabase/server.ts` requires `NEXT_PUBLIC_SUPABASE_URL` specifically and
+`getSupabaseBrowserClient` requires `NEXT_PUBLIC_SUPABASE_ANON_KEY`, which TASK-075 never
+mentioned and which PF's `.env.local` still lacks.
+
+---
+
+### TASK-075b — Cross-request durability is unprovable until an agent endpoint exists
 
 | Field        | Detail                                                        |
 | ------------ | ------------------------------------------------------------- |
-| **ID**       | TASK-075                                                      |
-| **Type**     | Deployment configuration                                      |
-| **Severity** | High — Sprint 2's durability work is inert until this is done |
+| **ID**       | TASK-075b                                                     |
+| **Type**     | Verification                                                  |
+| **Severity** | Medium — the demo's premise depends on it                     |
 | **Phase**    | Phase 5, Sprint 3a                                            |
-| **Target**   | Phase 5, Sprint 3a                                            |
+| **Target**   | Phase 5, Sprint 3b — with the B-layer endpoint, not before it |
 | **Status**   | Open                                                          |
-| **Logged**   | 2026-08-11                                                    |
+| **Logged**   | 2026-08-14                                                    |
 
-**What:** `TRAJECTORY_STORE`, `BUDGET_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER` and
-`APP_STATE_STORE` are unset, so every one falls back to its in-memory implementation.
-Trajectories, budgets, held proposals and the effect ledger do not survive a request.
+**What:** TASK-075's close condition — a trajectory written by one request is readable by
+another — cannot be run today. Nothing in `app/` calls `executeAgent`, and nothing in `app/`
+imports `platform/app-framework`. The agent runtime and the session lifecycle are both
+platform code with no HTTP caller in either repo.
 
-Until ADR-032 this could not have been fixed by setting them: the registry was writing to a
-bundle copy no route read, so the value would have been ignored anyway. Now it can.
+`/api/health` cannot substitute: `instrumentation.ts` registers one probe, for song
+identification. No probe reports a store. The only slot-level signal in existence is the
+`Platform providers initialized` log line.
 
-**Consequence while open:** agent runs leave no durable trace, the daily spend cap resets on
-every request rather than accumulating (the exposure TASK-063 was filed for, reintroduced by
-a different route), and held proposals cannot be approved by a later request.
+**Why this is not a blocker for Sprint 3b:** the store arms are proven (TASK-075a). What is
+unproven is the path from a request to a store, and that path is precisely what the B-layer
+builds. Filing it as a prerequisite made a piece of the work look like a predecessor to it.
 
-**Resolution:** set the five variables to `supabase` in the deployment environment, redeploy,
-and verify against the running build rather than the dashboard:
+**Resolution:** when `/api/agent/process-content` lands, set the five variables in
+`.env.local`, run one agent call, then confirm the trajectory is readable by a second
+request. That is the same curl the demo depends on.
 
-```
-curl -s https://<host>/api/health | python3 -m json.tool
-```
-
-with the startup self-check from commit 2 logging the resolved provider for each slot.
-
-**Close when:** a trajectory written by one request is readable by another.
-
----
+**Close when:** an agent invoked over HTTP writes a trajectory that a subsequent request
+reads back.
 
 ### TASK-076 — Nothing detects sustained silence from telemetry
 
@@ -1440,6 +1526,275 @@ lives.
 
 ---
 
+### TASK-082 — Six major-version bumps, each needing work rather than a merge
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-082                                    |
+| **Type**     | Dependency upgrades                         |
+| **Severity** | Low for most; Medium for eslint-config-next |
+| **Phase**    | Phase 5, Sprint 3a                          |
+| **Target**   | Phase 5, Sprint 4                           |
+| **Status**   | Open                                        |
+| **Logged**   | 2026-08-12                                  |
+
+**What:** the Dependabot triage separated patches and minors — merged — from majors, which
+change behaviour by definition and may pass CI while doing so.
+
+| Bump                                                                                              | Repos    | Note                                                                                                              |
+| ------------------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `eslint-config-next` 15 → 16                                                                      | both     | **Both repos run Next 16 and pin the v15 config.** The linter's rules lag the framework by a major. Not optional. |
+| `eslint` 9 → 10                                                                                   | both     | Flat-config changes likely; `eslint.config.mjs` will need review                                                  |
+| `typescript` 5.9 → 6                                                                              | PF       | **Already fails PF's type-check.** Code work, not a merge                                                         |
+| `typescript` 5.9 → 7                                                                              | Playform | Two majors ahead; do PF's 6 first                                                                                 |
+| `@types/node` 20 → 26                                                                             | Playform | Six majors; likely surfaces type errors the runtime never hits                                                    |
+| `dotenv` 16 → 17, `@napi-rs/canvas` 0.1 → 1.0, `jest-dom` 6 → 7, `@anthropic-ai/sdk` 0.98 → 0.115 | Playform | Pass CI. `0.x` packages break at any version by convention                                                        |
+
+**Sequence, and why it matters:** one at a time, each in its own commit. A major that breaks
+something subtle needs to be identifiable — six merged together produce a failure nobody can
+attribute. Start with `eslint-config-next`, which is a real mismatch rather than an optional
+upgrade, then ESLint 10 (they interact), then TypeScript, then the rest.
+
+**Why not now:** this is a day of work, not a merge session. TypeScript 6 alone means fixing
+whatever it flags across 190 test suites.
+
+**Close when:** each bump is merged or explicitly declined with a reason, and no major sits
+open untriaged.
+
+---
+
+### TASK-083 — Sync cannot tell an orphan from a Playform file
+
+| Field        | Detail                                                |
+| ------------ | ----------------------------------------------------- |
+| **ID**       | TASK-083                                              |
+| **Type**     | Sync tooling                                          |
+| **Severity** | Low — the sync is correct; the reviewer is uninformed |
+| **Phase**    | Phase 5, Sprint 3a                                    |
+| **Target**   | Phase 5, Sprint 4                                     |
+| **Status**   | Open                                                  |
+| **Logged**   | 2026-08-13                                            |
+
+**What:** the sync runs `rsync` without `--delete` by design (Sprint 7, item D), so a file
+platform-foundation deletes stays in Playform indefinitely. That has cost a debugging cycle
+once already: `__tests__/auth-config-lazy-init.test.ts` was removed upstream, the orphan
+remained, and it failed the sync PR's own CI.
+
+An attempt to report those files via `rsync --dry-run --delete` was made and reverted. It
+listed roughly forty files on its first run, nearly all of them Playform's own application —
+`lib/usePlayformConductor.ts`, `components/SongMatchCard.tsx`, `app/api/profile/`,
+`supabase/migrations/007_playform_subscription_tiers.sql`. That is not a bug in the flag: a
+dry run compares the whole target against the whole source, and for a PARTIAL sync a
+consumer-owned file is byte-for-byte the same observation as an upstream deletion.
+
+**Why no filter fixes it:** the two cases are indistinguishable from a single snapshot. The
+question "did this exist upstream last time?" needs last time's answer.
+
+**Resolution:** have the workflow record the source's file list on each successful sync — a
+committed manifest, or an artifact keyed by the synced SHA. The next run diffs against it, and
+the difference IS the deletion set. Genuine orphans, no noise.
+
+Roughly: `git -C source ls-files > .github/sync-manifest.txt` written on each sync, and the
+next run reporting `comm -23 previous current`.
+
+**Close when:** a file deleted in platform-foundation appears in the next sync PR, and nothing
+else does.
+
+---
+
+### TASK-084 — The L21 response kit has no arm until the workflow loop exists
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-084                                                |
+| **Type**     | Conformance coverage                                    |
+| **Severity** | Medium — an unrun kit is the checklist ADR-027 replaced |
+| **Phase**    | Phase 5, Sprint 3b                                      |
+| **Target**   | Phase 5, Sprint 3b                                      |
+| **Status**   | Closed — arm landed, all eight requirements run         |
+| **Closed**   | 2026-08-15                                              |
+| **Logged**   | 2026-08-15                                              |
+
+**What:** `__tests__/contract/agent-response-contract.ts` ships with eight arms and nothing
+invokes it. Its fixtures require both entry points of the PF-B workflow loop —
+`runOrchestrated` and `runChoreographed` — and that loop is the next commit. The manifest
+entry exists, so `conformance-coverage.test.ts` is satisfied; that test asserts a kit is
+present and callable, not that anything calls it.
+
+**Why this is a real gap and not bookkeeping:** ADR-027 exists because
+`auth-provider.test.ts` described a contract and instructed a human to run it against the
+real provider, and nobody ever did. A kit with no arm is that same artifact. Every assertion
+in it is unexecuted, so a typo in an arm typechecks and never fires.
+
+**Resolution:** the workflow loop commit adds `__tests__/agent-response-conformance.test.ts`,
+wiring the kit against the in-memory trajectory store and the loop's two entry points, in the
+shape `agentic-workflow-conformance.test.ts` already uses. Arms R6 (gate parity) and R7
+(budget) are the ones that only become meaningful there — both compare or constrain real
+runs, and neither can be satisfied by a stub.
+
+**Close when:** `agent-response-conformance.test.ts` exists, runs all eight arms green, and
+R6 compares two trajectories with at least two gated steps each.
+
+**Resolution (2026-08-15):** `__tests__/agent-response-conformance.test.ts` wires the kit to
+the workflow loop over `InMemoryTrajectoryStore`, registering a two-step `full-pipeline` and a
+one-step `translate`. All eight requirements run. R6 compares a `runGoal` trajectory against
+the `advanceGoal` sequence for the same input: two gated steps each, identical signatures.
+
+Writing the arm found a defect in the kit itself, fixed in the same commit: `getTrajectory`
+was typed `Promise<TrajectoryRecord | null>` and asserted with `not.toBeNull()`, but
+`TrajectoryStore.getById` returns `undefined` for a miss — so R5 would have passed against a
+trajectory that never persisted, which is the exact condition it exists to detect. GOTCHA-78's
+rule two (read the returned interface, not the prose describing it) applied one commit after
+that gotcha was cited in the same file.
+
+---
+
+### TASK-085 — Declared step cost and provider-reported cost are not reconciled
+
+| Field        | Detail                                             |
+| ------------ | -------------------------------------------------- |
+| **ID**       | TASK-085                                           |
+| **Type**     | Cost accounting                                    |
+| **Severity** | Medium — budget decisions are made on the estimate |
+| **Phase**    | Phase 5, Sprint 3b                                 |
+| **Target**   | Phase 5, Sprint 4                                  |
+| **Status**   | Open                                               |
+| **Logged**   | 2026-08-15                                         |
+
+**What:** `WorkflowStep.estimatedCostUSD` is a static declaration, and it is what the budget
+ceiling is checked against and what the trajectory records. The providers already emit their
+own `estimatedCostUsd` per call (`platform/voice/identify-types.ts`), and nothing compares the
+two. A step declared at $0.002 that actually costs $0.02 passes a $0.005 ceiling and records
+$0.002 in the trajectory.
+
+**Why the estimate exists:** the pipeline checks the ceiling BEFORE the step runs
+(`executeActionPipeline` step 2, before `perform()` at step 6), which is the correct order —
+a refused call must not execute. So a pre-execution figure is structurally required; the gap
+is that no post-execution figure ever replaces it.
+
+**Consequence today:** ADR-030 requirement 4 — `cost.estimatedCostUSD` is the sum of the
+steps' cost — passes trivially, because both sides come from the same declaration. The arm is
+real only once the recorded cost is the provider's.
+
+**Resolution:** have `invokeTool` accept a post-execution cost from the tool's output and
+record that on the Step, with the declared figure kept for the pre-check. Then requirement 4
+compares two independently produced numbers, and a declaration that drifts from reality
+surfaces as a failing conformance arm rather than as a quiet underbill.
+
+**Close when:** a step whose tool reports a cost different from its declaration records the
+reported figure in the trajectory, and the conformance arm still passes.
+
+---
+
+### TASK-086 — Capabilities reports configured providers, not the full D8 list
+
+| Field        | Detail                                           |
+| ------------ | ------------------------------------------------ |
+| **ID**       | TASK-086                                         |
+| **Type**     | Discovery completeness                           |
+| **Severity** | Low — the endpoint is honest about what it omits |
+| **Phase**    | Phase 5, Sprint 3b                               |
+| **Target**   | Phase 5, Sprint 4                                |
+| **Status**   | Open                                             |
+| **Logged**   | 2026-08-15                                       |
+
+**What:** ADR-030 D8 lists capabilities as reporting goals, params, cost AND latency
+ranges, languages, limits, and resolved provider names. The shipped endpoint reports the
+first set (goals, steps, per-goal estimated cost, provider selection names) and names the
+rest in a `notReported` array rather than inventing empty fields for them:
+`latencyMsRange`, `languages`, `limits`, `providerLiveness`.
+
+**Why reported this way and not filled with nulls:** a field present but always empty is
+the `nextActions: ["$0"]` shape — it looks complete and lies. `notReported` lets a
+discovering agent distinguish absent-by-design from absent-by-omission.
+
+**The three deferrals, each a real decision the next planner must keep:**
+
+1. **latencyMsRange / languages / limits** — not on `WorkflowDefinition` today. Adding
+   them is additive; they populate where known (languages from the translation/TTS
+   provider capability lists) and stay omitted where not.
+
+2. **providerLiveness — deferred deliberately, not overlooked.** D8's prose says
+   capabilities feeds off "the registry and health probes." The endpoint reports the
+   configured provider per slot but runs NO health probe. `health.check()` runs live
+   network probes at 5s timeout each; behind an unauthenticated discovery GET that is a
+   DoS lever, and it couples discovery to dependency liveness. An agent learns
+   reachability at call time through the trajectory and nextActions (P11), where the
+   answer is current rather than stale-at-discovery. If liveness is wanted here later, it
+   goes through a CACHED probe result with an explicit max-age, never a live check on the
+   request path. This option is recorded so it stays available; it was weighed and
+   deferred, not missed (GOTCHA-70).
+
+**Close when:** capabilities reports latency, languages and limits for goals that have
+them, `notReported` shrinks accordingly, and any liveness added is served from a cached
+probe result, not a live check.
+
+---
+
+### TASK-087 — Admin-governed approval policy, capability definition, AND agent identity rung 2 (Sprint 3c)
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-087                                                |
+| **Type**     | Feature / sprint                                        |
+| **Severity** | Medium — the seam exists; governance of it does not yet |
+| **Phase**    | Phase 5, Sprint 3c                                      |
+| **Target**   | Phase 5, Sprint 3c                                      |
+| **Status**   | Open                                                    |
+| **Logged**   | 2026-08-15                                              |
+
+**What:** Sprint 3b shipped the approval-policy SEAM — approvalPolicy() in gating.ts returns
+a human approver by default, and HeldAction.approver is a typed identity so an agent approver
+is expressible without an envelope change. What does not yet exist is the governance: a
+durable policy store, a privileged mutation to change it, and an admin surface to drive that
+mutation.
+
+**Why a sprint, not a task line:** it is two-repo (PF-B abstraction + PF admin surface;
+Playform-A extension) with its own security and accessibility gates. Folding it into a task
+would repeat the L22 failure — a task outliving its sprint. Filed as Sprint 3c in
+PHASE5_PLAN with the full breakdown and GenAI anchors (P10/P17/P4/P13/P3/P18). The Sprint 3b demo UI + A1-A8, deferred here, is 3c's acceptance gate (see PHASE5_PLAN Sprint 3c).
+
+**Close when:** Sprint 3c completes — policy store + kit + privileged audited mutation + PF
+admin route/panel behind admin_manage_approval_policy, and the agent-approver path proven
+reachable and governed end to end.
+
+---
+
+### TASK-088 — Three Phase-5 modules are outside coverage measurement
+
+| Field        | Detail                                                     |
+| ------------ | ---------------------------------------------------------- |
+| **ID**       | TASK-088                                                   |
+| **Type**     | Coverage integrity                                         |
+| **Severity** | Medium — the reported floor does not cover the newest code |
+| **Phase**    | Phase 5                                                    |
+| **Target**   | Phase 5, Sprint 4 (with TASK-080)                          |
+| **Status**   | Open                                                       |
+| **Logged**   | 2026-08-15                                                 |
+
+**What:** `collectCoverageFrom` lists lib, app/api, components, and four platform modules
+(auth, agents, input, moderation). It does NOT list platform/kernel, platform/app-framework
+or platform/action-pipeline — the three modules Phase 5 Sprints 1-2 built. Everything in
+them (session coordinator, action pipeline, state stores, the kernel types and the risk
+floor) is unmeasured, and the ~89% floor reported per sprint is computed without them.
+
+**Why it matters now:** the gating contract (32a0598) put safety-critical logic — the
+approved-commit path that must never bypass the gate — partly in platform/action-pipeline,
+which is unmeasured. Its guard is tested (kit R10, and the reconcile paths in
+gating.test.ts), but the coverage NUMBER does not reflect that module, so the tool cannot
+catch a future untested branch there.
+
+**Why it is a task, not a one-line fix:** adding the three trees to collectCoverageFrom
+surfaces their real coverage, which may fall below the global floor and turn the gate red
+across three mature modules at once. That is a ratchet effort — measure, then raise the
+floor to the measured level, then hold it — which is exactly TASK-080's scope. Doing it
+inside an unrelated commit would be the coverage-on-red hazard the sprint already documented.
+
+**Close when:** the three modules are in collectCoverageFrom, the global floor is re-derived
+to include them, and CI is green at the new floor (coordinated with TASK-080).
+
+---
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -1485,5 +1840,5 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: August 12, 2026 (TASK-081 filed — CodeQL on Playform deferred on cost at $30/month, not overlooked)_
+_Last updated: August 13, 2026 (TASK-083 filed — the sync cannot distinguish an upstream deletion from a Playform-owned file)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_

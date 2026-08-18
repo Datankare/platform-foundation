@@ -3,338 +3,277 @@
 > "Being agentic is not just about agents running on your platform — it's about agents running your platform."
 > — Dharmesh Shah, simple.ai@dharmesh
 
-**Status:** Design Phase
-**Target:** Phase 5 (Application Framework)
-**Dependencies:** Phase 3 (Voice Pipeline), Phase 4 (Content Safety)
-**Last Updated:** 2026-04-14
+**Status:** Design — Phase 5 Sprint 3b
+**Target:** Phase 5 (Application Framework + AUX)
+**Supersedes:** the April 2026 draft, which described AUX as a wrapper over the Phase 3 voice pipeline. This rewrite anchors AUX on the Phase 5 application framework and agent runtime, which did not exist when the first draft was written.
+**Dependencies:** app-framework (ADR-028), agentic workflow framework (ADR-029), action identity & lifecycle (ADR-031), durable stores (TASK-075a, verified)
+**Feeds:** ADR-030 (Agent User Experience)
+**Last Updated:** 2026-08-14
 
 ---
 
-## The Problem
+## What changed since the April draft
 
-Today Playform exposes human-facing endpoints:
+The first AUX_DESIGN predates most of Phase 5 and describes a world that no longer holds:
 
-| Endpoint            | What it does                           | Agent burden                                                             |
-| ------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
-| `POST /api/process` | Safety + detect + classify + translate | Returns flat JSON blob designed for React; agent must parse 10+ fields   |
-| `POST /api/stream`  | AI streaming response                  | Agent must accumulate SSE chunks, handle reconnection                    |
-| `POST /api/tts`     | Text to speech                         | Agent must know to call this AFTER process, with the right language code |
-| `POST /api/extract` | Audio/PDF/text extraction              | Agent must route file types, handle encoding, retry on failure           |
+- It framed `process-content` as wrapping Playform's routes (`/api/process`, `/api/tts`, `/api/extract`) directly. Since then the work has split: the **agent contract and workflow orchestration are platform (PF) work**; the **provider calls stay in Playform's voice module** where they already live. The old draft conflated the two.
+- It described the surface over the Phase 3 `VoicePipeline`. Phase 4 and 5 added the agent runtime, durable trajectories, the action lifecycle protocol, and the app-framework session model. AUX now sits over those, not over the voice pipeline alone.
+- It listed `nextActions` and per-step dollar cost as unbuilt. The provider layer already emits `estimatedCostUsd` per call and threads `trajectoryId`/`stepIndex` through every request and result — the gap is that the human routes discard those fields at the boundary, not that they don't exist.
 
-An agent handling a voice interaction must:
-
-1. Call `/api/extract` with audio → get transcript
-2. Call `/api/process` with transcript → get translations + classification
-3. Call `/api/tts` with translated text → get audio
-4. Handle errors at each step, retry, decide what to do on partial failure
-
-That's 3+ API calls, token-burning orchestration reasoning, and error handling — **per interaction**. Our VoicePipeline already solves this internally, but the API surface still forces agents through the human path.
+This document is the reconciled design. ADR-030 records the decisions it reaches.
 
 ---
 
-## Design Principles
+## The problem
 
-### 1. Workflow-Level Tools, Not Granular Endpoints
+Playform exposes human-facing endpoints. An agent handling a voice interaction must chain them by hand:
 
-**Bad AUX:** Expose every internal function as a tool.
-**Good AUX:** Expose one tool per complete workflow.
+| Step | Endpoint             | Agent burden                                                     |
+| ---- | -------------------- | ---------------------------------------------------------------- |
+| 1    | `POST /api/extract`  | Route file types, handle encoding, retry on failure              |
+| 2    | `POST /api/identify` | Know to call this for audio; parse the match result              |
+| 3    | `POST /api/process`  | Parse a flat JSON blob designed for React                        |
+| 4    | `POST /api/tts`      | Know to call this after processing, with the right language code |
 
-An agent should say "process this audio into Spanish" — not "transcribe this, then check safety, then translate, then synthesize."
+That is three-to-four calls, token-burning orchestration reasoning, and per-step error handling — for one interaction. The platform already knows this workflow internally. The API surface still forces agents through the human path.
 
-### 2. Structured Results with `nextActions`
+---
 
-Every response tells the agent what it CAN do next. The agent doesn't reason about possibilities — the platform enumerates them.
+## Design principles
+
+### 1. Workflow-level tools, not granular endpoints
+
+An agent should express a goal — "identify this hum, translate the song title to Spanish, and speak it" — not orchestrate four endpoints. One tool per complete workflow.
+
+### 2. Two intent layers, named apart
+
+There are two distinct notions the April draft called by one name. They must stay separate, because ADR-030 and every downstream contract depend on the distinction.
+
+- **`goal`** — the _workflow_ the agent wants accomplished. Request-level. Examples: `translate-and-speak`, `identify-song`, `full-pipeline`. This is the field on the agent request.
+- **`intent`** — the _step-level_ semantic already carried by the provider layer (`IDENTIFY_INTENT = "inform"`, and the voice pipeline's `STEP_INTENT_MAP`). Per-step. This is not renamed; it is what the existing providers already emit.
+
+`goal` names what the agent asked for. `intent` annotates what each internal step is doing. The rename of the request field from `intent` to `goal` is the one breaking change this design introduces, and it exists precisely so the two layers never collide in code or in an agent's reasoning.
+
+### 3. Choreography is the primitive; orchestration is a convenience over it
+
+This is the load-bearing decision. The platform supports two ways to run a workflow, and they are the **same machinery**, not two implementations.
+
+**Choreography — the agent walks the steps.** Each step returns its result plus `nextActions`, and the agent chooses the next hop. The platform enumerates possibilities; the agent does not reason them out. This is what makes the system agent-centric rather than a script with an LLM attached, and it is what the demo's story — "nextActions visibly driving the next step" — shows.
+
+![Choreography path](diagrams/aux-choreography-path.svg)
+
+**Orchestration — one call runs the loop server-side.** A `full-pipeline` goal runs the identical step sequence internally, against the same trajectory, applying the same gates, and returns the final result plus the complete `nextActions` and trajectory. It is the loop run to completion instead of across round trips — for a batch job or a latency-sensitive caller that does not want to walk steps.
+
+![Orchestration path](diagrams/aux-orchestration-path.svg)
+
+Three invariants make this a single design rather than two:
+
+1. **One workflow definition, two entry points.** The step sequence lives in one place (PF-B). `full-pipeline` calls the loop; the stepwise goals expose its checkpoints. A capability added to the loop appears in both automatically — no drift.
+2. **The trajectory is identical either way.** Whether the agent made four calls or one, `agent_trajectories` shows the same steps. Auditability does not depend on which door the agent used.
+3. **`nextActions` is always present**, including on the orchestrated return. A completed `full-pipeline` still hands back affordances (`translate-more`, `respond`, `done`); it never dead-ends. That is the difference between an agent API and an RPC.
+
+**The rule that keeps it honest:** the orchestrated path must not skip the gates. Same risk floor per step, same budget check per step, same content-safety screening on the new input surface (Standing Rule 11), same trajectory append per step. A `full-pipeline` that bypassed any gate "for speed" would create two safety regimes, and the fast one would be the unsafe one — the shape of the swallowed-throw defect (ADR-032). The response-conformance kit enforces this: both entry points must emit `result + trajectory + nextActions + cost`, and the trajectory must show every gated step, or CI fails.
+
+### 4. Cost transparency
+
+Agents operate on budgets. Every response includes cost so agents can make economic decisions. The data already exists — `IdentifyResult.estimatedCostUsd`, and `agent_trajectories.total_cost` shaped `{usd, tokens, apiCalls}`. AUX stops discarding it and sums per-step cost into a `CostSummary`.
+
+### 5. Trajectory as first-class return
+
+Every workflow execution returns its trajectory (P18). Agents audit what happened, resume from failure points, and learn which workflows succeed. This is now backed by the durable Supabase trajectory store (TASK-075a), not an in-memory store that vanishes per request.
+
+---
+
+## The PF-B / Playform-A boundary
+
+AUX is built in two layers, in two repos, in order.
+
+**PF-B (platform, built first)** — the agent contract and the workflow orchestration:
+
+- Agent-native contracts over app-framework sessions and agent workflows: `goal` + `nextActions`.
+- The workflow loop: sequence the steps, mint and thread the trajectory, apply the gates, assemble `nextActions`, sum `CostSummary`.
+- `GET /api/agent/capabilities` — discovery, so an agent self-configures.
+- The gating contract — how a held action (ADR-031) is expressed to an agent caller.
+
+**Playform-A (consumer, built second)** — the endpoint that exposes the workflow:
+
+- `POST /api/agent/process-content` wrapping extract → identify → process → tts.
+- The demo surface.
+
+The provider calls themselves — `ACRCloudIdentifier`, the translation and TTS providers — already live in Playform's `platform/voice` module and are not rebuilt. The A-layer endpoint stops _discarding_ what they emit; it does not re-implement them.
+
+**Worked example — `/api/identify` today.** The route runs auth, rate-limiting, format conversion, provider selection, and structured logging, then returns `{matched, match, confidence, clipDurationSeconds, remaining}` — dropping the `estimatedCostUsd`, `latencyMs`, and `trajectoryId` the provider already produced. The AUX layer wraps the same pipeline and keeps those fields. The provider resolves to a single `SongMatch | null` (no candidate list; `matched: false` is a normal result, not an error — P11), so the `nextActions` branch is binary: matched → offer `translate`/`speak`; not matched → offer `retry`/`done`.
+
+---
+
+## Proposed AUX surface
+
+### Core types
 
 ```typescript
 interface AgentResponse<T> {
   result: T;
-  trajectory: TrajectoryResult;
-  nextActions: NextAction[];
-  cost: CostSummary;
+  trajectory: Trajectory; // the kernel type; identified by trajectoryId, never id
+  nextActions: readonly NextAction[]; // what the agent can do next
+  cost: CostSummary; // so the agent can budget
 }
 
 interface NextAction {
-  action: string; // "translate-more" | "escalate" | "retry" | "done"
-  description: string; // Human-readable for debugging
-  endpoint: string; // Where to call
-  requiredParams: string[]; // What the agent needs to provide
-  estimatedCost: string; // "$0.002" — so agents can budget
+  action: string; // "translate" | "speak" | "respond" | "retry" | "done"
+  description: string; // human-readable, for debugging
+  endpoint: string | null; // where to call; null for terminal actions
+  requiredParams: string[];
+  estimatedCostUSD: number; // numeric so an agent can sum it against its ceiling
 }
-```
 
-### 3. Intent-Driven, Not Verb-Driven
-
-Human APIs: `POST /api/tts` (verb: "synthesize this text")
-Agent APIs: `POST /api/agent/process-content` with `intent: "translate-and-speak"` (goal: "I want the user to hear this in Spanish")
-
-The platform maps intents to workflows internally. Adding a new workflow doesn't change the agent's interface — just adds a new intent.
-
-### 4. Cost Transparency
-
-Agents operate on budgets. Every response includes cost information so agents can make economic decisions:
-
-```typescript
 interface CostSummary {
   apiCalls: number;
   tokensUsed: number;
   estimatedCostUSD: number;
-  cachedResults: number; // How many results came from cache
-  costSavedFromCache: number; // What we saved by caching
+  cachedResults: number;
+  costSavedFromCache: number;
 }
 ```
 
-### 5. Trajectory as First-Class Return
+### `POST /api/agent/process-content`
 
-Every workflow execution returns its trajectory (P18). Agents can:
-
-- Audit what happened
-- Resume from failure points
-- Learn from past trajectories (which workflows succeed, which fail)
-
----
-
-## Proposed AUX Surface
-
-### Core Agent Endpoints
-
-#### `POST /api/agent/process-content`
-
-The primary workflow tool. Replaces the need to chain `/api/extract` → `/api/process` → `/api/tts`.
+The primary workflow tool. Replaces chaining `/api/extract` → `/api/identify` → `/api/process` → `/api/tts`.
 
 ```typescript
-// Request
 interface ProcessContentRequest {
-  // Input — exactly one required
   input: {
-    audio?: string; // Base64 audio
-    text?: string; // Plain text
-    file?: string; // Base64 file (PDF, etc.)
-    url?: string; // URL to fetch content from
+    audio?: string; // Base64 audio — including a hum, for song-ID
+    text?: string;
+    file?: string; // Base64 (PDF, etc.)
+    url?: string;
   };
 
-  // Intent — what the agent wants to accomplish
-  intent:
-    | "translate" // Translate to target languages
-    | "identify" // Identify content type / song / language
-    | "analyze" // Full classification + safety analysis
-    | "full-pipeline" // Everything: transcribe + classify + translate + synthesize
-    | "transcribe"; // Just STT, no translation
+  // Workflow-level goal (design principle 2) — NOT the step-level `intent`
+  goal:
+    | "identify-song" // hum/clip → SongMatch (choreography primitive)
+    | "translate" // → translations (choreography primitive)
+    | "transcribe" // STT only (choreography primitive)
+    | "speak" // text → audio (choreography primitive)
+    | "translate-and-speak" // compose translate → speak
+    | "full-pipeline" // identify → translate → speak, orchestrated
+    | "analyze"; // read-only: classify + safety, no side effects
 
-  // Configuration
-  targetLanguages?: string[]; // Default: baseline (en, es, fr)
-  synthesize?: boolean; // Generate TTS audio? Default: true for translate
-  sourceLanguage?: string; // Hint; auto-detect if omitted
+  targetLanguages?: string[];
+  synthesize?: boolean;
+  sourceLanguage?: string;
 
   // Agent context (P15)
   actorType: "agent" | "user" | "system";
   actorId: string;
   onBehalfOf?: string;
   traceId?: string;
-  budgetMaxUSD?: number; // Agent's cost ceiling for this request
+  budgetMaxUSD?: number;
 }
 
-// Response
 interface ProcessContentResponse {
   result: {
+    song?: SongMatch | null; // for identify-song / full-pipeline
     transcript?: string;
     detectedLanguage?: string;
     contentType?: string;
     translations?: FanOutTranslation[];
-    audio?: { [languageCode: string]: string }; // Base64 per language
+    audio?: { [languageCode: string]: string };
     safety?: { passed: boolean; reason?: string };
   };
-
-  trajectory: {
-    id: string;
-    steps: PipelineStepResult[];
-    totalLatencyMs: number;
-  };
-
+  trajectory: Trajectory; // totalLatencyMs is derived by the loop from Step.durationMs
   nextActions: NextAction[];
   cost: CostSummary;
 }
 ```
 
-**Examples:**
+The demo path is `full-pipeline` over `input.audio`: a hum is identified, the title translated, the result spoken — one call, one trajectory, `nextActions` handed back. The same demo can instead be walked as choreography (`identify-song`, then the returned `translate` action, then the returned `speak` action) to show the affordance chain explicitly.
 
-```
-// "Handle this audio clip — translate it to Spanish"
-POST /api/agent/process-content
-{
-  "input": { "audio": "base64..." },
-  "intent": "translate",
-  "targetLanguages": ["es"],
-  "actorType": "agent",
-  "actorId": "support-bot-1",
-  "onBehalfOf": "user-456"
-}
+### `GET /api/agent/capabilities`
 
-// Response
-{
-  "result": {
-    "transcript": "Good morning, I need help with my account",
-    "detectedLanguage": "en",
-    "translations": [{ "code": "es", "translated": "Buenos días, necesito ayuda..." }],
-    "audio": { "es": "base64..." }
-  },
-  "trajectory": { "id": "traj_abc", "steps": [...], "totalLatencyMs": 2340 },
-  "nextActions": [
-    { "action": "translate-more", "description": "Translate to additional languages", "endpoint": "/api/agent/process-content", "requiredParams": ["targetLanguages"] },
-    { "action": "respond", "description": "Generate a response to this content", "endpoint": "/api/agent/respond", "requiredParams": ["prompt"] },
-    { "action": "done", "description": "No further action needed", "endpoint": null, "requiredParams": [] }
-  ],
-  "cost": { "apiCalls": 3, "tokensUsed": 0, "estimatedCostUSD": 0.003, "cachedResults": 0, "costSavedFromCache": 0 }
-}
-```
+Discovery. Lets a new agent self-configure — the enumerated `goal`s, their params, cost and latency ranges, language list, limits, and the resolved provider names. Feeds off the same registry and health probes the platform already runs.
 
-#### `POST /api/agent/respond`
+### Deferred to later sprints (recorded, not dropped)
 
-Generate an AI response in context of prior content processing.
-
-```typescript
-interface RespondRequest {
-  prompt: string;
-  context?: {
-    trajectoryId?: string; // Link to prior process-content result
-    conversationId?: string; // Ongoing conversation
-  };
-  constraints?: {
-    maxTokens?: number;
-    tier?: "fast" | "standard";
-    style?: "formal" | "casual" | "technical";
-  };
-  actorType: "agent" | "user" | "system";
-  actorId: string;
-  onBehalfOf?: string;
-}
-```
-
-#### `POST /api/agent/batch`
-
-Process multiple items in one call (the `processTicketQueue` pattern).
-
-```typescript
-interface BatchRequest {
-  items: ProcessContentRequest[];
-  strategy: "parallel" | "sequential";
-  stopOnFailure?: boolean; // Default: false (process all, report failures)
-  budgetMaxUSD?: number; // Total budget across all items
-  actorType: "agent" | "user" | "system";
-  actorId: string;
-}
-
-interface BatchResponse {
-  results: ProcessContentResponse[];
-  summary: {
-    total: number;
-    succeeded: number;
-    failed: number;
-    totalCostUSD: number;
-    totalLatencyMs: number;
-  };
-  nextActions: NextAction[];
-}
-```
-
-#### `GET /api/agent/capabilities`
-
-The "index of 273 features" — tells the agent what the platform can do.
-
-```typescript
-interface CapabilitiesResponse {
-  version: string;
-  intents: {
-    name: string;
-    description: string;
-    requiredParams: string[];
-    optionalParams: string[];
-    estimatedCostRange: string; // "$0.001 - $0.01"
-    estimatedLatencyRange: string; // "500ms - 3s"
-  }[];
-  languages: LanguageDefinition[];
-  limits: {
-    maxInputBytes: number;
-    maxBatchSize: number;
-    rateLimitPerMinute: number;
-  };
-  providers: {
-    translation: string;
-    tts: string;
-    stt: string;
-    ai: string;
-  };
-}
-```
+- `POST /api/agent/respond` — AI response in the context of a prior trajectory.
+- `POST /api/agent/batch` — N items in one call.
+- MCP server exposing AUX goals as MCP tools (Phase 8) — an explicit option, not a commitment.
 
 ---
 
-## Migration Path
+## Evaluation criteria — enforced, not reviewed
 
-### Phase 4 (Content Safety)
+The April draft listed these as review questions. In this design they are a **runtime response-conformance gate** (L21): a conformance kit asserts every `/api/agent/*` response on the way out, and CI fails if any response is missing a required field.
 
-- Add `safety` field to all response types
-- Ensure every endpoint returns `trajectory` and `cost`
-- Design `nextActions` vocabulary
+| #   | Gate        | Assertion                                                                                          |
+| --- | ----------- | -------------------------------------------------------------------------------------------------- |
+| 1   | One-call    | The complete workflow finishes in one call for orchestrated goals                                  |
+| 2   | NextActions | `nextActions` is present and non-empty (terminal actions included)                                 |
+| 3   | Cost        | `cost` is present with a numeric `estimatedCostUSD`                                                |
+| 4   | Trajectory  | `trajectory.trajectoryId` resolves to a durable record with a step per gated action                |
+| 5   | Capability  | The goal is discoverable via `/api/agent/capabilities`                                             |
+| 6   | Gate parity | The trajectory of a `full-pipeline` run shows the same gated steps as the choreographed equivalent |
+| 7   | Budget      | A `budgetMaxUSD` ceiling is respected and reported                                                 |
 
-### Phase 5 (Application Framework)
-
-- Build `/api/agent/process-content` — wraps VoicePipeline + existing routes
-- Build `/api/agent/capabilities`
-- Build `/api/agent/batch`
-- Build `/api/agent/respond`
-- Deprecate direct agent use of `/api/process`, `/api/tts`, `/api/extract` (keep for human UI)
-
-### Phase 8 (Consumer App Integration)
-
-- MCP server that exposes AUX endpoints as MCP tools
-- Agent discovery: agents can query capabilities and self-configure
-- Multi-agent coordination: agents hand off work to each other via trajectories
+Gate 6 is the one that keeps orchestration honest: it proves the two entry points are the same machinery by comparing their trajectories, not their code.
 
 ---
 
-## What Already Exists (Phase 3)
+## GenAI 18-Principle Mapping — Sprint 3b (L12 pre-code gate)
 
-| Component                 | AUX Ready? | Gap                                                   |
-| ------------------------- | ---------- | ----------------------------------------------------- |
-| VoicePipeline             | ✅         | IS the workflow-level tool — just needs an API route  |
-| TranslationCache (P16)    | ✅         | Cost savings tracked                                  |
-| Trajectory tracking (P18) | ✅         | Every pipeline step recorded                          |
-| Agent identity (P15)      | ✅         | actorType/actorId/onBehalfOf                          |
-| Metric emission (P2)      | ✅         | onMetric callback                                     |
-| Health probes             | ✅         | Can feed into capabilities response                   |
-| Provider registry         | ✅         | Can feed into capabilities response                   |
-| nextActions               | ❌         | Pipeline returns results but not suggested next steps |
-| Cost tracking             | ⚠️         | Latency tracked, but not dollar cost per step         |
-| Batch processing          | ❌         | Not built yet                                         |
-| Capabilities endpoint     | ❌         | Not built yet                                         |
+> Mapped before any Sprint 3b code (L12). Role legend: **Core** = Sprint 3b primary deliverer · **Extend** = fabric continued from a prior phase · **Advance** = moves a partial forward · **—** = no Sprint 3b deliverable.
+>
+> This table is a stub for ADR-030 to complete. The rows below are the load-bearing ones; ADR-030 fills the remainder and records the final mapping.
 
----
+| #   | Principle             | Sprint 3b | How                                                                                                                |
+| --- | --------------------- | --------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | Intent-Driven         | **Core**  | `goal` is the request; `nextActions` enumerates affordances — the agent selects, does not reason out possibilities |
+| 2   | Agentic Execution     | **Core**  | The workflow loop is bounded, instrumented, and interruptible; choreography exposes its checkpoints                |
+| 3   | Total Observability   | Extend    | Every step appends a trajectory Step; the durable store (TASK-075a) makes it survive the request                   |
+| 6   | Structured Outputs    | **Core**  | `AgentResponse<T>` schema-validated on the way out by the L21 conformance gate                                     |
+| 10  | Human Oversight       | Extend    | Held actions (ADR-031) expressed to the agent caller via the gating contract                                       |
+| 12  | Economic Transparency | Advance   | Per-step `estimatedCostUsd` summed into `CostSummary`; `budgetMaxUSD` ceiling respected                            |
+| 17  | Cognition-Commitment  | Extend    | The gating contract carries ADR-031's propose→commit boundary to the agent surface                                 |
+| 18  | Durable Trajectories  | **Core**  | Trajectory is a first-class return, backed by the durable store                                                    |
 
-## Evaluation Criteria
-
-When we build the AUX layer, every endpoint must pass:
-
-1. **One-call test:** Can an agent accomplish the complete workflow in one call?
-2. **NextActions test:** Does the response tell the agent what to do next?
-3. **Cost test:** Does the response include cost so agents can budget?
-4. **Trajectory test:** Can the agent audit what happened?
-5. **Capability test:** Can a new agent discover this endpoint and self-configure?
-6. **Batch test:** Can an agent process N items without N separate calls?
-7. **Budget test:** Can an agent set a cost ceiling and have the platform respect it?
+_Remaining principles (4, 5, 7, 8, 9, 11, 13, 14, 15, 16) to be completed in ADR-030. 18/18 must be accounted for before code (L12)._
 
 ---
 
-## Reading Queue
+## Migration path
 
-| Article                               | Author                             | Status  | Key Insight                                                                   |
-| ------------------------------------- | ---------------------------------- | ------- | ----------------------------------------------------------------------------- |
-| "Why Agents Need Their Own Interface" | Dharmesh Shah (simple.ai@dharmesh) | ✅ Read | AUX = workflow-level tools, not wrapped APIs. nextActions. Cost transparency. |
-| —                                     | —                                  | —       | —                                                                             |
+**Sprint 3b — this sprint:**
+
+- PF-B: workflow loop, `goal` + `nextActions` contracts, `/api/agent/capabilities`, the gating contract, the L21 response-conformance kit.
+- Playform-A: `/api/agent/process-content`, the demo surface.
+- TASK-075b closes: an agent invoked over HTTP writes a trajectory a later request reads back.
+
+**Later:**
+
+- `/api/agent/respond`, `/api/agent/batch`.
+- Deprecate direct agent use of `/api/process`, `/api/tts`, `/api/extract` (kept for the human UI).
+- Phase 8: MCP server, agent discovery, multi-agent handoff via trajectories.
 
 ---
 
-_This document is reviewed at every phase boundary per L9._
-_See [ENGINEERING_LEARNINGS.md](ENGINEERING_LEARNINGS.md) for L13 (AUX design principle)._
-_See [ROADMAP.md](ROADMAP.md) for Phase 5 timeline._
+## What already exists
 
-_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_
+| Component                                  | AUX ready? | Gap                                                     |
+| ------------------------------------------ | ---------- | ------------------------------------------------------- |
+| Voice providers (identify, translate, tts) | Yes        | Emit cost + trajectory fields the human routes discard  |
+| Durable trajectory store                   | Yes        | Verified live (TASK-075a)                               |
+| Agent identity (P15)                       | Yes        | `actorType`/`actorId`/`onBehalfOf` on provider requests |
+| Trajectory threading (P18)                 | Yes        | `trajectoryId`/`stepIndex` on request and result        |
+| Action lifecycle / gating (ADR-031)        | Yes        | Needs an agent-facing expression — the gating contract  |
+| `goal` + workflow loop                     | No         | PF-B, this sprint                                       |
+| `nextActions` assembly                     | No         | PF-B, this sprint                                       |
+| `/api/agent/capabilities`                  | No         | PF-B, this sprint                                       |
+| Response-conformance kit                   | No         | PF-B, this sprint (L21)                                 |
+| `/api/agent/process-content`               | No         | Playform-A, this sprint                                 |
+
+---
+
+_This document is reviewed at every phase boundary (L9)._
+_See [ENGINEERING_LEARNINGS.md](ENGINEERING_LEARNINGS.md) for L13 (AUX design principle) and L21 (conformance kits)._
+_See [PHASE5_PLAN.md](PHASE5_PLAN.md) for the sprint plan and [ROADMAP.md](ROADMAP.md) for the timeline._
+
+_Last updated: August 14, 2026 (Sprint 3b — full rewrite onto the app-framework; goal/intent split; choreography-primitive/orchestration-convenience model; L21 response-conformance gate; two path diagrams added)_

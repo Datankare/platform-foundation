@@ -35,6 +35,7 @@ import { runProposalStoreContract } from "./proposal-store-contract";
 import { runEffectLedgerContract } from "./effect-ledger-contract";
 import { runToolInvocationContract } from "./tool-invocation-contract";
 import { runAgenticWorkflowContract } from "./agentic-workflow-contract";
+import { runAgentResponseContract } from "./agent-response-contract";
 
 export type ContractKind = "registry" | "fabric";
 
@@ -81,6 +82,9 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   // ADR-029 L21: the agentic workflow kit. Fabric for the same reason — the
   // workflow is in-process, so there is no slot to swap.
   agenticWorkflow: { kind: "fabric", kit: runAgenticWorkflowContract },
+  // ADR-030 L21: the AUX response envelope kit. Fabric for the same reason — the
+  // envelope is assembled in process, so there is no slot to swap.
+  agentResponse: { kind: "fabric", kit: runAgentResponseContract },
   traceProvider: { kind: "fabric", kit: runTraceProviderContract },
   metricsSink: { kind: "fabric", kit: runMetricsSinkContract },
   healthProbe: { kind: "fabric", kit: runHealthProbeContract },
