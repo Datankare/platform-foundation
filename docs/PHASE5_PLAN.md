@@ -72,37 +72,44 @@ where it exercises a real governed backend. Recorded here so the next planner fi
 
 ### Sprint 3c — Admin-governed approval policy AND capability definition (PF + Playform)
 
-The gating contract (Sprint 3b) makes the approver an identity and human review a policy
-default in gating.ts approvalPolicy(). Sprint 3c makes that policy admin-governed and
-per-action-class, so approval can move from human to agent under governance as the system
-earns trust — without an envelope change.
+Sprint 3c makes the 3b gating/capability/identity seams **admin-governed** and proves them
+through a working demo. One sprint: four backend tracks + a seven-surface UX track + the
+acceptance demo. PF-B owns each abstraction; PF admin follows the existing adminGuard /
+admin_* / config-panel pattern; Playform-A extends where required. A1-A8 on every new UI.
 
-PF-B owns the abstraction and, following PF's existing admin pattern (adminGuard, admin_*
-scopes, config panels), the admin surface:
+**Backend + acceptance deliverables**
 
-- a durable approval-policy store (who-may-approve per action class, versioned) + reference
-  impl + conformance kit;
-- the privileged mutation that changes the policy — itself a commitment-boundary action
-  (P17), gated and audited, with loosening (human->agent) higher-risk than tightening (P4);
-- the PF admin route + panel behind a new admin_manage_approval_policy scope.
+| #   | Deliverable                                                                                                                  | Repo             | Depends on                  | Done when                                                               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------------------- | ----------------------------------------------------------------------- |
+| A1  | Durable approval-policy store — who-may-approve per action class, versioned + reference impl                                 | PF-B             | 3b approvalPolicy() seam    | Store read by the gate at runtime                                       |
+| A2  | Approval-policy conformance kit                                                                                              | PF-B             | A1                          | Kit arms; a non-conforming store fails CI                               |
+| A3  | Privileged policy mutation — itself a gated, audited commitment action; loosening (human->agent) higher-risk than tightening | PF-B             | A1                          | Mutation gated + audited; loosening carries the higher risk floor       |
+| A4  | PF admin route behind new admin_manage_approval_policy scope                                                                 | PF               | A1-A3                       | Route enforces scope; drives the mutation                               |
+| B1  | HTTP surface for approveHeldAction / rejectHeldAction                                                                        | PF-B -> Playform | 3b gating.ts                | Held action approved/rejected over HTTP; decision is a typed identity   |
+| B2  | Endpoint carries an approval decision and resumes the workflow                                                               | Playform         | B1, 3b workflow loop        | Held workflow resumes on approve, halts on reject; both audited         |
+| C1  | PF admin surface to DEFINE capabilities (name + intent) behind new admin_manage_capabilities scope                           | PF               | existing admin_* pattern    | Capabilities definable; scope enforced                                  |
+| C2  | Playform admin surface to MAP Playform permissions -> PF capability names (replaces the static CAPABILITY_FEATURES map)      | Playform-A       | C1                          | Mapping editable; static map retired                                    |
+| C3  | Third-party integrator docs for the name -> permission mapping workflow                                                      | PF docs          | C1, C2                      | Doc published; external integrator can follow it                        |
+| D1  | Agent identity rung 2 — retire the rung-1 allowlist; swap the two seam fns (resolveAgentIdentity, agentAuthorized)           | PF-B -> Playform | 3b AgentIdentity.delegation | Identity resolved from attested credential, not the x-agent-role header |
+| D2  | Governed agent registry — which agent identities exist, admin-managed                                                        | PF + Playform    | D1                          | Agents provisioned via admin, not hardcoded                             |
+| D3  | Attested delegation flow (OAuth 2.1/PKCE, SPIFFE-style) per ADR-033 rung 2                                                   | Playform         | D1, D2                      | Attested delegation works end to end                                    |
+| F1  | Per-account feature restriction via a platform_config row (makes agent_process_content / speak restrictable)                 | Playform         | Supabase migration pattern  | A restricted account is provably denied at the user gate                |
+| E   | Acceptance: agent-approver path reachable AND governed end to end                                                            | both             | all above                   | A gated action approved by a governed agent identity, audited, resumed  |
 
-Playform-A extends the admin surface into Playform's own admin where required, with A1-A8 on
-any new UI.
+**UX track** — seven new surfaces + a consistency pass, each gated on A1-A8. Extends PF's
+existing AdminShell / AdminConfigPanels / AppealForm patterns; survey the admin component
+surface at kickoff (same discipline as 3b).
 
-Cross-cutting: the agent-approver path proven reachable AND governed end to end.
-
-Capability governance (folded in — same admin-governance surface, ADR-030 D9):
-
-- PF admin surface to DEFINE capabilities (name + intent), following the same
-  adminGuard/admin_* pattern, behind a new admin_manage_capabilities scope;
-- Playform admin surface to MAP Playform permissions to PF capability names;
-- third-party integrator documentation for the name -> permission mapping workflow;
-- A1-A8 on any new UI. The mechanism ships in 3b (ADR-030 D9); 3c is its governance.
-
-- **Acceptance (the 3b demo, folded in):** the AgentConsole demo + the new admin surfaces
-  (approval policy, capability definition/mapping, agent registry, per-account restriction)
-  exercised end to end with A1-A8 — the agent-approver path proven reachable AND governed
-  through a working UI, not only by kit.
+| #   | UX surface                                                                                        | Repo          | Consumes | A1-A8 |
+| --- | ------------------------------------------------------------------------------------------------- | ------------- | -------- | ----- |
+| U1  | Approval-policy admin panel — view/edit who-may-approve; loosening vs tightening shown distinctly | PF + Playform | A1-A4    | Yes   |
+| U2  | Capability definition admin panel — define capability name + intent                               | PF            | C1       | Yes   |
+| U3  | Capability -> permission mapping panel                                                            | Playform      | C2       | Yes   |
+| U4  | Agent registry admin panel — provision/manage agent identities                                    | PF + Playform | D2       | Yes   |
+| U5  | Attestation / consent UX — the delegation flow screens                                            | Playform      | D3       | Yes   |
+| U6  | Per-account restriction control — toggle feature restriction on an account                        | Playform      | F1       | Yes   |
+| U7  | AgentConsole demo — goal picker, input, three capability states, held -> approve/reject -> resume | Playform      | A-D live | Yes   |
+| U8  | Design-system consistency pass — all surfaces reuse existing patterns so A1-A8 is uniform         | PF + Playform | U1-U7    | Yes   |
 
 GenAI anchors: P10 (the control surface for human oversight), P17 (policy change is a
 commitment), P4 (loosening is higher-risk), P13 (bounded autonomy governed centrally),
@@ -286,3 +293,5 @@ framework, not conventional). P14 is the only gap (Phase 7). 18/18 accounted for
 _Last updated: July 26, 2026 (Phase 5 Sprint 2 opened — L12 mapping recorded as the pre-code gate; ADR-031 promoted into the roster and into Sprint 2 scope; AUX/ADR-030 confirmed in Sprint 3; function floors added per TASK-061)_
 
 _Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Sprint 3b section added recording the AUX/gating/capability/identity stack as shipped; the demo UI + A1-A8 folded into Sprint 3c as its acceptance gate)_
+
+_Last updated: August 18, 2026 (Phase 5 Sprint 3c scoped — the 3c body replaced with backend + acceptance and UX deliverable tables; F1 per-account restriction folded in; one sprint, no split)_
