@@ -42,6 +42,11 @@ import {
 } from "@/platform/action-pipeline";
 import { getProposalStore } from "./proposal-store";
 import { getTrajectoryStore } from "./trajectory-store";
+import {
+  DEFAULT_APPROVAL_POLICY,
+  resolveApprover,
+  type ApprovalPolicy,
+} from "./approval-policy-store";
 
 /**
  * Which actor type may approve a held action of this risk/effects.
@@ -55,14 +60,11 @@ import { getTrajectoryStore } from "./trajectory-store";
  * admin role) is a consumer/Playform-A concern. What PF-B fixes is the TYPE required.
  */
 export function approvalPolicy(
-  _effectiveRisk: RiskLevel,
-  _effects: readonly EffectType[]
+  effectiveRisk: RiskLevel,
+  effects: readonly EffectType[],
+  policy: ApprovalPolicy = DEFAULT_APPROVAL_POLICY
 ): AgentIdentity {
-  return {
-    actorType: "user",
-    actorId: "pending-human-approver",
-    agentRole: "approver",
-  };
+  return resolveApprover(policy, effectiveRisk, effects);
 }
 
 export interface ApproveHeldActionArgs {

@@ -69,6 +69,11 @@ const EXPECTED_EXPORTS = [
   "approveHeldAction",
   "rejectHeldAction",
   "approvalPolicy",
+  // Sprint 3c A1 — admin-governable approval policy
+  "DEFAULT_APPROVAL_POLICY",
+  "InMemoryApprovalPolicyStore",
+  "getApprovalPolicyStore",
+  "resolveApprover",
   // ADR-030 AUX: workflow loop + capabilities (this commit)
   "advanceGoal",
   "buildCapabilities",

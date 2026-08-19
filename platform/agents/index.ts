@@ -115,6 +115,18 @@ export type {
   RunGoalArgs,
 } from "./workflow-loop";
 export { approvalPolicy, approveHeldAction, rejectHeldAction } from "./gating";
+export {
+  getApprovalPolicyStore,
+  resolveApprover,
+  InMemoryApprovalPolicyStore,
+  DEFAULT_APPROVAL_POLICY,
+} from "./approval-policy-store";
+export type {
+  ApprovalPolicy,
+  ApprovalRule,
+  ApprovalPolicyStore,
+  ActorType,
+} from "./approval-policy-store";
 export type { ApproveHeldActionArgs } from "./gating";
 export { buildCapabilities } from "./capabilities";
 export type { Capabilities, GoalCapability, CapabilityStep } from "./capabilities";
