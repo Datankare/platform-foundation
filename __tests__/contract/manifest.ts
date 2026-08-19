@@ -36,6 +36,7 @@ import { runEffectLedgerContract } from "./effect-ledger-contract";
 import { runToolInvocationContract } from "./tool-invocation-contract";
 import { runAgenticWorkflowContract } from "./agentic-workflow-contract";
 import { runAgentResponseContract } from "./agent-response-contract";
+import { runApprovalPolicyStoreContract } from "./approval-policy-contract";
 
 export type ContractKind = "registry" | "fabric";
 
@@ -87,5 +88,8 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   agentResponse: { kind: "fabric", kit: runAgentResponseContract },
   traceProvider: { kind: "fabric", kit: runTraceProviderContract },
   metricsSink: { kind: "fabric", kit: runMetricsSinkContract },
+  // Sprint 3c A2: the approval-policy store kit. Fabric — the policy store is assembled
+  // in process (governed via A3/A4), not a ProviderSelections slot, so no registry slot.
+  approvalPolicyStore: { kind: "fabric", kit: runApprovalPolicyStoreContract },
   healthProbe: { kind: "fabric", kit: runHealthProbeContract },
 };
