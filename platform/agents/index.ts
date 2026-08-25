@@ -117,10 +117,13 @@ export type {
 export { approvalPolicy, approveHeldAction, rejectHeldAction } from "./gating";
 export {
   getApprovalPolicyStore,
+  setApprovalPolicyStore,
+  resetApprovalPolicyStore,
   resolveApprover,
   InMemoryApprovalPolicyStore,
   DEFAULT_APPROVAL_POLICY,
 } from "./approval-policy-store";
+export { SupabaseApprovalPolicyStore } from "./supabase-approval-policy-store";
 export type {
   ApprovalPolicy,
   ApprovalRule,

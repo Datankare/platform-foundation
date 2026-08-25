@@ -88,8 +88,8 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   agentResponse: { kind: "fabric", kit: runAgentResponseContract },
   traceProvider: { kind: "fabric", kit: runTraceProviderContract },
   metricsSink: { kind: "fabric", kit: runMetricsSinkContract },
-  // Sprint 3c A2: the approval-policy store kit. Fabric — the policy store is assembled
-  // in process (governed via A3/A4), not a ProviderSelections slot, so no registry slot.
-  approvalPolicyStore: { kind: "fabric", kit: runApprovalPolicyStoreContract },
+  // Sprint 3c A2/A3: the approval-policy store kit. Registry — A3 makes it a
+  // ProviderSelections slot, so the conformance-coverage bijection requires this kit.
+  approvalPolicyStore: { kind: "registry", kit: runApprovalPolicyStoreContract },
   healthProbe: { kind: "fabric", kit: runHealthProbeContract },
 };

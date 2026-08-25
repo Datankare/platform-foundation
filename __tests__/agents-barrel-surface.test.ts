@@ -74,6 +74,10 @@ const EXPECTED_EXPORTS = [
   "InMemoryApprovalPolicyStore",
   "getApprovalPolicyStore",
   "resolveApprover",
+  // Sprint 3c A3 — durable store install + reset, Supabase impl
+  "SupabaseApprovalPolicyStore",
+  "resetApprovalPolicyStore",
+  "setApprovalPolicyStore",
   // ADR-030 AUX: workflow loop + capabilities (this commit)
   "advanceGoal",
   "buildCapabilities",

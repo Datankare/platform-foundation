@@ -19,7 +19,7 @@
  */
 
 import type { AgentIdentity, EffectType, RiskLevel } from "@/platform/kernel";
-import { getSingleton } from "@/platform/kernel";
+import { getSingleton, setSingleton } from "@/platform/kernel";
 
 /** The actor type an approval requires — the three legal AgentIdentity.actorType values. */
 export type ActorType = AgentIdentity["actorType"];
@@ -127,7 +127,7 @@ export class InMemoryApprovalPolicyStore implements ApprovalPolicyStore {
   }
 }
 
-const STORE_KEY = "datankare.agents.approval-policy-store";
+const STORE_KEY = "platform.agents.approvalPolicyStore";
 
 /**
  * The process-wide approval-policy store. Anchored on the kernel singleton registry
@@ -137,4 +137,20 @@ const STORE_KEY = "datankare.agents.approval-policy-store";
  */
 export function getApprovalPolicyStore(): ApprovalPolicyStore {
   return getSingleton(STORE_KEY, () => new InMemoryApprovalPolicyStore());
+}
+
+/**
+ * Install a policy store — the registry does this for the durable Supabase store; tests use it
+ * to inject a fake. Returns the previous store so a caller can restore it. Mirrors
+ * setProposalStore / setTrajectoryStore.
+ */
+export function setApprovalPolicyStore(store: ApprovalPolicyStore): ApprovalPolicyStore {
+  const previous = getApprovalPolicyStore();
+  setSingleton(STORE_KEY, store);
+  return previous;
+}
+
+/** Reset to the in-memory default (testing / resetProviders). */
+export function resetApprovalPolicyStore(): void {
+  setSingleton(STORE_KEY, new InMemoryApprovalPolicyStore());
 }
