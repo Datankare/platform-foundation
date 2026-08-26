@@ -41,6 +41,7 @@ import { invokeTool } from "./tool-invoker";
 import { getTrajectoryStore } from "./trajectory-store";
 import { getProposalStore } from "./proposal-store";
 import { approvalPolicy } from "./gating";
+import { getApprovalPolicyStore } from "./approval-policy-store";
 
 // ── Definition ────────────────────────────────────────────────────────
 
@@ -350,6 +351,7 @@ async function holdStep(
   const proposalStore = args.proposalStore ?? getProposalStore();
   const effectiveRisk = computeToolRisk(step.tool);
   const operationId = `op_${trajectoryId}_${stepIndex}`;
+  const approvalPolicyValue = await getApprovalPolicyStore().load();
 
   const proposal = await proposeOnce({
     spec: {
@@ -376,7 +378,7 @@ async function holdStep(
     label: proposal.label,
     effectiveRisk: proposal.effectiveRisk,
     effects: proposal.effects,
-    approver: approvalPolicy(effectiveRisk, step.tool.effects),
+    approver: approvalPolicy(effectiveRisk, step.tool.effects, approvalPolicyValue),
     approvalEndpoint: `${definition.endpoint}/approve`,
     observedVersion: proposal.observedVersion,
   };

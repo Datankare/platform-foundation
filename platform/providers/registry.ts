@@ -59,6 +59,8 @@ import { SupabaseTrajectoryStore } from "@/platform/agents/supabase-trajectory-s
 import { BudgetTracker, setBudgetTracker } from "@/platform/agents/budget-tracker";
 import { SupabaseBudgetStore } from "@/platform/agents/supabase-budget-store";
 import { setProposalStore } from "@/platform/agents/proposal-store";
+import { setApprovalPolicyStore } from "@/platform/agents/approval-policy-store";
+import { SupabaseApprovalPolicyStore } from "@/platform/agents/supabase-approval-policy-store";
 import { SupabaseProposalStore } from "@/platform/agents/supabase-proposal-store";
 import { setEffectLedger } from "@/platform/agents/effect-ledger";
 import { SupabaseEffectLedger } from "@/platform/agents/supabase-effect-ledger";
@@ -90,6 +92,7 @@ export type TrajectoryStoreType = "supabase" | "memory";
 export type BudgetStoreType = "supabase" | "memory";
 export type ProposalStoreType = "supabase" | "memory";
 export type EffectLedgerType = "supabase" | "memory";
+export type ApprovalPolicyStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -110,6 +113,7 @@ export interface ProviderSelections {
   budgetStore: BudgetStoreType;
   proposalStore: ProposalStoreType;
   effectLedger: EffectLedgerType;
+  approvalPolicyStore: ApprovalPolicyStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +143,8 @@ function getProviderSelections(): ProviderSelections {
     budgetStore: (process.env.BUDGET_STORE as BudgetStoreType) ?? "memory",
     proposalStore: (process.env.PROPOSAL_STORE as ProposalStoreType) ?? "memory",
     effectLedger: (process.env.EFFECT_LEDGER as EffectLedgerType) ?? "memory",
+    approvalPolicyStore:
+      (process.env.APPROVAL_POLICY_STORE as ApprovalPolicyStoreType) ?? "memory",
   };
 }
 
@@ -377,6 +383,27 @@ function initBudgetStore(type: BudgetStoreType): void {
   }
 }
 
+function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
+  if (type === "supabase") {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed, as the other agent stores do. An in-memory approval policy means an
+    // admin's governance change is lost on restart and nothing says so — the policy silently
+    // reverts to the built-in human-review default. That is a governance regression, not a
+    // degraded mode.
+    if (!url || !key) {
+      throw new Error(
+        "APPROVAL_POLICY_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to an in-memory approval policy."
+      );
+    }
+
+    setApprovalPolicyStore(new SupabaseApprovalPolicyStore(url, key));
+    return;
+  }
+}
+
 function initProposalStore(type: ProposalStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -490,6 +517,7 @@ export function initProviders(): ProviderSelections {
   initTrajectoryStore(selections.trajectoryStore);
   initBudgetStore(selections.budgetStore);
   initProposalStore(selections.proposalStore);
+  initApprovalPolicyStore(selections.approvalPolicyStore);
   initEffectLedger(selections.effectLedger);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
@@ -511,6 +539,7 @@ export function initProviders(): ProviderSelections {
     trajectoryStore: selections.trajectoryStore,
     budgetStore: selections.budgetStore,
     proposalStore: selections.proposalStore,
+    approvalPolicyStore: selections.approvalPolicyStore,
     effectLedger: selections.effectLedger,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
@@ -562,6 +591,7 @@ export const PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.agents.trajectoryStore",
   "platform.agents.budgetTracker",
   "platform.agents.proposalStore",
+  "platform.agents.approvalPolicyStore",
   "platform.agents.effectLedger",
   "platform.appFramework.stateStore",
   "platform.rag.embeddingStore",

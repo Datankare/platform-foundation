@@ -46,7 +46,7 @@ jest.mock("@/lib/supabase/server", () => ({
 
 // ── Imports ─────────────────────────────────────────────────────────────
 
-import { checkAccountStatus } from "../account-status-guard";
+import { checkAccountStatus, setKnownFeaturesFallback } from "../account-status-guard";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -276,5 +276,40 @@ describe("checkAccountStatus", () => {
     const result = await checkAccountStatus("", "translate");
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/Invalid user ID/);
+  });
+});
+
+// ── Known-feature governance seam (Sprint 3c B-gov) ─────────────────────────
+describe("checkAccountStatus — known-feature fail-closed", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setupUserState();
+    // No config for known_features → loader falls back to the registered set.
+    mockGetConfig.mockImplementation((_key: string, defaultValue: any) =>
+      Promise.resolve(defaultValue)
+    );
+  });
+
+  afterEach(() => {
+    // Clear the registered fallback so other suites see the default (null) behavior.
+    setKnownFeaturesFallback([]);
+  });
+
+  it("denies a feature not in the registered fallback set", async () => {
+    setKnownFeaturesFallback(["translate", "tts"]);
+    const result = await checkAccountStatus(VALID_USER_ID, "no_such_feature");
+    expect(result.allowed).toBe(false);
+  });
+
+  it("allows a feature that is in the registered fallback set", async () => {
+    setKnownFeaturesFallback(["translate", "tts"]);
+    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    expect(result.allowed).toBe(true);
+  });
+
+  it("does not fail closed when no fallback is registered and config is absent", async () => {
+    setKnownFeaturesFallback([]); // empty → treated as no known set
+    const result = await checkAccountStatus(VALID_USER_ID, "anything_at_all");
+    expect(result.allowed).toBe(true);
   });
 });

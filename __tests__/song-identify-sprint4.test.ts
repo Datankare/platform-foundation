@@ -808,6 +808,7 @@ describe("Registry — Sprint 4a provider slots", () => {
       "budgetStore",
       "proposalStore",
       "effectLedger",
+      "approvalPolicyStore",
     ]);
   });
 });
