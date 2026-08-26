@@ -24,6 +24,7 @@
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { getConfig } from "@/platform/auth/platform-config";
+import { getSingleton, setSingleton } from "@/platform/kernel";
 import { logger } from "@/lib/logger";
 import type { AccountStatus } from "@/platform/moderation/types";
 
@@ -69,6 +70,41 @@ const RESTRICTED_FEATURES_FALLBACK: readonly string[] = [
 
 const SUSPENDED_FEATURES_FALLBACK: readonly string[] = ["*"];
 
+// ── Known-feature governance (Sprint 3c B-gov) ──────────────────────────────
+//
+// The canonical set of features that EXIST is governed via the
+// account_status.known_features config entry. checkAccountStatus fails closed on
+// a feature absent from that set (an unknown feature is a bug or a probe, not an
+// allow). This is generic mechanism: PF ships NO feature list of its own — a bare
+// PF deployment registers no fallback and, with no config seeded, behaves as
+// before (config governs; a total config outage allows, logged).
+//
+// A consumer (e.g. Playform) that wants fail-closed to survive a config outage
+// registers its authoritative feature set via setKnownFeaturesFallback(); it is
+// then consulted when config is unavailable. The list lives with the consumer
+// that owns those feature strings, never in PF.
+const KNOWN_FEATURES_KEY = "account_status.known_features";
+const KNOWN_FEATURES_FALLBACK_SINGLETON = "platform.auth.knownFeaturesFallback";
+
+/**
+ * Register the authoritative feature set for this deployment. Consulted by
+ * checkAccountStatus only when the known_features config cannot be read, so
+ * fail-closed enforcement survives a config outage. PF registers nothing; a
+ * consumer that owns the feature vocabulary registers it at startup.
+ */
+export function setKnownFeaturesFallback(features: readonly string[]): void {
+  setSingleton(KNOWN_FEATURES_FALLBACK_SINGLETON, [...features]);
+}
+
+function getKnownFeaturesFallback(): readonly string[] | null {
+  const registered = getSingleton<readonly string[] | null>(
+    KNOWN_FEATURES_FALLBACK_SINGLETON,
+    () => null
+  );
+  // An empty set is treated as "no known set registered" — do not fail closed on it.
+  return registered && registered.length > 0 ? registered : null;
+}
+
 // ---------------------------------------------------------------------------
 // Valid account statuses (B5: input validation)
 // ---------------------------------------------------------------------------
@@ -104,6 +140,23 @@ async function loadRestrictedFeatures(): Promise<readonly string[]> {
  * Load suspended feature list from config.
  * Fail-closed: config unavailable → block everything (P11).
  */
+/**
+ * The governed known-feature set: the config list if present, else the registered
+ * fallback, else null. null means no set is known — checkAccountStatus then does
+ * NOT fail closed (PF standalone, or a genuine config outage with no fallback
+ * registered), preserving the prior allow-unknown behavior rather than denying
+ * every feature.
+ */
+async function loadKnownFeatures(): Promise<readonly string[] | null> {
+  try {
+    const features = await getConfig<string[] | undefined>(KNOWN_FEATURES_KEY, undefined);
+    if (Array.isArray(features) && features.length > 0) return features;
+  } catch {
+    // fall through to the registered fallback
+  }
+  return getKnownFeaturesFallback();
+}
+
 async function loadSuspendedFeatures(): Promise<readonly string[]> {
   try {
     const features = await getConfig<string[]>(SUSPENDED_FEATURES_KEY, [
@@ -244,6 +297,24 @@ export async function checkAccountStatus(
     return {
       allowed: false,
       reason: "Invalid user ID format",
+      accountStatus: "banned",
+      feature,
+    };
+  }
+
+  // Fail closed on an unknown feature when a known set is available (Sprint 3c B-gov).
+  // If no set is known (null), do not deny — PF standalone / config outage with no
+  // registered fallback keeps the prior allow-unknown behavior.
+  const knownFeatures = await loadKnownFeatures();
+  if (knownFeatures !== null && !knownFeatures.includes(feature)) {
+    logger.info("Account status guard: unknown feature denied (fail-closed)", {
+      userId,
+      feature,
+      route: "platform/auth/account-status-guard",
+    });
+    return {
+      allowed: false,
+      reason: `Unknown feature "${feature}".`,
       accountStatus: "banned",
       feature,
     };
