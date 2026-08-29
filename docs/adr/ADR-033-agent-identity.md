@@ -69,6 +69,40 @@ kernel type needs no change when the delegation machinery lands. Its wire format
 open deliberately: the delegation standards are not yet ratified, so the field holds the
 resolved binding, not a committed credential format.
 
+### Token-lifetime governance (rung-2 delegation)
+
+A delegation token's lifetime is a property of the _work_ it authorizes, bounded by the
+_standing trust_ the agent holds — not a single global constant. Three keying axes were
+considered:
+
+- **Global** — one TTL for all tokens. Simple, but cannot lengthen a long-running agent's
+  tokens without loosening every agent's.
+- **Per-user** — TTL by who delegates. Rejected: lifetime is a property of the task, not the
+  user; keying on the user conflates trust-in-user with task-duration and multiplies the
+  config surface by the user count.
+- **Per-service / per-caller** — TTL by the binding application. Premature: agents are
+  first-party and in-process today; there are no distinct service principals to key on. This
+  axis re-enters only if/when a service-principal credential type is introduced (a separate
+  mechanism, separate ADR).
+
+**Decision: per-agent ceiling + capped per-request ask + a global hard cap.**
+
+- Each trusted-agent registry entry carries `maxTokenTtl` (seconds) — the agent's ceiling, an
+  admin-governed property alongside owner/scopes/status, changed through the same governed
+  registry config (two-person approval).
+- `/authorize` accepts an optional `requested_ttl`; the token endpoint mints with
+  `min(requested_ttl, agent.maxTokenTtl, globalHardCap)`.
+- A global hard cap (`agent.delegation.max_ttl_seconds`, platform config) is the absolute
+  ceiling no agent can exceed — the safety backstop.
+
+**No refresh tokens.** Delegation tokens are short-lived and re-minted through a fresh consent
+while the user's session is live. This removes a long-lived, high-value secret and the
+revocation machinery it would require; the cost is that user-_absent_ long-running work must
+choose an explicit pattern — pre-authorize a longer TTL (bounded by the ceiling), park-and-
+resume via the held-action seam, or (for truly autonomous work) a service principal, which is
+a separate credential type and not part of rung-2 delegation. The refresh-less contract and
+these patterns are documented for agent developers in `docs/AGENT_DELEGATION_GUIDE.md`.
+
 ## Consequences
 
 - Ships a real two-principal check now, with the user gate at full strength and the agent

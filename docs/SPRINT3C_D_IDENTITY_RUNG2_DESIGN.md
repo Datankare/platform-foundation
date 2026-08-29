@@ -59,6 +59,30 @@ The token in 3b is minted by a consent flow:
 - **Revocation:** a suspended agent in the registry fails `agentAuthorized` even with a still-valid token — the registry is checked per invocation, so revocation is immediate regardless of token TTL.
 - **Fail-closed everywhere:** missing/invalid signature, wrong `aud`, expired, replayed, `onBehalfOf` mismatch, unknown/suspended agent, out-of-scope capability → deny, reason named.
 
+### 3d-ttl. Token-lifetime governance (per-agent ceiling + capped request + global cap)
+
+Token TTL is resolved, at mint time in the `/token` endpoint, as:
+
+```
+effective_ttl = min(requested_ttl, agent.maxTokenTtl, agent.delegation.max_ttl_seconds)
+```
+
+- **`requested_ttl`** — optional, supplied by the caller on `/authorize`. Absent -> the
+  agent ceiling is used. A hint, never authoritative.
+- **`agent.maxTokenTtl`** — per-agent ceiling, a field on the trusted-agent registry record
+  (extends D-reg's `TrustedAgent`; seeded in migration 033 with a default of 300s). Governs
+  by what the agent is; raised for a long-running agent through the governed registry config
+  (two-person approval), not in code.
+- **`agent.delegation.max_ttl_seconds`** — global hard cap (platform config, default 900s).
+  The absolute ceiling no agent can exceed; the safety backstop against a mis-set per-agent
+  ceiling.
+
+Rationale (see ADR-033, Token-lifetime governance): TTL is a property of the work, bounded by
+the agent's standing trust — so per-agent ceiling, not per-user or per-service. **No refresh
+tokens**; user-absent long work uses a pre-authorized longer TTL (within the ceiling),
+park-and-resume, or a service principal (separate mechanism). The developer-facing contract
+lives in `docs/AGENT_DELEGATION_GUIDE.md`.
+
 ## 3e. Security flow diagrams
 
 Two views of the same authorization path. The first is the mental model — two
@@ -225,11 +249,14 @@ and every per-capability user-gate check all pass.
 
 This is not scope reduction — it's the full thing in verifiable units. If you'd rather fewer/larger commits, say so.
 
+**Q4 — token-lifetime model. DECIDED: per-agent ceiling + capped per-request ask + global hard cap.** TTL is a property of the work bounded by the agent's standing trust, so it keys on the agent, not the user or the caller. Each trusted-agent record carries `maxTokenTtl`; `/authorize` takes an optional `requested_ttl`; `/token` mints with `min(requested_ttl, agent.maxTokenTtl, agent.delegation.max_ttl_seconds)`. No refresh tokens — user-absent long work uses a pre-authorized longer TTL (within the ceiling), park-and-resume, or a service principal (separate mechanism). Per-user and per-service axes deferred; documented for developers in `docs/AGENT_DELEGATION_GUIDE.md`. See §3d-ttl and ADR-033.
+
 ## 6. Test matrix (complete, not sampled) — enumerated now so build is measured against it
 
 Registry: active+in-scope allow; suspended deny; unknown deny; out-of-scope deny; config-outage→fallback; fallback empty→fail-closed behavior defined.
 Token: valid allow; bad signature deny; expired deny; not-yet-valid deny; wrong aud deny; replayed jti deny; onBehalfOf≠authenticated-user deny; absent→null (non-agent).
 PKCE: correct verifier mints; wrong verifier rejected; code reuse rejected; expired code rejected.
+TTL: requested<=ceiling honored; requested>ceiling capped to ceiling; ceiling>global-cap capped to global; absent request uses ceiling.
 Consent: recorded/audited; scope honored; revocation (registry suspend) denies a still-valid token.
 Composition: two-gate AND still holds (agent-pass+user-deny → deny naming user; agent-deny → deny naming agent, user gate not consulted).
 Retirement: x-agent-role no longer grants; RECOGNIZED_AGENT_ROLES gone; callers unchanged.
