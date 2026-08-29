@@ -1,6 +1,6 @@
 # ADR-033 — Agent identity and two-principal authorization
 
-Status: Accepted (rung 1); rung 2 targeted for Sprint 3c
+Status: Accepted. Rung 2 shipped in Sprint 3c (D-reg/D-token/D-consent); rung-1 x-agent-role header retired in D-retire — attested delegation is now the sole agent-identity path.
 Date: 2026-08-16
 Relates to: ADR-030 (AUX, capability enforcement D9), ADR-031 (action identity), the
 Sprint 3c admin-governance surface (TASK-087).
@@ -115,3 +115,9 @@ these patterns are documented for agent developers in `docs/AGENT_DELEGATION_GUI
   insufficient for them and the standing-credential + delegation-binding pieces must be
   pulled forward — a decision gated on "who calls, and when," recorded here so it is a
   conscious trigger rather than a surprise.
+- Rung 2 shipped in Sprint 3c and rung 1 was retired in the same sprint (D-retire): the
+  `x-agent-role` header and `RECOGNIZED_AGENT_ROLES` allowlist are gone, so a signed
+  delegation token is the only thing that resolves an agent identity. No production agents
+  were ever on the header path, so the retirement was a clean removal with no migration
+  window. An unconfigured signing key now fails closed (no agent calls) rather than falling
+  back to a header.

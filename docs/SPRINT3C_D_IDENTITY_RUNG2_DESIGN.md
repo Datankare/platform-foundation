@@ -12,7 +12,7 @@ Rung 2 = **attested delegation**, four named pieces:
 3. **OAuth 2.1 / PKCE consent** — the user consents to an agent acting for them, at a given scope.
 4. **Governed trusted-agent registry** — owner / scope / lifecycle per agent, with the admin surface to manage it (same governance surface as approval policy and capability map).
 
-And the retirement: the rung-1 `RECOGNIZED_AGENT_ROLES` allowlist and the `x-agent-role` header trust go away. The two function bodies (`resolveAgentIdentity`, `agentAuthorized`) get new bodies; **their signatures and every caller stay unchanged** (ADR-033's localized-swap guarantee).
+And the retirement (D-retire, done): the rung-1 `RECOGNIZED_AGENT_ROLES` allowlist and the `x-agent-role` header trust are gone. The two function bodies (`resolveAgentIdentity`, `agentAuthorized`) get new bodies; **their signatures and every caller stay unchanged** (ADR-033's localized-swap guarantee).
 
 ## 2. The two-repo boundary (GOTCHA-52, and ADR-033's "PF never holds Playform vocabulary")
 
@@ -35,13 +35,13 @@ A config-governed registry, same pattern as C's capability map (proven, gate-abl
 
 ### 3b. Standing agent credential + attested delegation — D3 (`resolveAgentIdentity` new body)
 
-Rung 1 read `x-agent-role` and trusted it. Rung 2:
+Rung 1 read `x-agent-role` and trusted it; that path is retired. Rung 2 (the sole path now):
 
 - The request carries a **delegation token** (Authorization: `Bearer <delegation-jwt>` on an agent header distinct from the user JWT, OR a dedicated `x-agent-delegation` header — chosen in §5 Q1).
 - `resolveAgentIdentity` **validates** that token: signature against the issuer, `exp`/`nbf`/`iat` (expiry + not-before), `aud` (this endpoint), `jti` (replay defense — see §3d), and extracts the bound `{ agentId, onBehalfOf (user), scope[] }`.
 - It cross-checks `onBehalfOf` against the **authenticated** `userId` (the verified Cognito JWT from the user gate). A delegation token whose `onBehalfOf` ≠ the authenticated user is rejected — the token attests _this_ user delegated to _this_ agent. This is the anti-impersonation core (T9).
 - On success it returns `AgentIdentity{ actorType:"agent", actorId: agentId, agentRole, onBehalfOf: userId, delegation: { onBehalfOf: userId, scope, method: "oauth2.1-pkce" } }`.
-- Absent token → `null` (direct non-agent call), exactly as rung 1.
+- Absent token → `null` (direct non-agent call). The retired header is ignored.
 
 ### 3c. OAuth 2.1 / PKCE consent flow — D3
 
@@ -92,34 +92,30 @@ should be scrutinized before shipping the token validator.
 ### Overview — the two principals
 
 A request must satisfy two independent gates (the two-principal check, ADR-033).
-Identity is resolved via the rung-2 attested-delegation token when present, else the
-rung-1 role header (retired in D-retire). Any gate failing denies, fail-closed.
+Identity is resolved solely via the rung-2 attested-delegation token; the rung-1 role header
+was retired in D-retire, so an agent call is a valid token or it is nothing. Any gate failing
+denies, fail-closed.
 
-<svg xmlns="http://www.w3.org/2000/svg" width="680" viewBox="0 0 680 900" role="img" aria-label="Two-principal agent authorization overview">
+<svg xmlns="http://www.w3.org/2000/svg" width="680" viewBox="0 0 680 760" role="img" aria-label="Two-principal agent authorization overview (delegation-only)">
 <defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#888" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
-<style>.b{stroke-width:1;rx:8}.t{font:500 14px sans-serif;fill:#222}.s{font:400 12px sans-serif;fill:#555}.a{stroke:#888;stroke-width:1.5;fill:none}</style>
+<style>.t{font:500 14px sans-serif;fill:#222}.s{font:400 12px sans-serif;fill:#555}.a{stroke:#888;stroke-width:1.5;fill:none}</style>
 <rect x="220" y="40" width="240" height="44" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t" x="340" y="67" text-anchor="middle">Incoming agent request</text>
 <line x1="340" y1="84" x2="340" y2="108" class="a" marker-end="url(#ar)"/>
 <rect x="190" y="110" width="300" height="56" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t" x="340" y="134" text-anchor="middle">User gate — verify Cognito JWT</text><text class="s" x="340" y="154" text-anchor="middle">principal 1 · already rung-2</text>
 <line x1="340" y1="166" x2="340" y2="206" class="a" marker-end="url(#ar)"/>
-<rect x="210" y="208" width="260" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t" x="340" y="232" text-anchor="middle">Resolve agent identity</text><text class="s" x="340" y="252" text-anchor="middle">which path attests the agent?</text>
-<line x1="300" y1="264" x2="215" y2="300" class="a" marker-end="url(#ar)"/>
-<line x1="380" y1="264" x2="465" y2="300" class="a" marker-end="url(#ar)"/>
-<rect x="55" y="302" width="270" height="96" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t" x="190" y="326" text-anchor="middle">Rung 2 — attested delegation</text><text class="s" x="190" y="348" text-anchor="middle">x-agent-delegation token (RS256)</text><text class="s" x="190" y="366" text-anchor="middle">sig · exp · aud · onBehalfOf=user</text><text class="s" x="190" y="384" text-anchor="middle">jti replay · scope bound</text>
-<rect x="355" y="302" width="270" height="96" rx="8" fill="#FAEEDA" stroke="#854F0B"/><text class="t" x="490" y="326" text-anchor="middle">Rung 1 — role header</text><text class="s" x="490" y="348" text-anchor="middle">x-agent-role (verified surface)</text><text class="s" x="490" y="366" text-anchor="middle">no delegation binding</text><text class="s" x="490" y="384" text-anchor="middle">legacy · retired in D-retire</text>
-<line x1="200" y1="398" x2="310" y2="442" class="a" marker-end="url(#ar)"/>
-<line x1="480" y1="398" x2="370" y2="442" class="a" marker-end="url(#ar)"/>
-<rect x="210" y="444" width="260" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t" x="340" y="468" text-anchor="middle">AgentIdentity resolved</text><text class="s" x="340" y="488" text-anchor="middle">delegation binding if rung-2</text>
-<line x1="340" y1="500" x2="340" y2="540" class="a" marker-end="url(#ar)"/>
-<rect x="190" y="542" width="300" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7"/><text class="t" x="340" y="566" text-anchor="middle">Agent gate — trusted registry</text><text class="s" x="340" y="586" text-anchor="middle">principal 2 · active + in scope</text>
-<line x1="340" y1="598" x2="340" y2="638" class="a" marker-end="url(#ar)"/>
-<rect x="190" y="640" width="300" height="56" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t" x="340" y="664" text-anchor="middle">User gate — account status</text><text class="s" x="340" y="684" text-anchor="middle">each feature · fail-closed unknown</text>
-<line x1="340" y1="696" x2="340" y2="736" class="a" marker-end="url(#ar)"/>
-<rect x="230" y="738" width="220" height="44" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t" x="340" y="765" text-anchor="middle">Both principals pass?</text>
-<line x1="320" y1="782" x2="255" y2="812" class="a" marker-end="url(#ar)"/>
-<line x1="360" y1="782" x2="435" y2="812" class="a" marker-end="url(#ar)"/>
-<rect x="150" y="814" width="170" height="44" rx="8" fill="#EAF3DE" stroke="#3B6D11"/><text class="t" x="235" y="841" text-anchor="middle">Allow</text>
-<rect x="360" y="814" width="170" height="44" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="t" x="445" y="833" text-anchor="middle">Deny</text><text class="s" x="445" y="851" text-anchor="middle">any gate · fail-closed</text>
+<rect x="150" y="208" width="380" height="76" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t" x="340" y="230" text-anchor="middle">Resolve agent identity — attested delegation only</text><text class="s" x="340" y="250" text-anchor="middle">x-agent-delegation token (RS256): sig · exp · aud</text><text class="s" x="340" y="268" text-anchor="middle">onBehalfOf=user · jti replay · scope bound</text>
+<line x1="340" y1="284" x2="340" y2="324" class="a" marker-end="url(#ar)"/>
+<rect x="210" y="326" width="260" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t" x="340" y="350" text-anchor="middle">AgentIdentity resolved</text><text class="s" x="340" y="370" text-anchor="middle">delegation binding, or null → deny</text>
+<line x1="340" y1="382" x2="340" y2="422" class="a" marker-end="url(#ar)"/>
+<rect x="190" y="424" width="300" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7"/><text class="t" x="340" y="448" text-anchor="middle">Agent gate — trusted registry</text><text class="s" x="340" y="468" text-anchor="middle">principal 2 · active + in scope</text>
+<line x1="340" y1="480" x2="340" y2="520" class="a" marker-end="url(#ar)"/>
+<rect x="190" y="522" width="300" height="56" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t" x="340" y="546" text-anchor="middle">User gate — account status</text><text class="s" x="340" y="566" text-anchor="middle">each feature · fail-closed unknown</text>
+<line x1="340" y1="578" x2="340" y2="618" class="a" marker-end="url(#ar)"/>
+<rect x="230" y="620" width="220" height="44" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t" x="340" y="647" text-anchor="middle">Both principals pass?</text>
+<line x1="320" y1="664" x2="255" y2="694" class="a" marker-end="url(#ar)"/>
+<line x1="360" y1="664" x2="435" y2="694" class="a" marker-end="url(#ar)"/>
+<rect x="150" y="696" width="170" height="44" rx="8" fill="#EAF3DE" stroke="#3B6D11"/><text class="t" x="235" y="723" text-anchor="middle">Allow</text>
+<rect x="360" y="696" width="170" height="44" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="t" x="445" y="715" text-anchor="middle">Deny</text><text class="s" x="445" y="733" text-anchor="middle">any gate · fail-closed</text>
 </svg>
 
 ### Complete — every failure path
@@ -127,49 +123,51 @@ rung-1 role header (retired in D-retire). Any gate failing denies, fail-closed.
 Each check is a row on the left happy-path spine; each exits right to its own
 fail-closed deny.
 
-<svg xmlns="http://www.w3.org/2000/svg" width="680" viewBox="0 0 680 1120" role="img" aria-label="Complete agent authorization flow with every failure path">
+<svg xmlns="http://www.w3.org/2000/svg" width="680" viewBox="0 0 680 1060" role="img" aria-label="Complete agent authorization flow with every failure path (delegation-only)">
 <defs><marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#888" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <style>.t2{font:500 14px sans-serif;fill:#222}.s2{font:400 12px sans-serif;fill:#555}.a2{stroke:#888;stroke-width:1.5;fill:none}.d2{stroke:#A32D2D;stroke-width:1.5;fill:none}</style>
-<rect x="470" y="40" width="180" height="1020" rx="12" fill="none" stroke="#A32D2D" stroke-width="0.5" stroke-dasharray="4 4"/><text class="s2" x="560" y="58" text-anchor="middle" fill="#A32D2D">Deny · fail-closed</text>
+<rect x="470" y="40" width="180" height="960" rx="12" fill="none" stroke="#A32D2D" stroke-width="0.5" stroke-dasharray="4 4"/><text class="s2" x="560" y="58" text-anchor="middle" fill="#A32D2D">Deny · fail-closed</text>
 <rect x="40" y="44" width="300" height="40" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t2" x="190" y="68" text-anchor="middle">Incoming agent request</text>
 <line x1="190" y1="84" x2="190" y2="104" class="a2" marker-end="url(#ar2)"/>
 <rect x="40" y="106" width="300" height="52" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t2" x="190" y="128" text-anchor="middle">User gate — verify Cognito JWT</text><text class="s2" x="190" y="147" text-anchor="middle">principal 1 · already rung-2</text>
 <line x1="340" y1="132" x2="486" y2="132" class="d2" marker-end="url(#ar2)"/><rect x="490" y="112" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="136" text-anchor="middle">invalid / expired JWT</text>
 <line x1="190" y1="158" x2="190" y2="178" class="a2" marker-end="url(#ar2)"/>
 <rect x="40" y="180" width="300" height="52" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t2" x="190" y="202" text-anchor="middle">Delegation token present?</text><text class="s2" x="190" y="221" text-anchor="middle">x-agent-delegation header</text>
-<line x1="190" y1="232" x2="190" y2="262" class="a2" marker-end="url(#ar2)"/><line x1="290" y1="206" x2="486" y2="206" class="a2" marker-end="url(#ar2)" stroke="#854F0B"/><text class="s2" x="388" y="199" text-anchor="middle" fill="#854F0B">no → rung 1</text>
-<rect x="40" y="264" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="288" text-anchor="middle">Verify RS256 signature</text>
-<line x1="340" y1="284" x2="486" y2="284" class="d2" marker-end="url(#ar2)"/><rect x="490" y="264" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="288" text-anchor="middle">bad signature</text>
+<line x1="340" y1="206" x2="486" y2="206" class="d2" marker-end="url(#ar2)"/><rect x="490" y="186" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="210" text-anchor="middle">absent → not an agent</text>
+<line x1="190" y1="232" x2="190" y2="262" class="a2" marker-end="url(#ar2)"/>
+<rect x="40" y="264" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="288" text-anchor="middle">Signing key configured?</text>
+<line x1="340" y1="284" x2="486" y2="284" class="d2" marker-end="url(#ar2)"/><rect x="490" y="264" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="288" text-anchor="middle">no key → fail-closed</text>
 <line x1="190" y1="304" x2="190" y2="320" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="322" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="346" text-anchor="middle">Check exp / nbf / iss / aud</text>
-<line x1="340" y1="342" x2="486" y2="342" class="d2" marker-end="url(#ar2)"/><rect x="490" y="322" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="346" text-anchor="middle">expired / wrong aud</text>
+<rect x="40" y="322" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="346" text-anchor="middle">Verify RS256 signature</text>
+<line x1="340" y1="342" x2="486" y2="342" class="d2" marker-end="url(#ar2)"/><rect x="490" y="322" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="346" text-anchor="middle">bad signature</text>
 <line x1="190" y1="362" x2="190" y2="378" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="380" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="404" text-anchor="middle">onBehalfOf = authenticated user</text>
-<line x1="340" y1="400" x2="486" y2="400" class="d2" marker-end="url(#ar2)"/><rect x="490" y="380" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="404" text-anchor="middle">T9 mismatch</text>
+<rect x="40" y="380" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="404" text-anchor="middle">Check exp / nbf / iss / aud</text>
+<line x1="340" y1="400" x2="486" y2="400" class="d2" marker-end="url(#ar2)"/><rect x="490" y="380" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="404" text-anchor="middle">expired / wrong aud</text>
 <line x1="190" y1="420" x2="190" y2="436" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="438" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="462" text-anchor="middle">Extract sub (agentId)</text>
-<line x1="340" y1="458" x2="486" y2="458" class="d2" marker-end="url(#ar2)"/><rect x="490" y="438" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="462" text-anchor="middle">missing sub</text>
+<rect x="40" y="438" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="462" text-anchor="middle">onBehalfOf = authenticated user</text>
+<line x1="340" y1="458" x2="486" y2="458" class="d2" marker-end="url(#ar2)"/><rect x="490" y="438" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="462" text-anchor="middle">T9 mismatch</text>
 <line x1="190" y1="478" x2="190" y2="494" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="496" width="300" height="52" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="518" text-anchor="middle">jti replay check (cache)</text><text class="s2" x="190" y="537" text-anchor="middle">outage → treat as seen</text>
-<line x1="340" y1="522" x2="486" y2="522" class="d2" marker-end="url(#ar2)"/><rect x="490" y="502" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="526" text-anchor="middle">replay / cache down</text>
-<line x1="190" y1="548" x2="190" y2="566" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="568" width="300" height="52" rx="8" fill="#FAEEDA" stroke="#854F0B"/><text class="t2" x="190" y="590" text-anchor="middle">Rung 1 — role header (legacy)</text><text class="s2" x="190" y="609" text-anchor="middle">x-agent-role · retired in D-retire</text>
-<line x1="190" y1="620" x2="190" y2="640" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="642" width="300" height="40" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t2" x="190" y="666" text-anchor="middle">AgentIdentity resolved</text>
-<line x1="190" y1="682" x2="190" y2="702" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="704" width="300" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7"/><text class="t2" x="190" y="728" text-anchor="middle">Agent registered + active?</text>
-<line x1="340" y1="724" x2="486" y2="724" class="d2" marker-end="url(#ar2)"/><rect x="490" y="704" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="728" text-anchor="middle">unknown / suspended</text>
-<line x1="190" y1="744" x2="190" y2="760" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="762" width="300" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7"/><text class="t2" x="190" y="786" text-anchor="middle">Capability in agent scope?</text>
-<line x1="340" y1="782" x2="486" y2="782" class="d2" marker-end="url(#ar2)"/><rect x="490" y="762" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="786" text-anchor="middle">out of scope</text>
-<line x1="190" y1="802" x2="190" y2="820" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="822" width="300" height="52" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t2" x="190" y="844" text-anchor="middle">Each mapped feature allowed?</text><text class="s2" x="190" y="863" text-anchor="middle">account status · principal 1</text>
-<line x1="340" y1="848" x2="486" y2="848" class="d2" marker-end="url(#ar2)"/><rect x="490" y="828" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="852" text-anchor="middle">restricted / suspended</text>
-<line x1="190" y1="874" x2="190" y2="890" class="a2" marker-end="url(#ar2)"/>
-<rect x="40" y="892" width="300" height="40" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t2" x="190" y="916" text-anchor="middle">Feature in known-features?</text>
-<line x1="340" y1="912" x2="486" y2="912" class="d2" marker-end="url(#ar2)"/><rect x="490" y="892" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="916" text-anchor="middle">unknown feature</text>
-<line x1="190" y1="932" x2="190" y2="960" class="a2" marker-end="url(#ar2)"/>
-<rect x="90" y="962" width="200" height="48" rx="8" fill="#EAF3DE" stroke="#3B6D11"/><text class="t2" x="190" y="982" text-anchor="middle">Allow</text><text class="s2" x="190" y="1000" text-anchor="middle">both principals passed</text>
+<rect x="40" y="496" width="300" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="520" text-anchor="middle">Extract sub (agentId)</text>
+<line x1="340" y1="516" x2="486" y2="516" class="d2" marker-end="url(#ar2)"/><rect x="490" y="496" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="520" text-anchor="middle">missing sub</text>
+<line x1="190" y1="536" x2="190" y2="552" class="a2" marker-end="url(#ar2)"/>
+<rect x="40" y="554" width="300" height="52" rx="8" fill="#E1F5EE" stroke="#0F6E56"/><text class="t2" x="190" y="576" text-anchor="middle">jti replay check (cache)</text><text class="s2" x="190" y="595" text-anchor="middle">outage → treat as seen</text>
+<line x1="340" y1="580" x2="486" y2="580" class="d2" marker-end="url(#ar2)"/><rect x="490" y="560" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="584" text-anchor="middle">replay / cache down</text>
+<line x1="190" y1="606" x2="190" y2="626" class="a2" marker-end="url(#ar2)"/>
+<rect x="40" y="628" width="300" height="40" rx="8" fill="#F1EFE8" stroke="#5F5E5A"/><text class="t2" x="190" y="652" text-anchor="middle">AgentIdentity resolved</text>
+<line x1="190" y1="668" x2="190" y2="688" class="a2" marker-end="url(#ar2)"/>
+<rect x="40" y="690" width="300" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7"/><text class="t2" x="190" y="714" text-anchor="middle">Agent registered + active?</text>
+<line x1="340" y1="710" x2="486" y2="710" class="d2" marker-end="url(#ar2)"/><rect x="490" y="690" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="714" text-anchor="middle">unknown / suspended</text>
+<line x1="190" y1="730" x2="190" y2="746" class="a2" marker-end="url(#ar2)"/>
+<rect x="40" y="748" width="300" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7"/><text class="t2" x="190" y="772" text-anchor="middle">Capability in agent scope?</text>
+<line x1="340" y1="768" x2="486" y2="768" class="d2" marker-end="url(#ar2)"/><rect x="490" y="748" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="772" text-anchor="middle">out of scope</text>
+<line x1="190" y1="788" x2="190" y2="806" class="a2" marker-end="url(#ar2)"/>
+<rect x="40" y="808" width="300" height="52" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t2" x="190" y="830" text-anchor="middle">Each mapped feature allowed?</text><text class="s2" x="190" y="849" text-anchor="middle">account status · principal 1</text>
+<line x1="340" y1="834" x2="486" y2="834" class="d2" marker-end="url(#ar2)"/><rect x="490" y="814" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="838" text-anchor="middle">restricted / suspended</text>
+<line x1="190" y1="860" x2="190" y2="876" class="a2" marker-end="url(#ar2)"/>
+<rect x="40" y="878" width="300" height="40" rx="8" fill="#E6F1FB" stroke="#185FA5"/><text class="t2" x="190" y="902" text-anchor="middle">Feature in known-features?</text>
+<line x1="340" y1="898" x2="486" y2="898" class="d2" marker-end="url(#ar2)"/><rect x="490" y="878" width="150" height="40" rx="8" fill="#FCEBEB" stroke="#A32D2D"/><text class="s2" x="565" y="902" text-anchor="middle">unknown feature</text>
+<line x1="190" y1="918" x2="190" y2="946" class="a2" marker-end="url(#ar2)"/>
+<rect x="90" y="948" width="200" height="48" rx="8" fill="#EAF3DE" stroke="#3B6D11"/><text class="t2" x="190" y="968" text-anchor="middle">Allow</text><text class="s2" x="190" y="986" text-anchor="middle">both principals passed</text>
 </svg>
 
 ### Enumerated failure paths (spec — complete list)
@@ -183,7 +181,7 @@ identity resolution.
 Rung-2 delegation validation (`resolveDelegatedIdentity`), each a `return null` ->
 deny:
 
-- no public key configured -> delegation disabled (falls through to rung-1)
+- no public key configured -> no agent identity resolved (fail-closed; rung-1 retired, so there is no header to fall back to)
 - bad signature or non-RS256 algorithm
 - expired (`exp`) or not-yet-valid (`nbf`)
 - wrong audience (`aud`) or issuer (`iss`)
@@ -193,10 +191,10 @@ deny:
 - cache outage during the replay check -> treated as "cannot prove unseen" -> deny
   (fails closed, never open)
 - present-but-invalid token while keys ARE configured -> deny, with NO downgrade to
-  the rung-1 header path
+  a header path (there is none; rung-1 retired)
 
-Rung-1 header path (reached only when no delegation header is present, or no key is
-configured): absent `x-agent-role` -> null (non-agent call).
+Absent delegation header -> null (a direct, non-agent call). The retired `x-agent-role`
+header is ignored entirely — it no longer resolves an agent identity.
 
 Agent gate (principal 2, `agentAuthorized` / trusted registry): actor is not an
 agent · unknown agent · suspended agent · capability outside the agent's scope.
