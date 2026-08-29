@@ -1,6 +1,6 @@
 # ADR-033 — Agent identity and two-principal authorization
 
-Status: Accepted (rung 1); rung 2 targeted for Sprint 3c
+Status: Accepted. Rung 2 shipped in Sprint 3c (D-reg/D-token/D-consent); rung-1 x-agent-role header retired in D-retire — attested delegation is now the sole agent-identity path.
 Date: 2026-08-16
 Relates to: ADR-030 (AUX, capability enforcement D9), ADR-031 (action identity), the
 Sprint 3c admin-governance surface (TASK-087).
@@ -69,6 +69,40 @@ kernel type needs no change when the delegation machinery lands. Its wire format
 open deliberately: the delegation standards are not yet ratified, so the field holds the
 resolved binding, not a committed credential format.
 
+### Token-lifetime governance (rung-2 delegation)
+
+A delegation token's lifetime is a property of the _work_ it authorizes, bounded by the
+_standing trust_ the agent holds — not a single global constant. Three keying axes were
+considered:
+
+- **Global** — one TTL for all tokens. Simple, but cannot lengthen a long-running agent's
+  tokens without loosening every agent's.
+- **Per-user** — TTL by who delegates. Rejected: lifetime is a property of the task, not the
+  user; keying on the user conflates trust-in-user with task-duration and multiplies the
+  config surface by the user count.
+- **Per-service / per-caller** — TTL by the binding application. Premature: agents are
+  first-party and in-process today; there are no distinct service principals to key on. This
+  axis re-enters only if/when a service-principal credential type is introduced (a separate
+  mechanism, separate ADR).
+
+**Decision: per-agent ceiling + capped per-request ask + a global hard cap.**
+
+- Each trusted-agent registry entry carries `maxTokenTtl` (seconds) — the agent's ceiling, an
+  admin-governed property alongside owner/scopes/status, changed through the same governed
+  registry config (two-person approval).
+- `/authorize` accepts an optional `requested_ttl`; the token endpoint mints with
+  `min(requested_ttl, agent.maxTokenTtl, globalHardCap)`.
+- A global hard cap (`agent.delegation.max_ttl_seconds`, platform config) is the absolute
+  ceiling no agent can exceed — the safety backstop.
+
+**No refresh tokens.** Delegation tokens are short-lived and re-minted through a fresh consent
+while the user's session is live. This removes a long-lived, high-value secret and the
+revocation machinery it would require; the cost is that user-_absent_ long-running work must
+choose an explicit pattern — pre-authorize a longer TTL (bounded by the ceiling), park-and-
+resume via the held-action seam, or (for truly autonomous work) a service principal, which is
+a separate credential type and not part of rung-2 delegation. The refresh-less contract and
+these patterns are documented for agent developers in `docs/AGENT_DELEGATION_GUIDE.md`.
+
 ## Consequences
 
 - Ships a real two-principal check now, with the user gate at full strength and the agent
@@ -81,3 +115,9 @@ resolved binding, not a committed credential format.
   insufficient for them and the standing-credential + delegation-binding pieces must be
   pulled forward — a decision gated on "who calls, and when," recorded here so it is a
   conscious trigger rather than a surprise.
+- Rung 2 shipped in Sprint 3c and rung 1 was retired in the same sprint (D-retire): the
+  `x-agent-role` header and `RECOGNIZED_AGENT_ROLES` allowlist are gone, so a signed
+  delegation token is the only thing that resolves an agent identity. No production agents
+  were ever on the header path, so the retirement was a clean removal with no migration
+  window. An unconfigured signing key now fails closed (no agent calls) rather than falling
+  back to a header.
