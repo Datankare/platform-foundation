@@ -80,6 +80,12 @@ from day one.
 
 See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability map.
 
+### Agent Governance + Identity (Sprint 3c — complete)
+
+- ✅ Agent identity rung 2 (ADR-033) — attested delegation: a governed trusted-agent registry, RS256 delegation tokens (verify + OAuth 2.1/PKCE mint), governed token TTL (per-agent ceiling + global cap), rung-1 header retired. Two-principal check (user gate + agent gate), fail-closed throughout.
+- ✅ Per-account feature restriction (ADR-034) — block a specific feature for a specific user, orthogonal to account status, fail-closed.
+- ✅ GenAI-native governance admin (ADR-035) — administer the registry, capability map, approval policy, and per-account blocks through the natural-language admin (prompt → AI plan → confirm → execute), not forms. A reusable platform capability: vocabulary-free tools over governed config, inherited by any consumer with agents.
+
 ### Infrastructure (ready to use)
 
 - ✅ Next.js 16 + TypeScript strict + Tailwind CSS
@@ -104,21 +110,23 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Documentation
 
-| Document                            | Purpose                                                              |
-| ----------------------------------- | -------------------------------------------------------------------- |
-| `docs/adr/ADR-001–027`              | 27 Architecture Decision Records                                     |
-| `docs/TAD.md`                       | Technical Architecture Document                                      |
-| `docs/ROADMAP.md`                   | 10-phase product roadmap with versioned changelog                    |
-| `docs/GENAI_ROADMAP.md`             | GenAI-native capability map — accomplished and forthcoming           |
-| `docs/GENAI_MANIFESTO.md`           | The 18 GenAI-native principles — what "GenAI-native" means           |
-| `docs/ENGINEERING_LEARNINGS.md`     | Adopted engineering principles (L1–L21) and learning log             |
-| `docs/PHASE4_PLAN.md`               | Phase 4 sprint plan — Content Safety + Social + Agent Runtime        |
-| `docs/RAMPS_PHASE4_ASSESSMENT.md`   | Phase 4 RAMPS assessment (all 5 pillars GREEN)                       |
-| `docs/RAMPS_PHASE1–3_ASSESSMENT.md` | Earlier phase baselines                                              |
-| `docs/SECURITY_DEBT.md`             | Tracked deferrals with phase assignments                             |
-| `docs/OWASP_CONTROLS.md`            | Verified OWASP Top 10 controls                                       |
-| `docs/SUSTAINABILITY_CHECKLIST.md`  | 22-point gate + 8-point accessibility gate + phase boundary protocol |
-| `CONTRIBUTING.md`                   | Branch workflow, seed separation, standing rules                     |
+| Document                                      | Purpose                                                                            |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `docs/adr/ADR-001–027`                        | 27 Architecture Decision Records                                                   |
+| `docs/TAD.md`                                 | Technical Architecture Document                                                    |
+| `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
+| `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
+| `docs/SPRINT3C_UX_GOVERNANCE_ADMIN_DESIGN.md` | GenAI-native governance admin — the reusable governance-panel capability (ADR-035) |
+| `docs/RELEASE_NOTES.md`                       | Release notes — new platform capabilities per release                              |
+| `docs/GENAI_MANIFESTO.md`                     | The 18 GenAI-native principles — what "GenAI-native" means                         |
+| `docs/ENGINEERING_LEARNINGS.md`               | Adopted engineering principles (L1–L21) and learning log                           |
+| `docs/PHASE4_PLAN.md`                         | Phase 4 sprint plan — Content Safety + Social + Agent Runtime                      |
+| `docs/RAMPS_PHASE4_ASSESSMENT.md`             | Phase 4 RAMPS assessment (all 5 pillars GREEN)                                     |
+| `docs/RAMPS_PHASE1–3_ASSESSMENT.md`           | Earlier phase baselines                                                            |
+| `docs/SECURITY_DEBT.md`                       | Tracked deferrals with phase assignments                                           |
+| `docs/OWASP_CONTROLS.md`                      | Verified OWASP Top 10 controls                                                     |
+| `docs/SUSTAINABILITY_CHECKLIST.md`            | 22-point gate + 8-point accessibility gate + phase boundary protocol               |
+| `CONTRIBUTING.md`                             | Branch workflow, seed separation, standing rules                                   |
 
 ### Consumer Inheritance
 
