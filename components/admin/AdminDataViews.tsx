@@ -402,3 +402,121 @@ export function PlatformConfigDataView({
     </div>
   );
 }
+
+// ── Agent governance (Sprint 3c U4/U6) ──────────────────────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+export function TrustedAgentsDataView({ data }: { data: any }) {
+  const pairs: [string, any][] = Array.isArray(data?.agents) ? data.agents : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Trusted agents</h2>
+      {pairs.length === 0 ? (
+        <p className="text-gray-500 text-sm">No agents registered.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Agent
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Owner
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Scope
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Status
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Token ceiling
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {pairs.map(([id, rec]) => (
+                <tr key={id}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50 font-mono text-xs">
+                    {id}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {rec.owner}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {(rec.scopes || []).join(", ")}
+                  </td>
+                  <td className="py-3 px-4 border-b border-gray-800/50">
+                    <span
+                      className={
+                        rec.status === "active" ? "text-green-400" : "text-red-400"
+                      }
+                    >
+                      {rec.status}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {rec.maxTokenTtl ? `${rec.maxTokenTtl}s` : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PerAccountRestrictionsDataView({ data }: { data: any }) {
+  const rows: any[] = Array.isArray(data?.restrictions) ? data.restrictions : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Per-account feature control</h2>
+      {rows.length === 0 ? (
+        <p className="text-gray-500 text-sm">No per-account blocks in effect.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  User
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Blocked feature
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Reason
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  By
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50">
+                    {r.user_id}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50 font-mono text-xs">
+                    {r.feature}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {r.reason || "—"}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {r.created_by}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

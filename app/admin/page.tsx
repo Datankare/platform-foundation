@@ -13,6 +13,8 @@ import {
   AuditDataView,
   GuestConfigDataView,
   PasswordPolicyDataView,
+  TrustedAgentsDataView,
+  PerAccountRestrictionsDataView,
 } from "@/components/admin/AdminDataViews";
 
 interface ActionPlan {
@@ -52,6 +54,8 @@ const ENDPOINTS: Record<string, string> = {
   audit: "/api/admin/audit?offset=0",
   "guest-config": "/api/admin/guest-config",
   "password-policy": "/api/admin/password-policy",
+  "agent-registry": "/api/admin/agent-registry",
+  "per-account": "/api/admin/per-account",
 };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -63,6 +67,8 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   audit: AuditDataView,
   "guest-config": GuestConfigDataView,
   "password-policy": PasswordPolicyDataView,
+  "agent-registry": TrustedAgentsDataView,
+  "per-account": PerAccountRestrictionsDataView,
 };
 
 export default function AdminPage() {

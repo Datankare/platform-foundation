@@ -9,7 +9,9 @@ export type AdminSection =
   | "audit"
   | "guest-config"
   | "password-policy"
-  | "platform-config";
+  | "platform-config"
+  | "agent-registry"
+  | "per-account";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -70,6 +72,18 @@ const NAV_ITEMS: {
     label: "Platform Config",
     icon: "⚡",
     permission: "admin_manage_config",
+  },
+  {
+    section: "agent-registry",
+    label: "Trusted Agents",
+    icon: "🤖",
+    permission: "admin_manage_agents",
+  },
+  {
+    section: "per-account",
+    label: "Per-Account",
+    icon: "🔒",
+    permission: "admin_manage_account_restrictions",
   },
 ];
 

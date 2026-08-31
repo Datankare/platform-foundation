@@ -16,3 +16,10 @@ export {
 export { handleCreateEntitlementGroup } from "./entitlements";
 export { handleUpdateGuestConfig, handleUpdatePasswordPolicy } from "./config";
 export { handleSearch } from "./search";
+export {
+  handleRegisterAgent,
+  handleSuspendAgent,
+  handleSetAgentScope,
+  handleSetAgentTtl,
+} from "./agents";
+export { handleBlockUserFeature, handleUnblockUserFeature } from "./restrictions";

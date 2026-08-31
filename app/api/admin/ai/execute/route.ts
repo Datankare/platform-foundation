@@ -18,6 +18,12 @@ import {
   handleUpdateGuestConfig,
   handleUpdatePasswordPolicy,
   handleSearch,
+  handleRegisterAgent,
+  handleSuspendAgent,
+  handleSetAgentScope,
+  handleSetAgentTtl,
+  handleBlockUserFeature,
+  handleUnblockUserFeature,
 } from "@/app/api/admin/ai/handlers";
 
 type ActionResult = {
@@ -41,6 +47,12 @@ const toolHandlers: Record<
   update_guest_config: handleUpdateGuestConfig,
   update_password_policy: handleUpdatePasswordPolicy,
   search: (input) => handleSearch(input),
+  register_agent: handleRegisterAgent,
+  suspend_agent: handleSuspendAgent,
+  set_agent_scope: handleSetAgentScope,
+  set_agent_ttl: handleSetAgentTtl,
+  block_user_feature: handleBlockUserFeature,
+  unblock_user_feature: handleUnblockUserFeature,
 };
 
 export async function POST(request: NextRequest) {
