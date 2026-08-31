@@ -643,3 +643,46 @@ export function CapabilitiesDataView({ data }: { data: any }) {
     </div>
   );
 }
+
+// ── Capability→feature mapping (U3) ─────────────────────────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+export function CapabilityMappingDataView({ data }: { data: any }) {
+  const pairs: [string, string[]][] = Array.isArray(data?.mappings) ? data.mappings : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Capability → feature mapping</h2>
+      {pairs.length === 0 ? (
+        <p className="text-gray-500 text-sm">No mappings configured.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Capability
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Required features
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {pairs.map(([cap, feats]) => (
+                <tr key={cap}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50 font-mono text-xs">
+                    {cap}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {(feats || []).join(", ")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -13,7 +13,8 @@ export type AdminSection =
   | "agent-registry"
   | "per-account"
   | "approval-policy"
-  | "capabilities";
+  | "capabilities"
+  | "capability-mapping";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -98,6 +99,12 @@ const NAV_ITEMS: {
     label: "Capabilities",
     icon: "🧩",
     permission: "admin_view_audit",
+  },
+  {
+    section: "capability-mapping",
+    label: "Capability Map",
+    icon: "🗺️",
+    permission: "admin_manage_config",
   },
 ];
 

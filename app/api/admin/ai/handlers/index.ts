@@ -24,3 +24,4 @@ export {
 } from "./agents";
 export { handleBlockUserFeature, handleUnblockUserFeature } from "./restrictions";
 export { handleSetApprovalPolicy } from "./approval";
+export { handleSetCapabilityMapping } from "./mapping";

@@ -97,6 +97,10 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
       const n = input.rules?.length || 0;
       return `Set approval policy — default approver "${input.default_approver}", ${n} rule${n === 1 ? "" : "s"} (mints a new version)`;
     }
+    case "set_capability_mapping":
+      return input.remove
+        ? `Remove capability mapping "${input.capability}"`
+        : `Map capability "${input.capability}" to features: ${(input.features || []).join(", ") || "none"}`;
     case "search":
       return `Search ${input.table} table`;
     case "search_audit":

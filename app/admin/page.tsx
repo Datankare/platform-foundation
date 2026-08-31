@@ -17,6 +17,7 @@ import {
   PerAccountRestrictionsDataView,
   ApprovalPolicyDataView,
   CapabilitiesDataView,
+  CapabilityMappingDataView,
 } from "@/components/admin/AdminDataViews";
 
 interface ActionPlan {
@@ -60,6 +61,7 @@ const ENDPOINTS: Record<string, string> = {
   "per-account": "/api/admin/per-account",
   "approval-policy": "/api/admin/approval-policy",
   capabilities: "/api/admin/capabilities",
+  "capability-mapping": "/api/admin/capability-mapping",
 };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -75,6 +77,7 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   "per-account": PerAccountRestrictionsDataView,
   "approval-policy": ApprovalPolicyDataView,
   capabilities: CapabilitiesDataView,
+  "capability-mapping": CapabilityMappingDataView,
 };
 
 export default function AdminPage() {
