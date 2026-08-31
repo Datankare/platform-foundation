@@ -11,7 +11,9 @@ export type AdminSection =
   | "password-policy"
   | "platform-config"
   | "agent-registry"
-  | "per-account";
+  | "per-account"
+  | "approval-policy"
+  | "capabilities";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -84,6 +86,18 @@ const NAV_ITEMS: {
     label: "Per-Account",
     icon: "🔒",
     permission: "admin_manage_account_restrictions",
+  },
+  {
+    section: "approval-policy",
+    label: "Approval Policy",
+    icon: "🤝",
+    permission: "admin_manage_approval_policy",
+  },
+  {
+    section: "capabilities",
+    label: "Capabilities",
+    icon: "🧩",
+    permission: "admin_view_audit",
   },
 ];
 

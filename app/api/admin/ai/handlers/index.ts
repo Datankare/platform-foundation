@@ -23,3 +23,4 @@ export {
   handleSetAgentTtl,
 } from "./agents";
 export { handleBlockUserFeature, handleUnblockUserFeature } from "./restrictions";
+export { handleSetApprovalPolicy } from "./approval";

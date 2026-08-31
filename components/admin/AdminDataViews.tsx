@@ -520,3 +520,126 @@ export function PerAccountRestrictionsDataView({ data }: { data: any }) {
     </div>
   );
 }
+
+// ── Approval policy (U1) + Capabilities (U2, read-only) ─────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+export function ApprovalPolicyDataView({ data }: { data: any }) {
+  const policy = data?.policy;
+  const rules: any[] = Array.isArray(policy?.rules) ? policy.rules : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Approval policy</h2>
+      {!policy ? (
+        <p className="text-gray-500 text-sm">No policy loaded.</p>
+      ) : (
+        <>
+          <p className="text-sm text-gray-400 mb-4">
+            Version {policy.version} · default approver:{" "}
+            <span className="text-gray-200">{policy.default}</span>
+          </p>
+          {rules.length === 0 ? (
+            <p className="text-gray-500 text-sm">
+              No rules — the default approver handles every action.
+            </p>
+          ) : (
+            <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+              <table className="w-full text-sm text-left border-collapse">
+                <thead>
+                  <tr>
+                    <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                      Max risk
+                    </th>
+                    <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                      Effects
+                    </th>
+                    <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                      Required approver
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rules.map((r, i) => (
+                    <tr key={i}>
+                      <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                        {r.maxRisk}
+                      </td>
+                      <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                        {(r.effects || []).join(", ") || "any"}
+                      </td>
+                      <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                        {r.requiredApprover}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function CapabilitiesDataView({ data }: { data: any }) {
+  const goals: any[] = Array.isArray(data?.goals) ? data.goals : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-2">Capabilities</h2>
+      <p className="text-sm text-gray-500 mb-6">
+        Read-only. Capabilities are derived from the registered workflows, not
+        administered here.
+      </p>
+      {goals.length === 0 ? (
+        <p className="text-gray-500 text-sm">No capabilities registered.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Goal
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Endpoint
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Steps
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Est. cost
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Requires
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {goals.map((g, i) => (
+                <tr key={i}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50 font-mono text-xs">
+                    {g.goal}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50 font-mono text-xs">
+                    {g.endpoint}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {(g.steps || []).map((s: any) => s.intent).join(" → ")}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    ${(g.estimatedCostUSD ?? 0).toFixed(4)}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {g.requiredCapability || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

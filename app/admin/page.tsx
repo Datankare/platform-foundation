@@ -15,6 +15,8 @@ import {
   PasswordPolicyDataView,
   TrustedAgentsDataView,
   PerAccountRestrictionsDataView,
+  ApprovalPolicyDataView,
+  CapabilitiesDataView,
 } from "@/components/admin/AdminDataViews";
 
 interface ActionPlan {
@@ -56,6 +58,8 @@ const ENDPOINTS: Record<string, string> = {
   "password-policy": "/api/admin/password-policy",
   "agent-registry": "/api/admin/agent-registry",
   "per-account": "/api/admin/per-account",
+  "approval-policy": "/api/admin/approval-policy",
+  capabilities: "/api/admin/capabilities",
 };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -69,6 +73,8 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   "password-policy": PasswordPolicyDataView,
   "agent-registry": TrustedAgentsDataView,
   "per-account": PerAccountRestrictionsDataView,
+  "approval-policy": ApprovalPolicyDataView,
+  capabilities: CapabilitiesDataView,
 };
 
 export default function AdminPage() {

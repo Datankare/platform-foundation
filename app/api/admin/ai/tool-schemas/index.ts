@@ -11,6 +11,7 @@ import { entitlementsSchemas } from "./entitlements";
 import { configSchemas } from "./config";
 import { agentsSchemas } from "./agents";
 import { restrictionsSchemas } from "./restrictions";
+import { approvalSchemas } from "./approval";
 
 export interface AdminTool {
   name: string;
@@ -39,4 +40,5 @@ export const PANEL_TOOL_SCHEMAS: Record<string, AdminTool[]> = {
   ...configSchemas,
   ...agentsSchemas,
   ...restrictionsSchemas,
+  ...approvalSchemas,
 };

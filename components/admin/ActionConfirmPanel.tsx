@@ -93,6 +93,10 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
       return `Block "${input.feature}" for user ${input.user_id}${input.reason ? ` — reason: ${input.reason}` : ""} (their account standing is unchanged)`;
     case "unblock_user_feature":
       return `Lift the "${input.feature}" block for user ${input.user_id}`;
+    case "set_approval_policy": {
+      const n = input.rules?.length || 0;
+      return `Set approval policy — default approver "${input.default_approver}", ${n} rule${n === 1 ? "" : "s"} (mints a new version)`;
+    }
     case "search":
       return `Search ${input.table} table`;
     case "search_audit":

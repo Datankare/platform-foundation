@@ -24,6 +24,7 @@ import {
   handleSetAgentTtl,
   handleBlockUserFeature,
   handleUnblockUserFeature,
+  handleSetApprovalPolicy,
 } from "@/app/api/admin/ai/handlers";
 
 type ActionResult = {
@@ -53,6 +54,7 @@ const toolHandlers: Record<
   set_agent_ttl: handleSetAgentTtl,
   block_user_feature: handleBlockUserFeature,
   unblock_user_feature: handleUnblockUserFeature,
+  set_approval_policy: handleSetApprovalPolicy,
 };
 
 export async function POST(request: NextRequest) {

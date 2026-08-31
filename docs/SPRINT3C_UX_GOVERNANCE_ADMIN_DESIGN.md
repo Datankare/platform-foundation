@@ -78,3 +78,13 @@ promotion.
 
 - The consumer usage guide's full tool reference lands with the code (UX-1…4), not here.
 - U7/U8 (demo + polish) are the last UX items, after the functional panels.
+
+## 8. Update — U2 is read-only; workflow composition deferred
+
+U2 (capabilities) shipped as a READ-ONLY view, not a governance panel: capabilities are
+derived from the code-registered workflow registry (ADR-030 D8), not admin-editable
+config, so there is nothing to mutate. The related idea — letting an admin COMPOSE new
+workflows from existing step primitives — is viable (steps dispatch generically through
+invokeTool) but is a feature with its own safety model (what a composed workflow may
+invoke) that spans both repos. It is deferred and tracked as FEAT-090 in docs/TASKS.md,
+to be revisited with its own ADR after this phase.
