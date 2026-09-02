@@ -288,6 +288,72 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * @param userId - User to check
  * @param feature - Feature identifier (must match config list entries)
  */
+// ---------------------------------------------------------------------------
+// Per-account feature restrictions (Sprint 3c F1, ADR-034)
+// ---------------------------------------------------------------------------
+//
+// A per-account, per-feature block that is ORTHOGONAL to account status: a
+// specific user barred from a specific feature regardless of standing (active,
+// warned, restricted, suspended). Stored in user_feature_restrictions and checked
+// before account state is loaded, so it applies for any status and takes
+// precedence over the status path.
+//
+// Fail-closed (ADR-034): a DB error while reading the block-list DENIES the
+// request under evaluation — the block status is unknowable, and a security
+// control must hold under stress. Consistent with loadAccountState. As there, a
+// deployment with no Supabase configured (mock/CI) is NOT a DB error: it degrades
+// to "no blocks", not a deny.
+
+/** Sentinel returned when the per-account block-list cannot be read (fail-closed). */
+const RESTRICTION_LOAD_FAILED = Symbol("restriction_load_failed");
+
+/**
+ * Load the set of features blocked for this specific user. Returns the feature
+ * array on success (possibly empty), or RESTRICTION_LOAD_FAILED on a DB error so
+ * the caller can fail closed. A deployment with no Supabase configured returns an
+ * empty set (mock/CI — no blocks), mirroring loadAccountState.
+ */
+async function loadUserFeatureRestrictions(
+  userId: string
+): Promise<readonly string[] | typeof RESTRICTION_LOAD_FAILED> {
+  try {
+    const supabase = getSupabaseServiceClient();
+    const { data, error } = await (supabase
+      .from("user_feature_restrictions" as never)
+      .select("feature")
+      .eq("user_id", userId) as unknown as Promise<{
+      data: { feature: string }[] | null;
+      error: { message: string } | null;
+    }>);
+
+    if (error) {
+      logger.error(
+        "Account status guard: failed to load per-account restrictions — failing closed",
+        {
+          userId,
+          error: error.message,
+          route: "platform/auth/account-status-guard",
+        }
+      );
+      return RESTRICTION_LOAD_FAILED;
+    }
+    return (data ?? []).map((row) => row.feature);
+  } catch (err) {
+    // No Supabase configured (mock/CI) is not a DB error — degrade to "no blocks".
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    if (!supabaseUrl) return [];
+    logger.error(
+      "Account status guard: per-account restriction load threw — failing closed",
+      {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/auth/account-status-guard",
+      }
+    );
+    return RESTRICTION_LOAD_FAILED;
+  }
+}
+
 export async function checkAccountStatus(
   userId: string,
   feature: string
@@ -316,6 +382,35 @@ export async function checkAccountStatus(
       allowed: false,
       reason: `Unknown feature "${feature}".`,
       accountStatus: "banned",
+      feature,
+    };
+  }
+
+  // Per-account feature block (Sprint 3c F1, ADR-034) — orthogonal to status, so it is
+  // checked before account state is loaded and applies for any status. Fail-closed: a load
+  // error denies the request (the block status is unknowable).
+  const perAccountBlocks = await loadUserFeatureRestrictions(userId);
+  if (perAccountBlocks === RESTRICTION_LOAD_FAILED) {
+    return {
+      allowed: false,
+      reason: "Feature availability could not be verified. Please try again.",
+      accountStatus: "banned",
+      feature,
+    };
+  }
+  if (isFeatureBlocked(feature, perAccountBlocks)) {
+    logger.info("Account status guard: feature blocked (per-account restriction)", {
+      userId,
+      feature,
+      route: "platform/auth/account-status-guard",
+    });
+    // Report the user's ACTUAL status in the result, not a synthetic one — load it for the
+    // message. The block denies regardless of what that status is.
+    const actual = await loadAccountState(userId);
+    return {
+      allowed: false,
+      reason: `Feature "${feature}" is not available on this account.`,
+      accountStatus: actual.accountStatus,
       feature,
     };
   }

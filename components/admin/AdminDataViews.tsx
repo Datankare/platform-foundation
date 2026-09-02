@@ -402,3 +402,287 @@ export function PlatformConfigDataView({
     </div>
   );
 }
+
+// ── Agent governance (Sprint 3c U4/U6) ──────────────────────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+export function TrustedAgentsDataView({ data }: { data: any }) {
+  const pairs: [string, any][] = Array.isArray(data?.agents) ? data.agents : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Trusted agents</h2>
+      {pairs.length === 0 ? (
+        <p className="text-gray-500 text-sm">No agents registered.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Agent
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Owner
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Scope
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Status
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Token ceiling
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {pairs.map(([id, rec]) => (
+                <tr key={id}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50 font-mono text-xs">
+                    {id}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {rec.owner}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {(rec.scopes || []).join(", ")}
+                  </td>
+                  <td className="py-3 px-4 border-b border-gray-800/50">
+                    <span
+                      className={
+                        rec.status === "active" ? "text-green-400" : "text-red-400"
+                      }
+                    >
+                      {rec.status}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {rec.maxTokenTtl ? `${rec.maxTokenTtl}s` : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PerAccountRestrictionsDataView({ data }: { data: any }) {
+  const rows: any[] = Array.isArray(data?.restrictions) ? data.restrictions : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Per-account feature control</h2>
+      {rows.length === 0 ? (
+        <p className="text-gray-500 text-sm">No per-account blocks in effect.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  User
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Blocked feature
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Reason
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  By
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50">
+                    {r.user_id}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50 font-mono text-xs">
+                    {r.feature}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {r.reason || "—"}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {r.created_by}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Approval policy (U1) + Capabilities (U2, read-only) ─────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+export function ApprovalPolicyDataView({ data }: { data: any }) {
+  const policy = data?.policy;
+  const rules: any[] = Array.isArray(policy?.rules) ? policy.rules : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Approval policy</h2>
+      {!policy ? (
+        <p className="text-gray-500 text-sm">No policy loaded.</p>
+      ) : (
+        <>
+          <p className="text-sm text-gray-400 mb-4">
+            Version {policy.version} · default approver:{" "}
+            <span className="text-gray-200">{policy.default}</span>
+          </p>
+          {rules.length === 0 ? (
+            <p className="text-gray-500 text-sm">
+              No rules — the default approver handles every action.
+            </p>
+          ) : (
+            <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+              <table className="w-full text-sm text-left border-collapse">
+                <thead>
+                  <tr>
+                    <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                      Max risk
+                    </th>
+                    <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                      Effects
+                    </th>
+                    <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                      Required approver
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rules.map((r, i) => (
+                    <tr key={i}>
+                      <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                        {r.maxRisk}
+                      </td>
+                      <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                        {(r.effects || []).join(", ") || "any"}
+                      </td>
+                      <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                        {r.requiredApprover}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function CapabilitiesDataView({ data }: { data: any }) {
+  const goals: any[] = Array.isArray(data?.goals) ? data.goals : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-2">Capabilities</h2>
+      <p className="text-sm text-gray-500 mb-6">
+        Read-only. Capabilities are derived from the registered workflows, not
+        administered here.
+      </p>
+      {goals.length === 0 ? (
+        <p className="text-gray-500 text-sm">No capabilities registered.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Goal
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Endpoint
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Steps
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Est. cost
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Requires
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {goals.map((g, i) => (
+                <tr key={i}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50 font-mono text-xs">
+                    {g.goal}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50 font-mono text-xs">
+                    {g.endpoint}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {(g.steps || []).map((s: any) => s.intent).join(" → ")}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    ${(g.estimatedCostUSD ?? 0).toFixed(4)}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {g.requiredCapability || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Capability→feature mapping (U3) ─────────────────────────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+export function CapabilityMappingDataView({ data }: { data: any }) {
+  const pairs: [string, string[]][] = Array.isArray(data?.mappings) ? data.mappings : [];
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-white mb-6">Capability → feature mapping</h2>
+      {pairs.length === 0 ? (
+        <p className="text-gray-500 text-sm">No mappings configured.</p>
+      ) : (
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+          <table className="w-full text-sm text-left border-collapse">
+            <thead>
+              <tr>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Capability
+                </th>
+                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
+                  Required features
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {pairs.map(([cap, feats]) => (
+                <tr key={cap}>
+                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50 font-mono text-xs">
+                    {cap}
+                  </td>
+                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
+                    {(feats || []).join(", ")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
