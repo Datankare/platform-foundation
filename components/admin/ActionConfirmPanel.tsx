@@ -79,6 +79,28 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
         changes.push(`rotation: ${input.rotation_days} days`);
       return `Update password policy — ${changes.join(", ") || "see details"}`;
     }
+    case "register_agent":
+      return `Register agent "${input.agent_id}" (owner: ${input.owner || "first-party"}, scopes: ${(input.scopes || []).join(", ") || "none"})`;
+    case "suspend_agent":
+      return input.reactivate
+        ? `Reactivate agent "${input.agent_id}"`
+        : `Suspend agent "${input.agent_id}" — it can no longer act on any capability`;
+    case "set_agent_scope":
+      return `Set scope of "${input.agent_id}" to: ${(input.scopes || []).join(", ") || "none"}`;
+    case "set_agent_ttl":
+      return `Set token ceiling of "${input.agent_id}" to ${input.max_token_ttl}s`;
+    case "block_user_feature":
+      return `Block "${input.feature}" for user ${input.user_id}${input.reason ? ` — reason: ${input.reason}` : ""} (their account standing is unchanged)`;
+    case "unblock_user_feature":
+      return `Lift the "${input.feature}" block for user ${input.user_id}`;
+    case "set_approval_policy": {
+      const n = input.rules?.length || 0;
+      return `Set approval policy — default approver "${input.default_approver}", ${n} rule${n === 1 ? "" : "s"} (mints a new version)`;
+    }
+    case "set_capability_mapping":
+      return input.remove
+        ? `Remove capability mapping "${input.capability}"`
+        : `Map capability "${input.capability}" to features: ${(input.features || []).join(", ") || "none"}`;
     case "search":
       return `Search ${input.table} table`;
     case "search_audit":

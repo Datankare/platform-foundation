@@ -71,6 +71,18 @@ function setupDefaultConfig() {
   });
 }
 
+// Per-account restriction rows for the current test (F1). Default: none.
+let restrictionRows: { feature: string }[] = [];
+let restrictionError: { message: string } | null = null;
+
+function setPerAccountRestrictions(
+  features: string[],
+  opts: { error?: { message: string } | null } = {}
+) {
+  restrictionRows = features.map((feature) => ({ feature }));
+  restrictionError = opts.error ?? null;
+}
+
 function setupUserState(
   overrides: Partial<{
     account_status: string;
@@ -86,7 +98,13 @@ function setupUserState(
     banned_at: null,
     ...overrides,
   };
-  mockSupabase.from.mockReturnValue(createChainMock({ data: state, error: null }));
+  // Table-aware: user_feature_restrictions (F1) resolves an array; users resolves the state.
+  mockSupabase.from.mockImplementation((table: string) => {
+    if (table === "user_feature_restrictions") {
+      return createChainMock({ data: restrictionRows, error: restrictionError });
+    }
+    return createChainMock({ data: state, error: null });
+  });
 }
 
 /** Returns an ISO timestamp N hours in the future */
@@ -104,6 +122,8 @@ function hoursAgo(hours: number): string {
 describe("checkAccountStatus", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    restrictionRows = [];
+    restrictionError = null;
     setupDefaultConfig();
     setupUserState();
   });
@@ -276,6 +296,68 @@ describe("checkAccountStatus", () => {
     const result = await checkAccountStatus("", "translate");
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/Invalid user ID/);
+  });
+  // ── Per-account feature restrictions (Sprint 3c F1, ADR-034) ─────────
+
+  describe("per-account feature restriction (orthogonal to status)", () => {
+    it("denies an ACTIVE user a feature on their per-account block-list", async () => {
+      setPerAccountRestrictions(["agent_delegate"]);
+      setupUserState({ account_status: "active" });
+      const result = await checkAccountStatus(VALID_USER_ID, "agent_delegate");
+      expect(result.allowed).toBe(false);
+      expect(result.accountStatus).toBe("active");
+    });
+
+    it("denies a WARNED user a feature on their per-account block-list", async () => {
+      setPerAccountRestrictions(["agent_delegate"]);
+      setupUserState({ account_status: "warned" });
+      const result = await checkAccountStatus(VALID_USER_ID, "agent_delegate");
+      expect(result.allowed).toBe(false);
+      expect(result.accountStatus).toBe("warned");
+    });
+
+    it("allows an active user a feature NOT on their block-list", async () => {
+      setPerAccountRestrictions(["agent_delegate"]);
+      setupUserState({ account_status: "active" });
+      const result = await checkAccountStatus(VALID_USER_ID, "translate");
+      expect(result.allowed).toBe(true);
+    });
+
+    it("blocks only the named feature, not others", async () => {
+      setPerAccountRestrictions(["upload_file"]);
+      setupUserState({ account_status: "active" });
+      expect((await checkAccountStatus(VALID_USER_ID, "upload_file")).allowed).toBe(
+        false
+      );
+      expect((await checkAccountStatus(VALID_USER_ID, "translate")).allowed).toBe(true);
+    });
+
+    it("takes precedence over the status path (blocked feature denies a restricted user at the per-account step)", async () => {
+      // The user is restricted AND has a per-account block on a DIFFERENT feature than the
+      // status list would catch; the per-account block denies first.
+      setPerAccountRestrictions(["view_dashboard"]);
+      setupUserState({
+        account_status: "restricted",
+        restricted_until: hoursFromNow(12),
+      });
+      const result = await checkAccountStatus(VALID_USER_ID, "view_dashboard");
+      expect(result.allowed).toBe(false);
+      expect(result.accountStatus).toBe("restricted");
+    });
+
+    it("fails CLOSED when the block-list cannot be read (DB error)", async () => {
+      setPerAccountRestrictions([], { error: { message: "db down" } });
+      setupUserState({ account_status: "active" });
+      const result = await checkAccountStatus(VALID_USER_ID, "translate");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/could not be verified/i);
+    });
+
+    it("does not block when the user has no per-account restrictions (default)", async () => {
+      setupUserState({ account_status: "active" });
+      const result = await checkAccountStatus(VALID_USER_ID, "agent_delegate");
+      expect(result.allowed).toBe(true);
+    });
   });
 });
 

@@ -9,6 +9,49 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ---
 
+### FEAT-090 — Admin-authored workflow composition (governed)
+
+| Field          | Detail                                       |
+| -------------- | -------------------------------------------- |
+| **ID**         | FEAT-090                                     |
+| **Type**       | Feature — agent governance                   |
+| **Severity**   | Enhancement                                  |
+| **Component**  | platform/agents (run loop), admin governance |
+| **Status**     | Deferred — revisit after Sprint 3c UX        |
+| **Logged**     | 2026-08-31 (Sprint 3c UX)                    |
+| **Resolve by** | Own ADR before build                         |
+
+**What:** Let an admin compose a new workflow from EXISTING step primitives (goal,
+description, ordered step intents, cost estimates, required capability, endpoint) through the
+governance admin, without new per-workflow code. Raised during Sprint 3c UX (U2): capabilities
+are derived from the code-registered workflow registry, so U2 shipped read-only — but the
+question is whether workflows themselves could become admin-governed.
+
+**Viability (assessed):** the execution model supports it. Steps run generically through
+`invokeTool` keyed off the step-level `intent` (ADR-030 D1), not a per-goal switch — so a
+workflow assembled from existing intents would run with no new step code.
+
+**Why it is NOT a small change (the honest scope):**
+
+1. PF's run loop reads workflows only from the code-populated registry (`registerWorkflow`).
+   Admin-authored workflows require the loop to MERGE an authored-workflow governed store
+   (config or table) with the code-registered definitions.
+2. Consumers (not PF) register workflows and own their endpoints, so the authoring panel and
+   the invocation/endpoint path are consumer-side — this spans both repos.
+3. A composed workflow is EXECUTABLE AUTHORITY: an admin assembling "invoke tool X then Y"
+   authors something with real effects. It needs a safety model — which tools a composed
+   workflow may invoke, under what risk tier, and whether authoring itself needs approval.
+
+**Resolution plan:**
+
+1. Write an ADR for admin-authored workflow composition (the safety model is the crux:
+   what may a composed workflow invoke, and under what governance).
+2. PF: merge an authored-workflow store into the run-loop registry read.
+3. Consumer: the authoring governance panel + the invocation path for authored workflows.
+4. Remove this entry when delivered.
+
+---
+
 ### CI-001 — GitHub Actions Node.js 24 deprecation warning
 
 | Field          | Detail                                               |
