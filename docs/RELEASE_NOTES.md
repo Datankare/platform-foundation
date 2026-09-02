@@ -11,7 +11,7 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ## Sprint 3c — Agent governance + identity
 
-Date: (set at promotion to main)
+Date: 2026-09-02
 
 Agent authorization becomes attested and governed end to end, plus a reusable admin surface to
 run it.

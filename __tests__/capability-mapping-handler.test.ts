@@ -25,8 +25,6 @@ beforeEach(() => {
   writeAuditLog.mockResolvedValue(undefined);
 });
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 describe("handleSetCapabilityMapping", () => {
   it("adds a new capability mapping", async () => {
     getConfig.mockResolvedValue([["translate", ["translate"]]]);
