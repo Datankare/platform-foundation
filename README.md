@@ -1,6 +1,8 @@
 # Platform Foundation
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
+>
+> **v2.0.0** — Phase 5 application framework & governed agency. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
 
 A battle-tested foundation for building commercial SaaS products, internal tools,
 and application platforms. Clone it, rename it, and start building on solid ground
