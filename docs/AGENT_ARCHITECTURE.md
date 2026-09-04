@@ -252,11 +252,108 @@ platform/input/
 
 ---
 
+## Governed authority (Phase 5 — Sprint 3/3c)
+
+The clusters above describe what agents _do_. This section describes the authority under which
+they do it — the governance layer added in Phase 5 that makes agent action attested, scoped,
+and auditable rather than implicitly trusted. It sits beneath the agent clusters and above the
+platform services, and every agent-invoked capability passes through it.
+
+### The two-principal check
+
+An agent never acts on its own authority alone. Every agent-invoked capability is authorized by
+**two independent gates, both of which must pass** (ADR-033):
+
+- **User gate (principal 1)** — the acting user's own verified session (Cognito JWT), plus a
+  per-capability account-status check. This answers "may this user do this."
+- **Agent gate (principal 2)** — the agent must be a registered, active, in-scope member of the
+  trusted-agent registry. This answers "is this agent trusted to act."
+
+The gates are independent: a permitted user working through an untrusted agent is denied, and a
+trusted agent acting for a restricted user is denied. Both must clear. Every denial is
+fail-closed and names which gate failed, for the audit trail.
+
+### Agent identity — attested delegation (rung 2, ADR-033)
+
+Agent identity matured through two rungs:
+
+- **Rung 1 (superseded):** an agent was named by an `x-agent-role` header and checked against a
+  hard-coded allowlist. A bare, unverified claim.
+- **Rung 2 (current):** an agent presents a **short-lived, RS256-signed delegation token** in
+  the `x-agent-delegation` header, obtained through an OAuth 2.1 / PKCE consent flow in which
+  the user explicitly authorizes the agent for a specific scope. Verification checks the
+  signature, expiry, audience, the `onBehalfOf` binding (the token must attest _this_
+  authenticated user delegated to the agent — the anti-impersonation core), and replay. The
+  rung-1 header path is retired: a signed token is the only thing that resolves an agent
+  identity.
+
+Token lifetime is governed, not free: `effective_ttl = min(requested, agent ceiling, global
+cap)`. There are deliberately no refresh tokens — tokens are re-minted through fresh consent,
+removing a long-lived secret. (Developer contract: `docs/AGENT_DELEGATION_GUIDE.md`.)
+
+### The trusted-agent registry
+
+The rung-1 allowlist is replaced by a **governed registry**: each agent has an owner, a scope
+(the capabilities it may act on), a status (active/suspended), and a token-lifetime ceiling.
+The registry is admin-managed config with a fail-safe built-in fallback, so a config outage
+keeps known agents working while still failing closed on the rest. Suspending an agent or
+narrowing its scope is a governed config change, not a code change.
+
+### Capability → feature mapping and the user gate
+
+A capability an agent invokes maps to a set of user-facing features (the capability→feature
+map). The user gate checks the acting user against _every_ mapped feature via the account-status
+guard. Layered on top is **per-account feature restriction** (ADR-034): a specific user can be
+blocked from a specific feature independent of their account status — a targeted, orthogonal
+control that denies at the user gate, fail-closed.
+
+### The GenAI-native governance admin
+
+All of the above is administered through the platform's natural-language admin (ADR-035):
+prompt → AI plan → human confirm → execute, not CRUD forms. The trusted-agent registry, the
+capability→feature map, the approval policy, and per-account blocks are each a governance panel
+over a governed store. The mechanism is vocabulary-free platform machinery; the specific values
+(which agents, which capabilities) are consumer config. Safety-tier changes route through
+two-person approval.
+
+### Where this sits in the layer diagram
+
+The governed-authority layer slots between the agent clusters and the platform services:
+
+```
+  Input / Processing / Social agent clusters
+                  │  each agent-invoked capability passes through ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Governed authority (Phase 5)                    │
+│                                                             │
+│  User gate (principal 1)          Agent gate (principal 2)  │
+│  · Cognito session                · trusted-agent registry  │
+│  · account-status + per-account   · attested delegation     │
+│    feature restriction              (rung-2 RS256 token)    │
+│                                                             │
+│  Capability→feature map · Approval policy · Governance admin │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+  Platform services: Moderation · AI · Embedding · Real-time
+  Observability · Data (Supabase · Trajectories · Budgets · …)
+```
+
+---
+
 ## Phase 5 extension points
+
+Delivered in Phase 5 (see "Governed authority" above and the agentic-workflow framework):
+
+- ✅ Governed agent identity (rung-2 attested delegation), trusted-agent registry, two-principal check
+- ✅ Per-account feature restriction; GenAI-native governance admin
+- ✅ Human-in-the-loop breakpoints — held actions with approve/reject/resume (ADR-029/031)
+- ✅ Durable trajectories, budgets, proposals, effect ledger
+
+Still open / forthcoming:
 
 - Multi-agent orchestration (agents coordinating on complex workflows)
 - Tool marketplace (agents discovering and using new tools)
-- Human-in-the-loop breakpoints
+- Admin-authored workflow composition (tracked as FEAT-090, needs its own ADR)
 - Cross-workflow trajectory linking
 - New agents: Game AI, Dispute Resolution, Anti-Cheat
 - New input classifiers: Camera/OCR, Gesture, Video
@@ -279,7 +376,7 @@ Sprint 4a shipped a precedence bug: `(scopeId ?? scopeType === "platform")` eval
 
 ---
 
-_Last updated: April 30, 2026 (Sprint 4b — 5 social agents + input agent swap delivered, scopeKey bug fixed)_
+_Last reviewed: September 2026 (v2.0.0 — added the Governed authority section: rung-2 identity, delegation, governance admin, per-account restriction)_
 
 ## Human review + reviewer-assist (Sprint 6)
 
