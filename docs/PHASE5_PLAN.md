@@ -115,6 +115,44 @@ GenAI anchors: P10 (the control surface for human oversight), P17 (policy change
 commitment), P4 (loosening is higher-risk), P13 (bounded autonomy governed centrally),
 P3/P18 (every change audited and reconstructable).
 
+### Sprint 3c — CLOSE
+
+Closed 2026-09-04. All deliverables shipped; the sprint gate is satisfied.
+
+**Deliverables.** A1–A3 (durable, versioned, admin-mutated approval-policy store) · B/B-gov
+(approve/resume path + fail-closed known-feature governance) · C (capability→feature map) ·
+D-series (agent identity rung 2: governed trusted-agent registry, RS256 attested delegation,
+OAuth 2.1/PKCE consent + minting, governed token TTL, rung-1 header retired — ADR-033) · F1
+(per-account feature restriction, orthogonal to status, fail-closed — ADR-034) · the
+GenAI-native governance admin (ADR-035) · U1–U8 (all seven governance/consent/console
+surfaces + the design-system consistency pass). All ✅.
+
+**Acceptance (E).** The agent-approver path is proven reachable AND governed end to end by
+`__tests__/integration-agent-governance.test.ts` — it composes the real seams (agentAuthorized,
+evaluateCapability, resolveApprover) and asserts both reachability and that each gate denies
+when its precondition fails.
+
+**Coverage ratchet (TASK-061).** Function coverage at close: platform-foundation **92.05%**,
+Playform **91.75%** — both well above the ≥84% phase goal, both up from the Sprint 1 floors
+(80.68% / 81.18%). Floors ratcheted to the close values (table above). Statement coverage held
+throughout (PF 89.23%, Playform 90.5%).
+
+**Release.** Cut as PF **v2.0.0** (tag + GitHub Release), not the v1.7.0 the plan anticipated:
+the rung-1 retirement (ADR-033) is a breaking change for any consumer on the old
+`x-agent-role` header, so semver required a major bump. Playform synced from PF main and
+promoted develop→staging→main. Dependency security advisories cleared in both repos (npm
+audit: 0 high, production).
+
+**Documentation.** A complete adopter set added (SETUP_AND_INTEGRATION, ENV_REFERENCE,
+AGENT_DELEGATION_GUIDE, MIGRATION_v1_to_v2), the architecture docs (TAD, PLATFORM_ARCHITECTURE,
+AGENT_ARCHITECTURE) brought current, a documentation index (docs/README.md), and a
+docs-integrity test (`__tests__/docs-integrity.test.ts`) that fails CI if docs drift behind the
+code.
+
+**Deferred (correctly, to phase exit — not sprint gate).** The live k6 re-baseline
+(**TASK-046**) is a Phase 5 _exit_ gate, not a sprint gate; it remains open for phase close.
+Admin-authored workflow composition captured as **FEAT-090** (needs its own ADR).
+
 ### Sprint 4 — Adaptive behavior + dynamic content generation (PF)
 
 - LLM-driven adaptive AI behavior framework — consumers implement app-specific logic (opponents, tutors, assistants).
@@ -167,10 +205,10 @@ P3/P18 (every change audited and reconstructable).
 
 Function-coverage target ≥ 84% (phase goal).
 
-| Repo                | Function floor (Sprint 1 close) |
-| ------------------- | ------------------------------- |
-| platform-foundation | 80.68%                          |
-| Playform            | 81.18%                          |
+| Repo                | Function floor (Sprint 3c close) |
+| ------------------- | -------------------------------- |
+| platform-foundation | 92.05%                           |
+| Playform            | 91.75%                           |
 
 Coverage must never decrease between sprints — statements **or** functions. Function floors
 ratchet up at each sprint close to whatever the sprint achieved, and each sprint's new modules
@@ -295,3 +333,5 @@ _Last updated: July 26, 2026 (Phase 5 Sprint 2 opened — L12 mapping recorded a
 _Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Sprint 3b section added recording the AUX/gating/capability/identity stack as shipped; the demo UI + A1-A8 folded into Sprint 3c as its acceptance gate)_
 
 _Last updated: August 18, 2026 (Phase 5 Sprint 3c scoped — the 3c body replaced with backend + acceptance and UX deliverable tables; F1 per-account restriction folded in; one sprint, no split)_
+
+_Last updated: September 4, 2026 (Phase 5 Sprint 3c CLOSE — all deliverables + E acceptance shipped; function-coverage floors ratcheted to 92.05% / 91.75% per TASK-061; PF released as v2.0.0 (major, breaking rung-1 retirement) + Playform synced/promoted; adopter docs + docs-integrity guardrail added; live k6 (TASK-046) remains a phase-exit gate)_
