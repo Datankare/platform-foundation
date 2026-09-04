@@ -160,3 +160,23 @@ describe("docs integrity — architecture docs are reviewed, not abandoned", () 
     expect(txt).toMatch(/Last (reviewed|updated):/i);
   });
 });
+
+// ── The documentation index lists every doc ────────────────────────────────
+
+describe("docs integrity — the index covers every document", () => {
+  const index = read("docs/README.md");
+
+  /** Every top-level doc under docs/ except the index itself. */
+  function topLevelDocs(): string[] {
+    return readdirSync(DOCS).filter((f) => f.endsWith(".md") && f !== "README.md");
+  }
+
+  it("finds a plausible number of docs (self-test)", () => {
+    expect(topLevelDocs().length).toBeGreaterThan(20);
+  });
+
+  it("lists every docs/*.md in docs/README.md (add a doc, add its row)", () => {
+    const unlisted = topLevelDocs().filter((f) => !index.includes(f));
+    expect(unlisted).toEqual([]);
+  });
+});
