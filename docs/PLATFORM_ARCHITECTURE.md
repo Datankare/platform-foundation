@@ -64,15 +64,49 @@ Supabase (PostgreSQL) with 16 migrations covering: identity and access (001–00
 
 ---
 
+## Phase 5 — Application framework & governed agency
+
+Phase 5 turns the agent runtime (registered in Phase 4) into a governed, resumable application
+framework, and puts every agent action under attested, admin-governed authority.
+
+### Application & agentic-workflow framework (ADR-028/029/031)
+
+Agent work runs as a **durable, resumable workflow**: trajectories, budgets, proposals, and
+external effects are persisted (not fire-and-forget). Tool invocation routes through the
+governed action pipeline, so a restricted tool is gated by the same code that gates a
+restricted session action. Gated actions are **held rather than refused**, with approval
+reconciled against the exact version the approver saw, then **resumed**. Rollback appends
+compensating actions; history is never rewritten. Failure is three-valued — an external effect
+that neither confirmed nor denied propagates as `indeterminate`, never collapsed into
+success or failure.
+
+### Governed authority (ADR-033/034/035)
+
+Every agent-invoked capability passes a **two-principal check** — the user's gate (session +
+account status + per-account feature restriction) and the agent's gate (a governed trusted-agent
+registry). Agent identity is **attested delegation** (rung 2): a short-lived RS256 token minted
+through an OAuth 2.1 / PKCE consent flow, bound to the delegating user and a specific scope; the
+old `x-agent-role` header trust is retired. All of this — the registry, the capability→feature
+map, the approval policy, per-account blocks — is administered through the **GenAI-native
+governance admin** (prompt → AI plan → human confirm → execute), a reusable, vocabulary-free
+platform capability inherited by any consumer with agents.
+
+See [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md) (the "Governed authority" section) for the
+full design, and [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md) for the one breaking change the
+rung-2 identity introduced.
+
 ## Related Documents
 
 - [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md) — Full agent design (clusters, sequences, inter-agent communication)
 - [GENAI_MANIFESTO.md](GENAI_MANIFESTO.md) — 18 principles governing all AI behavior
 - [GENAI_ROADMAP.md](GENAI_ROADMAP.md) — Phased delivery of GenAI capabilities
+- [SETUP_AND_INTEGRATION.md](SETUP_AND_INTEGRATION.md) — how a consumer adopts and syncs
+- [ENV_REFERENCE.md](ENV_REFERENCE.md) — every environment variable
+- [AGENT_DELEGATION_GUIDE.md](AGENT_DELEGATION_GUIDE.md) — building agents on the platform
 - [ROADMAP.md](ROADMAP.md) — 10-phase platform roadmap
 - [ADR-021](adr/ADR-021-social-system-architecture.md) — Social System Architecture
 - [ADR-022](adr/ADR-022-agent-runtime-architecture.md) — Agent Runtime Architecture
 
 ---
 
-_Last updated: April 29, 2026 (Sprint 4a — social data model + agent runtime)_
+_Last reviewed: September 2026 (v2.0.0 — Phase 5 application framework & governed agency)_
