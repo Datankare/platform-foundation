@@ -326,6 +326,42 @@ framework, not conventional). P14 is the only gap (Phase 7). 18/18 accounted for
 
 **Pre-code gate satisfied** — this table precedes any Sprint 2 implementation (L12).
 
+## GenAI 18-Principle Mapping — Sprint 4 (L12 pre-code gate)
+
+> Mapped against Sprint 4's deliverables — the adaptive-behavior framework (ADR-036), the
+> content-generation framework (ADR-037), and the prompt-eval harness (ADR-038). Sprints 1–3c
+> built and governed the agentic fabric; Sprint 4 rides it onto two generative surfaces and
+> builds the eval harness they gate on. Core = Sprint 4 primary deliverer · Extend = fabric
+> applied to a new surface · Advance = moves a partial forward · — = no deliverable.
+
+| #   | Principle             | Sprint 4 | How                                                                                                                         |
+| --- | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | Extend   | Adaptive behavior is context/intent-driven; content requests are structured intent; both emit AUX `nextActions` (ADR-030)   |
+| 2   | Agentic Execution     | Extend   | Both run as bounded, instrumented invocations over the `platform/agents/` runtime (ADR-029) — no new execution model        |
+| 3   | Total Observability   | Extend   | Every adaptive decision + generation call traced day one — model / prompt-version / tokens / latency / cost / trajectory    |
+| 4   | Structural Safety     | Extend   | Generated content routes through output validation + Guardian before it surfaces (ADR-021); adaptive actions policy-checked |
+| 5   | Versioned Artifacts   | Extend   | New adaptive prompts + content templates versioned in the prompt registry (ADR-015); conformance kit per abstraction (L21)  |
+| 6   | Structured Outputs    | **Core** | Content-gen conforms to consumer templates, schema-validated with a self-healing parse layer; adaptive decisions are typed  |
+| 7   | Provider-Aware        | Extend   | Both route by capability / cost over existing provider slots                                                                |
+| 8   | Context & Memory      | Extend   | Adaptive behavior consumes session state / user context / Phase-4 RAG; app-specific RAG is Sprint 5                         |
+| 9   | Automated Eval        | **Core** | The eval harness (ADR-038) is built this sprint — `prompts/evals/` datasets + CI regression gate; net-new (ADR-017 §4)      |
+| 10  | Human Oversight       | Extend   | Adaptive actions above the risk floor hit propose->confirm; generated content can require review (ADR-024)                  |
+| 11  | Resilient Degradation | Advance  | Both degrade to deterministic logic when the LLM is down — adaptive -> scripted, content-gen -> static templates            |
+| 12  | Economic Transparency | Extend   | Adaptive + generation cost-tracked per trajectory; `budgetConfig` caps enforced; per-user budgets remain Phase 6            |
+| 13  | Control Plane         | Extend   | Governance admin (ADR-035) governs adaptive execution; content types / templates are governed artifacts                     |
+| 14  | Feedback Loops        | —        | Phase 7 — no Sprint 4 work                                                                                                  |
+| 15  | Agent Identity        | Extend   | Adaptive behavior acts under a delegated, scoped, revocable identity (rung-1/2 from 3b/3c) — no new identity mechanism      |
+| 16  | Cognitive Memory      | Extend   | Adaptive behavior uses within-session working memory; resource memory and cross-session learning are deferred               |
+| 17  | Cognition-Commitment  | Extend   | Generated content is held as a draft until validated / committed — no unvalidated output leaks (ADR-031 boundary)           |
+| 18  | Durable Trajectories  | Extend   | Adaptive sequences + generation runs append to the checkpointed, inspectable trajectory                                     |
+
+**Summary:** Sprint 4 rides the finished agentic fabric onto two generative surfaces and builds
+the eval harness they gate on. **P6 / P9** are core — structured-by-construction output, and the
+net-new eval harness (ADR-038). **P11** advances (deterministic fallback in both frameworks).
+P14 remains the only gap (Phase 7). 18/18 accounted for.
+
+**Pre-code gate satisfied** — this table precedes any Sprint 4 implementation (L12).
+
 ---
 
 _Last updated: July 26, 2026 (Phase 5 Sprint 2 opened — L12 mapping recorded as the pre-code gate; ADR-031 promoted into the roster and into Sprint 2 scope; AUX/ADR-030 confirmed in Sprint 3; function floors added per TASK-061)_
@@ -335,3 +371,5 @@ _Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Sprint 3b section ad
 _Last updated: August 18, 2026 (Phase 5 Sprint 3c scoped — the 3c body replaced with backend + acceptance and UX deliverable tables; F1 per-account restriction folded in; one sprint, no split)_
 
 _Last updated: September 4, 2026 (Phase 5 Sprint 3c CLOSE — all deliverables + E acceptance shipped; function-coverage floors ratcheted to 92.05% / 91.75% per TASK-061; PF released as v2.0.0 (major, breaking rung-1 retirement) + Playform synced/promoted; adopter docs + docs-integrity guardrail added; live k6 (TASK-046) remains a phase-exit gate)_
+
+_Last updated: September 4, 2026 (Phase 5 Sprint 4 opened — L12 mapping recorded as the pre-code gate; ADR-036 / 037 / 038 reserved as Proposed and indexed in TAD; adaptive memory scoped within-session, cross-session deferred; P9 eval harness net-new this sprint)_

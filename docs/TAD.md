@@ -149,9 +149,12 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-033 | Agent Identity (rung 2 — attested delegation) |
 | ADR-034 | Per-Account Feature Restriction               |
 | ADR-035 | GenAI-Native Governance Admin                 |
+| ADR-036 | Adaptive Behavior Framework                   |
+| ADR-037 | Dynamic Content Generation Framework          |
+| ADR-038 | Prompt Evaluation Harness                     |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (v2.0.0 — Phase 5 agent + governance framework)_
+_Last reviewed: September 2026 (v2.0.0 — Phase 5 agent + governance framework; Sprint 4 opened — ADR-036/037/038 reserved in the index)_
