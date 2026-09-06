@@ -152,9 +152,10 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-036 | Adaptive Behavior Framework                   |
 | ADR-037 | Dynamic Content Generation Framework          |
 | ADR-038 | Prompt Evaluation Harness                     |
+| ADR-039 | Agent Registry Unification                    |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (v2.0.0 — Phase 5 agent + governance framework; Sprint 4 opened — ADR-036/037/038 reserved in the index)_
+_Last reviewed: September 2026 (v2.0.0 — Phase 5 agent + governance framework; Sprint 4 — ADR-036/037/038 reserved, ADR-039 accepted: agent registry unification)_
