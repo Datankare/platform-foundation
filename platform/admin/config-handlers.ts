@@ -38,6 +38,7 @@ import {
   validateConfigValue,
   setConfigWithHistory,
   getConfigHistory,
+  getConfig,
 } from "@/platform/auth/platform-config";
 import {
   isApprovalRequired,
@@ -60,6 +61,9 @@ import type { Tool, StepBoundary, AgentIdentity } from "@/platform/agents/types"
 import { invokeTool } from "@/platform/agents/tool-invoker";
 import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { getProposalStore } from "@/platform/agents/proposal-store";
+import { proposeOnce, PipelineRejectedError } from "@/platform/action-pipeline";
+import { approvalPolicy } from "@/platform/agents/gating";
+import { getApprovalPolicyStore } from "@/platform/agents/approval-policy-store";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -1033,10 +1037,24 @@ export async function dispatchConfigTool(
     trajectoryId = created.trajectory.trajectoryId;
   }
 
+  // ADR-039 F2b-2 dual-control: a config write to a key in config.dual_control_keys is
+  // catastrophic-if-wrong, so raise its risk to `restricted` — crossing the gating threshold
+  // forces a runtime hold cleared by an independent human (approval policy default = "user"),
+  // on top of config-approval's domain two-person gate. Non-listed keys stay below the line.
+  const dualControlKeys = await getConfig<string[]>("config.dual_control_keys", []);
+  const targetKey = typeof input.key === "string" ? input.key : undefined;
+  const isDualControl =
+    toolId === "update_config" &&
+    targetKey !== undefined &&
+    dualControlKeys.includes(targetKey);
+  const effectiveTool: Tool = isDualControl
+    ? { ...tool, declaredRisk: "restricted" }
+    : tool;
+
   let result: ConfigToolResult;
   try {
     const invoked = await invokeTool({
-      tool,
+      tool: effectiveTool,
       input,
       actor,
       sessionId: trajectoryId,
@@ -1047,6 +1065,53 @@ export async function dispatchConfigTool(
     });
     result = invoked.output as unknown as ConfigToolResult;
   } catch (err) {
+    // A dual-control write holds rather than fails: mint the proposal (idempotent) and surface
+    // who must approve. This is not an error — the change is pending an independent human, not
+    // broken. Clearing the hold (re-invoke with the approved proposal) is the ADR-040 surface.
+    if (err instanceof PipelineRejectedError && err.reason === "requires-approval") {
+      const stepIndex = context?.steps.length ?? 0;
+      const proposal = await proposeOnce({
+        spec: {
+          type: effectiveTool.id,
+          effects: effectiveTool.effects,
+          declaredRisk: effectiveTool.declaredRisk,
+          ephemeral: false,
+          commutative: false,
+        },
+        actor,
+        sessionId: trajectoryId,
+        operationId: `op_${trajectoryId}_${stepIndex}`,
+        label: effectiveTool.id,
+        payload: input,
+        trajectoryId,
+        stepIndex,
+        proposalStore: getProposalStore(),
+        trajectoryStore,
+      });
+      const policy = await getApprovalPolicyStore().load();
+      const approver = approvalPolicy(
+        proposal.effectiveRisk,
+        effectiveTool.effects,
+        policy
+      );
+      return {
+        toolId,
+        success: false,
+        held: true,
+        data: {
+          pendingApproval: true,
+          proposalId: proposal.proposalId,
+          operationId: proposal.operationId,
+          requiredApprover: approver.actorType,
+        },
+        approval: {
+          proposalId: proposal.proposalId,
+          operationId: proposal.operationId,
+          requiredApprover: approver.actorType,
+        },
+        durationMs: 0,
+      };
+    }
     logger.error("Config tool invocation failed in the runtime pipeline", {
       route: "platform/admin/config-handlers",
       toolId,
