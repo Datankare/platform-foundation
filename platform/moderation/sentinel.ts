@@ -2,8 +2,11 @@
  * platform/moderation/sentinel.ts — Sentinel account consequences agent
  *
  * The Sentinel processes Guardian block decisions and manages the
- * account consequences ladder: strike recording → threshold evaluation
- * → status change (warn → restrict → suspend → ban).
+ * account consequences ladder: strike recording -> threshold evaluation
+ * -> status change (warn -> restrict -> suspend -> ban).
+ *
+ * Runs on the agent runtime (ADR-039): processBlock drives its 5 steps through
+ * executeAgent, so the trajectory is persisted, inspectable, and budget-bounded.
  *
  * Trajectory (per processBlock call):
  *   Step 0: receive-block     (cognition)  — receive Guardian block event
@@ -15,17 +18,19 @@
  * GenAI Principles:
  *   P2  — Bounded agent: 5 steps max per block event
  *   P3  — Total observability: every step timed and recorded
- *   P11 — Fail-closed: config unavailable → strictest thresholds
+ *   P11 — Fail-closed: config unavailable -> strictest thresholds
  *   P13 — Control plane: all thresholds from platform_config
  *   P15 — Agent identity: actorType/actorId/agentRole
- *   P17 — Cognition-commitment: evaluate → commit (strike + status)
+ *   P17 — Cognition-commitment: evaluate -> commit (strike + status)
  *   P18 — Durable trajectories: full step history per decision
  *
  * @module platform/moderation
  */
 
-import type { AgentIdentity, Step, StepBoundary } from "@/platform/agents/types";
+import type { AgentIdentity } from "@/platform/agents/types";
 import { generateId } from "@/platform/agents/utils";
+import { executeAgent } from "@/platform/agents/runtime";
+import type { WorkflowFn } from "@/platform/agents/runtime";
 import type {
   ModerationResult,
   AccountStatus,
@@ -41,30 +46,6 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { writeAuditLog } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
-
-// ---------------------------------------------------------------------------
-// Trajectory helpers (same pattern as guardian.ts)
-// ---------------------------------------------------------------------------
-
-function makeStep(
-  stepIndex: number,
-  action: string,
-  boundary: StepBoundary,
-  input: Record<string, unknown>,
-  output: Record<string, unknown>,
-  durationMs: number
-): Step {
-  return {
-    stepIndex,
-    action,
-    boundary,
-    input,
-    output,
-    cost: 0,
-    durationMs,
-    timestamp: new Date().toISOString(),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Config loaders (P13)
@@ -177,181 +158,186 @@ export class Sentinel {
       throw new Error("Sentinel.processBlock called without userId");
     }
 
-    const trajectoryId = `traj-${generateId()}`;
-    const steps: Step[] = [];
+    const store = getStrikeStore();
     const reasonParts: string[] = [];
 
-    // ── Step 0: Receive block event (cognition) ────────────────────
-    const s0Start = Date.now();
+    // Step-shared state lives in one object: its assignments happen inside the
+    // workflow closure, and object-property reads use the declared type (they are
+    // not CFA-narrowed to the initialiser the way a captured `let` would be).
     const category = moderationResult.classifierOutput?.categories[0] ?? "unclassified";
     const severity: SafetySeverity =
       moderationResult.classifierOutput?.severity ?? "medium";
+    const acc: {
+      expiresAt: string | null;
+      strikeResult?: Awaited<ReturnType<typeof store.recordStrike>>;
+      updatedSummary: Awaited<ReturnType<typeof store.getStrikeSummary>>;
+      currentStatus: AccountStatus;
+      consequence: ConsequenceAction;
+      newStatus: AccountStatus;
+    } = {
+      expiresAt: null,
+      updatedSummary: await store.getStrikeSummary(userId), // safe default; set in step 3
+      currentStatus: "active",
+      consequence: "none",
+      newStatus: "active",
+    };
 
-    steps.push(
-      makeStep(
-        0,
-        "receive-block",
-        "cognition",
-        {
-          userId,
-          action: moderationResult.action,
-          category,
-          severity,
-          triggeredBy: moderationResult.triggeredBy,
-        },
-        {
-          received: true,
-        },
-        Date.now() - s0Start
-      )
-    );
+    const workflow: WorkflowFn = async (ctx) => {
+      switch (ctx.stepCount) {
+        case 0: {
+          reasonParts.push(
+            `Guardian blocked content: ${category} (severity: ${severity}, triggered by: ${moderationResult.triggeredBy}).`
+          );
+          return {
+            action: "receive-block",
+            boundary: "cognition",
+            input: {
+              userId,
+              action: moderationResult.action,
+              category,
+              severity,
+              triggeredBy: moderationResult.triggeredBy,
+            },
+            output: { received: true },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        case 1: {
+          const summary = await store.getStrikeSummary(userId);
+          reasonParts.push(`User has ${summary.totalActive} active strike(s).`);
+          return {
+            action: "load-history",
+            boundary: "cognition",
+            input: { userId },
+            output: {
+              totalActive: summary.totalActive,
+              byCategory: summary.byCategory,
+              highestSeverity: summary.highestSeverity,
+            },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        case 2: {
+          const expiryDays = await loadExpiryDays(severity);
+          acc.expiresAt =
+            expiryDays > 0
+              ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
+              : null;
 
-    reasonParts.push(
-      `Guardian blocked content: ${category} (severity: ${severity}, triggered by: ${moderationResult.triggeredBy}).`
-    );
+          const recorded = await store.recordStrike({
+            userId,
+            category,
+            severity,
+            moderationAuditId: null,
+            guardianDecisionId: moderationResult.trajectoryId,
+            trajectoryId: ctx.trajectoryId,
+            agentId: this.identity.actorId,
+            reason: reasonParts[0],
+            expiresAt: acc.expiresAt,
+            expired: false,
+          });
+          acc.strikeResult = recorded;
 
-    // ── Step 1: Load strike history (cognition) ────────────────────
-    const s1Start = Date.now();
-    const store = getStrikeStore();
-    const existingSummary = await store.getStrikeSummary(userId);
+          if (!recorded.success) {
+            // L19: Strike recording failure is surfaced, not swallowed
+            logger.error("Sentinel: strike recording failed", {
+              userId,
+              category,
+              severity,
+              error: recorded.error,
+              requestId,
+              route: "platform/moderation/sentinel",
+            });
+            reasonParts.push(`Strike recording FAILED: ${recorded.error}.`);
+          } else {
+            reasonParts.push(
+              `Strike recorded: ${category} (${severity}).` +
+                (acc.expiresAt ? ` Expires: ${acc.expiresAt}.` : " Never expires.")
+            );
+          }
 
-    steps.push(
-      makeStep(
-        1,
-        "load-history",
-        "cognition",
-        {
-          userId,
-        },
-        {
-          totalActive: existingSummary.totalActive,
-          byCategory: existingSummary.byCategory,
-          highestSeverity: existingSummary.highestSeverity,
-        },
-        Date.now() - s1Start
-      )
-    );
+          return {
+            action: "record-strike",
+            boundary: "commitment",
+            input: { category, severity, expiresAt: acc.expiresAt },
+            output: {
+              success: recorded.success,
+              error: recorded.error,
+              strikeId: recorded.record?.id,
+            },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        case 3: {
+          acc.updatedSummary = await store.getStrikeSummary(userId);
+          const thresholds = await loadStrikeThresholds();
+          acc.consequence = evaluateConsequence(
+            acc.updatedSummary.totalActive,
+            thresholds
+          );
+          acc.currentStatus = await loadUserStatus(userId);
+          acc.newStatus = consequenceToStatus(acc.consequence, acc.currentStatus);
 
-    reasonParts.push(`User has ${existingSummary.totalActive} active strike(s).`);
+          reasonParts.push(
+            `Total active strikes: ${acc.updatedSummary.totalActive}. ` +
+              `Thresholds: warn=${thresholds.warnAt}, suspend=${thresholds.suspendAt}, ban=${thresholds.banAt}. ` +
+              `Consequence: ${acc.consequence}.`
+          );
 
-    // ── Step 2: Record strike (commitment) ─────────────────────────
-    const s2Start = Date.now();
-    const expiryDays = await loadExpiryDays(severity);
-    const expiresAt =
-      expiryDays > 0
-        ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
-        : null;
+          return {
+            action: "evaluate",
+            boundary: "cognition",
+            input: {
+              totalActive: acc.updatedSummary.totalActive,
+              thresholds,
+              currentStatus: acc.currentStatus,
+            },
+            output: {
+              consequence: acc.consequence,
+              newStatus: acc.newStatus,
+              statusChanged: acc.newStatus !== acc.currentStatus,
+            },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        default: {
+          // Step 4 — apply-consequence (last step)
+          if (acc.newStatus !== acc.currentStatus) {
+            await updateUserStatus(
+              userId,
+              acc.newStatus,
+              acc.consequence,
+              this.identity.actorId
+            );
+            reasonParts.push(`Status changed: ${acc.currentStatus} -> ${acc.newStatus}.`);
+          } else {
+            reasonParts.push(`No status change needed (current: ${acc.currentStatus}).`);
+          }
 
-    const strikeResult = await store.recordStrike({
+          return {
+            action: "apply-consequence",
+            boundary: "commitment",
+            input: { previousStatus: acc.currentStatus, newStatus: acc.newStatus },
+            output: { applied: acc.newStatus !== acc.currentStatus },
+            costUsd: 0,
+            continueExecution: false,
+          };
+        }
+      }
+    };
+
+    const exec = await executeAgent(
+      "sentinel",
+      "guardian-block",
+      "user",
       userId,
-      category,
-      severity,
-      moderationAuditId: null,
-      guardianDecisionId: moderationResult.trajectoryId,
-      trajectoryId,
-      agentId: this.identity.actorId,
-      reason: reasonParts[0],
-      expiresAt,
-      expired: false,
-    });
-
-    steps.push(
-      makeStep(
-        2,
-        "record-strike",
-        "commitment",
-        {
-          category,
-          severity,
-          expiresAt,
-        },
-        {
-          success: strikeResult.success,
-          error: strikeResult.error,
-          strikeId: strikeResult.record?.id,
-        },
-        Date.now() - s2Start
-      )
+      workflow
     );
-
-    if (!strikeResult.success) {
-      // L19: Strike recording failure is surfaced, not swallowed
-      logger.error("Sentinel: strike recording failed", {
-        userId,
-        category,
-        severity,
-        error: strikeResult.error,
-        requestId,
-        route: "platform/moderation/sentinel",
-      });
-      reasonParts.push(`Strike recording FAILED: ${strikeResult.error}.`);
-    } else {
-      reasonParts.push(
-        `Strike recorded: ${category} (${severity}).` +
-          (expiresAt ? ` Expires: ${expiresAt}.` : " Never expires.")
-      );
-    }
-
-    // ── Step 3: Evaluate consequence (cognition) ───────────────────
-    const s3Start = Date.now();
-    const updatedSummary = await store.getStrikeSummary(userId);
-    const thresholds = await loadStrikeThresholds();
-    const consequence = evaluateConsequence(updatedSummary.totalActive, thresholds);
-
-    // Load current user status
-    const currentStatus = await loadUserStatus(userId);
-
-    const newStatus = consequenceToStatus(consequence, currentStatus);
-
-    steps.push(
-      makeStep(
-        3,
-        "evaluate",
-        "cognition",
-        {
-          totalActive: updatedSummary.totalActive,
-          thresholds,
-          currentStatus,
-        },
-        {
-          consequence,
-          newStatus,
-          statusChanged: newStatus !== currentStatus,
-        },
-        Date.now() - s3Start
-      )
-    );
-
-    reasonParts.push(
-      `Total active strikes: ${updatedSummary.totalActive}. ` +
-        `Thresholds: warn=${thresholds.warnAt}, suspend=${thresholds.suspendAt}, ban=${thresholds.banAt}. ` +
-        `Consequence: ${consequence}.`
-    );
-
-    // ── Step 4: Apply consequence (commitment) ─────────────────────
-    const s4Start = Date.now();
-    if (newStatus !== currentStatus) {
-      await updateUserStatus(userId, newStatus, consequence, this.identity.actorId);
-      reasonParts.push(`Status changed: ${currentStatus} → ${newStatus}.`);
-    } else {
-      reasonParts.push(`No status change needed (current: ${currentStatus}).`);
-    }
-
-    steps.push(
-      makeStep(
-        4,
-        "apply-consequence",
-        "commitment",
-        {
-          previousStatus: currentStatus,
-          newStatus,
-        },
-        {
-          applied: newStatus !== currentStatus,
-        },
-        Date.now() - s4Start
-      )
-    );
+    const trajectoryId = exec.trajectoryId;
 
     // Fire-and-forget audit log
     writeAuditLog({
@@ -362,10 +348,10 @@ export class Sentinel {
         type: "sentinel_decision",
         category,
         severity,
-        consequence,
-        previousStatus: currentStatus,
-        newStatus,
-        totalActiveStrikes: updatedSummary.totalActive,
+        consequence: acc.consequence,
+        previousStatus: acc.currentStatus,
+        newStatus: acc.newStatus,
+        totalActiveStrikes: acc.updatedSummary.totalActive,
         trajectoryId,
       },
     });
@@ -376,15 +362,15 @@ export class Sentinel {
     // (resolved via the strike's guardianDecisionId — relatedStrikeId here is
     // audit-only). Fail-open: a submission failure must never undo or break the
     // ban that has already been committed.
-    if (consequence === "ban" && newStatus !== currentStatus) {
+    if (acc.consequence === "ban" && acc.newStatus !== acc.currentStatus) {
       try {
         const reviewResult = await submitForReview({
           source: "ban_review",
           moderationResult,
           targetUserId: userId,
           requestId,
-          previousAccountStatus: currentStatus,
-          relatedStrikeId: strikeResult.record?.id,
+          previousAccountStatus: acc.currentStatus,
+          relatedStrikeId: acc.strikeResult?.record?.id,
         });
         if (!reviewResult.success) {
           logger.warn("Sentinel: ban_review submission did not succeed (ban stands)", {
@@ -405,7 +391,7 @@ export class Sentinel {
     }
 
     return {
-      strike: strikeResult.record ?? {
+      strike: acc.strikeResult?.record ?? {
         id: "failed",
         userId,
         category,
@@ -415,14 +401,14 @@ export class Sentinel {
         trajectoryId,
         agentId: this.identity.actorId,
         reason: reasonParts[0],
-        expiresAt,
+        expiresAt: acc.expiresAt,
         expired: false,
         createdAt: new Date().toISOString(),
       },
-      strikeSummary: updatedSummary,
-      consequenceAction: consequence,
-      previousStatus: currentStatus,
-      newStatus,
+      strikeSummary: acc.updatedSummary,
+      consequenceAction: acc.consequence,
+      previousStatus: acc.currentStatus,
+      newStatus: acc.newStatus,
       reasoning: reasonParts.join(" "),
       trajectoryId,
       agentId: this.identity.actorId,
@@ -550,16 +536,16 @@ export function resetSentinel(): void {
 // ---------------------------------------------------------------------------
 //
 // 1. evaluateConsequence uses total active strikes, not per-category.
-//    The threshold check is: total >= banAt? → ban. Total >= suspendAt? → suspend.
+//    The threshold check is: total >= banAt? -> ban. Total >= suspendAt? -> suspend.
 //    Per-category tracking exists for analytics, not for threshold evaluation.
 //
-// 2. consequenceToStatus only upgrades severity — warned → active never happens
+// 2. consequenceToStatus only upgrades severity — warned -> active never happens
 //    automatically. Only human review (Sprint 6) can downgrade status.
 //
 // 3. The Sentinel does NOT handle "restrict" consequence currently.
 //    The ConsequenceAction type includes "restrict" for type completeness,
 //    but evaluateConsequence() never returns it — the threshold ladder is
-//    warn → suspend → ban (no restrict step). If restrict is added later,
+//    warn -> suspend -> ban (no restrict step). If restrict is added later,
 //    it needs: (a) a threshold in evaluateConsequence, (b) restriction_duration_hours
 //    from config, (c) set restricted_until on users table, (d) middleware
 //    enforcement to check restricted_until before allowing writes.
@@ -578,3 +564,7 @@ export function resetSentinel(): void {
 //    be stale by one — evaluating consequences based on the previous
 //    strike count. This would delay the consequence by one violation
 //    (e.g., ban at 5 strikes instead of 4). Monitor if store changes.
+//
+// 7. ADR-039: processBlock runs its 5 steps through executeAgent("sentinel", ...).
+//    The trajectory is owned by the runtime (persisted + budget-bounded); the
+//    step-shared state lives in the processBlock closure across the workflow calls.

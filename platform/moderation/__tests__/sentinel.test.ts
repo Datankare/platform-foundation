@@ -69,6 +69,7 @@ import {
 import { InMemoryStrikeStore, setStrikeStore, resetStrikeStore } from "../strikes";
 import { submitForReview } from "../review-service";
 import type { ModerationResult } from "../types";
+import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -101,6 +102,10 @@ function makeBlockResult(overrides: Partial<ModerationResult> = {}): ModerationR
 // ── Setup ───────────────────────────────────────────────────────────────
 
 let store: InMemoryStrikeStore;
+
+beforeAll(() => {
+  registerPlatformAgents();
+});
 
 beforeEach(() => {
   jest.clearAllMocks();

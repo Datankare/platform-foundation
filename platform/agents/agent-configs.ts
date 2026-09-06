@@ -106,6 +106,18 @@ export const AGENT_CONFIGS: readonly AgentConfig[] = [
     budgetConfig: HIGH_FREQUENCY_BUDGET,
     effortTier: "low",
   },
+
+  // ── Moderation agents ───────────────────────────────────────────
+  {
+    id: "sentinel",
+    name: "Sentinel",
+    description:
+      "Processes Guardian block decisions and runs the account-consequences ladder " +
+      "(warn -> suspend -> ban). Rule-based; no LLM calls.",
+    tools: [],
+    budgetConfig: HIGH_FREQUENCY_BUDGET,
+    effortTier: "low",
+  },
 ];
 
 // ── Registration ──────────────────────────────────────────────────────
