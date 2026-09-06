@@ -56,7 +56,10 @@ import type {
   ToolExecutionContext,
 } from "./types";
 import { TOOL_BOUNDARIES } from "./types";
-import type { Tool, StepBoundary } from "@/platform/agents/types";
+import type { Tool, StepBoundary, AgentIdentity } from "@/platform/agents/types";
+import { invokeTool } from "@/platform/agents/tool-invoker";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { getProposalStore } from "@/platform/agents/proposal-store";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -710,7 +713,7 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         },
         actorId: { type: "string", description: "ID of the admin making the change" },
       },
-      required: ["key", "value", "changeComment", "actorId"],
+      required: ["key", "value", "changeComment"],
     },
     outputSchema: {
       type: "object",
@@ -866,7 +869,7 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         changeComment: { type: "string", description: "Why this change is needed" },
         actorId: { type: "string", description: "ID of the requesting admin" },
       },
-      required: ["configKey", "proposedValue", "changeComment", "actorId"],
+      required: ["configKey", "proposedValue", "changeComment"],
     },
     outputSchema: {
       type: "object",
@@ -894,7 +897,7 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         reviewerId: { type: "string", description: "ID of the reviewing admin" },
         reviewComment: { type: "string", description: "Review comment" },
       },
-      required: ["approvalId", "reviewerId", "reviewComment"],
+      required: ["approvalId", "reviewComment"],
     },
     outputSchema: {
       type: "object",
@@ -922,7 +925,7 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         reviewerId: { type: "string", description: "ID of the reviewing admin" },
         reviewComment: { type: "string", description: "Reason for rejection" },
       },
-      required: ["approvalId", "reviewerId", "reviewComment"],
+      required: ["approvalId", "reviewComment"],
     },
     outputSchema: {
       type: "object",
@@ -1006,9 +1009,61 @@ export async function dispatchConfigTool(
     };
   }
 
-  const result = (await tool.execute(input)) as unknown as ConfigToolResult;
+  // ADR-039 F2b: run through the governed runtime (invokeTool) — risk floor, budget ceiling,
+  // effect ledger and trajectory recording — rather than a hand-rolled step. A config write's
+  // effectiveRisk (stateWrite floor = ordinary, declaredRisk = consequential) stays below the
+  // gating threshold (restricted), so nothing holds here; dual-control (F2b-2) raises risk on
+  // named keys to cross it. config-approval remains the domain two-person gate.
+  const trajectoryStore = getTrajectoryStore();
+  const actor: AgentIdentity = {
+    actorType: "agent",
+    actorId: context?.agentId ?? "config-manager",
+    agentRole: "config-manager",
+  };
+  const existingTrajectoryId = context?.trajectoryId;
+  let trajectoryId: string;
+  if (existingTrajectoryId && (await trajectoryStore.getById(existingTrajectoryId))) {
+    trajectoryId = existingTrajectoryId;
+  } else {
+    const created = await trajectoryStore.create(
+      { kind: "agent", id: actor.actorId },
+      `config:${toolId}`,
+      "platform"
+    );
+    trajectoryId = created.trajectory.trajectoryId;
+  }
 
-  // P17/P18: Record step in trajectory after execution
+  let result: ConfigToolResult;
+  try {
+    const invoked = await invokeTool({
+      tool,
+      input,
+      actor,
+      sessionId: trajectoryId,
+      trajectoryId,
+      stepIndex: context?.steps.length ?? 0,
+      trajectoryStore,
+      proposalStore: getProposalStore(),
+    });
+    result = invoked.output as unknown as ConfigToolResult;
+  } catch (err) {
+    logger.error("Config tool invocation failed in the runtime pipeline", {
+      route: "platform/admin/config-handlers",
+      toolId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      toolId,
+      success: false,
+      data: null,
+      error: err instanceof Error ? err.message : "Tool invocation failed",
+      durationMs: 0,
+    };
+  }
+
+  // Project the governed step into the response view. The runtime trajectory is the source
+  // of truth; context.steps is this request's response projection, keeping the per-tool
+  // boundary for the UI.
   if (context && result) {
     // Fail closed. An unclassified tool gets the STRICTER boundary, not the lower one:
     // recording a state-changing tool as cognition would place it below the governance a
