@@ -15,8 +15,8 @@ describe("Agent Configs", () => {
   });
 
   describe("AGENT_CONFIGS", () => {
-    it("defines 9 agents total", () => {
-      expect(AGENT_CONFIGS).toHaveLength(9);
+    it("defines 11 agents total", () => {
+      expect(AGENT_CONFIGS).toHaveLength(11);
     });
 
     it("has unique IDs for every agent", () => {
@@ -65,13 +65,13 @@ describe("Agent Configs", () => {
   describe("registerPlatformAgents", () => {
     it("registers all agents", () => {
       registerPlatformAgents();
-      expect(listAgents()).toHaveLength(9);
+      expect(listAgents()).toHaveLength(11);
     });
 
     it("is idempotent", () => {
       registerPlatformAgents();
       registerPlatformAgents();
-      expect(listAgents()).toHaveLength(9);
+      expect(listAgents()).toHaveLength(11);
     });
 
     it("makes each agent retrievable by ID", () => {

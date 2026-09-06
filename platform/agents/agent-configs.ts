@@ -118,6 +118,28 @@ export const AGENT_CONFIGS: readonly AgentConfig[] = [
     budgetConfig: HIGH_FREQUENCY_BUDGET,
     effortTier: "low",
   },
+
+  // ── Admin agents ────────────────────────────────────────────────
+  {
+    id: "config-manager",
+    name: "Config Manager",
+    description:
+      "GenAI-native admin agent for platform configuration: search, inspect, compare, " +
+      "impact-assess, and change config behind a confirmation gate and two-person approval.",
+    tools: [],
+    budgetConfig: SCHEDULED_BUDGET,
+    effortTier: "standard",
+  },
+  {
+    id: "command-bar",
+    name: "Admin Command Bar",
+    description:
+      "GenAI-native admin command bar: plans natural-language admin requests into governed " +
+      "tool calls across roles, entitlements, restrictions, capability mapping, approval, and search.",
+    tools: [],
+    budgetConfig: SCHEDULED_BUDGET,
+    effortTier: "standard",
+  },
 ];
 
 // ── Registration ──────────────────────────────────────────────────────
