@@ -153,9 +153,10 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-037 | Dynamic Content Generation Framework          |
 | ADR-038 | Prompt Evaluation Harness                     |
 | ADR-039 | Agent Registry Unification                    |
+| ADR-040 | Held-Action & Dual-Control Admin              |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (v2.0.0 — Phase 5 agent + governance framework; Sprint 4 — ADR-036/037/038 reserved, ADR-039 accepted: agent registry unification)_
+_Last reviewed: September 2026 (v2.0.0 — Phase 5 agent + governance framework; Sprint 4 — ADR-036/037/038 reserved, ADR-039 accepted; Sprint 4b — ADR-040 reserved: held-action / dual-control admin)_
