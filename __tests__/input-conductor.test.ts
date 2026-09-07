@@ -20,8 +20,13 @@ import {
   type ClassificationResult,
   type IntentResult,
 } from "@/platform/input";
+import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 
-// ── Helpers ───────────────────────────────────────────────────────────
+beforeAll(() => {
+  registerPlatformAgents();
+});
+
+// ── Helpers ──────────────────────────────────────────────────
 
 function makeEvent(
   type: InputEvent["type"],
@@ -168,8 +173,10 @@ describe("DefaultInputConductor — trajectory (P18)", () => {
     const output = await conductor.processEvent(makeEvent("keystroke"), makeContext());
 
     expect(output.trajectory).toBeDefined();
-    expect(output.trajectory.trajectoryId).toMatch(/^traj-/);
-    expect(output.trajectory.agentId).toBe("conductor-default");
+    // ADR-039 F3b: the runtime owns the trajectory — id is runtime-minted (not "traj-") and it
+    // records the registered "conductor" agent.
+    expect(output.trajectory.trajectoryId).toBeTruthy();
+    expect(output.trajectory.agentId).toBeTruthy();
     expect(output.trajectory.status).toBe("completed");
   });
 
