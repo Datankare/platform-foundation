@@ -140,6 +140,18 @@ export const AGENT_CONFIGS: readonly AgentConfig[] = [
     budgetConfig: SCHEDULED_BUDGET,
     effortTier: "standard",
   },
+
+  // ── Input agents (orchestrator) ─────────────────────────────────
+  {
+    id: "conductor",
+    name: "Conductor",
+    description:
+      "Top-level input orchestrator: classifies raw input, resolves intent, and emits unified " +
+      "output. Delegates to the audio-classifier and intent-resolver agents.",
+    tools: [],
+    budgetConfig: HIGH_FREQUENCY_BUDGET,
+    effortTier: "low",
+  },
 ];
 
 // ── Registration ──────────────────────────────────────────────────────
