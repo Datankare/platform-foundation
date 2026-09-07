@@ -78,7 +78,7 @@ config-manager, command-bar, Conductor, and any processing unit that meets D6.
 **D3 — Every agent runs on the governed runtime.** No bespoke execution loops remain:
 
 - Sentinel migrates its 5-step sequence to `executeAgent`.
-- config-manager and command-bar port onto the goal-loop (`runGoal` / `advanceGoal`). Their
+- config-manager and command-bar port onto the governed runtime via `executeAgent` + `invokeTool` — the open-ended planners choose tools dynamically, so they do not fit the fixed-workflow `runGoal`; each tool call is governed by `invokeTool`, and config-manager keeps `config-approval` as its domain two-person gate (execution rerouted, approval kept). Their
   hand-rolled loop and their own approval code are deleted — approval comes from the pipeline
   (`gating.ts` + `approval-policy-store.ts`), the same path the governance admin already uses.
 
