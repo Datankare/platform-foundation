@@ -26,7 +26,10 @@
  * @module platform/moderation
  */
 
-import type { AgentIdentity, Step, StepBoundary } from "@/platform/agents/types";
+import type { AgentIdentity } from "@/platform/agents/types";
+import { executeAgent } from "@/platform/agents/runtime";
+import type { WorkflowFn } from "@/platform/agents/runtime";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { generateId } from "@/platform/agents/utils";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 import type {
@@ -41,6 +44,7 @@ import { classify } from "./classifier";
 import { loadContentRatingThresholds } from "./config";
 import { evaluateContext, reduceSeverity } from "./context";
 import { logModerationAudit } from "./audit";
+import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
@@ -61,27 +65,6 @@ function severityAtOrAbove(severity: SafetySeverity, threshold: SafetySeverity):
 // ---------------------------------------------------------------------------
 // Trajectory helpers
 // ---------------------------------------------------------------------------
-
-function makeStep(
-  stepIndex: number,
-  action: string,
-  boundary: StepBoundary,
-  input: Record<string, unknown>,
-  output: Record<string, unknown>,
-  durationMs: number,
-  cost: number
-): Step {
-  return {
-    stepIndex,
-    action,
-    boundary,
-    input,
-    output,
-    durationMs,
-    cost,
-    timestamp: new Date().toISOString(),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Blocklist severity constants
@@ -134,13 +117,18 @@ export class Guardian {
     context: ScreeningContext
   ): Promise<ModerationResult> {
     const startTime = Date.now();
-    const trajectoryId = `traj-${generateId()}`;
-    const steps: Step[] = [];
     const ratingLevel: ContentRatingLevel = context.contentRatingLevel ?? 1;
     const reasonParts: string[] = [];
+    const trajectoryStore = getTrajectoryStore();
+    const scope = context.userId ?? "anonymous";
 
-    // ── Guard: empty text ──────────────────────────────────────────
+    // ── Guard: empty text (still minted a runtime trajectory for the id) ──
     if (!text || text.trim().length === 0) {
+      const empty = await trajectoryStore.create(
+        { kind: "agent", id: this.identity.actorId },
+        `guardian-${direction}`,
+        "platform"
+      );
       return this.buildResult({
         action: "allow",
         triggeredBy: "none",
@@ -154,245 +142,270 @@ export class Guardian {
         attributeToUser: true,
         pipelineLatencyMs: Date.now() - startTime,
         classifierCostUsd: 0,
-        trajectoryId,
+        trajectoryId: empty.trajectory.trajectoryId,
       });
     }
 
-    // ── Step 0: Receive context (cognition) ─────────────────────────
-    const ctxStart = Date.now();
-    const ctxEval = await evaluateContext(context);
-    steps.push(
-      makeStep(
-        0,
-        "receive-context",
-        "cognition",
-        {
-          contentType: context.contentType,
-          contentRatingLevel: ratingLevel,
-          userId: context.userId ?? "anonymous",
-        },
-        {
-          severityReduction: ctxEval.severityReduction,
-          attributeToUser: ctxEval.attributeToUser,
-          factors: ctxEval.factors,
-        },
-        Date.now() - ctxStart,
-        0
-      )
+    // ADR-039 F3c: the runtime owns the trajectory. screen() runs its decision stages through
+    // executeAgent (recording each as a governed step) instead of hand-rolled makeStep/steps[].
+    // Step-shared state lives in one object so the closure's assignments survive to buildResult
+    // (object-property reads are not CFA-narrowed the way a captured `let` would be).
+    const acc: {
+      ctxEval: Awaited<ReturnType<typeof evaluateContext>>;
+      blocklistResult: ReturnType<typeof scanBlocklist>;
+      classifierOutput?: ModerationResult["classifierOutput"];
+      action: ModerationAction;
+      triggeredBy: ModerationResult["triggeredBy"];
+      severityAdjustment: number;
+      reasoning: string;
+    } = {
+      ctxEval: await evaluateContext(context),
+      blocklistResult: scanBlocklist(text),
+      action: "allow",
+      triggeredBy: "none",
+      severityAdjustment: 0,
+      reasoning: "",
+    };
+    // evaluateContext/scanBlocklist are re-run inside the workflow steps below so each stage is
+    // recorded against the runtime trajectory; the initial values above keep the type definite.
+
+    const workflow: WorkflowFn = async (ctx) => {
+      switch (ctx.stepCount) {
+        case 0: {
+          acc.ctxEval = await evaluateContext(context);
+          if (acc.ctxEval.factors.length > 0) {
+            reasonParts.push(`Context: ${acc.ctxEval.factors.join("; ")}.`);
+          }
+          return {
+            action: "receive-context",
+            boundary: "cognition",
+            input: {
+              contentType: context.contentType,
+              contentRatingLevel: ratingLevel,
+              userId: scope,
+            },
+            output: {
+              severityReduction: acc.ctxEval.severityReduction,
+              attributeToUser: acc.ctxEval.attributeToUser,
+              factors: acc.ctxEval.factors,
+            },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        case 1: {
+          acc.blocklistResult = scanBlocklist(text);
+          return {
+            action: "blocklist-scan",
+            boundary: "cognition",
+            input: { textLength: text.length },
+            output: {
+              matched: acc.blocklistResult.matched,
+              matchCount: acc.blocklistResult.matches.length,
+              maxSeverity: acc.blocklistResult.maxSeverity,
+            },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        case 2: {
+          // Critical/high blocklist hit → block immediately, skip classifier (terminal decide).
+          if (
+            acc.blocklistResult.matched &&
+            BLOCKLIST_BLOCK_SEVERITIES.has(acc.blocklistResult.maxSeverity)
+          ) {
+            acc.action = "block";
+            acc.triggeredBy = "blocklist";
+            acc.reasoning = `Blocklist hit: ${acc.blocklistResult.matches
+              .map((m) => m.category)
+              .join(
+                ", "
+              )} (severity: ${acc.blocklistResult.maxSeverity}). Blocked immediately — classifier skipped.`;
+            return {
+              action: "decide",
+              boundary: "commitment",
+              input: { trigger: "blocklist", severity: acc.blocklistResult.maxSeverity },
+              output: { action: "block", reasoning: acc.reasoning },
+              costUsd: 0,
+              continueExecution: false,
+            };
+          }
+          acc.classifierOutput = await classify(text, requestId);
+          return {
+            action: "classify-content",
+            boundary: "cognition",
+            input: { textLength: text.length },
+            output: {
+              safe: acc.classifierOutput.safe,
+              categories: acc.classifierOutput.categories,
+              confidence: acc.classifierOutput.confidence,
+              severity: acc.classifierOutput.severity,
+            },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        case 3: {
+          const classifierOutput = acc.classifierOutput!;
+          acc.severityAdjustment =
+            acc.ctxEval.severityReduction > 0 ? -acc.ctxEval.severityReduction : 0;
+
+          if (classifierOutput.safe) {
+            acc.action = acc.blocklistResult.matched ? "warn" : "allow";
+            acc.triggeredBy = acc.blocklistResult.matched ? "blocklist" : "none";
+            reasonParts.push(
+              `Classifier: safe (confidence ${classifierOutput.confidence.toFixed(2)}).`
+            );
+            if (acc.blocklistResult.matched) {
+              reasonParts.push(`Low-severity blocklist match — warning applied.`);
+            }
+          } else {
+            let thresholds;
+            try {
+              thresholds = await loadContentRatingThresholds(ratingLevel);
+            } catch {
+              thresholds = {
+                level: 1 as const,
+                label: "fail-closed (config unavailable)",
+                blockSeverity: "low" as const,
+                warnSeverity: "low" as const,
+                escalateBelow: 0.95,
+              };
+              reasonParts.push("Config unavailable — using fail-closed thresholds.");
+            }
+
+            const originalSeverity = classifierOutput.severity;
+            const adjustedSeverity = reduceSeverity(
+              originalSeverity,
+              acc.ctxEval.severityReduction
+            );
+
+            if (acc.ctxEval.severityReduction > 0) {
+              reasonParts.push(
+                `Severity adjusted: ${originalSeverity} → ${adjustedSeverity} (${context.contentType} context, -${acc.ctxEval.severityReduction}).`
+              );
+            }
+
+            if (classifierOutput.confidence < thresholds.escalateBelow) {
+              acc.action = "escalate";
+              acc.triggeredBy = "content-rating";
+              reasonParts.push(
+                `Confidence ${classifierOutput.confidence.toFixed(2)} below threshold ${thresholds.escalateBelow} for ${thresholds.label} — escalating for human review.`
+              );
+            } else if (severityAtOrAbove(adjustedSeverity, thresholds.blockSeverity)) {
+              acc.action = "block";
+              acc.triggeredBy = "content-rating";
+              reasonParts.push(
+                `Adjusted severity ${adjustedSeverity} ≥ block threshold ${thresholds.blockSeverity} for ${thresholds.label}.`
+              );
+            } else if (severityAtOrAbove(adjustedSeverity, thresholds.warnSeverity)) {
+              acc.action = "warn";
+              acc.triggeredBy = "content-rating";
+              reasonParts.push(
+                `Adjusted severity ${adjustedSeverity} ≥ warn threshold ${thresholds.warnSeverity} for ${thresholds.label}.`
+              );
+            } else {
+              acc.action = "allow";
+              acc.triggeredBy = "content-rating";
+              reasonParts.push(
+                `Adjusted severity ${adjustedSeverity} below warn threshold for ${thresholds.label} — allowed.`
+              );
+            }
+          }
+
+          return {
+            action: "evaluate-thresholds",
+            boundary: "cognition",
+            input: {
+              safe: classifierOutput.safe,
+              severity: classifierOutput.severity,
+              severityAdjustment: acc.severityAdjustment,
+              ratingLevel,
+            },
+            output: { action: acc.action, triggeredBy: acc.triggeredBy },
+            costUsd: 0,
+            continueExecution: true,
+          };
+        }
+        default: {
+          acc.reasoning = reasonParts.join(" ");
+          return {
+            action: "decide",
+            boundary: "commitment",
+            input: { proposedAction: acc.action },
+            output: {
+              finalAction: acc.action,
+              reasoning: acc.reasoning,
+              attributeToUser: acc.ctxEval.attributeToUser,
+            },
+            costUsd: 0,
+            continueExecution: false,
+          };
+        }
+      }
+    };
+
+    const exec = await executeAgent(
+      "guardian-social",
+      `guardian-${direction}`,
+      "user",
+      scope,
+      workflow
     );
 
-    if (ctxEval.factors.length > 0) {
-      reasonParts.push(`Context: ${ctxEval.factors.join("; ")}.`);
-    }
-
-    // ── Step 1: Blocklist scan (cognition) ───────────────────────────
-    const blStart = Date.now();
-    const blocklistResult = scanBlocklist(text);
-    steps.push(
-      makeStep(
-        1,
-        "blocklist-scan",
-        "cognition",
-        { textLength: text.length },
+    // ADR-039 F3c fail-closed guard: if the screening run did not complete (agent unavailable,
+    // budget exhausted, mid-run error), NEVER return the default allow. Escalate for human review
+    // — fail-closed, and bounded by the ADR-041 SLA. Restores Guardian's "fail closed on any
+    // error" contract.
+    if (!exec.success || exec.finalStatus !== "completed") {
+      logger.error(
+        "Guardian screening run did not complete — failing closed to escalate",
         {
-          matched: blocklistResult.matched,
-          matchCount: blocklistResult.matches.length,
-          maxSeverity: blocklistResult.maxSeverity,
-        },
-        Date.now() - blStart,
-        0
-      )
-    );
-
-    // Critical/high blocklist hit → block immediately, skip classifier
-    if (
-      blocklistResult.matched &&
-      BLOCKLIST_BLOCK_SEVERITIES.has(blocklistResult.maxSeverity)
-    ) {
-      const reasoning = `Blocklist hit: ${blocklistResult.matches.map((m) => m.category).join(", ")} (severity: ${blocklistResult.maxSeverity}). Blocked immediately — classifier skipped.`;
-
-      // Step 4: Decide (commitment) — immediate block
-      steps.push(
-        makeStep(
-          steps.length,
-          "decide",
-          "commitment",
-          { trigger: "blocklist", severity: blocklistResult.maxSeverity },
-          { action: "block", reasoning },
-          0,
-          0
-        )
+          route: "platform/moderation/guardian",
+          requestId,
+          finalStatus: exec.finalStatus,
+          error: exec.error,
+        }
       );
-
-      const result = this.buildResult({
-        action: "block",
-        triggeredBy: "blocklist",
+      const failClosed = this.buildResult({
+        action: "escalate",
+        triggeredBy: "context",
         direction,
         context,
         ratingLevel,
-        blocklistMatches: blocklistResult.matches.map((m) => m.matched),
-        reasoning,
-        severityAdjustment: 0,
-        contextFactors: ctxEval.factors,
-        attributeToUser: ctxEval.attributeToUser,
+        blocklistMatches: acc.blocklistResult.matches.map((m) => m.matched),
+        classifierOutput: acc.classifierOutput,
+        reasoning:
+          "Screening run did not complete — escalated for human review (fail-closed).",
+        severityAdjustment: acc.severityAdjustment,
+        contextFactors: acc.ctxEval.factors,
+        attributeToUser: acc.ctxEval.attributeToUser,
         pipelineLatencyMs: Date.now() - startTime,
         classifierCostUsd: 0,
-        trajectoryId,
-        steps,
+        trajectoryId: exec.trajectoryId,
       });
-
-      logModerationAudit(text, result, requestId);
-      return result;
+      logModerationAudit(text, failClosed, requestId);
+      return failClosed;
     }
-
-    // ── Step 2: Classify content (cognition) ─────────────────────────
-    const clStart = Date.now();
-    const classifierOutput = await classify(text, requestId);
-    const classifierCost = 0; // Cost tracked by orchestrator metrics
-    steps.push(
-      makeStep(
-        2,
-        "classify-content",
-        "cognition",
-        { textLength: text.length },
-        {
-          safe: classifierOutput.safe,
-          categories: classifierOutput.categories,
-          confidence: classifierOutput.confidence,
-          severity: classifierOutput.severity,
-        },
-        Date.now() - clStart,
-        classifierCost
-      )
-    );
-
-    // ── Step 3: Evaluate thresholds (cognition) ──────────────────────
-    const evalStart = Date.now();
-    let action: ModerationAction;
-    let triggeredBy: ModerationResult["triggeredBy"];
-    const severityAdjustment =
-      ctxEval.severityReduction > 0 ? -ctxEval.severityReduction : 0;
-
-    if (classifierOutput.safe) {
-      // Classifier says safe — check for low-severity blocklist matches
-      action = blocklistResult.matched ? "warn" : "allow";
-      triggeredBy = blocklistResult.matched ? "blocklist" : "none";
-      reasonParts.push(
-        `Classifier: safe (confidence ${classifierOutput.confidence.toFixed(2)}).`
-      );
-      if (blocklistResult.matched) {
-        reasonParts.push(`Low-severity blocklist match — warning applied.`);
-      }
-    } else {
-      // Classifier says unsafe — apply content rating with context adjustment
-      let thresholds;
-      try {
-        thresholds = await loadContentRatingThresholds(ratingLevel);
-      } catch {
-        // P11: Config unavailable — fail closed with strictest thresholds
-        thresholds = {
-          level: 1 as const,
-          label: "fail-closed (config unavailable)",
-          blockSeverity: "low" as const,
-          warnSeverity: "low" as const,
-          escalateBelow: 0.95,
-        };
-        reasonParts.push("Config unavailable — using fail-closed thresholds.");
-      }
-
-      // Apply severity reduction from context
-      const originalSeverity = classifierOutput.severity;
-      const adjustedSeverity = reduceSeverity(
-        originalSeverity,
-        ctxEval.severityReduction
-      );
-
-      if (ctxEval.severityReduction > 0) {
-        reasonParts.push(
-          `Severity adjusted: ${originalSeverity} → ${adjustedSeverity} (${context.contentType} context, -${ctxEval.severityReduction}).`
-        );
-      }
-
-      // Check confidence threshold
-      if (classifierOutput.confidence < thresholds.escalateBelow) {
-        action = "escalate";
-        triggeredBy = "content-rating";
-        reasonParts.push(
-          `Confidence ${classifierOutput.confidence.toFixed(2)} below threshold ${thresholds.escalateBelow} for ${thresholds.label} — escalating for human review.`
-        );
-      } else if (severityAtOrAbove(adjustedSeverity, thresholds.blockSeverity)) {
-        action = "block";
-        triggeredBy = "content-rating";
-        reasonParts.push(
-          `Adjusted severity ${adjustedSeverity} ≥ block threshold ${thresholds.blockSeverity} for ${thresholds.label}.`
-        );
-      } else if (severityAtOrAbove(adjustedSeverity, thresholds.warnSeverity)) {
-        action = "warn";
-        triggeredBy = "content-rating";
-        reasonParts.push(
-          `Adjusted severity ${adjustedSeverity} ≥ warn threshold ${thresholds.warnSeverity} for ${thresholds.label}.`
-        );
-      } else {
-        action = "allow";
-        triggeredBy = "content-rating";
-        reasonParts.push(
-          `Adjusted severity ${adjustedSeverity} below warn threshold for ${thresholds.label} — allowed.`
-        );
-      }
-    }
-
-    steps.push(
-      makeStep(
-        3,
-        "evaluate-thresholds",
-        "cognition",
-        {
-          safe: classifierOutput.safe,
-          severity: classifierOutput.severity,
-          severityAdjustment,
-          ratingLevel,
-        },
-        { action, triggeredBy },
-        Date.now() - evalStart,
-        0
-      )
-    );
-
-    // ── Step 4: Decide (commitment) ──────────────────────────────────
-    const reasoning = reasonParts.join(" ");
-    steps.push(
-      makeStep(
-        steps.length,
-        "decide",
-        "commitment",
-        { proposedAction: action },
-        { finalAction: action, reasoning, attributeToUser: ctxEval.attributeToUser },
-        0,
-        0
-      )
-    );
 
     const result = this.buildResult({
-      action,
-      triggeredBy,
+      action: acc.action,
+      triggeredBy: acc.triggeredBy,
       direction,
       context,
       ratingLevel,
-      blocklistMatches: blocklistResult.matches.map((m) => m.matched),
-      classifierOutput,
-      reasoning,
-      severityAdjustment,
-      contextFactors: ctxEval.factors,
-      attributeToUser: ctxEval.attributeToUser,
+      blocklistMatches: acc.blocklistResult.matches.map((m) => m.matched),
+      classifierOutput: acc.classifierOutput,
+      reasoning: acc.reasoning,
+      severityAdjustment: acc.severityAdjustment,
+      contextFactors: acc.ctxEval.factors,
+      attributeToUser: acc.ctxEval.attributeToUser,
       pipelineLatencyMs: Date.now() - startTime,
-      classifierCostUsd: classifierCost,
-      trajectoryId,
-      steps,
+      classifierCostUsd: 0,
+      trajectoryId: exec.trajectoryId,
     });
 
-    // Fire-and-forget audit
     logModerationAudit(text, result, requestId);
-
     return result;
   }
 
@@ -413,7 +426,6 @@ export class Guardian {
     pipelineLatencyMs: number;
     classifierCostUsd: number;
     trajectoryId: string;
-    steps?: Step[];
   }): ModerationResult {
     return {
       action: params.action,

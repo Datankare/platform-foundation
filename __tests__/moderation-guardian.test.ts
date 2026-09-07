@@ -9,6 +9,8 @@
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
 import type { AIResponse, Orchestrator, CircuitState } from "@/platform/ai";
 import { Guardian } from "@/platform/moderation/guardian";
+import { registerPlatformAgents } from "@/platform/agents/agent-configs";
+import { resetAgentRegistry } from "@/platform/agents/registry";
 import { resetModerationStore } from "@/platform/moderation/store";
 import type { ScreeningContext } from "@/platform/moderation/types";
 
@@ -142,7 +144,7 @@ describe("Guardian — trajectory (P18)", () => {
 
     const result = await guardian.screen("hello", "input", "req-1", makeContext());
 
-    expect(result.trajectoryId).toMatch(/^traj-/);
+    expect(result.trajectoryId).toBeTruthy();
     expect(result.agentId).toBe("test-g");
   });
 
@@ -429,5 +431,22 @@ describe("Guardian — config failure (F1: fail-closed)", () => {
 
     expect(result.action).toBe("block");
     expect(result.reasoning).toContain("fail-closed");
+  });
+});
+
+describe("Guardian — fail-closed when the runtime can't complete (ADR-039 F3c)", () => {
+  it("escalates (does NOT allow) when the guardian agent is not registered", async () => {
+    resetAgentRegistry(); // simulate the agent being unavailable at run time
+    const guardian = new Guardian("test-failclosed");
+    const context: ScreeningContext = {
+      contentType: "generation",
+      contentRatingLevel: 3,
+    };
+    const result = await guardian.screen("some content", "input", "req-fc", context);
+    // The safety-critical assertion: an incomplete run must NOT fail open to allow.
+    expect(result.action).not.toBe("allow");
+    expect(result.action).toBe("escalate");
+    // restore for any later tests in the run
+    registerPlatformAgents();
   });
 });

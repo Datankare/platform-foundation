@@ -339,6 +339,22 @@ export class Sentinel {
     );
     const trajectoryId = exec.trajectoryId;
 
+    // ADR-039 F3c companion: a Sentinel run that did not complete means the account consequence
+    // was NOT applied. Surface it loudly rather than silently returning "no consequence" — the
+    // Guardian block still stands, but the strike/status change must not be silently dropped.
+    if (!exec.success || exec.finalStatus !== "completed") {
+      logger.error("Sentinel run did not complete — account consequence NOT applied", {
+        route: "platform/moderation/sentinel",
+        userId,
+        requestId,
+        finalStatus: exec.finalStatus,
+        error: exec.error,
+      });
+      reasonParts.push(
+        "Sentinel run did not complete — consequence not applied (surfaced)."
+      );
+    }
+
     // Fire-and-forget audit log
     writeAuditLog({
       action: "admin_action",
