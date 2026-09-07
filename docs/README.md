@@ -36,7 +36,7 @@ graph TD
         PLAT[PLATFORM_ARCHITECTURE<br/>the layers]
         AGENT[AGENT_ARCHITECTURE<br/>agents + governed authority]
         AUX[AUX_DESIGN<br/>agent UX surface]
-        ADR[(adr/ · 40 ADRs<br/>every decision + rationale)]
+        ADR[(adr/ · 41 ADRs<br/>every decision + rationale)]
     end
 
     subgraph GUIDES["Developer Guides"]
@@ -99,7 +99,7 @@ graph TD
 | [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md) | The platform layers and how they compose.                                  |
 | [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md)       | Agent clusters, workflow, and the governed-authority layer.                |
 | [AUX_DESIGN.md](AUX_DESIGN.md)                       | The agent user-experience surface.                                         |
-| [adr/](adr/)                                         | 40 Architecture Decision Records — every decision and its rationale.       |
+| [adr/](adr/)                                         | 41 Architecture Decision Records — every decision and its rationale.       |
 
 ### Developer Guides
 
