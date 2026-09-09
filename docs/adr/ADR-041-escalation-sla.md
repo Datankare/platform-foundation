@@ -65,9 +65,7 @@ for orgs that would rather page a human than hard-block on a transient backlog.
 `status ∈ {pending, claimed}` with `now − createdAt > sla` and applies the remedial action in one
 transition per item, recording a moderation-audit entry + a trajectory step with
 `actorType: "system"`, `actorId: "escalation-reaper"`. Idempotent: a reaped item leaves the
-over-SLA set, so re-running is safe. Triggered the same way as the other lifecycle sweeps
-(`gdpr-deletion`, `guest-lifecycle`) — an authenticated scheduled invocation; the sweep function
-is pure and independently testable.
+over-SLA set, so re-running is safe. Invocation follows `gdpr-deletion`'s pattern — a permission-gated authenticated route invoking the pure, independently-testable sweep, fired by cron or on-call. A survey found no existing scheduler to inherit (`gdpr-deletion` is admin-route-triggered; `guest-lifecycle`'s sweep is currently dormant), so this ADR adds the route (option A); a dormant sweep fn (option B) was rejected — see the invocation decision below.
 
 **D4 — `escalate` is a withhold, not an allow (caller contract).** Callers must treat
 `action: "escalate"` as _not permitted-yet_ (content withheld pending review), never as `allow`.
@@ -77,6 +75,33 @@ is asserted in the conformance kit so a caller can't quietly treat escalate as a
 **D5 — Dual-control the controls.** `escalation_sla_*` and `escalation_remedial_action` are
 safety-tier config; adding them to `config.dual_control_keys` (ADR-039) is recommended so the SLA
 and remedial policy themselves can't be weakened without a second human.
+
+### Invocation decision — A (authenticated route) over B (dormant fn)
+
+Survey finding: there is no existing scheduler to inherit — `gdpr-deletion` runs via a permission-gated admin route, and `guest-lifecycle`'s sweep is currently dormant (exported, uninvoked). Because `escalate` is already a withhold (D4), neither option risks exposing content; the axis is whether an overdue item is ever _resolved_.
+
+```
+over-SLA escalation  (pending · past deadline · content withheld)
+        │
+        ├──────────────────────────────┐
+        ▼  A (chosen)                   ▼  B (rejected)
+  POST reaper route               reapOverdueEscalations()
+  permission-gated,               exported, no route
+  fired by cron / on-call                 │
+        │                                 ▼
+        ▼                           nothing calls it
+  reapOverdueEscalations()          (no cron, no caller —
+        │                            guest-lifecycle today)
+        ▼                                 │
+  remedial: block / escalate↑             ▼
+  + audit (actor = reaper)          SLA never enforced;
+        │                            items pile up in limbo
+        ▼
+  item resolved:
+  withheld → blocked, appealable
+```
+
+A is a strict superset of B — B's pure `reapOverdueEscalations(now)` plus a thin authenticated route (`POST /api/admin/moderation/reap-escalations`, permission-gated, fired by cron/on-call). B was rejected: it ships the SLA mechanism switched off, leaving the very limbo this ADR closes. The external scheduler (Vercel Cron vs a scheduled workflow) is a separate later step; the route is testable without it.
 
 ---
 
@@ -93,7 +118,7 @@ a fail-open window). D4 + the SLA + a fail-closed remedial default close it end 
 
 - New config keys (migration): `escalation_sla_hours` (+ min/max), `escalation_remedial_action`,
   all safety-tier, seeded with secure defaults.
-- New `review-service` function `reapOverdueEscalations()` + a scheduled invocation.
+- New `review-service` function `reapOverdueEscalations()` + a permission-gated reaper route (external scheduler wired separately).
 - Review items already carry `createdAt`/`status`, so no schema change is required for the SLA
   computation; the remedial transition reuses the existing resolve/escalate paths.
 - Conformance kit (L21): tests that (a) an over-SLA `pending` item is blocked by the reaper with
