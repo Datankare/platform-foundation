@@ -95,7 +95,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 203 suites, 2,589 tests (1 skipped), 89.23% statement / 77.5% branch / 92.04% function coverage
+- ✅ 205 suites, 2,598 tests (1 skipped), 89.29% statement / 77.6% branch / 92.08% function coverage
 - ✅ Conformance kits for all 25 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
@@ -201,7 +201,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 203 suites, 2,589 tests, 89.23% coverage
+npm run test:coverage  # 205 suites, 2,598 tests, 89.29% coverage
 npm run build          # Clean build
 ```
 
@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.0.0 — Datankare_
-_Phase 5 Sprint 4b · 203 suites · 2,589 tests · 89.23% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 4b · 205 suites · 2,598 tests · 89.29% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 8, 2026 (Phase 5 Sprint 4b — ADR-041 step 1: escalation-SLA config migration 033; doc migration counts synced to 34)_
+_Last updated: September 8, 2026 (Phase 5 Sprint 4b — ADR-041 step 2a: escalation SLA reaper mechanism + conformance kit; suite/test/coverage counts synced)_

@@ -185,3 +185,49 @@ export async function loadBlocklistOnlySurfaces(): Promise<readonly ContentType[
   const surfaces = await getConfig<ContentType[]>(key("blocklist_only_surfaces"), []);
   return Array.isArray(surfaces) ? surfaces : [];
 }
+
+// ---------------------------------------------------------------------------
+// Escalation SLA + remedial action (ADR-041)
+// ---------------------------------------------------------------------------
+
+/** Fail-closed SLA floor (hours) if even the min guardrail can't be read. */
+const FAIL_CLOSED_SLA_HOURS = 1;
+/** Fail-closed SLA ceiling (hours) if the max guardrail can't be read. */
+const FAIL_CLOSED_SLA_MAX_HOURS = 168;
+
+/** Remedial action the reaper may apply on an over-SLA item (ADR-041 D2). */
+export type RemedialAction = "block" | "escalate_higher";
+
+/**
+ * Escalation SLA in hours (ADR-041 D1): how long a review item may sit before the
+ * reaper acts. Reads escalation_sla_hours and clamps to [min, max]. On any read
+ * failure it falls back to the min (shortest) window — fail-closed.
+ */
+export async function loadEscalationSlaHours(): Promise<number> {
+  const minRaw = await getConfig<number>(
+    key("escalation_sla_min_hours"),
+    FAIL_CLOSED_SLA_HOURS
+  );
+  const min = typeof minRaw === "number" && minRaw > 0 ? minRaw : FAIL_CLOSED_SLA_HOURS;
+  const maxRaw = await getConfig<number>(
+    key("escalation_sla_max_hours"),
+    FAIL_CLOSED_SLA_MAX_HOURS
+  );
+  const max =
+    typeof maxRaw === "number" && maxRaw >= min
+      ? maxRaw
+      : Math.max(min, FAIL_CLOSED_SLA_MAX_HOURS);
+  const hoursRaw = await getConfig<number>(key("escalation_sla_hours"), min);
+  const hours = typeof hoursRaw === "number" ? hoursRaw : min;
+  return Math.max(min, Math.min(hours, max));
+}
+
+/**
+ * Remedial action on an over-SLA escalation (ADR-041 D2). Validates the configured
+ * value; anything other than "escalate_higher" (including "allow" or garbage) falls
+ * back to the secure default "block". The reaper never resolves an item to "allow".
+ */
+export async function loadRemedialAction(): Promise<RemedialAction> {
+  const raw = await getConfig<string>(key("escalation_remedial_action"), "block");
+  return raw === "escalate_higher" ? "escalate_higher" : "block";
+}
