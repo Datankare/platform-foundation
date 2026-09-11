@@ -6,6 +6,7 @@ import type { AdminSection } from "@/components/admin/AdminShell";
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
+import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import {
   RolesDataView,
   UsersDataView,
@@ -55,6 +56,7 @@ const ENDPOINTS: Record<string, string> = {
   roles: "/api/admin/roles",
   entitlements: "/api/admin/entitlements",
   audit: "/api/admin/audit?offset=0",
+  approvals: "/api/admin/approvals",
   "guest-config": "/api/admin/guest-config",
   "password-policy": "/api/admin/password-policy",
   "agent-registry": "/api/admin/agent-registry",
@@ -71,6 +73,7 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   roles: RolesDataView,
   entitlements: EntitlementsDataView,
   audit: AuditDataView,
+  approvals: HeldActionsPanel,
   "guest-config": GuestConfigDataView,
   "password-policy": PasswordPolicyDataView,
   "agent-registry": TrustedAgentsDataView,

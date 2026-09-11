@@ -14,7 +14,8 @@ export type AdminSection =
   | "per-account"
   | "approval-policy"
   | "capabilities"
-  | "capability-mapping";
+  | "capability-mapping"
+  | "approvals";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -57,6 +58,12 @@ const NAV_ITEMS: {
     label: "Audit Log",
     icon: "📋",
     permission: "admin_view_audit",
+  },
+  {
+    section: "approvals",
+    label: "Approvals",
+    icon: "✅",
+    permission: "can_access_admin",
   },
   {
     section: "guest-config",
