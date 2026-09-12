@@ -95,7 +95,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 211 suites, 2,650 tests (1 skipped), 89.30% statement / 77.67% branch / 92.11% function coverage
+- ✅ 212 suites, 2,663 tests (1 skipped), 89.30% statement / 77.67% branch / 92.11% function coverage
 - ✅ Conformance kits for all 25 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
@@ -201,7 +201,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 211 suites, 2,650 tests, 89.30% coverage
+npm run test:coverage  # 212 suites, 2,663 tests, 89.30% coverage
 npm run build          # Clean build
 ```
 
@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.0.0 — Datankare_
-_Phase 5 Sprint 4b · 211 suites · 2,650 tests · 89.30% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 4b · 212 suites · 2,663 tests · 89.30% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 10, 2026 (Phase 5 Sprint 4b — coverage remediation B2: medium admin-route tests; suite/test counts synced)_
+_Last updated: September 10, 2026 (Phase 5 Sprint 4b — coverage remediation B3a: ai role-handler tests; suite/test counts synced)_
