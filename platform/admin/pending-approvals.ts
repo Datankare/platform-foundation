@@ -51,13 +51,15 @@ function permissionForTier(tier: "standard" | "safety"): ApprovalPermission {
  * The permission required to clear a hold — derived from the config key's tier
  * (fail-closed to safety when there is no key, per getPermissionTier).
  */
-async function requiredPermissionForKey(configKey?: string): Promise<ApprovalPermission> {
+export async function requiredPermissionForKey(
+  configKey?: string
+): Promise<ApprovalPermission> {
   if (!configKey) return "config_manage_safety";
   return permissionForTier(await getPermissionTier(configKey));
 }
 
 /** The config key a runtime proposal concerns, if its payload names one (best-effort). */
-function proposalConfigKey(payload: Record<string, unknown>): string | undefined {
+export function proposalConfigKey(payload: Record<string, unknown>): string | undefined {
   const k = payload["key"] ?? payload["configKey"];
   return typeof k === "string" ? k : undefined;
 }
