@@ -95,7 +95,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 215 suites, 2,709 tests (1 skipped), 90.16% statement / 77.38% branch / 91.43% function coverage
+- ✅ 215 suites, 2,710 tests (1 skipped), 90.16% statement / 77.38% branch / 91.43% function coverage
 - ✅ Conformance kits for all 25 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
@@ -105,7 +105,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 34 migrations (001–033), tracked in `applied_migrations`
+- ✅ 35 migrations (001–034), tracked in `applied_migrations`
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -170,7 +170,7 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 25 abstractions (ADR-027)
-├── supabase/migrations/    ← 34 database migrations
+├── supabase/migrations/    ← 35 database migrations
 ├── docs/adr/               ← 41 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
@@ -201,7 +201,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 215 suites, 2,709 tests, 90.16% coverage
+npm run test:coverage  # 215 suites, 2,710 tests, 90.16% coverage
 npm run build          # Clean build
 ```
 
@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.0.0 — Datankare_
-_Phase 5 Sprint 4b · 215 suites · 2,709 tests · 90.16% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 4b · 215 suites · 2,710 tests · 90.16% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 10, 2026 (Phase 5 Sprint 4b — coverage remediation B5: full admin surface in the coverage map, zero ignores; figures synced)_
+_Last updated: September 10, 2026 (Phase 5 Sprint 4b — ADR-040 040b: safety_approver role migration (034); migration/test counts synced)_
