@@ -95,7 +95,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 216 suites, 2,722 tests (1 skipped), 90.14% statement / 77.29% branch / 91.23% function coverage
+- ✅ 217 suites, 2,729 tests (1 skipped), 90.17% statement / 77.37% branch / 91.23% function coverage
 - ✅ Conformance kits for all 25 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
@@ -201,7 +201,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 216 suites, 2,722 tests, 90.14% coverage
+npm run test:coverage  # 217 suites, 2,729 tests, 90.17% coverage
 npm run build          # Clean build
 ```
 
@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.0.0 — Datankare_
-_Phase 5 Sprint 4b · 216 suites · 2,722 tests · 90.14% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 4b · 217 suites · 2,729 tests · 90.17% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 10, 2026 (Phase 5 Sprint 4b — ADR-040 040c: approve/reject UI on the approvals surface; coverage synced)_
+_Last updated: September 10, 2026 (Phase 5 Sprint 4b — ADR-040 040c: dual-control keys management UI (governed config-ai path); counts synced)_

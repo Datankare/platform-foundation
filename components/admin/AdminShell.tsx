@@ -15,7 +15,8 @@ export type AdminSection =
   | "approval-policy"
   | "capabilities"
   | "capability-mapping"
-  | "approvals";
+  | "approvals"
+  | "dual-control";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -64,6 +65,12 @@ const NAV_ITEMS: {
     label: "Approvals",
     icon: "✅",
     permission: "can_access_admin",
+  },
+  {
+    section: "dual-control",
+    label: "Dual-Control",
+    icon: "🔒",
+    permission: "config_view",
   },
   {
     section: "guest-config",

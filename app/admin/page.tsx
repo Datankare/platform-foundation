@@ -7,6 +7,7 @@ import AdminPromptBar from "@/components/admin/AdminPromptBar";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
 import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
+import { DualControlKeysPanel } from "@/components/admin/DualControlKeysPanel";
 import {
   RolesDataView,
   UsersDataView,
@@ -74,6 +75,7 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   entitlements: EntitlementsDataView,
   audit: AuditDataView,
   approvals: HeldActionsPanel,
+  "dual-control": DualControlKeysPanel,
   "guest-config": GuestConfigDataView,
   "password-policy": PasswordPolicyDataView,
   "agent-registry": TrustedAgentsDataView,
