@@ -462,7 +462,7 @@ forgotten it — including its author.
 **85. Adding a member to an enumerated set (an agent, an ADR) trips hidden cardinality/roster assertions scattered across tests and docs — grep for them before packaging.** Registering Sentinel broke a hard-coded `expect(AGENT_CONFIGS).toHaveLength(8)`; reserving ADR-036/037/038 tripped docs-integrity's "TAD lists every ADR" check; each surfaced only when the gate ran on the human's machine — a wasted round trip. The counts and rosters that must move in lockstep are scattered: agent-count tests, `agent-registry-integrity.test.ts`, `docs/TAD.md`'s ADR index, `docs/README.md`'s ADR count, `AGENT_ARCHITECTURE`'s roster. Rules: (1) adding an agent → bump the `toHaveLength(` in the agent-config test and add it to `AGENT_ARCHITECTURE`'s roster (enforced by `agent-registry-integrity.test.ts`); (2) adding/reserving an ADR → add it to `docs/TAD.md` and bump `docs/README.md`, same commit; (3) whenever a change grows an enumerated set, grep the repo for that set's cardinality assertions before packaging — the sandbox catches it, but only if you run it, and grepping is cheaper than a round trip.
 
 _Last updated: September 4, 2026 (Phase 5 Sprint 3c close — Gotchas 80-83 added; sync add-only orphans, useSearchParams needs Suspense, verify a tag before releasing, honest doc footers)_
-_Last updated: September 7, 2026 (Phase 5 Sprint 4b — Gotchas 84-85 added; closure-narrowed lets need an acc object, and growing an enumerated set trips hidden count/roster assertions)_
+_Last updated: September 7, 2026 (Phase 5 Sprint 3d — Gotchas 84-85 added; closure-narrowed lets need an acc object, and growing an enumerated set trips hidden count/roster assertions)_
 
 ## Noted (Not Yet Adopted)
 

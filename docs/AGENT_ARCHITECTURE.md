@@ -410,7 +410,7 @@ Still open / forthcoming:
 
 ---
 
-## Sprint 4b delivery notes
+## Sprint 3d delivery notes
 
 ### Social agents — intentional structural similarity
 
@@ -426,7 +426,7 @@ Sprint 4a shipped a precedence bug: `(scopeId ?? scopeType === "platform")` eval
 
 ---
 
-_Last reviewed: September 2026 (Sprint 4b / ADR-039 — registry is the single source of truth; roster of 12 agents added; Cluster 2 reclassified as services (D6); Sentinel / config-manager / command-bar / conductor on the governed runtime; trusted-agent-registry naming disambiguated)_
+_Last reviewed: September 2026 (Sprint 3d / ADR-039 — registry is the single source of truth; roster of 12 agents added; Cluster 2 reclassified as services (D6); Sentinel / config-manager / command-bar / conductor on the governed runtime; trusted-agent-registry naming disambiguated)_
 
 ## Human review + reviewer-assist (Sprint 6)
 

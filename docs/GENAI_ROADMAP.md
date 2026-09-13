@@ -27,7 +27,7 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 | 2     | ✅ Complete  | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry                      |
 | 3     | ✅ Complete  | Voice pipeline (P1-P18 agentic), song ID, translation/TTS/STT providers, canonical audio format                                                      |
 | 4     | ✅ Complete  | RAG, embeddings, cognitive memory, explainability, Guardian/Sentinel agents, agent runtime, conformance kits                                         |
-| 5     | 🔄 Sprint 4b | Application framework, agentic workflow, AUX, agent identity + governance, registry unification (ADR-028–041); adaptive behavior + multimodal remain |
+| 5     | 🔄 Sprint 3d | Application framework, agentic workflow, AUX, agent identity + governance, registry unification (ADR-028–041); adaptive behavior + multimodal remain |
 | 6     | ⏳ Upcoming  | Token budgets, cost attribution, A/B testing                                                                                                         |
 | 7     | ⏳ Upcoming  | AI quality monitoring, personalization, feedback loop, NL analytics                                                                                  |
 | 8     | ⏳ Upcoming  | AI hardening, fallback chains, graceful degradation                                                                                                  |
@@ -196,4 +196,4 @@ If any statement is false at launch, GenAI-native is incomplete.
 
 | 2026-08-30 | Raman Sud | Sprint 3c. Agent governance + identity: agent identity rung 2 (ADR-033) — governed trusted-agent registry, RS256 attested delegation (verify + OAuth 2.1/PKCE mint), governed token TTL, rung-1 header retired. Per-account feature restriction (ADR-034), orthogonal to status, fail-closed. GenAI-native governance admin (ADR-035) — registry, capability map, approval policy, and per-account blocks administered through the natural-language admin; a reusable, vocabulary-free platform capability inherited by any consumer with agents. |
 
-_Last updated: September 8, 2026 (Sprint 4b — Phase 5 status row brought current through Sprint 4b: AUX, agent identity + governance, agent registry unification)_
+_Last updated: September 8, 2026 (Sprint 3d — Phase 5 status row brought current through Sprint 3d: AUX, agent identity + governance, agent registry unification)_

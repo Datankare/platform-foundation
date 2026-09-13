@@ -160,4 +160,4 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (Sprint 4b — ADR-036..040 + ADR-041 reserved: escalation SLA & remedial action)_
+_Last reviewed: September 2026 (Sprint 3d — ADR-036..040 + ADR-041 reserved: escalation SLA & remedial action)_

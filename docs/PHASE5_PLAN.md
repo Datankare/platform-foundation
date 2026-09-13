@@ -362,16 +362,16 @@ P14 remains the only gap (Phase 7). 18/18 accounted for.
 
 **Pre-code gate satisfied** — this table precedes any Sprint 4 implementation (L12).
 
-## GenAI 18-Principle Mapping — Sprint 4b (L12 pre-code gate)
+## GenAI 18-Principle Mapping — Sprint 3d (L12 pre-code gate)
 
-> Sprint 4b — Agent Registry Unification (ADR-039), promoted from Track F to its own sprint:
+> Sprint 3d — Agent Registry Unification (ADR-039), promoted from Track F to its own sprint (renamed from "Sprint 4b" so it orders correctly between 3c and 4; distinct from Phase 4's own Sprint 4b, which wired the social/input agents):
 > register every agent so `listAgents()` is the single source of truth, run every agent on the
 > governed runtime (no bespoke loops), enforce that with a CI guard, and add dual-control — a
 > runtime hold + independent human approver on a named catastrophic config subset — surfaced
 > GenAI-native in the admin (ADR-040). Core = primary deliverer · Extend = fabric applied to a
 > new surface · Advance = moves a partial forward · — = no deliverable.
 
-| #   | Principle             | Sprint 4b | How                                                                                                                              |
+| #   | Principle             | Sprint 3d | How                                                                                                                              |
 | --- | --------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Intent-Driven         | Extend    | Admin config-as-conversation via the command bar; holds/approvals surface as AUX nextActions                                     |
 | 2   | Agentic Execution     | **Core**  | Every agent runs on the governed runtime (executeAgent / invokeTool); zero bespoke loops                                         |
@@ -392,13 +392,13 @@ P14 remains the only gap (Phase 7). 18/18 accounted for.
 | 17  | Cognition-Commitment  | Extend    | Held actions are the commit gate; a catastrophic change is held until approved                                                   |
 | 18  | Durable Trajectories  | Extend    | Every agent appends to the checkpointed runtime trajectory                                                                       |
 
-**Summary:** Sprint 4b unifies the agent registry and puts every agent on one governed execution
+**Summary:** Sprint 3d unifies the agent registry and puts every agent on one governed execution
 model. **P2 / P13** are core — single roster + one runtime, made binding by the D5 zero-bespoke
 guard. **P10** advances via dual-control: a runtime hold + independent human approver on a named
 catastrophic config subset, surfaced GenAI-native in the admin (ADR-040). The generative
 principles (P6–P9) belong to Sprint 4 proper and are out of scope here.
 
-**Pre-code gate satisfied** — this table precedes any remaining Sprint 4b implementation (L12).
+**Pre-code gate satisfied** — this table precedes any remaining Sprint 3d implementation (L12).
 Status at open: F1 (Sentinel) and F2a (both planners registered) already landed; F2b/F2c
 (execution reroute + dual-control), F3 (Conductor + processing units), F4 (the guard + process
 Gotchas) and F5 (AGENT_ARCHITECTURE backfill + naming) remain.
@@ -415,4 +415,4 @@ _Last updated: September 4, 2026 (Phase 5 Sprint 3c CLOSE — all deliverables +
 
 _Last updated: September 4, 2026 (Phase 5 Sprint 4 opened — L12 mapping recorded as the pre-code gate; ADR-036 / 037 / 038 reserved as Proposed and indexed in TAD; adaptive memory scoped within-session, cross-session deferred; P9 eval harness net-new this sprint)_
 
-_Last updated: September 6, 2026 (Phase 5 Sprint 4b opened — Agent Registry Unification (ADR-039) promoted from Track F to its own sprint; L12 mapping recorded; ADR-040 reserved for the GenAI-native held-action / dual-control admin surface; dual-control going live; F1 + F2a already landed)_
+_Last updated: September 6, 2026 (Phase 5 Sprint 3d opened — Agent Registry Unification (ADR-039) promoted from Track F to its own sprint; L12 mapping recorded; ADR-040 reserved for the GenAI-native held-action / dual-control admin surface; dual-control going live; F1 + F2a already landed)_

@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.0.0 — Datankare_
-_Phase 5 Sprint 4b · 218 suites · 2,730 tests · 90.19% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 3d · 218 suites · 2,730 tests · 90.19% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 10, 2026 (Phase 5 Sprint 4b — ADR-040 040c: approve-by-conversation behind a mandatory confirm; counts synced)_
+_Last updated: September 10, 2026 (Phase 5 Sprint 3d — renamed from "Sprint 4b" to order between 3c and 4; distinct from Phase 4's Sprint 4b)_
