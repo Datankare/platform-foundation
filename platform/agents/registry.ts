@@ -12,12 +12,20 @@
  */
 
 import type { AgentConfig } from "./types";
+import { getSingleton } from "@/platform/kernel/singleton";
 
 // ---------------------------------------------------------------------------
 // Registry state
 // ---------------------------------------------------------------------------
 
-const agents = new Map<string, AgentConfig>();
+// ADR-039: the registry must survive Next.js/Turbopack module duplication — the
+// instrumentation bundle and the route bundles otherwise get separate Maps, so a consumer
+// that registers agents at startup is invisible to the routes that read them. Back it with
+// the globalThis singleton carrier (the same pattern platform/observability uses).
+const agents = getSingleton(
+  "platform.agents.registry",
+  () => new Map<string, AgentConfig>()
+);
 
 // ---------------------------------------------------------------------------
 // Public API
