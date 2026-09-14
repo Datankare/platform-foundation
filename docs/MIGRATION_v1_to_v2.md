@@ -1,4 +1,4 @@
-# Migrating from v1.x to v2.0.0
+# Migrating from v1.x to v2.x
 
 v2.0.0 delivers the Phase 5 application-and-governance framework (agentic workflow lifecycle,
 AUX, agent identity rung 2, per-account restriction, and the GenAI-native governance admin).
