@@ -1,6 +1,6 @@
 # ADR-040: Held-Action and Dual-Control Admin Experience
 
-Status: Accepted (Phase 5 Sprint 4b — full design authored; implementation 040a-c). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 3d — full design authored; implementation 040a-c). Decision maker: Raman Sud.
 Related: ADR-039 (agent registry unification — dual-control mechanism), ADR-035 (GenAI-native
 governance admin), ADR-030 (AUX nextActions / gating), `platform/agents/gating.ts`,
 `platform/agents/approval-policy-store.ts`.
@@ -111,7 +111,7 @@ A single `PendingApproval` view-model that both hold records map into, discrimin
   the client; routes are permission-gated; the underlying change is already dual-controlled;
   `safety_approver` cannot self-escalate.
 
-## Implementation plan (Sprint 4b — 040a -> 040b -> 040c)
+## Implementation plan (Sprint 3d — 040a -> 040b -> 040c)
 
 - **040a — read surface.** `PendingApproval` view-model + adapters, `listPendingApprovals()`,
   `GET /api/admin/approvals`, `HeldActionsPanel` (list + "why held"). No state change. Conformance +
@@ -153,5 +153,5 @@ A single `PendingApproval` view-model that both hold records map into, discrimin
   these would be speculative narrow roles; the tier-derived rule already differentiates by class,
   and per-domain roles slot in later as plain grants with no code change.
 
-_Last updated: September 8, 2026 (Phase 5 Sprint 4b — ADR-040 full design: unified approvals
+_Last updated: September 8, 2026 (Phase 5 Sprint 3d — ADR-040 full design: unified approvals
 surface, approve-iff-authorized-to-edit, safety_approver; implementation 040a-c)._

@@ -1,6 +1,6 @@
 # ADR-041: Escalation SLA and Remedial Action
 
-Status: Proposed (Phase 5 Sprint 4b). Decision maker: Raman Sud.
+Status: Proposed (Phase 5 Sprint 3d). Decision maker: Raman Sud.
 Related: ADR-024 (human review queue), ADR-016/017 (moderation pipeline), ADR-039 (Guardian on
 the runtime — fail-closed to `escalate`), `platform/moderation/review-service.ts`,
 `platform/moderation/review-store.ts`.

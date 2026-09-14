@@ -1,5 +1,5 @@
 /**
- * agent-registry-integrity.test.ts — ADR-039 D5 enforcement (Sprint 4b).
+ * agent-registry-integrity.test.ts — ADR-039 D5 enforcement (Sprint 3d).
  *
  * Makes the registry-unification invariants binding:
  *   1. Roster completeness — every registered agent (listAgents) is documented in
