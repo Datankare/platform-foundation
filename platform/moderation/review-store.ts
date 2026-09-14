@@ -144,6 +144,7 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
         | "decision"
         | "reviewerNotes"
         | "modifiedAction"
+        | "priority"
         | "updatedAt"
       >
     >
@@ -452,6 +453,7 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
         | "decision"
         | "reviewerNotes"
         | "modifiedAction"
+        | "priority"
         | "updatedAt"
       >
     >
@@ -470,6 +472,7 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
         dbFields.reviewer_notes = fields.reviewerNotes;
       if (fields.modifiedAction !== undefined)
         dbFields.modified_action = fields.modifiedAction;
+      if (fields.priority !== undefined) dbFields.priority = fields.priority;
 
       const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${id}`,

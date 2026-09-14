@@ -21,16 +21,16 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 
 ## Phase Summary
 
-| Phase | GenAI Status | Key GenAI Capabilities                                                                                                          |
-| ----- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | ✅ Complete  | Admin AI command bar                                                                                                            |
-| 2     | ✅ Complete  | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry |
-| 3     | ✅ Complete  | Voice pipeline (P1-P18 agentic), song ID, translation/TTS/STT providers, canonical audio format                                 |
-| 4     | ✅ Complete  | RAG, embeddings, cognitive memory, explainability, Guardian/Sentinel agents, agent runtime, conformance kits                    |
-| 5     | 🔄 Sprint 2  | Application framework, agentic workflow framework (ADR-029/031); adaptive behavior and multimodal remain                        |
-| 6     | ⏳ Upcoming  | Token budgets, cost attribution, A/B testing                                                                                    |
-| 7     | ⏳ Upcoming  | AI quality monitoring, personalization, feedback loop, NL analytics                                                             |
-| 8     | ⏳ Upcoming  | AI hardening, fallback chains, graceful degradation                                                                             |
+| Phase | GenAI Status | Key GenAI Capabilities                                                                                                                               |
+| ----- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | ✅ Complete  | Admin AI command bar                                                                                                                                 |
+| 2     | ✅ Complete  | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry                      |
+| 3     | ✅ Complete  | Voice pipeline (P1-P18 agentic), song ID, translation/TTS/STT providers, canonical audio format                                                      |
+| 4     | ✅ Complete  | RAG, embeddings, cognitive memory, explainability, Guardian/Sentinel agents, agent runtime, conformance kits                                         |
+| 5     | 🔄 Sprint 3d | Application framework, agentic workflow, AUX, agent identity + governance, registry unification (ADR-028–041); adaptive behavior + multimodal remain |
+| 6     | ⏳ Upcoming  | Token budgets, cost attribution, A/B testing                                                                                                         |
+| 7     | ⏳ Upcoming  | AI quality monitoring, personalization, feedback loop, NL analytics                                                                                  |
+| 8     | ⏳ Upcoming  | AI hardening, fallback chains, graceful degradation                                                                                                  |
 
 ---
 
@@ -194,6 +194,7 @@ If any statement is false at launch, GenAI-native is incomplete.
 
 | 2026-08-04 | Raman Sud | Phase 5 Sprint 2. Agentic workflow framework: tool invocation routed through the governed action pipeline (ADR-029 D2), so a restricted tool is gated by the code that gates a restricted session action. Schemas enforced at both tool edges with retry rather than coercion (D3) — a plausible wrong answer is worse than a loud failure. Trajectories, budgets, proposals and external effects made durable. Gated actions held rather than refused, with approval reconciled against the version the approver saw. Rollback appends compensating actions; history is never rewritten. Failure is three-valued — an external effect that neither confirmed nor denied propagates as `indeterminate` rather than being collapsed into success or failure. P2, P4, P12, P13, P15, P17, P18 strengthened. |
 
+| 2026-09-10 | Raman Sud | Sprint 3d. Agent registry unification (ADR-039): one registry is the single source of truth, every agent on the governed runtime, a zero-bespoke CI guard, Guardian fails closed. Escalation SLA + remedial reaper (ADR-041): fail-closed SLA, block-by-default remedial (never allow), idempotent sweep, authenticated route. Held-action & dual-control admin (ADR-040): a safety_approver peer role so two-person control needs no second super_admin, a unified approvals queue, approve/reject with server-side self-approval block, dual-control-keys management, approve-by-conversation behind a mandatory confirm. Admin surface brought fully into the coverage map; floors ratcheted (stmts 88 / lines 90 / funcs 90 / branches 76). PF v2.1.0. |
 | 2026-08-30 | Raman Sud | Sprint 3c. Agent governance + identity: agent identity rung 2 (ADR-033) — governed trusted-agent registry, RS256 attested delegation (verify + OAuth 2.1/PKCE mint), governed token TTL, rung-1 header retired. Per-account feature restriction (ADR-034), orthogonal to status, fail-closed. GenAI-native governance admin (ADR-035) — registry, capability map, approval policy, and per-account blocks administered through the natural-language admin; a reusable, vocabulary-free platform capability inherited by any consumer with agents. |
 
-_Last updated: August 30, 2026 (Sprint 3c — agent governance + identity: ADR-033 rung 2, ADR-034 per-account restriction, ADR-035 governance admin)_
+_Last updated: September 10, 2026 (Sprint 3d CLOSE — registry unification + dual-control admin + escalation reaper; PF v2.1.0; change-log row added)_

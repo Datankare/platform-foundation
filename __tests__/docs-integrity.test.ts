@@ -73,6 +73,33 @@ describe("docs integrity — ADRs", () => {
   });
 });
 
+describe("docs integrity — README counts match the filesystem (Gotcha 85)", () => {
+  // A green docs-integrity run must not be read as "every stated fact is true".
+  // The README states counts nothing else validated; pin the two that are pure
+  // filesystem facts so they can never silently drift from the tree again.
+  const readme = read("README.md");
+
+  it("every ADR count stated in the README equals the ADR file count", () => {
+    const n = adrFilesIds().length;
+    const stated = [
+      ...readme.matchAll(/(\d+)\s+(?:ADRs|Architecture Decision Records)/g),
+    ].map((m) => Number(m[1]));
+    expect(stated.length).toBeGreaterThan(0); // self-test: the pattern must match
+    expect(stated.every((c) => c === n)).toBe(true);
+  });
+
+  it("every migration count stated in the README equals the migration file count", () => {
+    const n = readdirSync(join(ROOT, "supabase", "migrations")).filter((f) =>
+      f.endsWith(".sql")
+    ).length;
+    const stated = [...readme.matchAll(/(\d+)\s+(?:database )?migrations/g)].map((m) =>
+      Number(m[1])
+    );
+    expect(stated.length).toBeGreaterThan(0); // self-test: the pattern must match
+    expect(stated.every((c) => c === n)).toBe(true);
+  });
+});
+
 // ── Environment variables ─────────────────────────────────────────────────
 
 /** Every process.env.X the code reads (platform/lib/app), minus obvious non-config. */

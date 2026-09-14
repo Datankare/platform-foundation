@@ -21,6 +21,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { writeAuditLog } from "@/platform/auth/audit";
 import { getStrikeStore } from "./strikes";
 import { getReviewQueueStore } from "./review-store";
+import { loadEscalationSlaHours, loadRemedialAction } from "./config";
 import type {
   ReviewQueueItem,
   ReviewDecision,
@@ -558,3 +559,100 @@ async function restoreAccountStatus(
 //    punishment a user would contest; "escalate" already routes to human
 //    review, and "ban" is a downstream Sentinel consequence of a block, not a
 //    ModerationAction. The guard and its error message agree (Sprint 6 follow-up).
+
+// ---------------------------------------------------------------------------
+// Escalation SLA reaper (ADR-041 D3)
+// ---------------------------------------------------------------------------
+
+/** Outcome of a reaper sweep. */
+export interface ReapResult {
+  /** Overdue escalation items matched (pending + claimed, older than the SLA). */
+  readonly scanned: number;
+  /** Items resolved to a block (the secure default remedial). */
+  readonly blocked: number;
+  /** Items ratcheted to critical priority (escalate_higher remedial). */
+  readonly escalatedHigher: number;
+  /** SLA (hours) applied this sweep. */
+  readonly slaHours: number;
+  /** ISO cutoff: items created before this were overdue. */
+  readonly cutoff: string;
+}
+
+/**
+ * Reap over-SLA escalations (ADR-041 D3). Selects source="escalation" items in
+ * pending/claimed created before (now - SLA) and applies the configured remedial
+ * action - never "allow":
+ *   - "block" (secure default): resolve as decision "modify" -> modifiedAction
+ *     "block"; the already-withheld content becomes a concrete, appealable block.
+ *   - "escalate_higher": ratchet priority to "critical" and keep it queued; items
+ *     already at "critical" are skipped (a one-way ratchet, so re-running is safe).
+ * Attributable via the audit log (actorId "escalation-reaper"), mirroring
+ * resolveItem. `now` is injectable for deterministic tests.
+ */
+export async function reapOverdueEscalations(
+  now: Date = new Date()
+): Promise<ReapResult> {
+  const store = getReviewQueueStore();
+  const slaHours = await loadEscalationSlaHours();
+  const remedial = await loadRemedialAction();
+  const cutoff = new Date(now.getTime() - slaHours * 3_600_000).toISOString();
+
+  const overdue = [
+    ...(await store.query({ status: "pending", source: "escalation", before: cutoff })),
+    ...(await store.query({ status: "claimed", source: "escalation", before: cutoff })),
+  ];
+
+  let blocked = 0;
+  let escalatedHigher = 0;
+
+  for (const item of overdue) {
+    if (remedial === "escalate_higher") {
+      if (item.priority === "critical") continue; // one-way ratchet -> idempotent
+      const res = await store.update(item.id, {
+        status: "pending",
+        priority: "critical",
+      });
+      if (!res.success) continue;
+      escalatedHigher++;
+      writeAuditLog({
+        action: "admin_action",
+        actorId: "escalation-reaper",
+        targetId: item.targetUserId,
+        details: {
+          type: "escalation_sla_escalate_higher",
+          reviewItemId: item.id,
+          slaHours,
+          trajectoryId: item.moderationResult.trajectoryId,
+          reapedAt: now.toISOString(),
+        },
+      });
+      continue;
+    }
+
+    const res = await store.update(item.id, {
+      status: "resolved",
+      decision: "modify",
+      modifiedAction: "block",
+      resolvedBy: "escalation-reaper",
+      resolvedAt: now.toISOString(),
+      reviewerNotes: `Auto-blocked: escalation exceeded the ${slaHours}h SLA without human review (ADR-041).`,
+    });
+    if (!res.success) continue;
+    blocked++;
+    writeAuditLog({
+      action: "admin_action",
+      actorId: "escalation-reaper",
+      targetId: item.targetUserId,
+      details: {
+        type: "escalation_sla_block",
+        reviewItemId: item.id,
+        slaHours,
+        originalAction: item.moderationResult.action,
+        trajectoryId: item.moderationResult.trajectoryId,
+        reapedAt: now.toISOString(),
+      },
+    });
+  }
+
+  return { scanned: overdue.length, blocked, escalatedHigher, slaHours, cutoff };
+}

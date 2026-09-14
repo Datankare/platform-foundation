@@ -27,6 +27,10 @@ import {
   handleSetApprovalPolicy,
   handleSetCapabilityMapping,
 } from "@/app/api/admin/ai/handlers";
+import type { Tool, AgentIdentity } from "@/platform/agents/types";
+import { invokeTool } from "@/platform/agents/tool-invoker";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { getProposalStore } from "@/platform/agents/proposal-store";
 
 type ActionResult = {
   success: boolean;
@@ -73,8 +77,25 @@ export async function POST(request: NextRequest) {
   const results: { tool: string; success: boolean; result?: string; error?: string }[] =
     [];
 
-  for (const action of actions) {
-    const validTools = new Set(Object.keys(toolHandlers));
+  // ADR-039 F2c: command-bar execution runs through the governed runtime (invokeTool) —
+  // trajectory, budget and gating — instead of a bespoke dispatch. Each handler is wrapped as a
+  // runtime Tool; writes declare stateWrite (effectiveRisk consequential, below the hold line).
+  const trajectoryStore = getTrajectoryStore();
+  const actor: AgentIdentity = {
+    actorType: "agent",
+    actorId: "command-bar",
+    agentRole: "command-bar",
+  };
+  const trajectory = await trajectoryStore.create(
+    { kind: "agent", id: actor.actorId },
+    "command-bar",
+    "platform"
+  );
+  const trajectoryId = trajectory.trajectory.trajectoryId;
+  const validTools = new Set(Object.keys(toolHandlers));
+
+  for (let i = 0; i < actions.length; i += 1) {
+    const action = actions[i];
     if (!validTools.has(action.tool)) {
       results.push({
         tool: action.tool,
@@ -84,9 +105,40 @@ export async function POST(request: NextRequest) {
       break;
     }
 
-    // Validated: action.tool is a known key in toolHandlers
     const handler = toolHandlers[action.tool as keyof typeof toolHandlers];
-    const result = await handler(action.input, actorId);
+    const toolInput = (action.input ?? {}) as Record<string, unknown>;
+    const isRead = action.tool === "search";
+    const runtimeTool: Tool = {
+      id: action.tool,
+      name: action.tool,
+      description: `admin command-bar: ${action.tool}`,
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      effects: isRead ? [] : ["stateWrite"],
+      declaredRisk: isRead ? "ordinary" : "consequential",
+      execute: async () =>
+        (await handler(toolInput, actorId)) as unknown as Record<string, unknown>,
+    };
+
+    let result: ActionResult;
+    try {
+      const invoked = await invokeTool({
+        tool: runtimeTool,
+        input: toolInput,
+        actor,
+        sessionId: trajectoryId,
+        trajectoryId,
+        stepIndex: i,
+        trajectoryStore,
+        proposalStore: getProposalStore(),
+      });
+      result = invoked.output as unknown as ActionResult;
+    } catch (err) {
+      result = {
+        success: false,
+        error: err instanceof Error ? err.message : "Tool invocation failed",
+      };
+    }
     results.push({ tool: action.tool, ...result });
     if (!result.success) break;
   }

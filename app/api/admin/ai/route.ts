@@ -18,6 +18,7 @@ import { logger, generateRequestId } from "@/lib/logger";
 import { getOrchestrator } from "@/platform/ai";
 import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS, type AdminTool } from "./tool-schemas";
+import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 
 function getToolsForPanel(panel: string): AdminTool[] {
   return [...SHARED_TOOLS, ...(PANEL_TOOL_SCHEMAS[panel] || [])];
@@ -55,6 +56,17 @@ async function getContextForPanel(panel: string): Promise<string> {
       .from("permissions")
       .select("code, display_name");
     return `Current entitlement groups: ${JSON.stringify(groups || [])}\nAvailable permissions: ${JSON.stringify(perms || [])}`;
+  }
+
+  if (panel === "approvals") {
+    const holds = await listPendingApprovals();
+    const summary = holds.map((h) => ({
+      proposalId: h.id,
+      source: h.source,
+      label: h.label,
+      requester: h.requester,
+    }));
+    return `Pending approvals — resolve the request to exactly one of these, by proposalId: ${JSON.stringify(summary)}`;
   }
 
   return "";

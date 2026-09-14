@@ -2,7 +2,7 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
-> **v2.0.0** — Phase 5 application framework & governed agency. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
+> **v2.1.0** — Phase 5 application framework & governed agency. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
 
 A battle-tested foundation for building commercial SaaS products, internal tools,
 and application platforms. Clone it, rename it, and start building on solid ground
@@ -95,17 +95,17 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 186 suites, 2,407 tests, 89.18% statement / 76.96% branch / 91.91% function coverage
-- ✅ Conformance kits for all 16 platform abstractions, self-policing via meta-test
+- ✅ 218 suites, 2,730 tests (1 skipped), 90.19% statement / 77.38% branch / 91.24% function coverage
+- ✅ Conformance kits for all 25 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v1.6.0)
+- ✅ Versioned releases (v2.1.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
 
-- ✅ 30 migrations (001–029), tracked in `applied_migrations`
+- ✅ 35 migrations (001–034), tracked in `applied_migrations`
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -114,7 +114,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                            |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–027`                        | 27 Architecture Decision Records                                                   |
+| `docs/adr/ADR-001–041`                        | 41 Architecture Decision Records                                                   |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                    |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
@@ -169,9 +169,9 @@ platform-foundation/
 ├── components/auth/        ← Auth UI (login, register, profile, age gate, review/appeals)
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
-├── __tests__/contract/     ← Conformance kits (TCK) for all 16 abstractions (ADR-027)
-├── supabase/migrations/    ← 30 database migrations
-├── docs/adr/               ← 30 ADRs
+├── __tests__/contract/     ← Conformance kits (TCK) for all 25 abstractions (ADR-027)
+├── supabase/migrations/    ← 35 database migrations
+├── docs/adr/               ← 41 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -201,7 +201,7 @@ npm run dev
 npm run format:check   # All formatted
 npm run typecheck      # Zero errors
 npm run lint           # Zero warnings
-npm run test:coverage  # 154 suites, 2089 tests, 88.5% coverage
+npm run test:coverage  # 218 suites, 2,730 tests, 90.19% coverage
 npm run build          # Clean build
 ```
 
@@ -239,8 +239,8 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 
 ---
 
-_Platform Foundation v1.6.0 — Datankare_
-_Phase 5 Sprint 2 · 186 suites · 2,407 tests · 89.18% coverage · 30 ADRs · 18 GenAI principles · 23 conformance kits · 18 provider slots_
+_Platform Foundation v2.1.0 — Datankare_
+_Phase 5 Sprint 3d · 218 suites · 2,730 tests · 90.19% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: August 4, 2026 (Phase 5 Sprint 2 — agentic workflow framework)_
+_Last updated: September 10, 2026 (Phase 5 Sprint 3d CLOSE — PF v2.1.0: registry unification (ADR-039), escalation reaper (ADR-041), dual-control admin (ADR-040), admin coverage remediation + floor ratchet)_

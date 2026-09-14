@@ -196,6 +196,7 @@ export interface ReviewQueueStore {
         | "decision"
         | "reviewerNotes"
         | "modifiedAction"
+        | "priority"
         | "updatedAt"
       >
     >

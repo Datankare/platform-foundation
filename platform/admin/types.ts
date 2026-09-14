@@ -267,6 +267,14 @@ export interface ConfigToolResult {
   readonly data: unknown;
   /** Error message if failed */
   readonly error?: string;
+  /** True when the call was HELD for approval (ADR-039 dual-control), not failed. */
+  readonly held?: boolean;
+  /** Present when held: the proposal to approve + the required approver actorType. */
+  readonly approval?: {
+    readonly proposalId: string;
+    readonly operationId: string;
+    readonly requiredApprover: string;
+  };
   /** Duration of this tool call in ms */
   readonly durationMs: number;
 }
