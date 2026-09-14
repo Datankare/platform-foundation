@@ -9,6 +9,23 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.1.1 — patch: agent registry survives bundle duplication
+
+Date: 2026-09-14
+
+A patch fixing a production agent-registration defect surfaced by a downstream consumer's
+end-to-end tests. No API change; consumers inherit the fix on sync.
+
+### Fix
+
+- **Agent registry now survives Next.js/Turbopack module duplication.** The registry held
+  agents in a module-level `Map`, which Next duplicates across the instrumentation bundle and
+  the route bundles — so a consumer registering agents at server startup populated one copy
+  while the routes read another, empty one, and moderation failed closed. The registry is now
+  backed by the same `globalThis` singleton carrier the observability layer uses.
+
+---
+
 ## v2.1.0 — Sprint 3d: registry unification & held-action governance
 
 Date: 2026-09-10
