@@ -16,6 +16,14 @@
  */
 process.env.LOG_LEVEL = "silent";
 
+// ADR-039: agents are registered at init in production (registerPlatformAgents).
+// Mirror that once per test file so any code path that runs an agent via the runtime
+// resolves it — matching prod and keeping this out of every individual suite.
+import { registerPlatformAgents } from "@/platform/agents/agent-configs";
+beforeAll(() => {
+  registerPlatformAgents();
+});
+
 afterAll(() => {
   const g = globalThis as unknown as Record<string, unknown>;
   if (g.__SENTRY__) {

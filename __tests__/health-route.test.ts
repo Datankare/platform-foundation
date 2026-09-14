@@ -21,6 +21,13 @@ jest.mock("@/platform/observability", () => ({
   tryGetObservability: () => mockState,
 }));
 
+// Deterministic requestId so the OWASP-A05 whole-body scan below cannot flake on a random
+// id that happens to contain a suppressed substring (e.g. a hex id containing "401").
+jest.mock("@/lib/logger", () => ({
+  generateRequestId: () => "healthcheck-req-id",
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+}));
+
 import { GET } from "@/app/api/health/route";
 
 function stateWith(report: HealthReport) {

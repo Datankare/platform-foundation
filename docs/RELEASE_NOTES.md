@@ -9,6 +9,33 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.1.0 — Sprint 3d: registry unification & held-action governance
+
+Date: 2026-09-10
+
+The first minor release on the v2 line. It ships Sprint 3d — Agent Registry Unification
+(ADR-039) — and the dual-control governance surface built on it, plus a full test-coverage
+remediation of the admin surface. No breaking changes; consumers inherit these on sync.
+
+### Headline capabilities
+
+- **Unified agent registry (ADR-039).** One registry is the single source of truth for every
+  agent; a CI guard fails the build if an agent runs off the governed runtime, and the
+  Guardian fails closed to escalation.
+- **Escalation SLA + reaper (ADR-041).** Over-SLA escalations are swept by a permission-gated
+  route and resolved to a concrete, appealable block (never "allow"); the SLA is fail-closed
+  to the shortest window, and the reaper is idempotent.
+- **Held-action & dual-control admin (ADR-040).** A `safety_approver` role (a safety peer that
+  cannot self-escalate) makes two-person control operable without a second super_admin; a
+  unified Approvals queue over both hold mechanisms; approve/reject with self-approval blocked
+  server-side (even for super_admin); dual-control-keys management through the governed config
+  path; and approve-by-conversation behind a mandatory confirm.
+- **Admin coverage remediation.** The whole admin surface — services, routes, handlers, tool
+  schemas — is now in the coverage map (no blanket ignores), with the enforced floors ratcheted
+  to statements 88 / lines 90 / functions 90 / branches 76.
+
+---
+
 ## v2.0.0 — Phase 5 application framework & governed agency
 
 Date: 2026-09-04

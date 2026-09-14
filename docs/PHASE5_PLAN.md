@@ -326,6 +326,102 @@ framework, not conventional). P14 is the only gap (Phase 7). 18/18 accounted for
 
 **Pre-code gate satisfied** — this table precedes any Sprint 2 implementation (L12).
 
+## GenAI 18-Principle Mapping — Sprint 4 (L12 pre-code gate)
+
+> Mapped against Sprint 4's deliverables — the adaptive-behavior framework (ADR-036), the
+> content-generation framework (ADR-037), and the prompt-eval harness (ADR-038). Sprints 1–3c
+> built and governed the agentic fabric; Sprint 4 rides it onto two generative surfaces and
+> builds the eval harness they gate on. Core = Sprint 4 primary deliverer · Extend = fabric
+> applied to a new surface · Advance = moves a partial forward · — = no deliverable.
+
+| #   | Principle             | Sprint 4 | How                                                                                                                         |
+| --- | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | Extend   | Adaptive behavior is context/intent-driven; content requests are structured intent; both emit AUX `nextActions` (ADR-030)   |
+| 2   | Agentic Execution     | Extend   | Both run as bounded, instrumented invocations over the `platform/agents/` runtime (ADR-029) — no new execution model        |
+| 3   | Total Observability   | Extend   | Every adaptive decision + generation call traced day one — model / prompt-version / tokens / latency / cost / trajectory    |
+| 4   | Structural Safety     | Extend   | Generated content routes through output validation + Guardian before it surfaces (ADR-021); adaptive actions policy-checked |
+| 5   | Versioned Artifacts   | Extend   | New adaptive prompts + content templates versioned in the prompt registry (ADR-015); conformance kit per abstraction (L21)  |
+| 6   | Structured Outputs    | **Core** | Content-gen conforms to consumer templates, schema-validated with a self-healing parse layer; adaptive decisions are typed  |
+| 7   | Provider-Aware        | Extend   | Both route by capability / cost over existing provider slots                                                                |
+| 8   | Context & Memory      | Extend   | Adaptive behavior consumes session state / user context / Phase-4 RAG; app-specific RAG is Sprint 5                         |
+| 9   | Automated Eval        | **Core** | The eval harness (ADR-038) is built this sprint — `prompts/evals/` datasets + CI regression gate; net-new (ADR-017 §4)      |
+| 10  | Human Oversight       | Extend   | Adaptive actions above the risk floor hit propose->confirm; generated content can require review (ADR-024)                  |
+| 11  | Resilient Degradation | Advance  | Both degrade to deterministic logic when the LLM is down — adaptive -> scripted, content-gen -> static templates            |
+| 12  | Economic Transparency | Extend   | Adaptive + generation cost-tracked per trajectory; `budgetConfig` caps enforced; per-user budgets remain Phase 6            |
+| 13  | Control Plane         | Extend   | Governance admin (ADR-035) governs adaptive execution; content types / templates are governed artifacts                     |
+| 14  | Feedback Loops        | —        | Phase 7 — no Sprint 4 work                                                                                                  |
+| 15  | Agent Identity        | Extend   | Adaptive behavior acts under a delegated, scoped, revocable identity (rung-1/2 from 3b/3c) — no new identity mechanism      |
+| 16  | Cognitive Memory      | Extend   | Adaptive behavior uses within-session working memory; resource memory and cross-session learning are deferred               |
+| 17  | Cognition-Commitment  | Extend   | Generated content is held as a draft until validated / committed — no unvalidated output leaks (ADR-031 boundary)           |
+| 18  | Durable Trajectories  | Extend   | Adaptive sequences + generation runs append to the checkpointed, inspectable trajectory                                     |
+
+**Summary:** Sprint 4 rides the finished agentic fabric onto two generative surfaces and builds
+the eval harness they gate on. **P6 / P9** are core — structured-by-construction output, and the
+net-new eval harness (ADR-038). **P11** advances (deterministic fallback in both frameworks).
+P14 remains the only gap (Phase 7). 18/18 accounted for.
+
+**Pre-code gate satisfied** — this table precedes any Sprint 4 implementation (L12).
+
+## GenAI 18-Principle Mapping — Sprint 3d (L12 pre-code gate)
+
+> Sprint 3d — Agent Registry Unification (ADR-039), promoted from Track F to its own sprint (renamed from "Sprint 4b" so it orders correctly between 3c and 4; distinct from Phase 4's own Sprint 4b, which wired the social/input agents):
+> register every agent so `listAgents()` is the single source of truth, run every agent on the
+> governed runtime (no bespoke loops), enforce that with a CI guard, and add dual-control — a
+> runtime hold + independent human approver on a named catastrophic config subset — surfaced
+> GenAI-native in the admin (ADR-040). Core = primary deliverer · Extend = fabric applied to a
+> new surface · Advance = moves a partial forward · — = no deliverable.
+
+| #   | Principle             | Sprint 3d | How                                                                                                                              |
+| --- | --------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | Extend    | Admin config-as-conversation via the command bar; holds/approvals surface as AUX nextActions                                     |
+| 2   | Agentic Execution     | **Core**  | Every agent runs on the governed runtime (executeAgent / invokeTool); zero bespoke loops                                         |
+| 3   | Total Observability   | Extend    | All agents' steps now on the runtime trajectory (was hand-rolled or absent)                                                      |
+| 4   | Structural Safety     | Extend    | Dual-control raises effectiveRisk on a named catastrophic key set -> runtime hold before commit                                  |
+| 5   | Versioned Artifacts   | Extend    | Approval policy + dual-control key set are admin-governed and versioned / audited                                                |
+| 6   | Structured Outputs    | —         | Sprint 4 proper (ADR-037)                                                                                                        |
+| 7   | Provider-Aware        | —         | No deliverable                                                                                                                   |
+| 8   | Context & Memory      | —         | No deliverable                                                                                                                   |
+| 9   | Automated Eval        | —         | Sprint 4 proper (ADR-038)                                                                                                        |
+| 10  | Human Oversight       | Advance   | Dual-control: independent human approver on catastrophic changes + GenAI-native held-actions / approvals admin surface (ADR-040) |
+| 11  | Resilient Degradation | —         | No deliverable                                                                                                                   |
+| 12  | Economic Transparency | Extend    | Budget ceilings now enforced on the newly-registered agents                                                                      |
+| 13  | Control Plane         | **Core**  | `listAgents()` is the single source of truth; admin-governed approval policy + dual-control; the D5 zero-bespoke CI guard        |
+| 14  | Feedback Loops        | —         | Phase 7                                                                                                                          |
+| 15  | Agent Identity        | Extend    | Every agent now carries a registered identity + budget                                                                           |
+| 16  | Cognitive Memory      | —         | No deliverable                                                                                                                   |
+| 17  | Cognition-Commitment  | Extend    | Held actions are the commit gate; a catastrophic change is held until approved                                                   |
+| 18  | Durable Trajectories  | Extend    | Every agent appends to the checkpointed runtime trajectory                                                                       |
+
+**Summary:** Sprint 3d unifies the agent registry and puts every agent on one governed execution
+model. **P2 / P13** are core — single roster + one runtime, made binding by the D5 zero-bespoke
+guard. **P10** advances via dual-control: a runtime hold + independent human approver on a named
+catastrophic config subset, surfaced GenAI-native in the admin (ADR-040). The generative
+principles (P6–P9) belong to Sprint 4 proper and are out of scope here.
+
+**Pre-code gate satisfied** — this table precedes any remaining Sprint 3d implementation (L12).
+
+### Sprint 3d — CLOSE
+
+All deliverables shipped. Agent Registry Unification (ADR-039): one registry as the single
+source of truth, every agent on the governed runtime, a zero-bespoke CI guard, Guardian
+fails closed. Escalation SLA + remedial reaper (ADR-041): config, mechanism, conformance kit,
+and the authenticated invocation route. Held-action & dual-control admin (ADR-040): the
+`safety_approver` role (migration 034), the unified approvals surface, the decision route with
+server-side enforcement, dual-control-keys management, and approve-by-conversation behind a
+mandatory confirm.
+
+**Admin coverage remediation.** The admin surface (services + every route + handlers + tool
+schemas) was brought into the coverage map with zero blanket ignores; floors ratcheted to
+statements 88 / lines 90 / functions 90 / branches 76. Close metrics: 218 suites, 2,730 tests,
+90.19% statements / 91.24% functions / 77.38% branches.
+
+**Release.** Cut as PF **v2.1.0** (minor — no breaking change; tag + GitHub Release). Promoted
+develop→staging→main; Playform inherits on the next foundation sync.
+
+Status at open: F1 (Sentinel) and F2a (both planners registered) already landed; F2b/F2c
+(execution reroute + dual-control), F3 (Conductor + processing units), F4 (the guard + process
+Gotchas) and F5 (AGENT_ARCHITECTURE backfill + naming) remain.
+
 ---
 
 _Last updated: July 26, 2026 (Phase 5 Sprint 2 opened — L12 mapping recorded as the pre-code gate; ADR-031 promoted into the roster and into Sprint 2 scope; AUX/ADR-030 confirmed in Sprint 3; function floors added per TASK-061)_
@@ -334,4 +430,10 @@ _Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Sprint 3b section ad
 
 _Last updated: August 18, 2026 (Phase 5 Sprint 3c scoped — the 3c body replaced with backend + acceptance and UX deliverable tables; F1 per-account restriction folded in; one sprint, no split)_
 
+_Last updated: September 10, 2026 (Phase 5 Sprint 3d CLOSE — ADR-039 registry unification + ADR-040 dual-control admin + ADR-041 escalation reaper shipped; admin surface brought fully into the coverage map, floors ratcheted (stmts 88 / lines 90 / funcs 90 / branches 76); PF released as v2.1.0 (minor); Sprint 4 (adaptive behavior + content generation, ADR-036/037/038) is next)_
+
 _Last updated: September 4, 2026 (Phase 5 Sprint 3c CLOSE — all deliverables + E acceptance shipped; function-coverage floors ratcheted to 92.05% / 91.75% per TASK-061; PF released as v2.0.0 (major, breaking rung-1 retirement) + Playform synced/promoted; adopter docs + docs-integrity guardrail added; live k6 (TASK-046) remains a phase-exit gate)_
+
+_Last updated: September 4, 2026 (Phase 5 Sprint 4 opened — L12 mapping recorded as the pre-code gate; ADR-036 / 037 / 038 reserved as Proposed and indexed in TAD; adaptive memory scoped within-session, cross-session deferred; P9 eval harness net-new this sprint)_
+
+_Last updated: September 6, 2026 (Phase 5 Sprint 3d opened — Agent Registry Unification (ADR-039) promoted from Track F to its own sprint; L12 mapping recorded; ADR-040 reserved for the GenAI-native held-action / dual-control admin surface; dual-control going live; F1 + F2a already landed)_

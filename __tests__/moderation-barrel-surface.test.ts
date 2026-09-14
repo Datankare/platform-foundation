@@ -37,6 +37,7 @@ const EXPECTED_EXPORTS = [
   "resetGuardian",
   "resetModerationStore",
   "resetReviewQueueStore",
+  "reapOverdueEscalations",
   "resolveItem",
   "scanBlocklist",
   "screenContent",

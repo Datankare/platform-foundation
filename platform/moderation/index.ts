@@ -107,6 +107,7 @@ export {
   claimItem,
   unclaimItem,
   resolveItem,
+  reapOverdueEscalations,
   releaseExpiredClaims,
   getQueue,
   getQueueStats,

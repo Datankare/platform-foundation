@@ -23,12 +23,7 @@
  * @module platform/input
  */
 
-import type {
-  AgentIdentity,
-  Trajectory,
-  Step,
-  StepBoundary,
-} from "@/platform/agents/types";
+import type { AgentIdentity, Trajectory } from "@/platform/agents/types";
 import type {
   InputEvent,
   InputMode,
@@ -39,49 +34,14 @@ import type {
 import { type InputClassifier, RuleBasedClassifier } from "./classifier";
 import { type IntentResolver, type IntentContext, DefaultIntentResolver } from "./intent";
 import { generateId } from "@/platform/agents/utils";
+import { executeAgent } from "@/platform/agents/runtime";
+import type { WorkflowFn } from "@/platform/agents/runtime";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 
 // ── Trajectory helpers ────────────────────────────────────────────────
 
 // Uses the shared crypto-secure helper (A5: no duplicate ID generators).
 // See platform/agents/utils.ts.
-
-function makeStep(
-  stepIndex: number,
-  action: string,
-  boundary: StepBoundary,
-  input: Record<string, unknown>,
-  output: Record<string, unknown>,
-  durationMs: number,
-  cost: number
-): Step {
-  return {
-    stepIndex,
-    action,
-    boundary,
-    input,
-    output,
-    durationMs,
-    cost,
-    timestamp: new Date().toISOString(),
-  };
-}
-
-function buildTrajectory(
-  agentId: string,
-  steps: Step[],
-  status: Trajectory["status"] = "completed"
-): Trajectory {
-  const now = new Date().toISOString();
-  return {
-    trajectoryId: `traj-${generateId()}`,
-    agentId,
-    steps,
-    status,
-    totalCost: steps.reduce((sum, s) => sum + s.cost, 0),
-    createdAt: now,
-    updatedAt: now,
-  };
-}
 
 // ── Interface ─────────────────────────────────────────────────────────
 
@@ -150,124 +110,117 @@ export class DefaultInputConductor implements InputConductor {
       actorId: agentId,
       agentRole: "conductor",
     };
-    // Initial trajectory — no steps yet
-    this.currentTrajectory = buildTrajectory(agentId, []);
+    // Initial trajectory — no steps yet (the runtime owns per-call trajectories, ADR-039 F3b)
+    const now = new Date().toISOString();
+    this.currentTrajectory = {
+      trajectoryId: `traj-${generateId()}`,
+      agentId,
+      steps: [],
+      status: "completed",
+      totalCost: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   async processEvent(
     event: InputEvent,
     context: IntentContext
   ): Promise<ConductorOutput> {
-    const steps: Step[] = [];
-
-    // Step 0: Classify the input (P17 — cognition)
-    let classification: ClassificationResult;
-    const classifyStart = Date.now();
-    try {
-      classification = await this.classifier.classify(event);
-      steps.push(
-        makeStep(
-          0,
-          "classify",
-          "cognition",
-          { eventType: event.type },
-          {
-            classification: classification.classification,
-            confidence: classification.confidence,
-            mode: classification.mode,
-          },
-          Date.now() - classifyStart,
-          classification.cost
-        )
-      );
-    } catch {
-      // P11: classification failure → fallback to text mode
-      classification = {
-        classification: "text",
-        confidence: 0,
-        mode: "text",
-        classifiedBy: "fallback",
-        latencyMs: 0,
-        cost: 0,
-      };
-      steps.push(
-        makeStep(
-          0,
-          "classify",
-          "cognition",
-          { eventType: event.type },
-          { classification: "text", confidence: 0, fallback: true },
-          Date.now() - classifyStart,
-          0
-        )
-      );
-    }
-
-    this.currentClassification = classification;
-    this.currentMode = classification.mode;
-    this.modeForced = false;
-
-    // Step 1: Resolve intent (P17 — cognition)
-    const intentContext: IntentContext = {
-      ...context,
-      currentMode: this.currentMode,
+    // ADR-039 F3b: the runtime owns the trajectory. processEvent runs its classify -> resolve
+    // steps through executeAgent instead of a hand-rolled steps[] + traj- id.
+    let classification: ClassificationResult = {
+      classification: "text",
+      confidence: 0,
+      mode: "text",
+      classifiedBy: "fallback",
+      latencyMs: 0,
+      cost: 0,
     };
 
-    let intent: IntentResult;
-    const resolveStart = Date.now();
-    try {
-      intent = await this.resolver.resolve(classification, intentContext);
-      steps.push(
-        makeStep(
-          1,
-          "resolve-intent",
-          "cognition",
-          { classification: classification.classification, mode: this.currentMode },
-          {
-            intent: intent.intent,
-            confidence: intent.confidence,
-            actionCount: intent.actions.length,
-          },
-          Date.now() - resolveStart,
-          intent.cost
-        )
-      );
-    } catch {
-      // P11: resolution failure → generic fallback
-      intent = {
-        intent: "unknown",
-        displayLabel: "Processing...",
-        confidence: 0,
-        actions: [],
-        resolvedBy: "fallback",
-        latencyMs: 0,
-        cost: 0,
-      };
-      steps.push(
-        makeStep(
-          1,
-          "resolve-intent",
-          "cognition",
-          { classification: classification.classification, mode: this.currentMode },
-          { intent: "unknown", fallback: true },
-          Date.now() - resolveStart,
-          0
-        )
-      );
-    }
+    const workflow: WorkflowFn = async (ctx) => {
+      if (ctx.stepCount === 0) {
+        let fellBack = false;
+        try {
+          classification = await this.classifier.classify(event);
+        } catch {
+          classification = {
+            classification: "text",
+            confidence: 0,
+            mode: "text",
+            classifiedBy: "fallback",
+            latencyMs: 0,
+            cost: 0,
+          };
+          fellBack = true;
+        }
+        this.currentClassification = classification;
+        this.currentMode = classification.mode;
+        this.modeForced = false;
+        return {
+          action: "classify",
+          boundary: "cognition",
+          input: { eventType: event.type },
+          output: fellBack
+            ? { classification: "text", confidence: 0, fallback: true }
+            : {
+                classification: classification.classification,
+                confidence: classification.confidence,
+                mode: classification.mode,
+              },
+          costUsd: classification.cost,
+          continueExecution: true,
+        };
+      }
 
-    this.currentIntent = intent;
-    this.currentTrajectory = buildTrajectory(this.identity.actorId, steps);
+      const intentContext: IntentContext = { ...context, currentMode: this.currentMode };
+      let resolveFellBack = false;
+      try {
+        this.currentIntent = await this.resolver.resolve(classification, intentContext);
+      } catch {
+        this.currentIntent = {
+          intent: "unknown",
+          displayLabel: "Processing...",
+          confidence: 0,
+          actions: [],
+          resolvedBy: "fallback",
+          latencyMs: 0,
+          cost: 0,
+        };
+        resolveFellBack = true;
+      }
+      return {
+        action: "resolve-intent",
+        boundary: "cognition",
+        input: { classification: classification.classification, mode: this.currentMode },
+        output: resolveFellBack
+          ? { intent: "unknown", fallback: true }
+          : {
+              intent: this.currentIntent.intent,
+              confidence: this.currentIntent.confidence,
+              actionCount: this.currentIntent.actions.length,
+            },
+        costUsd: this.currentIntent.cost,
+        continueExecution: false,
+      };
+    };
+
+    const exec = await executeAgent(
+      "conductor",
+      "input-event",
+      "user",
+      this.identity.actorId,
+      workflow
+    );
+    const rec = await getTrajectoryStore().getById(exec.trajectoryId);
+    if (rec) this.currentTrajectory = rec.trajectory;
 
     return this.getCurrentOutput();
   }
 
   async forceMode(mode: InputMode, context: IntentContext): Promise<ConductorOutput> {
-    const steps: Step[] = [];
     this.currentMode = mode;
     this.modeForced = true;
-
-    // Step 0: Synthetic classification for forced mode (P17 — cognition)
     const classification: ClassificationResult = {
       classification:
         mode === "speech"
@@ -285,70 +238,62 @@ export class DefaultInputConductor implements InputConductor {
     };
     this.currentClassification = classification;
 
-    steps.push(
-      makeStep(
-        0,
-        "force-mode",
-        "cognition",
-        { forcedMode: mode },
-        {
-          classification: classification.classification,
-          confidence: 1.0,
-          userForced: true,
-        },
-        0,
-        0
-      )
-    );
-
-    // Step 1: Resolve intent for the forced mode
-    const intentContext: IntentContext = {
-      ...context,
-      currentMode: mode,
+    const workflow: WorkflowFn = async (ctx) => {
+      if (ctx.stepCount === 0) {
+        return {
+          action: "force-mode",
+          boundary: "cognition",
+          input: { forcedMode: mode },
+          output: {
+            classification: classification.classification,
+            confidence: 1.0,
+            userForced: true,
+          },
+          costUsd: 0,
+          continueExecution: true,
+        };
+      }
+      const intentContext: IntentContext = { ...context, currentMode: mode };
+      let resolveFellBack = false;
+      try {
+        this.currentIntent = await this.resolver.resolve(classification, intentContext);
+      } catch {
+        this.currentIntent = {
+          intent: "unknown",
+          displayLabel: "Processing...",
+          confidence: 0,
+          actions: [],
+          resolvedBy: "fallback",
+          latencyMs: 0,
+          cost: 0,
+        };
+        resolveFellBack = true;
+      }
+      return {
+        action: "resolve-intent",
+        boundary: "cognition",
+        input: { classification: classification.classification, mode },
+        output: resolveFellBack
+          ? { intent: "unknown", fallback: true }
+          : {
+              intent: this.currentIntent.intent,
+              confidence: this.currentIntent.confidence,
+              actionCount: this.currentIntent.actions.length,
+            },
+        costUsd: this.currentIntent.cost,
+        continueExecution: false,
+      };
     };
 
-    const resolveStart = Date.now();
-    try {
-      this.currentIntent = await this.resolver.resolve(classification, intentContext);
-      steps.push(
-        makeStep(
-          1,
-          "resolve-intent",
-          "cognition",
-          { classification: classification.classification, mode },
-          {
-            intent: this.currentIntent.intent,
-            confidence: this.currentIntent.confidence,
-            actionCount: this.currentIntent.actions.length,
-          },
-          Date.now() - resolveStart,
-          this.currentIntent.cost
-        )
-      );
-    } catch {
-      this.currentIntent = {
-        intent: "unknown",
-        displayLabel: "Processing...",
-        confidence: 0,
-        actions: [],
-        resolvedBy: "fallback",
-        latencyMs: 0,
-        cost: 0,
-      };
-      steps.push(
-        makeStep(
-          1,
-          "resolve-intent",
-          "cognition",
-          { classification: classification.classification, mode },
-          { intent: "unknown", fallback: true },
-          Date.now() - resolveStart,
-          0
-        )
-      );
-    }
-
-    this.currentTrajectory = buildTrajectory(this.identity.actorId, steps);
+    const exec = await executeAgent(
+      "conductor",
+      "force-mode",
+      "user",
+      this.identity.actorId,
+      workflow
+    );
+    const rec = await getTrajectoryStore().getById(exec.trajectoryId);
+    if (rec) this.currentTrajectory = rec.trajectory;
 
     return this.getCurrentOutput();
   }

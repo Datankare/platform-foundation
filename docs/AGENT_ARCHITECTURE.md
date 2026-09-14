@@ -64,6 +64,41 @@ Agents are defined workflows with AI called at specific steps — not open-ended
 
 ---
 
+## The agent registry (single source of truth)
+
+Per ADR-039, the runtime registry (`platform/agents/registry.ts`) is the single source of truth
+for what agents exist. `listAgents()` is authoritative, and this document is checked against it by
+`__tests__/agent-registry-integrity.test.ts` — it cannot fall behind the code. Every agent runs
+on the governed runtime (`executeAgent` / `runGoal` / `advanceGoal`); none keeps a bespoke
+execution loop.
+
+**Naming.** "Agent registry" here is the _runtime_ registry (this document). It is distinct from
+the _trusted-agent registry_ of ADR-033 (attested delegation — "is this agent trusted to act").
+Different mechanisms; never conflate them.
+
+**Registered agents (`AGENT_CONFIGS`):**
+
+| id                 | name              | cluster              |
+| ------------------ | ----------------- | -------------------- |
+| `conductor`        | Conductor         | Input (orchestrator) |
+| `audio-classifier` | Audio Classifier  | Input                |
+| `intent-resolver`  | Intent Resolver   | Input                |
+| `guardian-social`  | Guardian (Social) | Social / moderation  |
+| `matchmaker`       | Matchmaker        | Social               |
+| `gatekeeper`       | Gatekeeper        | Social               |
+| `concierge`        | Concierge         | Social               |
+| `analyst`          | Analyst           | Social               |
+| `curator`          | Curator           | Social               |
+| `sentinel`         | Sentinel          | Moderation           |
+| `config-manager`   | Config Manager    | Admin                |
+| `command-bar`      | Admin Command Bar | Admin                |
+
+The processing units (transcription, identification, translation, extraction) are **services**,
+not agents (Cluster 2): deterministic provider-pipeline wrappers with no agent identity, no LLM
+decision, and no trajectory — so they are not registered (ADR-039 D6).
+
+---
+
 ## Cluster 1: Input agents
 
 ### Why agents and not a rules engine
@@ -106,11 +141,13 @@ Each new modality is a new output from the classifier. Conductor, Intent Agent, 
 
 ---
 
-## Cluster 2: Processing agents
+## Cluster 2: Processing services (not agents)
 
-Wrap existing provider pipelines as agents with trajectories, cost tracking, and observability.
+These wrap provider pipelines, but they make no autonomous decision and carry no agent identity
+or trajectory. By ADR-039 D6 they are **services**, not agents, and are not in the registry —
+an agent that consumes them (Conductor) supplies the identity and trajectory.
 
-| Agent          | Wraps                    | Trajectory                                     |
+| Service        | Wraps                    | Pipeline                                       |
 | -------------- | ------------------------ | ---------------------------------------------- |
 | Transcription  | `platform/voice/` STT    | audio → STT → text → safety check              |
 | Identification | Song ID + AudioConverter | audio → convert → fingerprint → match → enrich |
@@ -147,6 +184,19 @@ The Concierge agent MUST use the same AdaptiveInput component and ActionItem[] c
 | Analyst    | Guardian          | Anomaly detected   | groupId, anomalyType          |
 | Matchmaker | Gatekeeper        | User requests join | userId, groupId               |
 | Curator    | Analyst           | Engagement signals | metrics                       |
+
+---
+
+## Cluster 4: Moderation & admin agents
+
+| Agent             | id               | Job                                                                                                                                                                                                |
+| ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sentinel          | `sentinel`       | Processes Guardian block decisions and runs the account-consequences ladder (warn → suspend → ban). Rule-based; runs on the runtime (ADR-039 F1).                                                  |
+| Config Manager    | `config-manager` | GenAI-native config admin: search / inspect / compare / impact / change, behind a confirmation gate + two-person approval; catastrophic keys also take a runtime hold (dual-control, ADR-039 F2b). |
+| Admin Command Bar | `command-bar`    | Plans natural-language admin requests into governed tool calls across roles, entitlements, restrictions, capability mapping, approval, and search (ADR-039 F2c).                                   |
+
+All three run on the governed runtime (`invokeTool` / `executeAgent`); none keeps a bespoke
+execution loop (enforced by `agent-registry-integrity.test.ts`).
 
 ---
 
@@ -360,7 +410,7 @@ Still open / forthcoming:
 
 ---
 
-## Sprint 4b delivery notes
+## Sprint 3d delivery notes
 
 ### Social agents — intentional structural similarity
 
@@ -376,7 +426,7 @@ Sprint 4a shipped a precedence bug: `(scopeId ?? scopeType === "platform")` eval
 
 ---
 
-_Last reviewed: September 2026 (v2.0.0 — added the Governed authority section: rung-2 identity, delegation, governance admin, per-account restriction)_
+_Last reviewed: September 2026 (Sprint 3d / ADR-039 — registry is the single source of truth; roster of 12 agents added; Cluster 2 reclassified as services (D6); Sentinel / config-manager / command-bar / conductor on the governed runtime; trusted-agent-registry naming disambiguated)_
 
 ## Human review + reviewer-assist (Sprint 6)
 

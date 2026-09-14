@@ -20,6 +20,10 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
   const { tool, input } = action;
 
   switch (tool) {
+    case "approve_hold":
+      return `Approve held change: ${input.summary || input.proposalId}`;
+    case "reject_hold":
+      return `Reject held change: ${input.summary || input.proposalId}`;
     case "create_role": {
       const perms = input.permissions?.length
         ? ` with permissions: ${input.permissions.join(", ")}`

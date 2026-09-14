@@ -60,7 +60,7 @@ Cross-cutting fabric (ADR-014): distributed traces, metrics sink (in-memory + Su
 
 ### Data layer
 
-Supabase (PostgreSQL) with 16 migrations covering: identity and access (001–009), content safety (010–014), social data model (015), and agent runtime (016). Row-level security on all tables. Service-role bypass for server-side agent operations.
+Supabase (PostgreSQL) with 35 migrations; the foundational set covers: identity and access (001–009), content safety (010–014), social data model (015), and agent runtime (016). Row-level security on all tables. Service-role bypass for server-side agent operations.
 
 ---
 

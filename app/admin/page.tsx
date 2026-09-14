@@ -6,6 +6,8 @@ import type { AdminSection } from "@/components/admin/AdminShell";
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
+import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
+import { DualControlKeysPanel } from "@/components/admin/DualControlKeysPanel";
 import {
   RolesDataView,
   UsersDataView,
@@ -55,6 +57,7 @@ const ENDPOINTS: Record<string, string> = {
   roles: "/api/admin/roles",
   entitlements: "/api/admin/entitlements",
   audit: "/api/admin/audit?offset=0",
+  approvals: "/api/admin/approvals",
   "guest-config": "/api/admin/guest-config",
   "password-policy": "/api/admin/password-policy",
   "agent-registry": "/api/admin/agent-registry",
@@ -71,6 +74,8 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   roles: RolesDataView,
   entitlements: EntitlementsDataView,
   audit: AuditDataView,
+  approvals: HeldActionsPanel,
+  "dual-control": DualControlKeysPanel,
   "guest-config": GuestConfigDataView,
   "password-policy": PasswordPolicyDataView,
   "agent-registry": TrustedAgentsDataView,
@@ -104,6 +109,35 @@ export default function AdminPage() {
   const handleConfirm = async (actions: ActionPlan["actions"]) => {
     setIsExecuting(true);
     try {
+      // ADR-040 040c: an approve/reject action routes through the deterministic decision
+      // route (real admin identity + server-side enforcement), NOT the command-bar executor
+      // (which runs under a non-authenticated actor and cannot clear a hold).
+      const decision = actions.find(
+        (a) => a.tool === "approve_hold" || a.tool === "reject_hold"
+      );
+      if (decision) {
+        const id = String(decision.input.proposalId ?? "");
+        const res = await fetch(`/api/admin/approvals/${encodeURIComponent(id)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            decision: decision.tool === "approve_hold" ? "approve" : "reject",
+            source: decision.input.source,
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        setResults([
+          {
+            tool: decision.tool,
+            success: res.ok,
+            result: res.ok ? "Decision recorded" : undefined,
+            error: res.ok ? undefined : (body.error ?? `Failed (${res.status})`),
+          },
+        ]);
+        setCurrentPlan(null);
+        await refreshData(activePanel);
+        return;
+      }
       const res = await fetch("/api/admin/ai/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

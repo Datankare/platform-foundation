@@ -25,6 +25,7 @@ const mockValidateConfigValue = jest.fn();
 const mockSetConfigWithHistory = jest.fn();
 const mockGetConfigHistory = jest.fn();
 const mockGetPermissionTier = jest.fn();
+const mockGetConfig = jest.fn();
 
 jest.mock("@/platform/auth/platform-config", () => ({
   getEnhancedConfig: (...args: any[]) => mockGetEnhancedConfig(...args),
@@ -33,6 +34,7 @@ jest.mock("@/platform/auth/platform-config", () => ({
   setConfigWithHistory: (...args: any[]) => mockSetConfigWithHistory(...args),
   getConfigHistory: (...args: any[]) => mockGetConfigHistory(...args),
   getPermissionTier: (...args: any[]) => mockGetPermissionTier(...args),
+  getConfig: (...args: any[]) => mockGetConfig(...args),
 }));
 
 const mockIsApprovalRequired = jest.fn();
@@ -98,6 +100,7 @@ function makeEntry(overrides: Partial<EnhancedConfigEntry> = {}): EnhancedConfig
 // ── Setup ───────────────────────────────────────────────────────────────
 
 beforeEach(() => {
+  mockGetConfig.mockResolvedValue([]);
   jest.clearAllMocks();
 });
 
@@ -663,6 +666,49 @@ describe("dispatchConfigTool", () => {
 
     expect(context.steps).toHaveLength(1);
     expect(context.steps[0].boundary).toBe("commitment");
+  });
+
+  it("holds a write to a dual-control key for human approval (ADR-039 F2b-2)", async () => {
+    mockGetConfig.mockResolvedValue(["signups_enabled"]);
+    mockGetEnhancedConfig.mockResolvedValue(null);
+
+    const context: ToolExecutionContext = {
+      trajectoryId: "traj-dc-1",
+      agentId: "agent-test",
+      onBehalfOf: "admin-1",
+      steps: [],
+    };
+
+    const result = await dispatchConfigTool(
+      "update_config",
+      { key: "signups_enabled", value: "false", changeComment: "flip" },
+      context
+    );
+
+    expect(result.held).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.approval?.requiredApprover).toBe("user");
+    expect(result.approval?.proposalId).toBeTruthy();
+  });
+
+  it("does NOT hold a write to a non-dual-control key", async () => {
+    mockGetConfig.mockResolvedValue(["signups_enabled"]);
+    mockGetEnhancedConfig.mockResolvedValue(null);
+
+    const context: ToolExecutionContext = {
+      trajectoryId: "traj-dc-2",
+      agentId: "agent-test",
+      onBehalfOf: "admin-1",
+      steps: [],
+    };
+
+    const result = await dispatchConfigTool(
+      "update_config",
+      { key: "moderation.strike_warn_threshold", value: "2", changeComment: "tune" },
+      context
+    );
+
+    expect(result.held).toBeFalsy();
   });
 
   it("works without context (backward compatible)", async () => {
