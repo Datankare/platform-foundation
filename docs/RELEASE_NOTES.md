@@ -33,6 +33,9 @@ remediation of the admin surface. No breaking changes; consumers inherit these o
 - **Admin coverage remediation.** The whole admin surface — services, routes, handlers, tool
   schemas — is now in the coverage map (no blanket ignores), with the enforced floors ratcheted
   to statements 88 / lines 90 / functions 90 / branches 76.
+- **Security.** The bundled Next.js is patched to 16.3.5 and sharp to 0.35.4, clearing two
+  published advisories (an unauthenticated RCE in the Next.js image-optimization path; libheif
+  vulnerabilities via sharp). Consumers inherit the fix on sync.
 
 ---
 

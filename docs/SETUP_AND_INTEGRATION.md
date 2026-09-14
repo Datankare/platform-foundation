@@ -158,7 +158,7 @@ sync.
 
 ### Adopting a specific version
 
-Consumers pin to a Platform Foundation release tag (e.g. `v2.0.0`) rather than a moving branch,
+Consumers pin to a Platform Foundation release tag (e.g. `v2.1.0`) rather than a moving branch,
 and bump deliberately. See [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for what each release
 contains and [`MIGRATION_v1_to_v2.md`](MIGRATION_v1_to_v2.md) when a major version introduces
 breaking changes.

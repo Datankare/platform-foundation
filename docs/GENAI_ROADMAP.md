@@ -21,16 +21,16 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 
 ## Phase Summary
 
-| Phase | GenAI Status | Key GenAI Capabilities                                                                                                                               |
-| ----- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | ✅ Complete  | Admin AI command bar                                                                                                                                 |
-| 2     | ✅ Complete  | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry                      |
-| 3     | ✅ Complete  | Voice pipeline (P1-P18 agentic), song ID, translation/TTS/STT providers, canonical audio format                                                      |
-| 4     | ✅ Complete  | RAG, embeddings, cognitive memory, explainability, Guardian/Sentinel agents, agent runtime, conformance kits                                         |
-| 5     | 🔄 Sprint 3d | Application framework, agentic workflow, AUX, agent identity + governance, registry unification (ADR-028–041); adaptive behavior + multimodal remain |
-| 6     | ⏳ Upcoming  | Token budgets, cost attribution, A/B testing                                                                                                         |
-| 7     | ⏳ Upcoming  | AI quality monitoring, personalization, feedback loop, NL analytics                                                                                  |
-| 8     | ⏳ Upcoming  | AI hardening, fallback chains, graceful degradation                                                                                                  |
+| Phase | GenAI Status    | Key GenAI Capabilities                                                                                                                               |
+| ----- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | ✅ Complete     | Admin AI command bar                                                                                                                                 |
+| 2     | ✅ Complete     | Orchestration, prompt registry, safety, moderation, observability, cache, rate limiting, realtime, streaming, provider registry                      |
+| 3     | ✅ Complete     | Voice pipeline (P1-P18 agentic), song ID, translation/TTS/STT providers, canonical audio format                                                      |
+| 4     | ✅ Complete     | RAG, embeddings, cognitive memory, explainability, Guardian/Sentinel agents, agent runtime, conformance kits                                         |
+| 5     | 🔄 Sprint 3d ✅ | Application framework, agentic workflow, AUX, agent identity + governance, registry unification (ADR-028–041); adaptive behavior + multimodal remain |
+| 6     | ⏳ Upcoming     | Token budgets, cost attribution, A/B testing                                                                                                         |
+| 7     | ⏳ Upcoming     | AI quality monitoring, personalization, feedback loop, NL analytics                                                                                  |
+| 8     | ⏳ Upcoming     | AI hardening, fallback chains, graceful degradation                                                                                                  |
 
 ---
 
