@@ -1,7 +1,7 @@
 # Technical Architecture Document (TAD)
 
 **Project:** Platform Foundation — Reusable Platform Template
-**Version:** 2.1.0
+**Version:** 2.1.1
 **Date:** September 2026
 **Status:** Approved
 **Repository:** github.com/Datankare/platform-foundation
