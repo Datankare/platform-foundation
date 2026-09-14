@@ -399,6 +399,25 @@ catastrophic config subset, surfaced GenAI-native in the admin (ADR-040). The ge
 principles (P6–P9) belong to Sprint 4 proper and are out of scope here.
 
 **Pre-code gate satisfied** — this table precedes any remaining Sprint 3d implementation (L12).
+
+### Sprint 3d — CLOSE
+
+All deliverables shipped. Agent Registry Unification (ADR-039): one registry as the single
+source of truth, every agent on the governed runtime, a zero-bespoke CI guard, Guardian
+fails closed. Escalation SLA + remedial reaper (ADR-041): config, mechanism, conformance kit,
+and the authenticated invocation route. Held-action & dual-control admin (ADR-040): the
+`safety_approver` role (migration 034), the unified approvals surface, the decision route with
+server-side enforcement, dual-control-keys management, and approve-by-conversation behind a
+mandatory confirm.
+
+**Admin coverage remediation.** The admin surface (services + every route + handlers + tool
+schemas) was brought into the coverage map with zero blanket ignores; floors ratcheted to
+statements 88 / lines 90 / functions 90 / branches 76. Close metrics: 218 suites, 2,730 tests,
+90.19% statements / 91.24% functions / 77.38% branches.
+
+**Release.** Cut as PF **v2.1.0** (minor — no breaking change; tag + GitHub Release). Promoted
+develop→staging→main; Playform inherits on the next foundation sync.
+
 Status at open: F1 (Sentinel) and F2a (both planners registered) already landed; F2b/F2c
 (execution reroute + dual-control), F3 (Conductor + processing units), F4 (the guard + process
 Gotchas) and F5 (AGENT_ARCHITECTURE backfill + naming) remain.
@@ -410,6 +429,8 @@ _Last updated: July 26, 2026 (Phase 5 Sprint 2 opened — L12 mapping recorded a
 _Last updated: August 18, 2026 (Phase 5 Sprint 3b close — Sprint 3b section added recording the AUX/gating/capability/identity stack as shipped; the demo UI + A1-A8 folded into Sprint 3c as its acceptance gate)_
 
 _Last updated: August 18, 2026 (Phase 5 Sprint 3c scoped — the 3c body replaced with backend + acceptance and UX deliverable tables; F1 per-account restriction folded in; one sprint, no split)_
+
+_Last updated: September 10, 2026 (Phase 5 Sprint 3d CLOSE — ADR-039 registry unification + ADR-040 dual-control admin + ADR-041 escalation reaper shipped; admin surface brought fully into the coverage map, floors ratcheted (stmts 88 / lines 90 / funcs 90 / branches 76); PF released as v2.1.0 (minor); Sprint 4 (adaptive behavior + content generation, ADR-036/037/038) is next)_
 
 _Last updated: September 4, 2026 (Phase 5 Sprint 3c CLOSE — all deliverables + E acceptance shipped; function-coverage floors ratcheted to 92.05% / 91.75% per TASK-061; PF released as v2.0.0 (major, breaking rung-1 retirement) + Playform synced/promoted; adopter docs + docs-integrity guardrail added; live k6 (TASK-046) remains a phase-exit gate)_
 

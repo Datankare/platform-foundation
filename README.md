@@ -2,7 +2,7 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
-> **v2.0.0** — Phase 5 application framework & governed agency. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
+> **v2.1.0** — Phase 5 application framework & governed agency. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
 
 A battle-tested foundation for building commercial SaaS products, internal tools,
 and application platforms. Clone it, rename it, and start building on solid ground
@@ -100,7 +100,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v2.0.0)
+- ✅ Versioned releases (v2.1.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
@@ -239,8 +239,8 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 
 ---
 
-_Platform Foundation v2.0.0 — Datankare_
+_Platform Foundation v2.1.0 — Datankare_
 _Phase 5 Sprint 3d · 218 suites · 2,730 tests · 90.19% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 10, 2026 (Phase 5 Sprint 3d — renamed from "Sprint 4b" to order between 3c and 4; distinct from Phase 4's Sprint 4b)_
+_Last updated: September 10, 2026 (Phase 5 Sprint 3d CLOSE — PF v2.1.0: registry unification (ADR-039), escalation reaper (ADR-041), dual-control admin (ADR-040), admin coverage remediation + floor ratchet)_
