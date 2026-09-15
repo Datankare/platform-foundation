@@ -10,10 +10,10 @@
  *   - every enum member has a tagged case, and fail-closed / boundary / adversarial classes are
  *     each present.
  */
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { listPrompts } from "@/prompts";
-import { EVAL_SUITES, PENDING_EVAL } from "@/prompts/evals";
+import { EVAL_SUITES, PENDING_EVAL, TOOL_USE_EXEMPT } from "@/prompts/evals";
 import { runDeterministic } from "@/prompts/evals/runner";
 
 const ROOT = process.cwd();
@@ -25,20 +25,48 @@ function unionMembers(source: string, typeName: string): string[] {
   return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
 }
 
+/** Locate the prompt source file whose config declares `name: "<name>"`. */
+function promptFileFor(name: string): string | null {
+  const dirs = [join(ROOT, "prompts")];
+  while (dirs.length) {
+    const dir = dirs.pop() as string;
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) {
+        if (entry !== "__tests__" && entry !== "evals") dirs.push(full);
+      } else if (/-v\d+\.ts$/.test(entry)) {
+        if (new RegExp(`name:\\s*"${name}"`).test(readFileSync(full, "utf-8")))
+          return full;
+      }
+    }
+  }
+  return null;
+}
+
 describe("prompt eval harness conformance (ADR-038)", () => {
   const covered = new Set(EVAL_SUITES.map((s) => s.prompt));
   const registered = listPrompts();
 
-  it("every registered prompt has a suite or is explicitly PENDING_EVAL", () => {
-    const uncovered = registered.filter(
-      (p) => !covered.has(p) && !PENDING_EVAL.includes(p)
+  it("every registered prompt is covered by a suite or TOOL_USE_EXEMPT (nothing lingers)", () => {
+    const unaccounted = registered.filter(
+      (p) => !covered.has(p) && !TOOL_USE_EXEMPT.includes(p) && !PENDING_EVAL.includes(p)
     );
-    expect(uncovered).toEqual([]);
+    expect(unaccounted).toEqual([]);
   });
 
-  it("PENDING_EVAL has no stale entries (registered + not yet covered)", () => {
-    const stale = PENDING_EVAL.filter((p) => covered.has(p) || !registered.includes(p));
-    expect(stale).toEqual([]);
+  it("PENDING_EVAL is drained", () => {
+    expect([...PENDING_EVAL]).toEqual([]);
+  });
+
+  it("TOOL_USE_EXEMPT holds only registered, genuinely parserless prompts", () => {
+    for (const name of TOOL_USE_EXEMPT) {
+      expect(registered).toContain(name);
+      const file = promptFileFor(name);
+      expect(file).not.toBeNull();
+      expect(readFileSync(file as string, "utf-8")).not.toMatch(
+        /export function parse\w+Response/
+      );
+    }
   });
 
   for (const suite of EVAL_SUITES) {

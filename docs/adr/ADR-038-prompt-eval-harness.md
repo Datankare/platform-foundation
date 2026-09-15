@@ -108,6 +108,14 @@ and when a registered prompt has no eval dataset. Closing that gap (registering 
 input prompts) is the first implementation step of the harness work, so coverage is over every
 prompt, not a subset.
 
+Two registered prompts are **tool-use** — `config-manager` and `admin-command-bar` call
+tools rather than returning parseable structured text, so they have no `parse*Response` and
+cannot be run through the deterministic lane. They are listed in `TOOL_USE_EXEMPT`; their
+conformance is the tool-schema, tested by the admin AI suite. The meta-test verifies each
+exempt prompt is registered and genuinely parserless, so the exemption cannot hide a prompt
+that should be evaluated. Every registered prompt is therefore either exhaustively evaluated
+or explicitly, verifiably exempt, and `PENDING_EVAL` is `[]`.
+
 ## 3. How we get there — Sprint 4 sequencing
 
 ADR-038 is built **first**, because ADR-036 (adaptive behavior) and ADR-037 (content

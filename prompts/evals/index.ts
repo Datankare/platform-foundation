@@ -33,4 +33,10 @@ export const EVAL_SUITES: readonly EvalSuite<unknown>[] = [
   defineSuite(RESOLVE_INTENT_EVAL),
 ];
 
-export const PENDING_EVAL: readonly string[] = ["admin-command-bar", "config-manager"];
+export const PENDING_EVAL: readonly string[] = [];
+
+/** Registered prompts that are tool-use (they call tools rather than returning parseable
+ *  structured text), so they have no parse*Response and cannot run through the deterministic
+ *  lane. Their conformance is the tool-schema, tested by the admin AI suite. The meta-test
+ *  verifies each is genuinely parserless, so this cannot hide a parseable prompt. */
+export const TOOL_USE_EXEMPT: readonly string[] = ["config-manager", "admin-command-bar"];
