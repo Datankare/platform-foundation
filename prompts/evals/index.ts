@@ -8,6 +8,8 @@
  */
 import type { EvalSuite } from "./types";
 import { SAFETY_CLASSIFY_EVAL } from "./safety/classify.eval";
+import { GATEKEEPER_EVAL } from "./social/gatekeeper.eval";
+import { ANALYST_EVAL } from "./social/analyst.eval";
 
 /** Erase a suite's output type for heterogeneous storage; parse+assert stay internally
  *  consistent, so the cast is safe. */
@@ -17,6 +19,8 @@ function defineSuite<O>(s: EvalSuite<O>): EvalSuite<unknown> {
 
 export const EVAL_SUITES: readonly EvalSuite<unknown>[] = [
   defineSuite(SAFETY_CLASSIFY_EVAL),
+  defineSuite(GATEKEEPER_EVAL),
+  defineSuite(ANALYST_EVAL),
 ];
 
 export const PENDING_EVAL: readonly string[] = [
@@ -24,9 +28,7 @@ export const PENDING_EVAL: readonly string[] = [
   "config-manager",
   "classify-audio",
   "resolve-intent",
-  "analyst",
   "concierge",
   "curator",
-  "gatekeeper",
   "matchmaker",
 ];
