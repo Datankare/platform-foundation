@@ -12,6 +12,9 @@ import { GATEKEEPER_EVAL } from "./social/gatekeeper.eval";
 import { ANALYST_EVAL } from "./social/analyst.eval";
 import { CURATOR_EVAL } from "./social/curator.eval";
 import { CLASSIFY_AUDIO_EVAL } from "./input/classify-audio.eval";
+import { MATCHMAKER_EVAL } from "./social/matchmaker.eval";
+import { CONCIERGE_EVAL } from "./social/concierge.eval";
+import { RESOLVE_INTENT_EVAL } from "./input/resolve-intent.eval";
 
 /** Erase a suite's output type for heterogeneous storage; parse+assert stay internally
  *  consistent, so the cast is safe. */
@@ -25,12 +28,9 @@ export const EVAL_SUITES: readonly EvalSuite<unknown>[] = [
   defineSuite(ANALYST_EVAL),
   defineSuite(CURATOR_EVAL),
   defineSuite(CLASSIFY_AUDIO_EVAL),
+  defineSuite(MATCHMAKER_EVAL),
+  defineSuite(CONCIERGE_EVAL),
+  defineSuite(RESOLVE_INTENT_EVAL),
 ];
 
-export const PENDING_EVAL: readonly string[] = [
-  "admin-command-bar",
-  "config-manager",
-  "resolve-intent",
-  "concierge",
-  "matchmaker",
-];
+export const PENDING_EVAL: readonly string[] = ["admin-command-bar", "config-manager"];
