@@ -10,6 +10,8 @@ import type { EvalSuite } from "./types";
 import { SAFETY_CLASSIFY_EVAL } from "./safety/classify.eval";
 import { GATEKEEPER_EVAL } from "./social/gatekeeper.eval";
 import { ANALYST_EVAL } from "./social/analyst.eval";
+import { CURATOR_EVAL } from "./social/curator.eval";
+import { CLASSIFY_AUDIO_EVAL } from "./input/classify-audio.eval";
 
 /** Erase a suite's output type for heterogeneous storage; parse+assert stay internally
  *  consistent, so the cast is safe. */
@@ -21,14 +23,14 @@ export const EVAL_SUITES: readonly EvalSuite<unknown>[] = [
   defineSuite(SAFETY_CLASSIFY_EVAL),
   defineSuite(GATEKEEPER_EVAL),
   defineSuite(ANALYST_EVAL),
+  defineSuite(CURATOR_EVAL),
+  defineSuite(CLASSIFY_AUDIO_EVAL),
 ];
 
 export const PENDING_EVAL: readonly string[] = [
   "admin-command-bar",
   "config-manager",
-  "classify-audio",
   "resolve-intent",
   "concierge",
-  "curator",
   "matchmaker",
 ];

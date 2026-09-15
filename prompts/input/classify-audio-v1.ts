@@ -59,8 +59,10 @@ Rules:
 const VALID_CLASSIFICATIONS = new Set<string>(["speech", "music", "noise"]);
 
 /** Parsed audio classification result */
+export type AudioClassification = "speech" | "music" | "noise";
+
 export interface AudioClassificationResult {
-  readonly classification: "speech" | "music" | "noise";
+  readonly classification: AudioClassification;
   readonly confidence: number;
   readonly rhythmRegularity: number;
   readonly harmonicContent: number;
@@ -82,7 +84,7 @@ export function parseClassifyAudioResponse(raw: string): AudioClassificationResu
     const result = JSON.parse(cleaned);
 
     const classification = VALID_CLASSIFICATIONS.has(result.classification)
-      ? (result.classification as "speech" | "music" | "noise")
+      ? (result.classification as AudioClassification)
       : "noise";
 
     const clamp = (v: unknown): number =>
