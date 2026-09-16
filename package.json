@@ -73,7 +73,8 @@
       "platform/input/**/*.ts",
       "platform/moderation/**/*.ts",
       "platform/auth/**/*.tsx",
-      "platform/admin/**/*.ts"
+      "platform/admin/**/*.ts",
+      "platform/adaptive/**/*.ts"
     ],
     "coverageThreshold": {
       "global": {
