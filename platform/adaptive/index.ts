@@ -15,3 +15,5 @@ export {
   listAdaptiveBehaviors,
   resetAdaptiveBehaviors,
 } from "./registry";
+export { runAdaptive } from "./loop";
+export type { AdaptiveScope, AdaptiveResult, FallbackReason } from "./loop";
