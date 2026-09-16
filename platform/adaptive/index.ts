@@ -18,3 +18,9 @@ export {
 export { runAdaptive } from "./loop";
 export type { AdaptiveScope, AdaptiveResult, FallbackReason } from "./loop";
 export { readAdaptiveMemory, appendAdaptiveMemory, resetAdaptiveMemory } from "./memory";
+export { routeAdaptiveEffect } from "./effect";
+export type {
+  AdaptiveEffectStatus,
+  AdaptiveEffectOutcome,
+  AdaptiveEffectRequest,
+} from "./effect";
