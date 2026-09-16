@@ -445,8 +445,11 @@ Sprint 5, multimodal is Sprint 6, Playform adoption is Sprint 7.
 **Accepted** — a deterministic record-replay CI gate plus a non-gating live lane, with
 enum-exhaustive / fail-closed / boundary / adversarial fixture coverage mechanically enforced
 by the conformance meta-test, and registry completeness enforced as a precondition (only 2 of
-~10 prompt files are currently registered). ADR-036 and ADR-037 remain Proposed, each authored
-after its pre-code code survey (Concierge/runtime for 036, Curator/prompt-registry for 037).
+~10 prompt files are currently registered). ADR-036 is **Accepted** (adaptive behavior framework: consumer-implements seam on the
+ADR-039 runtime, mandatory deterministic fallback, within-session memory as a typed slice of
+the ActivityStateStore per D6a, effects via the D3 pipeline, eval-gated by ADR-038; the
+reuse-the-session-store vs dedicated-store tradeoff is recorded in the ADR). ADR-037 remains
+Proposed, authored after its Curator/prompt-registry pre-code survey.
 
 **Pre-code gate satisfied** — the L12 Sprint-4 table (above) precedes any Sprint 4
 implementation.
