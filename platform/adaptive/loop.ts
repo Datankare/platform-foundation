@@ -1,18 +1,19 @@
 /**
- * platform/adaptive/loop.ts — the adaptive decision loop (ADR-036 D2/D3).
+ * platform/adaptive/loop.ts — the adaptive decision loop (ADR-036 D2/D3/D5).
  *
  * Runs a behavior's decision inside executeAgent, so every adaptive decision is a traced
  * trajectory (D2). Fail-closed by construction (D3): an orchestrator error, an open circuit
  * breaker (the orchestrator throws when open, ADR-015), a parse failure, or schema-invalid output
  * each drive the behavior's deterministic fallback. A run that never completes (agent unavailable,
  * budget exhausted) falls back too, so a runtime failure can never yield a missing or unvalidated
- * decision.
+ * decision. Within-session memory (D5) is read before the decision and the outcome appended after.
  */
 import { getOrchestrator } from "@/platform/ai";
 import { executeAgent } from "@/platform/agents/runtime";
 import type { WorkflowFn, StepOutcome, WorkflowContext } from "@/platform/agents/runtime";
 import { isValidSchema } from "@/platform/agents/schema";
-import type { AdaptiveBehavior, AdaptiveMemory } from "./types";
+import { readAdaptiveMemory, appendAdaptiveMemory } from "./memory";
+import type { AdaptiveBehavior } from "./types";
 
 export interface AdaptiveScope {
   readonly type: "group" | "user" | "platform";
@@ -30,14 +31,12 @@ export interface AdaptiveResult<TDecision> {
   readonly fallbackReason?: FallbackReason;
 }
 
-const EMPTY_MEMORY: AdaptiveMemory = { recent: [] };
-
 export async function runAdaptive<TInput, TDecision>(
   behavior: AdaptiveBehavior<TInput, TDecision>,
   input: TInput,
-  scope: AdaptiveScope,
-  memory: AdaptiveMemory = EMPTY_MEMORY
+  scope: AdaptiveScope
 ): Promise<AdaptiveResult<TDecision>> {
+  const memory = await readAdaptiveMemory(behavior.name, scope);
   let decision: TDecision | undefined;
   let fallbackReason: FallbackReason | undefined;
 
@@ -104,6 +103,13 @@ export async function runAdaptive<TInput, TDecision>(
     fallbackReason = fallbackReason ?? "run-incomplete";
     decision = behavior.fallback(input, memory);
   }
+
+  // Append the outcome to within-session memory (D5).
+  await appendAdaptiveMemory(behavior.name, scope, {
+    at: Date.now(),
+    behavior: behavior.name,
+    summary: behavior.summarize(decision),
+  });
 
   return {
     decision,

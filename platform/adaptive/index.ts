@@ -17,3 +17,4 @@ export {
 } from "./registry";
 export { runAdaptive } from "./loop";
 export type { AdaptiveScope, AdaptiveResult, FallbackReason } from "./loop";
+export { readAdaptiveMemory, appendAdaptiveMemory, resetAdaptiveMemory } from "./memory";

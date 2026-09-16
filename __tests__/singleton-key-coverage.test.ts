@@ -31,6 +31,10 @@ const EXEMPT: Record<string, string> = {
     "Observability is initialised by instrumentation.ts, not by initProviders(). It has its own resetObservability().",
   "platform.providers.initialized":
     "The registry's own flag. resetProviders() clears it directly, before clearing the slots.",
+  "platform.adaptive.registry":
+    "The adaptive behavior registry (ADR-036). Cleared by resetAdaptiveBehaviors(), not by initProviders() — it is not a provider slot.",
+  "platform.adaptive.memory":
+    "Within-session adaptive memory (ADR-036 D5). Cleared by resetAdaptiveMemory(), not by initProviders() — it is not a provider slot.",
 };
 
 function singletonKeysDeclaredInSource(): string[] {

@@ -8,11 +8,10 @@
 import { getSingleton } from "@/platform/kernel/singleton";
 import type { AdaptiveBehavior, AnyAdaptiveBehavior } from "./types";
 
+const REGISTRY_KEY = "platform.adaptive.registry";
+
 function behaviors(): Map<string, AnyAdaptiveBehavior> {
-  return getSingleton(
-    "platform.adaptive.registry",
-    () => new Map<string, AnyAdaptiveBehavior>()
-  );
+  return getSingleton(REGISTRY_KEY, () => new Map<string, AnyAdaptiveBehavior>());
 }
 
 /** Register an adaptive behavior. Throws if it has no fallback (D3) or the name is taken. */
