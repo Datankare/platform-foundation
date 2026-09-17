@@ -93,8 +93,32 @@ a generic default cannot be correct for an arbitrary `TDecision`, and a missing 
 precisely when an outage would surface as a stall or an unvalidated decision. Mandatory + consumer-
 supplied is the only fail-closed option.
 
-**Applying decisions directly.** Considered letting the framework mutate state for speed; rejected
-(D4) — bypassing the pipeline would strip CAS, risk gating, and dual-control from adaptive actions.
+**Effect routing (the D4 decision).**
+
+- **(a) Route through the D3 pipeline behind a framework wrapper that forces the boundary —
+  CHOSEN.** An effectful decision is expressed as an `ActionSpec` + `computeNextState` and handed
+  to `routeAdaptiveEffect`, which fixes `boundary = "commitment"` and calls
+  `executeActionPipeline`, translating its outcomes into one small vocabulary (`applied` /
+  `held` / `rejected` / `conflict`). _For:_ every adaptive effect inherits CAS on versioned
+  state, risk gating, and the held-action / dual-control path (ADR-040), with no privileged
+  route around them; the boundary is set by the framework, so the pipeline computes risk from
+  the spec and a caller cannot downgrade it (P4/P17) — the "no route around the controls"
+  guarantee is **structural**, not a convention; and the consumer codes against a compact,
+  stable outcome type rather than the full pipeline surface. _Against:_ a thin translation
+  layer the framework must keep in step with the pipeline's outcomes; the consumer must model
+  its effect as a spec rather than mutate state inline.
+
+- **(b) Apply the decision directly to state (or let the consumer call the pipeline itself) —
+  REJECTED.** _For:_ fewer types and no wrapper; the shortest path from decision to state.
+  _Against:_ a direct mutation strips CAS, risk gating, and dual-control from adaptive actions
+  outright; and even "let the consumer call `executeActionPipeline` directly" reopens the same
+  hole, because the boundary becomes caller-supplied — an adaptive effect could be presented at
+  a lower boundary to dodge the gate, and every consumer re-implements outcome translation.
+  Either variant makes the D4 guarantee a matter of consumer discipline.
+
+Chosen (a): the boundary and the governed path are properties of the framework, not of a
+well-behaved caller. The cost is one thin translation layer; the return is that an adaptive
+decision carries exactly the controls every other action does, by construction.
 
 ## 4. How we get there — implementation sequencing
 
@@ -134,3 +158,4 @@ adaptive seam on the ADR-039 runtime, mandatory deterministic fallback (fail-clo
 open-breaker / parse / schema-invalid), effectful decisions via the D3 pipeline, within-session
 memory as a typed slice of the ActivityStateStore (D6a — reuse-the-session-store chosen over a
 dedicated store; tradeoffs recorded in §3), eval-gated by ADR-038)._
+_Last updated: September 17, 2026 (Phase 5 Sprint 4 — effect-routing tradeoff recorded in §3 (D4): the D3 pipeline behind a boundary-forcing wrapper (a, chosen) over applying decisions directly or a caller-supplied boundary (b))._
