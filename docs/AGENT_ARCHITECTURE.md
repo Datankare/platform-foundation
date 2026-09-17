@@ -78,20 +78,21 @@ Different mechanisms; never conflate them.
 
 **Registered agents (`AGENT_CONFIGS`):**
 
-| id                 | name              | cluster              |
-| ------------------ | ----------------- | -------------------- |
-| `conductor`        | Conductor         | Input (orchestrator) |
-| `audio-classifier` | Audio Classifier  | Input                |
-| `intent-resolver`  | Intent Resolver   | Input                |
-| `guardian-social`  | Guardian (Social) | Social / moderation  |
-| `matchmaker`       | Matchmaker        | Social               |
-| `gatekeeper`       | Gatekeeper        | Social               |
-| `concierge`        | Concierge         | Social               |
-| `analyst`          | Analyst           | Social               |
-| `curator`          | Curator           | Social               |
-| `sentinel`         | Sentinel          | Moderation           |
-| `config-manager`   | Config Manager    | Admin                |
-| `command-bar`      | Admin Command Bar | Admin                |
+| id                     | name                             | cluster              |
+| ---------------------- | -------------------------------- | -------------------- |
+| `conductor`            | Conductor                        | Input (orchestrator) |
+| `audio-classifier`     | Audio Classifier                 | Input                |
+| `intent-resolver`      | Intent Resolver                  | Input                |
+| `guardian-social`      | Guardian (Social)                | Social / moderation  |
+| `matchmaker`           | Matchmaker                       | Social               |
+| `gatekeeper`           | Gatekeeper                       | Social               |
+| `concierge`            | Concierge                        | Social               |
+| `analyst`              | Analyst                          | Social               |
+| `curator`              | Curator                          | Social               |
+| `sentinel`             | Sentinel                         | Moderation           |
+| `config-manager`       | Config Manager                   | Admin                |
+| `command-bar`          | Admin Command Bar                | Admin                |
+| `adaptive-pacing-host` | Adaptive Pacing (reference host) | Adaptive (reference) |
 
 The processing units (transcription, identification, translation, extraction) are **services**,
 not agents (Cluster 2): deterministic provider-pipeline wrappers with no agent identity, no LLM
