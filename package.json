@@ -76,7 +76,8 @@
       "platform/admin/**/*.ts",
       "platform/adaptive/**/*.ts",
       "platform/content/**/*.ts",
-      "platform/effects/**/*.ts"
+      "platform/effects/**/*.ts",
+      "platform/social/content/**/*.ts"
     ],
     "coverageThreshold": {
       "global": {

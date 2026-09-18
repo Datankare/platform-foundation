@@ -66,6 +66,7 @@ import { setEffectLedger } from "@/platform/agents/effect-ledger";
 import { SupabaseEffectLedger } from "@/platform/agents/supabase-effect-ledger";
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
+import { registerSocialContentTypes } from "@/platform/social/content/curator-content";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -529,6 +530,7 @@ export function initProviders(): ProviderSelections {
   // so it runs after the provider slots are live. Both registrars are idempotent.
   registerPlatformAgents();
   registerAdaptiveReference();
+  registerSocialContentTypes();
 
   writeInitialized(true);
   logger.info("Platform providers initialized", {
