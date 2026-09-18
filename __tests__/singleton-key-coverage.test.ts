@@ -35,6 +35,8 @@ const EXEMPT: Record<string, string> = {
     "The adaptive behavior registry (ADR-036). Cleared by resetAdaptiveBehaviors(), not by initProviders() — it is not a provider slot.",
   "platform.adaptive.memory":
     "Within-session adaptive memory (ADR-036 D5). Cleared by resetAdaptiveMemory(), not by initProviders() — it is not a provider slot.",
+  "platform.content.registry":
+    "The content-type registry (ADR-037). Cleared by resetContentTypes(), not by initProviders() — it is not a provider slot.",
 };
 
 function singletonKeysDeclaredInSource(): string[] {

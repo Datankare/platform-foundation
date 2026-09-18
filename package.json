@@ -74,7 +74,8 @@
       "platform/moderation/**/*.ts",
       "platform/auth/**/*.tsx",
       "platform/admin/**/*.ts",
-      "platform/adaptive/**/*.ts"
+      "platform/adaptive/**/*.ts",
+      "platform/content/**/*.ts"
     ],
     "coverageThreshold": {
       "global": {
