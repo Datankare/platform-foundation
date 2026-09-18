@@ -13,3 +13,9 @@ export {
 } from "./registry";
 export { generateContent } from "./loop";
 export type { ContentScope, ContentResult, ContentFallbackReason } from "./loop";
+export { routeContentEffect } from "./effect";
+export type {
+  ContentEffectStatus,
+  ContentEffectOutcome,
+  ContentEffectRequest,
+} from "./effect";
