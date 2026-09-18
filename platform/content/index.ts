@@ -11,3 +11,5 @@ export {
   listContentTypes,
   resetContentTypes,
 } from "./registry";
+export { generateContent } from "./loop";
+export type { ContentScope, ContentResult, ContentFallbackReason } from "./loop";
