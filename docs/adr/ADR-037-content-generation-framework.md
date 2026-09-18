@@ -74,11 +74,13 @@ block. A `block` or `escalate` never surfaces — the framework returns the stat
 and an `escalate` feeds the human review queue (P10). Screening is **framework-forced, not consumer
 discipline** — structural safety (P4), the content analog of ADR-036 D4's forced boundary.
 
-**D5 — Durable content surfaces via propose→commit (ADR-031).** Generating is cognition (internal,
-revisable); surfacing durable content is commitment (audited) — the P17 boundary. Content that
-persists is proposed (held), screened, and surfaces only on commit; it is an ordinary governed
-effect, with no privileged route. Ephemeral content (rendered once, not persisted) is still screened
-but need not be proposed.
+**D5 — Durable content surfaces as an ordinary governed effect (ADR-031).** Generating is cognition
+(internal, revisable); surfacing durable content is commitment (audited) — the P17 boundary. Durable
+content is routed through the shared governed-effect router (`platform/effects`, the same primitive
+the adaptive effect uses), forced to `boundary = "commitment"`: it is applied (committed and
+surfaced) when the risk gate allows, held when approval is required, and rejected or conflict
+otherwise — no privileged route. Ephemeral content (rendered once, not persisted) is screened but
+not routed.
 
 **D6 — Eval-gated and schema-conforming.** Every content prompt ships an ADR-038 eval suite (P9);
 the meta-test fails the build for an unevaluated prompt. Output is validated against the consumer's
@@ -88,7 +90,7 @@ JSON schema with a fail-closed / self-healing parse (P6).
 the framework carries no memory slice. Cross-session or accumulating content context, if ever
 needed, is a later, separately-governed decision.
 
-## 3. Generation flow — normal and exception paths
+## 3. Flows — generation and surfacing (normal and exception)
 
 The loop has one normal path and four failure classes, all of which converge on the consumer's
 static template so a runtime failure can never yield a missing, unvalidated, or unscreened result.
@@ -106,7 +108,7 @@ graph TD
     G -->|block / escalate| F
     G -->|allow| H{durable?}
     F --> H
-    H -->|yes| I[propose→commit<br/>ADR-031 — P17]
+    H -->|yes| I[routeGovernedEffect<br/>boundary = commitment, P17]
     H -->|no| J([surface — ephemeral])
     I --> K([surface — committed])
 
@@ -123,7 +125,7 @@ sequenceDiagram
     participant R as ADR-039 runtime
     participant O as Orchestrator / LLM
     participant G as Guardian
-    participant P as propose→commit
+    participant P as governed effect
 
     C->>F: generate(input, contentType)
     F->>R: executeAgent(workflow)
@@ -146,13 +148,75 @@ sequenceDiagram
             else allow
                 G-->>F: allow
                 alt durable content
-                    F->>P: propose, then commit (P17)
-                    P-->>C: surfaced (committed)
+                    F->>P: route as a governed effect (P17)
+                    P-->>C: applied — surfaced
                 else ephemeral content
                     F-->>C: surfaced
                 end
             end
         end
+    end
+```
+
+### Surfacing durable content — the governed-effect path
+
+Durable content — content that becomes a persisted, user-visible artifact — is surfaced as an
+ordinary governed effect (D5). Rather than duplicate the commitment-boundary routing the adaptive
+framework already has, both frameworks route through one shared primitive, `routeGovernedEffect` in
+`platform/effects`; `routeContentEffect` and `routeAdaptiveEffect` are thin renamed re-exports of it.
+The router forces `boundary = "commitment"` (P17) and runs the D3 pipeline, translating its outcomes
+to one vocabulary: applied (committed and surfaced), held (approval required), rejected (refused), or
+conflict (a CAS loss to revalidate and retry). Ephemeral content skips this path — it is screened
+and returned.
+
+```mermaid
+graph TD
+    subgraph AD["Adaptive framework (ADR-036)"]
+        RAE[routeAdaptiveEffect]
+    end
+    subgraph CO["Content framework (ADR-037)"]
+        RCE[routeContentEffect]
+    end
+    subgraph EF["platform/effects — shared"]
+        RGE[routeGovernedEffect<br/>forces boundary = commitment, P17]
+    end
+    PIPE[executeActionPipeline<br/>CAS · risk gate · held-action / dual-control]
+    RAE -. re-export .-> RGE
+    RCE -. re-export .-> RGE
+    RGE --> PIPE --> OUT([applied / held / rejected / conflict])
+```
+
+```mermaid
+graph TD
+    A([screened durable content]) --> B[routeGovernedEffect<br/>boundary = commitment]
+    B --> C[executeActionPipeline]
+    C --> D{risk gate}
+    D -->|allowed| E([applied — surfaced])
+    D -->|approval required| F([held])
+    D -->|refused / budget| G([rejected])
+    C -->|CAS loss| H([conflict — revalidate & retry])
+    F -.->|approved later| E
+```
+
+```mermaid
+sequenceDiagram
+    participant Co as Consumer
+    participant R as routeContentEffect
+    participant E as routeGovernedEffect
+    participant P as executeActionPipeline
+    Co->>R: surface(spec, computeNextState, stores)
+    R->>E: (re-export)
+    E->>P: execute at boundary = commitment
+    alt risk gate allows
+        P-->>Co: applied (committed, surfaced)
+    else approval required
+        P--xE: PipelineRejected(requires-approval)
+        E-->>Co: held
+    else budget / refused
+        P--xE: PipelineRejected(budget-exceeded)
+        E-->>Co: rejected
+    else CAS loss
+        P-->>Co: conflict
     end
 ```
 
@@ -196,6 +260,35 @@ sequenceDiagram
   a propose then a commit rather than a single write.
 - **(b) Generate and show immediately, screen asynchronously — REJECTED.** _Against:_ a window where
   unscreened content is visible — unacceptable for a safety surface.
+
+**Surfacing mechanism.**
+
+- **(a) Route durable content as an ordinary governed effect — CHOSEN.** Durable content is routed
+  through the shared governed-effect router at `boundary = "commitment"`: applied (surfaced) when the
+  risk gate allows, held when approval is required, rejected/conflict otherwise. _For:_ content
+  inherits exactly the governance every other durable effect has (CAS, risk gate, held-action /
+  dual-control), with no route around it; a routine surface commits without ceremony, and only
+  genuinely risky content is held; it stays structurally parallel to the adaptive sibling. _Against:_
+  "held" is a transient pipeline outcome rather than a first-class, queryable proposal record.
+- **(b) An explicit two-phase `proposeContent` / `commitContent` workflow — REJECTED.** Every durable
+  surface is always proposed (a held `ProposalRecord` + approval-request) and surfaces only on an
+  explicit commit. _For:_ a first-class proposal / audit artifact per surface and a guaranteed
+  checkpoint before anything durable appears. _Against:_ propose-then-commit ceremony on every routine
+  surface even when nothing is risky; it diverges from the adaptive sibling into its own workflow; and
+  it needs a commit driver (a human queue or an auto-approve policy) to operate the common case.
+
+**Governed-effect router: shared vs duplicated.**
+
+- **(a) One shared `routeGovernedEffect` (platform/effects); both frameworks re-export it — CHOSEN.**
+  The commitment-boundary routing (force the boundary, run the pipeline, translate outcomes) is
+  domain-agnostic, so it lives once in `platform/effects`; `routeAdaptiveEffect` and
+  `routeContentEffect` are thin renamed re-exports. _For:_ one implementation, no drift; the adaptive
+  refactor is behavior-preserving (ADR-036's effect and e2e suites are unchanged). _Against:_ it
+  touches the shipped ADR-036 effect module (reduced to a re-export). This refines the 1(a)
+  "accept some duplication" stance for this specific primitive.
+- **(b) Duplicate the ~30-line router in each framework — REJECTED.** _For:_ each framework is fully
+  self-contained. _Against:_ two copies of a domain-agnostic control path drift out of step; a shared
+  primitive is the right seam, and the re-exports still give each framework its own named surface.
 
 **Within-session memory (the D7 decision).**
 
@@ -265,3 +358,5 @@ prompt-registry survey: separate content-generation framework (1a) mirroring the
 mandatory Guardian screening before surfacing (D4/P4), fail-closed to a consumer static template
 (D3/P11), durable content via propose→commit (D5/P17), no within-session memory (D7); block / flow /
 sequence diagrams for the normal and exception paths; RAMPS mapping included)._
+
+_Last updated: September 18, 2026 (Phase 5 Sprint 4 — surfacing decision recorded: durable content routes as an ordinary governed effect (D5, option a) over an explicit two-phase proposeContent (b); the commitment-boundary router is extracted to a shared platform/effects primitive (routeGovernedEffect) that adaptive and content re-export, over duplicating it; block / flow / sequence diagrams for the surfacing path added to §3)._
