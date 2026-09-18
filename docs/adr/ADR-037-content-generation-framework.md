@@ -347,7 +347,37 @@ through propose→commit; and the type's prompt has an eval suite (cross-checked
 - **AAA:** generation runs under agent identity (P15, `actorType` / `actorId`); propose→commit and
   trajectories provide the audit trail (Analytics).
 
-## 9. Related
+## 9. Known limitations and future forks
+
+**The content path is single-shot by construction.** A `ContentType` is one `build(input) →
+AIRequest`, one `complete`, one `parse`, with no within-session memory (D7). That is the whole
+surface: it cannot express asynchronous gathering before the call (pulling engagement scores from
+the analyst, P14, or loading reading-history, P16), a tool-use loop, or reasoning across several
+model turns. For content that is a single screened generation from an assembled prompt, this is
+exactly right and keeps the fail-closed guarantees simple.
+
+**Consequence for Curator.** Curator today — rule-based gather, then one curate call — is fully
+served by `CURATOR_CONTENT_TYPE` with output screening (§5 step 4). But Curator is documented to
+grow multi-step: content scoring on analyst signals (P14), reading-history personalization (P16),
+tool use (ADR-039 and the Curator module). That richer agent is _not_ something the single-shot
+content path can host. This is why `createCuratorWorkflow` (the two-step `WorkflowFn` seam) is
+**retained rather than removed** — it is the form Curator evolves into, not dead code. The content
+type is how the digest is produced _now_; the workflow is what a multi-step Curator becomes.
+
+**The fork, when multi-step Curator lands** (to be decided then, not now):
+
+- **(a) Grow the framework to multi-step generation** — let a content type's generation itself be a
+  multi-step trajectory over `executeAgent` (gather → score → generate), extending build/parse while
+  preserving the mandatory-fallback and screen-before-surface invariants.
+- **(b) Compose** — keep the content path single-shot; have a Curator _workflow_ orchestrate the
+  multi-step gather/score/reason, then call the content path only for the final screened generation.
+  The workflow owns the steps; the framework owns fail-closed generation and Guardian screening.
+
+Either way the P4 invariant holds — nothing reaches a member unscreened. The boundary is recorded
+here so the single-shot constraint is a known scope line, not a surprise when Curator goes
+multi-step.
+
+## 10. Related
 
 ADR-028, ADR-015, ADR-016 / ADR-021 (Guardian), ADR-031 (propose→commit), ADR-039 (runtime),
 ADR-038 (evals), ADR-036 (sibling adaptive seam), ADR-040 (dual-control). Consumed by Sprint-7
@@ -360,3 +390,5 @@ mandatory Guardian screening before surfacing (D4/P4), fail-closed to a consumer
 sequence diagrams for the normal and exception paths; RAMPS mapping included)._
 
 _Last updated: September 18, 2026 (Phase 5 Sprint 4 — surfacing decision recorded: durable content routes as an ordinary governed effect (D5, option a) over an explicit two-phase proposeContent (b); the commitment-boundary router is extracted to a shared platform/effects primitive (routeGovernedEffect) that adaptive and content re-export, over duplicating it; block / flow / sequence diagrams for the surfacing path added to §3)._
+
+_Last updated: September 18, 2026 (Phase 5 Sprint 4 — Curator brought under the framework as the reference content type (§5 step 4): screened single-shot digest path (`generateCuratorDigest` / `CURATOR_CONTENT_TYPE`) added, `createCuratorWorkflow` retained as the multi-step seam; §9 records the known limitation — the single-shot content path cannot host multi-step Curator — with the grow-vs-compose fork noted for when it lands)._
