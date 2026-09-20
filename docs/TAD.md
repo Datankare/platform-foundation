@@ -1,7 +1,7 @@
 # Technical Architecture Document (TAD)
 
 **Project:** Platform Foundation — Reusable Platform Template
-**Version:** 2.1.1
+**Version:** 2.2.0
 **Date:** September 2026
 **Status:** Approved
 **Repository:** github.com/Datankare/platform-foundation
@@ -160,4 +160,4 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (Sprint 3d — ADR-036..040 + ADR-041 reserved: escalation SLA & remedial action)_
+_Last reviewed: September 2026 (Sprint 4 close — ADR-036/037 adaptive-behavior & content-generation frameworks and ADR-038 eval harness shipped; PF v2.2.0)_

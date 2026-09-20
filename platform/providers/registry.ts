@@ -64,6 +64,9 @@ import { SupabaseApprovalPolicyStore } from "@/platform/agents/supabase-approval
 import { SupabaseProposalStore } from "@/platform/agents/supabase-proposal-store";
 import { setEffectLedger } from "@/platform/agents/effect-ledger";
 import { SupabaseEffectLedger } from "@/platform/agents/supabase-effect-ledger";
+import { registerPlatformAgents } from "@/platform/agents/agent-configs";
+import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
+import { registerSocialContentTypes } from "@/platform/social/content/curator-content";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -521,6 +524,13 @@ export function initProviders(): ProviderSelections {
   initEffectLedger(selections.effectLedger);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
+
+  // ADR-036 step 4 / ADR-039: register platform agents and the adaptive reference on the
+  // boot path (makes real the invariant jest.setup mirrors). Registration needs no store,
+  // so it runs after the provider slots are live. Both registrars are idempotent.
+  registerPlatformAgents();
+  registerAdaptiveReference();
+  registerSocialContentTypes();
 
   writeInitialized(true);
   logger.info("Platform providers initialized", {
