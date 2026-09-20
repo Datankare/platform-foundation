@@ -10,7 +10,7 @@
  *   - every enum member has a tagged case, and fail-closed / boundary / adversarial classes are
  *     each present.
  */
-import { readFileSync, readdirSync, statSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { listPrompts } from "@/prompts";
 import { EVAL_SUITES, PENDING_EVAL, TOOL_USE_EXEMPT } from "@/prompts/evals";
@@ -30,11 +30,11 @@ function promptFileFor(name: string): string | null {
   const dirs = [join(ROOT, "prompts")];
   while (dirs.length) {
     const dir = dirs.pop() as string;
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
-        if (entry !== "__tests__" && entry !== "evals") dirs.push(full);
-      } else if (/-v\d+\.ts$/.test(entry)) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "__tests__" && entry.name !== "evals") dirs.push(full);
+      } else if (/-v\d+\.ts$/.test(entry.name)) {
         if (new RegExp(`name:\\s*"${name}"`).test(readFileSync(full, "utf-8")))
           return full;
       }
