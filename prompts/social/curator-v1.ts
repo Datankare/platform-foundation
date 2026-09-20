@@ -22,10 +22,12 @@ export interface CuratorInput {
 }
 
 /** A single digest item */
+export type DigestPriority = "high" | "medium" | "low";
+
 export interface DigestItem {
   readonly title: string;
   readonly summary: string;
-  readonly priority: "high" | "medium" | "low";
+  readonly priority: DigestPriority;
 }
 
 /** Complete digest */
@@ -97,7 +99,7 @@ export function parseCuratorResponse(raw: string): readonly DigestItem[] {
       .map((d: Record<string, unknown>) => ({
         title: d.title as string,
         summary: d.summary as string,
-        priority: d.priority as "high" | "medium" | "low",
+        priority: d.priority as DigestPriority,
       }));
   } catch {
     logger.debug("Prompt parse failed — returning safe default", { raw: cleaned });

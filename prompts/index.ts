@@ -13,6 +13,15 @@
 import { ModelTier } from "@/platform/ai/types";
 import { SAFETY_CLASSIFY_V1 } from "./safety/classify-v1";
 import { ADMIN_COMMAND_BAR_V1 } from "./admin/command-bar-v1";
+import { CONFIG_MANAGER_V1 } from "./admin/config-manager-v1";
+import { CLASSIFY_AUDIO_V1 } from "./input/classify-audio-v1";
+import { RESOLVE_INTENT_V1 } from "./input/resolve-intent-v1";
+import { ANALYST_V1 } from "./social/analyst-v1";
+import { CONCIERGE_V1 } from "./social/concierge-v1";
+import { CURATOR_V1 } from "./social/curator-v1";
+import { GATEKEEPER_V1 } from "./social/gatekeeper-v1";
+import { MATCHMAKER_V1 } from "./social/matchmaker-v1";
+import { PACING_V1 } from "./adaptive/pacing-v1";
 
 // ---------------------------------------------------------------------------
 // Registry types
@@ -38,6 +47,15 @@ export interface PromptConfig {
 const PROMPT_REGISTRY: Record<string, PromptConfig> = {
   "safety-classify": SAFETY_CLASSIFY_V1,
   "admin-command-bar": ADMIN_COMMAND_BAR_V1,
+  "config-manager": CONFIG_MANAGER_V1,
+  "classify-audio": CLASSIFY_AUDIO_V1,
+  "resolve-intent": RESOLVE_INTENT_V1,
+  analyst: ANALYST_V1,
+  concierge: CONCIERGE_V1,
+  curator: CURATOR_V1,
+  gatekeeper: GATEKEEPER_V1,
+  matchmaker: MATCHMAKER_V1,
+  "adaptive-pacing": PACING_V1,
 };
 
 /**

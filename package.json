@@ -1,6 +1,6 @@
 {
   "name": "platform-foundation",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -73,7 +73,11 @@
       "platform/input/**/*.ts",
       "platform/moderation/**/*.ts",
       "platform/auth/**/*.tsx",
-      "platform/admin/**/*.ts"
+      "platform/admin/**/*.ts",
+      "platform/adaptive/**/*.ts",
+      "platform/content/**/*.ts",
+      "platform/effects/**/*.ts",
+      "platform/social/content/**/*.ts"
     ],
     "coverageThreshold": {
       "global": {

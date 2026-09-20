@@ -20,8 +20,10 @@ process.env.LOG_LEVEL = "silent";
 // Mirror that once per test file so any code path that runs an agent via the runtime
 // resolves it — matching prod and keeping this out of every individual suite.
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
+import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
 beforeAll(() => {
   registerPlatformAgents();
+  registerAdaptiveReference();
 });
 
 afterAll(() => {
