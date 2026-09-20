@@ -471,3 +471,5 @@ _Last updated: September 4, 2026 (Phase 5 Sprint 3c CLOSE — all deliverables +
 _Last updated: September 4, 2026 (Phase 5 Sprint 4 opened — L12 mapping recorded as the pre-code gate; ADR-036 / 037 / 038 reserved as Proposed and indexed in TAD; adaptive memory scoped within-session, cross-session deferred; P9 eval harness net-new this sprint)_
 
 _Last updated: September 6, 2026 (Phase 5 Sprint 3d opened — Agent Registry Unification (ADR-039) promoted from Track F to its own sprint; L12 mapping recorded; ADR-040 reserved for the GenAI-native held-action / dual-control admin surface; dual-control going live; F1 + F2a already landed)_
+
+_Last updated: September 19, 2026 (Phase 5 Sprint 4 CLOSE — adaptive behavior (ADR-036) + dynamic content generation (ADR-037) frameworks shipped on the ADR-038 eval harness; screened, fail-closed content generation with L21 conformance kits; enforced coverage floor held at stmts 88 / lines 90 / funcs 90 / branches 76 (actual 90.52 / 91.56 / 91.54 / 77.77); PF released as v2.2.0 (minor). Sprint 5 (RAG + UGC input screening) is next)_

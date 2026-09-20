@@ -2,7 +2,7 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
-> **v2.1.1** — Phase 5 application framework & governed agency. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
+> **v2.2.0** — Phase 5 generative frameworks: adaptive behavior + dynamic content generation, on a prompt-eval harness. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
 
 A battle-tested foundation for building commercial SaaS products, internal tools,
 and application platforms. Clone it, rename it, and start building on solid ground
@@ -100,7 +100,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v2.1.1)
+- ✅ Versioned releases (v2.2.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
@@ -239,8 +239,8 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 
 ---
 
-_Platform Foundation v2.1.1 — Datankare_
-_Phase 5 Sprint 3d · 218 suites · 2,730 tests · 90.19% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Platform Foundation v2.2.0 — Datankare_
+_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 14, 2026 (v2.1.1 patch — agent registry backed by the globalThis singleton so consumer startup registration survives Next.js bundle duplication; fixes production moderation registration)_
+_Last updated: September 19, 2026 (v2.2.0 — Phase 5 Sprint 4 close: adaptive behavior (ADR-036) + dynamic content generation (ADR-037) frameworks on the ADR-038 eval harness; content generated on the governed runtime, schema-validated, Guardian-screened before it surfaces, fail-closed to a static template, with L21 conformance kits)_

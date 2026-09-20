@@ -9,6 +9,35 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.2.0 — Sprint 4: adaptive behavior & dynamic content generation frameworks
+
+Date: 2026-09-19
+
+Two PF-native generative frameworks land on the prompt-eval harness they gate on. Both follow
+the platform pattern (PF owns the loop, the consumer supplies the functions), run on the governed
+agent runtime, and fail closed.
+
+### Headline capabilities
+
+- **Adaptive behavior framework (ADR-036).** A consumer describes how an agent should adapt; the
+  framework runs the decision on the governed runtime with a mandatory deterministic fallback,
+  routes any effectful outcome through the action pipeline, and keeps adaptation to within-session
+  working memory.
+- **Dynamic content generation framework (ADR-037).** Generated content runs on the runtime, is
+  schema-validated, and — the gap this closes — is screened by the Guardian before it can
+  surface; any orchestrator error, parse failure, schema miss, or screening block falls back to the
+  consumer's static template. Curator is the reference content type; durable content surfaces only
+  through the governed commitment boundary.
+- **Prompt-eval harness (ADR-038).** A deterministic record-replay CI gate that runs recorded
+  fixtures through each prompt's own parser, with enum-exhaustive / fail-closed / boundary /
+  adversarial coverage enforced; both frameworks gate on it.
+
+Each framework ships an L21 conformance kit a consumer runs against its own implementations.
+
+### References
+
+ADR-036 (adaptive behavior), ADR-037 (dynamic content generation), ADR-038 (prompt-eval harness).
+
 ## v2.1.1 — patch: agent registry survives bundle duplication
 
 Date: 2026-09-14
