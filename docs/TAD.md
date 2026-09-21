@@ -155,9 +155,11 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-039 | Agent Registry Unification                    |
 | ADR-040 | Held-Action & Dual-Control Admin              |
 | ADR-041 | Escalation SLA & Remedial Action              |
+| ADR-042 | Application-Specific RAG & Knowledge Bases    |
+| ADR-043 | UGC Input-Surface Screening                   |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (Sprint 4 close — ADR-036/037 adaptive-behavior & content-generation frameworks and ADR-038 eval harness shipped; PF v2.2.0)_
+_Last reviewed: September 2026 (Sprint 5 open — ADR-042 (application-specific RAG) and ADR-043 (UGC input-surface screening) reserved as Proposed and indexed; prior: Sprint 4 close, PF v2.2.0)_

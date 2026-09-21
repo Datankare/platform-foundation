@@ -114,7 +114,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                            |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–041`                        | 41 Architecture Decision Records                                                   |
+| `docs/adr/ADR-001–041`                        | 43 Architecture Decision Records                                                   |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                    |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
@@ -171,7 +171,7 @@ platform-foundation/
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 25 abstractions (ADR-027)
 ├── supabase/migrations/    ← 35 database migrations
-├── docs/adr/               ← 41 ADRs
+├── docs/adr/               ← 43 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.2.0 — Datankare_
-_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 41 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 43 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
 _Last updated: September 19, 2026 (v2.2.0 — Phase 5 Sprint 4 close: adaptive behavior (ADR-036) + dynamic content generation (ADR-037) frameworks on the ADR-038 eval harness; content generated on the governed runtime, schema-validated, Guardian-screened before it surfaces, fail-closed to a static template, with L21 conformance kits)_

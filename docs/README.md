@@ -36,7 +36,7 @@ graph TD
         PLAT[PLATFORM_ARCHITECTURE<br/>the layers]
         AGENT[AGENT_ARCHITECTURE<br/>agents + governed authority]
         AUX[AUX_DESIGN<br/>agent UX surface]
-        ADR[(adr/ · 41 ADRs<br/>every decision + rationale)]
+        ADR[(adr/ · 43 ADRs<br/>every decision + rationale)]
     end
 
     subgraph GUIDES["Developer Guides"]

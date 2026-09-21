@@ -473,3 +473,46 @@ _Last updated: September 4, 2026 (Phase 5 Sprint 4 opened — L12 mapping record
 _Last updated: September 6, 2026 (Phase 5 Sprint 3d opened — Agent Registry Unification (ADR-039) promoted from Track F to its own sprint; L12 mapping recorded; ADR-040 reserved for the GenAI-native held-action / dual-control admin surface; dual-control going live; F1 + F2a already landed)_
 
 _Last updated: September 19, 2026 (Phase 5 Sprint 4 CLOSE — adaptive behavior (ADR-036) + dynamic content generation (ADR-037) frameworks shipped on the ADR-038 eval harness; screened, fail-closed content generation with L21 conformance kits; enforced coverage floor held at stmts 88 / lines 90 / funcs 90 / branches 76 (actual 90.52 / 91.56 / 91.54 / 77.77); PF released as v2.2.0 (minor). Sprint 5 (RAG + UGC input screening) is next)_
+
+## GenAI 18-Principle Mapping · Sprint 5 (L12 pre-code gate)
+
+> Mapped against Sprint 5's deliverables — application-specific RAG (ADR-042) extending the
+> Phase-4 RAG foundation, and UGC input-surface screening (ADR-043) under Standing Rule 11.
+> Core = Sprint 5 primary deliverer · Extend = fabric applied to a new surface ·
+> Advance = moves a partial forward · — = no deliverable.
+
+| #   | Principle             | Sprint 5 | How                                                                                                                         |
+| --- | --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | Extend   | Retrieved app-context sharpens intent resolution; the screened input surface is the intent front door                       |
+| 2   | Agentic Execution     | Extend   | Retrieval + input screening run as bounded, instrumented steps over the existing runtime — no new execution model           |
+| 3   | Total Observability   | Extend   | Every retrieval (query / k / scores / tokens / latency) and every input-screen verdict traced day one                       |
+| 4   | Structural Safety     | **Core** | UGC input screening routes user input through the Guardian before it reaches a model (Rule 11 — no input ships unscreened)  |
+| 5   | Versioned Artifacts   | Extend   | New retrieval / screening prompts + knowledge-base schemas versioned in the registry; conformance kit per abstraction (L21) |
+| 6   | Structured Outputs    | Extend   | Retrieval results + screen verdicts are typed and schema-validated; malformed retrieval fails closed                        |
+| 7   | Provider-Aware        | Extend   | App-RAG routes embedding / retrieval over existing EmbeddingProvider slots by capability / cost                             |
+| 8   | Context & Memory      | **Core** | App-specific RAG extends the Phase-4 foundation with app knowledge bases + budget-aware injection — the primary surface     |
+| 9   | Automated Eval        | Extend   | New retrieval + screening prompts carry eval datasets + CI regression before ship (ADR-038 harness)                         |
+| 10  | Human Oversight       | Extend   | Blocked / escalated input routes to the review queue (ADR-024); retrieval provenance is inspectable                         |
+| 11  | Resilient Degradation | Advance  | RAG degrades to no-context generation when retrieval is down rather than failing the turn; screening fails closed           |
+| 12  | Economic Transparency | Extend   | Retrieval + embedding cost-tracked per trajectory; context injection is budget-aware (Phase-4 injector)                     |
+| 13  | Control Plane         | Extend   | Knowledge bases + screening policy are governed artifacts under the governance admin (ADR-035)                              |
+| 14  | Feedback Loops        | —        | Phase 7 — no Sprint 5 work                                                                                                  |
+| 15  | Agent Identity        | Extend   | Retrieval + screening act under the caller's delegated, scoped identity — no new identity mechanism                         |
+| 16  | Cognitive Memory      | Extend   | App-RAG adds **resource memory** (app knowledge bases) atop the Phase-4 user-context store                                  |
+| 17  | Cognition-Commitment  | Extend   | Screened, retrieved context informs generation but is not itself a committed action; the boundary is unchanged              |
+| 18  | Durable Trajectories  | Extend   | Retrieval calls + screen verdicts append to the checkpointed, inspectable trajectory                                        |
+
+**Summary:** Sprint 5 extends the agentic fabric onto two surfaces — retrieval-grounded context
+(**P8** Core, app knowledge bases atop Phase-4 RAG) and a screened input front door (**P4** Core,
+Standing Rule 11 made structural). **P11** advances (RAG degrades to no-context; screening fails
+closed); **P16** gains resource memory. **P14** remains the lone gap (Phase 7). 18/18 accounted for.
+
+**Pre-code gate satisfied** — this table precedes any Sprint 5 implementation (L12).
+
+### Sprint 5 — OPEN
+
+_Last updated: September 21, 2026 (Phase 5 Sprint 5 opened — L12 mapping recorded as the pre-code
+gate; ADR-042 (application-specific RAG) and ADR-043 (UGC input-surface screening) reserved as
+Proposed and indexed in TAD; RAG extends the Phase-4 foundation from per-user memory to
+per-application knowledge; input screening makes Standing Rule 11 structural, fail-closed, for the
+input direction. Coverage-floor ratchet to Sprint-4 actuals tracked separately.)_
