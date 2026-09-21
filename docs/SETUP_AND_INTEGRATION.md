@@ -163,6 +163,33 @@ and bump deliberately. See [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for what each 
 contains and [`MIGRATION_v1_to_v2.md`](MIGRATION_v1_to_v2.md) when a major version introduces
 breaking changes.
 
+### Dependencies: what you own, what you inherit
+
+Your `package.json` and lockfile are **yours** — the sync never overwrites them (they are on
+your `exclude` list). But adopting Platform Foundation brought its dependencies into your tree, so
+many of the packages you depend on originate upstream. That gives one file two update streams:
+
+- **Your own Dependabot** (or equivalent), patching your dependencies on your security timeline.
+- **The platform sync**, which delivers the platform's versions of the packages it uses.
+
+These can collide — your Dependabot may bump `next` on Monday; the next sync may deliver a
+different `next`. Neither is wrong; **merge order is the thing to get right**:
+
+1. **Merge an open platform-sync PR before your own dependency PRs.** For a package the platform
+   also uses, it is the upstream of record; rebasing your bump on top then either drops as
+   redundant or surfaces a real delta to resolve deliberately.
+2. **For a package the platform also uses, prefer the platform's version** unless you have a
+   specific reason to diverge. Pinning ahead of the platform means running a version it does not
+   test against.
+3. **For a package only your app uses,** you own it outright — bump on your own schedule; the
+   sync never touches it.
+4. **If a security fix is urgent and the platform has not shipped it,** bump it yourself and carry
+   the delta; the next sync reconciles once the platform catches up.
+
+If you would rather your Dependabot not raise PRs for platform-owned packages at all, that is a
+valid choice — but it couples your security posture to the platform's release cadence. Running
+your own and reconciling per the order above keeps you independent.
+
 ---
 
 ## 7. Where to go next
