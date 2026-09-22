@@ -47,6 +47,7 @@ export { SupabaseEmbeddingStore } from "./supabase-embedding-store";
 export { retrieve } from "./retriever";
 export type { RetrieveOptions } from "./retriever";
 export { ingestDocument } from "./ingest";
+export { registerRagReference, CURATOR_REFERENCE_KB } from "./bootstrap";
 export type { IngestResult, IngestOptions, IngestStatus } from "./ingest";
 export { defaultInputScreen, screenPermits, runInputScreen } from "./screen";
 export type { InputScreen, ScreenDecision } from "./screen";
