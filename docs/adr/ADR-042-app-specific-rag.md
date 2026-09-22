@@ -1,6 +1,6 @@
 # ADR-042: Application-Specific RAG and Knowledge Bases
 
-Status: Proposed (Phase 5 Sprint 5). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 5). Decision maker: Raman Sud.
 Related: ADR-023 (Phase-4 RAG pipeline — EmbeddingProvider, chunker, retriever, budget-aware
 context injector, per-user context store), ADR-027 (provider conformance-kit pattern — abstraction
 trusted only once it passes a kit), ADR-043 (UGC input-surface screening), ADR-035 (governance

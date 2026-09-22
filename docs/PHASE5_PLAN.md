@@ -515,10 +515,14 @@ closed); **P16** gains resource memory. **P14** remains the lone gap (Phase 7). 
 
 **Pre-code gate satisfied** — this table precedes any Sprint 5 implementation (L12).
 
-### Sprint 5 — OPEN
+### Sprint 5 — CLOSE
 
-_Last updated: September 21, 2026 (Phase 5 Sprint 5 opened — L12 mapping recorded as the pre-code
-gate; ADR-042 (application-specific RAG) and ADR-043 (UGC input-surface screening) reserved as
-Proposed and indexed in TAD; RAG extends the Phase-4 foundation from per-user memory to
-per-application knowledge; input screening makes Standing Rule 11 structural, fail-closed, for the
-input direction. Coverage-floor ratchet to Sprint-4 actuals tracked separately.)_
+_Last updated: September 22, 2026 (Phase 5 Sprint 5 CLOSE — application-specific RAG (ADR-042) and
+UGC input-surface screening (ADR-043) shipped, both Accepted. ADR-042: a store-agnostic isolation
+contract with named-dimension scope, the KB registry, in-memory and durable Supabase/pgvector
+stores with app-layer scope enforcement (optional RLS backstop), the store-agnostic no-leak L21
+kit, and the curator reference KB registered on the boot path. ADR-043: input screening made
+structural and fail-closed at both enforcement points — ingestion (data-poisoning) and query
+(prompt-injection) — on the provider-agnostic screenContent seam, with an L21 conformance kit.
+Enforced coverage floor held at stmts 88 / lines 90 / funcs 90 / branches 76 (actual 90.52 / 91.56
+/ 91.54 / 77.77). PF version tag / release tracked separately.)_

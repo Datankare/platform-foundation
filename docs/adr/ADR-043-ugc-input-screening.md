@@ -1,6 +1,6 @@
 # ADR-043: User-Generated-Content Input-Surface Screening
 
-Status: Proposed (Phase 5 Sprint 5). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 5). Decision maker: Raman Sud.
 Related: ADR-016 / ADR-017 (content-safety architecture, moderation pipeline), ADR-021 (Guardian),
 ADR-039 (Guardian on the runtime — fail-closed to `escalate`), ADR-041 (escalation SLA), ADR-024
 (human review queue), ADR-042 (application-specific RAG). `platform/moderation/middleware.ts`.
