@@ -144,11 +144,14 @@ store.
 - A third party reaches the strictest isolation without forking: `dedicated` (separate schema/index)
   is a declaration on the reference store; separate _database instances_ are an "implement one
   `EmbeddingStore`, pass the kit" task in their own repo (see `docs/KNOWLEDGE_BASES.md`).
-- **Reference-store evidence (not part of the decision).** The two shipped stores realize the ladder
-  natively: the in-memory store by per-scope maps / separate instances; the Supabase/pgvector store
-  by Row-Level Security with `FORCE ROW LEVEL SECURITY` and transaction-local, verified-context tenant
-  scoping for `shared`, table partitioning + partial indexes for `partition`, and a separate schema /
-  index for `dedicated`. These mechanisms are how those stores _pass the kit_ — they live in the
-  implementations' notes, not here.
+- **Reference-store evidence (not part of the decision).** Both shipped stores realize `shared` by
+  confining every operation to its scope in the platform **store layer**: the in-memory store by
+  per-scope maps, the Supabase/pgvector store by an unbypassable `scope_key` predicate applied at a
+  single chokepoint (application-layer enforcement, not database enforcement — no RLS, RPC, or stored
+  procedure the platform depends on; vector similarity is computed in-process). Both pass the same
+  no-leak kit. A Row-Level-Security backstop is available as documented, **optional** defense-in-depth
+  (`supabase/optional/rag_rls_backstop.sql`), never a dependency; `partition` and `dedicated` extend
+  the durable store with physical separation later. These mechanisms are how the stores _pass the
+  kit_ — they live in the implementations' notes, not here.
 - Full decisions are settled in this ADR (no in-sprint TBD); implementation follows the pre-code
   survey already recorded for `platform/rag/`.

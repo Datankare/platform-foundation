@@ -1,0 +1,35 @@
+-- OPTIONAL — Row-Level-Security backstop for the embedding store (ADR-042 defense-in-depth)
+-- ============================================================================
+-- This file is DELIBERATELY OUTSIDE supabase/migrations/ and is NOT applied by the
+-- normal migration sequence. It is a documented, opt-in hardening layer.
+--
+-- WHAT THE PLATFORM GUARANTEES WITHOUT THIS
+--   The SupabaseEmbeddingStore already confines every operation to its scope_key at a
+--   single, unbypassable chokepoint in application code, and the store-agnostic no-leak
+--   conformance kit proves it. That is the enforcement the platform depends on.
+--
+-- WHAT THIS ADDS
+--   An independent, DB-level backstop: even a direct query on the table (bypassing the
+--   store) cannot cross a scope boundary. Pure defense-in-depth -- the app layer does
+--   not depend on it, and turning it off never weakens the store's own guarantee.
+--
+-- ACTIVATION REQUIREMENT (why it is optional, not default)
+--   RLS needs the querying connection to carry its scope as a transaction-local setting
+--   (app.scope). The default supabase-js/PostgREST transport does not set that, so this
+--   backstop is meant for a deployment whose transport can (e.g. a pg-based connection,
+--   or a PostgREST pre-request hook). Enabling it without such a transport would make
+--   RLS return nothing -- so enable it together with a scope-setting transport.
+--
+-- TO ENABLE (no schema change; operates on the existing scope_key column):
+--
+--   ALTER TABLE document_embeddings ENABLE ROW LEVEL SECURITY;
+--   ALTER TABLE document_embeddings FORCE ROW LEVEL SECURITY;
+--   CREATE POLICY rag_scope_backstop ON document_embeddings
+--     USING (scope_key = current_setting('app.scope', true));
+--
+--   -- and, per operation, the scope-setting transport runs (transaction-local):
+--   --   SELECT set_config('app.scope', <scope_key>, true);
+--
+-- TO DISABLE:
+--   DROP POLICY IF EXISTS rag_scope_backstop ON document_embeddings;
+--   -- (the app-layer store guarantee is unchanged either way)

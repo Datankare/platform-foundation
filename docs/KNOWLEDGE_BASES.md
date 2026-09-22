@@ -152,6 +152,7 @@ A few deliberate choices, so the design reads as intentional rather than inciden
 - **Safe by default, opt up deliberately.** `shared` is safe on day one; stronger isolation is a
   declared, governed, migrated choice. Nobody has to opt out of a leak, and nobody pays for
   separate-store overhead they do not need.
+- **Isolation is enforced in the store, not the database.** The durable (Supabase) reference store confines every operation to its scope in application code, at one chokepoint the no-leak kit proves — no stored procedures or DB-side logic to maintain. A Row-Level-Security backstop is documented and optional (defense-in-depth), never something the platform depends on.
 - **Trust is earned by the kit.** No store — ours or yours — is trusted because someone read its
   code. It is trusted because it passes the same behavioural no-leak tests. That is the ADR-027
   provider pattern applied to isolation.
