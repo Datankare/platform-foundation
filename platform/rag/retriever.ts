@@ -23,7 +23,13 @@ import type {
 import { DEFAULT_RETRIEVAL_CONFIG } from "./types";
 import { getKnowledgeBase } from "./kb-registry";
 import { assertScope } from "./scope";
-import { logger } from "@/lib/logger";
+import {
+  defaultInputScreen,
+  runInputScreen,
+  screenPermits,
+  type InputScreen,
+} from "./screen";
+import { logger, generateRequestId } from "@/lib/logger";
 
 /**
  * Result from a retrieval operation, including explainability data.
@@ -35,6 +41,16 @@ export interface RetrievalOutput {
   readonly explanationSteps: readonly ExplanationStep[];
   /** Total retrieval time in ms */
   readonly durationMs: number;
+}
+
+/**
+ * Options for {@link retrieve}.
+ */
+export interface RetrieveOptions {
+  /** Injected screener (ADR-043 D6). Defaults to the Guardian-backed input screen. */
+  readonly screen?: InputScreen;
+  /** Trace-correlation id. Defaults to a generated one. */
+  readonly requestId?: string;
 }
 
 /**
@@ -51,12 +67,15 @@ export async function retrieve(
   scope: Scope,
   query: RetrievalQuery,
   provider: EmbeddingProvider,
-  store: EmbeddingStore
+  store: EmbeddingStore,
+  options: RetrieveOptions = {}
 ): Promise<RetrievalOutput> {
   const start = Date.now();
   const steps: ExplanationStep[] = [];
   const topK = query.topK ?? DEFAULT_RETRIEVAL_CONFIG.topK;
   const minScore = query.minScore ?? DEFAULT_RETRIEVAL_CONFIG.minScore;
+  const screen = options.screen ?? defaultInputScreen;
+  const requestId = options.requestId ?? generateRequestId();
 
   try {
     // Fail-closed: retrieval requires a registered KB and a scope that satisfies its
@@ -64,6 +83,20 @@ export async function retrieve(
     const kb = getKnowledgeBase(scope.knowledgeBaseId);
     if (!kb) throw new Error(`unknown knowledge base: ${scope.knowledgeBaseId}`);
     assertScope(kb.boundary, scope);
+
+    // ADR-043 D3 (query): screen the query BEFORE embedding/search. Prompt-injection in
+    // the query is withheld fail-closed (block/escalate/screen-error -> empty results).
+    const screenStart = Date.now();
+    const decision = await runInputScreen(screen, query.query, requestId);
+    steps.push({
+      phase: "input-screening",
+      description: `Query screened: ${decision.action}`,
+      data: { action: decision.action },
+      durationMs: Date.now() - screenStart,
+    });
+    if (!screenPermits(decision)) {
+      return { results: [], explanationSteps: steps, durationMs: Date.now() - start };
+    }
 
     const embedStart = Date.now();
     const embedResponse = await provider.embed({ texts: [query.query] });

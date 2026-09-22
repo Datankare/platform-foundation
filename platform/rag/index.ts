@@ -45,6 +45,11 @@ export { chunkDocument } from "./chunker";
 export { InMemoryEmbeddingStore } from "./memory-embedding-store";
 export { SupabaseEmbeddingStore } from "./supabase-embedding-store";
 export { retrieve } from "./retriever";
+export type { RetrieveOptions } from "./retriever";
+export { ingestDocument } from "./ingest";
+export type { IngestResult, IngestOptions, IngestStatus } from "./ingest";
+export { defaultInputScreen, screenPermits, runInputScreen } from "./screen";
+export type { InputScreen, ScreenDecision } from "./screen";
 export {
   registerKnowledgeBase,
   getKnowledgeBase,

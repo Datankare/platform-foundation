@@ -18,6 +18,12 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: jest.fn(() => "test-request-id"),
 }));
 
+// ADR-043: retrieve() now screens the query on the input direction by default. Allow all
+// here so these retrieval-behaviour tests exercise the pipeline (screening has its own kit).
+jest.mock("@/platform/moderation/middleware", () => ({
+  screenContent: jest.fn(async () => ({ action: "allow" })),
+}));
+
 function makeChunk(id: string, content: string): Chunk {
   return {
     id,
@@ -74,9 +80,11 @@ describe("retrieve", () => {
   it("includes explanation steps", async () => {
     const query: RetrievalQuery = { query: "cats", topK: 3, minScore: 0 };
     const output = await retrieve(SCOPE, query, provider, store);
-    expect(output.explanationSteps.length).toBeGreaterThanOrEqual(2);
-    expect(output.explanationSteps[0].phase).toBe("query-embedding");
-    expect(output.explanationSteps[1].phase).toBe("vector-search");
+    // ADR-043: screening is the first pipeline step, before embedding + search.
+    expect(output.explanationSteps.length).toBeGreaterThanOrEqual(3);
+    expect(output.explanationSteps[0].phase).toBe("input-screening");
+    expect(output.explanationSteps[1].phase).toBe("query-embedding");
+    expect(output.explanationSteps[2].phase).toBe("vector-search");
   });
 
   it("records durationMs", async () => {
