@@ -200,15 +200,15 @@ Admin-authored workflow composition captured as **FEAT-090** (needs its own ADR)
 
 | Repo                | Floor (stmts) |
 | ------------------- | ------------- |
-| platform-foundation | 90.19%        |
-| Playform            | 89.45%        |
+| platform-foundation | 90.52%        |
+| Playform            | 90.56%        |
 
 Function-coverage target ≥ 84% (phase goal).
 
-| Repo                | Function floor (Sprint 3d close) |
-| ------------------- | -------------------------------- |
-| platform-foundation | 91.24%                           |
-| Playform            | 91.75%                           |
+| Repo                | Function floor (Sprint 4 close) |
+| ------------------- | ------------------------------- |
+| platform-foundation | 91.54%                          |
+| Playform            | 91.75%                          |
 
 > **Re-baseline (Sprint 3d close).** PF function coverage moved 92.05% -> 91.24%, not from a
 > loss of tested code but from the admin-coverage remediation adding the entire admin surface
@@ -216,6 +216,12 @@ Function-coverage target ≥ 84% (phase goal).
 > the percentage dipped because the base grew. The floor is re-baselined to the honest
 > 3d-close figure (91.24%) rather than held at a number a coverage-improving change already
 > moved. Statement coverage rose to 90.19% and ratchets up (TASK-061).
+
+> **Ratchet (Sprint 4 close).** PF ratchets up to 90.52% statements / 91.54% functions, and
+> Playform to 90.56% statements. Playform functions read 91.7% at Sprint-4 close, but the floor
+> is **held at 91.75%**: the dip is a sync-denominator effect — the admin surface arrived via PF
+> sync, growing Playform's function base — not a loss of tested functions, so 91.75% stays the
+> target to climb back to (never lower a floor a coverage-improving change moved).
 
 Coverage must never decrease between sprints — statements **or** functions. Function floors
 ratchet up at each sprint close to whatever the sprint achieved, and each sprint's new modules
