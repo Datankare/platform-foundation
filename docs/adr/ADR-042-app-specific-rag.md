@@ -25,7 +25,7 @@ store**.
 
 **D1 — Knowledge bases are a first-class registered abstraction.** A KB registry (globalThis-anchored
 per ADR-032, registered at boot, mirroring the content-type and adaptive registries) maps a KB id to
-its declared config: `{ name, isolationLevel, accessScope, embeddingModel, ... }`. Registration is
+its declared config: `{ name, isolationLevel, boundary, embeddingModel, ... }`. Registration is
 the governed control-plane surface for a KB (P13).
 
 **D2 — Isolation is a declared level, ordinal in strength, structural and fail-closed — store-agnostic.**
@@ -33,12 +33,16 @@ Each KB declares an `IsolationLevel`: `shared` then `partition` then `dedicated`
 _strength_, never a mechanism. **`shared` is the default**; `partition` and `dedicated` are declared
 opt-ups. The decision records the level ladder and its guarantees, not how any store realizes them.
 
-**D3 — Scope is a first-class object resolved from verified context, enforced at the store boundary,
-never a caller-supplied filter.** Every store operation takes a `scope` (KB + tenant/user) resolved
-from a verified session / server-side membership — not a request value. A query without an
-authorized scope returns nothing (fail-closed). No result ever crosses a scope boundary, at any
-level. This — declared level plus fail-closed, non-bypassable, no-leak scoping — is the entire
-contract; it says nothing about _how_.
+**D3 — Scope is a first-class object of named dimensions, resolved from verified context,
+enforced at the store boundary, never a caller-supplied filter.** Every store operation takes a
+`scope` — `{ knowledgeBaseId, dimensions: Record<string, string> }` — resolved from a verified
+session / server-side membership, not a request value. Each KB declares its **boundary**: the named
+dimensions that define its isolation (`[]` for platform-shared; `["tenant"]`; `["tenant", "region"]`;
+and so on). The boundary is validated at entry — a declared dimension absent from the resolved
+scope returns nothing (fail-closed). No result ever crosses a scope boundary, at any level. This —
+declared level plus a declared, named-dimension boundary, enforced fail-closed and non-bypassable —
+is the entire contract; it says nothing about _how_, and the dimension set is **extensible without
+changing the contract, the stores, or the conformance kit**.
 
 **D4 — The `EmbeddingStore` contract carries the scoping + isolation obligation; stores declare which
 levels they support.** Each store realizes the levels in its own native mechanism and advertises its
@@ -96,6 +100,18 @@ mechanism is an implementation's conformance evidence (§6), not the decision.
 **(c) Physical isolation (`dedicated`) as the default — rejected.** Separate schema/index per KB has
 real cost and object-count ceilings; forcing it on every adopter is wasteful. It is a declared opt-up
 for high-compliance tenants, not the floor.
+
+**(d) A fixed access tier (`platform` / `tenant` / `user`) for the scope boundary — rejected in
+favour of named dimensions.** A fixed enum is the simplest to validate but the least extensible: a new
+boundary (organization, team, region, data-residency) forces a change to the core enum and every
+validation site. A fixed hierarchy (an ordered ladder) adds levels but cannot express non-hierarchical
+axes such as region. An opaque scope token with a consumer-supplied resolver is maximally flexible but
+leaves the platform unable to reason about or prove the boundary shape, weakening the no-leak kit.
+**Named dimensions** — a KB declares which named dimensions form its boundary, resolved from verified
+context — is the chosen middle: the common case stays trivial (`["tenant"]`), a new axis is added by
+declaring it (no core, store, or kit change), and the boundary stays a concrete tuple the conformance
+kit can prove leak-free. Chosen for extensibility without surrendering provability — model the
+boundary to the business, start simple, evolve.
 
 ## 4. Conformance (L21) — store-agnostic
 

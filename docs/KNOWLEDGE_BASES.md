@@ -45,9 +45,12 @@ _out_ of safety.
 
 Whatever the level, three guarantees hold — and they are store-agnostic:
 
-1. **Scope is a first-class object, resolved from verified context.** Every operation carries a
-   `scope` (knowledge base + tenant/user) derived from a verified session or membership lookup —
-   never a value the caller passes in. You cannot query without one.
+1. **Scope is a first-class object of named dimensions, resolved from verified context.** Every
+   operation carries a `scope` — the knowledge base plus the named `dimensions` its boundary
+   requires (`tenant`, `region`, and so on) — derived from a verified session or membership lookup,
+   never a value the caller passes in. A KB declares its boundary dimensions once; you cannot query
+   without them, and a missing one returns nothing. New boundaries are added by declaring a dimension
+   — the contract does not change.
 2. **No scope, no results (fail-closed).** A query without an authorized scope returns nothing. A
    store or provider error degrades to no-context generation, not a leak and not a crash.
 3. **No result ever crosses a scope boundary**, at any level.
@@ -60,7 +63,7 @@ can bring your own store (§6).
 The common case. Register a knowledge base, declaring its level; push content; retrieve. No
 infrastructure work.
 
-- Register: `{ id, isolationLevel: "shared", accessScope, embeddingModel }` (level defaults to
+- Register: `{ id, isolationLevel: "shared", boundary: ["tenant"], embeddingModel }` (level defaults to
   `shared` if omitted).
 - Ingest: push documents. The platform chunks, screens the input
   ([ADR-043](adr/ADR-043-ugc-input-screening.md)), embeds, and stores under the KB's scope.
