@@ -44,6 +44,15 @@ export { createMockEmbeddingProvider } from "./mock-embedding-provider";
 export { chunkDocument } from "./chunker";
 export { InMemoryEmbeddingStore } from "./memory-embedding-store";
 export { retrieve } from "./retriever";
+export {
+  registerKnowledgeBase,
+  getKnowledgeBase,
+  hasKnowledgeBase,
+  listKnowledgeBases,
+  resetKnowledgeBases,
+} from "./kb-registry";
+export { scopeKey, assertScope, ScopeError } from "./scope";
+export type { IsolationLevel, Scope, KnowledgeBaseConfig, KnowledgeBase } from "./types";
 export type { RetrievalOutput } from "./retriever";
 export { buildContextBlock } from "./context-injector";
 export type { InjectionResult } from "./context-injector";
@@ -58,6 +67,7 @@ export type { ExplanationBuilder } from "./explainability";
 import type { EmbeddingStore } from "./types";
 import type { EmbeddingProvider } from "./embedding-types";
 import { InMemoryEmbeddingStore } from "./memory-embedding-store";
+import { resetKnowledgeBases as resetKnowledgeBasesInternal } from "./kb-registry";
 import { createMockEmbeddingProvider } from "./mock-embedding-provider";
 import type { UserContextStore } from "./types";
 import { InMemoryUserContextStore } from "./memory-user-context-store";
@@ -135,6 +145,7 @@ export function setUserContextStore(store: UserContextStore): UserContextStore {
 /** Reset all RAG singletons to defaults (testing only). */
 export function resetRAG(): void {
   writeCurrentEmbeddingStore(new InMemoryEmbeddingStore());
+  resetKnowledgeBasesInternal();
   writeCurrentEmbeddingProvider(createMockEmbeddingProvider());
   writeCurrentUserContextStore(new InMemoryUserContextStore());
 }

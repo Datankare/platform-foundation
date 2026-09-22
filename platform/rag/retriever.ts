@@ -18,8 +18,11 @@ import type {
   RetrievalQuery,
   RetrievalResult,
   ExplanationStep,
+  Scope,
 } from "./types";
 import { DEFAULT_RETRIEVAL_CONFIG } from "./types";
+import { getKnowledgeBase } from "./kb-registry";
+import { assertScope } from "./scope";
 import { logger } from "@/lib/logger";
 
 /**
@@ -45,6 +48,7 @@ export interface RetrievalOutput {
  * P11: On any failure, returns empty results (never throws).
  */
 export async function retrieve(
+  scope: Scope,
   query: RetrievalQuery,
   provider: EmbeddingProvider,
   store: EmbeddingStore
@@ -55,6 +59,12 @@ export async function retrieve(
   const minScore = query.minScore ?? DEFAULT_RETRIEVAL_CONFIG.minScore;
 
   try {
+    // Fail-closed: retrieval requires a registered KB and a scope that satisfies its
+    // declared boundary (ADR-042 D3). A miss returns empty via the catch below.
+    const kb = getKnowledgeBase(scope.knowledgeBaseId);
+    if (!kb) throw new Error(`unknown knowledge base: ${scope.knowledgeBaseId}`);
+    assertScope(kb.boundary, scope);
+
     const embedStart = Date.now();
     const embedResponse = await provider.embed({ texts: [query.query] });
     const queryEmbedding = embedResponse.embeddings[0];
@@ -70,10 +80,16 @@ export async function retrieve(
     });
 
     const searchStart = Date.now();
-    const results = await store.search(queryEmbedding, topK, minScore, query.filters);
+    const results = await store.search(
+      scope,
+      queryEmbedding,
+      topK,
+      minScore,
+      query.filters
+    );
     steps.push({
       phase: "vector-search",
-      description: `Searched ${await store.count()} vectors, found ${results.length} above ${minScore} threshold`,
+      description: `Searched ${await store.count(scope)} vectors, found ${results.length} above ${minScore} threshold`,
       data: {
         topK,
         minScore,
