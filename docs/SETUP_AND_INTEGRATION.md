@@ -198,5 +198,6 @@ your own and reconciling per the order above keeps you independent.
 - [`AGENT_DELEGATION_GUIDE.md`](AGENT_DELEGATION_GUIDE.md) — building agents that act on a
   user's behalf.
 - [`GENAI_ROADMAP.md`](GENAI_ROADMAP.md) — the capability map, shipped and forthcoming.
+- [`KNOWLEDGE_BASES.md`](KNOWLEDGE_BASES.md) — knowledge bases: isolation levels, scoping, and bringing your own store.
 - `docs/adr/` — the architecture decisions behind each capability.
 - [`PLATFORM_ARCHITECTURE.md`](PLATFORM_ARCHITECTURE.md) / [`AGENT_ARCHITECTURE.md`](AGENT_ARCHITECTURE.md) — how the pieces fit.
