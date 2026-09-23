@@ -157,9 +157,13 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-041 | Escalation SLA & Remedial Action              |
 | ADR-042 | Application-Specific RAG & Knowledge Bases    |
 | ADR-043 | UGC Input-Surface Screening                   |
+| ADR-044 | Multimodal Provider Interface                 |
+| ADR-045 | Governed Image Generation                     |
+| ADR-046 | Multimodal Content Safety                     |
+| ADR-047 | Multimodal Provenance & Synthetic-Media Det.  |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (Sprint 5 close — ADR-042 (application-specific RAG) and ADR-043 (UGC input-surface screening) Accepted and shipped; PF v2.3.0; prior: Sprint 4 close, PF v2.2.0)_
+_Last reviewed: September 2026 (Sprint 6 open — ADR-044 (multimodal provider interface), ADR-045 (governed image generation), ADR-046 (multimodal content safety), ADR-047 (multimodal provenance & synthetic-media detection) reserved as Proposed and indexed; prior: Sprint 5 close, ADR-042/043 Accepted, PF v2.3.0)_
