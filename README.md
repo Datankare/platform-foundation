@@ -114,7 +114,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                            |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–041`                        | 43 Architecture Decision Records                                                   |
+| `docs/adr/ADR-001–041`                        | 47 Architecture Decision Records                                                   |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                    |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
@@ -171,7 +171,7 @@ platform-foundation/
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 25 abstractions (ADR-027)
 ├── supabase/migrations/    ← 36 database migrations
-├── docs/adr/               ← 43 ADRs
+├── docs/adr/               ← 47 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.3.0 — Datankare_
-_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 43 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 47 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
 _Last updated: September 22, 2026 (v2.3.0 — Phase 5 Sprint 5 close: application-specific RAG (ADR-042) — store-agnostic isolation with named-dimension scope, in-memory + durable Supabase/pgvector stores, no-leak L21 kit, curator reference KB; and UGC input screening (ADR-043) — structural, fail-closed at ingest and query, with an L21 kit)_

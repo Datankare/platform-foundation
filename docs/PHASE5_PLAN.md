@@ -526,3 +526,44 @@ structural and fail-closed at both enforcement points — ingestion (data-poison
 (prompt-injection) — on the provider-agnostic screenContent seam, with an L21 conformance kit.
 Enforced coverage floor held at stmts 88 / lines 90 / funcs 90 / branches 76 (actual 90.52 / 91.56
 / 91.54 / 77.77). PF released as v2.3.0 (minor).)_
+
+### Sprint 6 — OPEN
+
+_Last updated: September 23, 2026 (Phase 5 Sprint 6 OPEN — entry gates verified (Sprint 5 CLOSED, PF v2.3.0 released + Playform v0.3.0 synced; coverage floor + scope locks hold); the L12 18-principle mapping is recorded below against the manifesto **tenet text** (not principle names). ADR-044 (multimodal provider interface), ADR-045 (governed image generation), ADR-046 (multimodal content safety), and ADR-047 (multimodal provenance & synthetic-media detection) reserved as Proposed and indexed in TAD; each authored in full after its pre-code survey. Design constraint: 044/045/046/047 consume one write-once multimodal substrate (content model, provider-capability descriptor, cost/observability seam, screenModality seam, provenance seam) and reuse the ADR-040/041 held-action risk/policy engine — no per-ADR reimplementation. Governed generation: every image is a committed effect (draft -> screen -> risk-classify -> admin-policy route: auto-commit low-tier / held-for-Confirm high-tier -> commit); safety axes (NSFW, real-person likeness, synthetic-origin) independently tunable; CSAM and real-person sexual imagery hard-refused above the tier system, non-configurable. Depends on TASK-025 (ffmpeg-service ALB) if the audio path leans on ffmpeg-service.)_
+
+## GenAI 18-Principle Mapping — Sprint 6 (L12 pre-code gate)
+
+> Mapped against `docs/GENAI_MANIFESTO.md` (**tenet text**, not principle names) before any Sprint 6 code (L12):
+> multimodal input (ADR-044), governed image generation (ADR-045), multimodal content safety (ADR-046), and
+> provenance / synthetic-media detection (ADR-047).
+> Core = Sprint 6 primary deliverer — Extend = fabric applied to a new surface —
+> Advance = moves a partial forward — — = no deliverable.
+
+| #   | Principle             | Sprint 6 | How                                                                                                                          |
+| --- | --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | Extend   | Image/audio enter as first-class inputs; the input conductor classifies modality into structured intent                      |
+| 2   | Agentic Execution     | —        | No Sprint 6 deliverable (agentic runtime shipped Sprint 2)                                                                   |
+| 3   | Total Observability   | Extend   | Every multimodal + generation call records model / modality / tokens / latency / cost, plus provenance + detection signals   |
+| 4   | Structural Safety     | **Core** | Multimodal inputs screened in-pipeline; generated images screened before commit; fail-closed; hard-refuse invariants (046)   |
+| 5   | Versioned Artifacts   | Extend   | Image-generation prompts versioned in the registry; a conformance kit per new multimodal abstraction (L21)                   |
+| 6   | Structured Outputs    | Extend   | The generation request contract + the C2PA provenance manifest are schema-validated structured outputs (047)                 |
+| 7   | Provider-Aware        | **Core** | Provider interface gains per-modality input + image-gen slots; capability/cost routing; managed variance; degrades (044)     |
+| 8   | Context & Memory      | —        | No Sprint 6 deliverable (application-specific RAG shipped Sprint 5)                                                          |
+| 9   | Automated Eval        | Extend   | New multimodal + image-gen prompts carry eval datasets + CI regression before ship (ADR-038 harness)                         |
+| 10  | Human Oversight       | Extend   | High-risk-tier generations held for explicit human Confirm via the ADR-040 dual-control path; admin RBAC over the policy     |
+| 11  | Resilient Degradation | Advance  | Multimodal degrades to text-only when a modality provider is unavailable rather than failing the turn                        |
+| 12  | Economic Transparency | Advance  | Image/audio input tokens + generation units tracked per request/user/feature; generation under orchestration-layer budgets   |
+| 13  | Control Plane         | Extend   | Risk-tier -> commit-path policy, category overrides, and hard-refuse invariants are central admin config, separate from app  |
+| 14  | Feedback Loops        | —        | Phase 7 — the lone deferred principle; no Sprint 6 work                                                                      |
+| 15  | Agent Identity        | —        | No Sprint 6 deliverable                                                                                                      |
+| 16  | Cognitive Memory      | —        | No Sprint 6 deliverable                                                                                                      |
+| 17  | Cognition-Commitment  | **Core** | Image generation spends money + creates a durable artifact -> draft-then-commit, idempotent, approval-gated above risk (045) |
+| 18  | Durable Trajectories  | Extend   | Multimodal calls + generation commits (modality, cost, verdicts, provenance) append to the inspectable trajectory            |
+
+**Summary:** Sprint 6 delivers **P7** (per-modality provider interface + routing), **P4** (the new multimodal
+surface screened both directions, fail-closed, with hard-refuse invariants), and **P17** (image generation as a
+committed, idempotent, approval-gated effect) as Core. **P11 / P12** advance (degradation + per-modality cost).
+**P6 / P10 / P13** are earned by the tenet text (provenance manifest / held-action Confirm / admin policy), not
+asserted. **P2 / P8 / P14 / P15 / P16** have no Sprint 6 deliverable (—). 18/18 accounted for.
+
+**Pre-code gate satisfied** — this table precedes any Sprint 6 implementation (L12).
