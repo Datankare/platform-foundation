@@ -30,6 +30,7 @@ import {
   AICallMetrics,
 } from "./types";
 import { AnthropicProvider, AIProviderError } from "./provider";
+import { degradeToSupported } from "./multimodal";
 import { estimateCost, recordMetrics } from "./instrumentation";
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
@@ -164,9 +165,19 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
   return {
     async complete(request: AIRequest, opts: OrchestratorOptions): Promise<AIResponse> {
       // Apply tier override if specified
-      const effectiveRequest = opts.tierOverride
+      const tieredRequest = opts.tierOverride
         ? { ...request, tier: opts.tierOverride }
         : request;
+      // ADR-044 D3: degrade unsupported modalities to text before dispatch (fail-closed).
+      const { request: effectiveRequest, dropped: droppedModalities } =
+        degradeToSupported(tieredRequest, provider.capabilities);
+      if (droppedModalities.length > 0) {
+        logger.warn("Multimodal input degraded to provider capabilities", {
+          provider: provider.name,
+          dropped: droppedModalities,
+          tier: effectiveRequest.tier,
+        });
+      }
 
       // Circuit breaker check
       if (!circuitBreaker.canExecute()) {
@@ -227,9 +238,19 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
       opts: OrchestratorOptions,
       streamOptions?: AIStreamOptions
     ): AsyncIterable<AIStreamChunk> {
-      const effectiveRequest = opts.tierOverride
+      const tieredRequest = opts.tierOverride
         ? { ...request, tier: opts.tierOverride }
         : request;
+      // ADR-044 D3: degrade unsupported modalities to text before dispatch (fail-closed).
+      const { request: effectiveRequest, dropped: droppedModalities } =
+        degradeToSupported(tieredRequest, provider.capabilities);
+      if (droppedModalities.length > 0) {
+        logger.warn("Multimodal input degraded to provider capabilities", {
+          provider: provider.name,
+          dropped: droppedModalities,
+          tier: effectiveRequest.tier,
+        });
+      }
 
       // Circuit breaker check
       if (!circuitBreaker.canExecute()) {

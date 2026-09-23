@@ -51,3 +51,10 @@ export {
   summarizeMetrics,
 } from "./instrumentation";
 export type { MetricsSummary } from "./instrumentation";
+export {
+  degradeToSupported,
+  requestModalities,
+  blockModality,
+  supportsInput,
+} from "./multimodal";
+export type { Modality, AIImageBlock, AIAudioBlock, ProviderCapabilities } from "./types";

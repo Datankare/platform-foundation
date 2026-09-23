@@ -433,6 +433,7 @@ describe("Orchestrator streaming", () => {
   test("stream falls back to complete when provider has no stream()", async () => {
     const provider: AIProvider = {
       name: "no-stream",
+      capabilities: { inputs: ["text"], outputs: ["text"] },
       complete: jest.fn().mockResolvedValue({
         content: [{ type: "text", text: "hello world" }],
         model: "test",
@@ -466,6 +467,7 @@ describe("Orchestrator streaming", () => {
 
     const provider: AIProvider = {
       name: "streaming",
+      capabilities: { inputs: ["text"], outputs: ["text"] },
       complete: jest.fn(),
       stream: jest.fn().mockReturnValue(mockStream()),
     };
@@ -484,6 +486,7 @@ describe("Orchestrator streaming", () => {
   test("stream throws when circuit breaker is open", async () => {
     const provider: AIProvider = {
       name: "test",
+      capabilities: { inputs: ["text"], outputs: ["text"] },
       complete: jest.fn().mockRejectedValue(new AIProviderError("fail", "transient")),
     };
 

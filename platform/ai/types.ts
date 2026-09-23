@@ -49,7 +49,23 @@ export interface AIMessage {
 }
 
 /** Content block — text or tool use */
-export type AIContentBlock = AITextBlock | AIToolUseBlock | AIToolResultBlock;
+export type AIContentBlock =
+  AITextBlock | AIToolUseBlock | AIToolResultBlock | AIImageBlock | AIAudioBlock;
+
+/** Input/output modalities a provider may support (ADR-044). */
+export type Modality = "text" | "image" | "audio";
+
+/** Image content block — base64 bytes + declared MIME (provider-portable, ADR-044 D1). */
+export interface AIImageBlock {
+  type: "image";
+  source: { mediaType: string; data: string };
+}
+
+/** Audio content block — base64 bytes + declared MIME (ADR-044 D1). */
+export interface AIAudioBlock {
+  type: "audio";
+  source: { mediaType: string; data: string };
+}
 
 export interface AITextBlock {
   type: "text";
@@ -142,9 +158,20 @@ export interface AIStreamOptions {
 // ---------------------------------------------------------------------------
 
 /** Provider interface — implemented by each LLM vendor */
+/**
+ * What a provider accepts and produces, per modality (ADR-044 D2). The single source of
+ * truth for modality-aware routing; ADR-045 reads `outputs`, the orchestrator reads `inputs`.
+ */
+export interface ProviderCapabilities {
+  readonly inputs: readonly Modality[];
+  readonly outputs: readonly Modality[];
+}
+
 export interface AIProvider {
   /** Provider name for logging */
   readonly name: string;
+  /** Declared per-modality capability (ADR-044 D2). */
+  readonly capabilities: ProviderCapabilities;
   /** Send a completion request */
   complete(request: AIRequest): Promise<AIResponse>;
   /**

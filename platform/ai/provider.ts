@@ -24,6 +24,10 @@ import { logger } from "@/lib/logger";
 
 export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic";
+  readonly capabilities = {
+    inputs: ["text", "image"] as const,
+    outputs: ["text"] as const,
+  };
   private readonly apiKey: string;
   private readonly baseUrl: string;
 
@@ -44,7 +48,21 @@ export class AnthropicProvider implements AIProvider {
       max_tokens: request.maxTokens,
       messages: request.messages.map((m) => ({
         role: m.role,
-        content: m.content,
+        content:
+          typeof m.content === "string"
+            ? m.content
+            : m.content.map((b) =>
+                b.type === "image"
+                  ? {
+                      type: "image",
+                      source: {
+                        type: "base64",
+                        media_type: b.source.mediaType,
+                        data: b.source.data,
+                      },
+                    }
+                  : b
+              ),
       })),
     };
 

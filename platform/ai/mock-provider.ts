@@ -15,6 +15,7 @@
  */
 
 import type {
+  ProviderCapabilities,
   AIProvider,
   AIRequest,
   AIResponse,
@@ -42,9 +43,15 @@ function estimateTokens(text: string): number {
 /**
  * Create a deterministic mock AI provider.
  */
-export function createMockAIProvider(): AIProvider {
+export function createMockAIProvider(opts?: {
+  capabilities?: ProviderCapabilities;
+}): AIProvider {
   return {
     name: "mock",
+    capabilities: opts?.capabilities ?? {
+      inputs: ["text", "image", "audio"],
+      outputs: ["text", "image"],
+    },
 
     async complete(request: AIRequest): Promise<AIResponse> {
       const echo = lastUserText(request).slice(0, 200);
