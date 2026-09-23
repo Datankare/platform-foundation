@@ -67,6 +67,7 @@ import { SupabaseEffectLedger } from "@/platform/agents/supabase-effect-ledger";
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
 import { registerSocialContentTypes } from "@/platform/social/content/curator-content";
+import { registerRagReference } from "@/platform/rag/bootstrap";
 import {
   setActivityStateStore,
   SupabaseActivityStateStore,
@@ -531,6 +532,7 @@ export function initProviders(): ProviderSelections {
   registerPlatformAgents();
   registerAdaptiveReference();
   registerSocialContentTypes();
+  registerRagReference();
 
   writeInitialized(true);
   logger.info("Platform providers initialized", {
