@@ -525,4 +525,4 @@ kit, and the curator reference KB registered on the boot path. ADR-043: input sc
 structural and fail-closed at both enforcement points — ingestion (data-poisoning) and query
 (prompt-injection) — on the provider-agnostic screenContent seam, with an L21 conformance kit.
 Enforced coverage floor held at stmts 88 / lines 90 / funcs 90 / branches 76 (actual 90.52 / 91.56
-/ 91.54 / 77.77). PF version tag / release tracked separately.)_
+/ 91.54 / 77.77). PF released as v2.3.0 (minor).)_
