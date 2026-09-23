@@ -9,6 +9,30 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.3.0 — Sprint 5: application-specific RAG & UGC input screening
+
+Date: 2026-09-22
+
+Retrieval-grounded knowledge and a screened input surface land on the platform. Both follow
+the platform pattern (PF owns the loop and the isolation; the consumer supplies content and
+queries), and both fail closed.
+
+### Headline capabilities
+
+- **Application-specific RAG (ADR-042).** A store-agnostic isolation contract with named-dimension
+  scope and a knowledge-base registry: every read, write, and delete is confined to its scope, and
+  a store earns trust only by passing the store-agnostic no-leak conformance kit. Two reference
+  stores ship — in-memory and a durable Supabase/pgvector store — both enforcing scope in the
+  platform layer (an optional Row-Level-Security backstop is documented, never depended on). A
+  curator reference knowledge base is registered on the boot path; adopters copy it.
+- **UGC input screening (ADR-043).** Input screening made structural (Standing Rule 11) and
+  fail-closed at both enforcement points on the RAG data path — ingestion (data-poisoning) and
+  query (prompt-injection) — on the provider-agnostic screenContent seam. A poisoned document
+  never enters the index; a malicious query never reaches retrieval. Block, escalate, or a screen
+  error all withhold; a store-agnostic conformance kit proves both points.
+
+---
+
 ## v2.2.0 — Sprint 4: adaptive behavior & dynamic content generation frameworks
 
 Date: 2026-09-19

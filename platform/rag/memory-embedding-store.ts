@@ -1,8 +1,10 @@
 /**
- * platform/rag/memory-embedding-store.ts — In-memory embedding store
+ * platform/rag/memory-embedding-store.ts — in-memory embedding store.
  *
- * Default implementation for tests and development.
- * Uses cosine similarity for vector search.
+ * Reference implementation for tests and development. Isolation is structural: each
+ * scope's vectors live in their own partition, and a search reads only its scope's
+ * partition — cross-scope leakage is impossible by construction (ADR-042 D3), at any
+ * declared isolation level.
  *
  * P7:  Provider-aware — mock/fallback provider.
  * P11: Always available — no network, no failure.
@@ -10,7 +12,14 @@
  * @module platform/rag
  */
 
-import type { EmbeddingStore, Chunk, RetrievalResult } from "./types";
+import type {
+  EmbeddingStore,
+  Chunk,
+  RetrievalResult,
+  Scope,
+  IsolationLevel,
+} from "./types";
+import { scopeKey } from "./scope";
 import { logger } from "@/lib/logger";
 
 interface StoredEntry {
@@ -19,10 +28,7 @@ interface StoredEntry {
   readonly chunk: Chunk;
 }
 
-/**
- * Compute cosine similarity between two vectors.
- * Returns 0–1 (clamped). Assumes non-zero magnitude vectors.
- */
+/** Cosine similarity, clamped to 0–1. Assumes non-zero-magnitude vectors. */
 function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
   if (a.length !== b.length) return 0;
   let dot = 0;
@@ -38,69 +44,85 @@ function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
   return Math.max(0, Math.min(1, dot / denom));
 }
 
+// In memory, per-scope partitioning is structural isolation for every level.
+const ALL_LEVELS: readonly IsolationLevel[] = ["shared", "partition", "dedicated"];
+
 export class InMemoryEmbeddingStore implements EmbeddingStore {
-  private entries: StoredEntry[] = [];
+  /** scopeKey → that scope's entries. A search never reads another scope's map. */
+  private readonly partitions = new Map<string, StoredEntry[]>();
+
+  supportedLevels(): readonly IsolationLevel[] {
+    return ALL_LEVELS;
+  }
+
+  private partitionFor(scope: Scope): StoredEntry[] {
+    const key = scopeKey(scope);
+    let entries = this.partitions.get(key);
+    if (!entries) {
+      entries = [];
+      this.partitions.set(key, entries);
+    }
+    return entries;
+  }
 
   async upsert(
+    scope: Scope,
     chunkId: string,
     embedding: readonly number[],
     chunk: Chunk
   ): Promise<void> {
-    const existingIndex = this.entries.findIndex((e) => e.chunkId === chunkId);
+    const entries = this.partitionFor(scope);
+    const i = entries.findIndex((e) => e.chunkId === chunkId);
     const entry: StoredEntry = { chunkId, embedding, chunk };
-    if (existingIndex >= 0) {
-      this.entries[existingIndex] = entry;
-    } else {
-      this.entries.push(entry);
-    }
+    if (i >= 0) entries[i] = entry;
+    else entries.push(entry);
   }
 
   async search(
+    scope: Scope,
     queryEmbedding: readonly number[],
     topK: number,
     minScore: number,
     filters?: Record<string, string | number | boolean>
   ): Promise<readonly RetrievalResult[]> {
-    if (this.entries.length > 0) {
-      const storedDims = this.entries[0].embedding.length;
-      if (queryEmbedding.length !== storedDims) {
-        logger.warn("Embedding dimension mismatch", {
-          queryDimensions: queryEmbedding.length,
-          storedDimensions: storedDims,
-        });
-        return [];
-      }
+    // Structural boundary: only this scope's partition is ever read.
+    const entries = this.partitions.get(scopeKey(scope)) ?? [];
+    if (entries.length > 0 && queryEmbedding.length !== entries[0].embedding.length) {
+      logger.warn("Embedding dimension mismatch", {
+        queryDimensions: queryEmbedding.length,
+        storedDimensions: entries[0].embedding.length,
+      });
+      return [];
     }
-
-    let candidates = this.entries;
-
+    let candidates = entries;
     if (filters) {
-      candidates = candidates.filter((entry) =>
-        Object.entries(filters).every(
-          ([key, value]) => entry.chunk.metadata[key] === value
-        )
+      candidates = candidates.filter((e) =>
+        Object.entries(filters).every(([k, v]) => e.chunk.metadata[k] === v)
       );
     }
-
-    const scored: RetrievalResult[] = candidates
-      .map((entry) => ({
-        chunk: entry.chunk,
-        score: cosineSimilarity(queryEmbedding, entry.embedding),
+    return candidates
+      .map((e) => ({
+        chunk: e.chunk,
+        score: cosineSimilarity(queryEmbedding, e.embedding),
       }))
       .filter((r) => r.score >= minScore)
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
-
-    return scored;
   }
 
-  async deleteByDocument(documentId: string): Promise<number> {
-    const before = this.entries.length;
-    this.entries = this.entries.filter((e) => e.chunk.documentId !== documentId);
-    return before - this.entries.length;
+  async deleteByDocument(scope: Scope, documentId: string): Promise<number> {
+    const key = scopeKey(scope);
+    const entries = this.partitions.get(key);
+    if (!entries) return 0;
+    const kept = entries.filter((e) => e.chunk.documentId !== documentId);
+    this.partitions.set(key, kept);
+    return entries.length - kept.length;
   }
 
-  async count(): Promise<number> {
-    return this.entries.length;
+  async count(scope?: Scope): Promise<number> {
+    if (scope) return (this.partitions.get(scopeKey(scope)) ?? []).length;
+    let n = 0;
+    for (const p of this.partitions.values()) n += p.length;
+    return n;
   }
 }

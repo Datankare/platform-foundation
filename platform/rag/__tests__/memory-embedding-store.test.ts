@@ -11,7 +11,9 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: jest.fn(() => "test-request-id"),
 }));
-import type { Chunk } from "../types";
+import type { Chunk, Scope } from "../types";
+
+const SCOPE: Scope = { knowledgeBaseId: "kb", dimensions: { tenant: "t1" } };
 
 function makeChunk(id: string, docId = "doc-1", content = "test"): Chunk {
   return {
@@ -44,36 +46,36 @@ describe("InMemoryEmbeddingStore", () => {
 
   describe("upsert", () => {
     it("stores a new entry", async () => {
-      await store.upsert("c1", normalizedVector(dims, 1), makeChunk("c1"));
+      await store.upsert(SCOPE, "c1", normalizedVector(dims, 1), makeChunk("c1"));
       expect(await store.count()).toBe(1);
     });
 
     it("updates existing entry with same chunkId", async () => {
       const vec1 = normalizedVector(dims, 1);
       const vec2 = normalizedVector(dims, 2);
-      await store.upsert("c1", vec1, makeChunk("c1"));
-      await store.upsert("c1", vec2, makeChunk("c1", "doc-1", "updated"));
+      await store.upsert(SCOPE, "c1", vec1, makeChunk("c1"));
+      await store.upsert(SCOPE, "c1", vec2, makeChunk("c1", "doc-1", "updated"));
       expect(await store.count()).toBe(1);
     });
 
     it("stores multiple entries", async () => {
-      await store.upsert("c1", normalizedVector(dims, 1), makeChunk("c1"));
-      await store.upsert("c2", normalizedVector(dims, 2), makeChunk("c2"));
-      await store.upsert("c3", normalizedVector(dims, 3), makeChunk("c3"));
+      await store.upsert(SCOPE, "c1", normalizedVector(dims, 1), makeChunk("c1"));
+      await store.upsert(SCOPE, "c2", normalizedVector(dims, 2), makeChunk("c2"));
+      await store.upsert(SCOPE, "c3", normalizedVector(dims, 3), makeChunk("c3"));
       expect(await store.count()).toBe(3);
     });
   });
 
   describe("search", () => {
     beforeEach(async () => {
-      await store.upsert("c1", normalizedVector(dims, 1), makeChunk("c1"));
-      await store.upsert("c2", normalizedVector(dims, 2), makeChunk("c2"));
-      await store.upsert("c3", normalizedVector(dims, 3), makeChunk("c3"));
+      await store.upsert(SCOPE, "c1", normalizedVector(dims, 1), makeChunk("c1"));
+      await store.upsert(SCOPE, "c2", normalizedVector(dims, 2), makeChunk("c2"));
+      await store.upsert(SCOPE, "c3", normalizedVector(dims, 3), makeChunk("c3"));
     });
 
     it("returns results ranked by similarity", async () => {
       const query = normalizedVector(dims, 1);
-      const results = await store.search(query, 3, 0);
+      const results = await store.search(SCOPE, query, 3, 0);
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].chunk.id).toBe("c1");
       expect(results[0].score).toBeCloseTo(1.0, 5);
@@ -81,13 +83,13 @@ describe("InMemoryEmbeddingStore", () => {
 
     it("respects topK limit", async () => {
       const query = normalizedVector(dims, 1);
-      const results = await store.search(query, 1, 0);
+      const results = await store.search(SCOPE, query, 1, 0);
       expect(results).toHaveLength(1);
     });
 
     it("filters by minScore", async () => {
       const query = normalizedVector(dims, 1);
-      const results = await store.search(query, 10, 0.999);
+      const results = await store.search(SCOPE, query, 10, 0.999);
       expect(results).toHaveLength(1);
       expect(results[0].chunk.id).toBe("c1");
     });
@@ -95,13 +97,13 @@ describe("InMemoryEmbeddingStore", () => {
     it("returns empty when no results above minScore", async () => {
       const orthogonal = new Array(dims).fill(0);
       orthogonal[0] = 1;
-      const results = await store.search(orthogonal, 10, 0.999);
+      const results = await store.search(SCOPE, orthogonal, 10, 0.999);
       expect(results).toHaveLength(0);
     });
 
     it("returns empty for empty store", async () => {
       const emptyStore = new InMemoryEmbeddingStore();
-      const results = await emptyStore.search(normalizedVector(dims, 1), 5, 0);
+      const results = await emptyStore.search(SCOPE, normalizedVector(dims, 1), 5, 0);
       expect(results).toEqual([]);
     });
   });
@@ -113,10 +115,10 @@ describe("InMemoryEmbeddingStore", () => {
       const chunkB = makeChunk("cb", "doc-b");
       (chunkB.metadata as Record<string, unknown>).category = "blog";
 
-      await store.upsert("ca", normalizedVector(dims, 1), chunkA);
-      await store.upsert("cb", normalizedVector(dims, 1), chunkB);
+      await store.upsert(SCOPE, "ca", normalizedVector(dims, 1), chunkA);
+      await store.upsert(SCOPE, "cb", normalizedVector(dims, 1), chunkB);
 
-      const results = await store.search(normalizedVector(dims, 1), 10, 0, {
+      const results = await store.search(SCOPE, normalizedVector(dims, 1), 10, 0, {
         category: "news",
       });
       expect(results).toHaveLength(1);
@@ -126,26 +128,41 @@ describe("InMemoryEmbeddingStore", () => {
 
   describe("dimension mismatch", () => {
     it("returns empty and warns on dimension mismatch", async () => {
-      await store.upsert("c1", normalizedVector(dims, 1), makeChunk("c1"));
+      await store.upsert(SCOPE, "c1", normalizedVector(dims, 1), makeChunk("c1"));
       const wrongDims = normalizedVector(16, 1);
-      const results = await store.search(wrongDims, 5, 0);
+      const results = await store.search(SCOPE, wrongDims, 5, 0);
       expect(results).toEqual([]);
     });
   });
 
   describe("deleteByDocument", () => {
     it("deletes all chunks for a document", async () => {
-      await store.upsert("c1", normalizedVector(dims, 1), makeChunk("c1", "doc-1"));
-      await store.upsert("c2", normalizedVector(dims, 2), makeChunk("c2", "doc-1"));
-      await store.upsert("c3", normalizedVector(dims, 3), makeChunk("c3", "doc-2"));
+      await store.upsert(
+        SCOPE,
+        "c1",
+        normalizedVector(dims, 1),
+        makeChunk("c1", "doc-1")
+      );
+      await store.upsert(
+        SCOPE,
+        "c2",
+        normalizedVector(dims, 2),
+        makeChunk("c2", "doc-1")
+      );
+      await store.upsert(
+        SCOPE,
+        "c3",
+        normalizedVector(dims, 3),
+        makeChunk("c3", "doc-2")
+      );
 
-      const deleted = await store.deleteByDocument("doc-1");
+      const deleted = await store.deleteByDocument(SCOPE, "doc-1");
       expect(deleted).toBe(2);
       expect(await store.count()).toBe(1);
     });
 
     it("returns 0 when document not found", async () => {
-      const deleted = await store.deleteByDocument("nonexistent");
+      const deleted = await store.deleteByDocument(SCOPE, "nonexistent");
       expect(deleted).toBe(0);
     });
   });
@@ -153,6 +170,24 @@ describe("InMemoryEmbeddingStore", () => {
   describe("count", () => {
     it("returns 0 for empty store", async () => {
       expect(await store.count()).toBe(0);
+    });
+  });
+
+  describe("isolation", () => {
+    it("advertises all three isolation levels", () => {
+      expect(store.supportedLevels()).toEqual(["shared", "partition", "dedicated"]);
+    });
+
+    it("never returns another scope's vectors (structural, no-leak)", async () => {
+      const a: Scope = { knowledgeBaseId: "kb", dimensions: { tenant: "a" } };
+      const b: Scope = { knowledgeBaseId: "kb", dimensions: { tenant: "b" } };
+      const v = normalizedVector(dims, 1);
+      await store.upsert(a, "ca", v, makeChunk("ca"));
+      const inA = await store.search(a, v, 10, 0);
+      const inB = await store.search(b, v, 10, 0);
+      expect(inA.map((r) => r.chunk.id)).toEqual(["ca"]);
+      expect(inB).toEqual([]);
+      expect(await store.count(b)).toBe(0);
     });
   });
 });

@@ -226,22 +226,34 @@ export interface ExplanationStep {
  * P7: Provider-aware — InMemory for tests, Supabase+pgvector for prod.
  */
 export interface EmbeddingStore {
-  /** Store a chunk with its embedding vector. */
-  upsert(chunkId: string, embedding: readonly number[], chunk: Chunk): Promise<void>;
+  /** Isolation levels this store can structurally enforce (ADR-042 D4). */
+  supportedLevels(): readonly IsolationLevel[];
 
-  /** Search for similar embeddings. Returns chunks ranked by similarity. */
+  /** Store a chunk with its embedding vector, under a scope. */
+  upsert(
+    scope: Scope,
+    chunkId: string,
+    embedding: readonly number[],
+    chunk: Chunk
+  ): Promise<void>;
+
+  /**
+   * Search for similar embeddings within a scope. Results never cross the scope
+   * boundary (ADR-042 D3). `filters` is sub-scope RBAC only, never the boundary.
+   */
   search(
+    scope: Scope,
     queryEmbedding: readonly number[],
     topK: number,
     minScore: number,
     filters?: Record<string, string | number | boolean>
   ): Promise<readonly RetrievalResult[]>;
 
-  /** Delete all embeddings for a document. */
-  deleteByDocument(documentId: string): Promise<number>;
+  /** Delete all embeddings for a document within a scope. */
+  deleteByDocument(scope: Scope, documentId: string): Promise<number>;
 
-  /** Count stored embeddings (diagnostics). */
-  count(): Promise<number>;
+  /** Count stored embeddings within a scope (all if omitted; diagnostics). */
+  count(scope?: Scope): Promise<number>;
 }
 
 /**
@@ -274,3 +286,37 @@ export interface UserContextStore {
 // 2. Chunk.content is the text to embed, not the full document.
 // 3. RetrievalResult.score is 0–1 (cosine similarity), NOT distance.
 // 4. ExplanationChain.steps are ordered — maintain insertion order.
+
+/**
+ * Isolation strength for a knowledge base (ADR-042 D2). Ordinal, not a mechanism:
+ * `shared` < `partition` < `dedicated`. A store realizes each in its own way and
+ * declares which it supports.
+ */
+export type IsolationLevel = "shared" | "partition" | "dedicated";
+
+/**
+ * The isolation key for one store operation (ADR-042 D3). Named-dimensions model:
+ * the knowledge base plus the named dimensions its boundary requires, resolved from
+ * verified context. Never a caller-supplied filter.
+ */
+export interface Scope {
+  readonly knowledgeBaseId: string;
+  readonly dimensions: Readonly<Record<string, string>>;
+}
+
+/** Declared configuration for a knowledge base (ADR-042 D1). */
+export interface KnowledgeBaseConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly isolationLevel: IsolationLevel;
+  /**
+   * The named dimensions that form this KB's isolation boundary (ADR-042 D3):
+   * `[]` platform-shared; `["tenant"]`; `["tenant", "region"]`; ... Extensible
+   * without changing the contract, the stores, or the conformance kit.
+   */
+  readonly boundary: readonly string[];
+  readonly embeddingModel?: string;
+}
+
+/** A registered knowledge base. */
+export type KnowledgeBase = KnowledgeBaseConfig;
