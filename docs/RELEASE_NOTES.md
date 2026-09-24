@@ -9,6 +9,31 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.4.0 — Sprint 6: multimodal AI (input, governed generation, safety, provenance)
+
+Date: 2026-09-24
+
+Multimodal lands end to end on one shared substrate: image/audio input, governed image generation, a
+screening seam for both directions, and provenance / synthetic-media detection. Everything fails closed.
+
+### Headline capabilities
+
+- **Multimodal provider interface (ADR-044).** Image and audio enter the provider interface as content
+  blocks; providers declare a per-modality capability descriptor that drives routing; an unsupported
+  modality degrades to text rather than failing the turn. The content model + descriptor are the write-once
+  substrate the rest of the sprint builds on.
+- **Multimodal content safety (ADR-046).** One screenModality seam screens image/audio in both directions,
+  fail-closed, across independent NSFW / real-person / baseline axes. CSAM and real-person sexual imagery are
+  hard-refused above the tunable tier system, non-configurable. Input is screened before any model sees it.
+- **Governed image generation (ADR-045).** Generation is a committed effect: draft (idempotent) -> screen ->
+  risk-classify -> auto-commit low-risk at the boundary / hold high-risk for Confirm. Committed images carry a
+  verifiable provenance credential; held generations enqueue in the admin approval queue.
+- **Provenance & synthetic-media detection (ADR-047).** A C2PA-shaped, verifiable credential is emitted on
+  every committed image; inbound media is classified for synthetic origin as a risk signal that raises the
+  generation tier — never a standalone gate.
+
+---
+
 ## v2.3.0 — Sprint 5: application-specific RAG & UGC input screening
 
 Date: 2026-09-22

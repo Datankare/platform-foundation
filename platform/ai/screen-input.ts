@@ -45,3 +45,29 @@ export async function screenMultimodalInput(
   }
   return { refused: false };
 }
+
+import { detectSyntheticOrigin } from "./provenance";
+
+/**
+ * Detect synthetic origin on multimodal input (ADR-047 D2). For a completion there is no
+ * governed-hold to raise, so this records the signal (available downstream) rather than gating —
+ * detection is a signal, never a standalone gate. Returns the per-block signals for the caller
+ * to log / attach.
+ */
+export async function detectMultimodalInput(
+  request: AIRequest
+): Promise<{ syntheticBlocks: number }> {
+  let syntheticBlocks = 0;
+  for (const m of request.messages) {
+    if (typeof m.content === "string") continue;
+    for (const b of m.content) {
+      if (b.type !== "image" && b.type !== "audio") continue;
+      const signal = await detectSyntheticOrigin({
+        mediaType: b.source.mediaType,
+        data: b.source.data,
+      });
+      if (signal.synthetic) syntheticBlocks++;
+    }
+  }
+  return { syntheticBlocks };
+}

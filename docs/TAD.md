@@ -1,7 +1,7 @@
 # Technical Architecture Document (TAD)
 
 **Project:** Platform Foundation — Reusable Platform Template
-**Version:** 2.3.0
+**Version:** 2.4.0
 **Date:** September 2026
 **Status:** Approved
 **Repository:** github.com/Datankare/platform-foundation
@@ -166,4 +166,4 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (Sprint 6 open — ADR-044 (multimodal provider interface), ADR-045 (governed image generation), ADR-046 (multimodal content safety), ADR-047 (multimodal provenance & synthetic-media detection) reserved as Proposed and indexed; prior: Sprint 5 close, ADR-042/043 Accepted, PF v2.3.0)_
+_Last reviewed: September 2026 (Sprint 6 close — ADR-044/045/046/047 (multimodal provider interface, governed image generation, content safety, provenance & synthetic-media detection) Accepted and shipped; PF v2.4.0; prior: Sprint 5 close, PF v2.3.0)_

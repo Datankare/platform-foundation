@@ -1,6 +1,6 @@
 # ADR-047: Multimodal Provenance & Synthetic-Media Detection
 
-Status: Proposed (Phase 5 Sprint 6). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 6). Decision maker: Raman Sud.
 Related: ADR-014 (observability), ADR-044 (multimodal input $\u2014 detect-in), ADR-045 (governed image generation $\u2014 emit-out), ADR-046 (multimodal content safety). `platform/ai/instrumentation.ts`, `platform/agents/trajectory-store.ts`.
 
 ---
