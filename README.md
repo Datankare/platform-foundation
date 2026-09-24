@@ -2,7 +2,7 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
-> **v2.3.0** — Phase 5 application-specific RAG (isolation, durable store, reference KB) + UGC input screening, both fail-closed. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
+> **v2.4.0** — Phase 5 multimodal AI: image/audio input, governed image generation, multimodal screening, and provenance — all fail-closed. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
 
 A battle-tested foundation for building commercial SaaS products, internal tools,
 and application platforms. Clone it, rename it, and start building on solid ground
@@ -100,7 +100,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v2.3.0)
+- ✅ Versioned releases (v2.4.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
@@ -239,8 +239,8 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 
 ---
 
-_Platform Foundation v2.3.0 — Datankare_
+_Platform Foundation v2.4.0 — Datankare_
 _Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 47 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
-_Last updated: September 22, 2026 (v2.3.0 — Phase 5 Sprint 5 close: application-specific RAG (ADR-042) — store-agnostic isolation with named-dimension scope, in-memory + durable Supabase/pgvector stores, no-leak L21 kit, curator reference KB; and UGC input screening (ADR-043) — structural, fail-closed at ingest and query, with an L21 kit)_
+_Last updated: September 24, 2026 (v2.4.0 — Phase 5 Sprint 6 close: multimodal AI — multimodal provider interface (ADR-044), screenModality safety seam (ADR-046), screened multimodal input, governed image generation (ADR-045), and provenance + synthetic-media detection (ADR-047); all fail-closed on one shared substrate, with L21 conformance kits)_

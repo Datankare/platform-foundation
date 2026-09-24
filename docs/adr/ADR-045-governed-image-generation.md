@@ -1,6 +1,6 @@
 # ADR-045: Governed Image Generation
 
-Status: Proposed (Phase 5 Sprint 6). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 6). Decision maker: Raman Sud.
 Related: ADR-017 §8 (multimodal surface map), ADR-031 (action-identity lifecycle $\u2014 draft/commit), ADR-040 (held-action & dual-control admin), ADR-041 (escalation SLA), ADR-044 (multimodal provider interface $\u2014 content model + capability descriptor), ADR-046 (multimodal content safety), ADR-047 (provenance & synthetic-media detection). `platform/agents/external-effect.ts`, `platform/agents/approval-policy-store.ts`, `platform/agents/gating.ts`, `platform/admin/pending-approvals.ts`.
 
 ---

@@ -1,6 +1,6 @@
 # ADR-044: Multimodal Provider Interface (Image + Audio Input)
 
-Status: Proposed (Phase 5 Sprint 6). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 6). Decision maker: Raman Sud.
 Related: ADR-015 (GenAI-native stack), ADR-017 §8 (GenAI-native surface map $\u2014 multimodal), ADR-022 (agent runtime / provider orchestration), ADR-014 (observability), ADR-045 (governed image generation), ADR-046 (multimodal content safety), ADR-047 (provenance & synthetic-media detection). `platform/ai/types.ts`, `platform/ai/provider.ts`, `platform/ai/orchestrator.ts`.
 
 ---
