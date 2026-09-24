@@ -76,3 +76,16 @@ export type {
   RequesterTrust,
   GenerateOptions,
 } from "./image-generation";
+export {
+  emitProvenance,
+  verifyProvenance,
+  detectSyntheticOrigin,
+  setSyntheticDetector,
+  resetSyntheticDetector,
+} from "./provenance";
+export type {
+  ImageBytes,
+  ProvenanceCredential,
+  DetectionSignal,
+  SyntheticDetector,
+} from "./provenance";
