@@ -1,6 +1,6 @@
 # ADR-046: Multimodal Content Safety
 
-Status: Proposed (Phase 5 Sprint 6). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 6). Decision maker: Raman Sud.
 Related: ADR-005 / ADR-016 (content-safety architecture), ADR-021 (Guardian), ADR-039 (Guardian on the runtime $\u2014 fail-closed to `escalate`), ADR-043 (UGC input-surface screening $\u2014 the text-direction analogue), ADR-024 (human review queue), ADR-044 (multimodal input), ADR-045 (governed image generation), ADR-047 (provenance & synthetic-media detection). `platform/moderation/middleware.ts`, `platform/moderation/guardian.ts`. Governs: **Standing Rule 11** $\u2014 no surface, multimodal included, ships unscreened.
 
 ---
