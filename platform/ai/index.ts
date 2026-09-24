@@ -51,3 +51,28 @@ export {
   summarizeMetrics,
 } from "./instrumentation";
 export type { MetricsSummary } from "./instrumentation";
+export {
+  degradeToSupported,
+  requestModalities,
+  blockModality,
+  supportsInput,
+} from "./multimodal";
+export type { Modality, AIImageBlock, AIAudioBlock, ProviderCapabilities } from "./types";
+export { screenMultimodalInput } from "./screen-input";
+export {
+  generateGoverned,
+  defaultRiskPolicy,
+  setGenerationRiskPolicy,
+  resetGenerationRiskPolicy,
+} from "./image-generation";
+export type {
+  GeneratedImage,
+  GenerationRequest,
+  GenerationOutcome,
+  GenerationTier,
+  GenerationStatus,
+  ImageGenerator,
+  GenerationRiskPolicy,
+  RequesterTrust,
+  GenerateOptions,
+} from "./image-generation";
