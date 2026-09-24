@@ -42,6 +42,7 @@ const defaultOpts = { useCase: "integration-test", requestId: "int-1" };
 function createMockProvider(overrides?: Partial<AIProvider>): AIProvider {
   return {
     name: "mock-integration",
+    capabilities: { inputs: ["text"], outputs: ["text"] },
     complete: jest.fn().mockResolvedValue({
       content: [{ type: "text", text: "Hello from mock" }],
       model: "mock-model",

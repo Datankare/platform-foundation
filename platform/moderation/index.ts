@@ -41,6 +41,22 @@ export type {
 // Middleware (primary API)
 export { screenContent } from "./middleware";
 export type { ScreeningOptions } from "./middleware";
+export {
+  screenModality,
+  screenPermits,
+  mostRestrictive,
+  setModalityClassifiers,
+  resetModalityClassifiers,
+} from "./screen-modality";
+export type {
+  ModalityContent,
+  ModalityScreenResult,
+  ModalityScreeningOptions,
+  ModalityClassifiers,
+  AxisVerdict,
+  ScreenAxis,
+  AxisClassifier,
+} from "./screen-modality";
 
 // Guardian agent
 export { Guardian, getGuardian, setGuardian, resetGuardian } from "./guardian";

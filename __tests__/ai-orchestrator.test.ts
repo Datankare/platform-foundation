@@ -39,6 +39,7 @@ function createMockProvider(
 
   return {
     name: "mock",
+    capabilities: { inputs: ["text"], outputs: ["text"] },
     complete:
       overrides?.completeFn ?? jest.fn().mockResolvedValue(overrides ?? defaultResponse),
     ...overrides,

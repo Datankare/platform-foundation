@@ -48,6 +48,11 @@ const EXPECTED_EXPORTS = [
   "submitForReview",
   "unclaimItem",
   "validatePattern",
+  "screenModality",
+  "screenPermits",
+  "mostRestrictive",
+  "setModalityClassifiers",
+  "resetModalityClassifiers",
 ].sort();
 
 describe("platform/moderation — public API surface", () => {
