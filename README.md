@@ -114,7 +114,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                            |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–041`                        | 47 Architecture Decision Records                                                   |
+| `docs/adr/ADR-001–047`                        | 47 Architecture Decision Records                                                   |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                    |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |

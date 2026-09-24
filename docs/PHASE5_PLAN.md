@@ -531,6 +531,13 @@ Enforced coverage floor held at stmts 88 / lines 90 / funcs 90 / branches 76 (ac
 
 _Last updated: September 24, 2026 (Phase 5 Sprint 6 CLOSE — multimodal AI shipped, ADR-044/045/046/047 Accepted. ADR-044 multimodal provider interface (image/audio content blocks + per-modality capability descriptor + fail-closed degrade-to-text); ADR-046 screenModality seam (both directions, independent NSFW/real-person/baseline axes, CSAM + real-person sexual imagery hard-refused above the tiers); screened multimodal input wired into the dispatch path; ADR-045 governed image generation (draft -> screen -> risk-classify -> auto-commit low / held-for-Confirm high, idempotent, provenance-credentialed); ADR-047 provenance emit (C2PA-shaped, verifiable) + synthetic-origin detection as a tier-raising signal, never a gate; held generations enqueue as proposals in the ADR-040 admin queue. All on one write-once multimodal substrate; L21 conformance kits throughout. 246 suites, 2,949 tests, 90.58% coverage (floors held). PF released as v2.4.0 (minor).)_
 
+**Sprint 6 process notes (pipeline deviations + fixes, carried to Sprint 7):**
+
+- **Playform v0.4.0 promotion divergence.** staging -> main conflicted on 4 files (PHASE5_PLAN, RELEASE_NOTES, package.json/lock) inherited from the v0.3.0 recovery's divergent ancestry. Resolved via Route B: a `promote/v0.4.0-main` branch off main with its tree set to staging's (PR #536), merged clean; the direct staging -> main PR was superseded and auto-closed.
+- **Branch realignment.** Playform develop/staging/main were force-realigned to one commit (70771b8) after verifying identical trees, ending the recurring divergence. platform-foundation needed no realignment: its promotions used clean merge commits throughout (#401 develop -> staging, #402 staging -> main), and develop/staging/main were verified to have identical trees.
+- **Squash-merge disabled** on both repos (Settings -> Pull Requests) -- the root cause of the ancestry drift. Future promotions stay fast-forwardable.
+- **Release integrity.** PF v2.4.0 tagged on main's release commit (`5b0e65f`) with the #82 ancestor check (`tag on main: yes`); Playform v0.4.0 tagged on `70771b8` (tag-only, no Release).
+
 ## GenAI 18-Principle Mapping — Sprint 6 (L12 pre-code gate)
 
 > Mapped against `docs/GENAI_MANIFESTO.md` (**tenet text**, not principle names) before any Sprint 6 code (L12):
