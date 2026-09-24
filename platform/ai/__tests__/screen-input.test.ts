@@ -10,6 +10,8 @@ import {
   resetModalityClassifiers,
   type ModalityClassifiers,
 } from "@/platform/moderation";
+import { detectMultimodalInput } from "../screen-input";
+import { setSyntheticDetector, resetSyntheticDetector } from "../provenance";
 
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -55,7 +57,10 @@ function captureProvider(): AIProvider {
   };
 }
 
-afterEach(() => resetModalityClassifiers());
+afterEach(() => {
+  resetModalityClassifiers();
+  resetSyntheticDetector();
+});
 
 describe("screenMultimodalInput", () => {
   it("permits allowed image input", async () => {
@@ -94,5 +99,15 @@ describe("orchestrator withholds blocked multimodal input", () => {
     const orch = createOrchestrator({ provider: captureProvider() });
     const res = await orch.complete(imageReq, { useCase: "test", requestId: "r" });
     expect(res.content[0]).toEqual({ type: "text", text: "ok" });
+  });
+});
+
+describe("detectMultimodalInput (ADR-047 signal, not gate)", () => {
+  it("counts synthetic input blocks without gating", async () => {
+    setSyntheticDetector(async () => ({ synthetic: true, confidence: 0.8 }));
+    expect((await detectMultimodalInput(imageReq)).syntheticBlocks).toBe(1);
+  });
+  it("reports zero when detection is clean", async () => {
+    expect((await detectMultimodalInput(imageReq)).syntheticBlocks).toBe(0);
   });
 });

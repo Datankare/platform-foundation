@@ -13,7 +13,16 @@ import {
   resetModalityClassifiers,
   type ModalityClassifiers,
 } from "@/platform/moderation";
-import { resetEffectLedger } from "@/platform/agents";
+import {
+  resetEffectLedger,
+  getProposalStore,
+  resetProposalStore,
+} from "@/platform/agents";
+import {
+  verifyProvenance,
+  setSyntheticDetector,
+  resetSyntheticDetector,
+} from "../provenance";
 
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -41,12 +50,15 @@ const OPTS = { requestId: "r" };
 
 beforeEach(() => {
   resetEffectLedger();
+  resetProposalStore();
+  resetSyntheticDetector();
   setModalityClassifiers(classifiers({}));
   resetGenerationRiskPolicy();
 });
 afterEach(() => {
   resetModalityClassifiers();
   resetGenerationRiskPolicy();
+  resetSyntheticDetector();
 });
 
 describe("generateGoverned", () => {
@@ -106,5 +118,40 @@ describe("generateGoverned", () => {
     setGenerationRiskPolicy(() => "low");
     const r = await generateGoverned(req({ requesterTrust: "guest" }), gen, OPTS);
     expect(r.status).toBe("committed");
+  });
+
+  it("commits with a verifiable provenance credential (ADR-047)", async () => {
+    const r = await generateGoverned(req(), gen, OPTS);
+    expect(r.status).toBe("committed");
+    expect(r.provenance).toBeDefined();
+    expect(verifyProvenance(r.provenance!, r.image!)).toBe(true);
+  });
+
+  it("raises the tier to held when a reference image is flagged synthetic (ADR-047)", async () => {
+    setSyntheticDetector(async () => ({ synthetic: true, confidence: 0.9 }));
+    const r = await generateGoverned(
+      req({ referenceImages: [{ mediaType: "image/png", data: "cmVm" }] }),
+      gen,
+      OPTS
+    );
+    expect(r.status).toBe("held");
+    expect(r.tier).toBe("high");
+  });
+
+  it("enqueues a held generation as a proposal given an approval context (ADR-040)", async () => {
+    const ctx = {
+      actor: { actorType: "agent" as const, actorId: "a", agentRole: "gen" },
+      sessionId: "s",
+      trajectoryId: "t",
+    };
+    const r = await generateGoverned(
+      req({ requesterTrust: "guest", operationId: "held-op" }),
+      gen,
+      { ...OPTS, approvalContext: ctx }
+    );
+    expect(r.status).toBe("held");
+    expect(r.proposalId).toBeDefined();
+    const rec = await getProposalStore().getById(r.proposalId!);
+    expect(rec?.label).toBe("image-generation");
   });
 });

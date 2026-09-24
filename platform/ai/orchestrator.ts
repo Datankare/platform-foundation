@@ -31,7 +31,7 @@ import {
 } from "./types";
 import { AnthropicProvider, AIProviderError } from "./provider";
 import { degradeToSupported } from "./multimodal";
-import { screenMultimodalInput } from "./screen-input";
+import { screenMultimodalInput, detectMultimodalInput } from "./screen-input";
 import { estimateCost, recordMetrics } from "./instrumentation";
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
@@ -182,6 +182,15 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
 
       // ADR-044 D4 / ADR-046: screen surviving multimodal input; refuse fail-closed.
       const inputScreen = await screenMultimodalInput(effectiveRequest, opts.requestId);
+      // ADR-047 D2: record synthetic-origin detection on input (a signal, not a gate here).
+      const detection = await detectMultimodalInput(effectiveRequest);
+      if (detection.syntheticBlocks > 0) {
+        logger.warn("Synthetic-origin signal on multimodal input", {
+          provider: provider.name,
+          syntheticBlocks: detection.syntheticBlocks,
+          requestId: opts.requestId,
+        });
+      }
       if (inputScreen.refused) {
         logger.warn("Multimodal input withheld by screening", {
           provider: provider.name,
@@ -269,6 +278,15 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
 
       // ADR-044 D4 / ADR-046: screen surviving multimodal input; refuse fail-closed.
       const inputScreen = await screenMultimodalInput(effectiveRequest, opts.requestId);
+      // ADR-047 D2: record synthetic-origin detection on input (a signal, not a gate here).
+      const detection = await detectMultimodalInput(effectiveRequest);
+      if (detection.syntheticBlocks > 0) {
+        logger.warn("Synthetic-origin signal on multimodal input", {
+          provider: provider.name,
+          syntheticBlocks: detection.syntheticBlocks,
+          requestId: opts.requestId,
+        });
+      }
       if (inputScreen.refused) {
         logger.warn("Multimodal input withheld by screening", {
           provider: provider.name,

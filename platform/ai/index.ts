@@ -58,7 +58,7 @@ export {
   supportsInput,
 } from "./multimodal";
 export type { Modality, AIImageBlock, AIAudioBlock, ProviderCapabilities } from "./types";
-export { screenMultimodalInput } from "./screen-input";
+export { screenMultimodalInput, detectMultimodalInput } from "./screen-input";
 export {
   generateGoverned,
   defaultRiskPolicy,
@@ -75,6 +75,8 @@ export type {
   GenerationRiskPolicy,
   RequesterTrust,
   GenerateOptions,
+  ApprovalContext,
+  RiskSignals,
 } from "./image-generation";
 export {
   emitProvenance,
