@@ -31,6 +31,7 @@ import {
 } from "./types";
 import { AnthropicProvider, AIProviderError } from "./provider";
 import { degradeToSupported } from "./multimodal";
+import { screenMultimodalInput } from "./screen-input";
 import { estimateCost, recordMetrics } from "./instrumentation";
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
@@ -179,6 +180,20 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
         });
       }
 
+      // ADR-044 D4 / ADR-046: screen surviving multimodal input; refuse fail-closed.
+      const inputScreen = await screenMultimodalInput(effectiveRequest, opts.requestId);
+      if (inputScreen.refused) {
+        logger.warn("Multimodal input withheld by screening", {
+          provider: provider.name,
+          reason: inputScreen.reason,
+          requestId: opts.requestId,
+        });
+        throw new AIProviderError(
+          `Multimodal input withheld by screening: ${inputScreen.reason}`,
+          "permanent"
+        );
+      }
+
       // Circuit breaker check
       if (!circuitBreaker.canExecute()) {
         const error = new AIProviderError(
@@ -250,6 +265,20 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           dropped: droppedModalities,
           tier: effectiveRequest.tier,
         });
+      }
+
+      // ADR-044 D4 / ADR-046: screen surviving multimodal input; refuse fail-closed.
+      const inputScreen = await screenMultimodalInput(effectiveRequest, opts.requestId);
+      if (inputScreen.refused) {
+        logger.warn("Multimodal input withheld by screening", {
+          provider: provider.name,
+          reason: inputScreen.reason,
+          requestId: opts.requestId,
+        });
+        throw new AIProviderError(
+          `Multimodal input withheld by screening: ${inputScreen.reason}`,
+          "permanent"
+        );
       }
 
       // Circuit breaker check
