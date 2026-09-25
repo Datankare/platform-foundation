@@ -20,7 +20,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "sprint:check": "node scripts/sprint-check.mjs",
-    "schema:check": "node scripts/schema-parity.mjs"
+    "schema:check": "node scripts/schema-parity.mjs",
+    "coverage:ratchet": "node scripts/coverage-ratchet.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
@@ -81,6 +82,11 @@
       "platform/content/**/*.ts",
       "platform/effects/**/*.ts",
       "platform/social/content/**/*.ts"
+    ],
+    "coverageReporters": [
+      "text-summary",
+      "json-summary",
+      "lcov"
     ],
     "coverageThreshold": {
       "global": {

@@ -48,6 +48,9 @@ jobs:
       - name: Layer 1 — Unit tests
         run: npm run test:coverage
 
+      - name: Layer 1b — Coverage ratchet (TASK-080)
+        run: npm run coverage:ratchet
+
       - name: Layer 2 — Build
         run: npm run build
         env:
