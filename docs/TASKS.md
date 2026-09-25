@@ -1840,15 +1840,15 @@ to include them, and CI is green at the new floor (coordinated with TASK-080).
 
 ### TASK-089 — PF CI never boots the production build, so the D3 store guard only fails downstream
 
-| Field        | Detail                                                                       |
-| ------------ | ---------------------------------------------------------------------------- |
-| **ID**       | TASK-089                                                                     |
-| **Type**     | CI integrity                                                                 |
-| **Severity** | Medium — a class of production-boot regression is invisible to PF's own gate |
-| **Phase**    | Phase 5                                                                      |
-| **Target**   | Phase 5, Sprint 7                                                            |
-| **Status**   | Open                                                                         |
-| **Logged**   | 2026-09-25                                                                   |
+| Field        | Detail                                                                                                                                               |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-089                                                                                                                                             |
+| **Type**     | CI integrity                                                                                                                                         |
+| **Severity** | Medium — a class of production-boot regression is invisible to PF's own gate                                                                         |
+| **Phase**    | Phase 5                                                                                                                                              |
+| **Target**   | Phase 5, Sprint 7                                                                                                                                    |
+| **Status**   | Open — option (b) simulated-boot test landed (Sprint 7 m1: `__tests__/production-boot-guard.test.ts`); option (a) full CI E2E layer remains the goal |
+| **Logged**   | 2026-09-25                                                                                                                                           |
 
 **What:** PF's `ci.yml` (Layers 0d/0a/0b/0c/0e/1/1b/2) runs typecheck, lint, format, unit tests +
 coverage, the ratchet, the override audit, and build — but never starts the production build
