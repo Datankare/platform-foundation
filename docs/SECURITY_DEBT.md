@@ -59,6 +59,33 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ---
 
+## Dependency Overrides (TASK-070)
+
+Every entry under `overrides` in `package.json` is a claim that a dependency's own version
+choice is wrong. Claims expire, and an unaudited override is worse than none: it is invisible,
+survives `npm update`, and points diagnosis away from itself (SEC-008 held the tree at the
+vulnerable `brace-expansion` 5.0.8 for a day for exactly this reason). Each override below has a
+recorded reason and a removal condition. `scripts/override-audit.mjs` (CI Layer 0e) fails the
+build if any override key is missing from this table, so a new override cannot land undocumented.
+
+Removal procedure for any override: remove the entry, `npm install`, `npm audit`; if the tree
+stays clean and installs, the override has expired and should be dropped.
+
+| Override          | Pinned   | Reason                                                                                         | Removal condition                                             |
+| ----------------- | -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| postcss           | >=8.5.18 | Forces a postcss line carrying patched nanoid (SEC-010, GHSA-2v37-7h3g-55p8).                  | Consumer requires postcss >=8.5.18 (patched nanoid) natively. |
+| browserslist      | ^4.28.7  | Pins a patched browserslist line (transitive). Original advisory to confirm.                   | Audit clean after removal.                                    |
+| fast-uri          | ^3.1.7   | fast-uri host confusion (SEC-009, GHSA-7p8r-x3mc-p8w7); re-pinned above patched 3.1.5.         | Consumer (fastify/ajv) requires patched fast-uri natively.    |
+| @humanfs/node     | ^0.16.8  | Pins patched @humanfs/node (eslint toolchain dep). Original advisory to confirm.               | Audit clean after removal.                                    |
+| sharp             | ^0.35.4  | Security pin for sharp/libvips. Original advisory to confirm.                                  | Audit clean after removal.                                    |
+| brace-expansion@5 | 5.0.9    | brace-expansion ReDoS (SEC-008, CVE-2026-14257 / GHSA-rgw5-rvv9-x895); 5.0.8 bypassed the fix. | TASK-069: 5.x consumers require patched natively.             |
+| brace-expansion@1 | 1.1.18   | Same ReDoS family (GHSA-rgw5-rvv9-x895) on the 1.x line.                                       | 1.x consumers require patched natively.                       |
+| brace-expansion@2 | 2.1.4    | Same ReDoS family on the 2.x line.                                                             | 2.x consumers require patched natively.                       |
+| js-yaml@3         | 3.15.2   | js-yaml advisory on the 3.x line (TASK-049 dependency-advisory family).                        | 3.x consumers require patched natively.                       |
+| js-yaml@4         | 4.3.2    | js-yaml advisory on the 4.x line.                                                              | 4.x consumers require patched natively.                       |
+
+---
+
 ## Resolved Items
 
 _Items below have been resolved and are retained for audit trail only._

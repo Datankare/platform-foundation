@@ -45,6 +45,9 @@ jobs:
       - name: Layer 0c — Format check
         run: npm run format:check
 
+      - name: Layer 0e — Override audit (TASK-070)
+        run: npm run overrides:audit
+
       - name: Layer 1 — Unit tests
         run: npm run test:coverage
 
