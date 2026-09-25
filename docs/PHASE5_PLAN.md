@@ -544,6 +544,10 @@ _Last updated: September 24, 2026 (Phase 5 Sprint 6 CLOSE — multimodal AI ship
 - **Squash-merge disabled** on both repos (Settings -> Pull Requests) -- the root cause of the ancestry drift. Future promotions stay fast-forwardable.
 - **Release integrity.** PF v2.4.0 tagged on main's release commit (`5b0e65f`) with the #82 ancestor check (`tag on main: yes`); Playform v0.4.0 tagged on `70771b8` (tag-only, no Release).
 
+### Sprint 6.5 — CLOSE
+
+_Last updated: September 24, 2026 (Phase 5 Sprint 6.5 CLOSE — maintenance & governance hardening. ADR-048 Accepted: governed agent budget & durability config (per-agent cost/step caps as a min-wins platform ceiling, fail-safe to default) + durable trajectory/budget stores required in production (fail-closed). M1 governed budget caps; M2 production fail-closed store guard; M3 TASK-064 boundary-map conformance arm (the fail-open→fail-closed fix shipped in an earlier sprint; this closed the drift gap); M4 TASK-080 coverage ratchet with hysteresis; M5 TASK-060 promotion-guard CI on both repos (develop→main un-mergeable wrong-base); M6a TASK-070 override register + drift guard and TASK-058 scheduled audit sweep (code/CI half); M6b TASK-050 jest global soft-delete disabled on Playform (PF verified clean). 247 suites, 2,961 tests, coverage 90.66 / 91.7 / 91.78 / 77.81 (ratchet baseline 89.66 / 90.7 / 90.78 / 76.81). PF released as v2.5.0 (minor); Playform synced/promoted to v0.5.0. Exit dependencies remain OPEN and were not silently resolved: TASK-046 (live k6 load proof) and TASK-025 (ffmpeg ALB) stay as Phase-5 exit gates; TASK-058's process half (shared/synced overrides baseline, triage cadence) and TASK-070's periodic remove-and-reaudit stay manual. Sprint 7 (Playform adoption + real providers) is next.)_
+
 ## GenAI 18-Principle Mapping — Sprint 6 (L12 pre-code gate)
 
 > Mapped against `docs/GENAI_MANIFESTO.md` (**tenet text**, not principle names) before any Sprint 6 code (L12):

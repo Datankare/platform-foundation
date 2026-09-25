@@ -1,6 +1,6 @@
 # ADR-048: Governed Agent Budget & Durability Configuration
 
-Status: Proposed (Phase 5 Sprint 6.5). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 6.5). Decision maker: Raman Sud.
 Related: ADR-031 (action-identity lifecycle $\u2014 effect-ledger), ADR-035 (GenAI-native governance admin), ADR-039/040 (agent registry unification / held-action dual-control), TASK-062/063 (trajectory + budget durability), TASK-046 (live re-baseline). `platform/agents/agent-configs.ts`, `platform/agents/budget-tracker.ts`, `platform/providers/registry.ts`, `platform/admin/config-handlers.ts`.
 
 ---
