@@ -161,9 +161,10 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-045 | Governed Image Generation                     |
 | ADR-046 | Multimodal Content Safety                     |
 | ADR-047 | Multimodal Provenance & Synthetic-Media Det.  |
+| ADR-048 | Governed Agent Budget & Durability Config     |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: September 2026 (Sprint 6 close — ADR-044/045/046/047 (multimodal provider interface, governed image generation, content safety, provenance & synthetic-media detection) Accepted and shipped; PF v2.4.0; prior: Sprint 5 close, PF v2.3.0)_
+_Last reviewed: September 2026 (Sprint 6.5 open — ADR-048 (governed agent budget & durability config) reserved as Proposed and indexed; a maintenance / governance-hardening sprint inserted between Sprint 6 and Sprint 7; prior: Sprint 6 close, ADR-044/045/046/047 Accepted, PF v2.4.0)_

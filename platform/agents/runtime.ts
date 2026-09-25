@@ -20,6 +20,7 @@ import type { AgentIdentity, Step, StepBoundary } from "./types";
 import type { TrajectoryStore } from "./trajectory-store";
 import { getTrajectoryStore } from "./trajectory-store";
 import { getBudgetTracker } from "./budget-tracker";
+import { resolveStepCap } from "./budget-config";
 import { getEffectLedger } from "./effect-ledger";
 import type { EffectLedger } from "@/platform/kernel";
 import type { BudgetTracker } from "./budget-tracker";
@@ -151,6 +152,7 @@ export async function executeAgent(
 
   let stepCount = 0;
   let totalCostUsd = 0;
+  const stepCap = await resolveStepCap(agentConfig.budgetConfig.maxStepsPerTrajectory);
 
   try {
     // ── Step loop ─────────────────────────────────────────────────
@@ -225,11 +227,11 @@ export async function executeAgent(
       }
 
       // Hard step limit (safety net)
-      if (stepCount >= agentConfig.budgetConfig.maxStepsPerTrajectory) {
+      if (stepCount >= stepCap) {
         logger.warn("Agent hit step limit", {
           agentId,
           trajectoryId,
-          maxSteps: agentConfig.budgetConfig.maxStepsPerTrajectory,
+          maxSteps: stepCap,
         });
         break;
       }

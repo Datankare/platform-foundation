@@ -9,6 +9,37 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.5.0 — Sprint 6.5: maintenance & governance hardening
+
+Date: 2026-09-24
+
+A maintenance sprint — no new consumer capability, but the platform's governance and quality
+gates are materially harder to regress. What a consumer inherits on sync is a stronger set of
+guardrails.
+
+### Headline changes
+
+- **Governed agent budget & durability config (ADR-048).** Per-agent daily-cost and per-trajectory
+  step caps resolve from governed config as a platform ceiling: governance may only tighten a
+  per-agent default, never silently raise it, and any config-store error or non-positive value
+  fails safe to that default. The durable trajectory/budget stores are now required in a production
+  context — an in-memory store refuses to boot the runtime (fail-closed), the stance the Supabase
+  path already took on missing creds.
+- **Promotion guard (TASK-060).** CI rejects any PR into `main` that is not a real promotion source
+  (staging / promote/* / hotfix/*), so `develop → main` can no longer be merged wrong-base.
+- **Coverage ratchet (TASK-080).** Coverage floors ratchet with hysteresis from a committed
+  baseline: a fall below fails CI, slack above baseline+margin raises the floor automatically, and
+  it never auto-lowers.
+- **Boundary-map conformance (TASK-064).** A conformance arm ties every config tool to an explicit
+  cognition/commitment boundary, so the map and the tool roster cannot drift apart unnoticed.
+- **Dependency-override hygiene (TASK-070) + audit sweep (TASK-058).** Every package.json override
+  has a recorded reason and removal condition, enforced by a CI drift guard; a scheduled npm audit
+  sweep surfaces advisories proactively.
+
+See ADR-048 and docs/SECURITY_DEBT.md for detail.
+
+---
+
 ## v2.4.0 — Sprint 6: multimodal AI (input, governed generation, safety, provenance)
 
 Date: 2026-09-24
