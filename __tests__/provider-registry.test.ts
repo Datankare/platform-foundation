@@ -9,6 +9,15 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
+// NODE_ENV is typed read-only; set it via defineProperty in tests that need it.
+function setNodeEnv(v: string): void {
+  Object.defineProperty(process.env, "NODE_ENV", {
+    value: v,
+    configurable: true,
+    writable: true,
+  });
+}
+
 describe("Provider Registry", () => {
   const origEnv = { ...process.env };
 
@@ -194,5 +203,50 @@ describe("auth-init backward compat", () => {
 
     initAuth();
     expect(hasAuthProvider()).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // ADR-048 D3: agent durability stores are required in production (M2)
+  // -------------------------------------------------------------------------
+  describe("agent durability stores \u2014 production fail-closed (ADR-048 D3)", () => {
+    it("throws in production when TRAJECTORY_STORE is unset (defaults to memory)", async () => {
+      setNodeEnv("production");
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(() => initProviders()).toThrow(/TRAJECTORY_STORE/);
+    });
+
+    it("throws in production when BUDGET_STORE is memory", async () => {
+      setNodeEnv("production");
+      process.env.TRAJECTORY_STORE = "supabase";
+      process.env.SUPABASE_URL = "https://example.supabase.co";
+      process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+      process.env.BUDGET_STORE = "memory";
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(() => initProviders()).toThrow(/BUDGET_STORE/);
+    });
+
+    it("does NOT throw outside production (tests/local keep in-memory)", async () => {
+      setNodeEnv("test");
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(() => initProviders()).not.toThrow();
+    });
+
+    it("does NOT throw in production when both stores are supabase with creds", async () => {
+      setNodeEnv("production");
+      process.env.TRAJECTORY_STORE = "supabase";
+      process.env.BUDGET_STORE = "supabase";
+      process.env.SUPABASE_URL = "https://example.supabase.co";
+      process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(() => initProviders()).not.toThrow();
+    });
   });
 });
