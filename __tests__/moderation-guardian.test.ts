@@ -414,10 +414,10 @@ describe("Guardian — edge cases", () => {
 describe("Guardian — config failure (F1: fail-closed)", () => {
   it("uses fail-closed thresholds when config loading throws", async () => {
     const { getConfig } = jest.requireMock("@/platform/auth/platform-config");
-    getConfig
-      .mockRejectedValueOnce(new Error("DB down"))
-      .mockRejectedValueOnce(new Error("DB down"))
-      .mockRejectedValueOnce(new Error("DB down"));
+    // Reject every getConfig call for the duration of this test. The guardian's
+    // moderation-config load must fail closed; the exact call count is not part of
+    // the contract (the agent runtime also resolves its governed step cap here).
+    getConfig.mockRejectedValue(new Error("DB down"));
 
     mockClassifierUnsafe("low", 0.98);
     const guardian = new Guardian();

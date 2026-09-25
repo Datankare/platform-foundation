@@ -168,6 +168,12 @@ Admin-authored workflow composition captured as **FEAT-090** (needs its own ADR)
 - Image/audio input in the provider interface; image generation (ADR-017 §8).
 - Depends on **TASK-025** (ALB for ffmpeg-service stable URL) if the audio path leans on ffmpeg-service.
 
+### Sprint 6.5 — Maintenance & governance hardening (PF)
+
+- Inserted by decision between Sprint 6 and Sprint 7 to clear verified debt before adoption. PF-side only; no adoption, no live deploy.
+- Governed agent budget & durability config (ADR-048); durable store required in production (fail-closed); overdue debt: promotion-guard CI, coverage ratchet, boundary audit-record fix, dependency-override hygiene.
+- Detailed scope lock + L12 mapping below.
+
 ### Sprint 7 — Playform adoption
 
 - Rewire SpikeApp onto `platform/app-framework`; consume the agent-native (AUX) contracts.
@@ -538,6 +544,10 @@ _Last updated: September 24, 2026 (Phase 5 Sprint 6 CLOSE — multimodal AI ship
 - **Squash-merge disabled** on both repos (Settings -> Pull Requests) -- the root cause of the ancestry drift. Future promotions stay fast-forwardable.
 - **Release integrity.** PF v2.4.0 tagged on main's release commit (`5b0e65f`) with the #82 ancestor check (`tag on main: yes`); Playform v0.4.0 tagged on `70771b8` (tag-only, no Release).
 
+### Sprint 6.5 — CLOSE
+
+_Last updated: September 24, 2026 (Phase 5 Sprint 6.5 CLOSE — maintenance & governance hardening. ADR-048 Accepted: governed agent budget & durability config (per-agent cost/step caps as a min-wins platform ceiling, fail-safe to default) + durable trajectory/budget stores required in production (fail-closed). M1 governed budget caps; M2 production fail-closed store guard; M3 TASK-064 boundary-map conformance arm (the fail-open→fail-closed fix shipped in an earlier sprint; this closed the drift gap); M4 TASK-080 coverage ratchet with hysteresis; M5 TASK-060 promotion-guard CI on both repos (develop→main un-mergeable wrong-base); M6a TASK-070 override register + drift guard and TASK-058 scheduled audit sweep (code/CI half); M6b TASK-050 jest global soft-delete disabled on Playform (PF verified clean). 247 suites, 2,961 tests, coverage 90.66 / 91.7 / 91.78 / 77.81 (ratchet baseline 89.66 / 90.7 / 90.78 / 76.81). PF released as v2.5.0 (minor); Playform synced/promoted to v0.5.0. Exit dependencies remain OPEN and were not silently resolved: TASK-046 (live k6 load proof) and TASK-025 (ffmpeg ALB) stay as Phase-5 exit gates; TASK-058's process half (shared/synced overrides baseline, triage cadence) and TASK-070's periodic remove-and-reaudit stay manual. Sprint 7 (Playform adoption + real providers) is next.)_
+
 ## GenAI 18-Principle Mapping — Sprint 6 (L12 pre-code gate)
 
 > Mapped against `docs/GENAI_MANIFESTO.md` (**tenet text**, not principle names) before any Sprint 6 code (L12):
@@ -574,3 +584,54 @@ committed, idempotent, approval-gated effect) as Core. **P11 / P12** advance (de
 asserted. **P2 / P8 / P14 / P15 / P16** have no Sprint 6 deliverable (—). 18/18 accounted for.
 
 **Pre-code gate satisfied** — this table precedes any Sprint 6 implementation (L12).
+
+---
+
+### Sprint 6.5 — OPEN
+
+_Last updated: September 24, 2026 (Phase 5 Sprint 6.5 OPEN — a maintenance / governance-hardening sprint inserted by decision between Sprint 6 (multimodal, v2.4.0) and Sprint 7 (Playform adoption), to clear verified debt before adoption. PF-side only: no adoption, no live deploy. Rationale: verifying TASK-062/063 showed the durable-store + cost-cap fix is correct and conformance-tested but opt-in (store default = memory) and unconfigurable (caps hardcoded, no admin surface / RBAC / approval); several overdue Medium/Low debts (TASK-060/064/080 + dependency hygiene) are cleared here rather than carried into adoption.)_
+
+**Scope lock (anti-creep) — M1–M6′:**
+
+- **M1 (ADR-048)** — governed agent budget & durability config: move \`maxCostPerDay\` / \`maxStepsPerTrajectory\` out of \`agent-configs.ts\` constants into the permission-tiered governed config store (P13), admin-editable via the ADR-035 GenAI-native admin under RBAC, hardcoded values seeded as defaults; catastrophic spend caps join \`config.dual_control_keys\` (ADR-039/040).
+- **M2 (ADR-048 D3)** — durable store required in production, fail-closed: a production-context guard refuses to boot on an in-memory budget/trajectory store (tests/local keep the in-memory default); a deployment can no longer silently run the TASK-062/063 condition.
+- **M3 (TASK-064)** — fix the ToolBoundary/StepBoundary audit-record misclassification (boundary lookup fails open in the audit record).
+- **M4 (TASK-080)** — coverage ratchet: auto-tighten floors to the Sprint 6 actuals.
+- **M5 (TASK-060)** — promotion-guard CI on both repos (develop–main un-mergeable; enforce develop–staging–main) — the recurring wrong-base / branch-staleness fix.
+- **M6′** — dependency hygiene: TASK-070 (audit + document overrides; fix the silently-losing duplicate override that held a vulnerable version), TASK-050 (time-boxed: jest-worker stack overflow in the soft-delete path — a silent CI blind spot Jest will make a hard failure), TASK-058 (code/CI half: reconcile lockfile sync + document the overrides pattern; the advisory-triage process half is an exit note).
+
+**Explicitly OUT of scope (named as exit dependencies, not silently "done"):** TASK-046 (live runtime re-baseline proving 062/063 bind — needs a deploy), TASK-025 (ffmpeg ALB — AWS provisioning), and all Sprint 7 adoption / real-provider work (real classifiers, image-gen provider, synthetic detector, C2PA signing, cross-session memory). Sprint 6.5 makes cost/durability enforcement **governed + fail-closed**; Sprint 7 (TASK-046) proves it **binds live**.
+
+Expected release: **PF v2.5.0** (minor — M1 adds a governed config surface).
+
+## GenAI 18-Principle Mapping — Sprint 6.5 (L12 pre-code gate)
+
+> Mapped against \`docs/GENAI_MANIFESTO.md\` (**tenet text**, not principle names) before any Sprint 6.5 code (L12):
+> governed agent budget & durability config (ADR-048) + overdue maintenance (TASK-060/064/080, dependency hygiene).
+> Core = Sprint 6.5 primary deliverer — Extend = fabric applied to a new surface —
+> Advance = moves a partial forward — – = no deliverable.
+
+| #   | Principle             | Sprint 6.5 | How                                                                                                                                                                   |
+| --- | --------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 2   | Agentic Execution     | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 3   | Total Observability   | Extend     | Durable budget/trajectory persistence required in production; spend accumulates + is inspectable across instances                                                     |
+| 4   | Structural Safety     | Extend     | Durable-store production guard fails closed (M2); boundary lookup no longer fails open in the audit record (M3)                                                       |
+| 5   | Versioned Artifacts   | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 6   | Structured Outputs    | Extend     | Governed budget config entries are schema-validated config with typed constraints (P13 store)                                                                         |
+| 7   | Provider-Aware        | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 8   | Context & Memory      | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 9   | Automated Eval        | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 10  | Human Oversight       | Advance    | Raising a catastrophic spend cap joins dual_control_keys — an independent human hold (M1, ADR-039/040)                                                                |
+| 11  | Resilient Degradation | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 12  | Economic Transparency | **Core**   | The daily cost cap becomes governed, durable, and binding — an admin-set ceiling metered per agent/scope, no longer a hardcoded constant reset per invocation (M1/M2) |
+| 13  | Control Plane         | **Core**   | Budget/cost caps + store durability move from constants/env into the permission-tiered, app-independent governed config surface with RBAC (M1)                        |
+| 14  | Feedback Loops        | –          | Phase 7 — no Sprint 6.5 work                                                                                                                                          |
+| 15  | Agent Identity        | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 16  | Cognitive Memory      | –          | No Sprint 6.5 deliverable                                                                                                                                             |
+| 17  | Cognition-Commitment  | Advance    | The spend cap is the commitment guard on a money-spending effect; governing it sharpens the boundary, and the boundary audit record is corrected (M3)                 |
+| 18  | Durable Trajectories  | Extend     | Trajectory durability required in production, fail-closed — P18 no longer opt-in (M2)                                                                                 |
+
+**Summary:** Sprint 6.5 delivers **P12 / P13** as Core (a governed, durable, binding cost cap on the admin-owned control plane). **P10 / P17** advance (dual-control on spend caps; commitment-boundary audit fix). **P3 / P4 / P6 / P18** extend (durable-by-default in production, fail-closed, schema-validated config). The remaining principles have no maintenance-sprint deliverable (–) — expected for a hardening sprint. 18/18 accounted for.
+
+**Pre-code gate satisfied** — this table precedes any Sprint 6.5 implementation (L12).

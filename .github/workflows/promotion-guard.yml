@@ -1,0 +1,37 @@
+name: Promotion Guard
+
+# TASK-060: enforce the promotion path develop -> staging -> main. A pull request that merges
+# develop (or any feature branch) directly into main skips staging and lands an unpromoted base,
+# which is how develop came to trail main and a fix branch had to be cut from main. This guard
+# fails any PR into main whose source is not an allowed promotion branch, so the path cannot be
+# bypassed. For pull_request events GitHub runs the base branch's copy of this file, so the guard
+# is active on main once a release promotion carries it there by the correct path.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, edited, synchronize]
+
+jobs:
+  promotion-path:
+    name: Promotion path into main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject non-promotion sources
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "PR into main from: ${HEAD_REF}"
+          case "${HEAD_REF}" in
+            staging | promote/* | hotfix/*)
+              echo "OK: '${HEAD_REF}' is an allowed promotion source into main."
+              ;;
+            develop)
+              echo "::error::develop -> main is not allowed. Promote develop -> staging -> main."
+              exit 1
+              ;;
+            *)
+              echo "::error::'${HEAD_REF}' -> main is not an allowed promotion source. Use staging (promotion), promote/* (Route-B), or hotfix/*."
+              exit 1
+              ;;
+          esac

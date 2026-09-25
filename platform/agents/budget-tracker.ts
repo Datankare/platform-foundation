@@ -20,6 +20,7 @@
  */
 
 import type { BudgetConfig } from "./types";
+import { resolveDailyCostCap } from "./budget-config";
 import { DEFAULT_BUDGET_CONFIG } from "./types";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
@@ -150,11 +151,12 @@ export class BudgetTracker {
     return { agentId, scopeType, scopeId, period: this.getCurrentPeriod() };
   }
 
-  private toStatus(
+  private async toStatus(
     scope: BudgetScope,
     usage: BudgetUsage,
     config: BudgetConfig
-  ): BudgetStatus {
+  ): Promise<BudgetStatus> {
+    const cap = await resolveDailyCostCap(config.maxCostPerDay);
     // Spend only. A step count accumulated per agent per period says nothing about
     // whether any one trajectory has run too long.
     return {
@@ -163,10 +165,10 @@ export class BudgetTracker {
       scopeId: scope.scopeId,
       period: scope.period,
       usedUsd: usage.usedUsd,
-      budgetUsd: config.maxCostPerDay,
+      budgetUsd: cap,
       usedSteps: usage.usedSteps,
-      exhausted: usage.usedUsd >= config.maxCostPerDay,
-      remainingUsd: Math.max(0, config.maxCostPerDay - usage.usedUsd),
+      exhausted: usage.usedUsd >= cap,
+      remainingUsd: Math.max(0, cap - usage.usedUsd),
     };
   }
 
@@ -181,14 +183,15 @@ export class BudgetTracker {
     config?: BudgetConfig
   ): Promise<BudgetCheckResult> {
     const cfg = config ?? DEFAULT_BUDGET_CONFIG;
+    const cap = await resolveDailyCostCap(cfg.maxCostPerDay);
     const scope = this.scopeOf(agentId, scopeType, scopeId);
     const usage = await this.store.read(scope);
-    const status = this.toStatus(scope, usage, cfg);
+    const status = await this.toStatus(scope, usage, cfg);
 
-    if (usage.usedUsd >= cfg.maxCostPerDay) {
+    if (usage.usedUsd >= cap) {
       return {
         allowed: false,
-        reason: `Daily budget exhausted: $${usage.usedUsd.toFixed(4)} / $${cfg.maxCostPerDay.toFixed(4)}`,
+        reason: `Daily budget exhausted: $${usage.usedUsd.toFixed(4)} / $${cap.toFixed(4)}`,
         status,
       };
     }

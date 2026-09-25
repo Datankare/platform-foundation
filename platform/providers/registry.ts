@@ -28,8 +28,8 @@
  *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
  *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
- *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory")
- *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory")
+ *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
+ *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
  *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
  *   EFFECT_LEDGER          = "supabase" | "memory"  (default: "memory")
  *
@@ -345,6 +345,22 @@ function initAppStateStore(type: AppStateStoreType): void {
   }
 }
 
+/**
+ * ADR-048 D3: the durable agent stores are required in production. Rather than flip the global
+ * default (which breaks the in-memory test/local path), refuse to boot the runtime on an
+ * in-memory budget/trajectory store in a production context — the same fail-closed stance the
+ * Supabase path already takes on missing creds. Tests and local (NODE_ENV !== "production") keep
+ * the in-memory default.
+ */
+function requireDurableStoreInProduction(envVar: string, noun: string): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      `${envVar} is unset or "memory" in production. Refusing to boot the agent runtime on ` +
+        `in-memory ${noun} (ADR-048 D3) — set ${envVar}=supabase with Supabase credentials.`
+    );
+  }
+}
+
 function initTrajectoryStore(type: TrajectoryStoreType): void {
   if (type === "supabase") {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
@@ -364,6 +380,9 @@ function initTrajectoryStore(type: TrajectoryStoreType): void {
     setTrajectoryStore(new SupabaseTrajectoryStore(url, key));
     return;
   }
+
+  // type is "memory" (explicit or defaulted).
+  requireDurableStoreInProduction("TRAJECTORY_STORE", "trajectories");
 }
 
 function initBudgetStore(type: BudgetStoreType): void {
@@ -385,6 +404,9 @@ function initBudgetStore(type: BudgetStoreType): void {
     setBudgetTracker(new BudgetTracker(new SupabaseBudgetStore(url, key)));
     return;
   }
+
+  // type is "memory" (explicit or defaulted).
+  requireDurableStoreInProduction("BUDGET_STORE", "budget accumulation");
 }
 
 function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
