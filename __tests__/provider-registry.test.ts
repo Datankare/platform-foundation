@@ -237,6 +237,15 @@ describe("auth-init backward compat", () => {
       expect(() => initProviders()).not.toThrow();
     });
 
+    it("does NOT throw in production when E2E_IN_MEMORY_STORES=true (test-harness opt-out)", async () => {
+      setNodeEnv("production");
+      process.env.E2E_IN_MEMORY_STORES = "true";
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(() => initProviders()).not.toThrow();
+    });
+
     it("does NOT throw in production when both stores are supabase with creds", async () => {
       setNodeEnv("production");
       process.env.TRAJECTORY_STORE = "supabase";

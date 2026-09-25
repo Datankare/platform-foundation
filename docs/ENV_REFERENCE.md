@@ -167,16 +167,17 @@ Selecting `CACHE_PROVIDER=upstash` requires the two `UPSTASH_REDIS_REST_*` varia
 Each store selects between an in-memory implementation (default, ephemeral) and Supabase
 (durable). Selecting `supabase` for any of these requires the three Supabase variables above.
 
-| Variable                | Required | Default  | Values              |
-| ----------------------- | -------- | -------- | ------------------- |
-| `MODERATION_STORE`      | No       | `memory` | `supabase` `memory` |
-| `SOCIAL_STORE`          | No       | `memory` | `supabase` `memory` |
-| `APP_STATE_STORE`       | No       | `memory` | `supabase` `memory` |
-| `TRAJECTORY_STORE`      | No       | `memory` | `supabase` `memory` |
-| `BUDGET_STORE`          | No       | `memory` | `supabase` `memory` |
-| `PROPOSAL_STORE`        | No       | `memory` | `supabase` `memory` |
-| `EFFECT_LEDGER`         | No       | `memory` | `supabase` `memory` |
-| `APPROVAL_POLICY_STORE` | No       | `memory` | `supabase` `memory` |
+| Variable                | Required | Default  | Values                                                                                                         |
+| ----------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| `MODERATION_STORE`      | No       | `memory` | `supabase` `memory`                                                                                            |
+| `SOCIAL_STORE`          | No       | `memory` | `supabase` `memory`                                                                                            |
+| `APP_STATE_STORE`       | No       | `memory` | `supabase` `memory`                                                                                            |
+| `TRAJECTORY_STORE`      | No       | `memory` | `supabase` `memory`                                                                                            |
+| `BUDGET_STORE`          | No       | `memory` | `supabase` `memory`                                                                                            |
+| `E2E_IN_MEMORY_STORES`  | No       |          | `true` (E2E harness only — permits in-memory agent stores under a production build; never set on a deployment) |
+| `PROPOSAL_STORE`        | No       | `memory` | `supabase` `memory`                                                                                            |
+| `EFFECT_LEDGER`         | No       | `memory` | `supabase` `memory`                                                                                            |
+| `APPROVAL_POLICY_STORE` | No       | `memory` | `supabase` `memory`                                                                                            |
 
 For anything agentic that must survive a restart (trajectories, budgets, proposals, the effect
 ledger, the approval policy), set these to `supabase` in production. In-memory is correct for

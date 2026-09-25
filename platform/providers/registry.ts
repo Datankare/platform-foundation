@@ -353,12 +353,26 @@ function initAppStateStore(type: AppStateStoreType): void {
  * the in-memory default.
  */
 function requireDurableStoreInProduction(envVar: string, noun: string): void {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(
-      `${envVar} is unset or "memory" in production. Refusing to boot the agent runtime on ` +
-        `in-memory ${noun} (ADR-048 D3) — set ${envVar}=supabase with Supabase credentials.`
+  if (process.env.NODE_ENV !== "production") return;
+
+  // A production BUILD run under an E2E harness (Playwright starts the app with `next start`,
+  // which forces NODE_ENV=production) is not a deployment: no Supabase is provisioned for the
+  // test, so it legitimately runs on in-memory stores. The harness opts out explicitly via
+  // E2E_IN_MEMORY_STORES=true; a real deployment never sets it, so it still fails closed. The
+  // opt-out is logged so an accidental production use is visible rather than silent.
+  if (process.env.E2E_IN_MEMORY_STORES === "true") {
+    logger.warn(
+      `${envVar} is "memory" in a production build — permitted by E2E_IN_MEMORY_STORES ` +
+        `(test harness only; never set on a deployment)`,
+      { route: "platform/providers/registry" }
     );
+    return;
   }
+
+  throw new Error(
+    `${envVar} is unset or "memory" in production. Refusing to boot the agent runtime on ` +
+      `in-memory ${noun} (ADR-048 D3) — set ${envVar}=supabase with Supabase credentials.`
+  );
 }
 
 function initTrajectoryStore(type: TrajectoryStoreType): void {
