@@ -76,6 +76,7 @@ import {
   dispatchConfigTool,
   CONFIG_TOOLS,
 } from "../config-handlers";
+import { TOOL_BOUNDARIES } from "../types";
 import type { EnhancedConfigEntry, ToolExecutionContext } from "../types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -814,5 +815,26 @@ describe("CONFIG_TOOLS", () => {
   it("tool IDs are unique", () => {
     const ids = CONFIG_TOOLS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-064 close condition: the boundary map and the tool roster cannot drift
+// apart unnoticed. Every CONFIG_TOOLS id must resolve an explicit boundary
+// (never fall through to the fail-closed "commitment" default), and the map
+// must carry no stale ids.
+// ---------------------------------------------------------------------------
+describe("tool boundary map conformance (TASK-064)", () => {
+  it("every CONFIG_TOOLS id resolves an explicit boundary (no default fallthrough)", () => {
+    for (const tool of CONFIG_TOOLS) {
+      expect(TOOL_BOUNDARIES[tool.id]).toBeDefined();
+    }
+  });
+
+  it("TOOL_BOUNDARIES carries no id that is not a CONFIG_TOOLS tool (no drift)", () => {
+    const ids = new Set(CONFIG_TOOLS.map((t) => t.id));
+    for (const key of Object.keys(TOOL_BOUNDARIES)) {
+      expect(ids.has(key)).toBe(true);
+    }
   });
 });
