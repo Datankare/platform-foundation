@@ -124,7 +124,7 @@ components/auth/SsoButtons.tsx
 | **Type**     | Infrastructure    |
 | **Severity** | Medium            |
 | **Phase**    | Phase 5, Sprint 6 |
-| **Target**   | Phase 5, Sprint 6 |
+| **Target**   | Phase 5, Sprint 7 |
 | **Status**   | Open              |
 | **Logged**   | 2026-04-16        |
 
@@ -605,15 +605,15 @@ result cache; a failing provider makes it report unhealthy; k6 re-baselined agai
 
 ### TASK-058 — Dependency-advisory handling is a CI tripwire, not a process
 
-| Field        | Detail                                |
-| ------------ | ------------------------------------- |
-| **ID**       | TASK-058                              |
-| **Type**     | CI / supply-chain process             |
-| **Severity** | Medium — recurring manual toil + risk |
-| **Phase**    | Phase 5, Sprint 2                     |
-| **Target**   | Phase 5, Sprint 4                     |
-| **Status**   | Open                                  |
-| **Logged**   | 2026-07-24                            |
+| Field        | Detail                                                                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-058                                                                                                       |
+| **Type**     | CI / supply-chain process                                                                                      |
+| **Severity** | Medium — recurring manual toil + risk                                                                          |
+| **Phase**    | Phase 5, Sprint 2                                                                                              |
+| **Target**   | Phase 5, Sprint 7                                                                                              |
+| **Status**   | Open — code/CI half resolved (Sprint 6.5 M6a: scheduled audit sweep + override register); process half remains |
+| **Logged**   | 2026-07-24                                                                                                     |
 
 **What:** Four high-severity advisories in three days (brace-expansion, sharp/fast-uri,
 postcss, plus the Next middleware CVE) were each discovered only when CI went red, and each
@@ -945,15 +945,15 @@ production call, and no budget column is unwritten.
 
 ### TASK-070 — Overrides are unaudited; one of them pinned us to a vulnerable version
 
-| Field        | Detail                                                       |
-| ------------ | ------------------------------------------------------------ |
-| **ID**       | TASK-070                                                     |
-| **Type**     | Dependency hygiene                                           |
-| **Severity** | Medium — the failure mode is silent and points the wrong way |
-| **Phase**    | Phase 5, Sprint 2                                            |
-| **Target**   | Phase 5, Sprint 4                                            |
-| **Status**   | Open                                                         |
-| **Logged**   | 2026-08-04                                                   |
+| Field        | Detail                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-070                                                                                   |
+| **Type**     | Dependency hygiene                                                                         |
+| **Severity** | Medium — the failure mode is silent and points the wrong way                               |
+| **Phase**    | Phase 5, Sprint 2                                                                          |
+| **Target**   | Phase 5, Sprint 7                                                                          |
+| **Status**   | Open — register + drift guard landed (Sprint 6.5 M6a); periodic remove-and-reaudit remains |
+| **Logged**   | 2026-08-04                                                                                 |
 
 **What:** `package.json` currently overrides `postcss`, `sharp` and `brace-expansion@5`.
 Nothing records why any of them exist, when they were added, or what would allow their
@@ -1837,6 +1837,40 @@ inside an unrelated commit would be the coverage-on-red hazard the sprint alread
 to include them, and CI is green at the new floor (coordinated with TASK-080).
 
 ---
+
+### TASK-089 — PF CI never boots the production build, so the D3 store guard only fails downstream
+
+| Field        | Detail                                                                       |
+| ------------ | ---------------------------------------------------------------------------- |
+| **ID**       | TASK-089                                                                     |
+| **Type**     | CI integrity                                                                 |
+| **Severity** | Medium — a class of production-boot regression is invisible to PF's own gate |
+| **Phase**    | Phase 5                                                                      |
+| **Target**   | Phase 5, Sprint 7                                                            |
+| **Status**   | Open                                                                         |
+| **Logged**   | 2026-09-25                                                                   |
+
+**What:** PF's `ci.yml` (Layers 0d/0a/0b/0c/0e/1/1b/2) runs typecheck, lint, format, unit tests +
+coverage, the ratchet, the override audit, and build — but never starts the production build
+under an E2E harness. PF has an `e2e/` directory and a `test:e2e` script; no CI layer invokes it.
+Only Playform runs Playwright (its Layer 3).
+
+**Why it matters now:** the ADR-048 D3 store guard (v2.5.0 M2) throws in `instrumentation.register()`
+when a production build boots on in-memory agent stores. The guard _decision_ is unit-tested, but
+the **boot cascade** — `register()` swallows the throw, so observability and agents never
+initialize, health returns 503, and Guardian fails closed on every request — only appears
+end-to-end. PF released v2.5.0 green because PF's gate never boots the production build; the
+interaction surfaced only when Playform's Layer 3 went red on the sync, forcing the v2.5.1 patch
+(`E2E_IN_MEMORY_STORES`). Any future production-boot regression in shared platform code is invisible
+to PF and caught one repo downstream, after a sync.
+
+**Why it is a task, not a one-line fix:** two defensible fixes, to be chosen in Sprint 7. (a) Add an
+E2E layer to PF's CI that starts the production build (`next start`) and runs a minimal platform
+boot/health smoke — highest fidelity, but PF has no app-specific E2E specs, so it needs a small
+platform-level smoke suite. (b) Add an integration test driving `instrumentation.register()` through
+a simulated production boot that asserts the fail-closed behavior _and_ that the `E2E_IN_MEMORY_STORES`
+opt-out lets boot complete (agents register, health OK) — cheaper, no server, but not a true
+end-to-end boot. Recommend (b) as the floor (guaranteed catch) and (a) as the eventual goal.
 
 ## Known Issue — TASK-020 numbering collision
 
