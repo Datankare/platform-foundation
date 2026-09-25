@@ -9,6 +9,19 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.5.1 — Sprint 6.5 patch: E2E opt-out for the production store guard
+
+Date: 2026-09-25
+
+Patch to the ADR-048 D3 production store guard (v2.5.0). The guard refuses to boot the agent
+runtime on in-memory trajectory/budget stores when NODE_ENV=production — correct for a real
+deployment, but an E2E harness runs the production build (Playwright's `next start` forces
+NODE_ENV=production) with no Supabase provisioned, which the guard could not distinguish from a
+deployment. It now honors an explicit `E2E_IN_MEMORY_STORES=true` opt-out set by the test harness;
+a real deployment never sets it and still fails closed. The opt-out is logged when used.
+
+---
+
 ## v2.5.0 — Sprint 6.5: maintenance & governance hardening
 
 Date: 2026-09-24
