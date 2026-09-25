@@ -86,6 +86,12 @@ stays clean and installs, the override has expired and should be dropped.
 
 ---
 
+**Reaudit cadence (TASK-070):** the scheduled dependency sweep (`.github/workflows/dependency-audit.yml`)
+runs `scripts/override-reaudit.mjs`, which emits a per-override triage checklist to the run summary
+so the remove-install-audit reaudit happens on a cadence, not never. **Cross-repo (TASK-058):**
+platform-foundation and Playform maintain overrides independently (`package.json` is sync-excluded);
+an override added in one repo is not inherited by the other, so reconcile divergence at each triage.
+
 ## Resolved Items
 
 _Items below have been resolved and are retained for audit trail only._

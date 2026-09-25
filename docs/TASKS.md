@@ -605,15 +605,15 @@ result cache; a failing provider makes it report unhealthy; k6 re-baselined agai
 
 ### TASK-058 — Dependency-advisory handling is a CI tripwire, not a process
 
-| Field        | Detail                                                                                                         |
-| ------------ | -------------------------------------------------------------------------------------------------------------- |
-| **ID**       | TASK-058                                                                                                       |
-| **Type**     | CI / supply-chain process                                                                                      |
-| **Severity** | Medium — recurring manual toil + risk                                                                          |
-| **Phase**    | Phase 5, Sprint 2                                                                                              |
-| **Target**   | Phase 5, Sprint 7                                                                                              |
-| **Status**   | Open — code/CI half resolved (Sprint 6.5 M6a: scheduled audit sweep + override register); process half remains |
-| **Logged**   | 2026-07-24                                                                                                     |
+| Field        | Detail                                                                                                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-058                                                                                                                                                                                                                              |
+| **Type**     | CI / supply-chain process                                                                                                                                                                                                             |
+| **Severity** | Medium — recurring manual toil + risk                                                                                                                                                                                                 |
+| **Phase**    | Phase 5, Sprint 2                                                                                                                                                                                                                     |
+| **Target**   | Phase 5, Sprint 7                                                                                                                                                                                                                     |
+| **Status**   | Open — code/CI half resolved (Sprint 6.5 M6a: scheduled audit sweep + override register); process half: PF reaudit cadence + cross-repo reconciliation documented (Sprint 7 m2); the Playform-side wiring gap it surfaced is TASK-090 |
+| **Logged**   | 2026-07-24                                                                                                                                                                                                                            |
 
 **What:** Four high-severity advisories in three days (brace-expansion, sharp/fast-uri,
 postcss, plus the Next middleware CVE) were each discovered only when CI went red, and each
@@ -945,15 +945,15 @@ production call, and no budget column is unwritten.
 
 ### TASK-070 — Overrides are unaudited; one of them pinned us to a vulnerable version
 
-| Field        | Detail                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------ |
-| **ID**       | TASK-070                                                                                   |
-| **Type**     | Dependency hygiene                                                                         |
-| **Severity** | Medium — the failure mode is silent and points the wrong way                               |
-| **Phase**    | Phase 5, Sprint 2                                                                          |
-| **Target**   | Phase 5, Sprint 7                                                                          |
-| **Status**   | Open — register + drift guard landed (Sprint 6.5 M6a); periodic remove-and-reaudit remains |
-| **Logged**   | 2026-08-04                                                                                 |
+| Field        | Detail                                                                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-070                                                                                                                                         |
+| **Type**     | Dependency hygiene                                                                                                                               |
+| **Severity** | Medium — the failure mode is silent and points the wrong way                                                                                     |
+| **Phase**    | Phase 5, Sprint 2                                                                                                                                |
+| **Target**   | Phase 5, Sprint 7                                                                                                                                |
+| **Status**   | Open — register + drift guard landed (Sprint 6.5 M6a); reaudit cadence landed (Sprint 7 m2: scripts/override-reaudit.mjs on the scheduled sweep) |
+| **Logged**   | 2026-08-04                                                                                                                                       |
 
 **What:** `package.json` currently overrides `postcss`, `sharp` and `brace-expansion@5`.
 Nothing records why any of them exist, when they were added, or what would allow their
@@ -1871,6 +1871,36 @@ platform-level smoke suite. (b) Add an integration test driving `instrumentation
 a simulated production boot that asserts the fail-closed behavior _and_ that the `E2E_IN_MEMORY_STORES`
 opt-out lets boot complete (agents register, health OK) — cheaper, no server, but not a true
 end-to-end boot. Recommend (b) as the floor (guaranteed catch) and (a) as the eventual goal.
+
+### TASK-090 — Playform inherits the guard scripts but never runs them (sync excludes package.json + .github)
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-090                                                                 |
+| **Type**     | Cross-repo CI integrity                                                  |
+| **Severity** | Medium — a guard that is present but never invoked gives false assurance |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7                                                        |
+| **Status**   | Open                                                                     |
+| **Logged**   | 2026-09-25                                                               |
+
+**What:** the coverage + dependency guards ship as two parts — the script files
+(`coverage-baseline.json`, `scripts/coverage-ratchet.mjs`, `scripts/override-audit.mjs`,
+`scripts/override-reaudit.mjs`) and their wiring (npm scripts in `package.json`; CI steps in
+`.github/workflows/ci.yml` and `dependency-audit.yml`). The sync brings the script files
+(`scripts/` and repo-root sync), but `package.json` and `.github/**` are sync-excluded, so Playform
+inherits the scripts as **dormant files**: nothing in Playform's `package.json` or `ci.yml` invokes
+them. The coverage ratchet and the override audit do not run in Playform.
+
+**Why it matters now:** TASK-058's intent is a both-repo posture. Playform has the files but not the
+enforcement — worse than not having them, because it reads as covered when it is not. The same
+exclusion is why M5's promotion-guard needed a separate Playform commit.
+
+**Why it is a task, not a one-line fix:** the wiring must be authored in Playform's OWN
+`package.json` (add the `coverage:ratchet` + `overrides:audit` scripts) and Playform's OWN
+`ci.yml` / `dependency-audit.yml` (add the ratchet, override-audit, and sweep steps), because those
+files are consumer-owned and diverge from PF by design. Playform's ratchet also needs its own
+coverage numbers for its baseline. Pairs with TASK-058.
 
 ## Known Issue — TASK-020 numbering collision
 
