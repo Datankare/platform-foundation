@@ -12,7 +12,8 @@
  *   - opt-out: with E2E_IN_MEMORY_STORES=true, boot completes end-to-end (observability initializes).
  *
  * This is the option-(b) floor from TASK-089: a guaranteed catch with no server. A full CI E2E
- * layer (option (a)) can follow.
+ * layer (option (a)) can follow. The test is portable: it runs unchanged against a consumer's own
+ * (sync-excluded) instrumentation.ts, because it simulates the Node server runtime Next.js sets.
  */
 import { register } from "@/instrumentation";
 import { resetObservability, tryGetObservability } from "@/platform/observability";
@@ -33,6 +34,11 @@ describe("production boot guard (TASK-089)", () => {
     resetObservability();
     resetProviders();
     process.env = { ...origEnv };
+    // A real Next.js server boots register() with NEXT_RUNTIME=nodejs; jest does not set it.
+    // Consumers' instrumentation.ts commonly returns early outside the Node runtime (the
+    // provider chain reaches node:crypto), so the simulated boot must set it or register()
+    // is a no-op and the check tests nothing.
+    process.env.NEXT_RUNTIME = "nodejs";
   });
 
   afterEach(() => {
