@@ -206,56 +206,79 @@ describe("auth-init backward compat", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ADR-048 D3: agent durability stores are required in production (M2)
+  // ADR-048 D3 + ADR-049 D1: durable stores are required in production
   // -------------------------------------------------------------------------
-  describe("agent durability stores \u2014 production fail-closed (ADR-048 D3)", () => {
-    it("throws in production when TRAJECTORY_STORE is unset (defaults to memory)", async () => {
-      setNodeEnv("production");
-      const { initProviders, resetProviders } =
-        await import("@/platform/providers/registry");
-      resetProviders();
-      expect(() => initProviders()).toThrow(/TRAJECTORY_STORE/);
-    });
-
-    it("throws in production when BUDGET_STORE is memory", async () => {
-      setNodeEnv("production");
-      process.env.TRAJECTORY_STORE = "supabase";
-      process.env.SUPABASE_URL = "https://example.supabase.co";
-      process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
-      process.env.BUDGET_STORE = "memory";
-      const { initProviders, resetProviders } =
-        await import("@/platform/providers/registry");
-      resetProviders();
-      expect(() => initProviders()).toThrow(/BUDGET_STORE/);
-    });
-
-    it("does NOT throw outside production (tests/local keep in-memory)", async () => {
-      setNodeEnv("test");
-      const { initProviders, resetProviders } =
-        await import("@/platform/providers/registry");
-      resetProviders();
-      expect(() => initProviders()).not.toThrow();
-    });
-
-    it("does NOT throw in production when E2E_IN_MEMORY_STORES=true (test-harness opt-out)", async () => {
-      setNodeEnv("production");
-      process.env.E2E_IN_MEMORY_STORES = "true";
-      const { initProviders, resetProviders } =
-        await import("@/platform/providers/registry");
-      resetProviders();
-      expect(() => initProviders()).not.toThrow();
-    });
-
-    it("does NOT throw in production when both stores are supabase with creds", async () => {
-      setNodeEnv("production");
+  describe("durable stores \u2014 production fail-closed (ADR-048 D3, ADR-049 D1)", () => {
+    // Every guarded store durable, so each test can flip exactly one to memory and assert
+    // that the named store (not whichever is initialized first) is what refuses to boot.
+    const allDurable = (): void => {
+      process.env.APP_STATE_STORE = "supabase";
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";
       process.env.SUPABASE_URL = "https://example.supabase.co";
       process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+      delete process.env.E2E_IN_MEMORY_STORES;
+    };
+    const boot = async (): Promise<() => void> => {
       const { initProviders, resetProviders } =
         await import("@/platform/providers/registry");
       resetProviders();
-      expect(() => initProviders()).not.toThrow();
+      return () => initProviders();
+    };
+
+    it("throws in production when APP_STATE_STORE is unset (defaults to memory)", async () => {
+      setNodeEnv("production");
+      allDurable();
+      delete process.env.APP_STATE_STORE;
+      expect(await boot()).toThrow(/APP_STATE_STORE/);
+    });
+
+    it("throws in production when TRAJECTORY_STORE is unset (defaults to memory)", async () => {
+      setNodeEnv("production");
+      allDurable();
+      delete process.env.TRAJECTORY_STORE;
+      expect(await boot()).toThrow(/TRAJECTORY_STORE/);
+    });
+
+    it("throws in production when BUDGET_STORE is memory", async () => {
+      setNodeEnv("production");
+      allDurable();
+      process.env.BUDGET_STORE = "memory";
+      expect(await boot()).toThrow(/BUDGET_STORE/);
+    });
+
+    it("throws in production when APP_STATE_STORE=supabase but creds are missing (no silent fallback)", async () => {
+      setNodeEnv("production");
+      allDurable();
+      process.env.TRAJECTORY_STORE = "memory";
+      process.env.BUDGET_STORE = "memory";
+      delete process.env.SUPABASE_URL;
+      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      expect(await boot()).toThrow(/APP_STATE_STORE/);
+    });
+
+    it("does NOT throw outside production (tests/local keep in-memory)", async () => {
+      setNodeEnv("test");
+      delete process.env.APP_STATE_STORE;
+      delete process.env.TRAJECTORY_STORE;
+      delete process.env.BUDGET_STORE;
+      expect(await boot()).not.toThrow();
+    });
+
+    it("does NOT throw in production when E2E_IN_MEMORY_STORES=true (test-harness opt-out)", async () => {
+      setNodeEnv("production");
+      delete process.env.APP_STATE_STORE;
+      delete process.env.TRAJECTORY_STORE;
+      delete process.env.BUDGET_STORE;
+      process.env.E2E_IN_MEMORY_STORES = "true";
+      expect(await boot()).not.toThrow();
+    });
+
+    it("does NOT throw in production when every guarded store is supabase with creds", async () => {
+      setNodeEnv("production");
+      allDurable();
+      expect(await boot()).not.toThrow();
     });
   });
 });
