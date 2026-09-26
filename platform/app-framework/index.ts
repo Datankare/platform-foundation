@@ -24,6 +24,7 @@ export {
   subscribeSessionEvents,
   resetSessionEventSubscribers,
   ActionRejectedError,
+  SessionAccessDeniedError,
 } from "./session";
 export type {
   ConflictResult,

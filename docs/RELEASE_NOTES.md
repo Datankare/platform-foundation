@@ -9,6 +9,26 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.6.0 — Sprint 7: activity session durability & ownership (ADR-049)
+
+Date: 2026-09-26
+
+What a consumer inherits on sync:
+
+- **Only a participant can load a session (ADR-049 D2).** `loadSession` now rejects an actor that
+  is not one of the session's participants with `SessionAccessDeniedError`, before any D6 repair
+  write. A session id is no longer a credential — consumers can resume sessions by id without
+  writing their own ownership check.
+- **Activity sessions are durable in production (ADR-049 D1).** The ADR-048 D3 fail-closed guard now
+  covers `APP_STATE_STORE`: an in-memory activity state store refuses to boot in production, and
+  `APP_STATE_STORE=supabase` without credentials no longer falls back to memory silently. The
+  `E2E_IN_MEMORY_STORES=true` test-harness opt-out applies. **Action for production consumers:** set
+  `APP_STATE_STORE=supabase` with Supabase credentials.
+- **Production-boot check in PF's own gate (TASK-089)** and the **override reaudit cadence**
+  (TASK-070/058) from Sprint 7 milestones 1–2.
+
+---
+
 ## v2.5.1 — Sprint 6.5 patch: E2E opt-out for the production store guard
 
 Date: 2026-09-25

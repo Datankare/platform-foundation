@@ -171,7 +171,7 @@ Each store selects between an in-memory implementation (default, ephemeral) and 
 | ----------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------- |
 | `MODERATION_STORE`      | No       | `memory` | `supabase` `memory`                                                                                            |
 | `SOCIAL_STORE`          | No       | `memory` | `supabase` `memory`                                                                                            |
-| `APP_STATE_STORE`       | No       | `memory` | `supabase` `memory`                                                                                            |
+| `APP_STATE_STORE`       | No       | `memory` | `supabase` `memory` (required `supabase` in production — ADR-049 D1)                                           |
 | `TRAJECTORY_STORE`      | No       | `memory` | `supabase` `memory`                                                                                            |
 | `BUDGET_STORE`          | No       | `memory` | `supabase` `memory`                                                                                            |
 | `E2E_IN_MEMORY_STORES`  | No       |          | `true` (E2E harness only — permits in-memory agent stores under a production build; never set on a deployment) |

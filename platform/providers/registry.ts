@@ -337,12 +337,18 @@ function initAppStateStore(type: AppStateStoreType): void {
       logger.warn(
         "APP_STATE_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
       );
+      // ADR-049 D1: the fallback leaves sessions in memory — not acceptable in production.
+      requireDurableStoreInProduction("APP_STATE_STORE", "activity sessions");
       return;
     }
 
     setActivityStateStore(new SupabaseActivityStateStore(url, key));
     return;
   }
+
+  // type is "memory" (explicit or defaulted). ADR-049 D1: activity sessions are user state;
+  // a production deployment must persist them.
+  requireDurableStoreInProduction("APP_STATE_STORE", "activity sessions");
 }
 
 /**
@@ -370,8 +376,8 @@ function requireDurableStoreInProduction(envVar: string, noun: string): void {
   }
 
   throw new Error(
-    `${envVar} is unset or "memory" in production. Refusing to boot the agent runtime on ` +
-      `in-memory ${noun} (ADR-048 D3) — set ${envVar}=supabase with Supabase credentials.`
+    `${envVar} is unset or "memory" in production. Refusing to boot on ` +
+      `in-memory ${noun} (ADR-048 D3, ADR-049 D1) — set ${envVar}=supabase with Supabase credentials.`
   );
 }
 

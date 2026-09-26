@@ -1874,15 +1874,15 @@ end-to-end boot. Recommend (b) as the floor (guaranteed catch) and (a) as the ev
 
 ### TASK-090 — Playform inherits the guard scripts but never runs them (sync excludes package.json + .github)
 
-| Field        | Detail                                                                   |
-| ------------ | ------------------------------------------------------------------------ |
-| **ID**       | TASK-090                                                                 |
-| **Type**     | Cross-repo CI integrity                                                  |
-| **Severity** | Medium — a guard that is present but never invoked gives false assurance |
-| **Phase**    | Phase 5                                                                  |
-| **Target**   | Phase 5, Sprint 7                                                        |
-| **Status**   | Open                                                                     |
-| **Logged**   | 2026-09-25                                                               |
+| Field        | Detail                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-090                                                                                                                             |
+| **Type**     | Cross-repo CI integrity                                                                                                              |
+| **Severity** | Medium — a guard that is present but never invoked gives false assurance                                                             |
+| **Phase**    | Phase 5                                                                                                                              |
+| **Target**   | Phase 5, Sprint 7                                                                                                                    |
+| **Status**   | Resolved — Sprint 7 m2: Playform package.json + ci.yml wired (Layers 0e/1b), coverage-baseline.json sync-excluded; Playform CI green |
+| **Logged**   | 2026-09-25                                                                                                                           |
 
 **What:** the coverage + dependency guards ship as two parts — the script files
 (`coverage-baseline.json`, `scripts/coverage-ratchet.mjs`, `scripts/override-audit.mjs`,

@@ -11,12 +11,18 @@ import {
   updateSessionMeta,
   resetActivityStateStore,
   getActivityStateStore,
+  SessionAccessDeniedError,
 } from "@/platform/app-framework";
 import { resetTrajectoryStore } from "@/platform/agents/trajectory-store";
 import type { ActivityDefinition, AgentIdentity } from "@/platform/kernel";
 
 const alice: AgentIdentity = { actorType: "user", actorId: "alice", agentRole: "player" };
 const bob: AgentIdentity = { actorType: "user", actorId: "bob", agentRole: "player" };
+const mallory: AgentIdentity = {
+  actorType: "user",
+  actorId: "mallory",
+  agentRole: "player",
+};
 
 interface S {
   count: number;
@@ -151,5 +157,42 @@ describe("loadSession", () => {
 
     expect(loaded?.repair).toBeUndefined();
     expect(loaded?.session.trajectory.steps).toHaveLength(0);
+  });
+  // ADR-049 D2: a session id is not a credential.
+  it("rejects an actor who is not a participant (SessionAccessDeniedError)", async () => {
+    const created = await make();
+    await expect(
+      loadSession({ sessionId: created.sessionId, definition, actor: mallory })
+    ).rejects.toBeInstanceOf(SessionAccessDeniedError);
+  });
+
+  it("a non-participant cannot trigger a repair write on someone else's session", async () => {
+    const created = await make();
+    const store = getActivityStateStore<S>();
+    await store.commit(created.sessionId, 1, { count: 1 }, "op_interrupted");
+
+    await expect(
+      loadSession({ sessionId: created.sessionId, definition, actor: mallory })
+    ).rejects.toBeInstanceOf(SessionAccessDeniedError);
+
+    const asAlice = await loadSession({
+      sessionId: created.sessionId,
+      definition,
+      actor: alice,
+      skipRepair: true,
+    });
+    expect(asAlice?.session.trajectory.steps).toHaveLength(0);
+  });
+
+  it("every participant can load the session", async () => {
+    const created = await make();
+    for (const actor of [alice, bob]) {
+      const loaded = await loadSession({
+        sessionId: created.sessionId,
+        definition,
+        actor,
+      });
+      expect(loaded?.session.sessionId).toBe(created.sessionId);
+    }
   });
 });
