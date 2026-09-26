@@ -9,6 +9,18 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.6.2 — migration 036 fix
+
+Date: 2026-09-26
+
+`036_governed_agent_budget.sql` (v2.5.0, ADR-048 M1) failed when applied: its `UPDATE` cast a jsonb
+expression back to text on the jsonb `platform_config.value` column. The update now operates on jsonb
+directly. Verified on Postgres 16: the migration seeds both governed budget keys, appends both to
+`config.dual_control_keys`, and self-records. Consumers that already applied 036 successfully need no
+action; consumers whose 036 failed should apply this version. Migration replay in CI is TASK-091.
+
+---
+
 ## v2.6.1 — portable production-boot check
 
 Date: 2026-09-26

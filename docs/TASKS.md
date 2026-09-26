@@ -1902,6 +1902,54 @@ exclusion is why M5's promotion-guard needed a separate Playform commit.
 files are consumer-owned and diverge from PF by design. Playform's ratchet also needs its own
 coverage numbers for its baseline. Pairs with TASK-058.
 
+### TASK-091 — The migration chain cannot rebuild a database from scratch, and no CI runs migration SQL
+
+| Field        | Detail                                                                    |
+| ------------ | ------------------------------------------------------------------------- |
+| **ID**       | TASK-091                                                                  |
+| **Type**     | Schema integrity                                                          |
+| **Severity** | High — blocks a fresh production database; a broken migration ships green |
+| **Phase**    | Phase 5                                                                   |
+| **Target**   | Phase 5, Sprint 7                                                         |
+| **Status**   | Open                                                                      |
+| **Logged**   | 2026-09-26                                                                |
+
+**What:** replaying `supabase/migrations/001`–`036` in order on an empty Postgres fails at the start:
+`001` creates `player_role` without `registered`, `002` seeds `registered`, `004` drops the enum, `008`
+renames the enum `004` dropped. The early files were edited after being applied; the live database
+was built as they changed, so it is correct, but the files no longer compose. Separately, nothing in
+CI executes migration SQL: `036_governed_agent_budget.sql` shipped in v2.5.0 with a jsonb/text cast
+bug (`SET value = (...)::text` on a jsonb column) that failed only when first applied to the live
+database (Sprint 7, fixed in v2.6.2).
+
+**Why it is a task:** the fix is a schema **baseline** — a dump of the live, known-good schema used as
+the starting point for any fresh database, with newer migrations replayed on top — plus a CI layer
+that stands up Postgres 16 (+ pgvector and a small Supabase `auth`/roles shim), applies the baseline
+and every newer migration, and fails on any error. Rewriting applied historical migrations is
+rejected: it changes what the live database claims to have run. Prerequisite for TASK-092.
+
+### TASK-092 — Production shares the dev/staging Supabase project
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-092                                                     |
+| **Type**     | Environment isolation                                        |
+| **Severity** | Medium — harmless pre-launch; must not carry into real users |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | Phase 5, Sprint 7                                            |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-09-26                                                   |
+
+**What:** ADR-048 D3 / ADR-049 D1 require durable stores in production, so `playform-dev` and
+`playform-staging` on Vercel now point at the single `playform` Supabase project (both boot, health
+200). Dev and staging sharing one database is acceptable pre-launch — all test data — but the
+production deployment must get its own Supabase project so real user data never mixes with test data
+and a staging migration cannot touch production.
+
+**Why it is a task:** a new project needs its schema built from the TASK-091 baseline, its own
+service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+`TRAJECTORY_STORE`, `BUDGET_STORE`, `APP_STATE_STORE`) on the production project.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
