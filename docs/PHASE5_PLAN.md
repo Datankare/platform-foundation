@@ -201,6 +201,7 @@ adoption, then real providers, then the live exit proof, then the Phase 5 exit g
    the adoption wiring to exercise them.
 6. **TASK-025 — ffmpeg-service ALB.** Stable URL / live infra; stand it up with the deployment the
    exit proof needs.
+   **Also milestone 6 — database:** TASK-091 (schema baseline from the live database + CI migration replay on real Postgres) then TASK-092 (a separate Supabase project for production, built from that baseline). Dev and staging share the `playform` Supabase project until then.
 7. **TASK-046 (phase-exit expectation).** Auth-enable `k6/api-load.js` (acquire a test-user JWT; Bearer
    on `/process` + `/stream`), then run the live `DRY_RUN=0` re-baseline against **staging** — the
    first real moderation + agent-latency baseline, and the proof that the ADR-048 governed caps (M1/M2)
