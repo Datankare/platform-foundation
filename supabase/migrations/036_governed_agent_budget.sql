@@ -27,9 +27,9 @@ VALUES
 ON CONFLICT (key) DO NOTHING;
 
 UPDATE platform_config
-SET value = (value::jsonb || '["agent.budget.max_cost_per_day","agent.budget.max_steps_per_trajectory"]'::jsonb)::text
+SET value = value || '["agent.budget.max_cost_per_day","agent.budget.max_steps_per_trajectory"]'::jsonb
 WHERE key = 'config.dual_control_keys'
-  AND NOT (value::jsonb @> '["agent.budget.max_cost_per_day"]'::jsonb);
+  AND NOT (value @> '["agent.budget.max_cost_per_day"]'::jsonb);
 
 insert into applied_migrations (filename, confidence, note)
 values (
