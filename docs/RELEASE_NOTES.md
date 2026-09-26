@@ -9,6 +9,19 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v2.6.1 — portable production-boot check
+
+Date: 2026-09-26
+
+Patch to the TASK-089 production-boot check (v2.6.0). The test drives `register()` through a
+simulated production boot but did not set `NEXT_RUNTIME`, which Next.js sets to `nodejs` on a real
+server. A consumer whose `instrumentation.ts` returns early outside the Node runtime (Playform's does)
+therefore saw `register()` as a no-op and the check failed on sync. The simulated boot now sets
+`NEXT_RUNTIME=nodejs`, so the check is faithful to a real server boot and runs unchanged against any
+consumer's own instrumentation.
+
+---
+
 ## v2.6.0 — Sprint 7: activity session durability & ownership (ADR-049)
 
 Date: 2026-09-26
