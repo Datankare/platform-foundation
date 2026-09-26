@@ -70,6 +70,20 @@ function emit(event: SessionEvent): void {
 // ── Errors ────────────────────────────────────────────────────────────
 
 /** Raised when an action is rejected before any state mutation. */
+/**
+ * ADR-049 D2: raised when an actor loads a session it is not a participant of. Session ids
+ * are bearer-like handles; possession of one must not grant access to another user's state.
+ */
+export class SessionAccessDeniedError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly actorId: string
+  ) {
+    super(`app-framework: ${actorId} is not a participant of session ${sessionId}`);
+    this.name = "SessionAccessDeniedError";
+  }
+}
+
 export class ActionRejectedError extends Error {
   constructor(
     message: string,
@@ -354,6 +368,12 @@ export async function loadSession<TState, TAction, TConfig>(
       `app-framework: session ${args.sessionId} belongs to definition ` +
         `${meta.definitionId}, not ${args.definition.id}`
     );
+  }
+
+  // ADR-049 D2: only a participant may load a session. Checked before repair, so a
+  // non-participant cannot even trigger a repair write on someone else's session.
+  if (!meta.participants.some((p) => p.actorId === args.actor.actorId)) {
+    throw new SessionAccessDeniedError(args.sessionId, args.actor.actorId);
   }
 
   const trajectories = await getTrajectoryStore().query({

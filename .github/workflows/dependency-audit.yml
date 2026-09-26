@@ -27,3 +27,6 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Audit (dev, informational)
         run: npm audit --audit-level=high || true
+
+      - name: Override reaudit triage (TASK-070 / TASK-058)
+        run: node scripts/override-reaudit.mjs >> "$GITHUB_STEP_SUMMARY"

@@ -174,12 +174,38 @@ Admin-authored workflow composition captured as **FEAT-090** (needs its own ADR)
 - Governed agent budget & durability config (ADR-048); durable store required in production (fail-closed); overdue debt: promotion-guard CI, coverage ratchet, boundary audit-record fix, dependency-override hygiene.
 - Detailed scope lock + L12 mapping below.
 
-### Sprint 7 — Playform adoption
+### Sprint 7 — Playform adoption + real providers
 
-- Rewire SpikeApp onto `platform/app-framework`; consume the agent-native (AUX) contracts.
-- **TASK-045:** rebase + grow Playform's GENAI_ROADMAP overlay; install the D3/D4 dual-repo guard.
-- **TASK-046 (phase-exit expectation):** auth-enable `k6/api-load.js` (acquire a test-user JWT; send Bearer on `/process` + `/stream`), then run the live `DRY_RUN=0` re-baseline against **staging** — the first real moderation + agent latency baseline. Required before the Phase 5 exit gate.
-- Playform's "game engine abstraction" overlay framing lives here (consumer-side).
+Single large sprint (decision: one Sprint 7, not split). Hygiene first — the CI/boot guard and
+dependency hygiene protect the adoption + real-provider work that stresses those paths — then
+adoption, then real providers, then the live exit proof, then the Phase 5 exit gate.
+
+**Ordered milestones:**
+
+1. **TASK-089 — PF CI production-boot check.** A PF-side check that boots the production build
+   (a CI E2E layer, or an integration test driving `instrumentation.register()` through a simulated
+   production boot) so the ADR-048 D3 store-guard cascade is caught in PF's own gate, not one repo
+   downstream. First — it protects everything after.
+2. **TASK-070 reaudit cadence + TASK-058 process half.** The remaining halves of the 6.5
+   dependency-hygiene work: a periodic remove-and-reaudit cadence for each override (TASK-070), and
+   the shared/synced overrides baseline + triage cadence across repos (TASK-058). Cheap, independent;
+   clear early.
+3. **Adoption core.** Rewire SpikeApp onto `platform/app-framework`; consume the agent-native (AUX)
+   contracts. The sprint's primary purpose.
+4. **TASK-045.** Rebase + grow Playform's GENAI_ROADMAP overlay; install the D3/D4 dual-repo guard.
+   Consumer-side; follows the rewire it documents. Playform's "game engine abstraction" overlay
+   framing lives here.
+5. **Real providers.** Swap reference implementations for real ones — real vision/audio
+   classifiers, real image generation, real synthetic-media detector, C2PA real signing, cross-session
+   adaptive memory. Each is its own ADR (authored as its milestone opens) + a conformance kit. Needs
+   the adoption wiring to exercise them.
+6. **TASK-025 — ffmpeg-service ALB.** Stable URL / live infra; stand it up with the deployment the
+   exit proof needs.
+7. **TASK-046 (phase-exit expectation).** Auth-enable `k6/api-load.js` (acquire a test-user JWT; Bearer
+   on `/process` + `/stream`), then run the live `DRY_RUN=0` re-baseline against **staging** — the
+   first real moderation + agent-latency baseline, and the proof that the ADR-048 governed caps (M1/M2)
+   actually **bind** live. Needs adoption + real providers + live infra deployed, so it is late.
+   Required before the Phase 5 exit gate.
 
 ### gate — Phase 5 exit (E1–E15)
 
