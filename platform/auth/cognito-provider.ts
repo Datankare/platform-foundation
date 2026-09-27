@@ -36,6 +36,7 @@ import type {
 import { logger } from "@/lib/logger";
 import { generateSecureId } from "@/platform/agents/utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getCognitoSettings } from "@/platform/providers/environment-contract";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -49,9 +50,9 @@ export interface CognitoConfig {
 }
 
 export function getCognitoConfigFromEnv(): CognitoConfig {
-  const region = process.env.COGNITO_REGION ?? process.env.AWS_REGION ?? "us-east-1";
-  const userPoolId = process.env.COGNITO_USER_POOL_ID ?? "";
-  const clientId = process.env.COGNITO_CLIENT_ID ?? "";
+  // ADR-050 D2: the contract resolver is the one reader (no AWS_REGION — that is the host's
+  // function region, not the pool's).
+  const { region, userPoolId, clientId } = getCognitoSettings();
 
   if (!userPoolId || !clientId) {
     logger.warn("Cognito config incomplete", {

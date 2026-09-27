@@ -58,10 +58,11 @@ describe("getCognitoConfigFromEnv", () => {
     expect(config.clientId).toBe("my-client");
   });
 
-  it("falls back to AWS_REGION", () => {
+  it("ignores AWS_REGION — falls back to the pool id's region (ADR-050 D2)", () => {
     delete process.env.COGNITO_REGION;
-    process.env.AWS_REGION = "ap-southeast-1";
-    process.env.COGNITO_USER_POOL_ID = "pool";
+    delete process.env.NEXT_PUBLIC_COGNITO_REGION;
+    process.env.AWS_REGION = "us-west-2";
+    process.env.COGNITO_USER_POOL_ID = "ap-southeast-1_Pool";
     process.env.COGNITO_CLIENT_ID = "client";
 
     const config = getCognitoConfigFromEnv();
@@ -70,6 +71,7 @@ describe("getCognitoConfigFromEnv", () => {
 
   it("defaults to us-east-1 when no region env", () => {
     delete process.env.COGNITO_REGION;
+    delete process.env.NEXT_PUBLIC_COGNITO_REGION;
     delete process.env.AWS_REGION;
     process.env.COGNITO_USER_POOL_ID = "pool";
     process.env.COGNITO_CLIENT_ID = "client";

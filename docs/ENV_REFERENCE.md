@@ -31,7 +31,7 @@ To do anything real you will typically set, at minimum:
 
 ```bash
 # A real database (most features that persist need this)
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key   # server-side only
 
@@ -63,14 +63,15 @@ credentials**.
 
 ### Database — Supabase
 
-| Variable                        | Required                             | Default                                  | Notes                                                                                                             |
-| ------------------------------- | ------------------------------------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | When using any Supabase-backed store | —                                        | Project URL. Browser-safe.                                                                                        |
-| `SUPABASE_URL`                  | Optional server-side alias           | falls back to `NEXT_PUBLIC_SUPABASE_URL` | Some server paths read the non-public name; set it if your host separates server config.                          |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | When using any Supabase-backed store | —                                        | Anon key. Browser-safe; row-level security enforces isolation.                                                    |
-| `SUPABASE_SERVICE_ROLE_KEY`     | When using any Supabase-backed store | —                                        | **Server-side only.** Bypasses RLS; used for admin ops, migrations, background jobs. Never expose to the browser. |
+| Variable                        | Required                             | Default | Notes                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_URL`                  | When using any Supabase-backed store | —       | Project URL — the single source (ADR-050 D2). Shape `https://<ref>.supabase.co`: no path, no trailing slash.                                                                             |
+| `NEXT_PUBLIC_SUPABASE_URL`      | No (alias)                           | —       | Alias of `SUPABASE_URL`, read only when it is unset. In production it must not be set alone or disagree.                                                                                 |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | When using any Supabase-backed store | —       | Anon key. Browser-safe; row-level security enforces isolation.                                                                                                                           |
+| `SUPABASE_SERVICE_ROLE_KEY`     | When using any Supabase-backed store | —       | **Server-side only.** Bypasses RLS; used for admin ops, migrations, background jobs. Never expose to the browser. Must be the legacy service_role JWT (`eyJ…`), not an `sb_secret_` key. |
 
-Selecting any `*_STORE=supabase` (below) makes these three required.
+Selecting any `*_STORE=supabase` (below) makes `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+required; in production boot refuses without them (ADR-050 D2).
 
 ### Logging
 
@@ -80,30 +81,44 @@ Selecting any `*_STORE=supabase` (below) makes these three required.
 
 ### Runtime
 
-| Variable   | Required            | Default | Notes                                                                                        |
-| ---------- | ------------------- | ------- | -------------------------------------------------------------------------------------------- |
-| `NODE_ENV` | No (set by tooling) | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand. |
+| Variable   | Required             | Default | Notes                                                                                                                                |
+| ---------- | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV` | No (set by tooling)  | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand.                                         |
+| `VERCEL`   | No (set by the host) | —       | Vercel sets `1` on every deployment. The environment contract refuses harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`) when it is set. |
+
+### Production environment contract (ADR-050 D1/D2)
+
+With `NODE_ENV=production`, boot checks the contract in `platform/providers/environment-contract.ts`
+before any provider initializes and refuses to start, naming every violation: test-double auth
+(`AUTH_PROVIDER` unset or `mock`), a declared setting that is mis-shaped, set only under an alias
+or set under two disagreeing names, a missing required setting, or a harness switch on a hosted
+deployment. The declared settings are `AUTH_PROVIDER`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`,
+`NEXT_PUBLIC_COGNITO_CLIENT_ID`, `NEXT_PUBLIC_COGNITO_REGION`, `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY`, each with the aliases listed in this reference.
 
 ---
 
 ## Authentication
 
-| Variable                                      | Required | Default | Values           |
-| --------------------------------------------- | -------- | ------- | ---------------- |
-| `AUTH_PROVIDER` / `NEXT_PUBLIC_AUTH_PROVIDER` | No       | `mock`  | `cognito` `mock` |
+| Variable                                      | Required          | Default | Values                                                                                                       |
+| --------------------------------------------- | ----------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `AUTH_PROVIDER` / `NEXT_PUBLIC_AUTH_PROVIDER` | Yes in production | `mock`  | `cognito` `mock` — `mock` is a test double, refused in production (ADR-050 D1)                               |
+| `E2E_TEST_DOUBLE_AUTH`                        | No                | —       | `true` (E2E harness only — permits the mock auth provider under a production build; refused when `VERCEL=1`) |
 
-Selecting `cognito` requires the AWS Cognito settings. The `NEXT_PUBLIC_` variants are read by
-the browser client; the non-prefixed ones by the server. Set both to the same value.
+Selecting `cognito` requires the AWS Cognito settings. The `NEXT_PUBLIC_COGNITO_*` names are the
+single source, read by both browser and server; the non-prefixed `COGNITO_*` names are aliases,
+accepted only when unset or equal (ADR-050 D2). `AWS_REGION` is not read — hosts set it to the
+function's region, not the pool's.
 
-| Variable                           | Required                | Default | Notes                                                                                                     |
-| ---------------------------------- | ----------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | With `cognito`          | —       | e.g. `us-east-1_ABC123`. Browser-safe.                                                                    |
-| `NEXT_PUBLIC_COGNITO_CLIENT_ID`    | With `cognito`          | —       | App client ID. Browser-safe.                                                                              |
-| `COGNITO_REGION`                   | With `cognito` (server) | —       | e.g. `us-east-1`.                                                                                         |
-| `COGNITO_USER_POOL_ID`             | With `cognito` (server) | —       | Server-side pool id.                                                                                      |
-| `COGNITO_CLIENT_ID`                | With `cognito` (server) | —       | Server-side client id.                                                                                    |
-| `AWS_REGION`                       | With `cognito`          | —       | AWS region for the Cognito SDK.                                                                           |
-| `ADMIN_DEV_BYPASS`                 | No                      | unset   | **Development only.** When set, bypasses admin permission checks for local work. Never set in production. |
+| Variable                           | Required       | Default          | Notes                                                                                                     |
+| ---------------------------------- | -------------- | ---------------- | --------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | With `cognito` | —                | e.g. `us-east-1_ABC123`. Browser-safe.                                                                    |
+| `NEXT_PUBLIC_COGNITO_CLIENT_ID`    | With `cognito` | —                | App client ID. Browser-safe.                                                                              |
+| `NEXT_PUBLIC_COGNITO_REGION`       | No             | pool id's region | e.g. `us-east-1`. Must match the pool id's region prefix.                                                 |
+| `COGNITO_REGION`                   | No (alias)     | —                | Alias of `NEXT_PUBLIC_COGNITO_REGION`.                                                                    |
+| `COGNITO_USER_POOL_ID`             | No (alias)     | —                | Alias of `NEXT_PUBLIC_COGNITO_USER_POOL_ID`.                                                              |
+| `COGNITO_CLIENT_ID`                | No (alias)     | —                | Alias of `NEXT_PUBLIC_COGNITO_CLIENT_ID`.                                                                 |
+| `ADMIN_DEV_BYPASS`                 | No             | unset            | **Development only.** When set, bypasses admin permission checks for local work. Never set in production. |
 
 ---
 
@@ -249,15 +264,15 @@ as long as the maximum token lifetime.
 `ACRCLOUD_ACCESS_KEY` · `ACRCLOUD_ACCESS_SECRET` · `ACRCLOUD_HOST` · `ADMIN_DEV_BYPASS` ·
 `AI_PROVIDER` · `ANTHROPIC_API_KEY` · `APP_STATE_STORE` · `APPROVAL_POLICY_STORE` ·
 `AUDIO_CONVERTER` · `AUDIO_CONVERTER_KEY` · `AUDIO_CONVERTER_URL` · `AUTH_PROVIDER` ·
-`AWS_REGION` · `BUDGET_STORE` · `CACHE_PROVIDER` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` ·
+`BUDGET_STORE` · `CACHE_PROVIDER` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` ·
 `COGNITO_USER_POOL_ID` · `DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` ·
-`EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `LOG_LEVEL` ·
+`E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `LOG_LEVEL` ·
 `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
-`NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
+`NEXT_PUBLIC_COGNITO_REGION` · `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` ·
 `PROPOSAL_STORE` · `REALTIME_PROVIDER` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` ·
 `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` · `TRANSLATION_PROVIDER` ·
-`TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` · `UPSTASH_REDIS_REST_URL`
+`TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` · `UPSTASH_REDIS_REST_URL` · `VERCEL`
 
 ---
 

@@ -35,6 +35,10 @@ describe("Provider Registry", () => {
     delete process.env.COGNITO_USER_POOL_ID;
     delete process.env.COGNITO_CLIENT_ID;
     delete process.env.COGNITO_REGION;
+    delete process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID;
+    delete process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID;
+    delete process.env.NEXT_PUBLIC_COGNITO_REGION;
+    delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
     delete process.env.ANTHROPIC_API_KEY;
@@ -208,6 +212,17 @@ describe("auth-init backward compat", () => {
   // -------------------------------------------------------------------------
   // ADR-048 D3 + ADR-049 D1: durable stores are required in production
   // -------------------------------------------------------------------------
+  // ADR-050 D1: production refuses test-double auth, so every production boot below that is not
+  // about auth runs on a real (contract-valid) auth configuration.
+  const SERVICE_ROLE_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2ln";
+  const realAuth = (): void => {
+    process.env.AUTH_PROVIDER = "cognito";
+    process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
+    process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
+    delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    delete process.env.E2E_TEST_DOUBLE_AUTH;
+  };
+
   describe("durable stores \u2014 production fail-closed (ADR-048 D3, ADR-049 D1)", () => {
     // Every guarded store durable, so each test can flip exactly one to memory and assert
     // that the named store (not whichever is initialized first) is what refuses to boot.
@@ -216,8 +231,9 @@ describe("auth-init backward compat", () => {
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";
       process.env.SUPABASE_URL = "https://example.supabase.co";
-      process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
       delete process.env.E2E_IN_MEMORY_STORES;
+      realAuth();
     };
     const boot = async (): Promise<() => void> => {
       const { initProviders, resetProviders } =
@@ -272,6 +288,7 @@ describe("auth-init backward compat", () => {
       delete process.env.TRAJECTORY_STORE;
       delete process.env.BUDGET_STORE;
       process.env.E2E_IN_MEMORY_STORES = "true";
+      realAuth();
       expect(await boot()).not.toThrow();
     });
 
@@ -279,6 +296,64 @@ describe("auth-init backward compat", () => {
       setNodeEnv("production");
       allDurable();
       expect(await boot()).not.toThrow();
+    });
+  });
+
+  describe("environment contract at boot (ADR-050 D1/D2)", () => {
+    const boot = async (): Promise<() => void> => {
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      return () => initProviders();
+    };
+    const durable = (): void => {
+      process.env.APP_STATE_STORE = "supabase";
+      process.env.TRAJECTORY_STORE = "supabase";
+      process.env.BUDGET_STORE = "supabase";
+      process.env.SUPABASE_URL = "https://example.supabase.co";
+      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+      delete process.env.E2E_IN_MEMORY_STORES;
+    };
+
+    it("refuses to boot in production on the mock auth provider (D1)", async () => {
+      setNodeEnv("production");
+      durable();
+      delete process.env.AUTH_PROVIDER;
+      delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+      delete process.env.E2E_TEST_DOUBLE_AUTH;
+      expect(await boot()).toThrow(/AUTH_PROVIDER is unset \(defaults to mock\)/);
+    });
+
+    it("refuses before any slot initializes — no auth provider is registered", async () => {
+      setNodeEnv("production");
+      durable();
+      process.env.AUTH_PROVIDER = "mock";
+      delete process.env.E2E_TEST_DOUBLE_AUTH;
+      const run = await boot();
+      expect(run).toThrow(/refusing to boot/);
+      const { hasAuthProvider } = await import("@/platform/auth/config");
+      expect(hasAuthProvider()).toBe(false);
+    });
+
+    it("refuses disagreeing Supabase URLs (D2, TASK-103)", async () => {
+      setNodeEnv("production");
+      durable();
+      realAuth();
+      process.env.NEXT_PUBLIC_SUPABASE_URL = "https://other.supabase.co";
+      expect(await boot()).toThrow(
+        /SUPABASE_URL and NEXT_PUBLIC_SUPABASE_URL .*disagree/
+      );
+    });
+
+    it("boots in production on real auth via the canonical Cognito names", async () => {
+      setNodeEnv("production");
+      durable();
+      realAuth();
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(initProviders().auth).toBe("cognito");
     });
   });
 });

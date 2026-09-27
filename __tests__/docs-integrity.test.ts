@@ -18,6 +18,11 @@
 
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
+import {
+  ENVIRONMENT_CONTRACT,
+  HARNESS_ONLY_SETTINGS,
+  SUPABASE_SELECTORS,
+} from "@/platform/providers/environment-contract";
 
 const ROOT = process.cwd();
 const DOCS = join(ROOT, "docs");
@@ -137,6 +142,19 @@ describe("docs integrity — environment variables", () => {
     const ref = read("docs/ENV_REFERENCE.md");
     const undocumented = codeVars.filter((v) => !ref.includes(v));
     expect(undocumented).toEqual([]);
+  });
+
+  it("documents every setting the environment contract reads (ADR-050 D2)", () => {
+    // The contract reads its settings by name (env[name]), which the process.env scan above
+    // cannot see — so its declarations are checked directly.
+    const ref = read("docs/ENV_REFERENCE.md");
+    const declared = [
+      ...ENVIRONMENT_CONTRACT.flatMap((d) => [d.name, ...d.aliases]),
+      ...SUPABASE_SELECTORS,
+      ...HARNESS_ONLY_SETTINGS,
+      "VERCEL",
+    ];
+    expect(declared.filter((v) => !ref.includes(`\`${v}\``))).toEqual([]);
   });
 });
 

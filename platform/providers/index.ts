@@ -4,6 +4,18 @@
 
 export { initProviders, getActiveProviders, resetProviders } from "./registry";
 
+export {
+  ENVIRONMENT_CONTRACT,
+  EnvironmentContractError,
+  assertEnvironmentContract,
+  checkEnvironmentContract,
+  getAuthProviderSetting,
+  getCognitoSettings,
+  getSupabaseUrl,
+  resolveSetting,
+} from "./environment-contract";
+export type { CognitoSettings, SettingDeclaration } from "./environment-contract";
+
 export type {
   AuthProviderType,
   CacheProviderType,

@@ -2023,12 +2023,14 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 | **Severity** | High — no real token can pass; silent |
 | **Phase**    | Phase 5                               |
 | **Target**   | Phase 5, Sprint 7A                    |
-| **Status**   | Open                                  |
+| **Status**   | Resolved — Sprint 7A A1               |
 | **Logged**   | 2026-09-26                            |
 
 **What:** With `AUTH_PROVIDER` unset the server registers the mock provider, which accepts one hard-coded test token. `playform-dev` ran this way until 7A; every signed-in call failed with "Invalid or expired token".
 
 **Resolution:** ADR-050 D1: refuse test-double auth in a production context, as ADR-048 D3 does for in-memory stores, with a named error at boot.
+
+**Resolved (7A A1):** `assertEnvironmentContract()` runs first in `initProviders()`; production refuses `AUTH_PROVIDER` unset/`mock`. E2E harnesses opt in with `E2E_TEST_DOUBLE_AUTH=true`, which — like every harness switch — is refused when `VERCEL=1`. Covered by `platform/providers/__tests__/environment-contract.test.ts`, `__tests__/provider-registry.test.ts` and the TASK-089 boot check. Consumers add `E2E_TEST_DOUBLE_AUTH` to their own E2E harness before syncing this release.
 
 ### TASK-098 — Guest tokens are unsigned
 
@@ -2119,12 +2121,14 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 | **Severity** | Medium — misconfiguration surfaces as obscure runtime errors |
 | **Phase**    | Phase 5                                                      |
 | **Target**   | Phase 5, Sprint 7A                                           |
-| **Status**   | Open                                                         |
+| **Status**   | Resolved — Sprint 7A A1                                      |
 | **Logged**   | 2026-09-26                                                   |
 
 **What:** Stores read `NEXT_PUBLIC_SUPABASE_URL ?? SUPABASE_URL`, so a stray public variable silently overrides the server one; setting shapes (URL with a path, trailing characters) are never checked, surfacing later as errors like PostgREST `PGRST125`.
 
 **Resolution:** ADR-050 D2: declare each setting once with its shape, validate at boot, fail on disagreeing duplicates.
+
+**Resolved (7A A1):** `ENVIRONMENT_CONTRACT` declares each setting with one canonical name, aliases and shape; all readers use its resolvers. `SUPABASE_URL` is canonical — which also connects `lib/supabase/server`, the account-status guard and the metrics sink, which read only `NEXT_PUBLIC_SUPABASE_URL` and so had no database on `playform-dev`. `AWS_REGION` is no longer read for Cognito. Documented in `docs/ENV_REFERENCE.md`; `__tests__/docs-integrity.test.ts` checks every declared name is documented.
 
 ### TASK-104 — Optional features are offered when not configured
 

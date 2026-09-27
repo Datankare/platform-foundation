@@ -15,7 +15,7 @@
  *   P10 — No late discovery: all provider slots defined here
  *
  * Environment variables (all optional — omit for mock/fallback):
- *   AUTH_PROVIDER      = "cognito" | "mock"      (default: "mock")
+ *   AUTH_PROVIDER      = "cognito" | "mock"      (default: "mock"; "mock" refused in production — ADR-050 D1)
  *   CACHE_PROVIDER     = "upstash" | "memory"    (default: "memory")
  *   AI_PROVIDER        = "anthropic" | "mock"    (default: "mock")
  *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
@@ -32,6 +32,10 @@
  *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
  *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
  *   EFFECT_LEDGER          = "supabase" | "memory"  (default: "memory")
+ *
+ * Settings shared by several slots (Supabase URL/key, Cognito ids) are read through the
+ * environment contract resolvers, and in production the whole contract is checked before any
+ * slot initializes (ADR-050 D1/D2 — see ./environment-contract.ts).
  *
  * @module platform/providers
  */
@@ -73,6 +77,12 @@ import {
   SupabaseActivityStateStore,
 } from "@/platform/app-framework";
 import { getSingleton, resetSingleton, setSingleton } from "@/platform/kernel/singleton";
+import {
+  assertEnvironmentContract,
+  getAuthProviderSetting,
+  getCognitoSettings,
+  getSupabaseUrl,
+} from "@/platform/providers/environment-contract";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,9 +136,7 @@ export interface ProviderSelections {
 
 function getProviderSelections(): ProviderSelections {
   return {
-    auth:
-      ((process.env.AUTH_PROVIDER ??
-        process.env.NEXT_PUBLIC_AUTH_PROVIDER) as AuthProviderType) ?? "mock",
+    auth: (getAuthProviderSetting() as AuthProviderType) ?? "mock",
     cache: (process.env.CACHE_PROVIDER as CacheProviderType) ?? "memory",
     ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
@@ -160,17 +168,13 @@ function initAuthProvider(type: AuthProviderType): void {
   if (hasAuthProvider()) return;
 
   if (type === "cognito") {
-    const region = process.env.COGNITO_REGION ?? process.env.AWS_REGION ?? "us-east-1";
-    const userPoolId =
-      process.env.COGNITO_USER_POOL_ID ??
-      process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID ??
-      "";
-    const clientId =
-      process.env.COGNITO_CLIENT_ID ?? process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID ?? "";
+    // ADR-050 D2: one resolver for the Cognito ids. In production the contract has already
+    // refused a missing pool/client, so the mock fallback below is reachable only outside it.
+    const { region, userPoolId, clientId } = getCognitoSettings();
 
     if (!userPoolId || !clientId) {
       logger.warn(
-        "AUTH_PROVIDER=cognito but COGNITO_USER_POOL_ID or COGNITO_CLIENT_ID missing — falling back to mock"
+        "AUTH_PROVIDER=cognito but NEXT_PUBLIC_COGNITO_USER_POOL_ID or NEXT_PUBLIC_COGNITO_CLIENT_ID missing — falling back to mock"
       );
       registerAuthProvider(createMockAuthProvider({}));
       return;
@@ -224,7 +228,7 @@ function initErrorReporter(type: ErrorReporterType): void {
 
 function initRealtimeProvider(type: RealtimeProviderType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     if (!url) {
       logger.warn(
         "REALTIME_PROVIDER=supabase but SUPABASE_URL missing — falling back to mock"
@@ -313,7 +317,7 @@ function initAudioConverter(type: AudioConverterType): void {
 
 function initModerationStore(type: ModerationStoreType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     if (!url || !key) {
@@ -330,7 +334,7 @@ function initModerationStore(type: ModerationStoreType): void {
 
 function initAppStateStore(type: AppStateStoreType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     if (!url || !key) {
@@ -383,7 +387,7 @@ function requireDurableStoreInProduction(envVar: string, noun: string): void {
 
 function initTrajectoryStore(type: TrajectoryStoreType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     // Fail closed (TASK-062). The other slots warn and degrade to memory; for
@@ -407,7 +411,7 @@ function initTrajectoryStore(type: TrajectoryStoreType): void {
 
 function initBudgetStore(type: BudgetStoreType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     // Fail closed, as slot #15 does. Degrading to an in-process counter is precisely
@@ -431,7 +435,7 @@ function initBudgetStore(type: BudgetStoreType): void {
 
 function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     // Fail closed, as the other agent stores do. An in-memory approval policy means an
@@ -452,7 +456,7 @@ function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
 
 function initProposalStore(type: ProposalStoreType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     // Fail closed, as slots #15 and #16 do. An in-memory proposal store means a held
@@ -471,7 +475,7 @@ function initProposalStore(type: ProposalStoreType): void {
 
 function initEffectLedger(type: EffectLedgerType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     // Fail closed. An in-memory effect ledger means a retry after restart finds no entry
@@ -491,7 +495,7 @@ function initEffectLedger(type: EffectLedgerType): void {
 
 function initSocialStore(type: SocialStoreType): void {
   if (type === "supabase") {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+    const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
     if (!url || !key) {
@@ -545,6 +549,10 @@ function writeInitialized(next: boolean): void {
  */
 export function initProviders(): ProviderSelections {
   if (readInitialized()) return getProviderSelections();
+
+  // ADR-050 D1/D2: in production, refuse to boot on a test-double auth provider or a missing,
+  // mis-shaped or duplicated setting — before any slot initializes. No-op outside production.
+  assertEnvironmentContract();
 
   const selections = getProviderSelections();
 

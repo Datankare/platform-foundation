@@ -26,6 +26,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getSingleton, setSingleton } from "@/platform/kernel";
 import { logger } from "@/lib/logger";
+import { getSupabaseUrl } from "@/platform/providers/environment-contract";
 import type { AccountStatus } from "@/platform/moderation/types";
 
 // ---------------------------------------------------------------------------
@@ -228,7 +229,7 @@ async function loadAccountState(userId: string): Promise<UserAccountRow> {
   } catch (err) {
     // Check if Supabase is configured. If not (mock/CI mode),
     // there is no DB to query — degrade to active, not banned.
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseUrl = getSupabaseUrl() ?? "";
     if (!supabaseUrl) {
       return {
         accountStatus: "active" as AccountStatus,
@@ -340,7 +341,7 @@ async function loadUserFeatureRestrictions(
     return (data ?? []).map((row) => row.feature);
   } catch (err) {
     // No Supabase configured (mock/CI) is not a DB error — degrade to "no blocks".
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseUrl = getSupabaseUrl() ?? "";
     if (!supabaseUrl) return [];
     logger.error(
       "Account status guard: per-account restriction load threw — failing closed",
