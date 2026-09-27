@@ -174,6 +174,45 @@ Admin-authored workflow composition captured as **FEAT-090** (needs its own ADR)
 - Governed agent budget & durability config (ADR-048); durable store required in production (fail-closed); overdue debt: promotion-guard CI, coverage ratchet, boundary audit-record fix, dependency-override hygiene.
 - Detailed scope lock + L12 mapping below.
 
+### Sprint 7A — Deployment & Auth Readiness (maintenance, inserted mid-Sprint 7)
+
+Sprint 7 **paused after milestone 3c** (SpikeApp on the persisted translate session, CI green). Taking
+Playform to a real deployment (`playform-dev` on Vercel) for the first time exposed that nothing
+verified a deployed environment: mock auth in a deployment, unsigned guest tokens, no guest path,
+SSO never wired, features offered but unconfigured, the deployed address tracking the wrong branch,
+and E2E passing while users saw errors (ADR-050, Proposed). The Cognito pool had also been deleted
+with its AWS account. 7A fixes the foundation and adds the guards so this class cannot recur, then
+Sprint 7 resumes at milestone 3d.
+
+**Decisions taken:** keep Cognito as the auth provider (new AWS account, hardened: root MFA,
+zero-spend budget alert, alternate contacts; new pool in `us-east-1` with deletion protection, email
+sign-in, SPA client with no secret, `USER_PASSWORD_AUTH` + refresh flows, hosted-UI Cognito domain);
+SSO proven with Google first, Apple and Microsoft at the end of 7A; production database and migration
+baseline included (C4).
+
+| Phase               | Step      | Work                                                                                                                     | Status      |
+| ------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ | ----------- |
+| 0 · Accounts        | 0.1–0.3   | AWS account, Cognito pool + client, hosted domain + callback/sign-out URLs                                               | Done        |
+|                     | 0.4       | Google identity provider (Google side + Cognito side, verified via hosted login)                                         | Done        |
+|                     | 0.5 · 0.6 | Apple · Microsoft identity providers                                                                                     | End of 7A   |
+| A · Platform guards | A1        | Production refuses test-double auth; environment contract checked at boot (TASK-097, TASK-103)                           | Open        |
+|                     | A2        | Signed guest tokens (TASK-098)                                                                                           | Open        |
+|                     | A3        | Opt-in guest routes, namespaced guest ids (TASK-099)                                                                     | Open        |
+| B · Playform        | B1        | Guest allowance, admin-governed min 1 / default 5 / max 10 (TASK-099)                                                    | Open        |
+|                     | B2        | E2E asserts real results; guest-limit test (TASK-100)                                                                    | Open        |
+|                     | B3        | Optional features offered only when configured (TASK-104); Teams on the signed-in user + durable social store (TASK-107) | Open        |
+| C · Environments    | C1        | Real auth on dev (Cognito) — done for `playform-dev`, staging to match                                                   | Partly done |
+|                     | C2        | SSO via Cognito hosted sign-in, configured providers only (TASK-101)                                                     | Open        |
+|                     | C3        | Deployed smoke test after every dev/staging deploy (TASK-102)                                                            | Open        |
+|                     | C4        | Migration baseline + CI replay (TASK-091), production database (TASK-092), project↔branch topology (TASK-105)            | Open        |
+| Close               |           | ADR-050 Accepted, PF v2.7.0, Playform sync, resume Sprint 7 at 3d                                                        | —           |
+
+**Also found during 7A testing, scheduled in Sprint 7 before it closes:** TASK-093 (alphabetical
+language order), TASK-094 (batch multi-language selection), TASK-095 (translate latency — measured
+median 2.6 s server-side, session path ≈ 0.26 s, the rest two sequential AI calls), TASK-096 (PDF
+extraction fails in deployment), TASK-106 (refresh-token rotation), TASK-108 (Teams participation —
+a product decision).
+
 ### Sprint 7 — Playform adoption + real providers
 
 Single large sprint (decision: one Sprint 7, not split). Hygiene first — the CI/boot guard and

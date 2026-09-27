@@ -1910,7 +1910,7 @@ coverage numbers for its baseline. Pairs with TASK-058.
 | **Type**     | Schema integrity                                                          |
 | **Severity** | High — blocks a fresh production database; a broken migration ships green |
 | **Phase**    | Phase 5                                                                   |
-| **Target**   | Phase 5, Sprint 7                                                         |
+| **Target**   | Phase 5, Sprint 7A (C4)                                                   |
 | **Status**   | Open                                                                      |
 | **Logged**   | 2026-09-26                                                                |
 
@@ -1936,7 +1936,7 @@ rejected: it changes what the live database claims to have run. Prerequisite for
 | **Type**     | Environment isolation                                        |
 | **Severity** | Medium — harmless pre-launch; must not carry into real users |
 | **Phase**    | Phase 5                                                      |
-| **Target**   | Phase 5, Sprint 7                                            |
+| **Target**   | Phase 5, Sprint 7A (C4)                                      |
 | **Status**   | Open                                                         |
 | **Logged**   | 2026-09-26                                                   |
 
@@ -1949,6 +1949,262 @@ and a staging migration cannot touch production.
 **Why it is a task:** a new project needs its schema built from the TASK-091 baseline, its own
 service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `TRAJECTORY_STORE`, `BUDGET_STORE`, `APP_STATE_STORE`) on the production project.
+
+### TASK-093 — Language lists are not in alphabetical order
+
+| Field        | Detail            |
+| ------------ | ----------------- |
+| **ID**       | TASK-093          |
+| **Type**     | Enhancement       |
+| **Severity** | Low — usability   |
+| **Phase**    | Phase 5           |
+| **Target**   | Phase 5, Sprint 7 |
+| **Status**   | Open              |
+| **Logged**   | 2026-09-26        |
+
+**What:** The _Add languages_ picker and the translation card's _Also:_ row list languages in a fixed, non-alphabetical order.
+
+**Resolution:** Sort both lists A→Z by display name through one shared helper so they cannot drift; a test pins the order.
+
+### TASK-094 — Each language click re-translates — no batch multi-language selection
+
+| Field        | Detail                    |
+| ------------ | ------------------------- |
+| **ID**       | TASK-094                  |
+| **Type**     | Enhancement               |
+| **Severity** | Medium — cost and latency |
+| **Phase**    | Phase 5                   |
+| **Target**   | Phase 5, Sprint 7         |
+| **Status**   | Open                      |
+| **Logged**   | 2026-09-26                |
+
+**What:** Toggling a language chip after a translation immediately dispatches a new translate turn: one paid request (and 2–5 s) per click.
+
+**Resolution:** Chips should only toggle selection; one Translate covers every selected language. Acceptance: N languages selected produce exactly one dispatch and the card shows all of them.
+
+### TASK-095 — Translate turns take 2–5 s
+
+| Field        | Detail                   |
+| ------------ | ------------------------ |
+| **ID**       | TASK-095                 |
+| **Type**     | Performance              |
+| **Severity** | Medium — perceived speed |
+| **Phase**    | Phase 5                  |
+| **Target**   | Phase 5, Sprint 7        |
+| **Status**   | Open                     |
+| **Logged**   | 2026-09-26               |
+
+**What:** Measured on `playform-dev` (Vercel `iad1`, 2026-09-26): translate turn median 2.6 s server-side (1.7–5.4 s); every other session action median 0.26 s; text-to-speech 0.22 s. The session/governance path costs ≈ 0.25 s; the rest is the safety check (an LLM call) completing before detection, classification (a second LLM call) and translation start.
+
+**Resolution:** Run safety and classification as one call, or concurrently, and re-measure. Target set from the new measurement.
+
+### TASK-096 — PDF upload fails in deployment — `@napi-rs/canvas` is a devDependency
+
+| Field        | Detail                               |
+| ------------ | ------------------------------------ |
+| **ID**       | TASK-096                             |
+| **Type**     | Bug                                  |
+| **Severity** | Medium — a visible feature is broken |
+| **Phase**    | Phase 5                              |
+| **Target**   | Phase 5, Sprint 7                    |
+| **Status**   | Open                                 |
+| **Logged**   | 2026-09-26                           |
+
+**What:** `/api/extract` fails with `DOMMatrix is not defined`: the PDF parser needs `@napi-rs/canvas` at runtime, but Playform lists it under devDependencies, so the deployment never installs it.
+
+**Resolution:** Move it to dependencies and declare it a server external package in `next.config.ts`; verify a PDF extract on the deployed address (Playform-owned files).
+
+### TASK-097 — Production accepts the mock auth provider
+
+| Field        | Detail                                |
+| ------------ | ------------------------------------- |
+| **ID**       | TASK-097                              |
+| **Type**     | Deployment integrity                  |
+| **Severity** | High — no real token can pass; silent |
+| **Phase**    | Phase 5                               |
+| **Target**   | Phase 5, Sprint 7A                    |
+| **Status**   | Open                                  |
+| **Logged**   | 2026-09-26                            |
+
+**What:** With `AUTH_PROVIDER` unset the server registers the mock provider, which accepts one hard-coded test token. `playform-dev` ran this way until 7A; every signed-in call failed with "Invalid or expired token".
+
+**Resolution:** ADR-050 D1: refuse test-double auth in a production context, as ADR-048 D3 does for in-memory stores, with a named error at boot.
+
+### TASK-098 — Guest tokens are unsigned
+
+| Field        | Detail                    |
+| ------------ | ------------------------- |
+| **ID**       | TASK-098                  |
+| **Type**     | Security                  |
+| **Severity** | High — forgeable identity |
+| **Phase**    | Phase 5                   |
+| **Target**   | Phase 5, Sprint 7A        |
+| **Status**   | Open                      |
+| **Logged**   | 2026-09-26                |
+
+**What:** `createGuestToken` returns `guest.` + base64 JSON (`sub`, `type`, `iat`, `exp`) with no signature, and `verifyGuestToken` only decodes it and checks expiry. Anyone can mint a guest token for any id and any expiry. Nothing relies on it yet.
+
+**Resolution:** ADR-050 D4: HMAC-sign guest tokens under `GUEST_TOKEN_SECRET` and verify the signature; must land before any route accepts guests.
+
+### TASK-099 — No guest path in the platform auth check, and no guest allowance
+
+| Field        | Detail                                               |
+| ------------ | ---------------------------------------------------- |
+| **ID**       | TASK-099                                             |
+| **Type**     | Auth                                                 |
+| **Severity** | Medium — guest mode admits users who then cannot act |
+| **Phase**    | Phase 5                                              |
+| **Target**   | Phase 5, Sprint 7A                                   |
+| **Status**   | Open                                                 |
+| **Logged**   | 2026-09-26                                           |
+
+**What:** `requireAuth` verifies only real-user tokens, so a guest can enter the app but every action is rejected. There is also no bound on what a guest may consume.
+
+**Resolution:** ADR-050 D4: an opt-in guest check for routes that allow guests (translate), namespaced guest actor ids, and a governed per-guest translate allowance (admin-settable, min 1 / default 5 / max 10) enforced before any paid call, with a clear sign-in prompt at the limit.
+
+### TASK-100 — E2E journey tests pass when the user sees an error
+
+| Field        | Detail                             |
+| ------------ | ---------------------------------- |
+| **ID**       | TASK-100                           |
+| **Type**     | Test integrity                     |
+| **Severity** | Medium — green CI while users fail |
+| **Phase**    | Phase 5                            |
+| **Target**   | Phase 5, Sprint 7A                 |
+| **Status**   | Open                               |
+| **Logged**   | 2026-09-26                         |
+
+**What:** The translate journeys wait for the translation card **or any alert**, so they passed while every real user got "Invalid or expired token".
+
+**Resolution:** Assert a real translation result; add explicit error-path and guest-limit journeys (Playform-owned `e2e/`).
+
+### TASK-101 — SSO buttons are never wired to the identity provider
+
+| Field        | Detail             |
+| ------------ | ------------------ |
+| **ID**       | TASK-101           |
+| **Type**     | Auth               |
+| **Severity** | Medium — dead UI   |
+| **Phase**    | Phase 5            |
+| **Target**   | Phase 5, Sprint 7A |
+| **Status**   | Open               |
+| **Logged**   | 2026-09-26         |
+
+**What:** Playform's browser auth provider returns "SSO not available" for every provider. Cognito's hosted sign-in (domain, callbacks, Google identity provider) is configured as of 7A step 0.4.
+
+**Resolution:** Start SSO through Cognito's hosted sign-in, add `/auth/callback` to exchange the code, and show only configured providers (ADR-050 D3). Google first; Apple and Microsoft at the end of 7A.
+
+### TASK-102 — No test runs against a deployed environment
+
+| Field        | Detail                           |
+| ------------ | -------------------------------- |
+| **ID**       | TASK-102                         |
+| **Type**     | CI integrity                     |
+| **Severity** | High — configuration is untested |
+| **Phase**    | Phase 5                          |
+| **Target**   | Phase 5, Sprint 7A               |
+| **Status**   | Open                             |
+| **Logged**   | 2026-09-26                       |
+
+**What:** Unit, integration and E2E tests all run on CI-built code with test settings; nothing checked `playform-dev` itself, so a missing database, mock auth and the wrong deployed branch all went unnoticed.
+
+**Resolution:** ADR-050 D5: after each dev/staging deploy, check health, report the deployed commit, and perform a real translate against the deployed address.
+
+### TASK-103 — Deployment settings are unvalidated and can shadow each other
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-103                                                     |
+| **Type**     | Deployment integrity                                         |
+| **Severity** | Medium — misconfiguration surfaces as obscure runtime errors |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | Phase 5, Sprint 7A                                           |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-09-26                                                   |
+
+**What:** Stores read `NEXT_PUBLIC_SUPABASE_URL ?? SUPABASE_URL`, so a stray public variable silently overrides the server one; setting shapes (URL with a path, trailing characters) are never checked, surfacing later as errors like PostgREST `PGRST125`.
+
+**Resolution:** ADR-050 D2: declare each setting once with its shape, validate at boot, fail on disagreeing duplicates.
+
+### TASK-104 — Optional features are offered when not configured
+
+| Field        | Detail                    |
+| ------------ | ------------------------- |
+| **ID**       | TASK-104                  |
+| **Type**     | UX / deployment integrity |
+| **Severity** | Medium — dead ends        |
+| **Phase**    | Phase 5                   |
+| **Target**   | Phase 5, Sprint 7A        |
+| **Status**   | Open                      |
+| **Logged**   | 2026-09-26                |
+
+**What:** Music identification (no provider keys, no audio service) and audio upload are offered on `playform-dev` and fail with "please try again", which can never succeed.
+
+**Resolution:** ADR-050 D3: each optional feature declares its settings; the UI offers it only when they are present.
+
+### TASK-105 — Vercel project-to-branch mapping is undocumented and was wrong
+
+| Field        | Detail                                     |
+| ------------ | ------------------------------------------ |
+| **ID**       | TASK-105                                   |
+| **Type**     | Deployment topology                        |
+| **Severity** | Medium — the deployed address ran old code |
+| **Phase**    | Phase 5                                    |
+| **Target**   | Phase 5, Sprint 7A                         |
+| **Status**   | Open                                       |
+| **Logged**   | 2026-09-26                                 |
+
+**What:** `playform-dev` tracked `main`, so its address served v0.5.0 while new code went only to preview addresses. Fixed for `playform-dev` (now `develop`) during 7A; staging and production unverified.
+
+**Resolution:** ADR-050 D6: document and verify `playform-dev` ← develop, `playform-staging` ← staging, production ← main; the smoke test reports the deployed commit.
+
+### TASK-106 — Refresh-token rotation is off
+
+| Field        | Detail             |
+| ------------ | ------------------ |
+| **ID**       | TASK-106           |
+| **Type**     | Security hardening |
+| **Severity** | Low                |
+| **Phase**    | Phase 5            |
+| **Target**   | Phase 5, Sprint 7  |
+| **Status**   | Open               |
+| **Logged**   | 2026-09-26         |
+
+**What:** Cognito's refresh-token rotation requires disabling `ALLOW_REFRESH_TOKEN_AUTH` and refreshing via `GetTokensFromRefreshToken`; the provider uses `REFRESH_TOKEN_AUTH`, so rotation stays off.
+
+**Resolution:** Switch the provider's refresh call, then enable rotation on the app client.
+
+### TASK-107 — Teams panel uses a hard-coded demo user and an in-memory social store
+
+| Field        | Detail                                  |
+| ------------ | --------------------------------------- |
+| **ID**       | TASK-107                                |
+| **Type**     | Identity / durability                   |
+| **Severity** | Medium — all users share one membership |
+| **Phase**    | Phase 5                                 |
+| **Target**   | Phase 5, Sprint 7A                      |
+| **Status**   | Open                                    |
+| **Logged**   | 2026-09-26                              |
+
+**What:** The panel requests groups for the literal user `current-user`, not the signed-in user, and the social store is in memory on deployments, so joins are shared across users and lost on restart.
+
+**Resolution:** Use the signed-in user's id; make the social store durable in production like ADR-048/049 stores.
+
+### TASK-108 — Teams has no participation surface and shows invented group data
+
+| Field        | Detail            |
+| ------------ | ----------------- |
+| **ID**       | TASK-108          |
+| **Type**     | Product           |
+| **Severity** | Medium            |
+| **Phase**    | Phase 5           |
+| **Target**   | Phase 5, Sprint 7 |
+| **Status**   | Open              |
+| **Logged**   | 2026-09-26        |
+
+**What:** Group names and member counts are derived from ids and scores (marked demo-only in code), and there is no posting, chat or activity view, so groups cannot be used.
+
+**Resolution:** Product decision on what participation means, then real group data and a participation surface.
 
 ## Known Issue — TASK-020 numbering collision
 

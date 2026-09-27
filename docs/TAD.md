@@ -163,6 +163,7 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-047 | Multimodal Provenance & Synthetic-Media Det.  |
 | ADR-048 | Governed Agent Budget & Durability Config     |
 | ADR-049 | Activity Session Durability & Ownership       |
+| ADR-050 | Deployment Environment Contract               |
 
 ---
 
