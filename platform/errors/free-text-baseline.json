@@ -1,4 +1,4 @@
 {
   "_comment": "ADR-051 / TASK-109 ratchet: free-text API error responses remaining. Lower it in the commit that converts them; 7A A4b takes it to 0.",
-  "count": 58
+  "count": 17
 }

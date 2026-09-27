@@ -14,6 +14,7 @@ import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getReviewQueueStore } from "@/platform/moderation/review-store";
 import { generateReviewRecommendation } from "@/platform/moderation/review-assist";
+import { apiError } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
 
@@ -30,7 +31,7 @@ export async function POST(
   try {
     const item = await getReviewQueueStore().getById(id);
     if (!item) {
-      return NextResponse.json({ error: "Review item not found" }, { status: 404 });
+      return apiError("moderation.review_item_not_found", { request });
     }
 
     const recommendation = await generateReviewRecommendation(item, requestId);
@@ -42,6 +43,6 @@ export async function POST(
       reviewItemId: id,
       route: "api/moderation/review/[id]/assist",
     });
-    return NextResponse.json({ error: "Failed to generate suggestion" }, { status: 500 });
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }

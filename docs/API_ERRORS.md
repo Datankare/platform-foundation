@@ -19,7 +19,7 @@ Every error the API returns has this body (ADR-051 D3):
 - Until Sprint 7B the body also carries `success: false` and `error` (equal to `message`) — deprecated aliases for older screens. Do not build on them.
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 
-**39 codes** in 9 areas.
+**44 codes** in 9 areas.
 
 ## Account
 
@@ -30,12 +30,13 @@ Every error the API returns has this body (ADR-051 D3):
 
 ## Approvals
 
-| Code                            | HTTP | Message (en)                                                                  | Params            | What the caller should do  |
-| ------------------------------- | ---- | ----------------------------------------------------------------------------- | ----------------- | -------------------------- |
-| `approvals.decision_conflict`   | 409  | This decision could not be recorded; the item changed. Refresh and try again. | —                 | Refresh.                   |
-| `approvals.hold_not_found`      | 404  | That held action was not found.                                               | —                 | Refresh the list.          |
-| `approvals.permission_required` | 403  | Clearing this change requires the {permission} permission.                    | `permission` (id) | Route to a holder of it.   |
-| `approvals.self_approval`       | 409  | You cannot approve your own change; another approver must clear it.           | —                 | Route to another approver. |
+| Code                            | HTTP | Message (en)                                                                  | Params            | What the caller should do                      |
+| ------------------------------- | ---- | ----------------------------------------------------------------------------- | ----------------- | ---------------------------------------------- |
+| `approvals.decision_conflict`   | 409  | This decision could not be recorded; the item changed. Refresh and try again. | —                 | Refresh.                                       |
+| `approvals.expired`             | 409  | This approval has expired. Request the change again.                          | —                 | Tell the requester to submit the change again. |
+| `approvals.hold_not_found`      | 404  | That held action was not found.                                               | —                 | Refresh the list.                              |
+| `approvals.permission_required` | 403  | Clearing this change requires the {permission} permission.                    | `permission` (id) | Route to a holder of it.                       |
+| `approvals.self_approval`       | 409  | You cannot approve your own change; another approver must clear it.           | —                 | Route to another approver.                     |
 
 ## Authentication and sign-in
 
@@ -72,15 +73,19 @@ Every error the API returns has this body (ADR-051 D3):
 
 ## Moderation
 
-| Code                                  | HTTP | Message (en)                                           | Params        | What the caller should do |
-| ------------------------------------- | ---- | ------------------------------------------------------ | ------------- | ------------------------- |
-| `moderation.appeal_not_found`         | 404  | That appeal was not found.                             | —             | —                         |
-| `moderation.appeal_pending`           | 409  | An appeal is already pending for this decision.        | —             | Show the pending appeal.  |
-| `moderation.decision_not_found`       | 404  | That moderation decision was not found.                | —             | —                         |
-| `moderation.modified_action_required` | 400  | Choose the modified action.                            | —             | Prompt for it.            |
-| `moderation.not_claimer`              | 409  | Only the reviewer who claimed this item can change it. | `action` (id) | Refresh the queue.        |
-| `moderation.not_own_decision`         | 403  | You can only appeal your own moderation decisions.     | —             | —                         |
-| `moderation.review_item_not_found`    | 404  | That review item was not found.                        | —             | —                         |
+| Code                                  | HTTP | Message (en)                                                                     | Params           | What the caller should do                 |
+| ------------------------------------- | ---- | -------------------------------------------------------------------------------- | ---------------- | ----------------------------------------- |
+| `moderation.appeal_not_allowed`       | 400  | Only blocked content can be appealed.                                            | —                | Hide the appeal action for this decision. |
+| `moderation.appeal_not_found`         | 404  | That appeal was not found.                                                       | —                | —                                         |
+| `moderation.appeal_pending`           | 409  | An appeal is already pending for this decision.                                  | —                | Show the pending appeal.                  |
+| `moderation.appeal_reason_too_short`  | 400  | Explain your appeal in at least {min, number} characters.                        | `min` (number)   | Ask for a longer reason.                  |
+| `moderation.appeal_window_expired`    | 400  | The appeal window has closed. Appeals must be made within {hours, number} hours. | `hours` (number) | Explain the window has closed; no retry.  |
+| `moderation.decision_not_found`       | 404  | That moderation decision was not found.                                          | —                | —                                         |
+| `moderation.item_state_conflict`      | 409  | This item has already been handled or changed. Refresh the queue.                | `status` (id)    | Refresh the queue.                        |
+| `moderation.modified_action_required` | 400  | Choose the modified action.                                                      | —                | Prompt for it.                            |
+| `moderation.not_claimer`              | 409  | Only the reviewer who claimed this item can change it.                           | `action` (id)    | Refresh the queue.                        |
+| `moderation.not_own_decision`         | 403  | You can only appeal your own moderation decisions.                               | —                | —                                         |
+| `moderation.review_item_not_found`    | 404  | That review item was not found.                                                  | —                | —                                         |
 
 ## Rate limits
 

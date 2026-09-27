@@ -11,6 +11,7 @@
 
 import type { AccountStatus, ModerationAction, ModerationResult } from "./types";
 import type { ExplanationChain } from "@/platform/rag/types";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 // ---------------------------------------------------------------------------
 // Review queue item — the core unit of human review
@@ -56,6 +57,18 @@ export type ReviewDecision = "uphold" | "overturn" | "modify";
  * A single review queue item. Created by middleware (escalation),
  * Sentinel (ban), or user (appeal).
  */
+/**
+ * Result of a review-queue operation. `errorCode` (ADR-051) is what a route turns into its
+ * response — never the English `error`, which is for logs.
+ */
+export interface ReviewResult {
+  success: boolean;
+  item?: ReviewQueueItem;
+  error?: string;
+  errorCode?: ErrorCode;
+  errorParams?: Readonly<Record<string, string | number>>;
+}
+
 export interface ReviewQueueItem {
   /** Unique review item ID */
   readonly id: string;
@@ -174,7 +187,7 @@ export interface ReviewQueueStore {
   /** Submit a new review item. Returns the created item or error (L19). */
   submit(
     item: Omit<ReviewQueueItem, "id" | "createdAt" | "updatedAt">
-  ): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }>;
+  ): Promise<ReviewResult>;
 
   /** Get a review item by ID. */
   getById(id: string): Promise<ReviewQueueItem | undefined>;
@@ -200,7 +213,7 @@ export interface ReviewQueueStore {
         | "updatedAt"
       >
     >
-  ): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }>;
+  ): Promise<ReviewResult>;
 
   /** Query review items with filters. */
   query(options?: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]>;

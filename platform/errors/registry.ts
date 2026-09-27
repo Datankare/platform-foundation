@@ -51,6 +51,11 @@ export const ERROR_CODES = {
     params: [],
     action: "Refresh.",
   },
+  "approvals.expired": {
+    status: 409,
+    params: [],
+    action: "Tell the requester to submit the change again.",
+  },
   "approvals.hold_not_found": {
     status: 404,
     params: [],
@@ -161,15 +166,35 @@ export const ERROR_CODES = {
     params: [],
     action: "—",
   },
+  "moderation.appeal_not_allowed": {
+    status: 400,
+    params: [],
+    action: "Hide the appeal action for this decision.",
+  },
   "moderation.appeal_pending": {
     status: 409,
     params: [],
     action: "Show the pending appeal.",
   },
+  "moderation.appeal_reason_too_short": {
+    status: 400,
+    params: [{ name: "min", kind: "number" }],
+    action: "Ask for a longer reason.",
+  },
+  "moderation.appeal_window_expired": {
+    status: 400,
+    params: [{ name: "hours", kind: "number" }],
+    action: "Explain the window has closed; no retry.",
+  },
   "moderation.decision_not_found": {
     status: 404,
     params: [],
     action: "—",
+  },
+  "moderation.item_state_conflict": {
+    status: 409,
+    params: [{ name: "status", kind: "id" }],
+    action: "Refresh the queue.",
   },
   "moderation.modified_action_required": {
     status: 400,

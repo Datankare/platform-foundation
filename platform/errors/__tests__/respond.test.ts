@@ -1,7 +1,12 @@
 /**
  * ADR-051 D3: { code, message, params } bodies, locale negotiation, rendering fallbacks.
  */
-import { apiError, apiErrorBody, internalError } from "@/platform/errors/respond";
+import {
+  apiError,
+  apiErrorBody,
+  errorFromResult,
+  internalError,
+} from "@/platform/errors/respond";
 import { logger } from "@/lib/logger";
 import {
   availableLocales,
@@ -114,6 +119,34 @@ describe("internalError", () => {
       "Internal error",
       expect.objectContaining({ error: "non-Error thrown" })
     );
+  });
+});
+
+describe("errorFromResult", () => {
+  it("uses the result's code and params", async () => {
+    const res = errorFromResult({
+      error: "Appeal window has expired (48 hours)",
+      errorCode: "moderation.appeal_window_expired",
+      errorParams: { hours: 48 },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("moderation.appeal_window_expired");
+    expect(body.message).toBe(
+      "The appeal window has closed. Appeals must be made within 48 hours."
+    );
+  });
+
+  it("an uncoded or internal failure is a logged 500 with no detail", async () => {
+    for (const result of [
+      { error: "Update failed: 500" },
+      { error: "No row returned", errorCode: "internal.error" as const },
+      {},
+    ]) {
+      const res = errorFromResult(result, { context: "Review update" });
+      expect(res.status).toBe(500);
+      expect(JSON.stringify(await res.json())).not.toMatch(/Update failed|No row/);
+    }
   });
 });
 

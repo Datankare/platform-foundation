@@ -112,3 +112,30 @@ export function internalError(
   }
   return apiError("internal.error", { params: { requestId }, request: options.request });
 }
+
+/** A service or store result that failed with a code (ADR-051). */
+export interface CodedFailure {
+  error?: string;
+  errorCode?: ErrorCode;
+  errorParams?: Readonly<Record<string, string | number>>;
+}
+
+/**
+ * The response for a failed service result: its code and params, or — when it carries no code
+ * or `internal.error` — a logged 500 whose English `error` goes to the log only.
+ */
+export function errorFromResult(
+  result: CodedFailure,
+  options: {
+    request?: { headers: Headers; nextUrl?: { pathname: string } };
+    context?: string;
+  } = {}
+): NextResponse {
+  if (!result.errorCode || result.errorCode === "internal.error") {
+    return internalError(result.error ?? "operation failed without a code", options);
+  }
+  return apiError(result.errorCode, {
+    params: result.errorParams,
+    request: options.request,
+  });
+}

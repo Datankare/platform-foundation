@@ -2234,6 +2234,8 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 **Progress (7A A4b-1, PF):** request-validation, auth-guard (`requireAuth`, `requireActor`, `requirePermission`, admin self-elevation, actor account status), rate-limit, admin and `/api/process` errors on codes; every 500 in them is `internal.error` — the 11 responses that echoed internal error text now log it with a request id and return only the id (`internalError`); the content classifier's reason (which may quote matched terms) goes to the log. Free-text ratchet 102 → 58. Compatibility aliases `success: false` / `error` stay in the body until 7B.
 
+**Progress (7A A4b-2, PF):** moderation and approvals. Services and stores return `errorCode` (+ `errorParams`) with their results (`ReviewResult`, `ConfigApprovalResult`); routes answer with `errorFromResult()`, so no status is chosen by matching English any more (`statusForError`, `appealErrorStatus` removed). Five codes added (`moderation.appeal_not_allowed`, `appeal_reason_too_short`, `appeal_window_expired`, `item_state_conflict`, `approvals.expired`) — 44 in all. A store's database text never reaches a response. Free-text ratchet 58 → 17 (the auth routes, A4b-3).
+
 ### TASK-110 — Screen strings are English literals
 
 | Field        | Detail                                |
