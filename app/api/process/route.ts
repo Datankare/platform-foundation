@@ -6,11 +6,18 @@ import { ProcessResponse } from "@/types";
 import { logger, generateRequestId } from "@/lib/logger";
 import { MAX_INPUT_CHARACTERS } from "@/shared/config/limits";
 import { apiError } from "@/platform/errors";
+import { requireActorWithStatus } from "@/platform/auth/actor-guard";
+import { enforceGuestAllowance } from "@/platform/auth/guest-allowance";
 
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
   const start = Date.now();
   logger.request("/api/process", "POST", requestId);
+
+  // Signed-in users, and guests within the governed allowance (ADR-050 D4). Every call below
+  // the validation is paid, so an anonymous request never reaches them.
+  const guard = await requireActorWithStatus(request, "translate", { allowGuests: true });
+  if (guard.error) return guard.error;
 
   try {
     const body = await request.json();
@@ -34,6 +41,19 @@ export async function POST(request: NextRequest) {
         params: { max: MAX_INPUT_CHARACTERS },
         request,
       });
+    }
+
+    // Counted after cheap validation, before the first paid call (the safety classifier).
+    const allowance = await enforceGuestAllowance(guard.actor, { request });
+    if (allowance.error) {
+      logger.response(
+        "/api/process",
+        "POST",
+        allowance.error.status,
+        requestId,
+        Date.now() - start
+      );
+      return allowance.error;
     }
 
     const safety = await checkSafety(trimmed);
@@ -64,10 +84,14 @@ export async function POST(request: NextRequest) {
     );
 
     logger.response("/api/process", "POST", 200, requestId, Date.now() - start);
-    return NextResponse.json<ProcessResponse>({
+    const response = NextResponse.json<ProcessResponse>({
       success: true,
       translations: results,
     });
+    if (allowance.remaining !== null) {
+      response.headers.set("X-Guest-Translations-Remaining", String(allowance.remaining));
+    }
+    return response;
   } catch (error) {
     logger.error("Process API error", {
       requestId,

@@ -183,17 +183,18 @@ Selecting `CACHE_PROVIDER=upstash` requires the two `UPSTASH_REDIS_REST_*` varia
 Each store selects between an in-memory implementation (default, ephemeral) and Supabase
 (durable). Selecting `supabase` for any of these requires the three Supabase variables above.
 
-| Variable                | Required | Default  | Values                                                                                                         |
-| ----------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------- |
-| `MODERATION_STORE`      | No       | `memory` | `supabase` `memory`                                                                                            |
-| `SOCIAL_STORE`          | No       | `memory` | `supabase` `memory`                                                                                            |
-| `APP_STATE_STORE`       | No       | `memory` | `supabase` `memory` (required `supabase` in production — ADR-049 D1)                                           |
-| `TRAJECTORY_STORE`      | No       | `memory` | `supabase` `memory`                                                                                            |
-| `BUDGET_STORE`          | No       | `memory` | `supabase` `memory`                                                                                            |
-| `E2E_IN_MEMORY_STORES`  | No       |          | `true` (E2E harness only — permits in-memory agent stores under a production build; never set on a deployment) |
-| `PROPOSAL_STORE`        | No       | `memory` | `supabase` `memory`                                                                                            |
-| `EFFECT_LEDGER`         | No       | `memory` | `supabase` `memory`                                                                                            |
-| `APPROVAL_POLICY_STORE` | No       | `memory` | `supabase` `memory`                                                                                            |
+| Variable                | Required          | Default  | Values                                                                                                                               |
+| ----------------------- | ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `MODERATION_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `SOCIAL_STORE`          | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `APP_STATE_STORE`       | No                | `memory` | `supabase` `memory` (required `supabase` in production — ADR-049 D1)                                                                 |
+| `TRAJECTORY_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `BUDGET_STORE`          | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory agent stores under a production build; never set on a deployment)                       |
+| `PROPOSAL_STORE`        | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `EFFECT_LEDGER`         | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `APPROVAL_POLICY_STORE` | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `GUEST_USAGE_STORE`     | Yes in production | `memory` | `supabase` `memory` — counts the guest translate allowance (ADR-050 D4); production refuses `memory`; `supabase` needs migration 037 |
 
 For anything agentic that must survive a restart (trajectories, budgets, proposals, the effect
 ledger, the approval policy), set these to `supabase` in production. In-memory is correct for
@@ -267,7 +268,7 @@ as long as the maximum token lifetime.
 `AUDIO_CONVERTER` · `AUDIO_CONVERTER_KEY` · `AUDIO_CONVERTER_URL` · `AUTH_PROVIDER` ·
 `BUDGET_STORE` · `CACHE_PROVIDER` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` ·
 `COGNITO_USER_POOL_ID` · `DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` ·
-`E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `LOG_LEVEL` ·
+`E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `GUEST_USAGE_STORE` · `LOG_LEVEL` ·
 `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
 `NEXT_PUBLIC_COGNITO_REGION` · `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` ·

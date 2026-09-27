@@ -30,6 +30,7 @@
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
  *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
  *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
+ *   GUEST_USAGE_STORE      = "supabase" | "memory"  (default: "memory"; required in production — ADR-050 D4)
  *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
  *   EFFECT_LEDGER          = "supabase" | "memory"  (default: "memory")
  *
@@ -83,6 +84,10 @@ import {
   getCognitoSettings,
   getSupabaseUrl,
 } from "@/platform/providers/environment-contract";
+import {
+  SupabaseGuestUsageStore,
+  setGuestUsageStore,
+} from "@/platform/auth/guest-allowance";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,6 +112,7 @@ export type BudgetStoreType = "supabase" | "memory";
 export type ProposalStoreType = "supabase" | "memory";
 export type EffectLedgerType = "supabase" | "memory";
 export type ApprovalPolicyStoreType = "supabase" | "memory";
+export type GuestUsageStoreType = "supabase" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -128,6 +134,7 @@ export interface ProviderSelections {
   proposalStore: ProposalStoreType;
   effectLedger: EffectLedgerType;
   approvalPolicyStore: ApprovalPolicyStoreType;
+  guestUsageStore: GuestUsageStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +164,7 @@ function getProviderSelections(): ProviderSelections {
     effectLedger: (process.env.EFFECT_LEDGER as EffectLedgerType) ?? "memory",
     approvalPolicyStore:
       (process.env.APPROVAL_POLICY_STORE as ApprovalPolicyStoreType) ?? "memory",
+    guestUsageStore: (process.env.GUEST_USAGE_STORE as GuestUsageStoreType) ?? "memory",
   };
 }
 
@@ -454,6 +462,28 @@ function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
   }
 }
 
+function initGuestUsageStore(type: GuestUsageStoreType): void {
+  if (type === "supabase") {
+    const url = getSupabaseUrl() ?? "";
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+    // Fail closed. An in-memory guest counter resets on every instance and restart, so the
+    // guest allowance (ADR-050 D4) would not bind — unbounded paid calls with nothing saying so.
+    if (!url || !key) {
+      throw new Error(
+        "GUEST_USAGE_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to an in-memory guest allowance."
+      );
+    }
+
+    setGuestUsageStore(new SupabaseGuestUsageStore(url, key));
+    return;
+  }
+
+  // type is "memory" (explicit or defaulted).
+  requireDurableStoreInProduction("GUEST_USAGE_STORE", "the guest allowance");
+}
+
 function initProposalStore(type: ProposalStoreType): void {
   if (type === "supabase") {
     const url = getSupabaseUrl() ?? "";
@@ -572,6 +602,7 @@ export function initProviders(): ProviderSelections {
   initBudgetStore(selections.budgetStore);
   initProposalStore(selections.proposalStore);
   initApprovalPolicyStore(selections.approvalPolicyStore);
+  initGuestUsageStore(selections.guestUsageStore);
   initEffectLedger(selections.effectLedger);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
@@ -602,6 +633,7 @@ export function initProviders(): ProviderSelections {
     budgetStore: selections.budgetStore,
     proposalStore: selections.proposalStore,
     approvalPolicyStore: selections.approvalPolicyStore,
+    guestUsageStore: selections.guestUsageStore,
     effectLedger: selections.effectLedger,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,
@@ -654,6 +686,7 @@ export const PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.agents.budgetTracker",
   "platform.agents.proposalStore",
   "platform.agents.approvalPolicyStore",
+  "platform.auth.guestUsageStore",
   "platform.agents.effectLedger",
   "platform.appFramework.stateStore",
   "platform.rag.embeddingStore",

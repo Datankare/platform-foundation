@@ -2052,21 +2052,23 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 ### TASK-099 — No guest path in the platform auth check, and no guest allowance
 
-| Field        | Detail                                               |
-| ------------ | ---------------------------------------------------- |
-| **ID**       | TASK-099                                             |
-| **Type**     | Auth                                                 |
-| **Severity** | Medium — guest mode admits users who then cannot act |
-| **Phase**    | Phase 5                                              |
-| **Target**   | Phase 5, Sprint 7A                                   |
-| **Status**   | Open                                                 |
-| **Logged**   | 2026-09-26                                           |
+| Field        | Detail                                                         |
+| ------------ | -------------------------------------------------------------- |
+| **ID**       | TASK-099                                                       |
+| **Type**     | Auth                                                           |
+| **Severity** | Medium — guest mode admits users who then cannot act           |
+| **Phase**    | Phase 5                                                        |
+| **Target**   | Phase 5, Sprint 7A                                             |
+| **Status**   | Resolved — Sprint 7A A3 + B1 (PF); Playform at the v2.7.0 sync |
+| **Logged**   | 2026-09-26                                                     |
 
 **What:** `requireAuth` verifies only real-user tokens, so a guest can enter the app but every action is rejected. There is also no bound on what a guest may consume.
 
 **Resolution:** ADR-050 D4: an opt-in guest check for routes that allow guests (translate), namespaced guest actor ids, and a governed per-guest translate allowance (admin-settable, min 1 / default 5 / max 10) enforced before any paid call, with a clear sign-in prompt at the limit.
 
 **Progress (7A A3, PF):** opt-in guest check and namespace done — `requireActor` / `requireActorWithStatus` (`allowGuests` per route; guests verified by `platform/auth/guest-token` only; `sign_in_required` elsewhere; `requireAuth` refuses guest-namespaced subjects). Remaining in 7A: B1 allowance; Playform's `lib/route-guard.ts` adopts `requireActorWithStatus`, and the translate routes opt in together with B1 — never before.
+
+**Resolved (7A B1, PF):** governed `guest.translate_allowance` (migration 037: 1–10, default 5, safety tier, dual control; clamped in code too); `GuestUsageStore` registry slot (`GUEST_USAGE_STORE`, durable required in production, conformance kit); atomic database consume (`guest_allowance_consume`); `enforceGuestAllowance()` before the first paid call, failing closed; `guest.allowance_exhausted` (403, `{limit}`) — the sign-in prompt. PF `/api/process` (was unauthenticated) now authenticates, serves guests and counts them. **Before v2.7.0 reaches Playform:** migration 037 applied to the `playform` database; `GUEST_USAGE_STORE=supabase` on `playform-dev` and `playform-staging`. **Playform commit at the sync:** `lib/route-guard.ts` on `requireActorWithStatus`; its translate routes (`/api/process`, `/api/translate/dispatch`, `/api/translate/session`) opt guests in with `enforceGuestAllowance`; speech, transcription and extraction stay users-only.
 
 ### TASK-100 — E2E journey tests pass when the user sees an error
 
@@ -2255,6 +2257,22 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 **What:** About 430 user-visible strings (text, labels, placeholders, `aria-label`, `title`, `alt`) across about 50 components in PF and Playform are English literals.
 
 **Resolution:** ADR-051 D4: every screen string through `t(key)`, until the literal ratchet (set in 7A A4) reaches zero; remaining platform reason strings into the catalog. Decided 2026-09-27: a dedicated sprint (7B) after Sprint 7 closes; the ratchet keeps new UI work compliant in the meantime.
+
+### TASK-111 — Guest lifecycle thresholds never load (column mismatch)
+
+| Field        | Detail                                             |
+| ------------ | -------------------------------------------------- |
+| **ID**       | TASK-111                                           |
+| **Type**     | Defect                                             |
+| **Severity** | Low — defaults apply silently; admin edits ignored |
+| **Phase**    | Phase 5                                            |
+| **Target**   | Phase 5, Sprint 7A (before close)                  |
+| **Status**   | Open                                               |
+| **Logged**   | 2026-09-27                                         |
+
+**What:** Migration 002 seeds `guest_config` with `nudge_after_seconds`, `grace_period_seconds` and `lockout_after_seconds`, while `getGuestConfig()` reads `nudge_after_sessions`, `grace_after_sessions`, `lockout_after_sessions`, `guest_token_ttl_hours` and `max_guest_sessions`. Every read falls back to the defaults, and an admin's change to the guest lifecycle has no effect — with nothing saying so.
+
+**Resolution:** reconcile against the live schema (TASK-091 baseline): one migration aligning columns with the code, or the code with the columns, plus a test that reads the seeded row; `getGuestConfig()` logs when it falls back.
 
 ## Known Issue — TASK-020 numbering collision
 

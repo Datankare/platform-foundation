@@ -19,7 +19,7 @@ Every error the API returns has this body (ADR-051 D3):
 - Until Sprint 7B the body also carries `success: false` and `error` (equal to `message`) — deprecated aliases for older screens. Do not build on them.
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 
-**44 codes** in 9 areas.
+**45 codes** in 10 areas.
 
 ## Account
 
@@ -64,6 +64,12 @@ Every error the API returns has this body (ADR-051 D3):
 | Code               | HTTP | Message (en)                               | Params                    | What the caller should do |
 | ------------------ | ---- | ------------------------------------------ | ------------------------- | ------------------------- |
 | `content.rejected` | 422  | This content does not meet our guidelines. | `category` (id, optional) | Ask for different input.  |
+
+## Guest access
+
+| Code                        | HTTP | Message (en)                                                                                                        | Params           | What the caller should do                                                         |
+| --------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------- |
+| `guest.allowance_exhausted` | 403  | You've used all {limit, plural, one {# free translation} other {# free translations}}. Sign in to keep translating. | `limit` (number) | Show sign-in; the guest has used every free translation (the governed allowance). |
 
 ## Internal
 

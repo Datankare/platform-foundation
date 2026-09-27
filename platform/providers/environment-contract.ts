@@ -95,6 +95,7 @@ export const SUPABASE_SELECTORS: readonly string[] = [
   "PROPOSAL_STORE",
   "EFFECT_LEDGER",
   "APPROVAL_POLICY_STORE",
+  "GUEST_USAGE_STORE",
   "REALTIME_PROVIDER",
 ];
 

@@ -233,6 +233,7 @@ describe("auth-init backward compat", () => {
       process.env.BUDGET_STORE = "supabase";
       process.env.SUPABASE_URL = "https://example.supabase.co";
       process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      process.env.GUEST_USAGE_STORE = "supabase";
       delete process.env.E2E_IN_MEMORY_STORES;
       realAuth();
     };
@@ -280,6 +281,7 @@ describe("auth-init backward compat", () => {
       delete process.env.APP_STATE_STORE;
       delete process.env.TRAJECTORY_STORE;
       delete process.env.BUDGET_STORE;
+      delete process.env.GUEST_USAGE_STORE;
       expect(await boot()).not.toThrow();
     });
 
@@ -288,6 +290,7 @@ describe("auth-init backward compat", () => {
       delete process.env.APP_STATE_STORE;
       delete process.env.TRAJECTORY_STORE;
       delete process.env.BUDGET_STORE;
+      delete process.env.GUEST_USAGE_STORE;
       process.env.E2E_IN_MEMORY_STORES = "true";
       realAuth();
       expect(await boot()).not.toThrow();
@@ -297,6 +300,53 @@ describe("auth-init backward compat", () => {
       setNodeEnv("production");
       allDurable();
       expect(await boot()).not.toThrow();
+    });
+  });
+
+  describe("guest usage store (ADR-050 D4)", () => {
+    const boot = async (): Promise<() => void> => {
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      return () => initProviders();
+    };
+
+    it("refuses the memory store in production", async () => {
+      setNodeEnv("production");
+      realAuth();
+      process.env.APP_STATE_STORE = "supabase";
+      process.env.TRAJECTORY_STORE = "supabase";
+      process.env.BUDGET_STORE = "supabase";
+      process.env.SUPABASE_URL = "https://example.supabase.co";
+      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      delete process.env.GUEST_USAGE_STORE;
+      delete process.env.E2E_IN_MEMORY_STORES;
+      expect(await boot()).toThrow(/GUEST_USAGE_STORE/);
+    });
+
+    it("refuses supabase without credentials", async () => {
+      setNodeEnv("test");
+      for (const v of ["APP_STATE_STORE", "TRAJECTORY_STORE", "BUDGET_STORE"])
+        delete process.env[v];
+      process.env.GUEST_USAGE_STORE = "supabase";
+      delete process.env.SUPABASE_URL;
+      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      expect(await boot()).toThrow(/GUEST_USAGE_STORE=supabase but SUPABASE_URL/);
+    });
+
+    it("selects the Supabase store with credentials", async () => {
+      setNodeEnv("test");
+      process.env.GUEST_USAGE_STORE = "supabase";
+      process.env.SUPABASE_URL = "https://example.supabase.co";
+      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(initProviders().guestUsageStore).toBe("supabase");
+      const { getGuestUsageStore, SupabaseGuestUsageStore } =
+        await import("@/platform/auth/guest-allowance");
+      expect(getGuestUsageStore()).toBeInstanceOf(SupabaseGuestUsageStore);
     });
   });
 
@@ -313,6 +363,7 @@ describe("auth-init backward compat", () => {
       process.env.BUDGET_STORE = "supabase";
       process.env.SUPABASE_URL = "https://example.supabase.co";
       process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      process.env.GUEST_USAGE_STORE = "supabase";
       delete process.env.NEXT_PUBLIC_SUPABASE_URL;
       delete process.env.E2E_IN_MEMORY_STORES;
     };

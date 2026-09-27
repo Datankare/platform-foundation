@@ -157,6 +157,12 @@ export const ERROR_CODES = {
     params: [{ name: "category", kind: "id", optional: true }],
     action: "Ask for different input.",
   },
+  "guest.allowance_exhausted": {
+    status: 403,
+    params: [{ name: "limit", kind: "number" }],
+    action:
+      "Show sign-in; the guest has used every free translation (the governed allowance).",
+  },
   "internal.error": {
     status: 500,
     params: [{ name: "requestId", kind: "id" }],

@@ -24,6 +24,7 @@ import { runSongIdProviderContract } from "./song-id-provider-contract";
 import { runAudioConverterContract } from "./audio-converter-contract";
 import { runModerationStoreContract } from "./moderation-store-contract";
 import { runSocialStoreContract } from "./social-store-contract";
+import { runGuestUsageStoreContract } from "./guest-usage-store-contract";
 import { runEmbeddingProviderContract } from "./embedding-provider-contract";
 import { runTraceProviderContract } from "./trace-provider-contract";
 import { runMetricsSinkContract } from "./metrics-sink-contract";
@@ -76,6 +77,7 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   budgetStore: { kind: "registry", kit: runBudgetStoreContract },
   proposalStore: { kind: "registry", kit: runProposalStoreContract },
   effectLedger: { kind: "registry", kit: runEffectLedgerContract },
+  guestUsageStore: { kind: "registry", kit: runGuestUsageStoreContract },
 
   // ── Observability fabric (not registry slots; folded in by ADR-027) ──
   // ADR-029 D9: tool execution is in-process — nothing to swap, so no registry slot.
