@@ -164,6 +164,7 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-048 | Governed Agent Budget & Durability Config     |
 | ADR-049 | Activity Session Durability & Ownership       |
 | ADR-050 | Deployment Environment Contract               |
+| ADR-051 | Codes and Messages — One Translatable Catalog |
 
 ---
 

@@ -2214,6 +2214,38 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 **Resolution:** Product decision on what participation means, then real group data and a participation surface.
 
+### TASK-109 — API errors have no codes and are not documented
+
+| Field        | Detail                                                 |
+| ------------ | ------------------------------------------------------ |
+| **ID**       | TASK-109                                               |
+| **Type**     | API contract                                           |
+| **Severity** | High — clients must match English text; untranslatable |
+| **Phase**    | Phase 5                                                |
+| **Target**   | Phase 5, Sprint 7A (A4, before B1)                     |
+| **Status**   | Open                                                   |
+| **Logged**   | 2026-09-27                                             |
+
+**What:** Every error response is `{ error: "<English sentence>" }` — about 150 distinct messages across PF and Playform routes, plus platform reason strings that reach users. Only `sign_in_required` and `guest_invalid` (7A A3) carry a code; nothing documents any of them. There is no message catalog and no i18n library.
+
+**Resolution:** ADR-051 D1–D3, D5 (a)–(e): catalog infrastructure (`next-intl`, `messages/en.json`, ICU); an error registry (code → status, catalog key, caller guidance); every PF API error on `{ code, message, params }`; `docs/API_ERRORS.md` generated and drift-checked; CI checks that every route error is registered, catalogued and documented; the screen-literal ratchet baseline. Playform's own routes in the Playform commit following the v2.7.0 sync.
+
+### TASK-110 — Screen strings are English literals
+
+| Field        | Detail                                |
+| ------------ | ------------------------------------- |
+| **ID**       | TASK-110                              |
+| **Type**     | UX / i18n                             |
+| **Severity** | Medium — screens cannot be translated |
+| **Phase**    | Phase 5                               |
+| **Target**   | Phase 5, Sprint 7B                    |
+| **Status**   | Open                                  |
+| **Logged**   | 2026-09-27                            |
+
+**What:** About 430 user-visible strings (text, labels, placeholders, `aria-label`, `title`, `alt`) across about 50 components in PF and Playform are English literals.
+
+**Resolution:** ADR-051 D4: every screen string through `t(key)`, until the literal ratchet (set in 7A A4) reaches zero; remaining platform reason strings into the catalog. Decided 2026-09-27: a dedicated sprint (7B) after Sprint 7 closes; the ratchet keeps new UI work compliant in the meantime.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
