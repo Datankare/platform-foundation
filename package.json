@@ -30,6 +30,7 @@
     "@supabase/supabase-js": "^2.112.1",
     "ajv": "8.20.0",
     "dotenv": "^17.4.2",
+    "intl-messageformat": "12.1.2",
     "jose": "^6.2.8",
     "next": "16.3.5",
     "react": "^19.2.8",
@@ -82,6 +83,7 @@
       "platform/adaptive/**/*.ts",
       "platform/content/**/*.ts",
       "platform/effects/**/*.ts",
+      "platform/errors/**/*.ts",
       "platform/social/content/**/*.ts"
     ],
     "coverageReporters": [
@@ -129,6 +131,15 @@
       "components/admin/AdminPromptBar.tsx",
       "components/admin/ExecutionResultsPanel.tsx",
       "platform/auth/platform-config.ts"
+    ],
+    "transform": {
+      "^.+\\.[tj]sx?$": [
+        "ts-jest",
+        {}
+      ]
+    },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(intl-messageformat|@formatjs)/)"
     ]
   },
   "overrides": {

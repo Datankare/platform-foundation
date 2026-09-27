@@ -1,0 +1,61 @@
+{
+  "errors": {
+    "account": {
+      "not_found": "Your account could not be found.",
+      "restricted": "Your account cannot use this feature right now."
+    },
+    "approvals": {
+      "decision_conflict": "This decision could not be recorded; the item changed. Refresh and try again.",
+      "hold_not_found": "That held action was not found.",
+      "permission_required": "Clearing this change requires the {permission} permission.",
+      "self_approval": "You cannot approve your own change; another approver must clear it."
+    },
+    "auth": {
+      "account_exists": "An account with this email already exists.",
+      "challenge_failed": "Verification did not complete. Try again.",
+      "code_expired": "That code has expired. Request a new one.",
+      "code_invalid": "That code is not correct.",
+      "email_not_verified": "Verify your email to continue.",
+      "guest_invalid": "Your guest session has expired. Start a new one or sign in.",
+      "invalid_credentials": "Email or password is incorrect.",
+      "password_policy": "Password does not meet the requirements: {rules}.",
+      "permission_denied": "You do not have permission to do this.",
+      "required": "Sign in to continue.",
+      "role_database_only": "The {role} role can only be assigned directly in the database.",
+      "role_self_change": "You cannot change your own role.",
+      "sign_in_required": "Sign in to use this feature.",
+      "sso_failed": "Sign-in with {provider} did not complete.",
+      "token_invalid": "Your session has expired. Sign in again.",
+      "too_many_attempts": "Too many attempts. Try again later."
+    },
+    "content": {
+      "rejected": "This content does not meet our guidelines."
+    },
+    "internal": {
+      "error": "Something went wrong. Try again; if it continues, quote reference {requestId}."
+    },
+    "moderation": {
+      "appeal_not_found": "That appeal was not found.",
+      "appeal_pending": "An appeal is already pending for this decision.",
+      "decision_not_found": "That moderation decision was not found.",
+      "modified_action_required": "Choose the modified action.",
+      "not_claimer": "Only the reviewer who claimed this item can change it.",
+      "not_own_decision": "You can only appeal your own moderation decisions.",
+      "review_item_not_found": "That review item was not found."
+    },
+    "rate": {
+      "limited": "Too many requests. Try again in a moment."
+    },
+    "request": {
+      "invalid_body": "The request body is not in the expected shape.",
+      "invalid_json": "The request body is not valid JSON.",
+      "invalid_value": "{field} must be one of: {allowed}.",
+      "missing_fields": "Required: {fields}.",
+      "text_empty": "Enter some text.",
+      "text_too_long": "Text must be {max, number} characters or fewer."
+    },
+    "service": {
+      "unavailable": "This service is unavailable right now. Try again shortly."
+    }
+  }
+}

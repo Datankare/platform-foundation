@@ -27,6 +27,8 @@ Standing expectation (Raman): every code the services return is documented for a
 
 **D6 — Which locales ship is separate.** This ADR delivers the structure and English. Which languages are offered, and how catalogs are translated (the platform's own pipeline, human review, or both), is a product decision taken on its own.
 
+_Implementation (7A A4a):_ `platform/errors/` — `registry.ts` (39 codes: status, typed params — `id` identifiers shown verbatim and never translated, `number`, `list` — and caller action), `messages.ts` (catalog lookup, `Accept-Language` negotiation, ICU via `intl-messageformat`, the engine `next-intl` builds on; `next-intl` itself joins in 7B with the screens, since API errors need only the formatter), `respond.ts` (`apiError(code, { params, request })`), `doc.ts` (generates `docs/API_ERRORS.md`). `messages/en.json` holds the `errors.*` namespace. User-facing sentences never embed identifiers; those travel only in `params`. CI: registry ↔ catalog ↔ ICU arguments agree; the reference cannot drift; a free-text ratchet (baseline 102) that A4b takes to zero.
+
 ## 3. Sequencing
 
 | Sprint            | Scope                                                                                                                                                                                                                                                                                                                       |
