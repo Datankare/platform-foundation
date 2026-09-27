@@ -11,6 +11,7 @@ export {
   checkEnvironmentContract,
   getAuthProviderSetting,
   getCognitoSettings,
+  getGuestTokenSecret,
   getSupabaseUrl,
   resolveSetting,
 } from "./environment-contract";

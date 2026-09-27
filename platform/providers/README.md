@@ -114,7 +114,8 @@ boot, naming every violation at once, when:
   build may opt in with `E2E_TEST_DOUBLE_AUTH=true`; `E2E_IN_MEMORY_STORES` does not cover auth;
 - a declared setting is mis-shaped, set only under an alias, or set under two names that disagree (D2) —
   `AUTH_PROVIDER`, the Cognito ids, `SUPABASE_URL` (`https://<ref>.supabase.co`), and
-  `SUPABASE_SERVICE_ROLE_KEY` (the legacy JWT);
+  `SUPABASE_SERVICE_ROLE_KEY` (the legacy JWT), `GUEST_TOKEN_SECRET` (≥ 32 random bytes — required with a
+  real auth provider: guest tokens are signed, D4);
 - a required setting is missing (Cognito ids with `cognito`; Supabase URL + key when any slot selects `supabase`);
 - a harness switch (`E2E_*`, `ADMIN_DEV_BYPASS`) is set on a hosted deployment (`VERCEL=1`).
 

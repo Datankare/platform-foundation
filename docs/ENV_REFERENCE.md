@@ -93,8 +93,8 @@ before any provider initializes and refuses to start, naming every violation: te
 (`AUTH_PROVIDER` unset or `mock`), a declared setting that is mis-shaped, set only under an alias
 or set under two disagreeing names, a missing required setting, or a harness switch on a hosted
 deployment. The declared settings are `AUTH_PROVIDER`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`,
-`NEXT_PUBLIC_COGNITO_CLIENT_ID`, `NEXT_PUBLIC_COGNITO_REGION`, `SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY`, each with the aliases listed in this reference.
+`NEXT_PUBLIC_COGNITO_CLIENT_ID`, `NEXT_PUBLIC_COGNITO_REGION`, `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY` and `GUEST_TOKEN_SECRET`, each with the aliases listed in this reference.
 
 ---
 
@@ -110,15 +110,16 @@ single source, read by both browser and server; the non-prefixed `COGNITO_*` nam
 accepted only when unset or equal (ADR-050 D2). `AWS_REGION` is not read — hosts set it to the
 function's region, not the pool's.
 
-| Variable                           | Required       | Default          | Notes                                                                                                     |
-| ---------------------------------- | -------------- | ---------------- | --------------------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | With `cognito` | —                | e.g. `us-east-1_ABC123`. Browser-safe.                                                                    |
-| `NEXT_PUBLIC_COGNITO_CLIENT_ID`    | With `cognito` | —                | App client ID. Browser-safe.                                                                              |
-| `NEXT_PUBLIC_COGNITO_REGION`       | No             | pool id's region | e.g. `us-east-1`. Must match the pool id's region prefix.                                                 |
-| `COGNITO_REGION`                   | No (alias)     | —                | Alias of `NEXT_PUBLIC_COGNITO_REGION`.                                                                    |
-| `COGNITO_USER_POOL_ID`             | No (alias)     | —                | Alias of `NEXT_PUBLIC_COGNITO_USER_POOL_ID`.                                                              |
-| `COGNITO_CLIENT_ID`                | No (alias)     | —                | Alias of `NEXT_PUBLIC_COGNITO_CLIENT_ID`.                                                                 |
-| `ADMIN_DEV_BYPASS`                 | No             | unset            | **Development only.** When set, bypasses admin permission checks for local work. Never set in production. |
+| Variable                           | Required                               | Default                             | Notes                                                                                                                                                                                             |
+| ---------------------------------- | -------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | With `cognito`                         | —                                   | e.g. `us-east-1_ABC123`. Browser-safe.                                                                                                                                                            |
+| `NEXT_PUBLIC_COGNITO_CLIENT_ID`    | With `cognito`                         | —                                   | App client ID. Browser-safe.                                                                                                                                                                      |
+| `NEXT_PUBLIC_COGNITO_REGION`       | No                                     | pool id's region                    | e.g. `us-east-1`. Must match the pool id's region prefix.                                                                                                                                         |
+| `COGNITO_REGION`                   | No (alias)                             | —                                   | Alias of `NEXT_PUBLIC_COGNITO_REGION`.                                                                                                                                                            |
+| `COGNITO_USER_POOL_ID`             | No (alias)                             | —                                   | Alias of `NEXT_PUBLIC_COGNITO_USER_POOL_ID`.                                                                                                                                                      |
+| `COGNITO_CLIENT_ID`                | No (alias)                             | —                                   | Alias of `NEXT_PUBLIC_COGNITO_CLIENT_ID`.                                                                                                                                                         |
+| `ADMIN_DEV_BYPASS`                 | No                                     | unset                               | **Development only.** When set, bypasses admin permission checks for local work. Never set in production.                                                                                         |
+| `GUEST_TOKEN_SECRET`               | With a real auth provider (production) | per-process random (non-production) | HMAC-SHA256 key that signs guest tokens (ADR-050 D4). At least 32 random bytes, base64 — `openssl rand -base64 48`. **Server-side only.** One per environment; rotating it signs every guest out. |
 
 ---
 
@@ -266,7 +267,7 @@ as long as the maximum token lifetime.
 `AUDIO_CONVERTER` · `AUDIO_CONVERTER_KEY` · `AUDIO_CONVERTER_URL` · `AUTH_PROVIDER` ·
 `BUDGET_STORE` · `CACHE_PROVIDER` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` ·
 `COGNITO_USER_POOL_ID` · `DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` ·
-`E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `LOG_LEVEL` ·
+`E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `LOG_LEVEL` ·
 `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
 `NEXT_PUBLIC_COGNITO_REGION` · `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` ·

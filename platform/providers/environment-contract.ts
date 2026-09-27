@@ -6,6 +6,7 @@
  *      an E2E harness running the production build, which opts in with E2E_TEST_DOUBLE_AUTH=true;
  *      the store opt-out (E2E_IN_MEMORY_STORES) does not extend to auth. Harness opt-outs and
  *      ADMIN_DEV_BYPASS are refused outright on a hosted deployment (VERCEL=1).
+ *      Guest tokens are signed under GUEST_TOKEN_SECRET (D4), required with a real auth provider.
  * D2 — Each setting is declared once: one canonical name, its accepted aliases, and its shape.
  *      Boot validates presence and shape and fails closed naming the setting. An alias set on
  *      its own, or disagreeing with the canonical name, is a violation — one setting, one source.
@@ -72,6 +73,12 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     shape: /^eyJ[\w-]*\.[\w-]+\.[\w-]+$/,
     shapeHint:
       "the legacy service_role JWT (eyJ…), not an sb_secret_/sb_publishable_ key",
+  },
+  {
+    name: "GUEST_TOKEN_SECRET",
+    aliases: [],
+    shape: /^[\w+/=-]{43,}$/,
+    shapeHint: "at least 32 random bytes, base64 (e.g. openssl rand -base64 48)",
   },
 ];
 
@@ -147,6 +154,11 @@ export function getSupabaseUrl(env: EnvSource = process.env): string | undefined
 
 export function getAuthProviderSetting(env: EnvSource = process.env): string | undefined {
   return resolveSetting("AUTH_PROVIDER", env);
+}
+
+/** ADR-050 D4: the guest-token signing secret. */
+export function getGuestTokenSecret(env: EnvSource = process.env): string | undefined {
+  return resolveSetting("GUEST_TOKEN_SECRET", env);
 }
 
 export interface CognitoSettings {
@@ -238,6 +250,14 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
           `the ${auth} provider is a test double; set AUTH_PROVIDER=cognito`
       );
     }
+  }
+
+  // D4: a real auth provider mints guest tokens, which must be signed. (The mock provider's
+  // guest tokens are fixed test values; it needs no secret.)
+  if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && getGuestTokenSecret(env) === undefined) {
+    violations.push(
+      `GUEST_TOKEN_SECRET is required by AUTH_PROVIDER=${auth} (signed guest tokens)`
+    );
   }
 
   // Provider-specific requirements.

@@ -196,7 +196,7 @@ baseline included (C4).
 |                     | 0.4       | Google identity provider (Google side + Cognito side, verified via hosted login)                                         | Done        |
 |                     | 0.5 · 0.6 | Apple · Microsoft identity providers                                                                                     | End of 7A   |
 | A · Platform guards | A1        | Production refuses test-double auth; environment contract checked at boot (TASK-097, TASK-103)                           | Done (PF)   |
-|                     | A2        | Signed guest tokens (TASK-098)                                                                                           | Open        |
+|                     | A2        | Signed guest tokens (TASK-098)                                                                                           | Done (PF)   |
 |                     | A3        | Opt-in guest routes, namespaced guest ids (TASK-099)                                                                     | Open        |
 | B · Playform        | B1        | Guest allowance, admin-governed min 1 / default 5 / max 10 (TASK-099)                                                    | Open        |
 |                     | B2        | E2E asserts real results; guest-limit test (TASK-100)                                                                    | Open        |
@@ -205,7 +205,7 @@ baseline included (C4).
 |                     | C2        | SSO via Cognito hosted sign-in, configured providers only (TASK-101)                                                     | Open        |
 |                     | C3        | Deployed smoke test after every dev/staging deploy (TASK-102)                                                            | Open        |
 |                     | C4        | Migration baseline + CI replay (TASK-091), production database (TASK-092), project↔branch topology (TASK-105)            | Open        |
-| Close               |           | ADR-050 Accepted, PF v2.7.0, Playform sync, resume Sprint 7 at 3d                                                        | —           |
+| Close               |           | ADR-050 Accepted, PF v2.7.0, Playform sync + Playform guest-token delegation (TASK-098), resume Sprint 7 at 3d           | —           |
 
 **Also found during 7A testing, scheduled in Sprint 7 before it closes:** TASK-093 (alphabetical
 language order), TASK-094 (batch multi-language selection), TASK-095 (translate latency — measured

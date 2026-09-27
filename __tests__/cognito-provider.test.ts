@@ -342,6 +342,21 @@ describe("CognitoAuthProvider — guest mode", () => {
     const result = await provider.verifyGuestToken(`guest.${expiredPayload}`);
     expect(result.valid).toBe(false);
   });
+
+  it("rejects an unsigned, unexpired guest token — forgery (ADR-050 D4, TASK-098)", async () => {
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const forged = Buffer.from(
+      JSON.stringify({
+        sub: "guest_00000000000000000000000000000000",
+        type: "guest",
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+    ).toString("base64url");
+
+    const result = await provider.verifyGuestToken(`guest.${forged}`);
+    expect(result.valid).toBe(false);
+  });
 });
 
 describe("CognitoAuthProvider — resilience", () => {

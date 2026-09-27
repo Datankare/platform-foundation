@@ -15,6 +15,7 @@ import {
 } from "@/platform/providers/environment-contract";
 
 const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2ln";
+const GUEST_SECRET = "a".repeat(64);
 
 /** A valid production deployment, as playform-dev is configured. */
 function valid(extra: Record<string, string | undefined> = {}): EnvSource {
@@ -28,6 +29,7 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     COGNITO_REGION: "us-east-1",
     SUPABASE_URL: "https://abcdefghijklmnop.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: JWT,
+    GUEST_TOKEN_SECRET: GUEST_SECRET,
     APP_STATE_STORE: "supabase",
     TRAJECTORY_STORE: "supabase",
     BUDGET_STORE: "supabase",
@@ -239,7 +241,26 @@ describe("required settings", () => {
         AUTH_PROVIDER: "cognito",
         NEXT_PUBLIC_COGNITO_USER_POOL_ID: "eu-west-1_X",
         NEXT_PUBLIC_COGNITO_CLIENT_ID: "c",
+        GUEST_TOKEN_SECRET: GUEST_SECRET,
       })
+    ).toEqual([]);
+  });
+
+  it("a real auth provider requires GUEST_TOKEN_SECRET (D4)", () => {
+    expect(checkEnvironmentContract(valid({ GUEST_TOKEN_SECRET: undefined }))).toEqual([
+      "GUEST_TOKEN_SECRET is required by AUTH_PROVIDER=cognito (signed guest tokens)",
+    ]);
+  });
+
+  it("refuses a short GUEST_TOKEN_SECRET", () => {
+    expect(checkEnvironmentContract(valid({ GUEST_TOKEN_SECRET: "short" }))).toEqual([
+      "GUEST_TOKEN_SECRET has the wrong shape — expected at least 32 random bytes, base64 (e.g. openssl rand -base64 48)",
+    ]);
+  });
+
+  it("the harness mock needs no guest secret", () => {
+    expect(
+      checkEnvironmentContract({ NODE_ENV: "production", E2E_TEST_DOUBLE_AUTH: "true" })
     ).toEqual([]);
   });
 });

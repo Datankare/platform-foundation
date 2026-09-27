@@ -21,6 +21,7 @@ import {
   CognitoAuthProvider,
   type CognitoConfig,
 } from "@/platform/auth/cognito-provider";
+import { mintGuestToken } from "@/platform/auth/guest-token";
 
 const C = AUTH_CONTRACT;
 
@@ -44,17 +45,14 @@ const VALID_ACCESS_TOKEN = fakeJwt({
   exp: 9_999_999_999,
 });
 
-const nowSec = Math.floor(Date.now() / 1000);
-const VALID_GUEST_TOKEN =
-  "guest." +
-  Buffer.from(
-    JSON.stringify({
-      sub: "guest_contract",
-      type: "guest",
-      iat: nowSec,
-      exp: nowSec + 3600,
-    })
-  ).toString("base64url");
+// ADR-050 D4: a valid guest token is one the platform minted and signed — a hand-built
+// payload is exactly the forgery TASK-098 closes. Minted in beforeAll (minting is async); the
+// kit reads the fixture at test time.
+let VALID_GUEST_TOKEN = "";
+beforeAll(async () => {
+  VALID_GUEST_TOKEN = (await mintGuestToken()).token;
+  cognitoFixtures.validGuestToken = VALID_GUEST_TOKEN;
+});
 
 interface CognitoPayload {
   AuthFlow?: string;

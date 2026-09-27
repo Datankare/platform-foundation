@@ -114,6 +114,21 @@ export {
 } from "@/platform/auth/data-export";
 export type { ExportModule } from "@/platform/auth/data-export";
 
+// ADR-050 D4 — platform-owned signed guest tokens
+export {
+  mintGuestToken,
+  verifyGuestToken,
+  newGuestId,
+  isGuestId,
+  GUEST_ID_PREFIX,
+  DEFAULT_GUEST_TTL_SECONDS,
+  MAX_GUEST_TTL_SECONDS,
+} from "@/platform/auth/guest-token";
+export type {
+  MintedGuestToken,
+  GuestTokenVerification,
+} from "@/platform/auth/guest-token";
+
 export {
   getGuestConfig,
   resolveGuestPhase,

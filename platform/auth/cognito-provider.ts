@@ -34,9 +34,12 @@ import type {
   TokenPayload,
 } from "@/platform/auth/types";
 import { logger } from "@/lib/logger";
-import { generateSecureId } from "@/platform/agents/utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { getCognitoSettings } from "@/platform/providers/environment-contract";
+import {
+  mintGuestToken,
+  verifyGuestToken as verifyPlatformGuestToken,
+} from "@/platform/auth/guest-token";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -145,15 +148,6 @@ function b64urlDecode(str: string): string {
   }
   // Node.js fallback — Buffer available server-side, not in browser
   return Buffer.from(str, "base64url").toString("utf-8");
-}
-
-/** Base64url encode — browser + Node compatible */
-function b64urlEncode(str: string): string {
-  if (typeof btoa === "function") {
-    return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-  // Node.js fallback — Buffer available server-side, not in browser
-  return Buffer.from(str).toString("base64url");
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -591,34 +585,18 @@ export class CognitoAuthProvider implements AuthProvider {
 
   // ── Guest Mode ──
 
+  // ADR-050 D4 (TASK-098): guest tokens are platform-owned and HMAC-signed — the provider
+  // delegates to platform/auth/guest-token rather than minting its own (unsigned) format.
   async createGuestToken(): Promise<GuestTokenResult> {
-    // 128-bit crypto-secure: a guessable guest id would let an attacker assume a
-    // guest identity (P4). Timestamp kept for readability/ordering only.
-    const guestId = `guest_${Date.now()}_${generateSecureId()}`;
-    const expiresAt = Math.floor(Date.now() / 1000) + 72 * 3600;
-    const token = b64urlEncode(
-      JSON.stringify({
-        sub: guestId,
-        type: "guest",
-        iat: Math.floor(Date.now() / 1000),
-        exp: expiresAt,
-      })
-    );
-
-    return { success: true, guestId, token: `guest.${token}`, expiresAt };
+    const { guestId, token, expiresAt } = await mintGuestToken();
+    return { success: true, guestId, token, expiresAt };
   }
 
   async verifyGuestToken(
     token: AuthToken
   ): Promise<{ valid: boolean; guestId?: string }> {
-    try {
-      if (!token.startsWith("guest.")) return { valid: false };
-      const payload = JSON.parse(b64urlDecode(token.slice(6)));
-      if (payload.exp < Math.floor(Date.now() / 1000)) return { valid: false };
-      return { valid: true, guestId: payload.sub };
-    } catch {
-      return { valid: false };
-    }
+    const result = await verifyPlatformGuestToken(token);
+    return result.valid ? { valid: true, guestId: result.guestId } : { valid: false };
   }
 
   // ── Device Management ──

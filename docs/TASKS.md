@@ -2041,12 +2041,14 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 | **Severity** | High — forgeable identity |
 | **Phase**    | Phase 5                   |
 | **Target**   | Phase 5, Sprint 7A        |
-| **Status**   | Open                      |
+| **Status**   | Resolved — Sprint 7A A2   |
 | **Logged**   | 2026-09-26                |
 
 **What:** `createGuestToken` returns `guest.` + base64 JSON (`sub`, `type`, `iat`, `exp`) with no signature, and `verifyGuestToken` only decodes it and checks expiry. Anyone can mint a guest token for any id and any expiry. Nothing relies on it yet.
 
 **Resolution:** ADR-050 D4: HMAC-sign guest tokens under `GUEST_TOKEN_SECRET` and verify the signature; must land before any route accepts guests.
+
+**Resolved (7A A2, PF):** `platform/auth/guest-token.ts` — signed, namespaced, lifetime-bounded guest tokens; PF's Cognito provider delegates to it; `GUEST_TOKEN_SECRET` is in the environment contract (required with a real auth provider). Two obligations carried inside 7A: (1) A3's guest check verifies through `platform/auth/guest-token` directly, never through a provider's `verifyGuestToken`; (2) Playform's own `platform/auth/cognito-services.ts` (sync-excluded; mints `guest_<uuid>_<ms>`, unsigned) delegates to the same module in the Playform commit that follows the v2.7.0 sync — before Playform promotes. `GUEST_TOKEN_SECRET` must be set on `playform-dev` and `playform-staging` before v2.7.0 reaches them.
 
 ### TASK-099 — No guest path in the platform auth check, and no guest allowance
 
