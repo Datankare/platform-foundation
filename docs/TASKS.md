@@ -2216,15 +2216,15 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 ### TASK-109 — API errors have no codes and are not documented
 
-| Field        | Detail                                                 |
-| ------------ | ------------------------------------------------------ |
-| **ID**       | TASK-109                                               |
-| **Type**     | API contract                                           |
-| **Severity** | High — clients must match English text; untranslatable |
-| **Phase**    | Phase 5                                                |
-| **Target**   | Phase 5, Sprint 7A (A4, before B1)                     |
-| **Status**   | Open                                                   |
-| **Logged**   | 2026-09-27                                             |
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-109                                                  |
+| **Type**     | API contract                                              |
+| **Severity** | High — clients must match English text; untranslatable    |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7A (A4, before B1)                        |
+| **Status**   | Resolved — Sprint 7A A4 (PF); Playform at the v2.7.0 sync |
+| **Logged**   | 2026-09-27                                                |
 
 **What:** Every error response is `{ error: "<English sentence>" }` — about 150 distinct messages across PF and Playform routes, plus platform reason strings that reach users. Only `sign_in_required` and `guest_invalid` (7A A3) carry a code; nothing documents any of them. There is no message catalog and no i18n library.
 
@@ -2235,6 +2235,10 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 **Progress (7A A4b-1, PF):** request-validation, auth-guard (`requireAuth`, `requireActor`, `requirePermission`, admin self-elevation, actor account status), rate-limit, admin and `/api/process` errors on codes; every 500 in them is `internal.error` — the 11 responses that echoed internal error text now log it with a request id and return only the id (`internalError`); the content classifier's reason (which may quote matched terms) goes to the log. Free-text ratchet 102 → 58. Compatibility aliases `success: false` / `error` stay in the body until 7B.
 
 **Progress (7A A4b-2, PF):** moderation and approvals. Services and stores return `errorCode` (+ `errorParams`) with their results (`ReviewResult`, `ConfigApprovalResult`); routes answer with `errorFromResult()`, so no status is chosen by matching English any more (`statusForError`, `appealErrorStatus` removed). Five codes added (`moderation.appeal_not_allowed`, `appeal_reason_too_short`, `appeal_window_expired`, `item_state_conflict`, `approvals.expired`) — 44 in all. A store's database text never reaches a response. Free-text ratchet 58 → 17 (the auth routes, A4b-3).
+
+**Resolved (7A A4b-3, PF):** auth routes on `authResultResponse` — success and challenge steps (MFA, new password, email verification) stay 200; failures return their code and real status (401 wrong credentials, 409 account exists, 429 too many attempts…) instead of HTTP 200; the Cognito provider maps exception types to codes and no Cognito message reaches a client (11 raw-message returns removed); sign-up password failures return `auth.password_policy` with rule ids (`passwordRuleViolations`). Free-text errors: 0, now a hard CI rule. Screen-literal ratchet in place (PF baseline 297). 45 codes in `docs/API_ERRORS.md`.
+
+**At the v2.7.0 sync (Playform commit, in 7A):** `package.json` gains `intl-messageformat` + the jest ESM transform; Playform's own routes (`app/api/auth/**`, translate/tts/transcribe/extract/classify) and `platform/auth/cognito-services.ts` move to codes; its own `screen-literal-baseline.json` (PF's is not synced).
 
 ### TASK-110 — Screen strings are English literals
 

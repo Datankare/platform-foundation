@@ -7,6 +7,8 @@
  * ADR-012: Auth provider interface for cloud-agnostic platform.
  */
 
+import type { ErrorCode } from "@/platform/errors/registry";
+
 /** Unique identifier for a user in the auth system */
 export type AuthUserId = string;
 
@@ -22,6 +24,8 @@ export interface AuthResult {
   idToken?: AuthToken;
   expiresIn?: number;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
   /** True if the user needs to complete MFA before access is granted */
   mfaRequired?: boolean;
   /** Session identifier for MFA challenge flow */
@@ -62,6 +66,8 @@ export interface MfaSetupResult {
   secretCode?: string;
   qrCodeUri?: string;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }
 
 /** MFA verification result */
@@ -69,6 +75,8 @@ export interface MfaVerifyResult {
   success: boolean;
   session?: AuthSession;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }
 
 /** Password recovery initiation result */
@@ -77,12 +85,16 @@ export interface PasswordRecoveryResult {
   /** Delivery destination (masked email) */
   deliveryMedium?: string;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }
 
 /** Password recovery confirmation result */
 export interface PasswordResetResult {
   success: boolean;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }
 
 /** Guest token result */
@@ -93,6 +105,8 @@ export interface GuestTokenResult {
   /** Absolute expiry as a UNIX timestamp in epoch seconds (contract unit; see ADR-027). */
   expiresAt: number;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }
 
 /** Device information for tracking */
@@ -111,6 +125,8 @@ export interface SsoInitResult {
   success: boolean;
   redirectUrl?: string;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }
 
 /** SSO callback result — same as AuthResult */
@@ -120,10 +136,14 @@ export type SsoCallbackResult = AuthResult;
 export interface ChangePasswordResult {
   success: boolean;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }
 
 /** Email verification result */
 export interface EmailVerificationResult {
   success: boolean;
   error?: string;
+  /** ADR-051: what a route returns on failure; `error` is for logs. */
+  errorCode?: ErrorCode;
 }

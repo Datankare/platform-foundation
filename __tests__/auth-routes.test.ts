@@ -58,7 +58,7 @@ jest.mock("@/platform/auth/audit", () => ({
 }));
 
 jest.mock("@/platform/auth/password-policy", () => ({
-  validatePassword: jest.fn().mockReturnValue([]),
+  passwordRuleViolations: jest.fn().mockReturnValue([]),
 }));
 
 function makeRequest(body: unknown, headers?: Record<string, string>): NextRequest {
@@ -138,6 +138,7 @@ describe("POST /api/auth/sign-in", () => {
     mockProvider.signIn.mockResolvedValue({
       success: false,
       error: "Invalid credentials",
+      errorCode: "auth.invalid_credentials",
     });
 
     const res = await handler(
@@ -145,8 +146,28 @@ describe("POST /api/auth/sign-in", () => {
     );
     const body = await res.json();
 
+    expect(res.status).toBe(401);
+    expect(body.code).toBe("auth.invalid_credentials");
     expect(body.success).toBe(false);
-    expect(body.error).toBe("Invalid credentials");
+    expect(JSON.stringify(body)).not.toContain("Invalid credentials");
+  });
+
+  it("an uncoded provider failure is a 500 with no provider text", async () => {
+    mockProvider.signIn.mockResolvedValue({ success: false, error: "raw provider text" });
+    const res = await handler(makeRequest({ email: "a@b.c", password: "x" }));
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain("raw provider text");
+  });
+
+  it("an MFA challenge is not an error", async () => {
+    mockProvider.signIn.mockResolvedValue({
+      success: false,
+      mfaRequired: true,
+      mfaSession: "s",
+    });
+    const res = await handler(makeRequest({ email: "a@b.c", password: "x" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).mfaRequired).toBe(true);
   });
 });
 
@@ -183,10 +204,8 @@ describe("POST /api/auth/sign-up", () => {
   });
 
   it("returns 400 when password violates policy", async () => {
-    const { validatePassword } = await import("@/platform/auth/password-policy");
-    (validatePassword as jest.Mock).mockReturnValueOnce([
-      "Must be at least 12 characters",
-    ]);
+    const { passwordRuleViolations } = await import("@/platform/auth/password-policy");
+    (passwordRuleViolations as jest.Mock).mockReturnValueOnce(["min_length"]);
 
     const res = await handler(
       makeRequest({ email: "new@example.com", password: "short" })
@@ -194,7 +213,8 @@ describe("POST /api/auth/sign-up", () => {
     const body = await res.json();
 
     expect(res.status).toBe(400);
-    expect(body.violations).toContain("Must be at least 12 characters");
+    expect(body.code).toBe("auth.password_policy");
+    expect(body.params.rules).toEqual(["min_length"]);
   });
 });
 

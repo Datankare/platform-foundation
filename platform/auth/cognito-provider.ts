@@ -36,6 +36,24 @@ import type {
 import { logger } from "@/lib/logger";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { getCognitoSettings } from "@/platform/providers/environment-contract";
+import type { ErrorCode } from "@/platform/errors/registry";
+
+/** ADR-051: Cognito exception types → platform error codes. Anything else is internal. */
+const COGNITO_ERROR_CODES: Readonly<Record<string, ErrorCode>> = {
+  UserNotFoundException: "auth.invalid_credentials",
+  NotAuthorizedException: "auth.invalid_credentials",
+  UsernameExistsException: "auth.account_exists",
+  AliasExistsException: "auth.account_exists",
+  UserNotConfirmedException: "auth.email_not_verified",
+  InvalidPasswordException: "auth.password_policy",
+  CodeMismatchException: "auth.code_invalid",
+  EnableSoftwareTokenMFAException: "auth.code_invalid",
+  ExpiredCodeException: "auth.code_expired",
+  LimitExceededException: "auth.too_many_attempts",
+  TooManyRequestsException: "auth.too_many_attempts",
+  TooManyFailedAttemptsException: "auth.too_many_attempts",
+  InvalidParameterException: "request.invalid_body",
+};
 import {
   mintGuestToken,
   verifyGuestToken as verifyPlatformGuestToken,
@@ -219,7 +237,13 @@ export class CognitoAuthProvider implements AuthProvider {
       }
 
       const auth = result.AuthenticationResult as Record<string, unknown>;
-      if (!auth) return { success: false, error: "No authentication result" };
+      if (!auth) {
+        return {
+          success: false,
+          error: "No authentication result",
+          errorCode: "auth.challenge_failed",
+        };
+      }
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
 
@@ -308,11 +332,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true, deliveryMedium: "email" };
     } catch (error) {
-      return {
-        success: false,
-        error:
-          error instanceof CognitoError ? error.message : "Failed to send reset code",
-      };
+      return this.codedFailure(error, "Failed to send reset code");
     }
   }
 
@@ -330,10 +350,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Password reset failed",
-      };
+      return this.codedFailure(error, "Password reset failed");
     }
   }
 
@@ -350,10 +367,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Password change failed",
-      };
+      return this.codedFailure(error, "Password change failed");
     }
   }
 
@@ -371,10 +385,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Verification failed",
-      };
+      return this.codedFailure(error, "Verification failed");
     }
   }
 
@@ -386,10 +397,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Failed to resend code",
-      };
+      return this.codedFailure(error, "Failed to resend code");
     }
   }
 
@@ -407,10 +415,7 @@ export class CognitoAuthProvider implements AuthProvider {
         qrCodeUri: `otpauth://totp/PlatformFoundation?secret=${secret}&issuer=PlatformFoundation`,
       };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "MFA setup failed",
-      };
+      return this.codedFailure(error, "MFA setup failed");
     }
   }
 
@@ -429,10 +434,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "MFA verification failed",
-      };
+      return this.codedFailure(error, "MFA verification failed");
     }
   }
 
@@ -449,7 +451,13 @@ export class CognitoAuthProvider implements AuthProvider {
       });
 
       const auth = result.AuthenticationResult as Record<string, unknown>;
-      if (!auth) return { success: false, error: "MFA challenge failed" };
+      if (!auth) {
+        return {
+          success: false,
+          error: "MFA challenge failed",
+          errorCode: "auth.challenge_failed",
+        };
+      }
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
 
@@ -483,7 +491,13 @@ export class CognitoAuthProvider implements AuthProvider {
       });
 
       const auth = result.AuthenticationResult as Record<string, unknown>;
-      if (!auth) return { success: false, error: "Password change failed" };
+      if (!auth) {
+        return {
+          success: false,
+          error: "Password change failed",
+          errorCode: "auth.challenge_failed",
+        };
+      }
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
 
@@ -510,10 +524,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Failed to disable MFA",
-      };
+      return this.codedFailure(error, "Failed to disable MFA");
     }
   }
 
@@ -562,7 +573,13 @@ export class CognitoAuthProvider implements AuthProvider {
         }),
       });
 
-      if (!response.ok) return { success: false, error: "SSO token exchange failed" };
+      if (!response.ok) {
+        return {
+          success: false,
+          error: `SSO token exchange failed: ${response.status}`,
+          errorCode: "auth.sso_failed",
+        };
+      }
 
       const tokens = (await response.json()) as Record<string, unknown>;
       const decoded = decodeJwtPayload(tokens.access_token as string);
@@ -576,10 +593,7 @@ export class CognitoAuthProvider implements AuthProvider {
         expiresIn: tokens.expires_in as number,
       };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "SSO callback failed",
-      };
+      return this.codedFailure(error, "SSO callback failed");
     }
   }
 
@@ -632,10 +646,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Failed to forget device",
-      };
+      return this.codedFailure(error, "Failed to forget device");
     }
   }
 
@@ -667,52 +678,48 @@ export class CognitoAuthProvider implements AuthProvider {
       logger.info("User account deleted from Cognito");
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Account deletion failed",
-      };
+      return this.codedFailure(error, "Account deletion failed");
     }
   }
 
   // ── Error Handling ──
 
-  private handleAuthError(error: unknown, operation: string): AuthResult {
+  /**
+   * ADR-051: a failed Cognito call as a coded result. The Cognito message stays in `error` for
+   * logs; routes answer with `errorCode`, so no Cognito text reaches a client.
+   */
+  private codedFailure(
+    error: unknown,
+    operation: string
+  ): { success: false; error: string; errorCode: ErrorCode } {
     if (error instanceof CognitoError) {
       logger.warn(`Auth ${operation} failed`, {
         cognitoType: error.cognitoType,
         message: error.message,
       });
-
-      switch (error.cognitoType) {
-        case "UserNotFoundException":
-        case "NotAuthorizedException":
-          return { success: false, error: "Invalid email or password" };
-        case "UsernameExistsException":
-          return { success: false, error: "An account with this email already exists" };
-        case "UserNotConfirmedException":
-          return {
-            success: false,
-            error: "Please verify your email",
-            emailVerificationRequired: true,
-          };
-        case "InvalidPasswordException":
-          return { success: false, error: "Password does not meet requirements" };
-        case "CodeMismatchException":
-          return { success: false, error: "Invalid verification code" };
-        case "ExpiredCodeException":
-          return { success: false, error: "Verification code has expired" };
-        case "LimitExceededException":
-        case "TooManyRequestsException":
-          return { success: false, error: "Too many attempts. Please try again later." };
-        default:
-          return { success: false, error: error.message };
-      }
+      return {
+        success: false,
+        error: error.message,
+        errorCode: COGNITO_ERROR_CODES[error.cognitoType] ?? "internal.error",
+      };
     }
-
     logger.error(`Auth ${operation} unexpected error`, {
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return { success: false, error: "An unexpected error occurred" };
+    return {
+      success: false,
+      error: "An unexpected error occurred",
+      errorCode: "internal.error",
+    };
+  }
+
+  private handleAuthError(error: unknown, operation: string): AuthResult {
+    const failure = this.codedFailure(error, operation);
+    // An unconfirmed account is the next step of sign-in, not a dead end: the client shows
+    // the verification step on `emailVerificationRequired`.
+    return failure.errorCode === "auth.email_not_verified"
+      ? { ...failure, emailVerificationRequired: true }
+      : failure;
   }
 }
 

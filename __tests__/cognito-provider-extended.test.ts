@@ -156,7 +156,7 @@ describe("CognitoAuthProvider — SSO", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("SSO token exchange failed");
+    expect(result.errorCode).toBe("auth.sso_failed");
   });
 
   it("handleSsoCallback returns error on network failure", async () => {
@@ -170,7 +170,7 @@ describe("CognitoAuthProvider — SSO", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Network down");
+    expect(result.errorCode).toBe("internal.error");
   });
 });
 

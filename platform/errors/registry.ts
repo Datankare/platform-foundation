@@ -108,8 +108,9 @@ export const ERROR_CODES = {
   },
   "auth.password_policy": {
     status: 400,
-    params: [{ name: "rules", kind: "list" }],
-    action: "Show the rules.",
+    params: [{ name: "rules", kind: "list", optional: true }],
+    action:
+      "Show the password rules; `rules` lists the ids that failed when known (min_length, uppercase, lowercase, number, special, breached, repeated, sequential).",
   },
   "auth.permission_denied": {
     status: 403,
@@ -138,7 +139,7 @@ export const ERROR_CODES = {
   },
   "auth.sso_failed": {
     status: 401,
-    params: [{ name: "provider", kind: "id" }],
+    params: [{ name: "provider", kind: "id", optional: true }],
     action: "Offer another sign-in method.",
   },
   "auth.token_invalid": {
