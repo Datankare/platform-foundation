@@ -34,9 +34,24 @@ export {
   hasAuthProvider,
 } from "@/platform/auth/config";
 
-export { requireAuth, optionalAuth, requirePermission } from "@/platform/auth/middleware";
+export {
+  requireAuth,
+  optionalAuth,
+  requirePermission,
+  requireActor,
+} from "@/platform/auth/middleware";
+export { requireActorWithStatus } from "@/platform/auth/actor-guard";
+export type { ActorGuardResult } from "@/platform/auth/actor-guard";
 
-export type { AuthContext, AuthError } from "@/platform/auth/middleware";
+export type {
+  AuthContext,
+  AuthError,
+  Actor,
+  ActorContext,
+  ActorError,
+  ActorOptions,
+  ActorResult,
+} from "@/platform/auth/middleware";
 
 // Sprint 3 — Permissions & Entitlements
 export { resolvePermissions, hasPermission } from "@/platform/auth/permissions";

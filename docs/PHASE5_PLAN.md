@@ -197,7 +197,7 @@ baseline included (C4).
 |                     | 0.5 · 0.6 | Apple · Microsoft identity providers                                                                                     | End of 7A   |
 | A · Platform guards | A1        | Production refuses test-double auth; environment contract checked at boot (TASK-097, TASK-103)                           | Done (PF)   |
 |                     | A2        | Signed guest tokens (TASK-098)                                                                                           | Done (PF)   |
-|                     | A3        | Opt-in guest routes, namespaced guest ids (TASK-099)                                                                     | Open        |
+|                     | A3        | Opt-in guest routes, namespaced guest ids (TASK-099)                                                                     | Done (PF)   |
 | B · Playform        | B1        | Guest allowance, admin-governed min 1 / default 5 / max 10 (TASK-099)                                                    | Open        |
 |                     | B2        | E2E asserts real results; guest-limit test (TASK-100)                                                                    | Open        |
 |                     | B3        | Optional features offered only when configured (TASK-104); Teams on the signed-in user + durable social store (TASK-107) | Open        |
