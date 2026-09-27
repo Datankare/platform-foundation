@@ -70,7 +70,7 @@ describe("requireActor", () => {
     const r = await requireActor(req(token), { allowGuests: false });
     expect(r.error?.status).toBe(401);
     await expect(r.error?.json()).resolves.toEqual(
-      expect.objectContaining({ code: "sign_in_required" })
+      expect.objectContaining({ code: "auth.sign_in_required" })
     );
   });
 
@@ -78,7 +78,7 @@ describe("requireActor", () => {
     const r = await requireActor(req("guest.e30.AAAA"), { allowGuests: true });
     expect(r.error?.status).toBe(401);
     await expect(r.error?.json()).resolves.toEqual(
-      expect.objectContaining({ code: "guest_invalid" })
+      expect.objectContaining({ code: "auth.guest_invalid" })
     );
   });
 

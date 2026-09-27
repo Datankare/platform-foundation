@@ -2232,6 +2232,8 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 **Progress (7A A4a, PF):** `platform/errors` (registry of 39 codes, catalog `messages/en.json`, `apiError`, locale negotiation, ICU rendering), generated `docs/API_ERRORS.md`, CI checks, free-text ratchet at 102. Survey findings carried to A4b: auth failures returned with HTTP 200 (12), 500s echoing internal error text (11), statuses chosen by matching English (7). Playform (sync-excluded `package.json`) must add `intl-messageformat` and the jest ESM transform in the same PR that syncs v2.7.0, or the synced `platform/errors` fails to build there.
 
+**Progress (7A A4b-1, PF):** request-validation, auth-guard (`requireAuth`, `requireActor`, `requirePermission`, admin self-elevation, actor account status), rate-limit, admin and `/api/process` errors on codes; every 500 in them is `internal.error` — the 11 responses that echoed internal error text now log it with a request id and return only the id (`internalError`); the content classifier's reason (which may quote matched terms) goes to the log. Free-text ratchet 102 → 58. Compatibility aliases `success: false` / `error` stay in the body until 7B.
+
 ### TASK-110 — Screen strings are English literals
 
 | Field        | Detail                                |

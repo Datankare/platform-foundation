@@ -1,7 +1,8 @@
 /**
  * ADR-051 D3: { code, message, params } bodies, locale negotiation, rendering fallbacks.
  */
-import { apiError, apiErrorBody } from "@/platform/errors/respond";
+import { apiError, apiErrorBody, internalError } from "@/platform/errors/respond";
+import { logger } from "@/lib/logger";
 import {
   availableLocales,
   catalogKeys,
@@ -12,7 +13,11 @@ import {
 import { isErrorCode, messageKey } from "@/platform/errors/registry";
 import * as barrel from "@/platform/errors";
 
-jest.mock("@/lib/logger", () => ({ generateRequestId: () => "req-123" }));
+jest.mock("@/lib/logger", () => ({
+  logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
+}));
+
+const REQ_ID = /^req_[0-9a-f]{16}$/;
 
 describe("apiError", () => {
   it("returns the registry status and a coded body", async () => {
@@ -24,6 +29,8 @@ describe("apiError", () => {
       code: "request.missing_fields",
       message: "Required: email and password.",
       params: { fields: ["email", "password"] },
+      success: false,
+      error: "Required: email and password.",
     });
   });
 
@@ -37,8 +44,8 @@ describe("apiError", () => {
     const res = apiError("internal.error");
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.params).toEqual({ requestId: "req-123" });
-    expect(body.message).toContain("req-123");
+    expect(body.params.requestId).toMatch(REQ_ID);
+    expect(body.message).toContain(body.params.requestId);
     expect(
       apiErrorBody("internal.error", { params: { requestId: "given" } }).params.requestId
     ).toBe("given");
@@ -64,6 +71,48 @@ describe("apiError", () => {
     );
     expect(apiErrorBody("auth.required", { locale: "xx" }).message).toBe(
       "Sign in to continue."
+    );
+  });
+});
+
+describe("internalError", () => {
+  it("logs the detail with a request id and returns only the id", async () => {
+    const request = {
+      headers: new Headers(),
+      nextUrl: { pathname: "/api/admin/roles" },
+    };
+    const res = internalError(new Error("relation users does not exist"), {
+      request,
+      context: "Roles query failed",
+    });
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body.code).toBe("internal.error");
+    expect(JSON.stringify(body)).not.toContain("relation users");
+    expect(logger.error).toHaveBeenCalledWith("Roles query failed", {
+      requestId: body.params.requestId,
+      route: "/api/admin/roles",
+      error: "relation users does not exist",
+    });
+  });
+
+  it("never throws, even when logging does", () => {
+    (logger.error as jest.Mock).mockImplementationOnce(() => {
+      throw new Error("log sink down");
+    });
+    expect(internalError(new Error("x")).status).toBe(500);
+  });
+
+  it("handles strings, non-errors and no options", () => {
+    internalError("boom");
+    expect(logger.error).toHaveBeenLastCalledWith(
+      "Internal error",
+      expect.objectContaining({ error: "boom" })
+    );
+    internalError({ weird: true });
+    expect(logger.error).toHaveBeenLastCalledWith(
+      "Internal error",
+      expect.objectContaining({ error: "non-Error thrown" })
     );
   });
 });

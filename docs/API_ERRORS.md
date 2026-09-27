@@ -16,6 +16,7 @@ Every error the API returns has this body (ADR-051 D3):
 - **`code`** is stable — act on it. A code is never repurposed; a new meaning gets a new code.
 - **`message`** is rendered for the request's locale (`Accept-Language`, English fallback). Show it; never parse it.
 - **`params`** are the values the message used, so a client can render the message in its own locale from the catalog key `errors.<code>`. Param kinds: `id` — an identifier, shown verbatim and never translated; `number`; `list` — identifiers, joined in the locale's list style.
+- Until Sprint 7B the body also carries `success: false` and `error` (equal to `message`) — deprecated aliases for older screens. Do not build on them.
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 
 **39 codes** in 9 areas.

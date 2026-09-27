@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { reapOverdueEscalations } from "@/platform/moderation/review-service";
+import { apiError } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
 
@@ -33,9 +34,6 @@ export async function POST(request: NextRequest) {
     logger.error(
       `escalation-reaper failed: ${err instanceof Error ? err.message : String(err)} (req ${requestId})`
     );
-    return NextResponse.json(
-      { error: "Escalation reaper failed", requestId },
-      { status: 500 }
-    );
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }

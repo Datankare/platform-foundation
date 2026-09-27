@@ -11,7 +11,7 @@ export type {
   ErrorParamKind,
   ErrorParamSpec,
 } from "./registry";
-export { apiError, apiErrorBody } from "./respond";
+export { apiError, apiErrorBody, internalError } from "./respond";
 export type { ApiErrorBody, ApiErrorOptions, ErrorParams } from "./respond";
 export {
   CATALOGS,

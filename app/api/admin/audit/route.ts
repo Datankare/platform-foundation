@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger } from "@/lib/logger";
+import { internalError } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_view_audit");
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
       error: error.message,
       route: "api/admin/audit",
     });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError(error, { request, context: "Admin audit query failed" });
   }
 
   const entries = (data || []).map(

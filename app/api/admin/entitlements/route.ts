@@ -10,6 +10,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { writeAuditLog } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import { apiError, internalError } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_entitlements");
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
       error: error.message,
       route: "api/admin/entitlements",
     });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError(error, { request, context: "Admin entitlements query failed" });
   }
 
   // Get user counts per group
@@ -63,7 +64,10 @@ export async function PATCH(request: NextRequest) {
   const { groupId, isActive } = body;
 
   if (!groupId || typeof isActive !== "boolean") {
-    return NextResponse.json({ error: "groupId and isActive required" }, { status: 400 });
+    return apiError("request.missing_fields", {
+      params: { fields: ["groupId", "isActive"] },
+      request,
+    });
   }
 
   const supabase = getSupabaseServiceClient();
@@ -74,7 +78,7 @@ export async function PATCH(request: NextRequest) {
     .eq("id", groupId);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError(error, { request, context: "Admin entitlements query failed" });
   }
 
   await writeAuditLog({

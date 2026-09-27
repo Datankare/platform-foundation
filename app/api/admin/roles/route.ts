@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger } from "@/lib/logger";
+import { internalError } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_roles");
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
       error: error.message,
       route: "api/admin/roles",
     });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError(error, { request, context: "Admin roles query failed" });
   }
 
   // Get all role-permission mappings with permission details

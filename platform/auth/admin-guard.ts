@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requirePermission } from "@/platform/auth/middleware";
 import { checkRateLimit } from "@/platform/auth/rate-limit";
+import { apiError } from "@/platform/errors";
 
 const DEV_BYPASS = process.env.ADMIN_DEV_BYPASS === "true";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -59,15 +60,12 @@ export function checkSelfElevation(
 ): NextResponse | null {
   // No one can assign super_admin through the UI
   if (PROTECTED_ROLES.includes(targetRole)) {
-    return NextResponse.json(
-      { error: `Role "${targetRole}" can only be assigned directly in the database` },
-      { status: 403 }
-    );
+    return apiError("auth.role_database_only", { params: { role: targetRole } });
   }
 
   // No one can change their own role
   if (actorId === targetId) {
-    return NextResponse.json({ error: "Cannot change your own role" }, { status: 403 });
+    return apiError("auth.role_self_change");
   }
 
   return null;

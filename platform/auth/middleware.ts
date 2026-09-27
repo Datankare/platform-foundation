@@ -26,6 +26,7 @@ import {
   verifyGuestToken,
 } from "@/platform/auth/guest-token";
 import { logger, generateRequestId } from "@/lib/logger";
+import { apiError } from "@/platform/errors";
 
 export interface AuthContext {
   user: TokenPayload;
@@ -54,7 +55,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
       route: request.nextUrl.pathname,
     });
     return {
-      error: NextResponse.json({ error: "Authentication required" }, { status: 401 }),
+      error: apiError("auth.required", { request }),
     };
   }
 
@@ -70,7 +71,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
         route: request.nextUrl.pathname,
       });
       return {
-        error: NextResponse.json({ error: "Invalid or expired token" }, { status: 401 }),
+        error: apiError("auth.token_invalid", { request }),
       };
     }
 
@@ -81,7 +82,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
         route: request.nextUrl.pathname,
       });
       return {
-        error: NextResponse.json({ error: "Invalid or expired token" }, { status: 401 }),
+        error: apiError("auth.token_invalid", { request }),
       };
     }
 
@@ -93,7 +94,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
       error: err instanceof Error ? err.message : "Unknown error",
     });
     return {
-      error: NextResponse.json({ error: "Authentication failed" }, { status: 401 }),
+      error: apiError("auth.token_invalid", { request }),
     };
   }
 }
@@ -143,23 +144,14 @@ export async function requireActor(
     if (!options.allowGuests) {
       logger.info("Guest refused on a route that requires sign-in", { route });
       return {
-        error: NextResponse.json(
-          { error: "Sign in to use this feature", code: "sign_in_required" },
-          { status: 401 }
-        ),
+        error: apiError("auth.sign_in_required", { request }),
       };
     }
     const verified = await verifyGuestToken(token);
     if (!verified.valid) {
       logger.warn("Invalid or expired guest token", { route });
       return {
-        error: NextResponse.json(
-          {
-            error: "Guest session expired — start a new one or sign in",
-            code: "guest_invalid",
-          },
-          { status: 401 }
-        ),
+        error: apiError("auth.guest_invalid", { request }),
       };
     }
     return {
@@ -222,10 +214,9 @@ export async function requirePermission(
       route: "platform/auth/middleware",
     });
     return {
-      error: NextResponse.json(
-        { error: "Permission denied", required: permissionCode },
-        { status: 403 }
-      ),
+      error: apiError("auth.permission_denied", {
+        params: { permission: permissionCode },
+      }),
     };
   }
 

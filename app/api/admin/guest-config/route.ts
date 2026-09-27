@@ -10,6 +10,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { writeAuditLog } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import { internalError } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_config");
@@ -71,7 +72,7 @@ export async function PUT(request: NextRequest) {
       error: error.message,
       route: "api/admin/guest-config",
     });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError(error, { request, context: "Admin guest-config update failed" });
   }
 
   await writeAuditLog({

@@ -19,6 +19,7 @@ import { getOrchestrator } from "@/platform/ai";
 import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS, type AdminTool } from "./tool-schemas";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
+import { apiError } from "@/platform/errors";
 
 function getToolsForPanel(panel: string): AdminTool[] {
   return [...SHARED_TOOLS, ...(PANEL_TOOL_SCHEMAS[panel] || [])];
@@ -80,7 +81,10 @@ export async function POST(request: NextRequest) {
   const { prompt, panel } = await request.json();
 
   if (!prompt || !panel) {
-    return NextResponse.json({ error: "prompt and panel are required" }, { status: 400 });
+    return apiError("request.missing_fields", {
+      params: { fields: ["prompt", "panel"] },
+      request,
+    });
   }
 
   const tools = getToolsForPanel(panel);
@@ -131,6 +135,6 @@ export async function POST(request: NextRequest) {
       requestId,
       route: "api/admin/ai",
     });
-    return NextResponse.json({ error: "AI service unavailable" }, { status: 500 });
+    return apiError("service.unavailable", { params: { service: "ai" }, request });
   }
 }

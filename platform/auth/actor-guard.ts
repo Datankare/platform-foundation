@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 import { requireActor, type Actor, type ActorOptions } from "@/platform/auth/middleware";
 import { checkAccountStatus } from "@/platform/auth/account-status-guard";
 import { logger } from "@/lib/logger";
+import { apiError } from "@/platform/errors";
 
 export type ActorGuardResult =
   | { readonly actor: Actor; readonly error?: never }
@@ -43,7 +44,12 @@ export async function requireActorWithStatus(
       accountStatus: status.accountStatus,
       route: request.nextUrl.pathname,
     });
-    return { error: NextResponse.json({ error: status.reason }, { status: 403 }) };
+    return {
+      error: apiError("account.restricted", {
+        params: { feature, status: status.accountStatus ?? "unknown" },
+        request,
+      }),
+    };
   }
   return { actor };
 }

@@ -5,6 +5,7 @@ import { textToSpeech } from "@/lib/tts";
 import { ProcessResponse } from "@/types";
 import { logger, generateRequestId } from "@/lib/logger";
 import { MAX_INPUT_CHARACTERS } from "@/shared/config/limits";
+import { apiError } from "@/platform/errors";
 
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -17,44 +18,34 @@ export async function POST(request: NextRequest) {
 
     if (!text || typeof text !== "string") {
       logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
-      return NextResponse.json<ProcessResponse>(
-        { success: false, error: "Text input is required." },
-        { status: 400 }
-      );
+      return apiError("request.text_empty", { request });
     }
 
     const trimmed = text.trim();
 
     if (trimmed.length === 0) {
       logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
-      return NextResponse.json<ProcessResponse>(
-        { success: false, error: "Text cannot be empty." },
-        { status: 400 }
-      );
+      return apiError("request.text_empty", { request });
     }
 
     if (trimmed.length > MAX_INPUT_CHARACTERS) {
       logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
-      return NextResponse.json<ProcessResponse>(
-        {
-          success: false,
-          error: `Text must be ${MAX_INPUT_CHARACTERS} characters or fewer.`,
-        },
-        { status: 400 }
-      );
+      return apiError("request.text_too_long", {
+        params: { max: MAX_INPUT_CHARACTERS },
+        request,
+      });
     }
 
     const safety = await checkSafety(trimmed);
 
     if (!safety.safe) {
       logger.response("/api/process", "POST", 422, requestId, Date.now() - start);
-      return NextResponse.json<ProcessResponse>(
-        {
-          success: false,
-          error: `Content rejected: ${safety.reason || "Input does not meet content guidelines."}`,
-        },
-        { status: 422 }
-      );
+      // The classifier's reason (it may quote matched terms) goes to the log, not the response.
+      logger.info("Process input rejected by content screening", {
+        requestId,
+        reason: safety.reason,
+      });
+      return apiError("content.rejected", { request });
     }
 
     const translations = await translateToAllLanguages(trimmed);
@@ -83,9 +74,6 @@ export async function POST(request: NextRequest) {
       route: "/api/process",
       error: error instanceof Error ? error.message : "Unknown error",
     });
-    return NextResponse.json<ProcessResponse>(
-      { success: false, error: "An unexpected error occurred. Please try again." },
-      { status: 500 }
-    );
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }
