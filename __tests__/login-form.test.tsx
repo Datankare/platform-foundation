@@ -25,11 +25,17 @@ describe("LoginForm", () => {
     expect(screen.getByLabelText("Password")).toBeDefined();
   });
 
-  it("renders SSO buttons", () => {
-    render(<LoginForm {...mockProps} />);
+  it("renders the configured SSO buttons and the divider", () => {
+    render(<LoginForm {...mockProps} enabledSsoProviders={["google"]} />);
     expect(screen.getByText("Continue with Google")).toBeDefined();
-    expect(screen.getByText("Continue with Apple")).toBeDefined();
-    expect(screen.getByText("Continue with Microsoft")).toBeDefined();
+    expect(screen.queryByText("Continue with Apple")).toBeNull();
+    expect(screen.getByRole("separator")).toBeDefined();
+  });
+
+  it("renders no SSO buttons and no divider when none are configured", () => {
+    render(<LoginForm {...mockProps} />);
+    expect(screen.queryByText("Continue with Google")).toBeNull();
+    expect(screen.queryByRole("separator")).toBeNull();
   });
 
   it("renders guest option by default", () => {

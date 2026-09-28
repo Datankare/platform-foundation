@@ -93,8 +93,9 @@ before any provider initializes and refuses to start, naming every violation: te
 (`AUTH_PROVIDER` unset or `mock`), a declared setting that is mis-shaped, set only under an alias
 or set under two disagreeing names, a missing required setting, or a harness switch on a hosted
 deployment. The declared settings are `AUTH_PROVIDER`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`,
-`NEXT_PUBLIC_COGNITO_CLIENT_ID`, `NEXT_PUBLIC_COGNITO_REGION`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY` and `GUEST_TOKEN_SECRET`, each with the aliases listed in this reference.
+`NEXT_PUBLIC_COGNITO_CLIENT_ID`, `NEXT_PUBLIC_COGNITO_REGION`, `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN`,
+`SSO_PROVIDERS`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `GUEST_TOKEN_SECRET`, each with the
+aliases listed in this reference.
 
 ---
 
@@ -120,6 +121,20 @@ function's region, not the pool's.
 | `COGNITO_CLIENT_ID`                | No (alias)                             | —                                   | Alias of `NEXT_PUBLIC_COGNITO_CLIENT_ID`.                                                                                                                                                         |
 | `ADMIN_DEV_BYPASS`                 | No                                     | unset                               | **Development only.** When set, bypasses admin permission checks for local work. Never set in production.                                                                                         |
 | `GUEST_TOKEN_SECRET`               | With a real auth provider (production) | per-process random (non-production) | HMAC-SHA256 key that signs guest tokens (ADR-050 D4). At least 32 random bytes, base64 — `openssl rand -base64 48`. **Server-side only.** One per environment; rotating it signs every guest out. |
+
+### Single sign-on (TASK-101)
+
+SSO runs through the Cognito hosted sign-in (authorization code with PKCE and `state`). A provider
+is offered only when all of this is true (ADR-050 D3, `GET /api/features` → `sso_<provider>`):
+`AUTH_PROVIDER=cognito` with its pool and client ids, `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` set, and
+the provider listed in `SSO_PROVIDERS`. Listing a provider declares that it is enabled on the Cognito
+app client — the platform cannot see that. Register `<origin>/auth/callback` as an allowed callback
+URL on the app client for every address the app is served from.
+
+| Variable                               | Required                           | Default | Notes                                                                                                                    |
+| -------------------------------------- | ---------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` | With `SSO_PROVIDERS` and `cognito` | —       | Hosted sign-in host name only — no `https://`, no path — e.g. `<prefix>.auth.us-east-1.amazoncognito.com`.               |
+| `SSO_PROVIDERS`                        | No                                 | none    | Comma-separated, no spaces: `google`, `apple`, `microsoft`. Only those listed are offered. Apple and Microsoft: Phase 6. |
 
 ---
 
@@ -270,9 +285,9 @@ as long as the maximum token lifetime.
 `COGNITO_USER_POOL_ID` · `DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` ·
 `E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `GUEST_USAGE_STORE` · `LOG_LEVEL` ·
 `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
-`NEXT_PUBLIC_COGNITO_REGION` · `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
+`NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` · `NEXT_PUBLIC_COGNITO_REGION` · `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` ·
-`PROPOSAL_STORE` · `REALTIME_PROVIDER` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` ·
+`PROPOSAL_STORE` · `REALTIME_PROVIDER` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` · `SSO_PROVIDERS` ·
 `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` · `TRANSLATION_PROVIDER` ·
 `TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` · `UPSTASH_REDIS_REST_URL` · `VERCEL`
 

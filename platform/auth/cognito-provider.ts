@@ -28,7 +28,9 @@ import type {
   MfaVerifyResult,
   PasswordRecoveryResult,
   PasswordResetResult,
+  SsoCallbackOptions,
   SsoCallbackResult,
+  SsoInitOptions,
   SsoInitResult,
   SsoProvider,
   TokenPayload,
@@ -67,13 +69,15 @@ export interface CognitoConfig {
   region: string;
   userPoolId: string;
   clientId: string;
+  /** Hosted sign-in host name (NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN); required for SSO. */
+  hostedUiDomain?: string;
   timeoutMs?: number;
 }
 
 export function getCognitoConfigFromEnv(): CognitoConfig {
   // ADR-050 D2: the contract resolver is the one reader (no AWS_REGION — that is the host's
   // function region, not the pool's).
-  const { region, userPoolId, clientId } = getCognitoSettings();
+  const { region, userPoolId, clientId, hostedUiDomain } = getCognitoSettings();
 
   if (!userPoolId || !clientId) {
     logger.warn("Cognito config incomplete", {
@@ -82,7 +86,7 @@ export function getCognitoConfigFromEnv(): CognitoConfig {
     });
   }
 
-  return { region, userPoolId, clientId };
+  return { region, userPoolId, clientId, hostedUiDomain };
 }
 
 // ---------------------------------------------------------------------------
@@ -530,8 +534,21 @@ export class CognitoAuthProvider implements AuthProvider {
 
   // ── SSO ──
 
-  async initiateSso(provider: SsoProvider, redirectUri: string): Promise<SsoInitResult> {
-    const domain = `${this.config.userPoolId.split("_")[1]?.toLowerCase()}.auth.${this.config.region}.amazoncognito.com`;
+  // TASK-101: the hosted sign-in domain is a declared setting (ADR-050 D2). It used to be
+  // derived from the pool id, which is not the domain Cognito assigns.
+  async initiateSso(
+    provider: SsoProvider,
+    redirectUri: string,
+    options: SsoInitOptions = {}
+  ): Promise<SsoInitResult> {
+    const domain = this.config.hostedUiDomain;
+    if (!domain) {
+      return {
+        success: false,
+        error: "SSO not configured: NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN is not set",
+        errorCode: "feature.not_configured",
+      };
+    }
     const identityProvider =
       provider === "google"
         ? "Google"
@@ -545,6 +562,11 @@ export class CognitoAuthProvider implements AuthProvider {
     url.searchParams.set("scope", "openid email profile");
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("identity_provider", identityProvider);
+    if (options.state) url.searchParams.set("state", options.state);
+    if (options.codeChallenge) {
+      url.searchParams.set("code_challenge", options.codeChallenge);
+      url.searchParams.set("code_challenge_method", "S256");
+    }
 
     return { success: true, redirectUrl: url.toString() };
   }
@@ -552,25 +574,35 @@ export class CognitoAuthProvider implements AuthProvider {
   async handleSsoCallback(
     _provider: SsoProvider,
     code: string,
-    redirectUri: string
+    redirectUri: string,
+    options: SsoCallbackOptions = {}
   ): Promise<SsoCallbackResult> {
-    const domain = `${this.config.userPoolId.split("_")[1]?.toLowerCase()}.auth.${this.config.region}.amazoncognito.com`;
+    const domain = this.config.hostedUiDomain;
+    if (!domain) {
+      return {
+        success: false,
+        error: "SSO not configured: NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN is not set",
+        errorCode: "feature.not_configured",
+      };
+    }
+
+    const form: Record<string, string> = {
+      grant_type: "authorization_code",
+      client_id: this.config.clientId,
+      code,
+      redirect_uri: redirectUri,
+    };
+    if (options.codeVerifier) form.code_verifier = options.codeVerifier;
 
     try {
       const response = await fetchWithTimeout(`https://${domain}/oauth2/token`, {
         timeoutMs: 10_000,
-        // Retry is the caller's: reduceCommit loops on version conflict and the effect
-        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        // An authorization code is single-use: a transport retry after a lost response would
+        // be refused and mask the first outcome.
         maxRetries: 0,
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "authorization_code",
-          client_id: this.config.clientId,
-          code,
-          redirect_uri: redirectUri,
-        }),
+        body: new URLSearchParams(form),
       });
 
       if (!response.ok) {
@@ -582,12 +614,19 @@ export class CognitoAuthProvider implements AuthProvider {
       }
 
       const tokens = (await response.json()) as Record<string, unknown>;
-      const decoded = decodeJwtPayload(tokens.access_token as string);
+      if (typeof tokens.access_token !== "string") {
+        return {
+          success: false,
+          error: "SSO token exchange returned no access token",
+          errorCode: "auth.sso_failed",
+        };
+      }
+      const decoded = decodeJwtPayload(tokens.access_token);
 
       return {
         success: true,
         userId: decoded?.sub as string,
-        accessToken: tokens.access_token as string,
+        accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token as string,
         idToken: tokens.id_token as string,
         expiresIn: tokens.expires_in as number,

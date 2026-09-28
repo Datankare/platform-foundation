@@ -129,6 +129,22 @@ export interface SsoInitResult {
   errorCode?: ErrorCode;
 }
 
+/**
+ * Request protection for the authorization-code flow (TASK-101): `state` (RFC 6749 §10.12,
+ * login CSRF) and a PKCE S256 challenge (RFC 7636, code interception). The platform's SSO
+ * routes always send both; a provider that receives them must pass them to the identity
+ * provider.
+ */
+export interface SsoInitOptions {
+  state?: string;
+  codeChallenge?: string;
+}
+
+/** The PKCE verifier matching the challenge sent at initiation. */
+export interface SsoCallbackOptions {
+  codeVerifier?: string;
+}
+
 /** SSO callback result — same as AuthResult */
 export type SsoCallbackResult = AuthResult;
 

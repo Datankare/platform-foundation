@@ -7,6 +7,8 @@
  *
  * Routes:
  *   /auth        — public (login/register)
+ *   /auth/callback — public (SSO return, TASK-101)
+ *   /api/features — public (which optional features exist; the sign-in screen reads it)
  *   /api/auth/*  — public (auth API endpoints)
  *   /api/health  — public (health check)
  *   /api/*       — protected (requires Bearer token)
@@ -23,10 +25,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /** Routes that don't require authentication */
-const PUBLIC_ROUTES = new Set(["/auth"]);
+const PUBLIC_ROUTES = new Set(["/auth", "/auth/callback"]);
 
 /** Route prefixes that are always public */
-const PUBLIC_PREFIXES = ["/api/auth/", "/api/health", "/_next/", "/favicon.ico"];
+const PUBLIC_PREFIXES = [
+  "/api/auth/",
+  "/api/health",
+  "/api/features",
+  "/_next/",
+  "/favicon.ico",
+];
 
 /** Check if a route is public */
 function isPublicRoute(pathname: string): boolean {

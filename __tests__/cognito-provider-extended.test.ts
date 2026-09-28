@@ -93,9 +93,72 @@ describe("getCognitoConfigFromEnv", () => {
   });
 });
 
+const SSO_CONFIG: CognitoConfig = {
+  ...TEST_CONFIG,
+  hostedUiDomain: "pfx.auth.us-east-1.amazoncognito.com",
+};
+
 describe("CognitoAuthProvider — SSO", () => {
-  it("initiateSso returns redirect URL for Google", async () => {
+  it("uses the declared hosted domain and sends state and the PKCE challenge (TASK-101)", async () => {
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
+    const result = await provider.initiateSso("google", "https://app.com/auth/callback", {
+      state: "st4te",
+      codeChallenge: "ch4llenge",
+    });
+    const url = new URL(result.redirectUrl as string);
+    expect(url.origin + url.pathname).toBe(
+      "https://pfx.auth.us-east-1.amazoncognito.com/oauth2/authorize"
+    );
+    expect(url.searchParams.get("state")).toBe("st4te");
+    expect(url.searchParams.get("code_challenge")).toBe("ch4llenge");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("redirect_uri")).toBe("https://app.com/auth/callback");
+  });
+
+  it("refuses SSO without a hosted domain — feature.not_configured, no request", async () => {
     const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const init = await provider.initiateSso("google", "https://app.com/auth/callback");
+    expect(init).toMatchObject({ success: false, errorCode: "feature.not_configured" });
+    const cb = await provider.handleSsoCallback(
+      "google",
+      "c",
+      "https://app.com/auth/callback"
+    );
+    expect(cb).toMatchObject({ success: false, errorCode: "feature.not_configured" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("sends the PKCE verifier to the hosted token endpoint", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: "h.e30.s", expires_in: 3600 }),
+    });
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
+    await provider.handleSsoCallback(
+      "google",
+      "code-1",
+      "https://app.com/auth/callback",
+      {
+        codeVerifier: "v3rifier",
+      }
+    );
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(String(url)).toBe("https://pfx.auth.us-east-1.amazoncognito.com/oauth2/token");
+    const form = new URLSearchParams(String(init.body));
+    expect(form.get("code_verifier")).toBe("v3rifier");
+    expect(form.get("code")).toBe("code-1");
+    expect(form.get("grant_type")).toBe("authorization_code");
+  });
+
+  it("treats a token response without an access token as sso_failed", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
+    const result = await provider.handleSsoCallback("google", "c", "https://app.com/cb");
+    expect(result).toMatchObject({ success: false, errorCode: "auth.sso_failed" });
+  });
+
+  it("initiateSso returns redirect URL for Google", async () => {
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
     const result = await provider.initiateSso("google", "https://app.com/callback");
 
     expect(result.success).toBe(true);
@@ -105,14 +168,14 @@ describe("CognitoAuthProvider — SSO", () => {
   });
 
   it("initiateSso returns redirect URL for Apple", async () => {
-    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
     const result = await provider.initiateSso("apple", "https://app.com/callback");
 
     expect(result.redirectUrl).toContain("identity_provider=SignInWithApple");
   });
 
   it("initiateSso returns redirect URL for Microsoft", async () => {
-    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
     const result = await provider.initiateSso("microsoft", "https://app.com/callback");
 
     expect(result.redirectUrl).toContain("identity_provider=Microsoft");
@@ -133,7 +196,7 @@ describe("CognitoAuthProvider — SSO", () => {
       }),
     });
 
-    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
     const result = await provider.handleSsoCallback(
       "google",
       "auth-code-123",
@@ -148,7 +211,7 @@ describe("CognitoAuthProvider — SSO", () => {
   it("handleSsoCallback returns error on HTTP failure", async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 400 });
 
-    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
     const result = await provider.handleSsoCallback(
       "google",
       "bad-code",
@@ -162,7 +225,7 @@ describe("CognitoAuthProvider — SSO", () => {
   it("handleSsoCallback returns error on network failure", async () => {
     mockFetch.mockRejectedValueOnce(new Error("Network down"));
 
-    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const provider = new CognitoAuthProvider(SSO_CONFIG);
     const result = await provider.handleSsoCallback(
       "google",
       "code",

@@ -29,6 +29,8 @@ const TEST_CONFIG: CognitoConfig = {
   region: "us-east-1",
   userPoolId: "us-east-1_TestPool",
   clientId: "test-client-id",
+  // TASK-101: SSO needs the declared hosted sign-in domain.
+  hostedUiDomain: "testpool.auth.us-east-1.amazoncognito.com",
   timeoutMs: 5000,
 };
 

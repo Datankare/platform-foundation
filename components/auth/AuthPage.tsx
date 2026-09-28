@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import AuthLayout from "@/components/auth/AuthLayout";
 import LoginForm from "@/components/auth/LoginForm";
 import RegisterForm from "@/components/auth/RegisterForm";
@@ -11,6 +11,9 @@ import EmailVerificationForm from "@/components/auth/EmailVerificationForm";
 import { getAuthProvider } from "@/platform/auth/config";
 import { useAuth } from "@/platform/auth/context";
 import type { SsoProvider } from "@/platform/auth/types";
+import { useSsoProviders } from "@/components/auth/useSsoProviders";
+import { isErrorCode, messageKey } from "@/platform/errors/registry";
+import { renderMessage } from "@/platform/errors/messages";
 
 type AuthView =
   | "login"
@@ -38,7 +41,14 @@ export default function AuthPage() {
   const [mfaSession, setMfaSession] = useState<string | null>(null);
   const [challengeSession, setChallengeSession] = useState<string | null>(null);
   const [pendingEmail, setPendingEmail] = useState<string>("");
+  const ssoProviders = useSsoProviders();
   const { setSession } = useAuth();
+
+  // A failed SSO attempt returns here with ?error=<code> (TASK-101).
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("error");
+    if (isErrorCode(code)) setError(renderMessage(messageKey(code)));
+  }, []);
 
   const clearError = () => setError(null);
 
@@ -225,31 +235,12 @@ export default function AuthPage() {
     }
   };
 
-  const handleSsoClick = async (provider: SsoProvider) => {
+  // TASK-101: the server starts SSO (state + PKCE) and redirects to the hosted sign-in.
+  const handleSsoClick = (provider: SsoProvider): Promise<void> => {
     clearError();
     setIsLoading(true);
-    try {
-      const auth = getAuthProvider();
-      const result = await auth.initiateSso(
-        provider,
-        window.location.origin + "/api/auth/callback"
-      );
-
-      if (!result.success) {
-        setError(result.error || "SSO initiation failed");
-        return;
-      }
-
-      if (result.redirectUrl) {
-        window.location.href = result.redirectUrl;
-      }
-    } catch {
-      /* justified */
-      // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
+    window.location.assign(`/api/auth/sso/${provider}`);
+    return Promise.resolve();
   };
 
   const handleGuestClick = async () => {
@@ -326,6 +317,7 @@ export default function AuthPage() {
         <LoginForm
           onSubmit={handleLogin}
           onSsoClick={handleSsoClick}
+          enabledSsoProviders={ssoProviders}
           onGuestClick={handleGuestClick}
           onForgotPassword={() => switchView("forgot-password")}
           onCreateAccount={() => switchView("register")}

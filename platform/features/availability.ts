@@ -14,9 +14,21 @@
  */
 
 import { getAcrCloudConfig } from "@/platform/voice/acrcloud-identify";
+import {
+  getAuthProviderSetting,
+  getCognitoSettings,
+  getSsoProviders,
+  type SsoProviderId,
+} from "@/platform/providers/environment-contract";
 
 export type FeatureId =
-  "music_identification" | "audio_upload" | "speech_input" | "teams";
+  | "music_identification"
+  | "audio_upload"
+  | "speech_input"
+  | "teams"
+  | "sso_google"
+  | "sso_apple"
+  | "sso_microsoft";
 
 export interface FeatureStatus {
   readonly available: boolean;
@@ -43,6 +55,27 @@ function converterReady(env: EnvSource): boolean {
 function googleSpeechReady(env: EnvSource): boolean {
   return set(env, "GOOGLE_API_KEY") || set(env, "NEXT_PUBLIC_GOOGLE_API_KEY");
 }
+
+/**
+ * SSO through the Cognito hosted sign-in (TASK-101): Cognito auth with its pool and client, the
+ * hosted sign-in domain, and the provider named in SSO_PROVIDERS. Whether the identity provider
+ * is enabled on the Cognito app client is not visible from here — SSO_PROVIDERS is the
+ * deployment's declaration that it is.
+ */
+function ssoReady(env: EnvSource, provider: SsoProviderId): FeatureStatus {
+  const cognito = getCognitoSettings(env);
+  return {
+    available:
+      getAuthProviderSetting(env) === "cognito" &&
+      cognito.userPoolId !== "" &&
+      cognito.clientId !== "" &&
+      cognito.hostedUiDomain !== undefined &&
+      getSsoProviders(env).includes(provider),
+  };
+}
+
+const SSO_NEEDS =
+  "AUTH_PROVIDER=cognito with its pool and client ids, NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN, and the provider in SSO_PROVIDERS (enabled on the Cognito app client)";
 
 /** What each optional feature needs. */
 export const FEATURE_REQUIREMENTS: Readonly<
@@ -78,6 +111,9 @@ export const FEATURE_REQUIREMENTS: Readonly<
       "nothing — sample data until TASK-108 defines participation (offered as a preview)",
     check: () => ({ available: true, preview: true }),
   },
+  sso_google: { needs: SSO_NEEDS, check: (env) => ssoReady(env, "google") },
+  sso_apple: { needs: SSO_NEEDS, check: (env) => ssoReady(env, "apple") },
+  sso_microsoft: { needs: SSO_NEEDS, check: (env) => ssoReady(env, "microsoft") },
 };
 
 export function featureAvailability(

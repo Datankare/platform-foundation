@@ -29,7 +29,7 @@ export default function LoginForm({
   onCreateAccount,
   error = null,
   isLoading = false,
-  enabledSsoProviders = ["google", "apple", "microsoft"],
+  enabledSsoProviders = [],
   showGuestOption = true,
 }: LoginFormProps) {
   const [email, setEmail] = useState("");
@@ -47,24 +47,28 @@ export default function LoginForm({
     <div className="flex flex-col gap-6">
       <h2 className="text-xl font-bold text-white text-center">Sign In</h2>
 
-      {/* SSO Buttons */}
-      <SsoButtons
-        onSsoClick={onSsoClick}
-        disabled={isLoading}
-        enabledProviders={enabledSsoProviders}
-      />
+      {/* SSO Buttons — only configured providers (ADR-050 D3); none, no divider */}
+      {enabledSsoProviders.length > 0 && (
+        <>
+          <SsoButtons
+            onSsoClick={onSsoClick}
+            disabled={isLoading}
+            enabledProviders={enabledSsoProviders}
+          />
 
-      {/* Divider */}
-      <div className="flex items-center gap-4" role="separator" aria-label="or">
-        <div className="flex-1 h-px bg-gray-700" />
-        <span
-          className="text-xs text-gray-500 uppercase tracking-wider"
-          aria-hidden="true"
-        >
-          or
-        </span>
-        <div className="flex-1 h-px bg-gray-700" />
-      </div>
+          {/* Divider */}
+          <div className="flex items-center gap-4" role="separator" aria-label="or">
+            <div className="flex-1 h-px bg-gray-700" />
+            <span
+              className="text-xs text-gray-500 uppercase tracking-wider"
+              aria-hidden="true"
+            >
+              or
+            </span>
+            <div className="flex-1 h-px bg-gray-700" />
+          </div>
+        </>
+      )}
 
       {/* Email/Password Form */}
       <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">

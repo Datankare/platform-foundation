@@ -190,24 +190,24 @@ sign-in, SPA client with no secret, `USER_PASSWORD_AUTH` + refresh flows, hosted
 SSO with Google in 7A; Apple and Microsoft moved to Phase 6 (decided 2026-09-28, TASK-112); production
 database and migration baseline included (C4).
 
-| Phase               | Step      | Work                                                                                                                                                                    | Status      |
-| ------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| 0 · Accounts        | 0.1–0.3   | AWS account, Cognito pool + client, hosted domain + callback/sign-out URLs                                                                                              | Done        |
-|                     | 0.4       | Google identity provider (Google side + Cognito side, verified via hosted login)                                                                                        | Done        |
-|                     | 0.5 · 0.6 | Apple · Microsoft identity providers — **moved to Phase 6** (TASK-112)                                                                                                  | Phase 6     |
-| A · Platform guards | A1        | Production refuses test-double auth; environment contract checked at boot (TASK-097, TASK-103)                                                                          | Done (PF)   |
-|                     | A2        | Signed guest tokens (TASK-098)                                                                                                                                          | Done (PF)   |
-|                     | A3        | Opt-in guest routes, namespaced guest ids (TASK-099)                                                                                                                    | Done (PF)   |
-|                     | A4        | API error contract: catalog infra, error registry, every PF API error coded, `docs/API_ERRORS.md`, screen-literal ratchet (ADR-051, TASK-109)                           | Done (PF)   |
-| B · Playform        | B1        | Guest allowance, admin-governed min 1 / default 5 / max 10 (TASK-099)                                                                                                   | Done (PF)   |
-|                     | B1a       | Guest lifecycle thresholds never load — `guest_config` column mismatch (TASK-111)                                                                                       | Open        |
-|                     | B2        | E2E asserts real results; guest-limit test (TASK-100)                                                                                                                   | B2a done    |
-|                     | B3        | Optional features offered only when configured (TASK-104); Teams on the signed-in user + durable social store (TASK-107)                                                | Done (PF)   |
-| C · Environments    | C1        | Real auth on dev (Cognito) — done for `playform-dev`, staging to match                                                                                                  | Partly done |
-|                     | C2        | SSO via Cognito hosted sign-in, configured providers only (TASK-101)                                                                                                    | Open        |
-|                     | C3        | Deployed smoke test after every dev/staging deploy (TASK-102)                                                                                                           | Open        |
-|                     | C4        | Migration baseline + CI replay (TASK-091), production database (TASK-092), project↔branch topology (TASK-105)                                                           | Open        |
-| Close               |           | ADR-050 Accepted, PF v2.7.0, Playform sync + Playform guest-token delegation (TASK-098) + Playform `package.json` (intl-messageformat, TASK-109), resume Sprint 7 at 3d | —           |
+| Phase               | Step      | Work                                                                                                                                                                    | Status    |
+| ------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 0 · Accounts        | 0.1–0.3   | AWS account, Cognito pool + client, hosted domain + callback/sign-out URLs                                                                                              | Done      |
+|                     | 0.4       | Google identity provider (Google side + Cognito side, verified via hosted login)                                                                                        | Done      |
+|                     | 0.5 · 0.6 | Apple · Microsoft identity providers — **moved to Phase 6** (TASK-112)                                                                                                  | Phase 6   |
+| A · Platform guards | A1        | Production refuses test-double auth; environment contract checked at boot (TASK-097, TASK-103)                                                                          | Done (PF) |
+|                     | A2        | Signed guest tokens (TASK-098)                                                                                                                                          | Done (PF) |
+|                     | A3        | Opt-in guest routes, namespaced guest ids (TASK-099)                                                                                                                    | Done (PF) |
+|                     | A4        | API error contract: catalog infra, error registry, every PF API error coded, `docs/API_ERRORS.md`, screen-literal ratchet (ADR-051, TASK-109)                           | Done (PF) |
+| B · Playform        | B1        | Guest allowance, admin-governed min 1 / default 5 / max 10 (TASK-099)                                                                                                   | Done (PF) |
+|                     | B1a       | Guest lifecycle thresholds never load — `guest_config` column mismatch (TASK-111)                                                                                       | Open      |
+|                     | B2        | E2E asserts real results; guest-limit test (TASK-100)                                                                                                                   | B2a done  |
+|                     | B3        | Optional features offered only when configured (TASK-104); Teams on the signed-in user + durable social store (TASK-107)                                                | Done (PF) |
+| C · Environments    | C1        | Real auth on dev and staging (Cognito); staging tracks `staging`                                                                                                        | Done      |
+|                     | C2        | SSO via Cognito hosted sign-in, configured providers only (TASK-101)                                                                                                    | Done (PF) |
+|                     | C3        | Deployed smoke test after every dev/staging deploy (TASK-102)                                                                                                           | Open      |
+|                     | C4        | Migration baseline + CI replay (TASK-091), production database (TASK-092), project↔branch topology (TASK-105)                                                           | Open      |
+| Close               |           | ADR-050 Accepted, PF v2.7.0, Playform sync + Playform guest-token delegation (TASK-098) + Playform `package.json` (intl-messageformat, TASK-109), resume Sprint 7 at 3d | —         |
 
 **Sprint 7B — screen strings (ADR-051, TASK-110).** A dedicated sprint after Sprint 7 closes: every
 user-visible screen string in PF and Playform through the catalog until the ratchet set in 7A A4 reaches

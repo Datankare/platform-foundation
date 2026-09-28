@@ -68,5 +68,10 @@
     "service": {
       "unavailable": "This service is unavailable right now. Try again shortly."
     }
+  },
+  "screens": {
+    "auth": {
+      "signing_in": "Signing you in…"
+    }
   }
 }

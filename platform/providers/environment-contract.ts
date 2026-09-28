@@ -62,6 +62,19 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     shapeHint: "an AWS region, e.g. us-east-1",
   },
   {
+    name: "NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN",
+    aliases: [],
+    shape: /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/,
+    shapeHint:
+      "the hosted sign-in host name only — no https://, no path — e.g. <prefix>.auth.us-east-1.amazoncognito.com",
+  },
+  {
+    name: "SSO_PROVIDERS",
+    aliases: [],
+    shape: /^(?:google|apple|microsoft)(?:,(?:google|apple|microsoft))*$/,
+    shapeHint: "a comma-separated list of: google, apple, microsoft (no spaces)",
+  },
+  {
     name: "SUPABASE_URL",
     aliases: ["NEXT_PUBLIC_SUPABASE_URL"],
     shape: /^https:\/\/[a-z0-9]+\.supabase\.co$/,
@@ -166,6 +179,8 @@ export interface CognitoSettings {
   region: string;
   userPoolId: string;
   clientId: string;
+  /** Hosted sign-in host name (SSO); undefined when not configured. */
+  hostedUiDomain?: string;
 }
 
 /**
@@ -179,7 +194,21 @@ export function getCognitoSettings(env: EnvSource = process.env): CognitoSetting
     resolveSetting("NEXT_PUBLIC_COGNITO_REGION", env) ??
     poolRegion(userPoolId) ??
     "us-east-1";
-  return { region, userPoolId, clientId };
+  const hostedUiDomain = resolveSetting("NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN", env);
+  return { region, userPoolId, clientId, hostedUiDomain };
+}
+
+/** SSO identity providers this deployment declares (TASK-101, ADR-050 D3). */
+export type SsoProviderId = "google" | "apple" | "microsoft";
+
+/**
+ * The declared SSO providers, in declared order, duplicates removed. A malformed value
+ * yields none — boot refuses it in production (shape), and nothing is offered meanwhile.
+ */
+export function getSsoProviders(env: EnvSource = process.env): SsoProviderId[] {
+  const value = resolveSetting("SSO_PROVIDERS", env);
+  if (value === undefined || !declaration("SSO_PROVIDERS").shape.test(value)) return [];
+  return [...new Set(value.split(",") as SsoProviderId[])];
 }
 
 function poolRegion(userPoolId: string): string | undefined {
@@ -272,6 +301,14 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
     if (!clientId) {
       violations.push(
         `NEXT_PUBLIC_COGNITO_CLIENT_ID is required by AUTH_PROVIDER=cognito`
+      );
+    }
+    if (
+      getSsoProviders(env).length > 0 &&
+      resolveSetting("NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN", env) === undefined
+    ) {
+      violations.push(
+        `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN is required by SSO_PROVIDERS with AUTH_PROVIDER=cognito`
       );
     }
     const region = resolveSetting("NEXT_PUBLIC_COGNITO_REGION", env);

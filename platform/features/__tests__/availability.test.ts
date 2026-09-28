@@ -28,6 +28,9 @@ describe("featureAvailability", () => {
       audio_upload: { available: false },
       speech_input: { available: false },
       teams: { available: true, preview: true },
+      sso_google: { available: false },
+      sso_apple: { available: false },
+      sso_microsoft: { available: false },
     });
   });
 
@@ -85,7 +88,55 @@ describe("featureAvailability", () => {
 
   it("reads process.env by default", () => {
     expect(typeof isFeatureAvailable("speech_input")).toBe("boolean");
-    expect(Object.keys(featureAvailability())).toHaveLength(4);
+    expect(Object.keys(featureAvailability())).toHaveLength(7);
+  });
+});
+
+describe("SSO providers (TASK-101)", () => {
+  const COGNITO = {
+    AUTH_PROVIDER: "cognito",
+    NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_AbC123",
+    NEXT_PUBLIC_COGNITO_CLIENT_ID: "client123",
+    NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN:
+      "us-east-1abc123.auth.us-east-1.amazoncognito.com",
+  };
+
+  it("offers exactly the listed providers when Cognito and the hosted domain are set", () => {
+    const env = { ...COGNITO, SSO_PROVIDERS: "google" };
+    expect(isFeatureAvailable("sso_google", env)).toBe(true);
+    expect(isFeatureAvailable("sso_apple", env)).toBe(false);
+    expect(isFeatureAvailable("sso_microsoft", env)).toBe(false);
+  });
+
+  it("offers none without the hosted domain, the list, Cognito, or its ids", () => {
+    const { NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN: _d, ...noDomain } = COGNITO;
+    expect(
+      isFeatureAvailable("sso_google", { ...noDomain, SSO_PROVIDERS: "google" })
+    ).toBe(false);
+    expect(isFeatureAvailable("sso_google", COGNITO)).toBe(false);
+    expect(
+      isFeatureAvailable("sso_google", {
+        ...COGNITO,
+        AUTH_PROVIDER: "mock",
+        SSO_PROVIDERS: "google",
+      })
+    ).toBe(false);
+    expect(
+      isFeatureAvailable("sso_google", {
+        ...COGNITO,
+        NEXT_PUBLIC_COGNITO_CLIENT_ID: "",
+        SSO_PROVIDERS: "google",
+      })
+    ).toBe(false);
+  });
+
+  it("offers none for a malformed list", () => {
+    expect(
+      isFeatureAvailable("sso_google", { ...COGNITO, SSO_PROVIDERS: "google, apple" })
+    ).toBe(false);
+    expect(
+      isFeatureAvailable("sso_google", { ...COGNITO, SSO_PROVIDERS: "Google" })
+    ).toBe(false);
   });
 });
 

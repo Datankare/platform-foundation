@@ -8,6 +8,7 @@ import {
   checkEnvironmentContract,
   getAuthProviderSetting,
   getCognitoSettings,
+  getSsoProviders,
   getSupabaseUrl,
   isHostedDeployment,
   resolveSetting,
@@ -299,5 +300,59 @@ describe("resolvers", () => {
     expect(() => getCognitoSettings()).not.toThrow();
     expect(isHostedDeployment({ VERCEL: "1" })).toBe(true);
     expect(isHostedDeployment({})).toBe(false);
+  });
+});
+
+describe("SSO settings (TASK-101)", () => {
+  const DOMAIN = "us-east-19prbnscbe.auth.us-east-1.amazoncognito.com";
+
+  it("accepts the hosted domain as a host name and a provider list", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({ NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN: DOMAIN, SSO_PROVIDERS: "google" })
+      )
+    ).toEqual([]);
+  });
+
+  it("refuses a hosted domain with a scheme or path", () => {
+    for (const bad of [`https://${DOMAIN}`, `${DOMAIN}/`, `${DOMAIN}/login`]) {
+      expect(
+        checkEnvironmentContract(valid({ NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN: bad }))
+      ).toEqual([
+        expect.stringMatching(
+          /^NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN has the wrong shape/
+        ),
+      ]);
+    }
+  });
+
+  it("refuses a malformed provider list", () => {
+    for (const bad of ["google, apple", "Google", "facebook", "google,"]) {
+      expect(
+        checkEnvironmentContract(
+          valid({ NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN: DOMAIN, SSO_PROVIDERS: bad })
+        )
+      ).toEqual([expect.stringMatching(/^SSO_PROVIDERS has the wrong shape/)]);
+    }
+  });
+
+  it("requires the hosted domain when providers are listed", () => {
+    expect(checkEnvironmentContract(valid({ SSO_PROVIDERS: "google" }))).toEqual([
+      expect.stringMatching(
+        /NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN is required by SSO_PROVIDERS/
+      ),
+    ]);
+  });
+
+  it("resolves the hosted domain and the provider list, deduplicated", () => {
+    const env = {
+      NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN: DOMAIN,
+      SSO_PROVIDERS: "google,apple,google",
+    };
+    expect(getCognitoSettings(env).hostedUiDomain).toBe(DOMAIN);
+    expect(getSsoProviders(env)).toEqual(["google", "apple"]);
+    expect(getSsoProviders({})).toEqual([]);
+    expect(getSsoProviders({ SSO_PROVIDERS: "bad" })).toEqual([]);
+    expect(getSsoProviders()).toEqual(expect.any(Array));
   });
 });

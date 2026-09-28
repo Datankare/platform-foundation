@@ -2097,12 +2097,26 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 | **Severity** | Medium — dead UI   |
 | **Phase**    | Phase 5            |
 | **Target**   | Phase 5, Sprint 7A |
-| **Status**   | Open               |
+| **Status**   | Resolved (PF)      |
 | **Logged**   | 2026-09-26         |
 
 **What:** Playform's browser auth provider returns "SSO not available" for every provider. Cognito's hosted sign-in (domain, callbacks, Google identity provider) is configured as of 7A step 0.4.
 
 **Resolution:** Start SSO through Cognito's hosted sign-in, add `/auth/callback` to exchange the code, and show only configured providers (ADR-050 D3). Google in 7A. Apple and Microsoft moved to Phase 6 (TASK-112); until then their buttons are not offered (ADR-050 D3 — only configured providers show).
+
+**Resolved (7A C2, PF):** SSO runs through the Cognito hosted sign-in with the authorization-code
+flow, `state` and PKCE S256. `GET /api/auth/sso/[provider]` starts it (attempt in an httpOnly cookie
+scoped to `/api/auth/sso`, ten minutes, single use); the provider returns the browser to
+`/auth/callback`, which posts `{ code, state }` to `POST /api/auth/sso/callback` (state compared in
+constant time, code exchanged with the verifier; the ID token is not returned). The hosted domain is
+now a declared setting, `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` — it had been derived from the pool id,
+which is not the domain Cognito assigns, so SSO could never reach Cognito. `SSO_PROVIDERS` lists the
+providers a deployment offers; `GET /api/features` reports `sso_google` / `sso_apple` /
+`sso_microsoft`, and the sign-in screen shows only those (none by default). `/api/features` and
+`/auth/callback` are now public in the proxy — the sign-in screen is unauthenticated and could not read
+the feature list. **Playform at the sync:** its browser auth provider and sign-in screen use the
+platform flow (TASK-101 remainder); set `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` and `SSO_PROVIDERS=google`
+on dev and staging.
 
 ### TASK-102 — No test runs against a deployed environment
 

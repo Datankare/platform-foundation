@@ -26,8 +26,15 @@ beforeAll(() => {
   registerAuthProvider(createMockAuthProvider());
 });
 
+/** GET /api/features — what the sign-in screen asks for its SSO providers (TASK-101). */
+let features: Record<string, { available: boolean }> = {};
+const fetchMock = jest.fn(async () => ({ ok: true, json: async () => ({ features }) }));
+
 beforeEach(() => {
   jest.clearAllMocks();
+  features = {};
+  global.fetch = fetchMock as unknown as typeof fetch;
+  window.history.replaceState(null, "", "/auth");
 });
 
 afterEach(() => {
@@ -99,11 +106,45 @@ describe("AuthPage", () => {
     expect(screen.getByText("Continue as Guest")).toBeDefined();
   });
 
-  it("renders all three SSO buttons", () => {
+  it("offers only the SSO providers /api/features reports available", async () => {
+    features = {
+      sso_google: { available: true },
+      sso_apple: { available: false },
+      sso_microsoft: { available: false },
+    };
     render(<AuthPage />);
-    expect(screen.getByText("Continue with Google")).toBeDefined();
-    expect(screen.getByText("Continue with Apple")).toBeDefined();
-    expect(screen.getByText("Continue with Microsoft")).toBeDefined();
+    expect(await screen.findByText("Continue with Google")).toBeDefined();
+    expect(screen.queryByText("Continue with Apple")).toBeNull();
+    expect(screen.queryByText("Continue with Microsoft")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/features");
+  });
+
+  it("offers no SSO when none is configured or the feature list fails", async () => {
+    render(<AuthPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByText("Continue with Google")).toBeNull();
+
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    render(<AuthPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Continue with Google")).toBeNull();
+  });
+
+  it("shows the catalog message for an SSO error returned in the address", async () => {
+    window.history.replaceState(null, "", "/auth?error=auth.sso_failed");
+    render(<AuthPage />);
+    expect(
+      await screen.findByText(
+        "Single sign-on did not complete. Try another sign-in method."
+      )
+    ).toBeDefined();
+  });
+
+  it("ignores an unknown error code in the address", async () => {
+    window.history.replaceState(null, "", "/auth?error=%3Cscript%3E");
+    render(<AuthPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows the new-password view when sign-in requires a new password", async () => {
