@@ -19,7 +19,7 @@ Every error the API returns has this body (ADR-051 D3):
 - Until Sprint 7B the body also carries `success: false` and `error` (equal to `message`) — deprecated aliases for older screens. Do not build on them.
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 
-**45 codes** in 10 areas.
+**46 codes** in 11 areas.
 
 ## Account
 
@@ -64,6 +64,12 @@ Every error the API returns has this body (ADR-051 D3):
 | Code               | HTTP | Message (en)                               | Params                    | What the caller should do |
 | ------------------ | ---- | ------------------------------------------ | ------------------------- | ------------------------- |
 | `content.rejected` | 422  | This content does not meet our guidelines. | `category` (id, optional) | Ask for different input.  |
+
+## Optional features
+
+| Code                     | HTTP | Message (en)                       | Params         | What the caller should do                                                                                   |
+| ------------------------ | ---- | ---------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `feature.not_configured` | 501  | This feature isn't available here. | `feature` (id) | Hide the feature; it is not configured on this deployment (see GET /api/features). Retrying cannot succeed. |
 
 ## Guest access
 

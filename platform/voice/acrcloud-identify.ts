@@ -301,11 +301,13 @@ export interface AcrCloudConfig {
  * Both the provider registry and ACRCloudIdentifier call this — do not read
  * process.env.ACRCLOUD_* anywhere else.
  */
-export function getAcrCloudConfig(): AcrCloudConfig {
+export function getAcrCloudConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): AcrCloudConfig {
   return {
-    host: process.env.ACRCLOUD_HOST ?? "",
-    accessKey: process.env.ACRCLOUD_ACCESS_KEY ?? "",
-    accessSecret: process.env.ACRCLOUD_ACCESS_SECRET ?? "",
+    host: env.ACRCLOUD_HOST ?? "",
+    accessKey: env.ACRCLOUD_ACCESS_KEY ?? "",
+    accessSecret: env.ACRCLOUD_ACCESS_SECRET ?? "",
   };
 }
 

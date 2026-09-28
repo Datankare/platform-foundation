@@ -20,6 +20,7 @@ const AREA_TITLES: Readonly<Record<string, string>> = {
   approvals: "Approvals",
   auth: "Authentication and sign-in",
   content: "Content",
+  feature: "Optional features",
   guest: "Guest access",
   internal: "Internal",
   moderation: "Moderation",

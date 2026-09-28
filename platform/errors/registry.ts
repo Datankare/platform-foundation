@@ -157,6 +157,12 @@ export const ERROR_CODES = {
     params: [{ name: "category", kind: "id", optional: true }],
     action: "Ask for different input.",
   },
+  "feature.not_configured": {
+    status: 501,
+    params: [{ name: "feature", kind: "id" }],
+    action:
+      "Hide the feature; it is not configured on this deployment (see GET /api/features). Retrying cannot succeed.",
+  },
   "guest.allowance_exhausted": {
     status: 403,
     params: [{ name: "limit", kind: "number" }],

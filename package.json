@@ -84,6 +84,7 @@
       "platform/content/**/*.ts",
       "platform/effects/**/*.ts",
       "platform/errors/**/*.ts",
+      "platform/features/**/*.ts",
       "platform/social/content/**/*.ts"
     ],
     "coverageReporters": [

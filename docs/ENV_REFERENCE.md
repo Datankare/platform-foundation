@@ -186,7 +186,7 @@ Each store selects between an in-memory implementation (default, ephemeral) and 
 | Variable                | Required          | Default  | Values                                                                                                                               |
 | ----------------------- | ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `MODERATION_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                  |
-| `SOCIAL_STORE`          | No                | `memory` | `supabase` `memory`                                                                                                                  |
+| `SOCIAL_STORE`          | Yes in production | `memory` | `supabase` `memory` — groups and memberships; production refuses `memory`, and `supabase` without credentials is an error (TASK-107) |
 | `APP_STATE_STORE`       | No                | `memory` | `supabase` `memory` (required `supabase` in production — ADR-049 D1)                                                                 |
 | `TRAJECTORY_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                  |
 | `BUDGET_STORE`          | No                | `memory` | `supabase` `memory`                                                                                                                  |

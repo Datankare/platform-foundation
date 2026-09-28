@@ -32,6 +32,9 @@
     "content": {
       "rejected": "This content does not meet our guidelines."
     },
+    "feature": {
+      "not_configured": "This feature isn't available here."
+    },
     "guest": {
       "allowance_exhausted": "You've used all {limit, plural, one {# free translation} other {# free translations}}. Sign in to keep translating."
     },

@@ -26,7 +26,7 @@
  *   SONG_ID_PROVIDER      = "acrcloud" | "mock"   (default: "mock")
  *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
  *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
- *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory")
+ *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory"; required in production — TASK-107)
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
  *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
  *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
@@ -528,18 +528,20 @@ function initSocialStore(type: SocialStoreType): void {
     const url = getSupabaseUrl() ?? "";
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
+    // Fail closed (TASK-107): a silent memory fallback shared one membership across users and
+    // lost it on restart.
     if (!url || !key) {
-      logger.warn(
-        "SOCIAL_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
+      throw new Error(
+        "SOCIAL_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          "Refusing to fall back to an in-memory social store."
       );
-      setSocialStore(new InMemorySocialStore());
-      return;
     }
 
     setSocialStore(new SupabaseSocialStore(url, key));
     return;
   }
 
+  requireDurableStoreInProduction("SOCIAL_STORE", "groups and memberships");
   setSocialStore(new InMemorySocialStore());
 }
 

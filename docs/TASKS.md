@@ -2072,19 +2072,21 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 ### TASK-100 — E2E journey tests pass when the user sees an error
 
-| Field        | Detail                             |
-| ------------ | ---------------------------------- |
-| **ID**       | TASK-100                           |
-| **Type**     | Test integrity                     |
-| **Severity** | Medium — green CI while users fail |
-| **Phase**    | Phase 5                            |
-| **Target**   | Phase 5, Sprint 7A                 |
-| **Status**   | Open                               |
-| **Logged**   | 2026-09-26                         |
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-100                                                  |
+| **Type**     | Test integrity                                            |
+| **Severity** | Medium — green CI while users fail                        |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7A                                        |
+| **Status**   | In progress — B2a done (Playform); B2b at the v2.7.0 sync |
+| **Logged**   | 2026-09-26                                                |
 
 **What:** The translate journeys wait for the translation card **or any alert**, so they passed while every real user got "Invalid or expired token".
 
 **Resolution:** Assert a real translation result; add explicit error-path and guest-limit journeys (Playform-owned `e2e/`).
+
+**Progress (7A B2a, Playform `ac291cd`, `78efda2`):** journeys assert a real translation (`e2e/helpers/journey.ts` `expectTranslation`: text visible and non-empty, Play button, no app alert); an error-path journey (a coded dispatch failure must show the server message and no result); `__tests__/e2e-journey-integrity.test.ts` fails CI on "result or any alert" or a raw `[role=alert]` locator. Found on the way: a "no error notification" check that looked for a test id no element has (could never fail), and Next.js's route announcer — an always-present, empty `role="alert"` — which any "no alert" check must exclude (`appAlerts()`). **B2b (at the sync):** the guest-limit journey, with the Playform guest wiring.
 
 ### TASK-101 — SSO buttons are never wired to the identity provider
 
@@ -2138,19 +2140,21 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 ### TASK-104 — Optional features are offered when not configured
 
-| Field        | Detail                    |
-| ------------ | ------------------------- |
-| **ID**       | TASK-104                  |
-| **Type**     | UX / deployment integrity |
-| **Severity** | Medium — dead ends        |
-| **Phase**    | Phase 5                   |
-| **Target**   | Phase 5, Sprint 7A        |
-| **Status**   | Open                      |
-| **Logged**   | 2026-09-26                |
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-104                                                  |
+| **Type**     | UX / deployment integrity                                 |
+| **Severity** | Medium — dead ends                                        |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7A                                        |
+| **Status**   | Resolved — Sprint 7A B3 (PF); Playform at the v2.7.0 sync |
+| **Logged**   | 2026-09-26                                                |
 
 **What:** Music identification (no provider keys, no audio service) and audio upload are offered on `playform-dev` and fail with "please try again", which can never succeed.
 
 **Resolution:** ADR-050 D3: each optional feature declares its settings; the UI offers it only when they are present.
+
+**Resolved (7A B3, PF):** `platform/features` declares `music_identification` (ACRCloud + a real audio converter), `audio_upload` (speech key + real converter), `speech_input` (speech key) and `teams` (preview); `GET /api/features` returns booleans only; `requireFeature()` answers `feature.not_configured` (501) — retrying cannot succeed. **Playform commit at the sync:** its identify/transcribe routes call `requireFeature`, and the screens hide what `/api/features` reports unavailable. SSO providers join the list in C2.
 
 ### TASK-105 — Vercel project-to-branch mapping is undocumented and was wrong
 
@@ -2186,19 +2190,21 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 ### TASK-107 — Teams panel uses a hard-coded demo user and an in-memory social store
 
-| Field        | Detail                                  |
-| ------------ | --------------------------------------- |
-| **ID**       | TASK-107                                |
-| **Type**     | Identity / durability                   |
-| **Severity** | Medium — all users share one membership |
-| **Phase**    | Phase 5                                 |
-| **Target**   | Phase 5, Sprint 7A                      |
-| **Status**   | Open                                    |
-| **Logged**   | 2026-09-26                              |
+| Field        | Detail                                                         |
+| ------------ | -------------------------------------------------------------- |
+| **ID**       | TASK-107                                                       |
+| **Type**     | Identity / durability                                          |
+| **Severity** | Medium — all users share one membership                        |
+| **Phase**    | Phase 5                                                        |
+| **Target**   | Phase 5, Sprint 7A                                             |
+| **Status**   | Resolved — Sprint 7A B3 (store); real Teams data with TASK-108 |
+| **Logged**   | 2026-09-26                                                     |
 
 **What:** The panel requests groups for the literal user `current-user`, not the signed-in user, and the social store is in memory on deployments, so joins are shared across users and lost on restart.
 
 **Resolution:** Use the signed-in user's id; make the social store durable in production like ADR-048/049 stores.
+
+**Resolved (7A B3):** the social store fails closed (missing credentials are an error, not a silent memory fallback) and is required durable in production (`SOCIAL_STORE=supabase`; tables from migration 015). Found: the Teams panel never reaches the store — `useGroupMembership` is client-side sample data (`DEMO_GROUPS`, `"current-user"` ignored). Decision (Raman, 2026-09-27): Teams stays visible, labelled **"Preview — sample data"** (Playform commit), until TASK-108 defines participation; signed-in-user wiring is part of TASK-108.
 
 ### TASK-108 — Teams has no participation surface and shows invented group data
 
