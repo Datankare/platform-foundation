@@ -2102,7 +2102,7 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 
 **What:** Playform's browser auth provider returns "SSO not available" for every provider. Cognito's hosted sign-in (domain, callbacks, Google identity provider) is configured as of 7A step 0.4.
 
-**Resolution:** Start SSO through Cognito's hosted sign-in, add `/auth/callback` to exchange the code, and show only configured providers (ADR-050 D3). Google first; Apple and Microsoft at the end of 7A.
+**Resolution:** Start SSO through Cognito's hosted sign-in, add `/auth/callback` to exchange the code, and show only configured providers (ADR-050 D3). Google in 7A. Apple and Microsoft moved to Phase 6 (TASK-112); until then their buttons are not offered (ADR-050 D3 — only configured providers show).
 
 ### TASK-102 — No test runs against a deployed environment
 
@@ -2279,6 +2279,22 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 **What:** Migration 002 seeds `guest_config` with `nudge_after_seconds`, `grace_period_seconds` and `lockout_after_seconds`, while `getGuestConfig()` reads `nudge_after_sessions`, `grace_after_sessions`, `lockout_after_sessions`, `guest_token_ttl_hours` and `max_guest_sessions`. Every read falls back to the defaults, and an admin's change to the guest lifecycle has no effect — with nothing saying so.
 
 **Resolution:** reconcile against the live schema (TASK-091 baseline): one migration aligning columns with the code, or the code with the columns, plus a test that reads the seeded row; `getGuestConfig()` logs when it falls back.
+
+### TASK-112 — Apple and Microsoft sign-in
+
+| Field        | Detail                                  |
+| ------------ | --------------------------------------- |
+| **ID**       | TASK-112                                |
+| **Type**     | Auth / feature                          |
+| **Severity** | Low — Google and email sign-in cover 7A |
+| **Phase**    | Phase 6                                 |
+| **Target**   | Phase 6                                 |
+| **Status**   | Deferred (decided 2026-09-28)           |
+| **Logged**   | 2026-09-28                              |
+
+**What:** Apple and Microsoft identity providers in the Cognito hosted sign-in (originally 7A steps 0.5 and 0.6). Moved out of 7A by decision (Raman, 2026-09-28).
+
+**Resolution (Phase 6):** Apple: App ID, Services ID, key `.p8`, Team ID, return URL on the Cognito domain (steps drafted). Microsoft: an Entra / Azure account (not yet created — Raman's decision), app registration, client secret. Each added as a Cognito identity provider; its button appears only once configured (ADR-050 D3, `platform/features`). Supersedes the Apple and Microsoft parts of TASK-024.
 
 ## Known Issue — TASK-020 numbering collision
 

@@ -406,6 +406,12 @@ hygiene). See TASKS.md.
 | Ad network integration                                      | ADR-011                             |
 | CSP updates for ad domains                                  | ADR-011                             |
 
+### Identity
+
+| Deliverable                                                                               | Source   |
+| ----------------------------------------------------------------------------------------- | -------- |
+| Apple and Microsoft sign-in via the Cognito hosted sign-in (moved from Phase 5 Sprint 7A) | TASK-112 |
+
 ### GenAI-Native (ADR-015, ADR-017)
 
 | Deliverable                                                                      | Rationale                                                                                                |

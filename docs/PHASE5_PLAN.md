@@ -187,14 +187,14 @@ Sprint 7 resumes at milestone 3d.
 **Decisions taken:** keep Cognito as the auth provider (new AWS account, hardened: root MFA,
 zero-spend budget alert, alternate contacts; new pool in `us-east-1` with deletion protection, email
 sign-in, SPA client with no secret, `USER_PASSWORD_AUTH` + refresh flows, hosted-UI Cognito domain);
-SSO proven with Google first, Apple and Microsoft at the end of 7A; production database and migration
-baseline included (C4).
+SSO with Google in 7A; Apple and Microsoft moved to Phase 6 (decided 2026-09-28, TASK-112); production
+database and migration baseline included (C4).
 
 | Phase               | Step      | Work                                                                                                                                                                    | Status      |
 | ------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | 0 · Accounts        | 0.1–0.3   | AWS account, Cognito pool + client, hosted domain + callback/sign-out URLs                                                                                              | Done        |
 |                     | 0.4       | Google identity provider (Google side + Cognito side, verified via hosted login)                                                                                        | Done        |
-|                     | 0.5 · 0.6 | Apple · Microsoft identity providers                                                                                                                                    | End of 7A   |
+|                     | 0.5 · 0.6 | Apple · Microsoft identity providers — **moved to Phase 6** (TASK-112)                                                                                                  | Phase 6     |
 | A · Platform guards | A1        | Production refuses test-double auth; environment contract checked at boot (TASK-097, TASK-103)                                                                          | Done (PF)   |
 |                     | A2        | Signed guest tokens (TASK-098)                                                                                                                                          | Done (PF)   |
 |                     | A3        | Opt-in guest routes, namespaced guest ids (TASK-099)                                                                                                                    | Done (PF)   |
