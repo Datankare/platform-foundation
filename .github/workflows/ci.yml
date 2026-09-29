@@ -59,3 +59,37 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+  # Layer 1c — Migration replay (TASK-091)
+  # Builds a database from zero the way a new instance is built — Supabase shim, schema
+  # baseline, then every migration the baseline does not cover — on Postgres 17 with pgvector,
+  # and fails on any SQL error, a missing table or function, or a table without row-level
+  # security. Nothing else in CI executes migration SQL (Gotcha 100).
+  migration-replay:
+    name: Migration replay
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: replay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Replay baseline and newer migrations
+        run: bash scripts/migration-replay.sh
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: replay

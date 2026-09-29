@@ -1911,7 +1911,7 @@ coverage numbers for its baseline. Pairs with TASK-058.
 | **Severity** | High — blocks a fresh production database; a broken migration ships green |
 | **Phase**    | Phase 5                                                                   |
 | **Target**   | Phase 5, Sprint 7A (C4)                                                   |
-| **Status**   | Open                                                                      |
+| **Status**   | Resolved (7A C4, 2026-09-29)                                              |
 | **Logged**   | 2026-09-26                                                                |
 
 **What:** replaying `supabase/migrations/001`–`036` in order on an empty Postgres fails at the start:
@@ -1927,6 +1927,16 @@ the starting point for any fresh database, with newer migrations replayed on top
 that stands up Postgres 16 (+ pgvector and a small Supabase `auth`/roles shim), applies the baseline
 and every newer migration, and fails on any error. Rewriting applied historical migrations is
 rejected: it changes what the live database claims to have run. Prerequisite for TASK-092.
+
+**Resolved:** `supabase/baseline/000_baseline.sql` (covers 001–037) is cut from the dev schema and
+seed, after an ownership audit that excluded Playform's `agent_delegation_*` tables, Supabase's
+`rls_auto_enable()` and default privileges, and a hand-made `tester` role; it includes
+`user_devices` and the `vector` extension, which no numbered migration creates. Proved on a fresh
+Supabase-shaped Postgres: it applies, refuses a second run, and differs from dev only by the
+exclusions. CI job **Migration replay** (`scripts/migration-replay.sh`, Postgres 17 + pgvector)
+builds shim → baseline → newer migrations on every push and fails on a SQL error, a missing table or
+function, or a table without row-level security; `__tests__/schema-baseline.test.ts` guards the
+baseline's contract. See `supabase/baseline/README.md`.
 
 ### TASK-092 — Production shares the dev/staging Supabase project
 
@@ -1949,6 +1959,10 @@ and a staging migration cannot touch production.
 **Why it is a task:** a new project needs its schema built from the TASK-091 baseline, its own
 service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `TRAJECTORY_STORE`, `BUDGET_STORE`, `APP_STATE_STORE`) on the production project.
+
+**Progress (2026-09-29):** Supabase project `playform-prod` created (Pro organization, Micro,
+`us-east-1`, Data API on, new tables exposed as on dev, automatic RLS off). Its schema is built from
+the TASK-091 baseline.
 
 ### TASK-093 — Language lists are not in alphabetical order
 
@@ -2309,6 +2323,46 @@ on dev and staging.
 **What:** Apple and Microsoft identity providers in the Cognito hosted sign-in (originally 7A steps 0.5 and 0.6). Moved out of 7A by decision (Raman, 2026-09-28).
 
 **Resolution (Phase 6):** Apple: App ID, Services ID, key `.p8`, Team ID, return URL on the Cognito domain (steps drafted). Microsoft: an Entra / Azure account (not yet created — Raman's decision), app registration, client secret. Each added as a Cognito identity provider; its button appears only once configured (ADR-050 D3, `platform/features`). Supersedes the Apple and Microsoft parts of TASK-024.
+
+### TASK-113 — `SupabaseMetricsSink` writes a table no migration creates
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-113                                                  |
+| **Type**     | Schema integrity                                          |
+| **Severity** | Low — the sink is opt-in; selecting it fails on first use |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7B                                        |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-09-29                                                |
+
+**What:** `platform/observability/metrics-sink.ts` reads and writes `ai_metrics` through PostgREST,
+but no migration creates `ai_metrics`, and neither the dev database nor the baseline has it. Found
+during the TASK-091 audit (the schema-parity script checks store columns, not this sink's table).
+
+**Resolution:** a migration that creates `ai_metrics` (with row-level security and its self-record),
+or remove the Supabase sink if metrics stay in Sentry/Langfuse.
+
+### TASK-114 — Every table grants ALL to `anon` and `authenticated`
+
+| Field        | Detail                                                            |
+| ------------ | ----------------------------------------------------------------- |
+| **ID**       | TASK-114                                                          |
+| **Type**     | Security hardening (defense in depth)                             |
+| **Severity** | Medium — row-level security is the only barrier for the API roles |
+| **Phase**    | Phase 5                                                           |
+| **Target**   | Phase 6 (before public launch)                                    |
+| **Status**   | Open                                                              |
+| **Logged**   | 2026-09-29                                                        |
+
+**What:** Supabase's "automatically expose new tables" grants `ALL` on every `public` table to
+`anon` and `authenticated` (the baseline carries dev's grants, and `playform-prod` keeps the option
+on for parity). Every table has row-level security, so this is not an open door — but one missing
+or wrong policy would be. The platform itself reaches the database only as `service_role`.
+
+**Resolution:** revoke table privileges from `anon` and `authenticated` except where a browser
+client needs them (none today), in a migration applied to dev and production alike, then turn the
+option off on both projects. The replay job gains a check that no table grants `anon` anything.
 
 ## Known Issue — TASK-020 numbering collision
 
