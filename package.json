@@ -32,7 +32,7 @@
     "dotenv": "^17.4.2",
     "intl-messageformat": "12.1.2",
     "jose": "^6.2.8",
-    "next": "16.3.5",
+    "next": "16.3.8",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "safe-regex2": "^5.1.1"
@@ -146,13 +146,14 @@
   "overrides": {
     "postcss": ">=8.5.18",
     "browserslist": "^4.28.7",
-    "fast-uri": "^3.1.7",
+    "fast-uri": "^3.1.8",
     "@humanfs/node": "^0.16.8",
-    "sharp": "^0.35.4",
-    "brace-expansion@5": "5.0.9",
+    "sharp": "^0.35.5",
+    "brace-expansion@5": "5.0.12",
     "brace-expansion@1": "1.1.18",
     "brace-expansion@2": "2.1.4",
     "js-yaml@3": "3.15.2",
-    "js-yaml@4": "4.3.2"
+    "js-yaml@4": "4.3.2",
+    "source-map-js": "^1.2.2"
   }
 }
