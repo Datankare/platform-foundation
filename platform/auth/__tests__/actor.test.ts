@@ -117,7 +117,25 @@ describe("requireActorWithStatus", () => {
       allowGuests: true,
     });
     expect(r.actor?.kind).toBe("user");
-    expect(mockStatus).toHaveBeenCalledWith(userId, "translate");
+    expect(mockStatus).toHaveBeenCalledWith(userId, "translate", {
+      email: expect.any(String),
+      emailVerified: expect.any(Boolean),
+    });
+  });
+
+  it("returns 503 account.not_provisioned — not a restriction — when provisioning failed", async () => {
+    mockStatus.mockResolvedValueOnce({
+      allowed: false,
+      reason: "set up",
+      accountStatus: "banned",
+      feature: "translate",
+      code: "account.not_provisioned",
+    } as Awaited<ReturnType<typeof checkAccountStatus>>);
+    const r = await requireActorWithStatus(req(userToken), "translate", {
+      allowGuests: true,
+    });
+    expect(r.error?.status).toBe(503);
+    expect((await r.error?.json()).code).toBe("account.not_provisioned");
   });
 
   it("returns 403 when account status denies", async () => {

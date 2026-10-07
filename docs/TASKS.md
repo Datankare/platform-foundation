@@ -2364,6 +2364,77 @@ or wrong policy would be. The platform itself reaches the database only as `serv
 client needs them (none today), in a migration applied to dev and production alike, then turn the
 option off on both projects. The replay job gains a check that no table grants `anon` anything.
 
+### TASK-115 — Legal review of Privacy Policy and Terms of Service
+
+| Field        | Detail                            |
+| ------------ | --------------------------------- |
+| **ID**       | TASK-115                          |
+| **Type**     | Legal / compliance                |
+| **Severity** | High at launch — real users' data |
+| **Phase**    | Phase 5                           |
+| **Target**   | Phase 6 (launch gate)             |
+| **Status**   | Open                              |
+| **Logged**   | 2026-10-07                        |
+
+**What:** Drafts published 2026-10-01 at `datankare.com/privacy` and `datankare.com/terms` (Datankare LLC,
+13+ only, Massachusetts law) so Google sign-in could leave Testing. They were written from what the platform
+does, but not reviewed by counsel.
+
+**Resolution:** counsel reviews both against the launch feature set — COPPA (the 13+ gate must actually
+hold), GDPR/UK GDPR and CCPA if those users are admitted, AI-vendor disclosure terms, liability limits.
+
+### TASK-116 — Account and production hardening before launch
+
+| Field        | Detail                |
+| ------------ | --------------------- |
+| **ID**       | TASK-116              |
+| **Type**     | Security hardening    |
+| **Severity** | High at launch        |
+| **Phase**    | Phase 5               |
+| **Target**   | Phase 6 (launch gate) |
+| **Status**   | Open                  |
+| **Logged**   | 2026-10-07            |
+
+**What:** found during 7A C4 setup:
+
+- AWS console used as **root** — create an IAM Identity Center admin, keep root for break-glass with MFA.
+- Vercel team has no **required 2FA**.
+- Older Vercel secrets (Anthropic, ACRCloud, audio converter) are not marked **Sensitive**.
+- Production provider keys are shared with dev/staging — issue production-only keys.
+- Cognito sends email with its built-in sender (~50/day) — move to SES with a `datankare.com` sender
+  (SPF/DKIM/DMARC).
+- `www.datankare.com` serves the site instead of redirecting to `datankare.com`.
+
+**Resolution:** each item done and checked off here before public launch.
+
+### TASK-117 — New accounts are refused as "permanently suspended" (no platform user row)
+
+| Field        | Detail                                       |
+| ------------ | -------------------------------------------- |
+| **ID**       | TASK-117                                     |
+| **Type**     | Defect — authorization                       |
+| **Severity** | High — every new account on a fresh database |
+| **Phase**    | Phase 5                                      |
+| **Status**   | Resolved (PF; Playform at the 7A sync)       |
+| **Logged**   | 2026-10-07                                   |
+
+**What:** sign-up creates the identity in Cognito only; nothing created the platform's `users` row that the
+account-status guard, COPPA gate, permissions and RLS read (`id = cognito_sub = sub`). The guard read with
+`.single()`, which returns an **error** for zero rows, so its "no row → active" branch was dead and a new
+user failed closed as `banned`. Hidden because unit tests mocked `{ data: null, error: null }` (which
+`.single()` never returns) and dev's rows were made by hand. Found on `playform-prod` 2026-10-07:
+`users rows: 0`; Raman's first sign-in was refused.
+
+**Resolved:** `platform/auth/user-provisioning.ts` — `ensureUserProvisioned()` creates the row on first use
+(default role `free`, `cognito_sub`, email from the token, `account_created` audit), idempotent and
+race-safe (insert ignores an existing id), never changes an existing row. The guard reads with
+`maybeSingle()`: a DB error still fails closed; no row → provision → re-read; provisioning failure → refused
+with the new code `account.not_provisioned` (503), never reported as banned. `requireActorWithStatus` passes
+the token's email and maps the code. Insert shape proven on the baseline schema (defaults: `active`, COPPA
+off, consent not required). **Playform at the sync:** its own `lib/route-guard.ts` moves to
+`requireActorWithStatus` (already listed for the 7A sync); verify on staging with a brand-new account (C3),
+then production after promotion.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:

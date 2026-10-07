@@ -28,6 +28,10 @@ import { getSingleton, setSingleton } from "@/platform/kernel";
 import { logger } from "@/lib/logger";
 import { getSupabaseUrl } from "@/platform/providers/environment-contract";
 import type { AccountStatus } from "@/platform/moderation/types";
+import {
+  ensureUserProvisioned,
+  type ProvisioningProfile,
+} from "@/platform/auth/user-provisioning";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,11 +47,19 @@ export interface AccountStatusGateResult {
   readonly accountStatus: AccountStatus;
   /** Feature that was requested */
   readonly feature: string;
+  /**
+   * Set when the user's platform row does not exist and could not be created (TASK-117). The
+   * request is refused, but the account is not banned — callers report this code
+   * (`account.not_provisioned`), not the status.
+   */
+  readonly code?: "account.not_provisioned";
 }
 
 /** User account state loaded from the DB */
 interface UserAccountRow {
   accountStatus: AccountStatus;
+  /** No row, and provisioning it failed (TASK-117). accountStatus is the fail-closed value. */
+  notProvisioned?: true;
   restrictedUntil: string | null;
   suspendedUntil: string | null;
   bannedAt: string | null;
@@ -173,11 +185,33 @@ async function loadSuspendedFeatures(): Promise<readonly string[]> {
 // User state loader
 // ---------------------------------------------------------------------------
 
+type AccountRowResult = Promise<{
+  data: {
+    account_status: string;
+    restricted_until: string | null;
+    suspended_until: string | null;
+    banned_at: string | null;
+  } | null;
+  error: { message: string } | null;
+}>;
+
+function readAccountRow(userId: string): AccountRowResult {
+  return getSupabaseServiceClient()
+    .from("users" as never)
+    .select("account_status, restricted_until, suspended_until, banned_at")
+    .eq("id", userId)
+    .maybeSingle() as unknown as AccountRowResult;
+}
+
 /**
  * Load a user's account status from the DB.
- * Fail-closed: DB error or user not found → banned (P11).
+ * Fail-closed: a DB error → banned (P11). No row → the user is provisioned with defaults and
+ * the row is read again (TASK-117); if that fails, the request is refused as not provisioned.
  */
-async function loadAccountState(userId: string): Promise<UserAccountRow> {
+async function loadAccountState(
+  userId: string,
+  profile: ProvisioningProfile = {}
+): Promise<UserAccountRow> {
   const failClosed: UserAccountRow = {
     accountStatus: "banned",
     restrictedUntil: null,
@@ -186,33 +220,31 @@ async function loadAccountState(userId: string): Promise<UserAccountRow> {
   };
 
   try {
-    const supabase = getSupabaseServiceClient();
-    const { data, error } = await (supabase
-      .from("users" as never)
-      .select("account_status, restricted_until, suspended_until, banned_at")
-      .eq("id", userId)
-      .single() as unknown as Promise<{
-      data: {
-        account_status: string;
-        restricted_until: string | null;
-        suspended_until: string | null;
-        banned_at: string | null;
-      } | null;
-      error: { message: string } | null;
-    }>);
+    let { data, error } = await readAccountRow(userId);
+    if (error) {
+      logger.error("Account status guard: failed to read user state — failing closed", {
+        userId,
+        error: error.message,
+        route: "platform/auth/account-status-guard",
+      });
+      return failClosed;
+    }
 
-    if (error) return failClosed;
-
-    // User authenticated but not in users table (mock mode, first login,
-    // or race condition). Authentication passed — treat as active, not banned.
-    // This is distinct from a DB error (which fails closed above).
+    // First use of a new account: create its row, then read what was stored (TASK-117).
     if (!data) {
-      return {
-        accountStatus: "active",
-        restrictedUntil: null,
-        suspendedUntil: null,
-        bannedAt: null,
-      };
+      const outcome = await ensureUserProvisioned(userId, profile);
+      if (outcome === "skipped") {
+        // No database configured (mock/CI) — nothing to load; authentication passed.
+        return {
+          accountStatus: "active",
+          restrictedUntil: null,
+          suspendedUntil: null,
+          bannedAt: null,
+        };
+      }
+      if (outcome === "failed") return { ...failClosed, notProvisioned: true };
+      ({ data, error } = await readAccountRow(userId));
+      if (error || !data) return { ...failClosed, notProvisioned: true };
     }
 
     // B5: Validate status is a known value
@@ -357,7 +389,8 @@ async function loadUserFeatureRestrictions(
 
 export async function checkAccountStatus(
   userId: string,
-  feature: string
+  feature: string,
+  profile: ProvisioningProfile = {}
 ): Promise<AccountStatusGateResult> {
   // S1: Validate userId format at boundary (B5)
   if (!userId || !UUID_PATTERN.test(userId)) {
@@ -407,7 +440,7 @@ export async function checkAccountStatus(
     });
     // Report the user's ACTUAL status in the result, not a synthetic one — load it for the
     // message. The block denies regardless of what that status is.
-    const actual = await loadAccountState(userId);
+    const actual = await loadAccountState(userId, profile);
     return {
       allowed: false,
       reason: `Feature "${feature}" is not available on this account.`,
@@ -416,7 +449,17 @@ export async function checkAccountStatus(
     };
   }
 
-  const state = await loadAccountState(userId);
+  const state = await loadAccountState(userId, profile);
+
+  if (state.notProvisioned) {
+    return {
+      allowed: false,
+      reason: "Your account is still being set up. Try again in a moment.",
+      accountStatus: state.accountStatus,
+      feature,
+      code: "account.not_provisioned",
+    };
+  }
 
   // Active or warned → always allowed
   if (state.accountStatus === "active" || state.accountStatus === "warned") {

@@ -38,6 +38,12 @@ export const ERROR_CODES = {
     params: [],
     action: "Show sign-in / contact support.",
   },
+  "account.not_provisioned": {
+    status: 503,
+    params: [],
+    action:
+      "Retry shortly; the account's platform record could not be created. If it persists, contact support.",
+  },
   "account.restricted": {
     status: 403,
     params: [

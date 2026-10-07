@@ -2,6 +2,7 @@
   "errors": {
     "account": {
       "not_found": "Your account could not be found.",
+      "not_provisioned": "Your account is still being set up. Try again in a moment.",
       "restricted": "Your account cannot use this feature right now."
     },
     "approvals": {

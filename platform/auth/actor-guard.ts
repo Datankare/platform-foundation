@@ -36,7 +36,14 @@ export async function requireActorWithStatus(
   const { actor } = result;
   if (actor.kind === "guest") return { actor };
 
-  const status = await checkAccountStatus(actor.id, feature);
+  // The token's email seeds the user's row on first use (TASK-117).
+  const status = await checkAccountStatus(actor.id, feature, {
+    email: actor.user.email,
+    emailVerified: actor.user.emailVerified,
+  });
+  if (!status.allowed && status.code === "account.not_provisioned") {
+    return { error: apiError("account.not_provisioned", { request }) };
+  }
   if (!status.allowed) {
     logger.info("Actor guard: access denied by account status", {
       userId: actor.id,

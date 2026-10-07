@@ -19,14 +19,15 @@ Every error the API returns has this body (ADR-051 D3):
 - Until Sprint 7B the body also carries `success: false` and `error` (equal to `message`) — deprecated aliases for older screens. Do not build on them.
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 
-**46 codes** in 11 areas.
+**47 codes** in 11 areas.
 
 ## Account
 
-| Code                 | HTTP | Message (en)                                    | Params                        | What the caller should do           |
-| -------------------- | ---- | ----------------------------------------------- | ----------------------------- | ----------------------------------- |
-| `account.not_found`  | 403  | Your account could not be found.                | —                             | Show sign-in / contact support.     |
-| `account.restricted` | 403  | Your account cannot use this feature right now. | `feature` (id), `status` (id) | Show the restriction; offer appeal. |
+| Code                      | HTTP | Message (en)                                               | Params                        | What the caller should do                                                                           |
+| ------------------------- | ---- | ---------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `account.not_found`       | 403  | Your account could not be found.                           | —                             | Show sign-in / contact support.                                                                     |
+| `account.not_provisioned` | 503  | Your account is still being set up. Try again in a moment. | —                             | Retry shortly; the account's platform record could not be created. If it persists, contact support. |
+| `account.restricted`      | 403  | Your account cannot use this feature right now.            | `feature` (id), `status` (id) | Show the restriction; offer appeal.                                                                 |
 
 ## Approvals
 
