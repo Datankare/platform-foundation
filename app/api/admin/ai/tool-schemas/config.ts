@@ -5,21 +5,6 @@
 import type { AdminTool } from "./index";
 
 export const configSchemas: Record<string, AdminTool[]> = {
-  "guest-config": [
-    {
-      name: "update_guest_config",
-      description: "Update guest lifecycle configuration.",
-      input_schema: {
-        type: "object",
-        properties: {
-          nudge_after_sessions: { type: "number" },
-          grace_after_sessions: { type: "number" },
-          lockout_after_sessions: { type: "number" },
-          guest_token_ttl_hours: { type: "number" },
-        },
-      },
-    },
-  ],
   "password-policy": [
     {
       name: "update_password_policy",

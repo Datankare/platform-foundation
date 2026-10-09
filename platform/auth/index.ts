@@ -5,7 +5,7 @@
  * Sprint 2: middleware, context
  * Sprint 3: permissions, entitlements, audit, cache
  * Sprint 4: profile, devices, consent, password-policy, coppa
- * Sprint 5: gdpr-deletion, data-export, guest-lifecycle
+ * Sprint 5: gdpr-deletion, data-export
  */
 
 export type { AuthProvider } from "@/platform/auth/provider";
@@ -144,19 +144,8 @@ export type {
   GuestTokenVerification,
 } from "@/platform/auth/guest-token";
 
-export {
-  getGuestConfig,
-  resolveGuestPhase,
-  getGuestStatus,
-  incrementGuestSession,
-  convertGuestToRegistered,
-  cleanupExpiredGuests,
-} from "@/platform/auth/guest-lifecycle";
-export type {
-  GuestConfig,
-  GuestPhase,
-  GuestStatus,
-} from "@/platform/auth/guest-lifecycle";
+// TASK-111: the session-count guest lifecycle was retired; guests are bounded by the governed
+// translate allowance (guest-allowance.ts).
 
 // Runtime configuration
 export {

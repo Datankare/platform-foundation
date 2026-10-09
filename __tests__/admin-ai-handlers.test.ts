@@ -24,10 +24,7 @@ import {
   handleSetAgentTtl,
 } from "@/app/api/admin/ai/handlers/agents";
 import { handleSetApprovalPolicy } from "@/app/api/admin/ai/handlers/approval";
-import {
-  handleUpdateGuestConfig,
-  handleUpdatePasswordPolicy,
-} from "@/app/api/admin/ai/handlers/config";
+import { handleUpdatePasswordPolicy } from "@/app/api/admin/ai/handlers/config";
 import { handleCreateEntitlementGroup } from "@/app/api/admin/ai/handlers/entitlements";
 import { handleSetCapabilityMapping } from "@/app/api/admin/ai/handlers/mapping";
 import {
@@ -187,20 +184,6 @@ describe("approval handler", () => {
 });
 
 describe("config handlers", () => {
-  it("updates guest config", async () => {
-    mockSupabase.mockReturnValue(makeSupabase({ guest_config: { error: null } }));
-    const res = await handleUpdateGuestConfig({ nudge_after_sessions: 2 }, "admin-1");
-    expect(res.success).toBe(true);
-  });
-
-  it("surfaces a guest-config insert error", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ guest_config: { error: { message: "boom" } } })
-    );
-    const res = await handleUpdateGuestConfig({}, "admin-1");
-    expect(res.success).toBe(false);
-  });
-
   it("updates the password policy", async () => {
     mockSupabase.mockReturnValue(makeSupabase({ password_policy: { error: null } }));
     const res = await handleUpdatePasswordPolicy({ min_length: 14 }, "admin-1");

@@ -105,7 +105,7 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 - Governance panels: `agent-registry`, `approval-policy`, `capabilities`,
   `capability-mapping`, `per-account`
 - Platform: `config`, `config-ai`, `config-ai/execute`, `roles`, `users`, `entitlements`,
-  `guest-config`, `password-policy`, `audit`, `gdpr`
+  `password-policy`, `audit`, `gdpr`
 
 **Moderation** — `/api/moderation/*`: `appeals`, `appeals/[id]`, `review`, `review/[id]`,
 `review/[id]/assist`

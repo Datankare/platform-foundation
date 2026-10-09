@@ -45,7 +45,7 @@ BEGIN
   -- Tables and functions the platform calls.
   SELECT string_agg(t, ', ') INTO missing FROM unnest(ARRAY[
     'users','roles','permissions','role_permissions','platform_config','platform_config_history',
-    'guest_config','guest_usage','user_devices','user_entitlements','groups','group_memberships',
+    'guest_usage','user_devices','user_entitlements','groups','group_memberships',
     'group_invites','review_queue','user_strikes','content_safety_audit','agent_budgets',
     'agent_trajectories','proposals','effect_ledger','app_sessions','document_embeddings',
     'applied_migrations'

@@ -234,7 +234,6 @@ import {
   RolesDataView,
   UsersDataView,
   EntitlementsDataView,
-  GuestConfigDataView,
   PasswordPolicyDataView,
 } from "@/components/admin/AdminDataViews";
 
@@ -342,32 +341,6 @@ describe("EntitlementsDataView", () => {
     expect(screen.getByText("Beta Access")).toBeDefined();
     expect(screen.getByText("Active")).toBeDefined();
     expect(screen.getByText("5")).toBeDefined();
-  });
-});
-
-describe("GuestConfigDataView", () => {
-  it("renders config values", () => {
-    render(
-      <GuestConfigDataView
-        data={{
-          config: {
-            nudgeAfterSessions: 3,
-            graceAfterSessions: 7,
-            lockoutAfterSessions: 10,
-            guestTokenTtlHours: 72,
-          },
-        }}
-      />
-    );
-    expect(screen.getByText("3")).toBeDefined();
-    expect(screen.getByText("7")).toBeDefined();
-    expect(screen.getByText("10")).toBeDefined();
-    expect(screen.getByText("72")).toBeDefined();
-  });
-
-  it("shows loading when no data", () => {
-    render(<GuestConfigDataView data={{}} />);
-    expect(screen.getByText("Loading...")).toBeDefined();
   });
 });
 

@@ -121,7 +121,6 @@
       "platform/auth/password-policy.ts",
       "platform/auth/gdpr-deletion.ts",
       "platform/auth/data-export.ts",
-      "platform/auth/guest-lifecycle.ts",
       "platform/auth/admin-guard.ts",
       "app/admin/page.tsx",
       "components/admin/ActionConfirmPanel.tsx",

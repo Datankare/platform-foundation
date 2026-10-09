@@ -6,7 +6,7 @@
  * 1. Service Role Client — bypasses RLS. Used for:
  *    - Admin operations (role management, audit log writes)
  *    - Schema migrations
- *    - Background jobs (guest lifecycle, entitlement expiry)
+ *    - Background jobs (entitlement expiry)
  *    - GDPR deletion (needs to access all user data)
  *    NEVER expose this client to browser code.
  *

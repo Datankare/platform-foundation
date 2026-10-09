@@ -13,7 +13,6 @@ import {
   UsersDataView,
   EntitlementsDataView,
   AuditDataView,
-  GuestConfigDataView,
   PasswordPolicyDataView,
   TrustedAgentsDataView,
   PerAccountRestrictionsDataView,
@@ -39,7 +38,6 @@ const PANEL_TITLES: Record<string, string> = {
   roles: "Roles",
   entitlements: "Entitlements",
   audit: "Audit Trail",
-  "guest-config": "Guest Configuration",
   "password-policy": "Password Policy",
 };
 
@@ -48,7 +46,6 @@ const PANEL_HINTS: Record<string, string> = {
   roles: 'Try: "Create a moderator role with can_play and admin_view_audit"',
   entitlements: 'Try: "Create beta_access entitlement with can_translate"',
   audit: 'Try: "Show role changes from the last 7 days"',
-  "guest-config": 'Try: "Set nudge to 5 sessions and lockout to 15"',
   "password-policy": 'Try: "Set minimum length to 16"',
 };
 
@@ -58,7 +55,6 @@ const ENDPOINTS: Record<string, string> = {
   entitlements: "/api/admin/entitlements",
   audit: "/api/admin/audit?offset=0",
   approvals: "/api/admin/approvals",
-  "guest-config": "/api/admin/guest-config",
   "password-policy": "/api/admin/password-policy",
   "agent-registry": "/api/admin/agent-registry",
   "per-account": "/api/admin/per-account",
@@ -76,7 +72,6 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   audit: AuditDataView,
   approvals: HeldActionsPanel,
   "dual-control": DualControlKeysPanel,
-  "guest-config": GuestConfigDataView,
   "password-policy": PasswordPolicyDataView,
   "agent-registry": TrustedAgentsDataView,
   "per-account": PerAccountRestrictionsDataView,

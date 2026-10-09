@@ -2301,12 +2301,25 @@ on dev and staging.
 | **Severity** | Low — defaults apply silently; admin edits ignored |
 | **Phase**    | Phase 5                                            |
 | **Target**   | Phase 5, Sprint 7A (before close)                  |
-| **Status**   | Open                                               |
+| **Status**   | Resolved (PF, 7A 2026-10-07)                       |
 | **Logged**   | 2026-09-27                                         |
 
 **What:** Migration 002 seeds `guest_config` with `nudge_after_seconds`, `grace_period_seconds` and `lockout_after_seconds`, while `getGuestConfig()` reads `nudge_after_sessions`, `grace_after_sessions`, `lockout_after_sessions`, `guest_token_ttl_hours` and `max_guest_sessions`. Every read falls back to the defaults, and an admin's change to the guest lifecycle has no effect — with nothing saying so.
 
 **Resolution:** reconcile against the live schema (TASK-091 baseline): one migration aligning columns with the code, or the code with the columns, plus a test that reads the seeded row; `getGuestConfig()` logs when it falls back.
+
+**Resolved (decision A — retire, 2026-10-07):** worse than logged — the code also counted sessions in a
+`users.guest_session_count` column that never existed, the admin route and AI tool wrote an `is_active`
+column that never existed, and no route called the lifecycle. Guests are bounded by the governed translate
+allowance (7A B1) and carry signed tokens never stored on `users` (ADR-050 D4). Removed:
+`platform/auth/guest-lifecycle.ts` and its exports, `/api/admin/guest-config`, the admin AI tool
+`update_guest_config` and its handler, the Guest Config admin panel, data view and confirm text, and their
+tests. Migration **038** drops `guest_config`, `users.guest_token` / `guest_play_seconds` /
+`guest_nudge_shown_at` / `guest_locked_out_at` (with their constraint and index) and the dead config keys
+`guest_session_limit` / `guest_nudge_after`; idempotent, proven on the baseline twice. **Apply 038 to the
+`playform` and `playform-prod` databases.** **Playform at the sync:** the sync does not delete files
+(TASK-083) — delete `platform/auth/guest-lifecycle.ts` and `app/api/admin/guest-config/route.ts` in
+Playform by hand. Screen-literal baseline 297 → 287.
 
 ### TASK-112 — Apple and Microsoft sign-in
 

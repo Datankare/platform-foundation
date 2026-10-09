@@ -7,7 +7,6 @@ export type AdminSection =
   | "roles"
   | "entitlements"
   | "audit"
-  | "guest-config"
   | "password-policy"
   | "platform-config"
   | "agent-registry"
@@ -71,12 +70,6 @@ const NAV_ITEMS: {
     label: "Dual-Control",
     icon: "🔒",
     permission: "config_view",
-  },
-  {
-    section: "guest-config",
-    label: "Guest Config",
-    icon: "⚙️",
-    permission: "admin_manage_config",
   },
   {
     section: "password-policy",

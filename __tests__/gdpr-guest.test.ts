@@ -1,13 +1,11 @@
 /**
- * Sprint 5 — GDPR & Guest Lifecycle tests
+ * Sprint 5 — GDPR tests
  *
  * Tests pure functions that don't require Supabase:
- * - Guest phase resolution
  * - Deletion module registration
  * - Export module registration
  */
 
-import { resolveGuestPhase, type GuestConfig } from "@/platform/auth/guest-lifecycle";
 import {
   registerDeletionModule,
   getDeletionModules,
@@ -18,62 +16,6 @@ import {
   getExportModules,
   type ExportModule,
 } from "@/platform/auth/data-export";
-
-// ── Guest Phase Resolution Tests ────────────────────────────────────────
-
-describe("resolveGuestPhase", () => {
-  const config: GuestConfig = {
-    nudgeAfterSessions: 3,
-    graceAfterSessions: 7,
-    lockoutAfterSessions: 10,
-    guestTokenTtlHours: 72,
-    maxGuestSessions: 10,
-  };
-
-  it("returns free_play for 0 sessions", () => {
-    expect(resolveGuestPhase(0, config)).toBe("free_play");
-  });
-
-  it("returns free_play for sessions below nudge threshold", () => {
-    expect(resolveGuestPhase(2, config)).toBe("free_play");
-  });
-
-  it("returns nudge at exact nudge threshold", () => {
-    expect(resolveGuestPhase(3, config)).toBe("nudge");
-  });
-
-  it("returns nudge between nudge and grace thresholds", () => {
-    expect(resolveGuestPhase(5, config)).toBe("nudge");
-  });
-
-  it("returns grace at exact grace threshold", () => {
-    expect(resolveGuestPhase(7, config)).toBe("grace");
-  });
-
-  it("returns grace between grace and lockout thresholds", () => {
-    expect(resolveGuestPhase(9, config)).toBe("grace");
-  });
-
-  it("returns lockout at exact lockout threshold", () => {
-    expect(resolveGuestPhase(10, config)).toBe("lockout");
-  });
-
-  it("returns lockout above lockout threshold", () => {
-    expect(resolveGuestPhase(50, config)).toBe("lockout");
-  });
-
-  it("handles custom config with higher thresholds", () => {
-    const custom: GuestConfig = {
-      nudgeAfterSessions: 10,
-      graceAfterSessions: 20,
-      lockoutAfterSessions: 30,
-      guestTokenTtlHours: 168,
-      maxGuestSessions: 30,
-    };
-    expect(resolveGuestPhase(15, custom)).toBe("nudge");
-    expect(resolveGuestPhase(25, custom)).toBe("grace");
-  });
-});
 
 // ── Deletion Module Registration Tests ──────────────────────────────────
 

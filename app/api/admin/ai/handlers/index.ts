@@ -14,7 +14,7 @@ export {
   handleChangeUserRole,
 } from "./roles";
 export { handleCreateEntitlementGroup } from "./entitlements";
-export { handleUpdateGuestConfig, handleUpdatePasswordPolicy } from "./config";
+export { handleUpdatePasswordPolicy } from "./config";
 export { handleSearch } from "./search";
 export {
   handleRegisterAgent,
