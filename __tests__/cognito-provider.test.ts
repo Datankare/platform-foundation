@@ -129,7 +129,7 @@ describe("CognitoAuthProvider — signIn", () => {
     const result = await provider.signIn("test@example.com", "wrong");
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("Invalid email or password");
+    expect(result.errorCode).toBe("auth.invalid_credentials");
   });
 
   it("returns emailVerificationRequired for unconfirmed user", async () => {
@@ -168,7 +168,7 @@ describe("CognitoAuthProvider — signUp", () => {
     const result = await provider.signUp("existing@example.com", "Pass1!");
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("already exists");
+    expect(result.errorCode).toBe("auth.account_exists");
   });
 });
 
@@ -342,6 +342,21 @@ describe("CognitoAuthProvider — guest mode", () => {
     const result = await provider.verifyGuestToken(`guest.${expiredPayload}`);
     expect(result.valid).toBe(false);
   });
+
+  it("rejects an unsigned, unexpired guest token — forgery (ADR-050 D4, TASK-098)", async () => {
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const forged = Buffer.from(
+      JSON.stringify({
+        sub: "guest_00000000000000000000000000000000",
+        type: "guest",
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      })
+    ).toString("base64url");
+
+    const result = await provider.verifyGuestToken(`guest.${forged}`);
+    expect(result.valid).toBe(false);
+  });
 });
 
 describe("CognitoAuthProvider — resilience", () => {
@@ -380,7 +395,7 @@ describe("CognitoAuthProvider — resilience", () => {
     const result = await provider.signIn("test@example.com", "password");
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Too many attempts");
+    expect(result.errorCode).toBe("auth.too_many_attempts");
   });
 });
 
@@ -391,5 +406,46 @@ describe("CognitoError", () => {
     expect(err.cognitoType).toBe("TestType");
     expect(err.statusCode).toBe(400);
     expect(err.name).toBe("CognitoError");
+  });
+});
+
+describe("CognitoAuthProvider — error codes (ADR-051)", () => {
+  it.each([
+    ["UserNotFoundException", "auth.invalid_credentials"],
+    ["NotAuthorizedException", "auth.invalid_credentials"],
+    ["UsernameExistsException", "auth.account_exists"],
+    ["InvalidPasswordException", "auth.password_policy"],
+    ["CodeMismatchException", "auth.code_invalid"],
+    ["ExpiredCodeException", "auth.code_expired"],
+    ["LimitExceededException", "auth.too_many_attempts"],
+    ["InvalidParameterException", "request.invalid_body"],
+    ["SomethingNewException", "internal.error"],
+  ])("%s → %s", async (type, code) => {
+    mockFetch.mockResolvedValueOnce(cognitoError(type, "raw cognito text"));
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const result = await provider.signIn("a@b.c", "x");
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe(code);
+  });
+
+  it("an unconfirmed account is the verification step", async () => {
+    mockFetch.mockResolvedValueOnce(
+      cognitoError("UserNotConfirmedException", "not confirmed")
+    );
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const result = await provider.signIn("a@b.c", "x");
+    expect(result.errorCode).toBe("auth.email_not_verified");
+    expect(result.emailVerificationRequired).toBe(true);
+  });
+
+  it("other operations code their failures too", async () => {
+    mockFetch.mockResolvedValueOnce(cognitoError("CodeMismatchException", "bad code"));
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const result = await provider.confirmForgotPassword(
+      "a@b.c",
+      "000000",
+      "N3w!Passw0rd#"
+    );
+    expect(result.errorCode).toBe("auth.code_invalid");
   });
 });

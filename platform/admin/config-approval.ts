@@ -23,6 +23,7 @@
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
+import type { ErrorCode } from "@/platform/errors/registry";
 import { getConfig } from "@/platform/auth/platform-config";
 import type {
   ConfigApprovalRecord,
@@ -178,6 +179,14 @@ export async function requestApproval(params: {
   }
 }
 
+/** Result of reviewing an approval; `errorCode` (ADR-051) is what a route returns. */
+export interface ConfigApprovalResult {
+  success: boolean;
+  record?: ConfigApprovalRecord;
+  error?: string;
+  errorCode?: ErrorCode;
+}
+
 /**
  * Approve a pending change.
  * Self-approval is blocked — reviewerId must differ from requestedBy.
@@ -187,7 +196,7 @@ export async function approveChange(
   approvalId: string,
   reviewerId: string,
   reviewComment: string
-): Promise<{ success: boolean; record?: ConfigApprovalRecord; error?: string }> {
+): Promise<ConfigApprovalResult> {
   return reviewChange(approvalId, reviewerId, reviewComment, "approved");
 }
 
@@ -199,7 +208,7 @@ export async function rejectChange(
   approvalId: string,
   reviewerId: string,
   reviewComment: string
-): Promise<{ success: boolean; record?: ConfigApprovalRecord; error?: string }> {
+): Promise<ConfigApprovalResult> {
   return reviewChange(approvalId, reviewerId, reviewComment, "rejected");
 }
 
@@ -211,7 +220,7 @@ async function reviewChange(
   reviewerId: string,
   reviewComment: string,
   newStatus: "approved" | "rejected"
-): Promise<{ success: boolean; record?: ConfigApprovalRecord; error?: string }> {
+): Promise<ConfigApprovalResult> {
   try {
     const supabase = getSupabaseServiceClient();
 
@@ -226,13 +235,18 @@ async function reviewChange(
     }>);
 
     if (!current) {
-      return { success: false, error: `Approval "${approvalId}" not found.` };
+      return {
+        success: false,
+        error: `Approval "${approvalId}" not found.`,
+        errorCode: "approvals.hold_not_found",
+      };
     }
 
     if (current.status !== "pending") {
       return {
         success: false,
         error: `Approval is already ${current.status}. Only pending approvals can be reviewed.`,
+        errorCode: "approvals.decision_conflict",
       };
     }
 
@@ -246,6 +260,7 @@ async function reviewChange(
       return {
         success: false,
         error: "This approval has expired.",
+        errorCode: "approvals.expired",
       };
     }
 
@@ -255,6 +270,7 @@ async function reviewChange(
         success: false,
         error:
           "Self-approval is not permitted. A different super_admin must review this change.",
+        errorCode: "approvals.self_approval",
       };
     }
 
@@ -285,11 +301,13 @@ async function reviewChange(
         return {
           success: false,
           error: "This approval was already reviewed by another admin. Please refresh.",
+          errorCode: "approvals.decision_conflict",
         };
       }
       return {
         success: false,
         error: error?.message ?? "Failed to update approval",
+        errorCode: "internal.error",
       };
     }
 

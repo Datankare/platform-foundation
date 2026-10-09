@@ -47,7 +47,7 @@ const SSO_PROVIDERS: {
 export default function SsoButtons({
   onSsoClick,
   disabled = false,
-  enabledProviders = ["google", "apple", "microsoft"],
+  enabledProviders = [],
 }: SsoButtonsProps) {
   const [loadingProvider, setLoadingProvider] = useState<SsoProvider | null>(null);
 

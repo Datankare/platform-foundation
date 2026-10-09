@@ -222,51 +222,58 @@ export async function getEffectivePasswordPolicy(
 // Validation (Phase 1 API preserved, Sprint 4 enhanced)
 // ============================================================
 
+/** Stable ids of password rules (ADR-051) — the `rules` param of `auth.password_policy`. */
+export type PasswordRuleId =
+  | "min_length"
+  | "uppercase"
+  | "lowercase"
+  | "number"
+  | "special"
+  | "breached"
+  | "repeated"
+  | "sequential";
+
+/** The rules a password fails, as stable ids (empty = valid). */
+export function passwordRuleViolations(
+  password: string,
+  policy: PasswordPolicy
+): PasswordRuleId[] {
+  const failed: PasswordRuleId[] = [];
+  if (password.length < policy.minLength) failed.push("min_length");
+  if (policy.requireUppercase && !/[A-Z]/.test(password)) failed.push("uppercase");
+  if (policy.requireLowercase && !/[a-z]/.test(password)) failed.push("lowercase");
+  // eslint-disable-next-line regexp/prefer-d -- ASCII digits only, \d matches Unicode
+  if (policy.requireNumber && !/[0-9]/.test(password)) failed.push("number");
+  // eslint-disable-next-line regexp/use-ignore-case -- ASCII-only special char detection
+  if (policy.requireSpecial && !/[^A-Za-z0-9]/.test(password)) failed.push("special");
+  if (isBreachedPassword(password)) failed.push("breached");
+  // ReDoS-safe: iterative check instead of /^(.)\1+$/ which has exponential backtracking
+  if (password.length > 0 && password.split("").every((c) => c === password[0])) {
+    failed.push("repeated");
+  }
+  if (isSequential(password)) failed.push("sequential");
+  return failed;
+}
+
 /**
  * Validate a password against a policy.
- * Returns a list of violations (empty = valid).
+ * Returns a list of violations (empty = valid) — English, for logs and legacy callers; API
+ * responses use {@link passwordRuleViolations}.
  *
- * Phase 1 API — signature unchanged.
- * Sprint 4: Added breached password check, sequential/repetition detection.
+ * Phase 1 API — signature unchanged. Sprint 4: breached, sequential and repetition checks.
  */
 export function validatePassword(password: string, policy: PasswordPolicy): string[] {
-  const violations: string[] = [];
-
-  if (password.length < policy.minLength) {
-    violations.push(`Must be at least ${policy.minLength} characters`);
-  }
-  if (policy.requireUppercase && !/[A-Z]/.test(password)) {
-    violations.push("Must contain an uppercase letter");
-  }
-  if (policy.requireLowercase && !/[a-z]/.test(password)) {
-    violations.push("Must contain a lowercase letter");
-  }
-  // eslint-disable-next-line regexp/prefer-d -- ASCII digits only, \d matches Unicode
-  if (policy.requireNumber && !/[0-9]/.test(password)) {
-    violations.push("Must contain a number");
-  }
-  // eslint-disable-next-line regexp/use-ignore-case -- ASCII-only special char detection
-  if (policy.requireSpecial && !/[^A-Za-z0-9]/.test(password)) {
-    violations.push("Must contain a special character");
-  }
-
-  // Sprint 4 enhancements
-  if (isBreachedPassword(password)) {
-    violations.push(
-      "This password has appeared in data breaches. Choose a different password."
-    );
-  }
-  // ReDoS-safe: iterative check instead of /^(.)\1+$/ which has exponential backtracking
-  const allSameChar =
-    password.length > 0 && password.split("").every((c) => c === password[0]);
-  if (allSameChar) {
-    violations.push("Password cannot be a single repeated character");
-  }
-  if (isSequential(password)) {
-    violations.push("Password cannot be a simple sequential pattern");
-  }
-
-  return violations;
+  const text: Record<PasswordRuleId, string> = {
+    min_length: `Must be at least ${policy.minLength} characters`,
+    uppercase: "Must contain an uppercase letter",
+    lowercase: "Must contain a lowercase letter",
+    number: "Must contain a number",
+    special: "Must contain a special character",
+    breached: "This password has appeared in data breaches. Choose a different password.",
+    repeated: "Password cannot be a single repeated character",
+    sequential: "Password cannot be a simple sequential pattern",
+  };
+  return passwordRuleViolations(password, policy).map((id) => text[id]);
 }
 
 /**

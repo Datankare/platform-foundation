@@ -26,6 +26,7 @@ import type {
   ModerationAuditRecord,
   ModerationResult,
 } from "@/platform/moderation/types";
+import { apiError, errorFromResult } from "@/platform/errors";
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "active",
@@ -101,11 +102,6 @@ async function derivePreviousStatus(
   return undefined;
 }
 
-function appealErrorStatus(error: string): number {
-  if (error.includes("already pending")) return 409;
-  return 400;
-}
-
 export async function POST(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth.error) return auth.error;
@@ -116,20 +112,20 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return apiError("request.invalid_json", { request });
   }
 
   const { originalDecisionId, appealReason } = body;
   if (!originalDecisionId || !appealReason) {
-    return NextResponse.json(
-      { error: "originalDecisionId and appealReason are required" },
-      { status: 400 }
-    );
+    return apiError("request.missing_fields", {
+      params: { fields: ["originalDecisionId", "appealReason"] },
+      request,
+    });
   }
 
   const appealingUserId = await resolveUserId(auth.user.sub);
   if (!appealingUserId) {
-    return NextResponse.json({ error: "User account not found" }, { status: 403 });
+    return apiError("account.not_found", { request });
   }
 
   try {
@@ -140,7 +136,7 @@ export async function POST(request: NextRequest) {
     });
     const original = records[0];
     if (!original) {
-      return NextResponse.json({ error: "Original decision not found" }, { status: 404 });
+      return apiError("moderation.decision_not_found", { request });
     }
 
     // Ownership (F6): a user may only appeal their own decision.
@@ -152,10 +148,7 @@ export async function POST(request: NextRequest) {
         requestId,
         route: "api/moderation/appeals",
       });
-      return NextResponse.json(
-        { error: "You can only appeal your own moderation decisions" },
-        { status: 403 }
-      );
+      return apiError("moderation.not_own_decision", { request });
     }
 
     const previousAccountStatus = await derivePreviousStatus(
@@ -176,10 +169,7 @@ export async function POST(request: NextRequest) {
     );
 
     if (!result.success) {
-      return NextResponse.json(
-        { error: result.error },
-        { status: appealErrorStatus(result.error ?? "") }
-      );
+      return errorFromResult(result, { request });
     }
 
     return NextResponse.json({ item: result.item }, { status: 201 });
@@ -189,6 +179,6 @@ export async function POST(request: NextRequest) {
       requestId,
       route: "api/moderation/appeals",
     });
-    return NextResponse.json({ error: "Failed to submit appeal" }, { status: 500 });
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }

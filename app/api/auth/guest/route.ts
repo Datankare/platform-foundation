@@ -1,14 +1,14 @@
-import { NextResponse } from "next/server";
 import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
 import { logger } from "@/lib/logger";
+import { authResultResponse } from "@/platform/auth/auth-response";
 
 export async function POST() {
   initAuth();
   const auth = getAuthProvider();
   const result = await auth.createGuestToken();
 
-  const response = NextResponse.json(result);
+  const response = authResultResponse(result, { context: "Guest session failed" });
 
   if (result.success) {
     logger.info("Guest session created", { guestId: result.guestId });

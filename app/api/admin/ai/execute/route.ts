@@ -15,7 +15,6 @@ import {
   handleAssignPermissions,
   handleChangeUserRole,
   handleCreateEntitlementGroup,
-  handleUpdateGuestConfig,
   handleUpdatePasswordPolicy,
   handleSearch,
   handleRegisterAgent,
@@ -31,6 +30,7 @@ import type { Tool, AgentIdentity } from "@/platform/agents/types";
 import { invokeTool } from "@/platform/agents/tool-invoker";
 import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { getProposalStore } from "@/platform/agents/proposal-store";
+import { apiError } from "@/platform/errors";
 
 type ActionResult = {
   success: boolean;
@@ -50,7 +50,6 @@ const toolHandlers: Record<
   assign_permissions: handleAssignPermissions,
   change_user_role: handleChangeUserRole,
   create_entitlement_group: handleCreateEntitlementGroup,
-  update_guest_config: handleUpdateGuestConfig,
   update_password_policy: handleUpdatePasswordPolicy,
   search: (input) => handleSearch(input),
   register_agent: handleRegisterAgent,
@@ -70,7 +69,10 @@ export async function POST(request: NextRequest) {
   const { actions, prompt } = await request.json();
 
   if (!actions || !Array.isArray(actions)) {
-    return NextResponse.json({ error: "actions array required" }, { status: 400 });
+    return apiError("request.missing_fields", {
+      params: { fields: ["actions"] },
+      request,
+    });
   }
 
   const actorId = "dev-admin";

@@ -64,18 +64,6 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
       return `Revoke "${input.entitlement_code}" from ${input.user_identifiers?.length || 0} users`;
     case "delete_entitlement_group":
       return `Delete entitlement group "${input.code}"`;
-    case "update_guest_config": {
-      const changes: string[] = [];
-      if (input.nudge_after_sessions)
-        changes.push(`nudge: ${input.nudge_after_sessions} sessions`);
-      if (input.grace_after_sessions)
-        changes.push(`grace: ${input.grace_after_sessions} sessions`);
-      if (input.lockout_after_sessions)
-        changes.push(`lockout: ${input.lockout_after_sessions} sessions`);
-      if (input.guest_token_ttl_hours)
-        changes.push(`TTL: ${input.guest_token_ttl_hours}h`);
-      return `Update guest config — ${changes.join(", ")}`;
-    }
     case "update_password_policy": {
       const changes: string[] = [];
       if (input.min_length) changes.push(`min length: ${input.min_length}`);

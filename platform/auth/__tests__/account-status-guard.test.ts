@@ -30,7 +30,7 @@ function createChainMock(resolvedValue: { data: any; error: any }) {
   const chain: any = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue(resolvedValue),
+    maybeSingle: jest.fn().mockResolvedValue(resolvedValue),
     then: (resolve: any) => resolve(resolvedValue),
   };
   return chain;
@@ -39,6 +39,11 @@ function createChainMock(resolvedValue: { data: any; error: any }) {
 const mockSupabase = {
   from: jest.fn(),
 };
+
+const mockEnsureProvisioned = jest.fn();
+jest.mock("@/platform/auth/user-provisioning", () => ({
+  ensureUserProvisioned: (...args: any[]) => mockEnsureProvisioned(...args),
+}));
 
 jest.mock("@/lib/supabase/server", () => ({
   getSupabaseServiceClient: jest.fn(() => mockSupabase),
@@ -248,11 +253,75 @@ describe("checkAccountStatus", () => {
     expect(result.accountStatus).toBe("banned");
   });
 
-  it("allows when user not found (authenticated but no DB row)", async () => {
-    mockSupabase.from.mockReturnValue(createChainMock({ data: null, error: null }));
+  // ── First use: no row (TASK-117) ────────────────────────────────────
+
+  /** users reads return `rows` in order (then the last one repeatedly). */
+  function usersReads(...rows: any[]) {
+    let i = 0;
+    mockSupabase.from.mockImplementation((table: string) => {
+      if (table === "user_feature_restrictions") {
+        return createChainMock({ data: [], error: null });
+      }
+      const data = rows[Math.min(i++, rows.length - 1)];
+      return createChainMock({ data, error: null });
+    });
+  }
+  const ACTIVE_ROW = {
+    account_status: "active",
+    restricted_until: null,
+    suspended_until: null,
+    banned_at: null,
+  };
+
+  it("provisions a user with no row, then allows from the stored row", async () => {
+    usersReads(null, ACTIVE_ROW);
+    mockEnsureProvisioned.mockResolvedValue("created");
+    const result = await checkAccountStatus(VALID_USER_ID, "translate", {
+      email: "a@b.com",
+      emailVerified: true,
+    });
+    expect(mockEnsureProvisioned).toHaveBeenCalledWith(VALID_USER_ID, {
+      email: "a@b.com",
+      emailVerified: true,
+    });
+    expect(result).toMatchObject({ allowed: true, accountStatus: "active" });
+    expect(result.code).toBeUndefined();
+  });
+
+  it("does not provision a user who already has a row", async () => {
+    usersReads(ACTIVE_ROW);
+    await checkAccountStatus(VALID_USER_ID, "translate");
+    expect(mockEnsureProvisioned).not.toHaveBeenCalled();
+  });
+
+  it("refuses as not provisioned — never as banned — when provisioning fails", async () => {
+    usersReads(null);
+    mockEnsureProvisioned.mockResolvedValue("failed");
     const result = await checkAccountStatus(VALID_USER_ID, "translate");
-    expect(result.allowed).toBe(true);
-    expect(result.accountStatus).toBe("active");
+    expect(result).toMatchObject({ allowed: false, code: "account.not_provisioned" });
+  });
+
+  it("refuses as not provisioned when the row is still missing after provisioning", async () => {
+    usersReads(null, null);
+    mockEnsureProvisioned.mockResolvedValue("existing");
+    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    expect(result).toMatchObject({ allowed: false, code: "account.not_provisioned" });
+  });
+
+  it("allows when no database is configured (mock/CI)", async () => {
+    usersReads(null);
+    mockEnsureProvisioned.mockResolvedValue("skipped");
+    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    expect(result).toMatchObject({ allowed: true, accountStatus: "active" });
+  });
+
+  it("a DB error never triggers provisioning (fails closed)", async () => {
+    mockSupabase.from.mockReturnValue(
+      createChainMock({ data: null, error: { message: "DB down" } })
+    );
+    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    expect(result.allowed).toBe(false);
+    expect(mockEnsureProvisioned).not.toHaveBeenCalled();
   });
 
   it("fails closed when DB throws exception", async () => {

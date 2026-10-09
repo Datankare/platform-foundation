@@ -9,7 +9,9 @@
  *   - fail-closed: in production on in-memory stores with no opt-out, register() swallows the
  *     guard throw (it must not crash the process) BUT boot does NOT complete — observability and
  *     probes never initialize, which is exactly what left health at 503 and Guardian unregistered.
- *   - opt-out: with E2E_IN_MEMORY_STORES=true, boot completes end-to-end (observability initializes).
+ *   - opt-out: with the harness opt-outs (E2E_IN_MEMORY_STORES=true for stores, E2E_TEST_DOUBLE_AUTH=true
+ *     for auth — ADR-050 D1), boot completes end-to-end (observability initializes).
+ *   - ADR-050 D1: the store opt-out alone does not cover auth — boot still fails closed.
  *
  * This is the option-(b) floor from TASK-089: a guaranteed catch with no server. A full CI E2E
  * layer (option (a)) can follow. The test is portable: it runs unchanged against a consumer's own
@@ -50,6 +52,7 @@ describe("production boot guard (TASK-089)", () => {
   it("fail-closed: production + in-memory stores + no opt-out — register() swallows the throw but boot does not complete", () => {
     setNodeEnv("production");
     delete process.env.E2E_IN_MEMORY_STORES;
+    delete process.env.E2E_TEST_DOUBLE_AUTH;
     delete process.env.TRAJECTORY_STORE;
     delete process.env.BUDGET_STORE;
     const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -64,9 +67,31 @@ describe("production boot guard (TASK-089)", () => {
     errSpy.mockRestore();
   });
 
-  it("opt-out: production + E2E_IN_MEMORY_STORES=true — boot completes (observability initializes)", () => {
+  it("ADR-050 D1: production + E2E_IN_MEMORY_STORES=true but mock auth — boot does not complete", () => {
     setNodeEnv("production");
     process.env.E2E_IN_MEMORY_STORES = "true";
+    delete process.env.E2E_TEST_DOUBLE_AUTH;
+    delete process.env.AUTH_PROVIDER;
+    delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    delete process.env.TRAJECTORY_STORE;
+    delete process.env.BUDGET_STORE;
+    const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() => register()).not.toThrow();
+    expect(tryGetObservability()).toBeFalsy();
+    expect(errSpy).toHaveBeenCalledWith(
+      "[instrumentation] Failed to initialize:",
+      expect.objectContaining({ name: "EnvironmentContractError" })
+    );
+
+    errSpy.mockRestore();
+  });
+
+  it("opt-out: production + E2E_IN_MEMORY_STORES=true + E2E_TEST_DOUBLE_AUTH=true — boot completes (observability initializes)", () => {
+    setNodeEnv("production");
+    process.env.E2E_IN_MEMORY_STORES = "true";
+    process.env.E2E_TEST_DOUBLE_AUTH = "true";
+    delete process.env.VERCEL;
     delete process.env.TRAJECTORY_STORE;
     delete process.env.BUDGET_STORE;
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});

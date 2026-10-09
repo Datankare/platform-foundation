@@ -1,7 +1,7 @@
 /**
  * __tests__/admin-medium-routes.test.ts — coverage remediation (ADR-040 "B", B2).
  *
- * guest-config, password-policy, entitlements (adminGuard + Supabase + audit) and gdpr
+ * password-policy, entitlements (adminGuard + Supabase + audit) and gdpr
  * (requireAuth/requirePermission + PurgePipeline). Authorized, guard/auth denial,
  * data/default and error branches, and input validation.
  */
@@ -23,7 +23,6 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { requireAuth, requirePermission } from "@/platform/auth/middleware";
 import { PurgePipeline } from "@/platform/gdpr";
 
-import { GET as guestGET, PUT as guestPUT } from "@/app/api/admin/guest-config/route";
 import { GET as pwGET, PUT as pwPUT } from "@/app/api/admin/password-policy/route";
 import { GET as entGET, PATCH as entPATCH } from "@/app/api/admin/entitlements/route";
 import { POST as gdprPOST } from "@/app/api/admin/gdpr/route";
@@ -76,54 +75,6 @@ function jsonReq(method: string, body?: unknown, raw?: string): NextRequest {
 beforeEach(() => {
   jest.clearAllMocks();
   mockGuard.mockResolvedValue(null);
-});
-
-describe("guest-config route", () => {
-  it("GET returns the stored config", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({
-        guest_config: {
-          data: {
-            nudge_after_sessions: 5,
-            grace_after_sessions: 8,
-            lockout_after_sessions: 11,
-            guest_token_ttl_hours: 24,
-          },
-        },
-      })
-    );
-    const res = await guestGET(jsonReq("GET"));
-    const body = await res.json();
-    expect(body.config.nudgeAfterSessions).toBe(5);
-  });
-
-  it("GET falls back to defaults when no row exists", async () => {
-    mockSupabase.mockReturnValue(makeSupabase({ guest_config: { data: null } }));
-    const res = await guestGET(jsonReq("GET"));
-    const body = await res.json();
-    expect(body.config.nudgeAfterSessions).toBe(3);
-  });
-
-  it("PUT writes a new config and returns success", async () => {
-    mockSupabase.mockReturnValue(makeSupabase({ guest_config: { error: null } }));
-    const res = await guestPUT(jsonReq("PUT", { nudgeAfterSessions: 2 }));
-    const body = await res.json();
-    expect(body.success).toBe(true);
-  });
-
-  it("PUT returns 500 on insert error", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ guest_config: { error: { message: "boom" } } })
-    );
-    const res = await guestPUT(jsonReq("PUT", {}));
-    expect(res.status).toBe(500);
-  });
-
-  it("GET passes the guard denial through", async () => {
-    mockGuard.mockResolvedValue(denial());
-    const res = await guestGET(jsonReq("GET"));
-    expect(res.status).toBe(403);
-  });
 });
 
 describe("password-policy route", () => {

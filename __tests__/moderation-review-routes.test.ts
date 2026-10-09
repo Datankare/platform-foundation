@@ -335,6 +335,7 @@ describe("PATCH /api/moderation/review/[id]", () => {
     (claimItem as jest.Mock).mockResolvedValue({
       success: false,
       error: "Review item not found: review-x",
+      errorCode: "moderation.review_item_not_found",
     });
 
     const res = await PATCH(
@@ -349,6 +350,8 @@ describe("PATCH /api/moderation/review/[id]", () => {
     (claimItem as jest.Mock).mockResolvedValue({
       success: false,
       error: "Item is claimed, not pending",
+      errorCode: "moderation.item_state_conflict",
+      errorParams: { status: "claimed" },
     });
 
     const res = await PATCH(
@@ -357,6 +360,7 @@ describe("PATCH /api/moderation/review/[id]", () => {
     );
 
     expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("moderation.item_state_conflict");
   });
 
   it("returns 400 for an unknown action", async () => {

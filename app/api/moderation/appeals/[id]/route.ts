@@ -21,14 +21,9 @@ import {
 import { getReviewQueueStore } from "@/platform/moderation/review-store";
 import type { ReviewDecision } from "@/platform/moderation/review-types";
 import type { ModerationAction } from "@/platform/moderation/types";
+import { apiError, errorFromResult } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
-
-function statusForError(error: string): number {
-  if (error.includes("not found")) return 404;
-  if (error.includes("required")) return 400;
-  return 409;
-}
 
 async function resolveReviewerId(request: NextRequest): Promise<string> {
   const { user } = await optionalAuth(request);
@@ -55,43 +50,37 @@ export async function PATCH(
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return apiError("request.invalid_json", { request });
   }
 
   try {
     // Scope guard: this endpoint only operates on appeal items.
     const item = await getReviewQueueStore().getById(id);
     if (!item || item.source !== "appeal") {
-      return NextResponse.json({ error: "Appeal not found" }, { status: 404 });
+      return apiError("moderation.appeal_not_found", { request });
     }
 
     switch (body.action) {
       case "claim": {
         const result = await claimItem(id, reviewerId);
         if (!result.success) {
-          return NextResponse.json(
-            { error: result.error },
-            { status: statusForError(result.error ?? "") }
-          );
+          return errorFromResult(result, { request });
         }
         return NextResponse.json({ item: result.item });
       }
       case "unclaim": {
         const result = await unclaimItem(id, reviewerId);
         if (!result.success) {
-          return NextResponse.json(
-            { error: result.error },
-            { status: statusForError(result.error ?? "") }
-          );
+          return errorFromResult(result, { request });
         }
         return NextResponse.json({ item: result.item });
       }
       case "resolve": {
         if (!body.decision || !body.reviewerNotes) {
-          return NextResponse.json(
-            { error: "decision and reviewerNotes are required to resolve" },
-            { status: 400 }
-          );
+          return apiError("request.missing_fields", {
+            params: { fields: ["decision", "reviewerNotes"] },
+            request,
+          });
         }
         const result = await resolveItem({
           itemId: id,
@@ -101,18 +90,15 @@ export async function PATCH(
           modifiedAction: body.modifiedAction,
         });
         if (!result.success) {
-          return NextResponse.json(
-            { error: result.error },
-            { status: statusForError(result.error ?? "") }
-          );
+          return errorFromResult(result, { request });
         }
         return NextResponse.json({ item: result.item });
       }
       default:
-        return NextResponse.json(
-          { error: "action must be one of: claim, unclaim, resolve" },
-          { status: 400 }
-        );
+        return apiError("request.invalid_value", {
+          params: { field: "action", allowed: ["claim", "unclaim", "resolve"] },
+          request,
+        });
     }
   } catch (err) {
     logger.error("Appeal action error", {
@@ -122,6 +108,6 @@ export async function PATCH(
       action: body.action,
       route: "api/moderation/appeals/[id]",
     });
-    return NextResponse.json({ error: "Failed to update appeal" }, { status: 500 });
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }

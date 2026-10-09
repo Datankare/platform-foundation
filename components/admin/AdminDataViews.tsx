@@ -307,21 +307,6 @@ function ConfigRow({
   );
 }
 
-export function GuestConfigDataView({ data }: { data: any }) {
-  const config = data?.config;
-  if (!config) return <p className="text-gray-500 text-sm">Loading...</p>;
-  return (
-    <div className="bg-[#111827] rounded-xl border border-gray-800 p-5 max-w-lg">
-      <div className="space-y-3 text-sm">
-        <ConfigRow label="Nudge after sessions" value={config.nudgeAfterSessions} />
-        <ConfigRow label="Grace after sessions" value={config.graceAfterSessions} />
-        <ConfigRow label="Lockout after sessions" value={config.lockoutAfterSessions} />
-        <ConfigRow label="Guest token TTL (hours)" value={config.guestTokenTtlHours} />
-      </div>
-    </div>
-  );
-}
-
 export function PasswordPolicyDataView({ data }: { data: any }) {
   const policy = data?.policy;
   if (!policy) return <p className="text-gray-500 text-sm">Loading...</p>;

@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
+import { apiError } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "can_access_admin");
@@ -25,9 +26,6 @@ export async function GET(request: NextRequest) {
     logger.error(
       `pending-approvals list failed: ${err instanceof Error ? err.message : String(err)} (req ${requestId})`
     );
-    return NextResponse.json(
-      { error: "Failed to list pending approvals", requestId },
-      { status: 500 }
-    );
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }

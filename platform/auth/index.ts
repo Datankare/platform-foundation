@@ -5,7 +5,7 @@
  * Sprint 2: middleware, context
  * Sprint 3: permissions, entitlements, audit, cache
  * Sprint 4: profile, devices, consent, password-policy, coppa
- * Sprint 5: gdpr-deletion, data-export, guest-lifecycle
+ * Sprint 5: gdpr-deletion, data-export
  */
 
 export type { AuthProvider } from "@/platform/auth/provider";
@@ -34,9 +34,24 @@ export {
   hasAuthProvider,
 } from "@/platform/auth/config";
 
-export { requireAuth, optionalAuth, requirePermission } from "@/platform/auth/middleware";
+export {
+  requireAuth,
+  optionalAuth,
+  requirePermission,
+  requireActor,
+} from "@/platform/auth/middleware";
+export { requireActorWithStatus } from "@/platform/auth/actor-guard";
+export type { ActorGuardResult } from "@/platform/auth/actor-guard";
 
-export type { AuthContext, AuthError } from "@/platform/auth/middleware";
+export type {
+  AuthContext,
+  AuthError,
+  Actor,
+  ActorContext,
+  ActorError,
+  ActorOptions,
+  ActorResult,
+} from "@/platform/auth/middleware";
 
 // Sprint 3 — Permissions & Entitlements
 export { resolvePermissions, hasPermission } from "@/platform/auth/permissions";
@@ -114,19 +129,23 @@ export {
 } from "@/platform/auth/data-export";
 export type { ExportModule } from "@/platform/auth/data-export";
 
+// ADR-050 D4 — platform-owned signed guest tokens
 export {
-  getGuestConfig,
-  resolveGuestPhase,
-  getGuestStatus,
-  incrementGuestSession,
-  convertGuestToRegistered,
-  cleanupExpiredGuests,
-} from "@/platform/auth/guest-lifecycle";
+  mintGuestToken,
+  verifyGuestToken,
+  newGuestId,
+  isGuestId,
+  GUEST_ID_PREFIX,
+  DEFAULT_GUEST_TTL_SECONDS,
+  MAX_GUEST_TTL_SECONDS,
+} from "@/platform/auth/guest-token";
 export type {
-  GuestConfig,
-  GuestPhase,
-  GuestStatus,
-} from "@/platform/auth/guest-lifecycle";
+  MintedGuestToken,
+  GuestTokenVerification,
+} from "@/platform/auth/guest-token";
+
+// TASK-111: the session-count guest lifecycle was retired; guests are bounded by the governed
+// translate allowance (guest-allowance.ts).
 
 // Runtime configuration
 export {

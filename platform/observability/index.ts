@@ -37,6 +37,7 @@ import { createErrorReporter } from "./error-reporting";
 import { createMetricsSink } from "./metrics-sink";
 import { HealthRegistry } from "./health";
 import { logger } from "@/lib/logger";
+import { getSupabaseUrl } from "@/platform/providers/environment-contract";
 import {
   getSingleton,
   hasSingleton,
@@ -130,7 +131,7 @@ export function initObservability(config: ObservabilityConfig): void {
   const metrics =
     config.metricsSink ??
     createMetricsSink({
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      supabaseUrl: getSupabaseUrl(),
       supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     });
 

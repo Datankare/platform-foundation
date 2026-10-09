@@ -20,6 +20,7 @@ import { writeAuditLog } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import { PurgePipeline } from "@/platform/gdpr";
 import type { PurgeRequest } from "@/platform/gdpr";
+import { apiError } from "@/platform/errors";
 
 /** Valid purge reasons */
 const VALID_REASONS = new Set([
@@ -42,23 +43,21 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return apiError("request.invalid_json", { request });
   }
 
   if (!body.userId || typeof body.userId !== "string") {
-    return NextResponse.json(
-      { error: "userId is required and must be a string" },
-      { status: 400 }
-    );
+    return apiError("request.missing_fields", {
+      params: { fields: ["userId"] },
+      request,
+    });
   }
 
   if (!body.reason || !VALID_REASONS.has(body.reason)) {
-    return NextResponse.json(
-      {
-        error: `reason must be one of: ${Array.from(VALID_REASONS).join(", ")}`,
-      },
-      { status: 400 }
-    );
+    return apiError("request.invalid_value", {
+      params: { field: "reason", allowed: Array.from(VALID_REASONS) },
+      request,
+    });
   }
 
   const purgeRequest: PurgeRequest = {
@@ -108,6 +107,6 @@ export async function POST(request: NextRequest) {
       targetId: purgeRequest.userId,
     });
 
-    return NextResponse.json({ error: "Purge operation failed" }, { status: 500 });
+    return apiError("internal.error", { request });
   }
 }

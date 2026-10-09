@@ -104,27 +104,27 @@ Four architectural commitments span all phases (see ADR-014, ADR-015, ADR-016, A
 
 ### Deliverables
 
-| Deliverable                                           | Status |
-| ----------------------------------------------------- | ------ |
-| Auth provider interface (Cognito-ready, pluggable)    | ✅     |
-| RBAC permissions engine with role inheritance         | ✅     |
-| Entitlements engine (time-bounded grants)             | ✅     |
-| User profiles with per-field visibility               | ✅     |
-| COPPA age verification + parental consent schema      | ✅     |
-| GDPR: data export, deletion, guest lifecycle          | ✅     |
-| Admin UI with GenAI-native command bar                | ✅     |
-| Platform config table (runtime key-value settings)    | ✅     |
-| super_admin role separation + anti-self-elevation     | ✅     |
-| Rate limiting (per-IP sliding window)                 | ✅     |
-| Automated 22-point sustainability gate                | ✅     |
-| Pull-based repo inheritance (PF → consumers)          | ✅     |
-| Seed data separation (generic PF, app-specific tiers) | ✅     |
-| 13 ADRs, 7 migrations, 20 RLS policies                | ✅     |
-| RAMPS Phase 1 Assessment                              | ✅     |
-| fetchWithTimeout retry (429/503/529 backoff)          | ✅     |
-| API transient error handling (503 with user message)  | ✅     |
-| Semgrep SAST + ZAP DAST (Playform)                    | ✅     |
-| CodeQL SAST (platform-foundation)                     | ✅     |
+| Deliverable                                                        | Status |
+| ------------------------------------------------------------------ | ------ |
+| Auth provider interface (Cognito-ready, pluggable)                 | ✅     |
+| RBAC permissions engine with role inheritance                      | ✅     |
+| Entitlements engine (time-bounded grants)                          | ✅     |
+| User profiles with per-field visibility                            | ✅     |
+| COPPA age verification + parental consent schema                   | ✅     |
+| GDPR: data export, deletion (guest lifecycle retired 7A, TASK-111) | ✅     |
+| Admin UI with GenAI-native command bar                             | ✅     |
+| Platform config table (runtime key-value settings)                 | ✅     |
+| super_admin role separation + anti-self-elevation                  | ✅     |
+| Rate limiting (per-IP sliding window)                              | ✅     |
+| Automated 22-point sustainability gate                             | ✅     |
+| Pull-based repo inheritance (PF → consumers)                       | ✅     |
+| Seed data separation (generic PF, app-specific tiers)              | ✅     |
+| 13 ADRs, 7 migrations, 20 RLS policies                             | ✅     |
+| RAMPS Phase 1 Assessment                                           | ✅     |
+| fetchWithTimeout retry (429/503/529 backoff)                       | ✅     |
+| API transient error handling (503 with user message)               | ✅     |
+| Semgrep SAST + ZAP DAST (Playform)                                 | ✅     |
+| CodeQL SAST (platform-foundation)                                  | ✅     |
 
 ### Final Metrics
 
@@ -405,6 +405,12 @@ hygiene). See TASKS.md.
 | Payment integration                                         | —                                   |
 | Ad network integration                                      | ADR-011                             |
 | CSP updates for ad domains                                  | ADR-011                             |
+
+### Identity
+
+| Deliverable                                                                               | Source   |
+| ----------------------------------------------------------------------------------------- | -------- |
+| Apple and Microsoft sign-in via the Cognito hosted sign-in (moved from Phase 5 Sprint 7A) | TASK-112 |
 
 ### GenAI-Native (ADR-015, ADR-017)
 

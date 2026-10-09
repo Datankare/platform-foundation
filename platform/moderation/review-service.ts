@@ -28,6 +28,7 @@ import type {
   ReviewItemSource,
   ReviewPriority,
   ReviewQueryOptions,
+  ReviewResult,
 } from "./review-types";
 import type { AccountStatus, ModerationResult, ModerationAction } from "./types";
 import type { ExplanationChain } from "@/platform/rag/types";
@@ -108,9 +109,7 @@ export interface SubmitReviewInput {
  *
  * Returns the created review item or error.
  */
-export async function submitForReview(
-  input: SubmitReviewInput
-): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+export async function submitForReview(input: SubmitReviewInput): Promise<ReviewResult> {
   const priority = SOURCE_TO_PRIORITY[input.source];
   const store = getReviewQueueStore();
 
@@ -165,12 +164,13 @@ export interface SubmitAppealInput {
 export async function submitAppeal(
   input: SubmitAppealInput,
   decisionTimestamp: string
-): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+): Promise<ReviewResult> {
   // Validate: only a block can be appealed
   if (input.moderationResult.action !== "block") {
     return {
       success: false,
       error: `Only blocked decisions can be appealed, got: ${input.moderationResult.action}`,
+      errorCode: "moderation.appeal_not_allowed",
     };
   }
 
@@ -180,6 +180,8 @@ export async function submitAppeal(
     return {
       success: false,
       error: `Appeal reason must be at least ${minLength} characters`,
+      errorCode: "moderation.appeal_reason_too_short",
+      errorParams: { min: minLength },
     };
   }
 
@@ -191,6 +193,8 @@ export async function submitAppeal(
     return {
       success: false,
       error: `Appeal window has expired (${windowHours} hours)`,
+      errorCode: "moderation.appeal_window_expired",
+      errorParams: { hours: windowHours },
     };
   }
 
@@ -201,6 +205,7 @@ export async function submitAppeal(
     return {
       success: false,
       error: "An appeal is already pending for this decision",
+      errorCode: "moderation.appeal_pending",
     };
   }
 
@@ -230,17 +235,23 @@ export async function submitAppeal(
 export async function claimItem(
   itemId: string,
   reviewerId: string
-): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+): Promise<ReviewResult> {
   const store = getReviewQueueStore();
   const item = await store.getById(itemId);
 
   if (!item) {
-    return { success: false, error: `Review item not found: ${itemId}` };
+    return {
+      success: false,
+      error: `Review item not found: ${itemId}`,
+      errorCode: "moderation.review_item_not_found",
+    };
   }
   if (item.status !== "pending") {
     return {
       success: false,
       error: `Item is ${item.status}, not pending`,
+      errorCode: "moderation.item_state_conflict",
+      errorParams: { status: item.status },
     };
   }
 
@@ -262,20 +273,30 @@ export async function claimItem(
 export async function unclaimItem(
   itemId: string,
   reviewerId: string
-): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+): Promise<ReviewResult> {
   const store = getReviewQueueStore();
   const item = await store.getById(itemId);
 
   if (!item) {
-    return { success: false, error: `Review item not found: ${itemId}` };
+    return {
+      success: false,
+      error: `Review item not found: ${itemId}`,
+      errorCode: "moderation.review_item_not_found",
+    };
   }
   if (item.status !== "claimed") {
-    return { success: false, error: `Item is ${item.status}, not claimed` };
+    return {
+      success: false,
+      error: `Item is ${item.status}, not claimed`,
+      errorCode: "moderation.item_state_conflict",
+      errorParams: { status: item.status },
+    };
   }
   if (item.claimedBy !== reviewerId) {
     return {
       success: false,
       error: "Only the claiming reviewer can unclaim",
+      errorCode: "moderation.not_claimer",
     };
   }
 
@@ -315,9 +336,7 @@ export interface ResolveInput {
  *   modify   → (future: adjust strike severity)
  *   uphold   → no side effects
  */
-export async function resolveItem(
-  input: ResolveInput
-): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
   const store = getReviewQueueStore();
   const item = await store.getById(input.itemId);
 
@@ -325,24 +344,29 @@ export async function resolveItem(
     return {
       success: false,
       error: `Review item not found: ${input.itemId}`,
+      errorCode: "moderation.review_item_not_found",
     };
   }
   if (item.status !== "claimed") {
     return {
       success: false,
       error: `Item is ${item.status}, not claimed`,
+      errorCode: "moderation.item_state_conflict",
+      errorParams: { status: item.status },
     };
   }
   if (item.claimedBy !== input.reviewerId) {
     return {
       success: false,
       error: "Only the claiming reviewer can resolve",
+      errorCode: "moderation.not_claimer",
     };
   }
   if (input.decision === "modify" && !input.modifiedAction) {
     return {
       success: false,
       error: "modifiedAction is required when decision is modify",
+      errorCode: "moderation.modified_action_required",
     };
   }
 

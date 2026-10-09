@@ -1,0 +1,4 @@
+{
+  "_comment": "ADR-051 / TASK-110 screen-literal ratchet for this repository: user-visible English literals left in screens. Lower it in the commit that moves strings to messages/; Sprint 7B takes it to 0. Per repository \u2014 not synced.",
+  "count": 287
+}

@@ -8,6 +8,7 @@
  * 1. requireAuth() — returns 401 if no valid token
  * 2. optionalAuth() — allows unauthenticated access, provides user if present
  * 3. requirePermission() — returns 403 if user lacks the permission
+ * 4. requireActor() — a signed-in user, or a guest where the route opts in (ADR-050 D4)
  *
  * Sprint 2: requireAuth + optionalAuth
  * Sprint 3: requirePermission (real implementation replacing placeholder)
@@ -19,7 +20,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthProvider } from "@/platform/auth/config";
 import { hasCachedPermission } from "@/platform/auth/permissions-cache";
 import type { TokenPayload } from "@/platform/auth/types";
+import {
+  GUEST_TOKEN_PREFIX,
+  isGuestId,
+  verifyGuestToken,
+} from "@/platform/auth/guest-token";
 import { logger, generateRequestId } from "@/lib/logger";
+import { apiError } from "@/platform/errors";
 
 export interface AuthContext {
   user: TokenPayload;
@@ -48,7 +55,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
       route: request.nextUrl.pathname,
     });
     return {
-      error: NextResponse.json({ error: "Authentication required" }, { status: 401 }),
+      error: apiError("auth.required", { request }),
     };
   }
 
@@ -64,7 +71,18 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
         route: request.nextUrl.pathname,
       });
       return {
-        error: NextResponse.json({ error: "Invalid or expired token" }, { status: 401 }),
+        error: apiError("auth.token_invalid", { request }),
+      };
+    }
+
+    // ADR-050 D4: guest ids are a reserved namespace — a provider can never vouch for one.
+    if (isGuestId(payload.sub)) {
+      logger.warn("User token carries a guest-namespaced subject", {
+        requestId,
+        route: request.nextUrl.pathname,
+      });
+      return {
+        error: apiError("auth.token_invalid", { request }),
       };
     }
 
@@ -76,9 +94,74 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
       error: err instanceof Error ? err.message : "Unknown error",
     });
     return {
-      error: NextResponse.json({ error: "Authentication failed" }, { status: 401 }),
+      error: apiError("auth.token_invalid", { request }),
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Actors — a signed-in user, or a guest on routes that opt in (ADR-050 D4, TASK-099)
+// ---------------------------------------------------------------------------
+
+export type Actor =
+  | { readonly kind: "user"; readonly id: string; readonly user: TokenPayload }
+  | { readonly kind: "guest"; readonly id: string; readonly expiresAt: number };
+
+export interface ActorContext {
+  actor: Actor;
+  error?: never;
+}
+
+export interface ActorError {
+  actor?: never;
+  error: NextResponse;
+}
+
+export type ActorResult = ActorContext | ActorError;
+
+export interface ActorOptions {
+  /** Opt-in: this route serves guests. Every other route requires a real user. */
+  readonly allowGuests: boolean;
+}
+
+/**
+ * Require an actor. A guest token (`guest.…`) is verified by the platform's signed-token
+ * module directly — never by the auth provider — and is accepted only when the route opts in
+ * with `allowGuests: true`. Anything else goes through requireAuth().
+ *
+ * A guest on a route that does not allow guests gets 401 with `code: "sign_in_required"`, so
+ * the client can prompt for sign-in rather than show a generic failure.
+ */
+export async function requireActor(
+  request: NextRequest,
+  options: ActorOptions
+): Promise<ActorResult> {
+  const authHeader = request.headers.get("authorization");
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
+
+  if (token.startsWith(GUEST_TOKEN_PREFIX)) {
+    const route = request.nextUrl.pathname;
+    if (!options.allowGuests) {
+      logger.info("Guest refused on a route that requires sign-in", { route });
+      return {
+        error: apiError("auth.sign_in_required", { request }),
+      };
+    }
+    const verified = await verifyGuestToken(token);
+    if (!verified.valid) {
+      logger.warn("Invalid or expired guest token", { route });
+      return {
+        error: apiError("auth.guest_invalid", { request }),
+      };
+    }
+    return {
+      actor: { kind: "guest", id: verified.guestId, expiresAt: verified.expiresAt },
+    };
+  }
+
+  const auth = await requireAuth(request);
+  if (auth.error) return { error: auth.error };
+  return { actor: { kind: "user", id: auth.user.sub, user: auth.user } };
 }
 
 /**
@@ -131,10 +214,9 @@ export async function requirePermission(
       route: "platform/auth/middleware",
     });
     return {
-      error: NextResponse.json(
-        { error: "Permission denied", required: permissionCode },
-        { status: 403 }
-      ),
+      error: apiError("auth.permission_denied", {
+        params: { permission: permissionCode },
+      }),
     };
   }
 

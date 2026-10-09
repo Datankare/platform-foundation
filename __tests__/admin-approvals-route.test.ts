@@ -55,6 +55,6 @@ describe("GET /api/admin/approvals", () => {
     const res = await GET(req());
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toMatch(/failed/i);
+    expect(body.code).toBe("internal.error");
   });
 });

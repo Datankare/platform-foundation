@@ -14,8 +14,15 @@ describe("SsoButtons", () => {
     jest.clearAllMocks();
   });
 
-  it("renders all three provider buttons by default", () => {
+  const ALL = ["google", "apple", "microsoft"] as const;
+
+  it("renders no provider by default — only configured ones are offered (ADR-050 D3)", () => {
     render(<SsoButtons onSsoClick={mockOnSsoClick} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("renders every provider it is given", () => {
+    render(<SsoButtons onSsoClick={mockOnSsoClick} enabledProviders={[...ALL]} />);
     expect(screen.getByText("Continue with Google")).toBeDefined();
     expect(screen.getByText("Continue with Apple")).toBeDefined();
     expect(screen.getByText("Continue with Microsoft")).toBeDefined();
@@ -29,7 +36,7 @@ describe("SsoButtons", () => {
   });
 
   it("calls onSsoClick with provider id", async () => {
-    render(<SsoButtons onSsoClick={mockOnSsoClick} />);
+    render(<SsoButtons onSsoClick={mockOnSsoClick} enabledProviders={["google"]} />);
     fireEvent.click(screen.getByText("Continue with Google"));
 
     await waitFor(() => {
@@ -45,7 +52,7 @@ describe("SsoButtons", () => {
           resolveClick = r;
         })
     );
-    render(<SsoButtons onSsoClick={slowClick} />);
+    render(<SsoButtons onSsoClick={slowClick} enabledProviders={["google"]} />);
     fireEvent.click(screen.getByText("Continue with Google"));
 
     await waitFor(() => {
@@ -59,8 +66,15 @@ describe("SsoButtons", () => {
   });
 
   it("disables all buttons when disabled prop is true", () => {
-    render(<SsoButtons onSsoClick={mockOnSsoClick} disabled={true} />);
+    render(
+      <SsoButtons
+        onSsoClick={mockOnSsoClick}
+        disabled={true}
+        enabledProviders={[...ALL]}
+      />
+    );
     const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(3);
     buttons.forEach((button) => {
       expect(button.getAttribute("disabled")).not.toBeNull();
     });

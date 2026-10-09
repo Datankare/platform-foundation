@@ -105,7 +105,7 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 - Governance panels: `agent-registry`, `approval-policy`, `capabilities`,
   `capability-mapping`, `per-account`
 - Platform: `config`, `config-ai`, `config-ai/execute`, `roles`, `users`, `entitlements`,
-  `guest-config`, `password-policy`, `audit`, `gdpr`
+  `password-policy`, `audit`, `gdpr`
 
 **Moderation** — `/api/moderation/*`: `appeals`, `appeals/[id]`, `review`, `review/[id]`,
 `review/[id]/assist`
@@ -163,9 +163,13 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 | ADR-047 | Multimodal Provenance & Synthetic-Media Det.  |
 | ADR-048 | Governed Agent Budget & Durability Config     |
 | ADR-049 | Activity Session Durability & Ownership       |
+| ADR-050 | Deployment Environment Contract               |
+| ADR-051 | Codes and Messages — One Translatable Catalog |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
+
+_Last reviewed: October 2026 (Sprint 7A close — ADR-050 Accepted, PF v3.0.0; ADR-051 Proposed until Sprint 7B; schema baseline + migration replay)_
 
 _Last reviewed: September 2026 (Sprint 6.5 open — ADR-048 (governed agent budget & durability config) reserved as Proposed and indexed; a maintenance / governance-hardening sprint inserted between Sprint 6 and Sprint 7; prior: Sprint 6 close, ADR-044/045/046/047 Accepted, PF v2.4.0)_

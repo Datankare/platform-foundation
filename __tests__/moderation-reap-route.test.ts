@@ -70,6 +70,7 @@ describe("POST /api/admin/moderation/reap-escalations", () => {
     const res = await POST(req());
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toMatch(/reaper failed/i);
+    expect(body.code).toBe("internal.error");
+    expect(body.params.requestId).toBe("req-test");
   });
 });

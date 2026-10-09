@@ -2,7 +2,7 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
-> **v2.5.0** — Phase 5 maintenance & governance hardening: governed agent budget & durability (ADR-048), promotion-guard CI, coverage ratchet, and dependency-override hygiene — all fail-closed. New adopters start with [Setup & Integration](docs/SETUP_AND_INTEGRATION.md); upgraders from v1.x see [Migration](docs/MIGRATION_v1_to_v2.md).
+> **v3.0.0** — Phase 5 Sprint 7A, deployment & auth readiness: a declared, fail-closed deployment environment contract (ADR-050), signed guest tokens and a governed guest allowance, coded API errors in one translatable catalog (ADR-051), Google sign-in via the hosted identity provider, a schema baseline with migration replay in CI, and a deployed smoke test. **Breaking** — see [MIGRATION_v2_to_v3](docs/MIGRATION_v2_to_v3.md).
 
 A battle-tested foundation for building commercial SaaS products, internal tools,
 and application platforms. Clone it, rename it, and start building on solid ground
@@ -24,7 +24,7 @@ from day one.
 - ✅ Entitlements engine (time-bounded grants)
 - ✅ User profiles with per-field visibility (private/friends/public)
 - ✅ COPPA age verification + parental consent schema
-- ✅ GDPR: data export, cascading deletion, guest lifecycle
+- ✅ GDPR: data export, cascading deletion
 - ✅ Platform config table (runtime key-value settings)
 - ✅ super_admin role separation + anti-self-elevation guard
 - ✅ Admin UI with GenAI-native command bar
@@ -91,21 +91,21 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 ### Infrastructure (ready to use)
 
 - ✅ Next.js 16 + TypeScript strict + Tailwind CSS
-- ✅ CI/CD pipeline (GitHub Actions) — format, typecheck, lint, test:coverage, build, dependency audit
+- ✅ CI/CD pipeline (GitHub Actions) — format, typecheck, lint, test:coverage, build, dependency audit, migration replay on real Postgres
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 218 suites, 2,730 tests (1 skipped), 90.19% statement / 77.38% branch / 91.24% function coverage
-- ✅ Conformance kits for all 25 platform abstractions, self-policing via meta-test
+- ✅ 265 suites, 3,399 tests (1 skipped), 91.68% statement / 80.13% branch / 91.35% function coverage
+- ✅ Conformance kits for all 26 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v2.5.0)
+- ✅ Versioned releases (v3.0.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
 
-- ✅ 37 migrations (001–036), tracked in `applied_migrations`
+- ✅ 39 migrations (001–038), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -114,7 +114,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                            |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–049`                        | 49 Architecture Decision Records                                                   |
+| `docs/adr/ADR-001–051`                        | 51 Architecture Decision Records                                                   |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                    |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
@@ -169,9 +169,9 @@ platform-foundation/
 ├── components/auth/        ← Auth UI (login, register, profile, age gate, review/appeals)
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
-├── __tests__/contract/     ← Conformance kits (TCK) for all 25 abstractions (ADR-027)
-├── supabase/migrations/    ← 37 database migrations
-├── docs/adr/               ← 49 ADRs
+├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
+├── supabase/migrations/    ← 39 database migrations
+├── docs/adr/               ← 51 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -240,7 +240,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.5.0 — Datankare_
-_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 49 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 51 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
 _Last updated: September 24, 2026 (v2.5.0 — Phase 5 Sprint 6 close: multimodal AI — multimodal provider interface (ADR-044), screenModality safety seam (ADR-046), screened multimodal input, governed image generation (ADR-045), and provenance + synthetic-media detection (ADR-047); all fail-closed on one shared substrate, with L21 conformance kits)_

@@ -28,14 +28,38 @@ import type {
   MfaVerifyResult,
   PasswordRecoveryResult,
   PasswordResetResult,
+  SsoCallbackOptions,
   SsoCallbackResult,
+  SsoInitOptions,
   SsoInitResult,
   SsoProvider,
   TokenPayload,
 } from "@/platform/auth/types";
 import { logger } from "@/lib/logger";
-import { generateSecureId } from "@/platform/agents/utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { getCognitoSettings } from "@/platform/providers/environment-contract";
+import type { ErrorCode } from "@/platform/errors/registry";
+
+/** ADR-051: Cognito exception types → platform error codes. Anything else is internal. */
+const COGNITO_ERROR_CODES: Readonly<Record<string, ErrorCode>> = {
+  UserNotFoundException: "auth.invalid_credentials",
+  NotAuthorizedException: "auth.invalid_credentials",
+  UsernameExistsException: "auth.account_exists",
+  AliasExistsException: "auth.account_exists",
+  UserNotConfirmedException: "auth.email_not_verified",
+  InvalidPasswordException: "auth.password_policy",
+  CodeMismatchException: "auth.code_invalid",
+  EnableSoftwareTokenMFAException: "auth.code_invalid",
+  ExpiredCodeException: "auth.code_expired",
+  LimitExceededException: "auth.too_many_attempts",
+  TooManyRequestsException: "auth.too_many_attempts",
+  TooManyFailedAttemptsException: "auth.too_many_attempts",
+  InvalidParameterException: "request.invalid_body",
+};
+import {
+  mintGuestToken,
+  verifyGuestToken as verifyPlatformGuestToken,
+} from "@/platform/auth/guest-token";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -45,13 +69,15 @@ export interface CognitoConfig {
   region: string;
   userPoolId: string;
   clientId: string;
+  /** Hosted sign-in host name (NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN); required for SSO. */
+  hostedUiDomain?: string;
   timeoutMs?: number;
 }
 
 export function getCognitoConfigFromEnv(): CognitoConfig {
-  const region = process.env.COGNITO_REGION ?? process.env.AWS_REGION ?? "us-east-1";
-  const userPoolId = process.env.COGNITO_USER_POOL_ID ?? "";
-  const clientId = process.env.COGNITO_CLIENT_ID ?? "";
+  // ADR-050 D2: the contract resolver is the one reader (no AWS_REGION — that is the host's
+  // function region, not the pool's).
+  const { region, userPoolId, clientId, hostedUiDomain } = getCognitoSettings();
 
   if (!userPoolId || !clientId) {
     logger.warn("Cognito config incomplete", {
@@ -60,7 +86,7 @@ export function getCognitoConfigFromEnv(): CognitoConfig {
     });
   }
 
-  return { region, userPoolId, clientId };
+  return { region, userPoolId, clientId, hostedUiDomain };
 }
 
 // ---------------------------------------------------------------------------
@@ -146,15 +172,6 @@ function b64urlDecode(str: string): string {
   return Buffer.from(str, "base64url").toString("utf-8");
 }
 
-/** Base64url encode — browser + Node compatible */
-function b64urlEncode(str: string): string {
-  if (typeof btoa === "function") {
-    return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  }
-  // Node.js fallback — Buffer available server-side, not in browser
-  return Buffer.from(str).toString("base64url");
-}
-
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
@@ -224,7 +241,13 @@ export class CognitoAuthProvider implements AuthProvider {
       }
 
       const auth = result.AuthenticationResult as Record<string, unknown>;
-      if (!auth) return { success: false, error: "No authentication result" };
+      if (!auth) {
+        return {
+          success: false,
+          error: "No authentication result",
+          errorCode: "auth.challenge_failed",
+        };
+      }
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
 
@@ -313,11 +336,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true, deliveryMedium: "email" };
     } catch (error) {
-      return {
-        success: false,
-        error:
-          error instanceof CognitoError ? error.message : "Failed to send reset code",
-      };
+      return this.codedFailure(error, "Failed to send reset code");
     }
   }
 
@@ -335,10 +354,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Password reset failed",
-      };
+      return this.codedFailure(error, "Password reset failed");
     }
   }
 
@@ -355,10 +371,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Password change failed",
-      };
+      return this.codedFailure(error, "Password change failed");
     }
   }
 
@@ -376,10 +389,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Verification failed",
-      };
+      return this.codedFailure(error, "Verification failed");
     }
   }
 
@@ -391,10 +401,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Failed to resend code",
-      };
+      return this.codedFailure(error, "Failed to resend code");
     }
   }
 
@@ -412,10 +419,7 @@ export class CognitoAuthProvider implements AuthProvider {
         qrCodeUri: `otpauth://totp/PlatformFoundation?secret=${secret}&issuer=PlatformFoundation`,
       };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "MFA setup failed",
-      };
+      return this.codedFailure(error, "MFA setup failed");
     }
   }
 
@@ -434,10 +438,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "MFA verification failed",
-      };
+      return this.codedFailure(error, "MFA verification failed");
     }
   }
 
@@ -454,7 +455,13 @@ export class CognitoAuthProvider implements AuthProvider {
       });
 
       const auth = result.AuthenticationResult as Record<string, unknown>;
-      if (!auth) return { success: false, error: "MFA challenge failed" };
+      if (!auth) {
+        return {
+          success: false,
+          error: "MFA challenge failed",
+          errorCode: "auth.challenge_failed",
+        };
+      }
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
 
@@ -488,7 +495,13 @@ export class CognitoAuthProvider implements AuthProvider {
       });
 
       const auth = result.AuthenticationResult as Record<string, unknown>;
-      if (!auth) return { success: false, error: "Password change failed" };
+      if (!auth) {
+        return {
+          success: false,
+          error: "Password change failed",
+          errorCode: "auth.challenge_failed",
+        };
+      }
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
 
@@ -515,17 +528,27 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Failed to disable MFA",
-      };
+      return this.codedFailure(error, "Failed to disable MFA");
     }
   }
 
   // ── SSO ──
 
-  async initiateSso(provider: SsoProvider, redirectUri: string): Promise<SsoInitResult> {
-    const domain = `${this.config.userPoolId.split("_")[1]?.toLowerCase()}.auth.${this.config.region}.amazoncognito.com`;
+  // TASK-101: the hosted sign-in domain is a declared setting (ADR-050 D2). It used to be
+  // derived from the pool id, which is not the domain Cognito assigns.
+  async initiateSso(
+    provider: SsoProvider,
+    redirectUri: string,
+    options: SsoInitOptions = {}
+  ): Promise<SsoInitResult> {
+    const domain = this.config.hostedUiDomain;
+    if (!domain) {
+      return {
+        success: false,
+        error: "SSO not configured: NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN is not set",
+        errorCode: "feature.not_configured",
+      };
+    }
     const identityProvider =
       provider === "google"
         ? "Google"
@@ -539,6 +562,11 @@ export class CognitoAuthProvider implements AuthProvider {
     url.searchParams.set("scope", "openid email profile");
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("identity_provider", identityProvider);
+    if (options.state) url.searchParams.set("state", options.state);
+    if (options.codeChallenge) {
+      url.searchParams.set("code_challenge", options.codeChallenge);
+      url.searchParams.set("code_challenge_method", "S256");
+    }
 
     return { success: true, redirectUrl: url.toString() };
   }
@@ -546,78 +574,82 @@ export class CognitoAuthProvider implements AuthProvider {
   async handleSsoCallback(
     _provider: SsoProvider,
     code: string,
-    redirectUri: string
+    redirectUri: string,
+    options: SsoCallbackOptions = {}
   ): Promise<SsoCallbackResult> {
-    const domain = `${this.config.userPoolId.split("_")[1]?.toLowerCase()}.auth.${this.config.region}.amazoncognito.com`;
+    const domain = this.config.hostedUiDomain;
+    if (!domain) {
+      return {
+        success: false,
+        error: "SSO not configured: NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN is not set",
+        errorCode: "feature.not_configured",
+      };
+    }
+
+    const form: Record<string, string> = {
+      grant_type: "authorization_code",
+      client_id: this.config.clientId,
+      code,
+      redirect_uri: redirectUri,
+    };
+    if (options.codeVerifier) form.code_verifier = options.codeVerifier;
 
     try {
       const response = await fetchWithTimeout(`https://${domain}/oauth2/token`, {
         timeoutMs: 10_000,
-        // Retry is the caller's: reduceCommit loops on version conflict and the effect
-        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
+        // An authorization code is single-use: a transport retry after a lost response would
+        // be refused and mask the first outcome.
         maxRetries: 0,
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "authorization_code",
-          client_id: this.config.clientId,
-          code,
-          redirect_uri: redirectUri,
-        }),
+        body: new URLSearchParams(form),
       });
 
-      if (!response.ok) return { success: false, error: "SSO token exchange failed" };
+      if (!response.ok) {
+        return {
+          success: false,
+          error: `SSO token exchange failed: ${response.status}`,
+          errorCode: "auth.sso_failed",
+        };
+      }
 
       const tokens = (await response.json()) as Record<string, unknown>;
-      const decoded = decodeJwtPayload(tokens.access_token as string);
+      if (typeof tokens.access_token !== "string") {
+        return {
+          success: false,
+          error: "SSO token exchange returned no access token",
+          errorCode: "auth.sso_failed",
+        };
+      }
+      const decoded = decodeJwtPayload(tokens.access_token);
 
       return {
         success: true,
         userId: decoded?.sub as string,
-        accessToken: tokens.access_token as string,
+        accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token as string,
         idToken: tokens.id_token as string,
         expiresIn: tokens.expires_in as number,
       };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "SSO callback failed",
-      };
+      return this.codedFailure(error, "SSO callback failed");
     }
   }
 
   // ── Guest Mode ──
 
+  // ADR-050 D4 (TASK-098): guest tokens are platform-owned and HMAC-signed — the provider
+  // delegates to platform/auth/guest-token rather than minting its own (unsigned) format.
   async createGuestToken(): Promise<GuestTokenResult> {
-    // 128-bit crypto-secure: a guessable guest id would let an attacker assume a
-    // guest identity (P4). Timestamp kept for readability/ordering only.
-    const guestId = `guest_${Date.now()}_${generateSecureId()}`;
-    const expiresAt = Math.floor(Date.now() / 1000) + 72 * 3600;
-    const token = b64urlEncode(
-      JSON.stringify({
-        sub: guestId,
-        type: "guest",
-        iat: Math.floor(Date.now() / 1000),
-        exp: expiresAt,
-      })
-    );
-
-    return { success: true, guestId, token: `guest.${token}`, expiresAt };
+    const { guestId, token, expiresAt } = await mintGuestToken();
+    return { success: true, guestId, token, expiresAt };
   }
 
   async verifyGuestToken(
     token: AuthToken
   ): Promise<{ valid: boolean; guestId?: string }> {
-    try {
-      if (!token.startsWith("guest.")) return { valid: false };
-      const payload = JSON.parse(b64urlDecode(token.slice(6)));
-      if (payload.exp < Math.floor(Date.now() / 1000)) return { valid: false };
-      return { valid: true, guestId: payload.sub };
-    } catch {
-      return { valid: false };
-    }
+    const result = await verifyPlatformGuestToken(token);
+    return result.valid ? { valid: true, guestId: result.guestId } : { valid: false };
   }
 
   // ── Device Management ──
@@ -653,10 +685,7 @@ export class CognitoAuthProvider implements AuthProvider {
       });
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Failed to forget device",
-      };
+      return this.codedFailure(error, "Failed to forget device");
     }
   }
 
@@ -688,52 +717,48 @@ export class CognitoAuthProvider implements AuthProvider {
       logger.info("User account deleted from Cognito");
       return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof CognitoError ? error.message : "Account deletion failed",
-      };
+      return this.codedFailure(error, "Account deletion failed");
     }
   }
 
   // ── Error Handling ──
 
-  private handleAuthError(error: unknown, operation: string): AuthResult {
+  /**
+   * ADR-051: a failed Cognito call as a coded result. The Cognito message stays in `error` for
+   * logs; routes answer with `errorCode`, so no Cognito text reaches a client.
+   */
+  private codedFailure(
+    error: unknown,
+    operation: string
+  ): { success: false; error: string; errorCode: ErrorCode } {
     if (error instanceof CognitoError) {
       logger.warn(`Auth ${operation} failed`, {
         cognitoType: error.cognitoType,
         message: error.message,
       });
-
-      switch (error.cognitoType) {
-        case "UserNotFoundException":
-        case "NotAuthorizedException":
-          return { success: false, error: "Invalid email or password" };
-        case "UsernameExistsException":
-          return { success: false, error: "An account with this email already exists" };
-        case "UserNotConfirmedException":
-          return {
-            success: false,
-            error: "Please verify your email",
-            emailVerificationRequired: true,
-          };
-        case "InvalidPasswordException":
-          return { success: false, error: "Password does not meet requirements" };
-        case "CodeMismatchException":
-          return { success: false, error: "Invalid verification code" };
-        case "ExpiredCodeException":
-          return { success: false, error: "Verification code has expired" };
-        case "LimitExceededException":
-        case "TooManyRequestsException":
-          return { success: false, error: "Too many attempts. Please try again later." };
-        default:
-          return { success: false, error: error.message };
-      }
+      return {
+        success: false,
+        error: error.message,
+        errorCode: COGNITO_ERROR_CODES[error.cognitoType] ?? "internal.error",
+      };
     }
-
     logger.error(`Auth ${operation} unexpected error`, {
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return { success: false, error: "An unexpected error occurred" };
+    return {
+      success: false,
+      error: "An unexpected error occurred",
+      errorCode: "internal.error",
+    };
+  }
+
+  private handleAuthError(error: unknown, operation: string): AuthResult {
+    const failure = this.codedFailure(error, operation);
+    // An unconfirmed account is the next step of sign-in, not a dead end: the client shows
+    // the verification step on `emailVerificationRequired`.
+    return failure.errorCode === "auth.email_not_verified"
+      ? { ...failure, emailVerificationRequired: true }
+      : failure;
   }
 }
 

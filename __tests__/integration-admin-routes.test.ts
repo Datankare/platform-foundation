@@ -282,47 +282,6 @@ describe("GET /api/admin/audit", () => {
   });
 });
 
-// ── Guest Config Route ──────────────────────────────────────────────────
-
-describe("GET /api/admin/guest-config", () => {
-  beforeEach(() => {
-    jest.resetModules();
-    jest.doMock("@/lib/supabase/server", () => {
-      const mockFrom = jest.fn().mockImplementation(() => {
-        /* eslint-disable @typescript-eslint/no-explicit-any */
-        const builder: Record<string, any> = {};
-        builder.select = jest.fn().mockReturnValue(builder);
-        builder.eq = jest.fn().mockReturnValue(builder);
-        builder.single = jest.fn().mockResolvedValue({
-          data: {
-            nudge_after_sessions: 3,
-            grace_after_sessions: 7,
-            lockout_after_sessions: 10,
-            guest_token_ttl_hours: 72,
-          },
-          error: null,
-        });
-        return builder;
-      });
-
-      return {
-        getSupabaseServiceClient: () => ({ from: mockFrom }),
-      };
-    });
-  });
-
-  it("returns guest config", async () => {
-    const { GET } = await import("@/app/api/admin/guest-config/route");
-    const req = makeRequest("/api/admin/guest-config");
-    const res = await GET(req);
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body.config.nudgeAfterSessions).toBe(3);
-    expect(body.config.lockoutAfterSessions).toBe(10);
-  });
-});
-
 // ── Password Policy Route ───────────────────────────────────────────────
 
 describe("GET /api/admin/password-policy", () => {

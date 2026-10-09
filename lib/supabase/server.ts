@@ -6,7 +6,7 @@
  * 1. Service Role Client — bypasses RLS. Used for:
  *    - Admin operations (role management, audit log writes)
  *    - Schema migrations
- *    - Background jobs (guest lifecycle, entitlement expiry)
+ *    - Background jobs (entitlement expiry)
  *    - GDPR deletion (needs to access all user data)
  *    NEVER expose this client to browser code.
  *
@@ -20,6 +20,7 @@
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
+import { getSupabaseUrl } from "@/platform/providers/environment-contract";
 
 /**
  * Get a Supabase client with the service role key.
@@ -28,12 +29,13 @@ import type { Database } from "@/lib/supabase/types";
  * Creates a new client each call (stateless server context).
  */
 export function getSupabaseServiceClient(): SupabaseClient<Database> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  // ADR-050 D2: SUPABASE_URL is the single source (NEXT_PUBLIC_SUPABASE_URL is an alias).
+  const supabaseUrl = getSupabaseUrl();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error(
-      "Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required"
+      "Missing Supabase environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required"
     );
   }
 
@@ -55,12 +57,13 @@ export function getSupabaseServiceClient(): SupabaseClient<Database> {
  * @param accessToken — The user's Cognito JWT (already verified by middleware)
  */
 export function getSupabaseUserClient(accessToken: string): SupabaseClient<Database> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  // ADR-050 D2: SUPABASE_URL is the single source (NEXT_PUBLIC_SUPABASE_URL is an alias).
+  const supabaseUrl = getSupabaseUrl();
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error(
-      "Missing Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required"
+      "Missing Supabase environment variables: SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required"
     );
   }
 

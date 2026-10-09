@@ -5,10 +5,12 @@
  * Calls AuthProvider.signIn() on the server side.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
 import { logger } from "@/lib/logger";
+import { apiError } from "@/platform/errors";
+import { authResultResponse } from "@/platform/auth/auth-response";
 
 export async function POST(request: NextRequest) {
   initAuth();
@@ -17,17 +19,14 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Invalid request body" },
-      { status: 400 }
-    );
+    return apiError("request.invalid_json", { request });
   }
 
   if (!body.email || !body.password) {
-    return NextResponse.json(
-      { success: false, error: "Email and password are required" },
-      { status: 400 }
-    );
+    return apiError("request.missing_fields", {
+      params: { fields: ["email", "password"] },
+      request,
+    });
   }
 
   const auth = getAuthProvider();
@@ -37,7 +36,7 @@ export async function POST(request: NextRequest) {
     logger.warn("Sign in failed", { email: body.email, error: result.error });
   }
 
-  const response = NextResponse.json(result);
+  const response = authResultResponse(result, { request, context: "Sign in failed" });
 
   // Set session indicator cookie for middleware route protection
   if (result.success && result.accessToken) {
