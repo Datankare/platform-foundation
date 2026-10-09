@@ -2477,6 +2477,26 @@ off, consent not required). **Playform at the sync:** its own `lib/route-guard.t
 `requireActorWithStatus` (already listed for the 7A sync); verify on staging with a brand-new account (C3),
 then production after promotion.
 
+### TASK-118 — Dependabot version-update backlog
+
+| Field        | Detail                     |
+| ------------ | -------------------------- |
+| **ID**       | TASK-118                   |
+| **Type**     | Maintenance — dependencies |
+| **Severity** | Low                        |
+| **Phase**    | Phase 5                    |
+| **Target**   | Sprint 7                   |
+| **Status**   | Open                       |
+| **Logged**   | 2026-10-09                 |
+
+**What:** Dependabot version-update pull requests have accumulated. Those opened against `main`
+(#335, #337, #423, #426) were closed at v3.0.1 — every change goes develop → staging → production,
+so none merges into `main` directly. Those against `develop` are kept.
+
+**Resolution:** take each `develop` update on its own branch through the full gate (typecheck,
+lint, format, tests, migration replay, production audit), majors with their migration notes;
+reconfigure Dependabot to target `develop` only. Done when no update PR is older than one sprint.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
