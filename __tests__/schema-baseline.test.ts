@@ -4,10 +4,12 @@
  * Source checks on supabase/baseline/000_baseline.sql. The CI job "Migration replay" executes
  * it; these keep its contract honest without a database:
  *   - it refuses to run over an existing schema;
- *   - it records exactly the migrations it covers, and none it does not (a newer migration
- *     must be replayed, never assumed);
+ *   - it records only migration files that exist, none numbered past what it covers (a newer
+ *     migration must be replayed, never assumed), and — in platform-foundation — every one it
+ *     covers. In a consuming app, a migration it does not record is the app's own (TASK-119):
+ *     it is replayed after the baseline, whatever its number;
  *   - nothing consumer-owned or Supabase-generated has crept in;
- *   - every table a migration newer than the baseline creates also enables row-level
+ *   - every table a migration the baseline does not record creates also enables row-level
  *     security — production has no automatic-RLS trigger, dev does.
  */
 
@@ -30,6 +32,15 @@ const coversThrough = Number(
   /^-- baseline-covers-through: (\d+)$/m.exec(BASELINE)?.[1] ?? Number.NaN
 );
 const num = (f: string) => Number(/^(\d+)/.exec(f)?.[1]);
+/** The migration files the baseline records as applied (it also records itself: 000_baseline). */
+const RECORDED = [...BASELINE.matchAll(/\('(\d+_[^']+\.sql)', 'verified'/g)]
+  .map((m) => m[1])
+  .filter((f) => f !== "000_baseline.sql");
+const isRecorded = (f: string) => RECORDED.includes(f);
+/** platform-foundation itself — where every migration up to the baseline's number is its own. */
+const IS_PLATFORM =
+  JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8")).name ===
+  "platform-foundation";
 
 describe("schema baseline (TASK-091)", () => {
   it("declares what it covers", () => {
@@ -44,11 +55,26 @@ describe("schema baseline (TASK-091)", () => {
     expect(guard).toBeLessThan(firstDdl);
   });
 
-  it("records every covered migration and no newer one", () => {
-    for (const f of migrations) {
-      const recorded = BASELINE.includes(`('${f}', 'verified'`);
-      expect({ f, recorded }).toEqual({ f, recorded: num(f) <= coversThrough });
+  it("records only migrations that exist, and none past what it covers", () => {
+    expect(RECORDED.length).toBeGreaterThan(0);
+    for (const f of RECORDED) {
+      expect({
+        f,
+        exists: migrations.includes(f),
+        covered: num(f) <= coversThrough,
+      }).toEqual({ f, exists: true, covered: true });
     }
+    for (const f of migrations.filter((m) => num(m) > coversThrough)) {
+      expect({ f, recorded: isRecorded(f) }).toEqual({ f, recorded: false });
+    }
+  });
+
+  it("in platform-foundation, records every migration it covers (no gap in the chain)", () => {
+    const unrecorded = migrations.filter(
+      (f) => num(f) <= coversThrough && !isRecorded(f)
+    );
+    // In a consuming app these are its own migrations, replayed after the baseline (TASK-119).
+    expect(IS_PLATFORM ? unrecorded : []).toEqual([]);
   });
 
   it("contains nothing consumer-owned or Supabase-generated", () => {
@@ -72,8 +98,8 @@ describe("schema baseline (TASK-091)", () => {
     );
   });
 
-  it("every newer migration that creates a table enables row-level security on it", () => {
-    for (const f of migrations.filter((m) => num(m) > coversThrough)) {
+  it("every migration the baseline does not record enables row-level security on its tables", () => {
+    for (const f of migrations.filter((m) => !isRecorded(m))) {
       const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
       const tables = [
         ...sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(\w+)/gi),

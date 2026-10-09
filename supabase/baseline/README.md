@@ -4,7 +4,12 @@
 instance (a production database, another consumer app, CI) runs:
 
 1. `000_baseline.sql` — once, on an empty Supabase project, as `postgres` (SQL Editor or `psql`);
-2. then only the migrations numbered **after** its `baseline-covers-through` line, in order.
+2. then every migration the baseline does **not record** (its `applied_migrations` seed), in filename
+   order: the platform's migrations numbered after its `baseline-covers-through` line, and **all** of the
+   consuming app's own migrations, whatever their number (TASK-119).
+
+A consuming app's migrations share the platform's number range (Playform's `007_playform_*`, `031`–`036`)
+but are not in the baseline — it is the platform's schema. They are never "covered" by its number.
 
 An existing database built from the numbered chain (the `playform` dev project) does not run the
 baseline. It already has the schema.
@@ -51,10 +56,10 @@ enabled by hand).
 
 ## Checks
 
-| Where                                                       | What                                                                                                                                                   |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| CI job **Migration replay** (`scripts/migration-replay.sh`) | Shim, baseline, newer migrations on Postgres 17 + pgvector; fails on any SQL error, a missing table or function, or a table without row-level security |
-| `__tests__/schema-baseline.test.ts`                         | The refusal guard, the migration record, no consumer-owned or Supabase-generated objects                                                               |
+| Where                                                       | What                                                                                                                                                                                                                             |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI job **Migration replay** (`scripts/migration-replay.sh`) | Shim, baseline, every migration it does not record, on Postgres 17 + pgvector; fails on any SQL error, a missing table or function, or a table without row-level security                                                        |
+| `__tests__/schema-baseline.test.ts`                         | The refusal guard; the baseline records only files that exist and none past its number (and, in platform-foundation, every one in its range); RLS in every unrecorded migration; no consumer-owned or Supabase-generated objects |
 
 Run the replay locally against an empty database: `PGDATABASE=replay scripts/migration-replay.sh`.
 `supabase-shim.sql` makes plain Postgres look like a fresh Supabase project — never apply it to

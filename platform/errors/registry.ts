@@ -10,29 +10,26 @@
  *   - what the caller should do.
  * Its user-facing text is the catalog entry `errors.<code>` in messages/<locale>.json (ICU).
  *
+ * A consuming app declares its own codes, `app.<area>.<name>`, in app-codes.ts (consumer-owned);
+ * they are merged below, so every check and helper treats them like the platform's.
+ *
  * A code, once shipped, is never repurposed — a changed meaning gets a new code. docs/API_ERRORS.md
  * is generated from this registry and the English catalog (see ./doc.ts); CI checks both agree.
  *
  * @module platform/errors
  */
 
-export type ErrorParamKind = "id" | "number" | "list";
+import type { ErrorCodeSpec } from "@/platform/errors/spec";
+import { APP_ERROR_CODES } from "@/platform/errors/app-codes";
 
-export interface ErrorParamSpec {
-  readonly name: string;
-  readonly kind: ErrorParamKind;
-  /** Sent only when known; never required by the message. */
-  readonly optional?: boolean;
-}
+export type {
+  ErrorCodeSpec,
+  ErrorParamKind,
+  ErrorParamSpec,
+} from "@/platform/errors/spec";
 
-export interface ErrorCodeSpec {
-  readonly status: number;
-  readonly params: readonly ErrorParamSpec[];
-  /** What a client or agent should do on receiving this code. */
-  readonly action: string;
-}
-
-export const ERROR_CODES = {
+/** The platform's codes. A consuming app adds its own in app-codes.ts (ADR-051 D1). */
+export const PLATFORM_ERROR_CODES = {
   "account.not_found": {
     status: 403,
     params: [],
@@ -280,7 +277,15 @@ export const ERROR_CODES = {
   },
 } as const satisfies Record<string, ErrorCodeSpec>;
 
+/** Every code the API can return: the platform's, then the consuming app's (`app.*`). */
+export const ERROR_CODES = { ...PLATFORM_ERROR_CODES, ...APP_ERROR_CODES } as const;
+
 export type ErrorCode = keyof typeof ERROR_CODES;
+
+/** Codes the consuming app declared (app-codes.ts). */
+export function isAppErrorCode(code: string): boolean {
+  return code.startsWith("app.");
+}
 
 export function isErrorCode(value: unknown): value is ErrorCode {
   return (

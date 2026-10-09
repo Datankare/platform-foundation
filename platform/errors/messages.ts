@@ -6,18 +6,64 @@
  * Rendering uses intl-messageformat — the ICU engine next-intl builds on — so the same catalog
  * serves the screens in Sprint 7B.
  *
+ * A consuming app's own messages (ADR-051 D1) live in messages/app/<locale>.json — consumer-owned,
+ * sync-excluded — under the `errors.app` and `screens.app` namespaces only. They are merged into
+ * the platform catalog at load; a key in both is refused, so an app can neither shadow nor
+ * rewrite a platform message.
+ *
  * @module platform/errors
  */
 
 import { IntlMessageFormat } from "intl-messageformat";
 import en from "@/messages/en.json";
+import appEn from "@/messages/app/en.json";
 
 export type Catalog = Readonly<Record<string, unknown>>;
+
+/** The namespaces an app catalog may use. */
+export const APP_NAMESPACES = ["errors.app", "screens.app"] as const;
+
+/**
+ * The platform catalog with the app's merged in. Throws when the app uses a key outside its
+ * namespaces or one the platform already has — a load-time failure, caught by the catalog tests.
+ */
+export function mergeCatalogs(platform: Catalog, app: Catalog): Catalog {
+  const outside = catalogKeys(app).filter(
+    (k) => !APP_NAMESPACES.some((ns) => k.startsWith(`${ns}.`))
+  );
+  if (outside.length > 0) {
+    throw new Error(
+      `App catalog keys outside errors.app / screens.app: ${outside.join(", ")}`
+    );
+  }
+  const merge = (a: Catalog, b: Catalog, path: string): Catalog => {
+    const out: Record<string, unknown> = { ...a };
+    for (const [k, v] of Object.entries(b)) {
+      const key = path ? `${path}.${k}` : k;
+      const existing = out[k];
+      if (existing === undefined) out[k] = v;
+      else if (
+        typeof existing === "object" &&
+        existing !== null &&
+        typeof v === "object" &&
+        v !== null
+      ) {
+        out[k] = merge(existing as Catalog, v as Catalog, key);
+      } else {
+        throw new Error(`App catalog key already defined by the platform: ${key}`);
+      }
+    }
+    return out;
+  };
+  return merge(platform, app, "");
+}
 
 export const DEFAULT_LOCALE = "en";
 
 /** Locales with a catalog. Adding one is a product decision (ADR-051 D6). */
-export const CATALOGS: Readonly<Record<string, Catalog>> = { en };
+export const CATALOGS: Readonly<Record<string, Catalog>> = {
+  en: mergeCatalogs(en, appEn),
+};
 
 export function availableLocales(): string[] {
   return Object.keys(CATALOGS);
