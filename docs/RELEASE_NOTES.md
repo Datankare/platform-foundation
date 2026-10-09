@@ -9,6 +9,64 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v3.0.0 — Sprint 7A: deployment & auth readiness
+
+Date: 2026-10-09
+
+The first real deployment showed that configuration no test could see broke every user: mock auth
+in a deployment, unsigned guest tokens, no database, the wrong branch live, and end-to-end tests
+passing while users saw errors. v3.0.0 makes that class of failure loud and early.
+
+**This release is breaking** for a consumer that deploys — the production boot is stricter by
+design — and it removes the never-working guest lifecycle. Upgrade with
+[`MIGRATION_v2_to_v3.md`](MIGRATION_v2_to_v3.md).
+
+### What a consumer inherits on sync
+
+- **Deployment environment contract (ADR-050 D1/D2, Accepted).** Production refuses to boot on test-double
+  auth, a missing, mis-shaped or alias-only setting, or an in-memory store, and names every violation.
+  One source per setting (`SUPABASE_URL`, `NEXT_PUBLIC_COGNITO_*`); `AWS_REGION` no longer read.
+- **Signed, bounded guests (ADR-050 D4).** Platform-owned HMAC-signed, namespaced guest tokens
+  (`GUEST_TOKEN_SECRET`); routes opt guests in (`requireActorWithStatus … allowGuests`); a governed
+  translate allowance (1–10, default 5, dual control) enforced before any paid call (migration 037,
+  `GUEST_USAGE_STORE`).
+- **One error contract (ADR-051 D1–D3, D5 a–e).** Every API error is `{ code, message, params }` from a
+  registry and an ICU catalog (`messages/en.json`, locale negotiation); auth routes return real statuses;
+  generated [`API_ERRORS.md`](API_ERRORS.md); free-text errors fail CI (now including `proxy.ts`); a
+  screen-literal ratchet (287) for Sprint 7B.
+- **Optional features offered only when configured (ADR-050 D3).** `platform/features`,
+  `GET /api/features`, `requireFeature()` → `feature.not_configured`; durable social store required in
+  production.
+- **Single sign-on (TASK-101).** Cognito hosted sign-in with `state` + PKCE, `/auth/callback`, declared
+  hosted domain and `SSO_PROVIDERS`; only configured providers are shown.
+- **Accounts provisioned on first use (TASK-117).** The platform `users` row is created on a new user's
+  first request; a missing row is no longer reported as "suspended"; new code `account.not_provisioned`.
+- **Schema baseline + migration replay in CI (TASK-091).** `supabase/baseline/000_baseline.sql` builds a new
+  database (the numbered chain could not); the CI job **Migration replay** applies the baseline and every
+  newer migration to Postgres 17 + pgvector on every push and fails on a SQL error, a missing table or
+  function, or a table without row-level security.
+- **Deployed smoke test (ADR-050 D5/D6, TASK-102/105).** `scripts/deploy-smoke.mjs` checks a deployed
+  address — health and the deployed commit, features, a coded refusal, a signed guest token, a real
+  translation; `/api/health` reports `commit`.
+- **Proxy.** A credentialed API call is no longer redirected to `/auth` without a session cookie; its 401 is
+  coded.
+- **Removed (TASK-111).** The session-count guest lifecycle (exports, `/api/admin/guest-config`, admin tool and
+  panel) and, via migration 038, its table, four `users` columns and two config keys — it never worked.
+- **Security.** Next.js 16.3.8 (critical GHSA-vcvr-r3jv-pc5j), sharp 0.35.5, brace-expansion 5.0.12, fast-uri
+  3.1.8, source-map-js 1.2.2; production audit clean.
+
+### Actions for a deploying consumer
+
+1. Set the production settings in [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md) §1 before deploying.
+2. Existing database: apply 037 before deploying; apply 038 after the code without the guest lifecycle is
+   live. New database: the baseline, then migrations after it.
+3. Run the deployed smoke test after each deploy.
+
+Apple and Microsoft sign-in moved to Phase 6 (TASK-112). Screen strings move to the catalog in Sprint 7B
+(ADR-051 stays Proposed until then).
+
+---
+
 ## v2.6.2 — migration 036 fix
 
 Date: 2026-09-26

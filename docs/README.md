@@ -10,7 +10,7 @@ document is catalogued in [The full catalog](#the-full-catalog) with a one-line 
 
 - **Adopting the platform** → [SETUP_AND_INTEGRATION](SETUP_AND_INTEGRATION.md), then
   [ENV_REFERENCE](ENV_REFERENCE.md).
-- **Upgrading from v1.x** → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md).
+- **Upgrading from v2.x** → [MIGRATION_v2_to_v3](MIGRATION_v2_to_v3.md). From v1.x → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md) first.
 - **Building agents** → [AGENT_DELEGATION_GUIDE](AGENT_DELEGATION_GUIDE.md) +
   [AGENT_ARCHITECTURE](AGENT_ARCHITECTURE.md).
 - **Understanding the architecture** → [TAD](TAD.md) →
@@ -28,6 +28,7 @@ graph TD
         SETUP[SETUP_AND_INTEGRATION<br/>adopt & sync the platform]
         ENV[ENV_REFERENCE<br/>every environment variable]
         MIG[MIGRATION_v1_to_v2<br/>upgrading from v1.x]
+        MIG3[MIGRATION_v2_to_v3<br/>upgrading from v2.x]
         REL[RELEASE_NOTES<br/>what shipped, per release]
     end
 
@@ -91,6 +92,7 @@ graph TD
 | [API_ERRORS.md](API_ERRORS.md)                       | Every API error code — HTTP status, message, params, what the caller should do. Generated (ADR-051). |
 | [ENV_REFERENCE.md](ENV_REFERENCE.md)                 | Every environment variable — purpose, required, default, values, incl. delegation keys.              |
 | [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md)       | Upgrading from v1.x: the breaking rung-1 retirement + adoption steps.                                |
+| [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md)       | Upgrading from v2.x: stricter production boot, signed guests, coded errors, removed guest lifecycle. |
 | [RELEASE_NOTES.md](RELEASE_NOTES.md)                 | What shipped, per release, newest first.                                                             |
 
 ### Architecture

@@ -1,6 +1,6 @@
 # ADR-050: Deployment Environment Contract
 
-Status: Proposed (Phase 5 Sprint 7A). Decision maker: Raman Sud.
+Status: Accepted (Phase 5 Sprint 7A, 2026-10-09; proposed 2026-09-26). Decision maker: Raman Sud.
 Related: ADR-048 D3 and ADR-049 D1 (durable stores fail closed in production), ADR-049 D2 (session ownership), TASK-089 (production-boot check), TASK-091/092 (database baseline, production database), Sprint 7A (deployment & auth readiness). `platform/providers/registry.ts`, `platform/auth/*`, `instrumentation.ts`.
 
 ---

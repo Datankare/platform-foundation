@@ -187,7 +187,9 @@ describe("docs integrity — release notes", () => {
     // current major (e.g. a "v2" / "2.0" heading) so a major release cannot ship without a
     // release-notes entry. Kept coarse (major) so patch releases don't force a churn edit.
     const notes = read("docs/RELEASE_NOTES.md");
-    expect(notes).toMatch(/\b2\.0|\bv2\b|Sprint 3c/);
+    const major = Number(JSON.parse(read("package.json")).version.split(".")[0]);
+    expect(Number.isInteger(major)).toBe(true);
+    expect(notes).toMatch(new RegExp(`^## v${major}\\.\\d+\\.\\d+`, "m"));
   });
 });
 

@@ -2067,7 +2067,7 @@ own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable 
 
 **Resolution:** ADR-050 D4: HMAC-sign guest tokens under `GUEST_TOKEN_SECRET` and verify the signature; must land before any route accepts guests.
 
-**Resolved (7A A2, PF):** `platform/auth/guest-token.ts` — signed, namespaced, lifetime-bounded guest tokens; PF's Cognito provider delegates to it; `GUEST_TOKEN_SECRET` is in the environment contract (required with a real auth provider). Two obligations carried inside 7A: (1) A3's guest check verifies through `platform/auth/guest-token` directly, never through a provider's `verifyGuestToken`; (2) Playform's own `platform/auth/cognito-services.ts` (sync-excluded; mints `guest_<uuid>_<ms>`, unsigned) delegates to the same module in the Playform commit that follows the v2.7.0 sync — before Playform promotes. `GUEST_TOKEN_SECRET` must be set on `playform-dev` and `playform-staging` before v2.7.0 reaches them.
+**Resolved (7A A2, PF):** `platform/auth/guest-token.ts` — signed, namespaced, lifetime-bounded guest tokens; PF's Cognito provider delegates to it; `GUEST_TOKEN_SECRET` is in the environment contract (required with a real auth provider). Two obligations carried inside 7A: (1) A3's guest check verifies through `platform/auth/guest-token` directly, never through a provider's `verifyGuestToken`; (2) Playform's own `platform/auth/cognito-services.ts` (sync-excluded; mints `guest_<uuid>_<ms>`, unsigned) delegates to the same module in the Playform commit that follows the v3.0.0 sync — before Playform promotes. `GUEST_TOKEN_SECRET` must be set on `playform-dev` and `playform-staging` before v3.0.0 reaches them.
 
 ### TASK-099 — No guest path in the platform auth check, and no guest allowance
 
@@ -2078,7 +2078,7 @@ own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable 
 | **Severity** | Medium — guest mode admits users who then cannot act           |
 | **Phase**    | Phase 5                                                        |
 | **Target**   | Phase 5, Sprint 7A                                             |
-| **Status**   | Resolved — Sprint 7A A3 + B1 (PF); Playform at the v2.7.0 sync |
+| **Status**   | Resolved — Sprint 7A A3 + B1 (PF); Playform at the v3.0.0 sync |
 | **Logged**   | 2026-09-26                                                     |
 
 **What:** `requireAuth` verifies only real-user tokens, so a guest can enter the app but every action is rejected. There is also no bound on what a guest may consume.
@@ -2087,7 +2087,7 @@ own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable 
 
 **Progress (7A A3, PF):** opt-in guest check and namespace done — `requireActor` / `requireActorWithStatus` (`allowGuests` per route; guests verified by `platform/auth/guest-token` only; `sign_in_required` elsewhere; `requireAuth` refuses guest-namespaced subjects). Remaining in 7A: B1 allowance; Playform's `lib/route-guard.ts` adopts `requireActorWithStatus`, and the translate routes opt in together with B1 — never before.
 
-**Resolved (7A B1, PF):** governed `guest.translate_allowance` (migration 037: 1–10, default 5, safety tier, dual control; clamped in code too); `GuestUsageStore` registry slot (`GUEST_USAGE_STORE`, durable required in production, conformance kit); atomic database consume (`guest_allowance_consume`); `enforceGuestAllowance()` before the first paid call, failing closed; `guest.allowance_exhausted` (403, `{limit}`) — the sign-in prompt. PF `/api/process` (was unauthenticated) now authenticates, serves guests and counts them. **Before v2.7.0 reaches Playform:** migration 037 applied to the `playform` database; `GUEST_USAGE_STORE=supabase` on `playform-dev` and `playform-staging`. **Playform commit at the sync:** `lib/route-guard.ts` on `requireActorWithStatus`; its translate routes (`/api/process`, `/api/translate/dispatch`, `/api/translate/session`) opt guests in with `enforceGuestAllowance`; speech, transcription and extraction stay users-only.
+**Resolved (7A B1, PF):** governed `guest.translate_allowance` (migration 037: 1–10, default 5, safety tier, dual control; clamped in code too); `GuestUsageStore` registry slot (`GUEST_USAGE_STORE`, durable required in production, conformance kit); atomic database consume (`guest_allowance_consume`); `enforceGuestAllowance()` before the first paid call, failing closed; `guest.allowance_exhausted` (403, `{limit}`) — the sign-in prompt. PF `/api/process` (was unauthenticated) now authenticates, serves guests and counts them. **Before v3.0.0 reaches Playform:** migration 037 applied to the `playform` database; `GUEST_USAGE_STORE=supabase` on `playform-dev` and `playform-staging`. **Playform commit at the sync:** `lib/route-guard.ts` on `requireActorWithStatus`; its translate routes (`/api/process`, `/api/translate/dispatch`, `/api/translate/session`) opt guests in with `enforceGuestAllowance`; speech, transcription and extraction stay users-only.
 
 ### TASK-100 — E2E journey tests pass when the user sees an error
 
@@ -2098,7 +2098,7 @@ own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable 
 | **Severity** | Medium — green CI while users fail                        |
 | **Phase**    | Phase 5                                                   |
 | **Target**   | Phase 5, Sprint 7A                                        |
-| **Status**   | In progress — B2a done (Playform); B2b at the v2.7.0 sync |
+| **Status**   | In progress — B2a done (Playform); B2b at the v3.0.0 sync |
 | **Logged**   | 2026-09-26                                                |
 
 **What:** The translate journeys wait for the translation card **or any alert**, so they passed while every real user got "Invalid or expired token".
@@ -2193,7 +2193,7 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 | **Severity** | Medium — dead ends                                        |
 | **Phase**    | Phase 5                                                   |
 | **Target**   | Phase 5, Sprint 7A                                        |
-| **Status**   | Resolved — Sprint 7A B3 (PF); Playform at the v2.7.0 sync |
+| **Status**   | Resolved — Sprint 7A B3 (PF); Playform at the v3.0.0 sync |
 | **Logged**   | 2026-09-26                                                |
 
 **What:** Music identification (no provider keys, no audio service) and audio upload are offered on `playform-dev` and fail with "please try again", which can never succeed.
@@ -2288,14 +2288,14 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 | **Severity** | High — clients must match English text; untranslatable    |
 | **Phase**    | Phase 5                                                   |
 | **Target**   | Phase 5, Sprint 7A (A4, before B1)                        |
-| **Status**   | Resolved — Sprint 7A A4 (PF); Playform at the v2.7.0 sync |
+| **Status**   | Resolved — Sprint 7A A4 (PF); Playform at the v3.0.0 sync |
 | **Logged**   | 2026-09-27                                                |
 
 **What:** Every error response is `{ error: "<English sentence>" }` — about 150 distinct messages across PF and Playform routes, plus platform reason strings that reach users. Only `sign_in_required` and `guest_invalid` (7A A3) carry a code; nothing documents any of them. There is no message catalog and no i18n library.
 
-**Resolution:** ADR-051 D1–D3, D5 (a)–(e): catalog infrastructure (`next-intl`, `messages/en.json`, ICU); an error registry (code → status, catalog key, caller guidance); every PF API error on `{ code, message, params }`; `docs/API_ERRORS.md` generated and drift-checked; CI checks that every route error is registered, catalogued and documented; the screen-literal ratchet baseline. Playform's own routes in the Playform commit following the v2.7.0 sync.
+**Resolution:** ADR-051 D1–D3, D5 (a)–(e): catalog infrastructure (`next-intl`, `messages/en.json`, ICU); an error registry (code → status, catalog key, caller guidance); every PF API error on `{ code, message, params }`; `docs/API_ERRORS.md` generated and drift-checked; CI checks that every route error is registered, catalogued and documented; the screen-literal ratchet baseline. Playform's own routes in the Playform commit following the v3.0.0 sync.
 
-**Progress (7A A4a, PF):** `platform/errors` (registry of 39 codes, catalog `messages/en.json`, `apiError`, locale negotiation, ICU rendering), generated `docs/API_ERRORS.md`, CI checks, free-text ratchet at 102. Survey findings carried to A4b: auth failures returned with HTTP 200 (12), 500s echoing internal error text (11), statuses chosen by matching English (7). Playform (sync-excluded `package.json`) must add `intl-messageformat` and the jest ESM transform in the same PR that syncs v2.7.0, or the synced `platform/errors` fails to build there.
+**Progress (7A A4a, PF):** `platform/errors` (registry of 39 codes, catalog `messages/en.json`, `apiError`, locale negotiation, ICU rendering), generated `docs/API_ERRORS.md`, CI checks, free-text ratchet at 102. Survey findings carried to A4b: auth failures returned with HTTP 200 (12), 500s echoing internal error text (11), statuses chosen by matching English (7). Playform (sync-excluded `package.json`) must add `intl-messageformat` and the jest ESM transform in the same PR that syncs v3.0.0, or the synced `platform/errors` fails to build there.
 
 **Progress (7A A4b-1, PF):** request-validation, auth-guard (`requireAuth`, `requireActor`, `requirePermission`, admin self-elevation, actor account status), rate-limit, admin and `/api/process` errors on codes; every 500 in them is `internal.error` — the 11 responses that echoed internal error text now log it with a request id and return only the id (`internalError`); the content classifier's reason (which may quote matched terms) goes to the log. Free-text ratchet 102 → 58. Compatibility aliases `success: false` / `error` stay in the body until 7B.
 
@@ -2303,7 +2303,7 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 
 **Resolved (7A A4b-3, PF):** auth routes on `authResultResponse` — success and challenge steps (MFA, new password, email verification) stay 200; failures return their code and real status (401 wrong credentials, 409 account exists, 429 too many attempts…) instead of HTTP 200; the Cognito provider maps exception types to codes and no Cognito message reaches a client (11 raw-message returns removed); sign-up password failures return `auth.password_policy` with rule ids (`passwordRuleViolations`). Free-text errors: 0, now a hard CI rule. Screen-literal ratchet in place (PF baseline 297). 45 codes in `docs/API_ERRORS.md`.
 
-**At the v2.7.0 sync (Playform commit, in 7A):** `package.json` gains `intl-messageformat` + the jest ESM transform; Playform's own routes (`app/api/auth/**`, translate/tts/transcribe/extract/classify) and `platform/auth/cognito-services.ts` move to codes; its own `screen-literal-baseline.json` (PF's is not synced).
+**At the v3.0.0 sync (Playform commit, in 7A):** `package.json` gains `intl-messageformat` + the jest ESM transform; Playform's own routes (`app/api/auth/**`, translate/tts/transcribe/extract/classify) and `platform/auth/cognito-services.ts` move to codes; its own `screen-literal-baseline.json` (PF's is not synced).
 
 ### TASK-110 — Screen strings are English literals
 

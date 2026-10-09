@@ -170,4 +170,6 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 
 _Confidential & Proprietary — Datankare — March 2026_
 
+_Last reviewed: October 2026 (Sprint 7A close — ADR-050 Accepted, PF v3.0.0; ADR-051 Proposed until Sprint 7B; schema baseline + migration replay)_
+
 _Last reviewed: September 2026 (Sprint 6.5 open — ADR-048 (governed agent budget & durability config) reserved as Proposed and indexed; a maintenance / governance-hardening sprint inserted between Sprint 6 and Sprint 7; prior: Sprint 6 close, ADR-044/045/046/047 Accepted, PF v2.4.0)_

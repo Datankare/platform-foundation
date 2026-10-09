@@ -207,7 +207,13 @@ database and migration baseline included (C4).
 |                     | C2        | SSO via Cognito hosted sign-in, configured providers only (TASK-101)                                                                                                    | Done (PF)                     |
 |                     | C3        | Deployed smoke test after every dev/staging deploy (TASK-102)                                                                                                           | In progress                   |
 |                     | C4        | Migration baseline + CI replay (TASK-091), production database (TASK-092), project↔branch topology (TASK-105)                                                           | Done (Playform smoke at sync) |
-| Close               |           | ADR-050 Accepted, PF v2.7.0, Playform sync + Playform guest-token delegation (TASK-098) + Playform `package.json` (intl-messageformat, TASK-109), resume Sprint 7 at 3d | —                             |
+| Close               |           | ADR-050 Accepted, PF v3.0.0, Playform sync + Playform guest-token delegation (TASK-098) + Playform `package.json` (intl-messageformat, TASK-109), resume Sprint 7 at 3d | In progress                   |
+
+**Also closed in 7A (2026-10-07 → 10-09):** TASK-117 (new accounts refused as "suspended" — the platform user
+row is now provisioned on first use), TASK-111 (the never-working guest lifecycle retired; migration 038),
+TASK-102/105 (deployed smoke test; topology recorded and checked by deployed commit), the proxy defects the
+smoke test exposed, and the 2026-10-07 dependency advisories (Next.js 16.3.8). Breaking changes make the
+release **PF v3.0.0** (semver), with [`MIGRATION_v2_to_v3.md`](MIGRATION_v2_to_v3.md).
 
 **Sprint 7B — screen strings (ADR-051, TASK-110).** A dedicated sprint after Sprint 7 closes: every
 user-visible screen string in PF and Playform through the catalog until the ratchet set in 7A A4 reaches
