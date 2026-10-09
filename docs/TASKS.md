@@ -1910,8 +1910,8 @@ coverage numbers for its baseline. Pairs with TASK-058.
 | **Type**     | Schema integrity                                                          |
 | **Severity** | High — blocks a fresh production database; a broken migration ships green |
 | **Phase**    | Phase 5                                                                   |
-| **Target**   | Phase 5, Sprint 7                                                         |
-| **Status**   | Open                                                                      |
+| **Target**   | Phase 5, Sprint 7A (C4)                                                   |
+| **Status**   | Resolved (7A C4, 2026-09-29)                                              |
 | **Logged**   | 2026-09-26                                                                |
 
 **What:** replaying `supabase/migrations/001`–`036` in order on an empty Postgres fails at the start:
@@ -1928,6 +1928,16 @@ that stands up Postgres 16 (+ pgvector and a small Supabase `auth`/roles shim), 
 and every newer migration, and fails on any error. Rewriting applied historical migrations is
 rejected: it changes what the live database claims to have run. Prerequisite for TASK-092.
 
+**Resolved:** `supabase/baseline/000_baseline.sql` (covers 001–037) is cut from the dev schema and
+seed, after an ownership audit that excluded Playform's `agent_delegation_*` tables, Supabase's
+`rls_auto_enable()` and default privileges, and a hand-made `tester` role; it includes
+`user_devices` and the `vector` extension, which no numbered migration creates. Proved on a fresh
+Supabase-shaped Postgres: it applies, refuses a second run, and differs from dev only by the
+exclusions. CI job **Migration replay** (`scripts/migration-replay.sh`, Postgres 17 + pgvector)
+builds shim → baseline → newer migrations on every push and fails on a SQL error, a missing table or
+function, or a table without row-level security; `__tests__/schema-baseline.test.ts` guards the
+baseline's contract. See `supabase/baseline/README.md`.
+
 ### TASK-092 — Production shares the dev/staging Supabase project
 
 | Field        | Detail                                                       |
@@ -1936,8 +1946,8 @@ rejected: it changes what the live database claims to have run. Prerequisite for
 | **Type**     | Environment isolation                                        |
 | **Severity** | Medium — harmless pre-launch; must not carry into real users |
 | **Phase**    | Phase 5                                                      |
-| **Target**   | Phase 5, Sprint 7                                            |
-| **Status**   | Open                                                         |
+| **Target**   | Phase 5, Sprint 7A (C4)                                      |
+| **Status**   | Resolved (7A C4, 2026-10-07)                                 |
 | **Logged**   | 2026-09-26                                                   |
 
 **What:** ADR-048 D3 / ADR-049 D1 require durable stores in production, so `playform-dev` and
@@ -1949,6 +1959,523 @@ and a staging migration cannot touch production.
 **Why it is a task:** a new project needs its schema built from the TASK-091 baseline, its own
 service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `TRAJECTORY_STORE`, `BUDGET_STORE`, `APP_STATE_STORE`) on the production project.
+
+**Progress (2026-09-29):** Supabase project `playform-prod` created (Pro organization, Micro,
+`us-east-1`, Data API on, new tables exposed as on dev, automatic RLS off). Its schema is built from
+the TASK-091 baseline.
+
+**Resolved (2026-10-07):** `playform-prod` built from the baseline (39 migrations recorded, 36 tables, all
+with row-level security); Vercel `playform` production settings point at it (Production scope only), with its
+own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable stores; `/api/health` 200 at
+`https://playform.datankare.com`; first real sign-up and sign-in verified (which found TASK-117).
+
+### TASK-093 — Language lists are not in alphabetical order
+
+| Field        | Detail            |
+| ------------ | ----------------- |
+| **ID**       | TASK-093          |
+| **Type**     | Enhancement       |
+| **Severity** | Low — usability   |
+| **Phase**    | Phase 5           |
+| **Target**   | Phase 5, Sprint 7 |
+| **Status**   | Open              |
+| **Logged**   | 2026-09-26        |
+
+**What:** The _Add languages_ picker and the translation card's _Also:_ row list languages in a fixed, non-alphabetical order.
+
+**Resolution:** Sort both lists A→Z by display name through one shared helper so they cannot drift; a test pins the order.
+
+### TASK-094 — Each language click re-translates — no batch multi-language selection
+
+| Field        | Detail                    |
+| ------------ | ------------------------- |
+| **ID**       | TASK-094                  |
+| **Type**     | Enhancement               |
+| **Severity** | Medium — cost and latency |
+| **Phase**    | Phase 5                   |
+| **Target**   | Phase 5, Sprint 7         |
+| **Status**   | Open                      |
+| **Logged**   | 2026-09-26                |
+
+**What:** Toggling a language chip after a translation immediately dispatches a new translate turn: one paid request (and 2–5 s) per click.
+
+**Resolution:** Chips should only toggle selection; one Translate covers every selected language. Acceptance: N languages selected produce exactly one dispatch and the card shows all of them.
+
+### TASK-095 — Translate turns take 2–5 s
+
+| Field        | Detail                   |
+| ------------ | ------------------------ |
+| **ID**       | TASK-095                 |
+| **Type**     | Performance              |
+| **Severity** | Medium — perceived speed |
+| **Phase**    | Phase 5                  |
+| **Target**   | Phase 5, Sprint 7        |
+| **Status**   | Open                     |
+| **Logged**   | 2026-09-26               |
+
+**What:** Measured on `playform-dev` (Vercel `iad1`, 2026-09-26): translate turn median 2.6 s server-side (1.7–5.4 s); every other session action median 0.26 s; text-to-speech 0.22 s. The session/governance path costs ≈ 0.25 s; the rest is the safety check (an LLM call) completing before detection, classification (a second LLM call) and translation start.
+
+**Resolution:** Run safety and classification as one call, or concurrently, and re-measure. Target set from the new measurement.
+
+### TASK-096 — PDF upload fails in deployment — `@napi-rs/canvas` is a devDependency
+
+| Field        | Detail                               |
+| ------------ | ------------------------------------ |
+| **ID**       | TASK-096                             |
+| **Type**     | Bug                                  |
+| **Severity** | Medium — a visible feature is broken |
+| **Phase**    | Phase 5                              |
+| **Target**   | Phase 5, Sprint 7                    |
+| **Status**   | Open                                 |
+| **Logged**   | 2026-09-26                           |
+
+**What:** `/api/extract` fails with `DOMMatrix is not defined`: the PDF parser needs `@napi-rs/canvas` at runtime, but Playform lists it under devDependencies, so the deployment never installs it.
+
+**Resolution:** Move it to dependencies and declare it a server external package in `next.config.ts`; verify a PDF extract on the deployed address (Playform-owned files).
+
+### TASK-097 — Production accepts the mock auth provider
+
+| Field        | Detail                                |
+| ------------ | ------------------------------------- |
+| **ID**       | TASK-097                              |
+| **Type**     | Deployment integrity                  |
+| **Severity** | High — no real token can pass; silent |
+| **Phase**    | Phase 5                               |
+| **Target**   | Phase 5, Sprint 7A                    |
+| **Status**   | Resolved — Sprint 7A A1               |
+| **Logged**   | 2026-09-26                            |
+
+**What:** With `AUTH_PROVIDER` unset the server registers the mock provider, which accepts one hard-coded test token. `playform-dev` ran this way until 7A; every signed-in call failed with "Invalid or expired token".
+
+**Resolution:** ADR-050 D1: refuse test-double auth in a production context, as ADR-048 D3 does for in-memory stores, with a named error at boot.
+
+**Resolved (7A A1):** `assertEnvironmentContract()` runs first in `initProviders()`; production refuses `AUTH_PROVIDER` unset/`mock`. E2E harnesses opt in with `E2E_TEST_DOUBLE_AUTH=true`, which — like every harness switch — is refused when `VERCEL=1`. Covered by `platform/providers/__tests__/environment-contract.test.ts`, `__tests__/provider-registry.test.ts` and the TASK-089 boot check. Consumers add `E2E_TEST_DOUBLE_AUTH` to their own E2E harness before syncing this release.
+
+### TASK-098 — Guest tokens are unsigned
+
+| Field        | Detail                    |
+| ------------ | ------------------------- |
+| **ID**       | TASK-098                  |
+| **Type**     | Security                  |
+| **Severity** | High — forgeable identity |
+| **Phase**    | Phase 5                   |
+| **Target**   | Phase 5, Sprint 7A        |
+| **Status**   | Resolved — Sprint 7A A2   |
+| **Logged**   | 2026-09-26                |
+
+**What:** `createGuestToken` returns `guest.` + base64 JSON (`sub`, `type`, `iat`, `exp`) with no signature, and `verifyGuestToken` only decodes it and checks expiry. Anyone can mint a guest token for any id and any expiry. Nothing relies on it yet.
+
+**Resolution:** ADR-050 D4: HMAC-sign guest tokens under `GUEST_TOKEN_SECRET` and verify the signature; must land before any route accepts guests.
+
+**Resolved (7A A2, PF):** `platform/auth/guest-token.ts` — signed, namespaced, lifetime-bounded guest tokens; PF's Cognito provider delegates to it; `GUEST_TOKEN_SECRET` is in the environment contract (required with a real auth provider). Two obligations carried inside 7A: (1) A3's guest check verifies through `platform/auth/guest-token` directly, never through a provider's `verifyGuestToken`; (2) Playform's own `platform/auth/cognito-services.ts` (sync-excluded; mints `guest_<uuid>_<ms>`, unsigned) delegates to the same module in the Playform commit that follows the v3.0.0 sync — before Playform promotes. `GUEST_TOKEN_SECRET` must be set on `playform-dev` and `playform-staging` before v3.0.0 reaches them.
+
+### TASK-099 — No guest path in the platform auth check, and no guest allowance
+
+| Field        | Detail                                                         |
+| ------------ | -------------------------------------------------------------- |
+| **ID**       | TASK-099                                                       |
+| **Type**     | Auth                                                           |
+| **Severity** | Medium — guest mode admits users who then cannot act           |
+| **Phase**    | Phase 5                                                        |
+| **Target**   | Phase 5, Sprint 7A                                             |
+| **Status**   | Resolved — Sprint 7A A3 + B1 (PF); Playform at the v3.0.0 sync |
+| **Logged**   | 2026-09-26                                                     |
+
+**What:** `requireAuth` verifies only real-user tokens, so a guest can enter the app but every action is rejected. There is also no bound on what a guest may consume.
+
+**Resolution:** ADR-050 D4: an opt-in guest check for routes that allow guests (translate), namespaced guest actor ids, and a governed per-guest translate allowance (admin-settable, min 1 / default 5 / max 10) enforced before any paid call, with a clear sign-in prompt at the limit.
+
+**Progress (7A A3, PF):** opt-in guest check and namespace done — `requireActor` / `requireActorWithStatus` (`allowGuests` per route; guests verified by `platform/auth/guest-token` only; `sign_in_required` elsewhere; `requireAuth` refuses guest-namespaced subjects). Remaining in 7A: B1 allowance; Playform's `lib/route-guard.ts` adopts `requireActorWithStatus`, and the translate routes opt in together with B1 — never before.
+
+**Resolved (7A B1, PF):** governed `guest.translate_allowance` (migration 037: 1–10, default 5, safety tier, dual control; clamped in code too); `GuestUsageStore` registry slot (`GUEST_USAGE_STORE`, durable required in production, conformance kit); atomic database consume (`guest_allowance_consume`); `enforceGuestAllowance()` before the first paid call, failing closed; `guest.allowance_exhausted` (403, `{limit}`) — the sign-in prompt. PF `/api/process` (was unauthenticated) now authenticates, serves guests and counts them. **Before v3.0.0 reaches Playform:** migration 037 applied to the `playform` database; `GUEST_USAGE_STORE=supabase` on `playform-dev` and `playform-staging`. **Playform commit at the sync:** `lib/route-guard.ts` on `requireActorWithStatus`; its translate routes (`/api/process`, `/api/translate/dispatch`, `/api/translate/session`) opt guests in with `enforceGuestAllowance`; speech, transcription and extraction stay users-only.
+
+### TASK-100 — E2E journey tests pass when the user sees an error
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-100                                                  |
+| **Type**     | Test integrity                                            |
+| **Severity** | Medium — green CI while users fail                        |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7A                                        |
+| **Status**   | In progress — B2a done (Playform); B2b at the v3.0.0 sync |
+| **Logged**   | 2026-09-26                                                |
+
+**What:** The translate journeys wait for the translation card **or any alert**, so they passed while every real user got "Invalid or expired token".
+
+**Resolution:** Assert a real translation result; add explicit error-path and guest-limit journeys (Playform-owned `e2e/`).
+
+**Progress (7A B2a, Playform `ac291cd`, `78efda2`):** journeys assert a real translation (`e2e/helpers/journey.ts` `expectTranslation`: text visible and non-empty, Play button, no app alert); an error-path journey (a coded dispatch failure must show the server message and no result); `__tests__/e2e-journey-integrity.test.ts` fails CI on "result or any alert" or a raw `[role=alert]` locator. Found on the way: a "no error notification" check that looked for a test id no element has (could never fail), and Next.js's route announcer — an always-present, empty `role="alert"` — which any "no alert" check must exclude (`appAlerts()`). **B2b (at the sync):** the guest-limit journey, with the Playform guest wiring.
+
+### TASK-101 — SSO buttons are never wired to the identity provider
+
+| Field        | Detail             |
+| ------------ | ------------------ |
+| **ID**       | TASK-101           |
+| **Type**     | Auth               |
+| **Severity** | Medium — dead UI   |
+| **Phase**    | Phase 5            |
+| **Target**   | Phase 5, Sprint 7A |
+| **Status**   | Resolved (PF)      |
+| **Logged**   | 2026-09-26         |
+
+**What:** Playform's browser auth provider returns "SSO not available" for every provider. Cognito's hosted sign-in (domain, callbacks, Google identity provider) is configured as of 7A step 0.4.
+
+**Resolution:** Start SSO through Cognito's hosted sign-in, add `/auth/callback` to exchange the code, and show only configured providers (ADR-050 D3). Google in 7A. Apple and Microsoft moved to Phase 6 (TASK-112); until then their buttons are not offered (ADR-050 D3 — only configured providers show).
+
+**Resolved (7A C2, PF):** SSO runs through the Cognito hosted sign-in with the authorization-code
+flow, `state` and PKCE S256. `GET /api/auth/sso/[provider]` starts it (attempt in an httpOnly cookie
+scoped to `/api/auth/sso`, ten minutes, single use); the provider returns the browser to
+`/auth/callback`, which posts `{ code, state }` to `POST /api/auth/sso/callback` (state compared in
+constant time, code exchanged with the verifier; the ID token is not returned). The hosted domain is
+now a declared setting, `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` — it had been derived from the pool id,
+which is not the domain Cognito assigns, so SSO could never reach Cognito. `SSO_PROVIDERS` lists the
+providers a deployment offers; `GET /api/features` reports `sso_google` / `sso_apple` /
+`sso_microsoft`, and the sign-in screen shows only those (none by default). `/api/features` and
+`/auth/callback` are now public in the proxy — the sign-in screen is unauthenticated and could not read
+the feature list. **Playform at the sync:** its browser auth provider and sign-in screen use the
+platform flow (TASK-101 remainder); set `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` and `SSO_PROVIDERS=google`
+on dev and staging.
+
+### TASK-102 — No test runs against a deployed environment
+
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-102                                                |
+| **Type**     | CI integrity                                            |
+| **Severity** | High — configuration is untested                        |
+| **Phase**    | Phase 5                                                 |
+| **Target**   | Phase 5, Sprint 7A                                      |
+| **Status**   | In progress — PF done; Playform workflow at the 7A sync |
+| **Logged**   | 2026-09-26                                              |
+
+**What:** Unit, integration and E2E tests all run on CI-built code with test settings; nothing checked `playform-dev` itself, so a missing database, mock auth and the wrong deployed branch all went unnoticed.
+
+**Resolution:** ADR-050 D5: after each dev/staging deploy, check health, report the deployed commit, and perform a real translate against the deployed address.
+
+**Resolved in PF (7A C3, 2026-10-08):** `scripts/deploy-smoke.mjs` (synced to consumers) runs against a
+deployed address: health 200 and the deployed commit (polls until the address serves the expected build),
+`/api/features`, an anonymous request refused with a registered code, a signed guest token, and a real guest
+translation. One line per step; exit 1 names the failing step. Tested end to end against a local server
+standing in for a deployment (`__tests__/deploy-smoke.test.ts`: healthy, wrong commit, health 503, uncoded
+401, mock guest token, empty translation, bad settings). Writing it found two proxy defects, fixed:
+the proxy's 401 was free text (outside ADR-051 — the free-text scan did not cover root files; it now scans
+`proxy.ts`), and **an API call with a bearer token but no session cookie was redirected to `/auth`** —
+every non-browser client (agents, this smoke test, k6) got a 307 instead of the API's answer. **Playform at
+the sync:** its own `proxy.ts` (sync-excluded) takes both fixes, and its `.github/workflows/deploy-smoke.yml`
+runs the script on every successful Vercel deployment of `playform-dev`, `playform-staging` and `playform`
+with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
+
+### TASK-103 — Deployment settings are unvalidated and can shadow each other
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-103                                                     |
+| **Type**     | Deployment integrity                                         |
+| **Severity** | Medium — misconfiguration surfaces as obscure runtime errors |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | Phase 5, Sprint 7A                                           |
+| **Status**   | Resolved — Sprint 7A A1                                      |
+| **Logged**   | 2026-09-26                                                   |
+
+**What:** Stores read `NEXT_PUBLIC_SUPABASE_URL ?? SUPABASE_URL`, so a stray public variable silently overrides the server one; setting shapes (URL with a path, trailing characters) are never checked, surfacing later as errors like PostgREST `PGRST125`.
+
+**Resolution:** ADR-050 D2: declare each setting once with its shape, validate at boot, fail on disagreeing duplicates.
+
+**Resolved (7A A1):** `ENVIRONMENT_CONTRACT` declares each setting with one canonical name, aliases and shape; all readers use its resolvers. `SUPABASE_URL` is canonical — which also connects `lib/supabase/server`, the account-status guard and the metrics sink, which read only `NEXT_PUBLIC_SUPABASE_URL` and so had no database on `playform-dev`. `AWS_REGION` is no longer read for Cognito. Documented in `docs/ENV_REFERENCE.md`; `__tests__/docs-integrity.test.ts` checks every declared name is documented.
+
+### TASK-104 — Optional features are offered when not configured
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-104                                                  |
+| **Type**     | UX / deployment integrity                                 |
+| **Severity** | Medium — dead ends                                        |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7A                                        |
+| **Status**   | Resolved — Sprint 7A B3 (PF); Playform at the v3.0.0 sync |
+| **Logged**   | 2026-09-26                                                |
+
+**What:** Music identification (no provider keys, no audio service) and audio upload are offered on `playform-dev` and fail with "please try again", which can never succeed.
+
+**Resolution:** ADR-050 D3: each optional feature declares its settings; the UI offers it only when they are present.
+
+**Resolved (7A B3, PF):** `platform/features` declares `music_identification` (ACRCloud + a real audio converter), `audio_upload` (speech key + real converter), `speech_input` (speech key) and `teams` (preview); `GET /api/features` returns booleans only; `requireFeature()` answers `feature.not_configured` (501) — retrying cannot succeed. **Playform commit at the sync:** its identify/transcribe routes call `requireFeature`, and the screens hide what `/api/features` reports unavailable. SSO providers join the list in C2.
+
+### TASK-105 — Vercel project-to-branch mapping is undocumented and was wrong
+
+| Field        | Detail                                                                                |
+| ------------ | ------------------------------------------------------------------------------------- |
+| **ID**       | TASK-105                                                                              |
+| **Type**     | Deployment topology                                                                   |
+| **Severity** | Medium — the deployed address ran old code                                            |
+| **Phase**    | Phase 5                                                                               |
+| **Target**   | Phase 5, Sprint 7A                                                                    |
+| **Status**   | In progress — topology documented and verified; checked by the smoke test at the sync |
+| **Logged**   | 2026-09-26                                                                            |
+
+**What:** `playform-dev` tracked `main`, so its address served v0.5.0 while new code went only to preview addresses. Fixed for `playform-dev` (now `develop`) during 7A; staging and production unverified.
+
+**Resolution:** ADR-050 D6: document and verify `playform-dev` ← develop, `playform-staging` ← staging, production ← main; the smoke test reports the deployed commit.
+
+**Topology (verified 2026-10-08, ADR-050 D6):**
+
+| Vercel project     | Branch    | Address                               | Database (Supabase)                   | Cognito pool          |
+| ------------------ | --------- | ------------------------------------- | ------------------------------------- | --------------------- |
+| `playform-dev`     | `develop` | `https://playform-dev.vercel.app`     | `playform` (shared with staging)      | `us-east-1_9pRbNsCbE` |
+| `playform-staging` | `staging` | `https://playform-staging.vercel.app` | `playform` (shared with dev)          | `us-east-1_9pRbNsCbE` |
+| `playform`         | `main`    | `https://playform.datankare.com`      | `playform-prod` (built from baseline) | `us-east-1_l5B9bbdFh` |
+
+`playform-inky.vercel.app` redirects (308) to `playform.datankare.com`. `/api/health` now reports `commit`
+(`VERCEL_GIT_COMMIT_SHA`, 12 characters) so the smoke test proves which build each address serves.
+
+### TASK-106 — Refresh-token rotation is off
+
+| Field        | Detail             |
+| ------------ | ------------------ |
+| **ID**       | TASK-106           |
+| **Type**     | Security hardening |
+| **Severity** | Low                |
+| **Phase**    | Phase 5            |
+| **Target**   | Phase 5, Sprint 7  |
+| **Status**   | Open               |
+| **Logged**   | 2026-09-26         |
+
+**What:** Cognito's refresh-token rotation requires disabling `ALLOW_REFRESH_TOKEN_AUTH` and refreshing via `GetTokensFromRefreshToken`; the provider uses `REFRESH_TOKEN_AUTH`, so rotation stays off.
+
+**Resolution:** Switch the provider's refresh call, then enable rotation on the app client.
+
+### TASK-107 — Teams panel uses a hard-coded demo user and an in-memory social store
+
+| Field        | Detail                                                         |
+| ------------ | -------------------------------------------------------------- |
+| **ID**       | TASK-107                                                       |
+| **Type**     | Identity / durability                                          |
+| **Severity** | Medium — all users share one membership                        |
+| **Phase**    | Phase 5                                                        |
+| **Target**   | Phase 5, Sprint 7A                                             |
+| **Status**   | Resolved — Sprint 7A B3 (store); real Teams data with TASK-108 |
+| **Logged**   | 2026-09-26                                                     |
+
+**What:** The panel requests groups for the literal user `current-user`, not the signed-in user, and the social store is in memory on deployments, so joins are shared across users and lost on restart.
+
+**Resolution:** Use the signed-in user's id; make the social store durable in production like ADR-048/049 stores.
+
+**Resolved (7A B3):** the social store fails closed (missing credentials are an error, not a silent memory fallback) and is required durable in production (`SOCIAL_STORE=supabase`; tables from migration 015). Found: the Teams panel never reaches the store — `useGroupMembership` is client-side sample data (`DEMO_GROUPS`, `"current-user"` ignored). Decision (Raman, 2026-09-27): Teams stays visible, labelled **"Preview — sample data"** (Playform commit), until TASK-108 defines participation; signed-in-user wiring is part of TASK-108.
+
+### TASK-108 — Teams has no participation surface and shows invented group data
+
+| Field        | Detail            |
+| ------------ | ----------------- |
+| **ID**       | TASK-108          |
+| **Type**     | Product           |
+| **Severity** | Medium            |
+| **Phase**    | Phase 5           |
+| **Target**   | Phase 5, Sprint 7 |
+| **Status**   | Open              |
+| **Logged**   | 2026-09-26        |
+
+**What:** Group names and member counts are derived from ids and scores (marked demo-only in code), and there is no posting, chat or activity view, so groups cannot be used.
+
+**Resolution:** Product decision on what participation means, then real group data and a participation surface.
+
+### TASK-109 — API errors have no codes and are not documented
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-109                                                  |
+| **Type**     | API contract                                              |
+| **Severity** | High — clients must match English text; untranslatable    |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7A (A4, before B1)                        |
+| **Status**   | Resolved — Sprint 7A A4 (PF); Playform at the v3.0.0 sync |
+| **Logged**   | 2026-09-27                                                |
+
+**What:** Every error response is `{ error: "<English sentence>" }` — about 150 distinct messages across PF and Playform routes, plus platform reason strings that reach users. Only `sign_in_required` and `guest_invalid` (7A A3) carry a code; nothing documents any of them. There is no message catalog and no i18n library.
+
+**Resolution:** ADR-051 D1–D3, D5 (a)–(e): catalog infrastructure (`next-intl`, `messages/en.json`, ICU); an error registry (code → status, catalog key, caller guidance); every PF API error on `{ code, message, params }`; `docs/API_ERRORS.md` generated and drift-checked; CI checks that every route error is registered, catalogued and documented; the screen-literal ratchet baseline. Playform's own routes in the Playform commit following the v3.0.0 sync.
+
+**Progress (7A A4a, PF):** `platform/errors` (registry of 39 codes, catalog `messages/en.json`, `apiError`, locale negotiation, ICU rendering), generated `docs/API_ERRORS.md`, CI checks, free-text ratchet at 102. Survey findings carried to A4b: auth failures returned with HTTP 200 (12), 500s echoing internal error text (11), statuses chosen by matching English (7). Playform (sync-excluded `package.json`) must add `intl-messageformat` and the jest ESM transform in the same PR that syncs v3.0.0, or the synced `platform/errors` fails to build there.
+
+**Progress (7A A4b-1, PF):** request-validation, auth-guard (`requireAuth`, `requireActor`, `requirePermission`, admin self-elevation, actor account status), rate-limit, admin and `/api/process` errors on codes; every 500 in them is `internal.error` — the 11 responses that echoed internal error text now log it with a request id and return only the id (`internalError`); the content classifier's reason (which may quote matched terms) goes to the log. Free-text ratchet 102 → 58. Compatibility aliases `success: false` / `error` stay in the body until 7B.
+
+**Progress (7A A4b-2, PF):** moderation and approvals. Services and stores return `errorCode` (+ `errorParams`) with their results (`ReviewResult`, `ConfigApprovalResult`); routes answer with `errorFromResult()`, so no status is chosen by matching English any more (`statusForError`, `appealErrorStatus` removed). Five codes added (`moderation.appeal_not_allowed`, `appeal_reason_too_short`, `appeal_window_expired`, `item_state_conflict`, `approvals.expired`) — 44 in all. A store's database text never reaches a response. Free-text ratchet 58 → 17 (the auth routes, A4b-3).
+
+**Resolved (7A A4b-3, PF):** auth routes on `authResultResponse` — success and challenge steps (MFA, new password, email verification) stay 200; failures return their code and real status (401 wrong credentials, 409 account exists, 429 too many attempts…) instead of HTTP 200; the Cognito provider maps exception types to codes and no Cognito message reaches a client (11 raw-message returns removed); sign-up password failures return `auth.password_policy` with rule ids (`passwordRuleViolations`). Free-text errors: 0, now a hard CI rule. Screen-literal ratchet in place (PF baseline 297). 45 codes in `docs/API_ERRORS.md`.
+
+**At the v3.0.0 sync (Playform commit, in 7A):** `package.json` gains `intl-messageformat` + the jest ESM transform; Playform's own routes (`app/api/auth/**`, translate/tts/transcribe/extract/classify) and `platform/auth/cognito-services.ts` move to codes; its own `screen-literal-baseline.json` (PF's is not synced).
+
+### TASK-110 — Screen strings are English literals
+
+| Field        | Detail                                |
+| ------------ | ------------------------------------- |
+| **ID**       | TASK-110                              |
+| **Type**     | UX / i18n                             |
+| **Severity** | Medium — screens cannot be translated |
+| **Phase**    | Phase 5                               |
+| **Target**   | Phase 5, Sprint 7B                    |
+| **Status**   | Open                                  |
+| **Logged**   | 2026-09-27                            |
+
+**What:** About 430 user-visible strings (text, labels, placeholders, `aria-label`, `title`, `alt`) across about 50 components in PF and Playform are English literals.
+
+**Resolution:** ADR-051 D4: every screen string through `t(key)`, until the literal ratchet (set in 7A A4) reaches zero; remaining platform reason strings into the catalog. Decided 2026-09-27: a dedicated sprint (7B) after Sprint 7 closes; the ratchet keeps new UI work compliant in the meantime.
+
+### TASK-111 — Guest lifecycle thresholds never load (column mismatch)
+
+| Field        | Detail                                             |
+| ------------ | -------------------------------------------------- |
+| **ID**       | TASK-111                                           |
+| **Type**     | Defect                                             |
+| **Severity** | Low — defaults apply silently; admin edits ignored |
+| **Phase**    | Phase 5                                            |
+| **Target**   | Phase 5, Sprint 7A (before close)                  |
+| **Status**   | Resolved (PF, 7A 2026-10-07)                       |
+| **Logged**   | 2026-09-27                                         |
+
+**What:** Migration 002 seeds `guest_config` with `nudge_after_seconds`, `grace_period_seconds` and `lockout_after_seconds`, while `getGuestConfig()` reads `nudge_after_sessions`, `grace_after_sessions`, `lockout_after_sessions`, `guest_token_ttl_hours` and `max_guest_sessions`. Every read falls back to the defaults, and an admin's change to the guest lifecycle has no effect — with nothing saying so.
+
+**Resolution:** reconcile against the live schema (TASK-091 baseline): one migration aligning columns with the code, or the code with the columns, plus a test that reads the seeded row; `getGuestConfig()` logs when it falls back.
+
+**Resolved (decision A — retire, 2026-10-07):** worse than logged — the code also counted sessions in a
+`users.guest_session_count` column that never existed, the admin route and AI tool wrote an `is_active`
+column that never existed, and no route called the lifecycle. Guests are bounded by the governed translate
+allowance (7A B1) and carry signed tokens never stored on `users` (ADR-050 D4). Removed:
+`platform/auth/guest-lifecycle.ts` and its exports, `/api/admin/guest-config`, the admin AI tool
+`update_guest_config` and its handler, the Guest Config admin panel, data view and confirm text, and their
+tests. Migration **038** drops `guest_config`, `users.guest_token` / `guest_play_seconds` /
+`guest_nudge_shown_at` / `guest_locked_out_at` (with their constraint and index) and the dead config keys
+`guest_session_limit` / `guest_nudge_after`; idempotent, proven on the baseline twice. **Apply 038 to the
+`playform` and `playform-prod` databases.** **Playform at the sync:** the sync does not delete files
+(TASK-083) — delete `platform/auth/guest-lifecycle.ts` and `app/api/admin/guest-config/route.ts` in
+Playform by hand. Screen-literal baseline 297 → 287.
+
+### TASK-112 — Apple and Microsoft sign-in
+
+| Field        | Detail                                  |
+| ------------ | --------------------------------------- |
+| **ID**       | TASK-112                                |
+| **Type**     | Auth / feature                          |
+| **Severity** | Low — Google and email sign-in cover 7A |
+| **Phase**    | Phase 6                                 |
+| **Target**   | Phase 6                                 |
+| **Status**   | Deferred (decided 2026-09-28)           |
+| **Logged**   | 2026-09-28                              |
+
+**What:** Apple and Microsoft identity providers in the Cognito hosted sign-in (originally 7A steps 0.5 and 0.6). Moved out of 7A by decision (Raman, 2026-09-28).
+
+**Resolution (Phase 6):** Apple: App ID, Services ID, key `.p8`, Team ID, return URL on the Cognito domain (steps drafted). Microsoft: an Entra / Azure account (not yet created — Raman's decision), app registration, client secret. Each added as a Cognito identity provider; its button appears only once configured (ADR-050 D3, `platform/features`). Supersedes the Apple and Microsoft parts of TASK-024.
+
+### TASK-113 — `SupabaseMetricsSink` writes a table no migration creates
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-113                                                  |
+| **Type**     | Schema integrity                                          |
+| **Severity** | Low — the sink is opt-in; selecting it fails on first use |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7B                                        |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-09-29                                                |
+
+**What:** `platform/observability/metrics-sink.ts` reads and writes `ai_metrics` through PostgREST,
+but no migration creates `ai_metrics`, and neither the dev database nor the baseline has it. Found
+during the TASK-091 audit (the schema-parity script checks store columns, not this sink's table).
+
+**Resolution:** a migration that creates `ai_metrics` (with row-level security and its self-record),
+or remove the Supabase sink if metrics stay in Sentry/Langfuse.
+
+### TASK-114 — Every table grants ALL to `anon` and `authenticated`
+
+| Field        | Detail                                                            |
+| ------------ | ----------------------------------------------------------------- |
+| **ID**       | TASK-114                                                          |
+| **Type**     | Security hardening (defense in depth)                             |
+| **Severity** | Medium — row-level security is the only barrier for the API roles |
+| **Phase**    | Phase 5                                                           |
+| **Target**   | Phase 6 (before public launch)                                    |
+| **Status**   | Open                                                              |
+| **Logged**   | 2026-09-29                                                        |
+
+**What:** Supabase's "automatically expose new tables" grants `ALL` on every `public` table to
+`anon` and `authenticated` (the baseline carries dev's grants, and `playform-prod` keeps the option
+on for parity). Every table has row-level security, so this is not an open door — but one missing
+or wrong policy would be. The platform itself reaches the database only as `service_role`.
+
+**Resolution:** revoke table privileges from `anon` and `authenticated` except where a browser
+client needs them (none today), in a migration applied to dev and production alike, then turn the
+option off on both projects. The replay job gains a check that no table grants `anon` anything.
+
+### TASK-115 — Legal review of Privacy Policy and Terms of Service
+
+| Field        | Detail                            |
+| ------------ | --------------------------------- |
+| **ID**       | TASK-115                          |
+| **Type**     | Legal / compliance                |
+| **Severity** | High at launch — real users' data |
+| **Phase**    | Phase 5                           |
+| **Target**   | Phase 6 (launch gate)             |
+| **Status**   | Open                              |
+| **Logged**   | 2026-10-07                        |
+
+**What:** Drafts published 2026-10-01 at `datankare.com/privacy` and `datankare.com/terms` (Datankare LLC,
+13+ only, Massachusetts law) so Google sign-in could leave Testing. They were written from what the platform
+does, but not reviewed by counsel.
+
+**Resolution:** counsel reviews both against the launch feature set — COPPA (the 13+ gate must actually
+hold), GDPR/UK GDPR and CCPA if those users are admitted, AI-vendor disclosure terms, liability limits.
+
+### TASK-116 — Account and production hardening before launch
+
+| Field        | Detail                |
+| ------------ | --------------------- |
+| **ID**       | TASK-116              |
+| **Type**     | Security hardening    |
+| **Severity** | High at launch        |
+| **Phase**    | Phase 5               |
+| **Target**   | Phase 6 (launch gate) |
+| **Status**   | Open                  |
+| **Logged**   | 2026-10-07            |
+
+**What:** found during 7A C4 setup:
+
+- AWS console used as **root** — create an IAM Identity Center admin, keep root for break-glass with MFA.
+- Vercel team has no **required 2FA**.
+- Older Vercel secrets (Anthropic, ACRCloud, audio converter) are not marked **Sensitive**.
+- Production provider keys are shared with dev/staging — issue production-only keys.
+- Cognito sends email with its built-in sender (~50/day) — move to SES with a `datankare.com` sender
+  (SPF/DKIM/DMARC).
+- `www.datankare.com` serves the site instead of redirecting to `datankare.com`.
+
+**Resolution:** each item done and checked off here before public launch.
+
+### TASK-117 — New accounts are refused as "permanently suspended" (no platform user row)
+
+| Field        | Detail                                       |
+| ------------ | -------------------------------------------- |
+| **ID**       | TASK-117                                     |
+| **Type**     | Defect — authorization                       |
+| **Severity** | High — every new account on a fresh database |
+| **Phase**    | Phase 5                                      |
+| **Status**   | Resolved (PF; Playform at the 7A sync)       |
+| **Logged**   | 2026-10-07                                   |
+
+**What:** sign-up creates the identity in Cognito only; nothing created the platform's `users` row that the
+account-status guard, COPPA gate, permissions and RLS read (`id = cognito_sub = sub`). The guard read with
+`.single()`, which returns an **error** for zero rows, so its "no row → active" branch was dead and a new
+user failed closed as `banned`. Hidden because unit tests mocked `{ data: null, error: null }` (which
+`.single()` never returns) and dev's rows were made by hand. Found on `playform-prod` 2026-10-07:
+`users rows: 0`; Raman's first sign-in was refused.
+
+**Resolved:** `platform/auth/user-provisioning.ts` — `ensureUserProvisioned()` creates the row on first use
+(default role `free`, `cognito_sub`, email from the token, `account_created` audit), idempotent and
+race-safe (insert ignores an existing id), never changes an existing row. The guard reads with
+`maybeSingle()`: a DB error still fails closed; no row → provision → re-read; provisioning failure → refused
+with the new code `account.not_provisioned` (503), never reported as banned. `requireActorWithStatus` passes
+the token's email and maps the code. Insert shape proven on the baseline schema (defaults: `active`, COPPA
+off, consent not required). **Playform at the sync:** its own `lib/route-guard.ts` moves to
+`requireActorWithStatus` (already listed for the 7A sync); verify on staging with a brand-new account (C3),
+then production after promotion.
 
 ## Known Issue — TASK-020 numbering collision
 

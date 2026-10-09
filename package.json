@@ -1,6 +1,6 @@
 {
   "name": "platform-foundation",
-  "version": "2.6.2",
+  "version": "3.0.0",
   "engines": {
     "node": ">=22"
   },
@@ -30,8 +30,9 @@
     "@supabase/supabase-js": "^2.112.1",
     "ajv": "8.20.0",
     "dotenv": "^17.4.2",
+    "intl-messageformat": "12.1.2",
     "jose": "^6.2.8",
-    "next": "16.3.5",
+    "next": "16.3.8",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "safe-regex2": "^5.1.1"
@@ -82,6 +83,8 @@
       "platform/adaptive/**/*.ts",
       "platform/content/**/*.ts",
       "platform/effects/**/*.ts",
+      "platform/errors/**/*.ts",
+      "platform/features/**/*.ts",
       "platform/social/content/**/*.ts"
     ],
     "coverageReporters": [
@@ -118,7 +121,6 @@
       "platform/auth/password-policy.ts",
       "platform/auth/gdpr-deletion.ts",
       "platform/auth/data-export.ts",
-      "platform/auth/guest-lifecycle.ts",
       "platform/auth/admin-guard.ts",
       "app/admin/page.tsx",
       "components/admin/ActionConfirmPanel.tsx",
@@ -129,18 +131,28 @@
       "components/admin/AdminPromptBar.tsx",
       "components/admin/ExecutionResultsPanel.tsx",
       "platform/auth/platform-config.ts"
+    ],
+    "transform": {
+      "^.+\\.[tj]sx?$": [
+        "ts-jest",
+        {}
+      ]
+    },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(intl-messageformat|@formatjs)/)"
     ]
   },
   "overrides": {
     "postcss": ">=8.5.18",
     "browserslist": "^4.28.7",
-    "fast-uri": "^3.1.7",
+    "fast-uri": "^3.1.8",
     "@humanfs/node": "^0.16.8",
-    "sharp": "^0.35.4",
-    "brace-expansion@5": "5.0.9",
+    "sharp": "^0.35.5",
+    "brace-expansion@5": "5.0.12",
     "brace-expansion@1": "1.1.18",
     "brace-expansion@2": "2.1.4",
     "js-yaml@3": "3.15.2",
-    "js-yaml@4": "4.3.2"
+    "js-yaml@4": "4.3.2",
+    "source-map-js": "^1.2.2"
   }
 }

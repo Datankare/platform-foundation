@@ -200,6 +200,7 @@ describe("submitAppeal", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Only blocked");
+    expect(result.errorCode).toBe("moderation.appeal_not_allowed");
   });
 
   it("rejects appeal with short reason", async () => {
@@ -216,6 +217,8 @@ describe("submitAppeal", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("at least 20 characters");
+    expect(result.errorCode).toBe("moderation.appeal_reason_too_short");
+    expect(result.errorParams).toEqual({ min: 20 });
   });
 
   it("rejects appeal outside window", async () => {
@@ -234,6 +237,7 @@ describe("submitAppeal", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("window has expired");
+    expect(result.errorCode).toBe("moderation.appeal_window_expired");
   });
 
   it("rejects duplicate appeal for same decision", async () => {
@@ -261,6 +265,7 @@ describe("submitAppeal", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("already pending");
+    expect(result.errorCode).toBe("moderation.appeal_pending");
   });
 });
 
@@ -298,6 +303,7 @@ describe("claimItem", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not pending");
+    expect(result.errorCode).toBe("moderation.item_state_conflict");
   });
 
   it("rejects claim on nonexistent item", async () => {
@@ -305,6 +311,7 @@ describe("claimItem", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not found");
+    expect(result.errorCode).toBe("moderation.review_item_not_found");
   });
 });
 
@@ -338,6 +345,7 @@ describe("unclaimItem", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("claiming reviewer");
+    expect(result.errorCode).toBe("moderation.not_claimer");
   });
 });
 
@@ -408,6 +416,7 @@ describe("resolveItem", () => {
 
     expect(noAction.success).toBe(false);
     expect(noAction.error).toContain("modifiedAction is required");
+    expect(noAction.errorCode).toBe("moderation.modified_action_required");
   });
 
   it("resolves with modify — stores modified action", async () => {
@@ -450,6 +459,7 @@ describe("resolveItem", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("claiming reviewer");
+    expect(result.errorCode).toBe("moderation.not_claimer");
   });
 
   it("rejects resolve on pending item", async () => {
@@ -469,6 +479,7 @@ describe("resolveItem", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not claimed");
+    expect(result.errorCode).toBe("moderation.item_state_conflict");
   });
 
   it("writes audit log on resolution", async () => {

@@ -34,6 +34,7 @@ import { isApprovalRequired } from "@/platform/admin/config-approval";
 import type { Step } from "@/platform/agents/types";
 import type { ConfigToolResult } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
+import { apiError } from "@/platform/errors";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -90,10 +91,10 @@ export async function POST(request: NextRequest) {
     const body: ConfigAIRequest = await request.json();
 
     if (!body.message || typeof body.message !== "string") {
-      return NextResponse.json(
-        { error: "message is required and must be a string" },
-        { status: 400 }
-      );
+      return apiError("request.missing_fields", {
+        params: { fields: ["message"] },
+        request,
+      });
     }
 
     const actorId = getAdminActorId(request);
@@ -166,7 +167,7 @@ export async function POST(request: NextRequest) {
       route: "/api/admin/config-ai",
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return NextResponse.json({ error: "Config AI conversation failed" }, { status: 500 });
+    return apiError("internal.error", { request });
   }
 }
 

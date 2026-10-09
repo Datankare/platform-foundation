@@ -20,7 +20,6 @@ export interface Database {
       users: TableDef<{
         id: string;
         cognito_sub: string | null;
-        guest_token: string | null;
         email: string | null;
         display_name: string | null;
         role_id: string;
@@ -103,10 +102,6 @@ export interface Database {
       deletion_manifest: TableDef<{
         id: string;
         module_name: string;
-        [key: string]: any;
-      }>;
-      guest_config: TableDef<{
-        id: string;
         [key: string]: any;
       }>;
     };

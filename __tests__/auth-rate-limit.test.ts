@@ -86,8 +86,8 @@ describe("checkRateLimit — blocks requests over limit", () => {
     const result = checkRateLimit(makeRequest(), config)!;
     const body = await result.json();
 
-    expect(body.error).toBe("Too many requests");
-    expect(body.retryAfter).toBeGreaterThan(0);
+    expect(body.code).toBe("rate.limited");
+    expect(body.params.retryAfterSeconds).toBeGreaterThan(0);
   });
 });
 

@@ -23,6 +23,7 @@ import { dispatchConfigTool } from "@/platform/admin/config-handlers";
 import { getPermissionTier } from "@/platform/auth/platform-config";
 import type { ToolExecutionContext } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
+import { apiError } from "@/platform/errors";
 
 // ---------------------------------------------------------------------------
 // Permission routing
@@ -85,7 +86,10 @@ export async function POST(request: NextRequest) {
     const body: ExecuteRequest = await request.json();
 
     if (!body.toolId || typeof body.toolId !== "string") {
-      return NextResponse.json({ error: "toolId is required" }, { status: 400 });
+      return apiError("request.missing_fields", {
+        params: { fields: ["toolId"] },
+        request,
+      });
     }
 
     // Determine base permission required
@@ -163,6 +167,6 @@ export async function POST(request: NextRequest) {
       route: "/api/admin/config-ai/execute",
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return NextResponse.json({ error: "Tool execution failed" }, { status: 500 });
+    return apiError("internal.error", { request });
   }
 }

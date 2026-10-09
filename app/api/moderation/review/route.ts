@@ -26,6 +26,7 @@ import type {
 } from "@/platform/moderation/review-types";
 import type { AccountStatus, ModerationResult } from "@/platform/moderation/types";
 import type { ExplanationChain } from "@/platform/rag/types";
+import { apiError, errorFromResult } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
 
@@ -89,7 +90,7 @@ export async function GET(request: NextRequest) {
       requestId,
       route: "api/moderation/review",
     });
-    return NextResponse.json({ error: "Failed to load review queue" }, { status: 500 });
+    return apiError("internal.error", { request });
   }
 }
 
@@ -109,26 +110,22 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return apiError("request.invalid_json", { request });
   }
 
   const { source, moderationResult, targetUserId } = body;
 
   if (!source || !moderationResult || !targetUserId) {
-    return NextResponse.json(
-      { error: "source, moderationResult, and targetUserId are required" },
-      { status: 400 }
-    );
+    return apiError("request.missing_fields", {
+      params: { fields: ["source", "moderationResult", "targetUserId"] },
+      request,
+    });
   }
   if (!VALID_SUBMIT_SOURCES.includes(source)) {
-    return NextResponse.json(
-      {
-        error: `source must be one of: ${VALID_SUBMIT_SOURCES.join(
-          ", "
-        )} (appeals use /api/moderation/appeals)`,
-      },
-      { status: 400 }
-    );
+    return apiError("request.invalid_value", {
+      params: { field: "source", allowed: [...VALID_SUBMIT_SOURCES] },
+      request,
+    });
   }
 
   try {
@@ -147,10 +144,7 @@ export async function POST(request: NextRequest) {
         requestId,
         route: "api/moderation/review",
       });
-      return NextResponse.json(
-        { error: result.error ?? "Submit failed" },
-        { status: 500 }
-      );
+      return errorFromResult(result, { request, context: "Review queue submit failed" });
     }
 
     return NextResponse.json({ item: result.item }, { status: 201 });
@@ -160,6 +154,6 @@ export async function POST(request: NextRequest) {
       requestId,
       route: "api/moderation/review",
     });
-    return NextResponse.json({ error: "Failed to submit for review" }, { status: 500 });
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }

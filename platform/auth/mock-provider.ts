@@ -48,7 +48,11 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
 
     async signIn(email: string, password: string): Promise<AuthResult> {
       if (password === "wrong-password") {
-        return { success: false, error: "Incorrect email or password" };
+        return {
+          success: false,
+          error: "Incorrect email or password",
+          errorCode: "auth.invalid_credentials",
+        };
       }
       if (password === "mfa-required") {
         return {
@@ -112,7 +116,11 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
       oldPassword: string
     ): Promise<ChangePasswordResult> {
       if (oldPassword === "wrong-password") {
-        return { success: false, error: "Incorrect current password" };
+        return {
+          success: false,
+          error: "Incorrect current password",
+          errorCode: "auth.invalid_credentials",
+        };
       }
       return { success: true };
     },
@@ -150,7 +158,11 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
       totpCode: string
     ): Promise<AuthResult> {
       if (totpCode === "000000") {
-        return { success: false, error: "Invalid TOTP code" };
+        return {
+          success: false,
+          error: "Invalid TOTP code",
+          errorCode: "auth.code_invalid",
+        };
       }
       return {
         success: true,
@@ -167,7 +179,11 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
       _username: string
     ): Promise<AuthResult> {
       if (newPassword === "weak") {
-        return { success: false, error: "Password does not meet requirements" };
+        return {
+          success: false,
+          error: "Password does not meet requirements",
+          errorCode: "auth.password_policy",
+        };
       }
       return {
         success: true,

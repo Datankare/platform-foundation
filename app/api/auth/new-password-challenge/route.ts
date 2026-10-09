@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
+import { apiError } from "@/platform/errors";
+import { authResultResponse } from "@/platform/auth/auth-response";
 
 export async function POST(request: NextRequest) {
   initAuth();
@@ -8,26 +10,21 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Invalid request body" },
-      { status: 400 }
-    );
+    return apiError("request.invalid_json", { request });
   }
   if (!body.session || !body.newPassword || !body.username) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Session, newPassword, and username are required",
-      },
-      { status: 400 }
-    );
+    return apiError("request.missing_fields", {
+      params: { fields: ["session", "newPassword", "username"] },
+      request,
+    });
   }
   const auth = getAuthProvider();
-  return NextResponse.json(
+  return authResultResponse(
     await auth.respondToNewPasswordChallenge(
       body.session,
       body.newPassword,
       body.username
-    )
+    ),
+    { request, context: "New-password challenge failed" }
   );
 }

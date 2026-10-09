@@ -31,10 +31,13 @@ Set env vars to activate real providers. Each provider has its own required conf
 
 ```bash
 AUTH_PROVIDER=cognito
-COGNITO_REGION=us-east-1
-COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
-COGNITO_CLIENT_ID=your-app-client-id
+NEXT_PUBLIC_COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
+NEXT_PUBLIC_COGNITO_CLIENT_ID=your-app-client-id
+NEXT_PUBLIC_COGNITO_REGION=us-east-1   # optional — defaults to the pool id's region
 ```
+
+The `COGNITO_*` names without the prefix are accepted aliases; in production an alias must not be
+set on its own or disagree with the prefixed name (ADR-050 D2).
 
 **Requirements:** AWS Cognito User Pool with USER_PASSWORD_AUTH flow enabled on the app client.
 
@@ -100,6 +103,24 @@ CACHE_PROVIDER=memory    →  InMemoryCacheProvider     → getCache()
 AI_PROVIDER=anthropic    →  AnthropicProvider          → getOrchestrator()
 ERROR_REPORTER=noop      →  NoopErrorReporter          → getObservability()
 ```
+
+## Production: the environment contract (ADR-050)
+
+Zero-config fallbacks are for tests and local work. In a production context (`NODE_ENV=production`)
+`initProviders()` first runs `assertEnvironmentContract()` (`environment-contract.ts`) and refuses to
+boot, naming every violation at once, when:
+
+- auth is a test double — `AUTH_PROVIDER` unset or `mock` (D1). An E2E harness running the production
+  build may opt in with `E2E_TEST_DOUBLE_AUTH=true`; `E2E_IN_MEMORY_STORES` does not cover auth;
+- a declared setting is mis-shaped, set only under an alias, or set under two names that disagree (D2) —
+  `AUTH_PROVIDER`, the Cognito ids, `SUPABASE_URL` (`https://<ref>.supabase.co`), and
+  `SUPABASE_SERVICE_ROLE_KEY` (the legacy JWT), `GUEST_TOKEN_SECRET` (≥ 32 random bytes — required with a
+  real auth provider: guest tokens are signed, D4);
+- a required setting is missing (Cognito ids with `cognito`; Supabase URL + key when any slot selects `supabase`);
+- a harness switch (`E2E_*`, `ADMIN_DEV_BYPASS`) is set on a hosted deployment (`VERCEL=1`).
+
+Every reader of these settings goes through the contract's resolvers (`getSupabaseUrl()`,
+`getCognitoSettings()`, `getAuthProviderSetting()`), so what boot validates is what runs.
 
 ## Consumer Inheritance
 

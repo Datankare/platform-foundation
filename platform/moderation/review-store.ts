@@ -22,6 +22,7 @@ import type {
   ReviewQueueStats,
   ReviewItemSource,
   ReviewPriority,
+  ReviewResult,
 } from "./review-types";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
@@ -101,7 +102,7 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
 
   async submit(
     item: Omit<ReviewQueueItem, "id" | "createdAt" | "updatedAt">
-  ): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+  ): Promise<ReviewResult> {
     const now = new Date().toISOString();
     const record: ReviewQueueItem = {
       ...item,
@@ -148,10 +149,14 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
         | "updatedAt"
       >
     >
-  ): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+  ): Promise<ReviewResult> {
     const index = this.items.findIndex((i) => i.id === id);
     if (index === -1) {
-      return { success: false, error: `Review item not found: ${id}` };
+      return {
+        success: false,
+        error: `Review item not found: ${id}`,
+        errorCode: "moderation.review_item_not_found",
+      };
     }
     const updated: ReviewQueueItem = {
       ...this.items[index],
@@ -347,7 +352,7 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
 
   async submit(
     item: Omit<ReviewQueueItem, "id" | "createdAt" | "updatedAt">
-  ): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+  ): Promise<ReviewResult> {
     try {
       const response = await fetchWithTimeout(
         `${this.supabaseUrl}/rest/v1/review_queue`,
@@ -370,7 +375,11 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
           error: errText,
           route: "platform/moderation/review-store",
         });
-        return { success: false, error: `Submit failed: ${response.status}` };
+        return {
+          success: false,
+          error: `Submit failed: ${response.status}`,
+          errorCode: "internal.error",
+        };
       }
 
       const rows = await response.json();
@@ -457,7 +466,7 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
         | "updatedAt"
       >
     >
-  ): Promise<{ success: boolean; item?: ReviewQueueItem; error?: string }> {
+  ): Promise<ReviewResult> {
     try {
       const dbFields: Record<string, unknown> = {
         updated_at: fields.updatedAt ?? new Date().toISOString(),
@@ -489,12 +498,17 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
       );
 
       if (!response.ok) {
-        return { success: false, error: `Update failed: ${response.status}` };
+        return {
+          success: false,
+          error: `Update failed: ${response.status}`,
+          errorCode: "internal.error",
+        };
       }
 
       const rows = await response.json();
       const row = Array.isArray(rows) ? rows[0] : rows;
-      if (!row) return { success: false, error: "No row returned" };
+      if (!row)
+        return { success: false, error: "No row returned", errorCode: "internal.error" };
       return { success: true, item: mapRowToItem(row as ReviewQueueRow) };
     } catch (err) {
       return {

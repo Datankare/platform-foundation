@@ -30,7 +30,9 @@ import type {
   MfaVerifyResult,
   PasswordRecoveryResult,
   PasswordResetResult,
+  SsoCallbackOptions,
   SsoCallbackResult,
+  SsoInitOptions,
   SsoInitResult,
   SsoProvider,
   TokenPayload,
@@ -153,7 +155,11 @@ export interface AuthProvider {
    * Initiate SSO sign-in — returns the redirect URL for the identity provider.
    * The user's browser navigates to this URL to authenticate with Google/Apple/Microsoft.
    */
-  initiateSso(provider: SsoProvider, redirectUri: string): Promise<SsoInitResult>;
+  initiateSso(
+    provider: SsoProvider,
+    redirectUri: string,
+    options?: SsoInitOptions
+  ): Promise<SsoInitResult>;
 
   /**
    * Handle the SSO callback — exchange the authorization code for tokens.
@@ -162,7 +168,8 @@ export interface AuthProvider {
   handleSsoCallback(
     provider: SsoProvider,
     code: string,
-    redirectUri: string
+    redirectUri: string,
+    options?: SsoCallbackOptions
   ): Promise<SsoCallbackResult>;
 
   // ── Guest Mode ─────────────────────────────────────────────────────

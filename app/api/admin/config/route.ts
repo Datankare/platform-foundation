@@ -23,6 +23,7 @@ import {
   getPermissionTier,
 } from "@/platform/auth/platform-config";
 import { logger, generateRequestId } from "@/lib/logger";
+import { apiError, internalError } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const requestId = generateRequestId();
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
       route: "/api/admin/config",
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return NextResponse.json({ error: "Failed to load config" }, { status: 500 });
+    return apiError("internal.error", { request });
   }
 }
 
@@ -60,7 +61,10 @@ export async function PUT(request: NextRequest) {
     const { key, value, description, category } = await request.json();
 
     if (!key || value === undefined) {
-      return NextResponse.json({ error: "key and value are required" }, { status: 400 });
+      return apiError("request.missing_fields", {
+        params: { fields: ["key", "value"] },
+        request,
+      });
     }
 
     // Sprint 3a: permission tier routing
@@ -75,7 +79,10 @@ export async function PUT(request: NextRequest) {
     const result = await setConfig(key, value, actorId, description, category);
 
     if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 500 });
+      return internalError(result.error, {
+        request,
+        context: "Admin config write failed",
+      });
     }
 
     return NextResponse.json({ success: true, key, value });
@@ -85,7 +92,7 @@ export async function PUT(request: NextRequest) {
       route: "/api/admin/config",
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return NextResponse.json({ error: "Failed to update config" }, { status: 500 });
+    return apiError("internal.error", { request });
   }
 }
 
@@ -99,14 +106,17 @@ export async function DELETE(request: NextRequest) {
     const { key } = await request.json();
 
     if (!key) {
-      return NextResponse.json({ error: "key is required" }, { status: 400 });
+      return apiError("request.missing_fields", { params: { fields: ["key"] }, request });
     }
 
     const actorId = getAdminActorId(request);
     const result = await deleteConfig(key, actorId);
 
     if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 500 });
+      return internalError(result.error, {
+        request,
+        context: "Admin config write failed",
+      });
     }
 
     return NextResponse.json({ success: true, key });
@@ -116,6 +126,6 @@ export async function DELETE(request: NextRequest) {
       route: "/api/admin/config",
       error: error instanceof Error ? error.message : "Unknown",
     });
-    return NextResponse.json({ error: "Failed to delete config" }, { status: 500 });
+    return apiError("internal.error", { request });
   }
 }

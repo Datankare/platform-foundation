@@ -2,11 +2,13 @@
  * app/api/auth/sign-up/route.ts — Sign up endpoint
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
-import { validatePassword } from "@/platform/auth/password-policy";
+import { passwordRuleViolations } from "@/platform/auth/password-policy";
 import { logger } from "@/lib/logger";
+import { apiError } from "@/platform/errors";
+import { authResultResponse } from "@/platform/auth/auth-response";
 
 export async function POST(request: NextRequest) {
   initAuth();
@@ -15,21 +17,18 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Invalid request body" },
-      { status: 400 }
-    );
+    return apiError("request.invalid_json", { request });
   }
 
   if (!body.email || !body.password) {
-    return NextResponse.json(
-      { success: false, error: "Email and password are required" },
-      { status: 400 }
-    );
+    return apiError("request.missing_fields", {
+      params: { fields: ["email", "password"] },
+      request,
+    });
   }
 
   // Validate password against policy (Sprint 4 enhanced)
-  const policyViolations = validatePassword(body.password, {
+  const failedRules = passwordRuleViolations(body.password, {
     rotationDays: 90,
     minLength: 12,
     requireUppercase: true,
@@ -39,11 +38,8 @@ export async function POST(request: NextRequest) {
     passwordHistoryCount: 5,
   });
 
-  if (policyViolations.length > 0) {
-    return NextResponse.json(
-      { success: false, error: policyViolations[0], violations: policyViolations },
-      { status: 400 }
-    );
+  if (failedRules.length > 0) {
+    return apiError("auth.password_policy", { params: { rules: failedRules }, request });
   }
 
   const auth = getAuthProvider();
@@ -53,5 +49,5 @@ export async function POST(request: NextRequest) {
     logger.info("User registered", { email: body.email });
   }
 
-  return NextResponse.json(result);
+  return authResultResponse(result, { request, context: "Sign up failed" });
 }

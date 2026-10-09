@@ -20,15 +20,9 @@ import {
 } from "@/platform/moderation/review-service";
 import type { ReviewDecision } from "@/platform/moderation/review-types";
 import type { ModerationAction } from "@/platform/moderation/types";
+import { apiError, errorFromResult } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
-
-/** Map a service error string to an HTTP status. */
-function statusForError(error: string): number {
-  if (error.includes("not found")) return 404;
-  if (error.includes("required")) return 400;
-  return 409;
-}
 
 /**
  * The acting reviewer's id, taken from the verified token. Falls back to
@@ -60,7 +54,7 @@ export async function PATCH(
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return apiError("request.invalid_json", { request });
   }
 
   try {
@@ -68,29 +62,23 @@ export async function PATCH(
       case "claim": {
         const result = await claimItem(id, reviewerId);
         if (!result.success) {
-          return NextResponse.json(
-            { error: result.error },
-            { status: statusForError(result.error ?? "") }
-          );
+          return errorFromResult(result, { request });
         }
         return NextResponse.json({ item: result.item });
       }
       case "unclaim": {
         const result = await unclaimItem(id, reviewerId);
         if (!result.success) {
-          return NextResponse.json(
-            { error: result.error },
-            { status: statusForError(result.error ?? "") }
-          );
+          return errorFromResult(result, { request });
         }
         return NextResponse.json({ item: result.item });
       }
       case "resolve": {
         if (!body.decision || !body.reviewerNotes) {
-          return NextResponse.json(
-            { error: "decision and reviewerNotes are required to resolve" },
-            { status: 400 }
-          );
+          return apiError("request.missing_fields", {
+            params: { fields: ["decision", "reviewerNotes"] },
+            request,
+          });
         }
         const result = await resolveItem({
           itemId: id,
@@ -100,18 +88,15 @@ export async function PATCH(
           modifiedAction: body.modifiedAction,
         });
         if (!result.success) {
-          return NextResponse.json(
-            { error: result.error },
-            { status: statusForError(result.error ?? "") }
-          );
+          return errorFromResult(result, { request });
         }
         return NextResponse.json({ item: result.item });
       }
       default:
-        return NextResponse.json(
-          { error: "action must be one of: claim, unclaim, resolve" },
-          { status: 400 }
-        );
+        return apiError("request.invalid_value", {
+          params: { field: "action", allowed: ["claim", "unclaim", "resolve"] },
+          request,
+        });
     }
   } catch (err) {
     logger.error("Review item action error", {
@@ -121,6 +106,6 @@ export async function PATCH(
       action: body.action,
       route: "api/moderation/review/[id]",
     });
-    return NextResponse.json({ error: "Failed to update review item" }, { status: 500 });
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }

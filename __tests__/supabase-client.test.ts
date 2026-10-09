@@ -75,6 +75,28 @@ describe("getSupabaseServiceClient", () => {
       "Missing Supabase environment variables"
     );
   });
+
+  it("reads SUPABASE_URL as the single source over the NEXT_PUBLIC_ alias (ADR-050 D2)", async () => {
+    process.env.SUPABASE_URL = "https://canonical.supabase.co";
+    const { getSupabaseServiceClient } = await import("@/lib/supabase/server");
+    getSupabaseServiceClient();
+
+    expect(mockCreateClient).toHaveBeenCalledWith(
+      "https://canonical.supabase.co",
+      "test-service-role-key",
+      expect.anything()
+    );
+  });
+
+  it("names SUPABASE_URL when no URL is set", async () => {
+    delete process.env.SUPABASE_URL;
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const { getSupabaseServiceClient } = await import("@/lib/supabase/server");
+
+    expect(() => getSupabaseServiceClient()).toThrow(
+      /SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/
+    );
+  });
 });
 
 describe("getSupabaseUserClient", () => {

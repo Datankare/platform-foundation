@@ -18,6 +18,11 @@
 
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
+import {
+  ENVIRONMENT_CONTRACT,
+  HARNESS_ONLY_SETTINGS,
+  SUPABASE_SELECTORS,
+} from "@/platform/providers/environment-contract";
 
 const ROOT = process.cwd();
 const DOCS = join(ROOT, "docs");
@@ -138,6 +143,19 @@ describe("docs integrity — environment variables", () => {
     const undocumented = codeVars.filter((v) => !ref.includes(v));
     expect(undocumented).toEqual([]);
   });
+
+  it("documents every setting the environment contract reads (ADR-050 D2)", () => {
+    // The contract reads its settings by name (env[name]), which the process.env scan above
+    // cannot see — so its declarations are checked directly.
+    const ref = read("docs/ENV_REFERENCE.md");
+    const declared = [
+      ...ENVIRONMENT_CONTRACT.flatMap((d) => [d.name, ...d.aliases]),
+      ...SUPABASE_SELECTORS,
+      ...HARNESS_ONLY_SETTINGS,
+      "VERCEL",
+    ];
+    expect(declared.filter((v) => !ref.includes(`\`${v}\``))).toEqual([]);
+  });
 });
 
 // ── Required adopter docs ──────────────────────────────────────────────────
@@ -169,7 +187,9 @@ describe("docs integrity — release notes", () => {
     // current major (e.g. a "v2" / "2.0" heading) so a major release cannot ship without a
     // release-notes entry. Kept coarse (major) so patch releases don't force a churn edit.
     const notes = read("docs/RELEASE_NOTES.md");
-    expect(notes).toMatch(/\b2\.0|\bv2\b|Sprint 3c/);
+    const major = Number(JSON.parse(read("package.json")).version.split(".")[0]);
+    expect(Number.isInteger(major)).toBe(true);
+    expect(notes).toMatch(new RegExp(`^## v${major}\\.\\d+\\.\\d+`, "m"));
   });
 });
 

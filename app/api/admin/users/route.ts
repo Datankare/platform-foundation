@@ -11,6 +11,7 @@ import { adminGuard } from "@/platform/auth/admin-guard";
 import { writeAuditLog } from "@/platform/auth/audit";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
 import { logger } from "@/lib/logger";
+import { apiError, internalError } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_users");
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
       error: error.message,
       route: "api/admin/users",
     });
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError(error, { request, context: "Admin users query failed" });
   }
 
   // Resolve role names
@@ -85,7 +86,10 @@ export async function PATCH(request: NextRequest) {
   const { userId, roleId } = body;
 
   if (!userId || !roleId) {
-    return NextResponse.json({ error: "userId and roleId required" }, { status: 400 });
+    return apiError("request.missing_fields", {
+      params: { fields: ["userId", "roleId"] },
+      request,
+    });
   }
 
   const supabase = getSupabaseServiceClient();
@@ -103,7 +107,7 @@ export async function PATCH(request: NextRequest) {
     .eq("id", userId);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return internalError(error, { request, context: "Admin users query failed" });
   }
 
   invalidatePermissions(userId);

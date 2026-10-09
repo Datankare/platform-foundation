@@ -1,6 +1,10 @@
 name: "CodeQL SAST"
 
 on:
+  # On develop too, so a finding surfaces on the commit that introduces it rather than first at
+  # promotion (7A: a doc-generator escaping finding appeared only on the develop → staging PR).
+  push:
+    branches: [develop]
   pull_request:
     branches: [main, staging]
   schedule:

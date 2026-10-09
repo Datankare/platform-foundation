@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
+import { apiError } from "@/platform/errors";
 
 export interface RateLimitConfig {
   windowMs: number;
@@ -102,18 +103,15 @@ export function checkRateLimit(
 
     const retryAfterSeconds = Math.ceil(config.windowMs / 1000);
 
-    return NextResponse.json(
-      { error: "Too many requests", retryAfter: retryAfterSeconds },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(retryAfterSeconds),
-          "X-RateLimit-Limit": String(config.maxRequests),
-          "X-RateLimit-Remaining": "0",
-          "X-RateLimit-Reset": String(Math.ceil((cutoff + config.windowMs) / 1000)),
-        },
-      }
-    );
+    return apiError("rate.limited", {
+      params: { retryAfterSeconds },
+      request,
+      headers: {
+        "X-RateLimit-Limit": String(config.maxRequests),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": String(Math.ceil((cutoff + config.windowMs) / 1000)),
+      },
+    });
   }
 
   entry.timestamps.push(now);

@@ -45,7 +45,7 @@ describe("requireAuth — error handling", () => {
     expect(result.error!.status).toBe(401);
 
     const body = await result.error!.json();
-    expect(body.error).toBe("Authentication failed");
+    expect(body.code).toBe("auth.token_invalid");
   });
 
   it("returns 401 when verifyToken returns null", async () => {
@@ -58,7 +58,7 @@ describe("requireAuth — error handling", () => {
     expect(result.error!.status).toBe(401);
 
     const body = await result.error!.json();
-    expect(body.error).toBe("Invalid or expired token");
+    expect(body.code).toBe("auth.token_invalid");
   });
 });
 
@@ -79,8 +79,8 @@ describe("requirePermission", () => {
     expect(result.error!.status).toBe(403);
 
     const body = await result.error!.json();
-    expect(body.error).toBe("Permission denied");
-    expect(body.required).toBe("admin_manage_users");
+    expect(body.code).toBe("auth.permission_denied");
+    expect(body.params.permission).toBe("admin_manage_users");
   });
 
   it("checks the correct user and permission code", async () => {

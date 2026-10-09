@@ -28,7 +28,7 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import { GET } from "@/app/api/health/route";
+import { GET, deployedCommit } from "@/app/api/health/route";
 
 function stateWith(report: HealthReport) {
   mockCheck.mockResolvedValue(report);
@@ -229,5 +229,34 @@ describe("GET /api/health — zero probes is visible", () => {
     expect(body.status).toBe("healthy");
     expect(body.probeCount).toBe(0);
     expect(body.checks).toEqual([]);
+  });
+});
+
+describe("GET /api/health — deployed commit (ADR-050 D6, TASK-105)", () => {
+  it("reports the host's commit, shortened and lower-cased", () => {
+    expect(
+      deployedCommit({
+        VERCEL_GIT_COMMIT_SHA: "E3C3FE4A1B2C3D4E5F60718293A4B5C6D7E8F901",
+      })
+    ).toBe("e3c3fe4a1b2c");
+  });
+
+  it("is null when not built by the host, or when the value is not a commit", () => {
+    expect(deployedCommit({})).toBeNull();
+    expect(deployedCommit({ VERCEL_GIT_COMMIT_SHA: "  " })).toBeNull();
+    expect(deployedCommit({ VERCEL_GIT_COMMIT_SHA: "main" })).toBeNull();
+    expect(deployedCommit({ VERCEL_GIT_COMMIT_SHA: "<script>" })).toBeNull();
+  });
+
+  it("is carried on the fail-closed path too", async () => {
+    const prev = process.env.VERCEL_GIT_COMMIT_SHA;
+    process.env.VERCEL_GIT_COMMIT_SHA = "abcdef1234567890";
+    try {
+      const body = await (await GET()).json();
+      expect(body.commit).toBe("abcdef123456");
+    } finally {
+      if (prev === undefined) delete process.env.VERCEL_GIT_COMMIT_SHA;
+      else process.env.VERCEL_GIT_COMMIT_SHA = prev;
+    }
   });
 });

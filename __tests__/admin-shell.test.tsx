@@ -35,7 +35,6 @@ describe("AdminShell", () => {
     expect(screen.getByText("Roles")).toBeDefined();
     expect(screen.getByText("Entitlements")).toBeDefined();
     expect(screen.getByText("Audit Log")).toBeDefined();
-    expect(screen.getByText("Guest Config")).toBeDefined();
     expect(screen.getByText("Password Policy")).toBeDefined();
   });
 

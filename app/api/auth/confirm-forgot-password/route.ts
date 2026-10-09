@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
+import { apiError } from "@/platform/errors";
+import { authResultResponse } from "@/platform/auth/auth-response";
 
 export async function POST(request: NextRequest) {
   initAuth();
@@ -8,19 +10,17 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { success: false, error: "Invalid request body" },
-      { status: 400 }
-    );
+    return apiError("request.invalid_json", { request });
   }
   if (!body.email || !body.code || !body.newPassword) {
-    return NextResponse.json(
-      { success: false, error: "Email, code, and newPassword are required" },
-      { status: 400 }
-    );
+    return apiError("request.missing_fields", {
+      params: { fields: ["email", "code", "newPassword"] },
+      request,
+    });
   }
   const auth = getAuthProvider();
-  return NextResponse.json(
-    await auth.confirmForgotPassword(body.email, body.code, body.newPassword)
+  return authResultResponse(
+    await auth.confirmForgotPassword(body.email, body.code, body.newPassword),
+    { request, context: "Password reset failed" }
   );
 }

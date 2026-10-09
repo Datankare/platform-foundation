@@ -114,7 +114,8 @@ describe("ai plan route", () => {
       complete: jest.fn().mockRejectedValue(new Error("down")),
     });
     const res = await planPOST(jsonReq({ prompt: "x", panel: "roles" }));
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("service.unavailable");
   });
 
   it("passes the guard denial through", async () => {

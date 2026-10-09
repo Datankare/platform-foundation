@@ -10,6 +10,10 @@
  * our credentials are broken, while a timeout on the LLM probe tells them which provider we
  * use and that it is reachable from our network. Detail goes to the configured ErrorReporter
  * — an interface, so a consumer running Datadog or Bugsnag receives it there.
+ *
+ * `commit` (ADR-050 D6, TASK-105): the git commit this deployment was built from, so the
+ * deployed smoke test can prove which code is live. Reported on every path, healthy or not —
+ * "what is running" matters most when it is broken. Null outside a hosted build.
  */
 
 import { NextResponse } from "next/server";
@@ -20,6 +24,14 @@ import { tryGetObservability } from "@/platform/observability";
 const DETAIL_NOTICE =
   "Probe detail is withheld from unauthenticated callers (OWASP A05) and sent to the " +
   "configured error reporter. Correlate using requestId.";
+
+/** The deployed commit (first 12 characters), or null when not built by the host. */
+export function deployedCommit(
+  env: Readonly<Record<string, string | undefined>> = process.env
+) {
+  const sha = env.VERCEL_GIT_COMMIT_SHA?.trim();
+  return sha && /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 12).toLowerCase() : null;
+}
 
 export async function GET() {
   const requestId = generateRequestId();
@@ -36,6 +48,7 @@ export async function GET() {
     return NextResponse.json(
       {
         status: "unhealthy",
+        commit: deployedCommit(),
         requestId,
         probeCount: 0,
         checks: [],
@@ -101,6 +114,7 @@ export async function GET() {
     {
       status: report.status,
       version: report.version,
+      commit: deployedCommit(),
       timestamp: report.timestamp,
       requestId,
       probeCount: report.checks.length,

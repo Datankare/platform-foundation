@@ -251,6 +251,8 @@ describe("POST /api/moderation/appeals", () => {
     (submitAppeal as jest.Mock).mockResolvedValue({
       success: false,
       error: "Appeal window has expired (72 hours)",
+      errorCode: "moderation.appeal_window_expired",
+      errorParams: { hours: 72 },
     });
 
     const res = await POST(
@@ -265,6 +267,7 @@ describe("POST /api/moderation/appeals", () => {
     (submitAppeal as jest.Mock).mockResolvedValue({
       success: false,
       error: "An appeal is already pending for this decision",
+      errorCode: "moderation.appeal_pending",
     });
 
     const res = await POST(
@@ -413,6 +416,8 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
     (claimItem as jest.Mock).mockResolvedValue({
       success: false,
       error: "Item is claimed, not pending",
+      errorCode: "moderation.item_state_conflict",
+      errorParams: { status: "claimed" },
     });
 
     const res = await PATCH(patchReq({ action: "claim" }), ctx("a1"));

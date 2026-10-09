@@ -23,6 +23,7 @@ import {
   requiredPermissionForKey,
   proposalConfigKey,
 } from "@/platform/admin/pending-approvals";
+import { apiError, errorFromResult } from "@/platform/errors";
 
 interface DecisionBody {
   decision?: string;
@@ -43,28 +44,28 @@ export async function POST(
   const { user } = await optionalAuth(request);
   const decidedBy = user?.sub;
   if (!decidedBy) {
-    return NextResponse.json({ error: "Unauthenticated", requestId }, { status: 401 });
+    return apiError("auth.required", { request });
   }
 
   let body: DecisionBody;
   try {
     body = (await request.json()) as DecisionBody;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON", requestId }, { status: 400 });
+    return apiError("request.invalid_json", { request });
   }
 
   const { decision, source, note } = body;
   if (decision !== "approve" && decision !== "reject") {
-    return NextResponse.json(
-      { error: "decision must be 'approve' or 'reject'", requestId },
-      { status: 400 }
-    );
+    return apiError("request.invalid_value", {
+      params: { field: "decision", allowed: ["approve", "reject"] },
+      request,
+    });
   }
   if (source !== "runtime" && source !== "config-approval") {
-    return NextResponse.json(
-      { error: "source must be 'runtime' or 'config-approval'", requestId },
-      { status: 400 }
-    );
+    return apiError("request.invalid_value", {
+      params: { field: "source", allowed: ["runtime", "config-approval"] },
+      request,
+    });
   }
 
   // Resolve the hold: who requested it, and the permission required to clear it.
@@ -73,7 +74,7 @@ export async function POST(
   if (source === "runtime") {
     const proposal = await getProposalStore().getById(id);
     if (!proposal) {
-      return NextResponse.json({ error: "Hold not found", requestId }, { status: 404 });
+      return apiError("approvals.hold_not_found", { request });
     }
     requester = proposal.actor.actorId;
     requiredPermission = await requiredPermissionForKey(
@@ -82,7 +83,7 @@ export async function POST(
   } else {
     const record = await getApproval(id);
     if (!record) {
-      return NextResponse.json({ error: "Hold not found", requestId }, { status: 404 });
+      return apiError("approvals.hold_not_found", { request });
     }
     requester = record.requestedBy ?? "";
     requiredPermission = await requiredPermissionForKey(record.configKey);
@@ -90,23 +91,14 @@ export async function POST(
 
   // ADR-040 enforcement, server-side: independent + authorized.
   if (decision === "approve" && decidedBy === requester) {
-    return NextResponse.json(
-      {
-        error: "Self-approval is not permitted; an independent approver must clear this.",
-        requestId,
-      },
-      { status: 409 }
-    );
+    return apiError("approvals.self_approval", { request });
   }
   const authorized = await hasPermission(decidedBy, requiredPermission);
   if (!authorized) {
-    return NextResponse.json(
-      {
-        error: `This change requires the ${requiredPermission} permission to clear.`,
-        requestId,
-      },
-      { status: 403 }
-    );
+    return apiError("approvals.permission_required", {
+      params: { permission: requiredPermission },
+      request,
+    });
   }
 
   try {
@@ -123,19 +115,13 @@ export async function POST(
         ? await approveChange(id, decidedBy, note ?? "")
         : await rejectChange(id, decidedBy, note ?? "");
     if (!result.success) {
-      return NextResponse.json(
-        { error: result.error ?? "Decision failed", requestId },
-        { status: 409 }
-      );
+      return errorFromResult(result, { request, context: "Approval decision failed" });
     }
     return NextResponse.json({ decision, source, requestId });
   } catch (err) {
     logger.error(
       `approval decision failed: ${err instanceof Error ? err.message : String(err)} (req ${requestId})`
     );
-    return NextResponse.json(
-      { error: "Failed to record the decision", requestId },
-      { status: 500 }
-    );
+    return apiError("internal.error", { params: { requestId }, request });
   }
 }
