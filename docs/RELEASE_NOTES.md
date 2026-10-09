@@ -9,6 +9,23 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v3.0.1 — development-dependency advisories
+
+Date: 2026-10-09
+
+No runtime change; the production dependency tree is unchanged and `npm audit --omit=dev` is clean.
+
+- **handlebars** 4.7.10 (in-range update, via ts-jest) — SEC-014.
+- **brace-expansion** overrides raised to 1.1.21 and 2.1.7 — SEC-015.
+- **sprintf-js** (SEC-012) and **braces** (SEC-013) have no patched release; both are reachable only
+  from the test toolchain with the repository's own input. Recorded as accepted risk in
+  [`SECURITY_DEBT.md`](SECURITY_DEBT.md) and reassessed at every dependency sweep.
+
+**Consumer action:** `package.json` is sync-excluded — apply the same handlebars update and
+brace-expansion overrides in your own `package.json` and run `npm install`.
+
+---
+
 ## v3.0.0 — Sprint 7A: deployment & auth readiness
 
 Date: 2026-10-09
