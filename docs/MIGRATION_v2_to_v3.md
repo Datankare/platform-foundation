@@ -29,10 +29,10 @@ Full reference: [ENV_REFERENCE.md](ENV_REFERENCE.md).
 
 ## 2. Database — every consumer with a Supabase project
 
-| Situation             | Action                                                                                                                                                                                                                                                                             |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **New database**      | Run `supabase/baseline/000_baseline.sql` once on the empty project, then every migration numbered after its `baseline-covers-through` line. The numbered chain cannot build a database from zero (TASK-091) — see [`supabase/baseline/README.md`](../supabase/baseline/README.md). |
-| **Existing database** | Apply **037** (guest allowance) before deploying v3.0.0. Apply **038** (retires the guest lifecycle) only **after** the code that no longer uses the dropped objects is live — drop the schema after the code, never before.                                                       |
+| Situation             | Action                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **New database**      | Run `supabase/baseline/000_baseline.sql` once on the empty project, then every migration the baseline does not record — the platform's newer ones and **all** of the app's own, whatever their number (corrected in v3.1.0, TASK-119). The numbered chain cannot build a database from zero (TASK-091) — see [`supabase/baseline/README.md`](../supabase/baseline/README.md). |
+| **Existing database** | Apply **037** (guest allowance) before deploying v3.0.0. Apply **038** (retires the guest lifecycle) only **after** the code that no longer uses the dropped objects is live — drop the schema after the code, never before.                                                                                                                                                  |
 
 ## 3. Guests (ADR-050 D4) — consumers with guest access
 

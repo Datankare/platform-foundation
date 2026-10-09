@@ -282,8 +282,9 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
     }
   }
 
-  // D4: a real auth provider mints guest tokens, which must be signed. (The mock provider's
-  // guest tokens are fixed test values; it needs no secret.)
+  // D4: guest tokens are signed by the platform (/api/auth/guest) under this secret. Required
+  // with a real auth provider; a production-build test harness on the mock provider sets it
+  // only if it exercises guests (without it, starting a guest session is refused).
   if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && getGuestTokenSecret(env) === undefined) {
     violations.push(
       `GUEST_TOKEN_SECRET is required by AUTH_PROVIDER=${auth} (signed guest tokens)`

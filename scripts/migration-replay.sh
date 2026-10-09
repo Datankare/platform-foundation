@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # scripts/migration-replay.sh — build a database from zero the way a new instance is built
 # (TASK-091): Supabase shim, schema baseline, then every migration the baseline does not
-# cover, in order. Any SQL error fails. Then checks what the platform needs is there.
+# record, in filename order. Any SQL error fails. Then checks what the platform needs is there.
+#
+# "Covered" means recorded in the baseline's applied_migrations seed — not "numbered at or below
+# baseline-covers-through". A consuming app's own migrations (Playform's 007_playform_*, 031–036)
+# share that number range but are not the platform's, so the baseline never contains them; they
+# are replayed after it like any newer migration (TASK-119).
 #
 # Uses the standard PG* environment (PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE) and
 # expects an EMPTY database. CI runs it against a pgvector Postgres service; locally:
@@ -25,8 +30,7 @@ step "baseline (covers 001–$through)"
 
 applied=0
 for f in $(ls "$ROOT/supabase/migrations" | grep -E '^[0-9]+_.*\.sql$' | sort); do
-  n=$((10#${f%%_*}))
-  if [ "$n" -gt "$((10#$through))" ]; then
+  if ! grep -qF "('$f', 'verified'" "$BASELINE"; then
     step "migration $f"
     "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null
     applied=$((applied + 1))
@@ -72,4 +76,4 @@ BEGIN
 END $$;
 SQL
 
-echo "✓ replay: baseline + $applied newer migration(s), checks passed"
+echo "✓ replay: baseline + $applied migration(s) it does not record, checks passed"

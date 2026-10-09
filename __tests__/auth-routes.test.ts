@@ -432,20 +432,19 @@ describe("POST /api/auth/guest", () => {
     handler = mod.POST;
   });
 
-  it("creates guest token and sets cookie", async () => {
-    mockProvider.createGuestToken.mockResolvedValue({
-      success: true,
-      guestId: "guest-123",
-      token: "guest.tok",
-      expiresAt: 9999999999,
-    });
-
+  it("mints a platform-signed guest token, whatever the auth provider", async () => {
     const res = await handler();
     const body = await res.json();
-    const setCookie = res.headers.get("set-cookie");
-
+    expect(res.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.guestId).toBe("guest-123");
-    expect(setCookie).toContain("pf_has_session=true");
+    expect(body.token).toMatch(/^guest\./);
+    // Never the provider: guests are the platform's (ADR-050 D4).
+    expect(mockProvider.createGuestToken).not.toHaveBeenCalled();
+    const { verifyGuestToken } = await import("@/platform/auth/guest-token");
+    await expect(verifyGuestToken(body.token)).resolves.toMatchObject({
+      valid: true,
+      guestId: body.guestId,
+    });
+    expect(res.headers.get("set-cookie")).toContain("pf_has_session=true");
   });
 });

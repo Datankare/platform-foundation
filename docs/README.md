@@ -85,15 +85,16 @@ graph TD
 
 ### Getting Started
 
-| Doc                                                  | What it is                                                                                           |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [SETUP_AND_INTEGRATION.md](SETUP_AND_INTEGRATION.md) | Adopt the platform: zero-config boot → real backends → migrations → sync/inheritance.                |
-| [KNOWLEDGE_BASES.md](KNOWLEDGE_BASES.md)             | Knowledge bases: isolation levels, scoping, and bringing your own store.                             |
-| [API_ERRORS.md](API_ERRORS.md)                       | Every API error code — HTTP status, message, params, what the caller should do. Generated (ADR-051). |
-| [ENV_REFERENCE.md](ENV_REFERENCE.md)                 | Every environment variable — purpose, required, default, values, incl. delegation keys.              |
-| [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md)       | Upgrading from v1.x: the breaking rung-1 retirement + adoption steps.                                |
-| [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md)       | Upgrading from v2.x: stricter production boot, signed guests, coded errors, removed guest lifecycle. |
-| [RELEASE_NOTES.md](RELEASE_NOTES.md)                 | What shipped, per release, newest first.                                                             |
+| Doc                                                  | What it is                                                                                                          |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [SETUP_AND_INTEGRATION.md](SETUP_AND_INTEGRATION.md) | Adopt the platform: zero-config boot → real backends → migrations → sync/inheritance.                               |
+| [KNOWLEDGE_BASES.md](KNOWLEDGE_BASES.md)             | Knowledge bases: isolation levels, scoping, and bringing your own store.                                            |
+| [API_ERRORS.md](API_ERRORS.md)                       | Every API error code — HTTP status, message, params, what the caller should do. Generated (ADR-051).                |
+| [APP_API_ERRORS.md](APP_API_ERRORS.md)               | The consuming app's own `app.*` error codes (ADR-051 D1). Generated; consumer-owned — empty in platform-foundation. |
+| [ENV_REFERENCE.md](ENV_REFERENCE.md)                 | Every environment variable — purpose, required, default, values, incl. delegation keys.                             |
+| [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md)       | Upgrading from v1.x: the breaking rung-1 retirement + adoption steps.                                               |
+| [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md)       | Upgrading from v2.x: stricter production boot, signed guests, coded errors, removed guest lifecycle.                |
+| [RELEASE_NOTES.md](RELEASE_NOTES.md)                 | What shipped, per release, newest first.                                                                            |
 
 ### Architecture
 

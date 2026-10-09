@@ -1,19 +1,34 @@
 /**
- * ADR-051 D5 (c): docs/API_ERRORS.md is generated from the registry and catalog and never drifts.
+ * ADR-051 D5 (c): docs/API_ERRORS.md (platform codes) and docs/APP_API_ERRORS.md (the consuming
+ * app's `app.*` codes, D1) are generated from the registry and catalog and never drift.
  * The generator pads tables as Prettier does, so the file also passes format:check.
  * Regenerate: UPDATE_API_ERRORS_DOC=1 npx jest __tests__/api-errors-doc.test.ts
  */
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { escapeTableCell, renderApiErrorsDoc } from "@/platform/errors/doc";
+import {
+  escapeTableCell,
+  renderApiErrorsDoc,
+  renderAppApiErrorsDoc,
+} from "@/platform/errors/doc";
 
-const DOC = join(__dirname, "..", "docs", "API_ERRORS.md");
+const DOCS = join(__dirname, "..", "docs");
 
-describe("docs/API_ERRORS.md", () => {
+describe.each([
+  ["API_ERRORS.md", renderApiErrorsDoc],
+  ["APP_API_ERRORS.md", renderAppApiErrorsDoc],
+])("docs/%s", (file, render) => {
   it("matches the registry and the English catalog", () => {
-    const want = renderApiErrorsDoc() + "\n";
-    if (process.env.UPDATE_API_ERRORS_DOC === "1") writeFileSync(DOC, want);
-    expect(readFileSync(DOC, "utf8")).toBe(want);
+    const path = join(DOCS, file);
+    const want = render() + "\n";
+    if (process.env.UPDATE_API_ERRORS_DOC === "1") writeFileSync(path, want);
+    expect(readFileSync(path, "utf8")).toBe(want);
+  });
+});
+
+describe("platform and app references are separate", () => {
+  it("the platform reference lists no app code", () => {
+    expect(renderApiErrorsDoc()).not.toMatch(/^\| `app\./m);
   });
 });
 

@@ -5,6 +5,8 @@
 import { IntlMessageFormat } from "intl-messageformat";
 import {
   ERROR_CODES,
+  PLATFORM_ERROR_CODES,
+  isAppErrorCode,
   messageKey,
   type ErrorCode,
   type ErrorCodeSpec,
@@ -14,8 +16,10 @@ import {
   DEFAULT_LOCALE,
   catalogKeys,
   lookup,
+  mergeCatalogs,
   renderMessage,
 } from "@/platform/errors/messages";
+import appEn from "@/messages/app/en.json";
 
 const en = CATALOGS[DEFAULT_LOCALE];
 const codes = Object.keys(ERROR_CODES) as ErrorCode[];
@@ -89,7 +93,9 @@ describe("error registry ↔ catalog (ADR-051)", () => {
     expect(spec.status).toBeGreaterThanOrEqual(400);
     expect(spec.status).toBeLessThan(600);
     expect(spec.action.length).toBeGreaterThan(0);
-    expect(code).toMatch(/^[a-z]+\.[a-z_]+$/);
+    expect(code).toMatch(
+      isAppErrorCode(code) ? /^app\.[a-z_]+\.[a-z_]+$/ : /^[a-z]+\.[a-z_]+$/
+    );
   });
 
   it("every locale has exactly English's keys", () => {
@@ -97,5 +103,42 @@ describe("error registry ↔ catalog (ADR-051)", () => {
     for (const [locale, catalog] of Object.entries(CATALOGS)) {
       expect({ locale, keys: catalogKeys(catalog) }).toEqual({ locale, keys: want });
     }
+  });
+});
+
+describe("app codes and messages (ADR-051 D1 — consumer-owned)", () => {
+  it("no platform code is in the app namespace", () => {
+    expect(Object.keys(PLATFORM_ERROR_CODES).filter(isAppErrorCode)).toEqual([]);
+  });
+
+  it("the app catalog uses only errors.app and screens.app", () => {
+    const outside = catalogKeys(appEn).filter(
+      (k) => !k.startsWith("errors.app.") && !k.startsWith("screens.app.")
+    );
+    expect(outside).toEqual([]);
+  });
+
+  it("merges an app catalog under the platform's", () => {
+    const merged = mergeCatalogs(
+      { errors: { auth: { required: "Sign in." } } },
+      { errors: { app: { files: { too_large: "Too large." } } } }
+    );
+    expect(lookup(merged, "errors.auth.required")).toBe("Sign in.");
+    expect(lookup(merged, "errors.app.files.too_large")).toBe("Too large.");
+  });
+
+  it("refuses an app key outside its namespaces", () => {
+    expect(() => mergeCatalogs({}, { errors: { auth: { required: "x" } } })).toThrow(
+      /outside errors\.app/
+    );
+  });
+
+  it("refuses an app key the platform already defines", () => {
+    expect(() =>
+      mergeCatalogs(
+        { errors: { app: { a: { b: "platform" } } } },
+        { errors: { app: { a: { b: "app" } } } }
+      )
+    ).toThrow(/already defined by the platform: errors\.app\.a\.b/);
   });
 });
