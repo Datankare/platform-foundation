@@ -81,10 +81,11 @@ required; in production boot refuses without them (ADR-050 D2).
 
 ### Runtime
 
-| Variable   | Required             | Default | Notes                                                                                                                                |
-| ---------- | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `NODE_ENV` | No (set by tooling)  | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand.                                         |
-| `VERCEL`   | No (set by the host) | —       | Vercel sets `1` on every deployment. The environment contract refuses harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`) when it is set. |
+| Variable                | Required             | Default | Notes                                                                                                                                                                          |
+| ----------------------- | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`              | No (set by tooling)  | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand.                                                                                   |
+| `VERCEL`                | No (set by the host) | —       | Vercel sets `1` on every deployment. The environment contract refuses harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`) when it is set.                                           |
+| `VERCEL_GIT_COMMIT_SHA` | No (set by the host) | —       | The commit a Vercel deployment was built from. `/api/health` reports its first 12 characters as `commit` so the deployed smoke test can prove which code is live (ADR-050 D6). |
 
 ### Production environment contract (ADR-050 D1/D2)
 
@@ -289,7 +290,7 @@ as long as the maximum token lifetime.
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` ·
 `PROPOSAL_STORE` · `REALTIME_PROVIDER` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` · `SSO_PROVIDERS` ·
 `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` · `TRANSLATION_PROVIDER` ·
-`TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` · `UPSTASH_REDIS_REST_URL` · `VERCEL`
+`TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` · `UPSTASH_REDIS_REST_URL` · `VERCEL` · `VERCEL_GIT_COMMIT_SHA`
 
 ---
 

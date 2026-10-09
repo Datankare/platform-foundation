@@ -51,6 +51,8 @@ _Implementation (7A B1 — allowance):_ governed `guest.translate_allowance` (pl
 
 **D6 — Deployment topology is explicit.** Each Vercel project maps to one branch (`playform-dev` ← `develop`, `playform-staging` ← `staging`, production ← `main`), and production has its own database (TASK-092). The mapping is documented and checked by the smoke test (it reports the deployed commit).
 
+_Implementation (7A C3/C4):_ `scripts/deploy-smoke.mjs` is the D5 check — health, the deployed commit, features, a coded refusal, a signed guest token and a real guest translation against the deployed address — and `/api/health` reports `commit` so the same run checks D6. The consumer's deployment workflow runs it after every successful deploy (Playform: `.github/workflows/deploy-smoke.yml`, on Vercel's `deployment_status`, expected commit = the deployment's commit). The topology is recorded and verified in TASK-105; production has its own database built from the schema baseline (TASK-091/092) and its own Cognito pool.
+
 ## 3. Consequences
 
 - A misconfigured deployment fails at boot with a named setting, instead of running degraded.

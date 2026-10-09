@@ -23,6 +23,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { apiError } from "@/platform/errors";
 
 /** Routes that don't require authentication */
 const PUBLIC_ROUTES = new Set(["/auth", "/auth/callback"]);
@@ -56,8 +57,13 @@ export function proxy(request: NextRequest) {
     const hasCookie = request.cookies.get("pf_has_session")?.value === "true";
     const hasBearer = authHeader && authHeader.startsWith("Bearer ");
     if (!hasCookie && !hasBearer) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      // ADR-051: coded like every other API error (auth.required, 401).
+      return apiError("auth.required", { request });
     }
+    // Credentials present: the route handler validates them. An API call is never redirected
+    // to the sign-in page — a bearer-only client (an agent, the deployed smoke test, k6) has no
+    // session cookie and would otherwise receive a 307 to /auth instead of the API's answer.
+    return NextResponse.next();
   }
 
   // Page routes — check for session cookie (lightweight check)

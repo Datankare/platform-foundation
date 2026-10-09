@@ -1,7 +1,7 @@
 /**
  * ADR-051 D5 (b) — hard rule (7A A4b-3; was a ratchet 102 → 0 across A4a–A4b): no API error is
  * free text. A NextResponse.json / Response.json body with an `error` field and no `code`,
- * anywhere in app/api, platform or lib, fails CI. Errors go through apiError(),
+ * anywhere in app/api, platform, lib or the root request proxy (proxy.ts), fails CI. Errors go through apiError(),
  * internalError(), errorFromResult() or authResultResponse() (platform/errors, platform/auth).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
@@ -10,6 +10,8 @@ import * as ts from "typescript";
 
 const ROOT = join(__dirname, "..");
 const DIRS = ["app/api", "platform", "lib"];
+/** Root files that answer requests. proxy.ts escaped the directory scan until 7A (TASK-102). */
+const FILES = ["proxy.ts"];
 
 function files(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -47,7 +49,8 @@ function sitesIn(sf: ts.SourceFile, name: string): string[] {
 
 function freeTextErrorSites(): string[] {
   const sites: string[] = [];
-  for (const file of DIRS.flatMap((d) => files(join(ROOT, d)))) {
+  const roots = FILES.map((f) => join(ROOT, f)).filter((f) => existsSync(f));
+  for (const file of [...DIRS.flatMap((d) => files(join(ROOT, d))), ...roots]) {
     const text = readFileSync(file, "utf8");
     if (!/Response\.json/.test(text)) continue;
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);

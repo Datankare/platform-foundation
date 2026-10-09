@@ -1947,7 +1947,7 @@ baseline's contract. See `supabase/baseline/README.md`.
 | **Severity** | Medium — harmless pre-launch; must not carry into real users |
 | **Phase**    | Phase 5                                                      |
 | **Target**   | Phase 5, Sprint 7A (C4)                                      |
-| **Status**   | Open                                                         |
+| **Status**   | Resolved (7A C4, 2026-10-07)                                 |
 | **Logged**   | 2026-09-26                                                   |
 
 **What:** ADR-048 D3 / ADR-049 D1 require durable stores in production, so `playform-dev` and
@@ -1963,6 +1963,11 @@ service-role key, and the five Vercel variables (`SUPABASE_URL`, `SUPABASE_SERVI
 **Progress (2026-09-29):** Supabase project `playform-prod` created (Pro organization, Micro,
 `us-east-1`, Data API on, new tables exposed as on dev, automatic RLS off). Its schema is built from
 the TASK-091 baseline.
+
+**Resolved (2026-10-07):** `playform-prod` built from the baseline (39 migrations recorded, 36 tables, all
+with row-level security); Vercel `playform` production settings point at it (Production scope only), with its
+own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable stores; `/api/health` 200 at
+`https://playform.datankare.com`; first real sign-up and sign-in verified (which found TASK-117).
 
 ### TASK-093 — Language lists are not in alphabetical order
 
@@ -2134,19 +2139,32 @@ on dev and staging.
 
 ### TASK-102 — No test runs against a deployed environment
 
-| Field        | Detail                           |
-| ------------ | -------------------------------- |
-| **ID**       | TASK-102                         |
-| **Type**     | CI integrity                     |
-| **Severity** | High — configuration is untested |
-| **Phase**    | Phase 5                          |
-| **Target**   | Phase 5, Sprint 7A               |
-| **Status**   | Open                             |
-| **Logged**   | 2026-09-26                       |
+| Field        | Detail                                                  |
+| ------------ | ------------------------------------------------------- |
+| **ID**       | TASK-102                                                |
+| **Type**     | CI integrity                                            |
+| **Severity** | High — configuration is untested                        |
+| **Phase**    | Phase 5                                                 |
+| **Target**   | Phase 5, Sprint 7A                                      |
+| **Status**   | In progress — PF done; Playform workflow at the 7A sync |
+| **Logged**   | 2026-09-26                                              |
 
 **What:** Unit, integration and E2E tests all run on CI-built code with test settings; nothing checked `playform-dev` itself, so a missing database, mock auth and the wrong deployed branch all went unnoticed.
 
 **Resolution:** ADR-050 D5: after each dev/staging deploy, check health, report the deployed commit, and perform a real translate against the deployed address.
+
+**Resolved in PF (7A C3, 2026-10-08):** `scripts/deploy-smoke.mjs` (synced to consumers) runs against a
+deployed address: health 200 and the deployed commit (polls until the address serves the expected build),
+`/api/features`, an anonymous request refused with a registered code, a signed guest token, and a real guest
+translation. One line per step; exit 1 names the failing step. Tested end to end against a local server
+standing in for a deployment (`__tests__/deploy-smoke.test.ts`: healthy, wrong commit, health 503, uncoded
+401, mock guest token, empty translation, bad settings). Writing it found two proxy defects, fixed:
+the proxy's 401 was free text (outside ADR-051 — the free-text scan did not cover root files; it now scans
+`proxy.ts`), and **an API call with a bearer token but no session cookie was redirected to `/auth`** —
+every non-browser client (agents, this smoke test, k6) got a 307 instead of the API's answer. **Playform at
+the sync:** its own `proxy.ts` (sync-excluded) takes both fixes, and its `.github/workflows/deploy-smoke.yml`
+runs the script on every successful Vercel deployment of `playform-dev`, `playform-staging` and `playform`
+with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 
 ### TASK-103 — Deployment settings are unvalidated and can shadow each other
 
@@ -2186,19 +2204,30 @@ on dev and staging.
 
 ### TASK-105 — Vercel project-to-branch mapping is undocumented and was wrong
 
-| Field        | Detail                                     |
-| ------------ | ------------------------------------------ |
-| **ID**       | TASK-105                                   |
-| **Type**     | Deployment topology                        |
-| **Severity** | Medium — the deployed address ran old code |
-| **Phase**    | Phase 5                                    |
-| **Target**   | Phase 5, Sprint 7A                         |
-| **Status**   | Open                                       |
-| **Logged**   | 2026-09-26                                 |
+| Field        | Detail                                                                                |
+| ------------ | ------------------------------------------------------------------------------------- |
+| **ID**       | TASK-105                                                                              |
+| **Type**     | Deployment topology                                                                   |
+| **Severity** | Medium — the deployed address ran old code                                            |
+| **Phase**    | Phase 5                                                                               |
+| **Target**   | Phase 5, Sprint 7A                                                                    |
+| **Status**   | In progress — topology documented and verified; checked by the smoke test at the sync |
+| **Logged**   | 2026-09-26                                                                            |
 
 **What:** `playform-dev` tracked `main`, so its address served v0.5.0 while new code went only to preview addresses. Fixed for `playform-dev` (now `develop`) during 7A; staging and production unverified.
 
 **Resolution:** ADR-050 D6: document and verify `playform-dev` ← develop, `playform-staging` ← staging, production ← main; the smoke test reports the deployed commit.
+
+**Topology (verified 2026-10-08, ADR-050 D6):**
+
+| Vercel project     | Branch    | Address                               | Database (Supabase)                   | Cognito pool          |
+| ------------------ | --------- | ------------------------------------- | ------------------------------------- | --------------------- |
+| `playform-dev`     | `develop` | `https://playform-dev.vercel.app`     | `playform` (shared with staging)      | `us-east-1_9pRbNsCbE` |
+| `playform-staging` | `staging` | `https://playform-staging.vercel.app` | `playform` (shared with dev)          | `us-east-1_9pRbNsCbE` |
+| `playform`         | `main`    | `https://playform.datankare.com`      | `playform-prod` (built from baseline) | `us-east-1_l5B9bbdFh` |
+
+`playform-inky.vercel.app` redirects (308) to `playform.datankare.com`. `/api/health` now reports `commit`
+(`VERCEL_GIT_COMMIT_SHA`, 12 characters) so the smoke test proves which build each address serves.
 
 ### TASK-106 — Refresh-token rotation is off
 
