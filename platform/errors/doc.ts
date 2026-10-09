@@ -29,8 +29,12 @@ const AREA_TITLES: Readonly<Record<string, string>> = {
   service: "Service availability",
 };
 
-function cell(s: string): string {
-  return s.replace(/\|/g, "\\|");
+/**
+ * Text safe inside a Markdown table cell. Backslashes are escaped first, so a backslash already in
+ * the text cannot combine with the escape added for a pipe (CodeQL js/incomplete-sanitization).
+ */
+export function escapeTableCell(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 }
 
 /** A Markdown table padded the way Prettier formats it, so the generated file is format-clean. */
@@ -89,9 +93,9 @@ export function renderApiErrorsDoc(): string {
         return [
           `\`${code}\``,
           String(spec.status),
-          cell(message),
+          escapeTableCell(message),
           params,
-          cell(spec.action),
+          escapeTableCell(spec.action),
         ];
       });
     out.push(
