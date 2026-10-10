@@ -22,6 +22,9 @@
  *   SMOKE_EXPECTED_COMMIT  optional — the commit this deploy should be running (hex)
  *   SMOKE_WAIT_SECONDS     optional — how long to wait for that commit (default 300)
  *   SMOKE_TRANSLATE_PATH   optional — default /api/process
+ *   SMOKE_TRANSLATION_FIELD optional — the field of each `translations[]` item that holds the
+ *                          translated text; default `text` (PF's /api/process). An app whose
+ *                          translate route answers in its own shape names its field here.
  *   SMOKE_TIMEOUT_MS       optional — per request (default 30000)
  *
  * Read by the consumer's deployment workflow (Playform: .github/workflows/deploy-smoke.yml).
@@ -65,6 +68,10 @@ export function readSettings(env) {
   if (!/^\/[\w\-/]+$/.test(translatePath)) {
     problems.push("SMOKE_TRANSLATE_PATH must be a path such as /api/process");
   }
+  const translationField = (env.SMOKE_TRANSLATION_FIELD ?? "text").trim();
+  if (!/^[a-z_]\w*$/i.test(translationField)) {
+    problems.push("SMOKE_TRANSLATION_FIELD must be a field name such as text");
+  }
   if (problems.length) throw new Error(problems.join("; "));
   return {
     base: url.origin,
@@ -72,6 +79,7 @@ export function readSettings(env) {
     waitMs: wait * 1000,
     timeoutMs: timeout,
     translatePath,
+    translationField,
   };
 }
 
@@ -84,10 +92,12 @@ export function commitMatches(reported, expected) {
 }
 
 /** At least one translation with non-empty text — a real result, not an empty 200. */
-export function hasRealTranslation(body) {
+export function hasRealTranslation(body, field = "text") {
   return (
     Array.isArray(body?.translations) &&
-    body.translations.some((t) => typeof t?.text === "string" && t.text.trim() !== "")
+    body.translations.some(
+      (t) => typeof t?.[field] === "string" && t[field].trim() !== ""
+    )
   );
 }
 
@@ -178,7 +188,7 @@ export async function runSmoke(settings, log = console.log) {
       body: { text: "Good morning" },
     });
   }
-  if (tr.status !== 200 || !hasRealTranslation(tr.json)) {
+  if (tr.status !== 200 || !hasRealTranslation(tr.json, settings.translationField)) {
     fail(
       `translate: ${tr.status}${tr.json?.code ? ` ${tr.json.code}` : ""}, no translation`
     );

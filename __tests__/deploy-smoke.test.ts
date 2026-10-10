@@ -133,7 +133,7 @@ describe("deploy smoke (TASK-102)", () => {
     expect(r.out).toContain("got 200");
   });
 
-  it("fails when no signed guest token is issued (e.g. mock auth deployed)", async () => {
+  it("fails when no signed guest token is issued (e.g. a build that predates ADR-050 D4)", async () => {
     deployment.guestToken = "mock-guest-token";
     const r = await smoke({ SMOKE_BASE_URL: base });
     expect(r.code).toBe(1);
@@ -147,6 +147,17 @@ describe("deploy smoke (TASK-102)", () => {
     expect(r.out).toContain("translate: 200, no translation");
   });
 
+  it("reads the translated text from the field the app names (SMOKE_TRANSLATION_FIELD)", async () => {
+    deployment.translations = [{ language: "French", translated: "Bonjour" }];
+    let r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("translate: 200, no translation");
+
+    r = await smoke({ SMOKE_BASE_URL: base, SMOKE_TRANSLATION_FIELD: "translated" });
+    expect(r.out).toContain("✓ translate: 1 translation(s)");
+    expect(r.code).toBe(0);
+  });
+
   it("refuses bad settings before calling anything (exit 2)", async () => {
     for (const env of [
       {},
@@ -154,6 +165,7 @@ describe("deploy smoke (TASK-102)", () => {
       { SMOKE_BASE_URL: `${base}/api` },
       { SMOKE_BASE_URL: base, SMOKE_EXPECTED_COMMIT: "main" },
       { SMOKE_BASE_URL: base, SMOKE_TRANSLATE_PATH: "process" },
+      { SMOKE_BASE_URL: base, SMOKE_TRANSLATION_FIELD: "a.b" },
     ]) {
       const r = await smoke(env as Record<string, string>);
       expect({ env, code: r.code }).toEqual({ env, code: 2 });

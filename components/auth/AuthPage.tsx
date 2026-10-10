@@ -247,11 +247,26 @@ export default function AuthPage() {
     clearError();
     setIsLoading(true);
     try {
-      const auth = getAuthProvider();
-      const result = await auth.createGuestToken();
+      // ADR-050 D4: guest tokens are the platform's, minted and signed on the server — never by
+      // an auth provider in the browser, which has no signing secret.
+      const res = await fetch("/api/auth/guest", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const result = (await res.json().catch(() => ({}))) as {
+        token?: unknown;
+        guestId?: unknown;
+        message?: unknown;
+      };
 
-      if (!result.success) {
-        setError(result.error || "Guest access failed");
+      if (
+        !res.ok ||
+        typeof result.token !== "string" ||
+        typeof result.guestId !== "string"
+      ) {
+        setError(
+          typeof result.message === "string" ? result.message : "Guest access failed"
+        );
         return;
       }
 

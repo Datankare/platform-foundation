@@ -2,6 +2,8 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
+> **v3.1.0** — consumer seams: an app's own API error codes merged into the catalog (ADR-051 D1), consumer migrations replayed after the schema baseline, and guest tokens minted by the platform under any auth provider. Non-breaking — see [RELEASE_NOTES](docs/RELEASE_NOTES.md).
+>
 > **v3.0.0** — Phase 5 Sprint 7A, deployment & auth readiness: a declared, fail-closed deployment environment contract (ADR-050), signed guest tokens and a governed guest allowance, coded API errors in one translatable catalog (ADR-051), Google sign-in via the hosted identity provider, a schema baseline with migration replay in CI, and a deployed smoke test. **Breaking** — see [MIGRATION_v2_to_v3](docs/MIGRATION_v2_to_v3.md).
 
 A battle-tested foundation for building commercial SaaS products, internal tools,
@@ -95,12 +97,12 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ CodeQL + Semgrep SAST, Dependabot dependency scanning
 - ✅ Branch protection (develop → staging → main with required CI)
 - ✅ ESLint + Prettier — zero warnings
-- ✅ 265 suites, 3,399 tests (1 skipped), 91.68% statement / 80.13% branch / 91.35% function coverage
+- ✅ 265 suites, 3,414 tests (1 skipped), 91.84% statement / 80.27% branch / 90.98% function coverage
 - ✅ Conformance kits for all 26 platform abstractions, self-policing via meta-test
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v3.0.1)
+- ✅ Versioned releases (v3.1.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)

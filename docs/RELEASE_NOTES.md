@@ -9,6 +9,50 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v3.1.0 — consumer seams: app error codes, consumer migrations, platform guests
+
+Date: 2026-10-09
+
+The first consumer sync of v3.0 showed three places where the platform said a consumer could do
+something but gave it no way to. Each is a seam now, exercised by tests in this repository.
+
+### What a consumer inherits on sync
+
+- **Its own error codes (ADR-051 D1, TASK-120).** `platform/errors/app-codes.ts` (`APP_ERROR_CODES`,
+  codes `app.<area>.<name>`), `messages/app/en.json` (messages under `errors.app` and `screens.app`
+  only) and the generated `docs/APP_API_ERRORS.md`. The registry and catalog merge them at load, so
+  `apiError("app.files.too_large", …)` type-checks and renders like a platform code; a key outside the
+  app namespaces, or one the platform already defines, is refused at load. Shipped empty. See
+  [`platform/errors/README.md`](../platform/errors/README.md).
+- **Consumer migrations are replayed (TASK-119).** The baseline covers what it _records_, not a number
+  range: `scripts/migration-replay.sh` applies every migration the baseline does not record — a
+  consumer's own migrations whatever their number, then newer platform ones — and the schema-baseline
+  test checks the record instead of the numbers.
+- **Platform-minted guests (ADR-050 D4).** `POST /api/auth/guest` signs the guest token itself, under any
+  auth provider, and the sign-in screen calls it. A guest now works under the test double too, so an E2E
+  harness can exercise guests (on a production build, set `GUEST_TOKEN_SECRET`).
+- **`SMOKE_TRANSLATION_FIELD`** for the deployed smoke test — the field of each `translations[]` item that
+  holds the text (default `text`).
+- **CI: the migration replay no longer pulls from Docker Hub (TASK-122).** It installs Postgres 17 and
+  pgvector from the PostgreSQL apt repository on the runner; anonymous Docker Hub pulls are rate-limited
+  and failed the job with nothing wrong in the code. `.github/` does not sync — a consumer copying the job
+  takes this form.
+
+### Actions for a consumer
+
+1. Add `platform/errors/app-codes.ts`, `messages/app/**` and `docs/APP_API_ERRORS.md` to the sync
+   exclude list **before the next sync after this one** — this sync brings the empty versions; the next
+   would overwrite yours.
+2. Move the app's own API errors onto codes (`apiError`), declaring app codes only where no platform code
+   fits; regenerate `docs/APP_API_ERRORS.md`.
+3. **Check every existing database for the app's own migrations** (`applied_migrations` against the
+   files). A database built from the baseline before v3.1.0 does not have them; apply them in filename
+   order.
+
+No breaking change: the empty app files change nothing, and the guest route returns the same body.
+
+---
+
 ## v3.0.1 — development-dependency advisories
 
 Date: 2026-10-09

@@ -9,9 +9,10 @@ import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 
 // Mock the auth context
+const mockSetSession = jest.fn();
 jest.mock("@/platform/auth/context", () => ({
   useAuth: () => ({
-    setSession: jest.fn(),
+    setSession: mockSetSession,
     user: null,
     accessToken: null,
     isLoading: false,
@@ -28,7 +29,12 @@ beforeAll(() => {
 
 /** GET /api/features — what the sign-in screen asks for its SSO providers (TASK-101). */
 let features: Record<string, { available: boolean }> = {};
-const fetchMock = jest.fn(async () => ({ ok: true, json: async () => ({ features }) }));
+let guestResponse: { ok: boolean; body: unknown } = { ok: true, body: {} };
+const fetchMock = jest.fn(async (url: string) =>
+  url === "/api/auth/guest"
+    ? { ok: guestResponse.ok, json: async () => guestResponse.body }
+    : { ok: true, json: async () => ({ features }) }
+);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -104,6 +110,39 @@ describe("AuthPage", () => {
   it("renders guest option", () => {
     render(<AuthPage />);
     expect(screen.getByText("Continue as Guest")).toBeDefined();
+  });
+
+  it("starts a guest session with a server-minted token (ADR-050 D4)", async () => {
+    guestResponse = {
+      ok: true,
+      body: { success: true, guestId: "guest_abc", token: "guest.p.m", expiresAt: 1 },
+    };
+    render(<AuthPage />);
+    fireEvent.click(screen.getByText("Continue as Guest"));
+    await waitFor(() =>
+      expect(mockSetSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accessToken: "guest.p.m",
+          userId: "guest_abc",
+          isGuest: true,
+        })
+      )
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/guest",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("shows the server's message when a guest session cannot start", async () => {
+    guestResponse = {
+      ok: false,
+      body: { code: "internal.error", message: "Something went wrong (ref req_1)." },
+    };
+    render(<AuthPage />);
+    fireEvent.click(screen.getByText("Continue as Guest"));
+    expect(await screen.findByText("Something went wrong (ref req_1).")).toBeDefined();
+    expect(mockSetSession).not.toHaveBeenCalled();
   });
 
   it("offers only the SSO providers /api/features reports available", async () => {

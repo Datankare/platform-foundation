@@ -2497,6 +2497,107 @@ so none merges into `main` directly. Those against `develop` are kept.
 lint, format, tests, migration replay, production audit), majors with their migration notes;
 reconfigure Dependabot to target `develop` only. Done when no update PR is older than one sprint.
 
+### TASK-119 — Consumer migrations were never replayed after the baseline (`playform-prod` lacks Playform's schema)
+
+| Field        | Detail                                                                 |
+| ------------ | ---------------------------------------------------------------------- |
+| **ID**       | TASK-119                                                               |
+| **Type**     | Defect — schema integrity                                              |
+| **Severity** | High — production is missing a consumer's tables and configuration     |
+| **Phase**    | Phase 5                                                                |
+| **Target**   | Phase 5, Sprint 7A                                                     |
+| **Status**   | Resolved in PF (v3.1.0); `playform-prod` gets the migrations at v0.6.0 |
+| **Logged**   | 2026-10-09                                                             |
+
+**What:** `scripts/migration-replay.sh` and `__tests__/schema-baseline.test.ts` treated every migration
+numbered at or below `baseline-covers-through` (037) as inside the baseline. Playform's own migrations
+share that range — `007_playform_subscription_tiers`, `031_known_features`, `032_capability_features`,
+`033_trusted_agents`, `034_agent_delegation`, `035_trusted_agents_ttl`, `036_known_features_agent_delegate`
+— and the baseline (correctly) does not contain them, so the replay skipped them and `playform-prod`, built
+from the baseline in 7A C4, never received them. Found 2026-10-09 by querying `applied_migrations` on
+`playform-prod`: all seven missing, `agent_delegation_grant` absent. Gotcha 109.
+
+**Resolved (PF v3.1.0):** "covered" means recorded in the baseline's `applied_migrations` seed. The replay
+applies every migration the baseline does not record, in filename order (a consumer's ≤037 migrations
+first, then newer ones); the test checks the baseline records only files that exist and none past its
+number, that platform-foundation itself has no unrecorded migration in its range, and that every unrecorded
+migration enables row-level security on its tables. Verified: Playform's seven apply cleanly after the
+baseline on Postgres 16 + pgvector, and the replay checks pass.
+
+**Playform (v0.6.0):** the CI replay job runs on Playform; the seven migrations, then 038, are applied to
+`playform-prod` in replay order from the files (SQL Editor), and `applied_migrations` is compared with the
+files afterwards. Close when that comparison shows nothing missing.
+
+### TASK-120 — ADR-051 consumer error codes were specified but not built; guest tokens depended on the auth provider
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-120                                                     |
+| **Type**     | Defect — platform contract                                   |
+| **Severity** | High — a consumer could not comply with the synced hard rule |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | Phase 5, Sprint 7A                                           |
+| **Status**   | Resolved (PF v3.1.0)                                         |
+| **Logged**   | 2026-10-09                                                   |
+
+**What:** (1) ADR-051 D1 says an app adds its own error codes and messages in a consumer-owned file merged
+at load. Nothing merged anything, so after the v3.0.1 sync the synced no-free-text rule failed on 52
+Playform error sites, many needing codes only Playform has (file too large, recording too short, profile
+not found …). (2) `/api/auth/guest` asked the auth provider for a guest token. Under the test double that is
+a fixed string the platform never accepts, and in the browser the provider would sign with a secret it
+does not have — so no E2E harness could exercise a guest (TASK-100 B2b). (3) The deployed smoke test read
+translations only from `text`. Gotchas 110–111.
+
+**Resolved (PF v3.1.0):** `platform/errors/app-codes.ts` (`APP_ERROR_CODES`, `app.<area>.<name>`),
+`messages/app/en.json` (under `errors.app` / `screens.app` only) and `docs/APP_API_ERRORS.md` (generated) —
+consumer-owned, shipped empty; the registry and catalog merge them at load and refuse a key outside the app
+namespaces or one the platform defines. `/api/auth/guest` mints the platform-signed token itself, and the
+sign-in screen calls it. `SMOKE_TRANSLATION_FIELD` names the field a consumer's translate route uses.
+
+### TASK-121 — The Playform sync failed for 12 days and nothing said so
+
+| Field        | Detail                                           |
+| ------------ | ------------------------------------------------ |
+| **ID**       | TASK-121                                         |
+| **Type**     | Defect — operations                              |
+| **Severity** | Medium — platform changes silently not inherited |
+| **Phase**    | Phase 5                                          |
+| **Target**   | Phase 5, Sprint 7A                               |
+| **Status**   | Open — fix in Playform v0.6.0                    |
+| **Logged**   | 2026-10-09                                       |
+
+**What:** `sync-from-foundation` failed on every run from 2026-09-28 (`could not read Username`, exit 128):
+the stored `FOUNDATION_SYNC_TOKEN` was not the token's current value. Its failure alert never fired — the
+step runs `gh issue` with no checkout and no repository named, so it failed too (`not a git repository`).
+A fresh value, tested against both repositories before storing, fixed the sync on 2026-10-09.
+
+**Resolution (Playform v0.6.0):** the alert step names its repository (`GH_REPO`) and is exercised once; the
+platform-foundation checkout uses its own read-only token (`FOUNDATION_READ_TOKEN`, platform-foundation
+only, Contents read) so the token that writes to Playform no longer reaches platform-foundation; both tokens'
+expiry dates are recorded in `ROTATION_RUNBOOK.md` with a reminder before each.
+
+### TASK-122 — The migration replay depended on an anonymous Docker Hub pull
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-122                                    |
+| **Type**     | CI reliability                              |
+| **Severity** | Medium — a release blocked by a third party |
+| **Phase**    | Phase 5                                     |
+| **Target**   | Phase 5, Sprint 7A                          |
+| **Status**   | Resolved (PF v3.1.0); Playform at v0.6.0    |
+| **Logged**   | 2026-10-09                                  |
+
+**What:** the Migration replay job ran Postgres as a `pgvector/pgvector:pg17` service container. On the v3.1.0
+develop → staging promotion, Docker Hub refused the pull (`toomanyrequests`, the anonymous rate limit) on the
+run and on its re-run; the code had passed on develop.
+
+**Resolved:** the job installs `postgresql-17` and `postgresql-17-pgvector` from apt.postgresql.org on the
+runner, creates the `17/main` cluster when the image has not (GitHub's runner image turns off automatic cluster
+creation — the first attempt failed on exactly that), and uses whichever port the cluster gets; nothing is
+pulled from Docker Hub. Playform's replay job
+(added at v0.6.0) takes the same form.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
