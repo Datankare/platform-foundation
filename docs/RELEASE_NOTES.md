@@ -33,6 +33,10 @@ something but gave it no way to. Each is a seam now, exercised by tests in this 
   harness can exercise guests (on a production build, set `GUEST_TOKEN_SECRET`).
 - **`SMOKE_TRANSLATION_FIELD`** for the deployed smoke test — the field of each `translations[]` item that
   holds the text (default `text`).
+- **CI: the migration replay no longer pulls from Docker Hub (TASK-122).** It installs Postgres 17 and
+  pgvector from the PostgreSQL apt repository on the runner; anonymous Docker Hub pulls are rate-limited
+  and failed the job with nothing wrong in the code. `.github/` does not sync — a consumer copying the job
+  takes this form.
 
 ### Actions for a consumer
 

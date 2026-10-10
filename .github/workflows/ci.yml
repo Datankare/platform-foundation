@@ -68,28 +68,41 @@ jobs:
   migration-replay:
     name: Migration replay
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: replay
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    # Postgres 17 + pgvector from the PostgreSQL project's own apt repository, on the runner —
+    # not a Docker Hub image: anonymous pulls are rate-limited, and the limit failed this job
+    # twice in a row on 2026-10-09 with nothing wrong in the code (TASK-122).
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Replay baseline and newer migrations
+      - name: Install Postgres 17 + pgvector (apt.postgresql.org)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
+          # The runner image turns off automatic cluster creation (create_main_cluster = false),
+          # so the package installs without one: create it when missing, start it if stopped.
+          if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
+            sudo pg_createcluster 17 main --start >/dev/null
+          fi
+          sudo pg_ctlcluster 17 main status >/dev/null || sudo pg_ctlcluster 17 main start
+          # The runner image may already have another cluster on 5432; use whatever 17 got.
+          port=$(pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main" { print $3 }')
+          [ -n "$port" ] || { pg_lsclusters; echo "no Postgres 17 cluster"; exit 1; }
+          echo "PGPORT=$port" >> "$GITHUB_ENV"
+          sudo -u postgres psql -X -q -p "$port" \
+            -c "ALTER USER postgres PASSWORD 'postgres'" -c "CREATE DATABASE replay"
+          echo "Postgres $(sudo -u postgres psql -X -At -p "$port" -c 'show server_version') on port $port"
+
+      - name: Replay baseline and every migration it does not record
         run: bash scripts/migration-replay.sh
         env:
           PGHOST: localhost
-          PGPORT: "5432"
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: replay

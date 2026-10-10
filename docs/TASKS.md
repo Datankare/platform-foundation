@@ -2576,6 +2576,28 @@ platform-foundation checkout uses its own read-only token (`FOUNDATION_READ_TOKE
 only, Contents read) so the token that writes to Playform no longer reaches platform-foundation; both tokens'
 expiry dates are recorded in `ROTATION_RUNBOOK.md` with a reminder before each.
 
+### TASK-122 — The migration replay depended on an anonymous Docker Hub pull
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-122                                    |
+| **Type**     | CI reliability                              |
+| **Severity** | Medium — a release blocked by a third party |
+| **Phase**    | Phase 5                                     |
+| **Target**   | Phase 5, Sprint 7A                          |
+| **Status**   | Resolved (PF v3.1.0); Playform at v0.6.0    |
+| **Logged**   | 2026-10-09                                  |
+
+**What:** the Migration replay job ran Postgres as a `pgvector/pgvector:pg17` service container. On the v3.1.0
+develop → staging promotion, Docker Hub refused the pull (`toomanyrequests`, the anonymous rate limit) on the
+run and on its re-run; the code had passed on develop.
+
+**Resolved:** the job installs `postgresql-17` and `postgresql-17-pgvector` from apt.postgresql.org on the
+runner, creates the `17/main` cluster when the image has not (GitHub's runner image turns off automatic cluster
+creation — the first attempt failed on exactly that), and uses whichever port the cluster gets; nothing is
+pulled from Docker Hub. Playform's replay job
+(added at v0.6.0) takes the same form.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
