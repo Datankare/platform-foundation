@@ -2593,7 +2593,9 @@ develop → staging promotion, Docker Hub refused the pull (`toomanyrequests`, t
 run and on its re-run; the code had passed on develop.
 
 **Resolved:** the job installs `postgresql-17` and `postgresql-17-pgvector` from apt.postgresql.org on the
-runner and uses whichever port that cluster gets; nothing is pulled from Docker Hub. Playform's replay job
+runner, creates the `17/main` cluster when the image has not (GitHub's runner image turns off automatic cluster
+creation — the first attempt failed on exactly that), and uses whichever port the cluster gets; nothing is
+pulled from Docker Hub. Playform's replay job
 (added at v0.6.0) takes the same form.
 
 ## Known Issue — TASK-020 numbering collision
