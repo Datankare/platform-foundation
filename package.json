@@ -1,6 +1,7 @@
 {
   "name": "platform-foundation",
   "version": "3.1.0",
+  "license": "MIT",
   "engines": {
     "node": ">=22"
   },

@@ -118,20 +118,25 @@ components/auth/SsoButtons.tsx
 
 ### TASK-025 — ALB for ffmpeg-service (stable URL)
 
-| Field        | Detail            |
-| ------------ | ----------------- |
-| **ID**       | TASK-025          |
-| **Type**     | Infrastructure    |
-| **Severity** | Medium            |
-| **Phase**    | Phase 5, Sprint 6 |
-| **Target**   | Phase 5, Sprint 7 |
-| **Status**   | Open              |
-| **Logged**   | 2026-04-16        |
+| Field        | Detail                 |
+| ------------ | ---------------------- |
+| **ID**       | TASK-025               |
+| **Type**     | Infrastructure         |
+| **Severity** | Medium                 |
+| **Phase**    | Phase 5, Sprint 6      |
+| **Target**   | Phase 5, Sprint 7P     |
+| **Status**   | Open — service retired |
+| **Logged**   | 2026-04-16             |
 
 **What:** ECS Fargate public IP changes on task restart.
 Add ALB or Elastic IP for stable URL.
 Currently using direct IP — acceptable for development,
 not production.
+
+**Update (2026-10-20):** the service no longer runs. Its load balancer and the AWS account it ran in are gone,
+and the `ffmpeg` DNS record was removed in the 2026-10 hardening. Song identification cannot convert
+audio until the service is back. Decision deferred to Sprint 7P: rebuild it as a container on the AWS
+environment (TASK-128), or retire server-side conversion for client-side WAV capture.
 
 **Migrated from:** SECURITY_DEBT.md (Sprint 3c — not security-related)
 
@@ -1966,7 +1971,7 @@ the TASK-091 baseline.
 
 **Resolved (2026-10-07):** `playform-prod` built from the baseline (39 migrations recorded, 36 tables, all
 with row-level security); Vercel `playform` production settings point at it (Production scope only), with its
-own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable stores; `/api/health` 200 at
+own Cognito pool, Google client, guest secret and durable stores; `/api/health` 200 at
 `https://playform.datankare.com`; first real sign-up and sign-in verified (which found TASK-117).
 
 ### TASK-093 — Language lists are not in alphabetical order
@@ -2220,13 +2225,13 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 
 **Topology (verified 2026-10-08, ADR-050 D6):**
 
-| Vercel project     | Branch    | Address                               | Database (Supabase)                   | Cognito pool          |
-| ------------------ | --------- | ------------------------------------- | ------------------------------------- | --------------------- |
-| `playform-dev`     | `develop` | `https://playform-dev.vercel.app`     | `playform` (shared with staging)      | `us-east-1_9pRbNsCbE` |
-| `playform-staging` | `staging` | `https://playform-staging.vercel.app` | `playform` (shared with dev)          | `us-east-1_9pRbNsCbE` |
-| `playform`         | `main`    | `https://playform.datankare.com`      | `playform-prod` (built from baseline) | `us-east-1_l5B9bbdFh` |
+| Vercel project     | Branch    | Address                          | Database (Supabase)                   | Cognito pool     |
+| ------------------ | --------- | -------------------------------- | ------------------------------------- | ---------------- |
+| `playform-dev`     | `develop` | the project's default address    | `playform` (shared with staging)      | dev/staging pool |
+| `playform-staging` | `staging` | the project's default address    | `playform` (shared with dev)          | dev/staging pool |
+| `playform`         | `main`    | `https://playform.datankare.com` | `playform-prod` (built from baseline) | production pool  |
 
-`playform-inky.vercel.app` redirects (308) to `playform.datankare.com`. `/api/health` now reports `commit`
+The production project's default address redirects (308) to `playform.datankare.com`. Resource identifiers (pool ids, project refs) are kept out of the repository. `/api/health` now reports `commit`
 (`VERCEL_GIT_COMMIT_SHA`, 12 characters) so the smoke test proves which build each address serves.
 
 ### TASK-106 — Refresh-token rotation is off
@@ -2597,6 +2602,203 @@ runner, creates the `17/main` cluster when the image has not (GitHub's runner im
 creation — the first attempt failed on exactly that), and uses whichever port the cluster gets; nothing is
 pulled from Docker Hub. Playform's replay job
 (added at v0.6.0) takes the same form.
+
+### TASK-123 — Playform UX polish: visible defaults and listening feedback
+
+| Field        | Detail                                        |
+| ------------ | --------------------------------------------- |
+| **ID**       | TASK-123                                      |
+| **Type**     | Feature — user experience (Playform)          |
+| **Severity** | Low — users are left guessing, nothing breaks |
+| **Phase**    | Phase 5                                       |
+| **Target**   | Phase 5, Sprint 8                             |
+| **Status**   | Open                                          |
+| **Logged**   | 2026-10-12                                    |
+
+**What:** found in manual testing on dev (Raman, 2026-10-12). (1) The default translation languages
+(Spanish, French) are not shown anywhere; show them next to **Add languages**. (2) Music/microphone input
+gives no feedback: while listening, the input area is blank. Explain how the microphone works and show live
+feedback while listening (a level meter or waveform and a "Listening…" status). More items may be added
+before the sprint opens.
+
+### TASK-124 — One API key per environment, each with its own spend limit
+
+| Field        | Detail                                                     |
+| ------------ | ---------------------------------------------------------- |
+| **ID**       | TASK-124                                                   |
+| **Type**     | Operations — credential hygiene                            |
+| **Severity** | Medium — production cannot be revoked or capped on its own |
+| **Phase**    | Phase 5                                                    |
+| **Target**   | Phase 5, Sprint 7O                                         |
+| **Status**   | Open                                                       |
+| **Logged**   | 2026-10-20                                                 |
+
+**What:** dev, staging and production (and CI) share one Anthropic key and one Google key, so a leak in any
+environment exposes all of them, and production cannot be revoked or rate-capped separately. Found during the
+2026-10 account hardening, which put organisation-level caps in place (Anthropic monthly limit with prepaid
+credit only; Google keys restricted to the three APIs used, daily quotas, unused premium voice models
+disabled, and a billing budget with alerts).
+
+**Plan:** one Anthropic workspace per environment, each with its own key and spend limit; one Google key per
+environment, each restricted to the same three APIs; a separate CI key; keys recorded by name (never value)
+in `ROTATION_RUNBOOK.md`, with rotation dates.
+
+### TASK-125 — Register Datankare as an LLC and assign the platform's copyright to it
+
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-125                                                           |
+| **Type**     | Governance — legal                                                 |
+| **Severity** | Medium — needed before the platform is showcased or monetised      |
+| **Phase**    | Phase 5                                                            |
+| **Target**   | Before the platform is publicly showcased; required before Phase 6 |
+| **Status**   | Open                                                               |
+| **Logged**   | 2026-10-20                                                         |
+
+**What:** the copyright notice named "RKS"; it now names the owner, Raman K. Sud. Once Datankare is
+registered as an LLC, a written IP assignment transfers the platform to it and the notice in `LICENSE` is
+updated. The MIT terms are unchanged either way.
+
+### TASK-126 — Tenancy model: one codebase, shared or dedicated deployment
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-126                                                                 |
+| **Type**     | Architecture                                                             |
+| **Severity** | High — the most expensive change to make late; blocks monetisation       |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7R (decision and groundwork), Sprint 7T (implementation) |
+| **Status**   | Open                                                                     |
+| **Logged**   | 2026-10-20                                                               |
+
+**What:** the platform has no tenant concept. No table carries a tenant or organisation; row-level security
+is written for users and admins; roles are global; config, rate limits, AI budgets, caches, audit and metrics
+are global; there is no tenant lifecycle. Server code reaches the database with the service-role key, so
+row-level security does not protect server paths. Raised by an independent engineering assessment
+(2026-10-17).
+
+**Decision (2026-10-17):** both models from one codebase. A dedicated per-client deployment is the shared
+deployment running with exactly one tenant — one code path, two deployment shapes.
+
+**Plan:** an ADR in Sprint 7R covering tenant identity (one Cognito pool with a tenant claim, or a pool per
+tenant), tenant admin roles, row-level security under a database role that cannot bypass it, per-tenant
+config, limits, budgets, cache keys, audit and metrics, the tenant lifecycle, and taking service-role access
+off request paths. Sprint 7R plumbs a tenant context through requests and agents (one default tenant) and adds
+a cross-tenant isolation conformance kit; Sprint 7T carries tenancy through every table, policy and cache.
+
+### TASK-127 — Split the foundation from product modules
+
+| Field        | Detail                                                                      |
+| ------------ | --------------------------------------------------------------------------- |
+| **ID**       | TASK-127                                                                    |
+| **Type**     | Architecture                                                                |
+| **Severity** | Medium — every consumer inherits, patches and tests features it may not use |
+| **Phase**    | Phase 5                                                                     |
+| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7S (implementation)                   |
+| **Status**   | Open                                                                        |
+| **Logged**   | 2026-10-20                                                                  |
+
+**What:** games, social groups and agents, song identification, audio conversion and the voice pipeline live
+in the foundation, so every consumer inherits them. Raised by the 2026-10-17 assessment.
+
+**Plan:** an ADR in Sprint 7R defining the core (identity and roles, errors and catalogs, config, agents and
+AI governance, content safety, consent) and optional modules; sync becomes "core plus the modules a consumer
+opts into"; a lint rule stops the core importing a module. Sprint 7S moves the modules out.
+
+### TASK-128 — Deploy anywhere: a container image, infrastructure as code, a second host
+
+| Field        | Detail                                                                      |
+| ------------ | --------------------------------------------------------------------------- |
+| **ID**       | TASK-128                                                                    |
+| **Type**     | Architecture — deployability                                                |
+| **Severity** | High — portability off the current hosts is designed for but untested       |
+| **Phase**    | Phase 5                                                                     |
+| **Target**   | Phase 5, Sprint 7R (decision, container build), Sprint 7P (AWS environment) |
+| **Status**   | Open                                                                        |
+| **Logged**   | 2026-10-20                                                                  |
+
+**What:** only Vercel has been deployed to; `infra/` holds placeholders; the environment contract detects a
+hosted deployment through `VERCEL=1`; the cache provider speaks Upstash's REST protocol only.
+
+**Decision (2026-10-17):** Vercel stays a first-class host, and AWS, GCP and Azure become supported targets.
+AWS first (the account and identity pool already exist), built after Sprint 7T so it is provisioned once on
+the final schema.
+
+**Plan:** Sprint 7R — the container image as the portable unit, a host-agnostic environment contract, the
+deploy smoke test passing against a container build. Sprint 7P — OpenTofu modules for AWS (network, ECS,
+RDS Postgres with point-in-time recovery, Valkey, load balancer, DNS and certificates); CI deploys the same
+commit to Vercel and AWS and the smoke test must pass on both; a Valkey provider over the standard Redis
+protocol. GCP and Azure follow with the same image.
+
+### TASK-129 — Operations baseline: recovery, alerting, objectives, background work
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-129                                                  |
+| **Type**     | Operations                                                |
+| **Severity** | High — required for any mission-critical claim            |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7O (implementation) |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-10-20                                                |
+
+**What:** no backup or restore design (recovery relies on the database plan's defaults), no RPO or RTO, no
+alerting or on-call runbooks, no service-level objectives, and no durable queue or scheduler (retries and
+timed jobs run as API routes or CI schedules). These were Phase 9 items; brought forward.
+
+**Plan:** an ADR in Sprint 7R; Sprint 7O delivers point-in-time recovery with a tested restore drill, RPO
+and RTO targets, alerting and runbooks, SLO monitoring across both hosts, and a durable queue and scheduler.
+
+### TASK-130 — Security assurance: dynamic testing, compliance mapping, data residency
+
+| Field        | Detail               |
+| ------------ | -------------------- |
+| **ID**       | TASK-130             |
+| **Type**     | Security — assurance |
+| **Severity** | Medium               |
+| **Phase**    | Phase 5              |
+| **Target**   | Phase 5, Sprint 7O   |
+| **Status**   | Open                 |
+| **Logged**   | 2026-10-20           |
+
+**What:** static analysis, dependency audit and secret scanning run in CI, but there is no dynamic testing
+(DAST) against a deployed environment, no mapping to SOC 2, ISO 27001, India's DPDP Act or GDPR processor
+obligations, and no data-residency control. Raised by the 2026-10-17 assessment. SEC-001 (CSP) remains
+tracked in `SECURITY_DEBT.md`.
+
+**Plan:** DAST against staging in CI; a compliance control map; data residency as part of the tenancy
+placement decision (TASK-126).
+
+### TASK-131 — More Indian languages and locale-aware formats
+
+| Field        | Detail                   |
+| ------------ | ------------------------ |
+| **ID**       | TASK-131                 |
+| **Type**     | Feature — multi-language |
+| **Severity** | Low                      |
+| **Phase**    | Phase 5                  |
+| **Target**   | Phase 5, Sprint 7B       |
+| **Status**   | Open                     |
+| **Logged**   | 2026-10-20               |
+
+**What:** Hindi, Bengali, Kannada, Malayalam and Telugu are supported; Marathi, Tamil and Gujarati are not.
+Dates, numbers and currency are not yet locale-formatted. Tenant- and user-level language settings belong to
+TASK-126.
+
+### TASK-132 — A second maintainer with merge rights
+
+| Field        | Detail                         |
+| ------------ | ------------------------------ |
+| **ID**       | TASK-132                       |
+| **Type**     | Governance                     |
+| **Severity** | Medium — key-person risk       |
+| **Phase**    | Phase 5                        |
+| **Target**   | Before the Phase 9 launch gate |
+| **Status**   | Open                           |
+| **Logged**   | 2026-10-20                     |
+
+**What:** one person authors almost every commit. The ADRs, task register and engineering learnings keep the
+platform legible; a second maintainer with merge rights removes the single point of failure.
 
 ## Known Issue — TASK-020 numbering collision
 

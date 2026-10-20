@@ -14,7 +14,7 @@ from day one.
 
 ### Governing Principles (pre-wired)
 
-- **RAMPS** — Reliability · Accessibility (WCAG 2.2) · Maintainability · Performance · Security
+- **RAMPS** — Reliability · Accessibility (WCAG 2.2) · Manageability · Performance · Security
 - **AAA** — Authentication · Authorization · Analytics
 - **Foundation as Fabric** — Infrastructure woven in, never bolted on
 - **Continuous Confidence** — Full test suite, green means nothing is broken
@@ -129,6 +129,8 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 | `docs/RAMPS_PHASE1–3_ASSESSMENT.md`           | Earlier phase baselines                                                            |
 | `docs/SECURITY_DEBT.md`                       | Tracked deferrals with phase assignments                                           |
 | `docs/OWASP_CONTROLS.md`                      | Verified OWASP Top 10 controls                                                     |
+| `docs/COMPONENT_REGISTER.md`                  | Dependencies and hosted services — licence verdicts and exit paths                 |
+| `SECURITY.md`                                 | How to report a vulnerability privately; supported versions                        |
 | `docs/SUSTAINABILITY_CHECKLIST.md`            | 22-point gate + 8-point accessibility gate + phase boundary protocol               |
 | `CONTRIBUTING.md`                             | Branch workflow, seed separation, standing rules                                   |
 

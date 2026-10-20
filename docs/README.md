@@ -104,7 +104,7 @@ graph TD
 | [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md) | The platform layers and how they compose.                                  |
 | [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md)       | Agent clusters, workflow, and the governed-authority layer.                |
 | [AUX_DESIGN.md](AUX_DESIGN.md)                       | The agent user-experience surface.                                         |
-| [adr/](adr/)                                         | 41 Architecture Decision Records — every decision and its rationale.       |
+| [adr/](adr/)                                         | 51 Architecture Decision Records — every decision and its rationale.       |
 
 ### Developer Guides
 
@@ -115,13 +115,14 @@ graph TD
 
 ### Principles & Standards
 
-| Doc                                                                | What it is                                            |
-| ------------------------------------------------------------------ | ----------------------------------------------------- |
-| [GENAI_MANIFESTO.md](GENAI_MANIFESTO.md)                           | The GenAI-native principles the platform is built on. |
-| [OWASP_CONTROLS.md](OWASP_CONTROLS.md)                             | OWASP Top 10 control mapping.                         |
-| [SUSTAINABILITY_CHECKLIST.md](SUSTAINABILITY_CHECKLIST.md)         | Sustainability review checklist.                      |
-| [SUSTAINABILITY_REVIEW_PROMPT.md](SUSTAINABILITY_REVIEW_PROMPT.md) | The prompt used for sustainability reviews.           |
-| [LIGHTHOUSE.md](LIGHTHOUSE.md)                                     | Lighthouse performance/accessibility guidance.        |
+| Doc                                                                | What it is                                                                   |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [GENAI_MANIFESTO.md](GENAI_MANIFESTO.md)                           | The GenAI-native principles the platform is built on.                        |
+| [OWASP_CONTROLS.md](OWASP_CONTROLS.md)                             | OWASP Top 10 control mapping.                                                |
+| [COMPONENT_REGISTER.md](COMPONENT_REGISTER.md)                     | Every dependency and hosted service, with its licence verdict and exit path. |
+| [SUSTAINABILITY_CHECKLIST.md](SUSTAINABILITY_CHECKLIST.md)         | Sustainability review checklist.                                             |
+| [SUSTAINABILITY_REVIEW_PROMPT.md](SUSTAINABILITY_REVIEW_PROMPT.md) | The prompt used for sustainability reviews.                                  |
+| [LIGHTHOUSE.md](LIGHTHOUSE.md)                                     | Lighthouse performance/accessibility guidance.                               |
 
 ### Planning & Tracking
 

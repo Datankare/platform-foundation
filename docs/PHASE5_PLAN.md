@@ -14,7 +14,7 @@
 - **TASK-019:** rename `platform/game-engine/` → `platform/app-framework/` (ADR-001 platform-agnostic naming; placeholder dir, no code yet).
 - GenAI **P1–P18 mapping table** (L12) for the phase.
 - **N7/N8 ROADMAP edits:** Phase 5 → In Progress, start date, changelog 8.0.0 (applied this session).
-- **k6 re-baseline (dry baseline captured; live deferred → TASK-046, Sprint 7):** dry run vs prod (`playform-inky.vercel.app`, 10 VUs, 1221 reqs) — 0% errors; process p95 76.9ms, stream p95 71.4ms, health p95 149ms; only health p99 tripped on a single ~~2s Vercel cold start (benign). A live `DRY_RUN=0` run can't reach moderation/agent paths today — Sprint 3d auth-guards 401 every k6 request (the script sends no auth header), so its "~~$5 live" note is stale. Live re-baseline needs an auth-enabled k6 script → **TASK-046** (Sprint 7, phase-exit expectation).
+- **k6 re-baseline (dry baseline captured; live deferred → TASK-046, Sprint 7):** dry run vs production (10 VUs, 1221 reqs) — 0% errors; process p95 76.9ms, stream p95 71.4ms, health p95 149ms; only health p99 tripped on a single ~~2s Vercel cold start (benign). A live `DRY_RUN=0` run can't reach moderation/agent paths today — Sprint 3d auth-guards 401 every k6 request (the script sends no auth header), so its "~~$5 live" note is stale. Live re-baseline needs an auth-enabled k6 script → **TASK-046** (Sprint 7, phase-exit expectation).
 - **ACRCloud Edge-Runtime warning fix** in PF — isolate the Node-only `createHmac` import from the Edge bundle (handoff carry-in §1).
 - **Doc cleanups (PF):** GENAI_ROADMAP changelog reorder + literal `\u2705`/`\u2014` escape glitch in some Phase 2 rows.
 - **TASK-045 scheduled:** Playform GENAI_ROADMAP overlay rebase + D3/D4 dual-repo guard.
@@ -226,6 +226,28 @@ median 2.6 s server-side, session path ≈ 0.26 s, the rest two sequential AI ca
 extraction fails in deployment), TASK-106 (refresh-token rotation), TASK-108 (Teams participation —
 a product decision).
 
+### Sprints 7R → 7O — Architecture realignment (inserted 2026-10-17)
+
+An independent engineering assessment (2026-10-17) found the platform's engineering discipline strong but
+the platform not yet multi-tenant, deployed on one host only, without an operations layer, and mixing
+foundation with product features. Two of those findings change the shape Sprint 7's adoption work builds
+on, so they are settled first. Sprint 7 resumes after 7O, on the new shape.
+
+**Decisions taken (2026-10-17):** tenancy means both a shared deployment and a dedicated per-client
+deployment, from one codebase — a dedicated deployment is the shared one running with exactly one tenant.
+Hosting means Vercel and AWS, GCP or Azure; AWS first.
+
+| Sprint | Scope                                                                                                                                                                                                                                                                                                                                                      | Tasks              |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| **7R** | Decisions and groundwork: an ADR each for tenancy, the foundation/product split, deploy-anywhere and the operations baseline; tenant context plumbed through requests and agents (one default tenant); a cross-tenant isolation conformance kit; the core/module import boundary enforced; a container image with the deploy smoke test passing against it | TASK-126–129       |
+| **7T** | Tenancy through every table, policy, cache key, config, limit, budget, audit record and metric; service-role access off request paths                                                                                                                                                                                                                      | TASK-126           |
+| **7P** | AWS environment through OpenTofu (network, ECS, RDS Postgres with point-in-time recovery, Valkey, load balancer, DNS, certificates); CI deploys the same commit to Vercel and AWS, smoke test on both; Valkey provider; ffmpeg service decision                                                                                                            | TASK-128, TASK-025 |
+| **7S** | Product modules (games, social, song identification, voice) out of the core; sync becomes core plus opted-in modules                                                                                                                                                                                                                                       | TASK-127           |
+| **7O** | Operations baseline live on both hosts: point-in-time recovery with a tested restore, RPO/RTO, alerting and runbooks, SLOs, durable queue and scheduler; per-environment keys; DAST and compliance mapping                                                                                                                                                 | TASK-129, 124, 130 |
+
+Order rationale: AWS is built after tenancy so it is provisioned once, on the final schema; the operations
+baseline needs both hosts to exist. Phase 9 shrinks accordingly.
+
 ### Sprint 7 — Playform adoption + real providers
 
 Single large sprint (decision: one Sprint 7, not split). Hygiene first — the CI/boot guard and
@@ -251,7 +273,7 @@ adoption, then real providers, then the live exit proof, then the Phase 5 exit g
    classifiers, real image generation, real synthetic-media detector, C2PA real signing, cross-session
    adaptive memory. Each is its own ADR (authored as its milestone opens) + a conformance kit. Needs
    the adoption wiring to exercise them.
-6. **TASK-025 — ffmpeg-service ALB.** Stable URL / live infra; stand it up with the deployment the
+6. **TASK-025 — ffmpeg service** (moved to Sprint 7P with the AWS environment; the service was retired in 2026-10). Originally: stable URL / live infra; stand it up with the deployment the
    exit proof needs.
    **Also milestone 6 — database:** TASK-091 (schema baseline from the live database + CI migration replay on real Postgres) then TASK-092 (a separate Supabase project for production, built from that baseline). Dev and staging share the `playform` Supabase project until then.
 7. **TASK-046 (phase-exit expectation).** Auth-enable `k6/api-load.js` (acquire a test-user JWT; Bearer

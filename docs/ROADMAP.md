@@ -370,6 +370,15 @@ history (D6); failure is three-valued, and an unresolved external effect propaga
 TASK-072 (turn advancement belongs in the coordinator), TASK-069/070 (override
 hygiene). See TASKS.md.
 
+### Architecture realignment (inserted 2026-10-17)
+
+After Sprint 7A, five sprints settle what an independent engineering assessment found before Playform
+adoption continues: **7R** decisions and groundwork, **7T** tenancy (shared and dedicated deployment from one
+codebase), **7P** a second host (AWS through OpenTofu, alongside Vercel), **7S** product modules out of the
+core, **7O** the operations baseline (recovery, alerting, objectives, background work). Then Sprint 7
+(adoption, real providers, live load proof), Sprint 7B (screen strings) and Sprint 8 (UX polish). Details
+in [PHASE5_PLAN.md](PHASE5_PLAN.md); tasks TASK-123–132.
+
 ### Application Framework
 
 | Deliverable                                                   | Source                |

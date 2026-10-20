@@ -57,7 +57,7 @@ See `audio-format-types.ts` for the `CANONICAL_FORMAT` constant and `AudioFormat
 | -------------------------- | ---------------- | ------------------------------------------------------- |
 | `google-tts.ts`            | Google Cloud TTS | Neural2/Wavenet voices, auto-chunking                   |
 | `google-stt.ts`            | Google Cloud STT | Server-side transcription, 10-language pool             |
-| `ffmpeg-converter.ts`      | FFmpeg service   | `fetchWithTimeout` to `ffmpeg.datankare.com`            |
+| `ffmpeg-converter.ts`      | FFmpeg service   | `fetchWithTimeout` to `AUDIO_CONVERTER_URL`             |
 | `passthrough-converter.ts` | Passthrough      | WAV-only, no conversion (dev/optimization)              |
 | `acrcloud-identify.ts`     | ACRCloud         | HMAC-SHA1 signed, `fetchWithTimeout`, extracted methods |
 
@@ -115,7 +115,7 @@ Every `IdentifyResult` includes `estimatedCostUsd` (~$0.01 on ACRCloud paid tier
 
 ### FFmpeg Service
 
-Deployed at `ffmpeg.datankare.com` (ECS Fargate, us-east-1).
+Reached at `AUDIO_CONVERTER_URL`, authenticated with `AUDIO_CONVERTER_KEY`. The original ECS Fargate deployment was retired in 2026-10; its replacement is tracked in TASK-025.
 
 ```
 POST /convert

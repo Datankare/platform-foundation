@@ -257,8 +257,8 @@ awk 'NF {sub(/\r/, ""); printf "%s\\n", $0;}' delegation_public.pem
 Then, in `.env.local` (or your host's secret manager):
 
 ```bash
-DELEGATION_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
-DELEGATION_JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nMIIB...\n-----END PUBLIC KEY-----\n"
+DELEGATION_JWT_PRIVATE_KEY="<PKCS#8 PEM private key, newlines written as \n>"
+DELEGATION_JWT_PUBLIC_KEY="<SPKI PEM public key, newlines written as \n>"
 ```
 
 ### Where each key goes

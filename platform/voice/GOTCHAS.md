@@ -24,7 +24,7 @@
 
 **Date:** 2026-04-25 (TASK-026 rotation)
 
-**What broke:** Local audio smoke testing blocked — `ffmpeg` not installed despite `ffmpeg.datankare.com` (ECS Fargate) being the production audio conversion service.
+**What broke:** Local audio smoke testing blocked — `ffmpeg` not installed despite the deployed ffmpeg service (ECS Fargate at the time) being the production audio conversion service.
 
 **The fix:** `brew install ffmpeg` — installs in ~2 min on Apple Silicon. Not a production dependency, but needed for local audio debugging, test fixture creation, and credential rotation smoke tests.
 

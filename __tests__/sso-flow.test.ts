@@ -39,7 +39,7 @@ import {
 import { GET as start } from "@/app/api/auth/sso/[provider]/route";
 import { POST as callback } from "@/app/api/auth/sso/callback/route";
 
-const ORIGIN = "https://playform-staging.vercel.app";
+const ORIGIN = "https://staging.example.com";
 const SSO_ENV = {
   AUTH_PROVIDER: "cognito",
   NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_AbC123",

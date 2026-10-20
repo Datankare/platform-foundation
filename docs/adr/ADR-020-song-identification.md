@@ -26,7 +26,7 @@ All audio entering the platform is normalized to **WAV 16kHz mono 16-bit PCM** b
 - Ensures consistent input to all downstream consumers (STT, song ID, future analysis)
 - Privacy by design: canonical conversion removes device/software identifiers embedded in containers
 
-Conversion is performed by the `AudioFormatConverter` provider interface, defaulting to the `ffmpeg-service` deployment at `ffmpeg.datankare.com` (ECS Fargate). Uses `fetchWithTimeout` per platform convention (not raw fetch).
+Conversion is performed by the `AudioFormatConverter` provider interface, defaulting to the `ffmpeg-service` deployment at `AUDIO_CONVERTER_URL` (originally ECS Fargate; retired 2026-10 — see TASK-025). Uses `fetchWithTimeout` per platform convention (not raw fetch).
 
 ### Song Identification Provider
 
@@ -110,10 +110,10 @@ Two new slots added (total: 10):
 
 ## Infrastructure
 
-| Service        | Endpoint                                              | Notes                           |
-| -------------- | ----------------------------------------------------- | ------------------------------- |
-| FFmpeg service | `https://ffmpeg.datankare.com/convert`                | ECS Fargate, X-Service-Key auth |
-| ACRCloud       | `https://identify-us-west-2.acrcloud.com/v1/identify` | HMAC-SHA1 signed                |
+| Service        | Endpoint                                              | Notes                         |
+| -------------- | ----------------------------------------------------- | ----------------------------- |
+| FFmpeg service | `${AUDIO_CONVERTER_URL}/convert`                      | X-Service-Key auth (TASK-025) |
+| ACRCloud       | `https://identify-us-west-2.acrcloud.com/v1/identify` | HMAC-SHA1 signed              |
 
 Both providers use `fetchWithTimeout` from `@/lib/fetchWithTimeout` (not raw fetch), getting retry + timeout + logging for free.
 
