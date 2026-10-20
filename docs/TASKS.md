@@ -411,7 +411,7 @@ froze.
 | **Source**   | Phase 5 Sprint 0 k6 re-baseline finding       |
 
 **What:** `k6/api-load.js`'s `DRY_RUN=0` ("live, ~$5") profile is stale — it predates
-Sprint 3d, which added `requireAuthWithStatus` to `/api/process` and `/api/stream`. The
+Sprint 3d, which added `requireAuthWithStatus` to `/api/process` (and, in Playform, guarded `/api/stream` — in platform-foundation that route was unguarded until TASK-133). The
 script sends no auth header, so every live request 401s at the guard before reaching
 moderation, translate/classify, or the orchestrator. A live run today costs ~$0 and
 measures only 401-rejection latency.
@@ -2799,6 +2799,38 @@ TASK-126.
 
 **What:** one person authors almost every commit. The ADRs, task register and engineering learnings keep the
 platform legible; a second maintainer with merge rights removes the single point of failure.
+
+### TASK-133 — /api/stream ran any prompt for any request carrying a bearer header
+
+| Field        | Detail                                                        |
+| ------------ | ------------------------------------------------------------- |
+| **ID**       | TASK-133                                                      |
+| **Type**     | Security — authentication                                     |
+| **Severity** | High — unauthenticated, unbounded model calls on the platform |
+| **Phase**    | Phase 5                                                       |
+| **Target**   | Phase 5, Sprint 7A                                            |
+| **Status**   | Resolved (platform-foundation develop); consumer action below |
+| **Logged**   | 2026-10-20                                                    |
+
+**What:** `proxy.ts` checks only that credentials are _present_ on `/api/*` and leaves verification
+to the route handler. `/api/stream` (added Phase 2, Sprint 5) never verified them, so any request
+with `Authorization: Bearer <anything>` — or a `pf_has_session=true` cookie — reached the orchestrator
+with a caller-chosen prompt, system prompt, tier and `maxTokens`, with no screening and no limit.
+Found by the route survey for B-2 (rate limiting). TASK-046's note that Sprint 3d had guarded the route
+was true of Playform, whose own `proxy.ts` verifies tokens; Playform's dev, staging and production
+were probed on 2026-10-20 and refused both forms with 401.
+
+**Resolved:** the route verifies its caller (`requireActorWithStatus`, signed-in users only, account
+status under the `stream` feature); every field is bounded server-side (`platform/ai/stream-policy.ts`:
+prompt ≤ 4,000 characters, system ≤ 2,000, `maxTokens` 1–1,024, tier `fast` or `standard`,
+temperature 0–1) and refused with a coded error when out of bounds; prompt and system prompt are
+screened before any model call; an upstream failure reaches the client by code only. A new test,
+`__tests__/api-route-auth.test.ts`, fails CI for any API route that neither calls a verifier nor is
+listed as public by design with a reason. `useRealtimeStream` takes an access-token getter.
+
+**Consumer action:** add `stream` to `account_status.known_features` to offer streaming (the
+account-status check fails closed on an unknown feature, so the route answers `account.restricted`
+until then). Routes in a consumer's own `app/api` are checked by the same test after sync.
 
 ## Known Issue — TASK-020 numbering collision
 
