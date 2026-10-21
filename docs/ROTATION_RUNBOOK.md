@@ -4,6 +4,46 @@ Procedures for rotating external service credentials. Each rotation is logged wi
 
 ---
 
+## GitHub — Playform sync token
+
+### Current State
+
+| Item          | Value                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Token         | Fine-grained personal access token `playform-foundation-sync`, owner Datankare                                           |
+| Stored as     | Playform Actions secret `FOUNDATION_SYNC_TOKEN`                                                                          |
+| Used for      | Opening the `auto-sync/foundation-*` pull request in Playform (reading platform-foundation needs no token: it is public) |
+| Access        | Datankare/playform only — Contents and Pull requests: read and write                                                     |
+| **Expires**   | **2027-01-18**                                                                                                           |
+| **Rotate by** | **2027-01-04** (two weeks before expiry)                                                                                 |
+
+### Rotation History
+
+| Date       | Event                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------- |
+| 2026-10-09 | Stored value was stale; sync had failed for 12 days (TASK-121). Fresh value tested and stored. |
+| 2026-10-20 | Old token deleted while trimming its access; replaced with a Playform-only token.              |
+| 2026-10-20 | Regenerated the same day after its value appeared in a screenshot. Expiry 2027-01-18.          |
+
+### Rotation Procedure
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens → `playform-foundation-sync` →
+   **Regenerate token** (90 days). Copy it; never screenshot the page that shows it.
+2. Store it without displaying it — the value is tested before it is stored:
+
+   ```zsh
+   read -rs "T?Paste token (hidden): "; echo; code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $T" https://api.github.com/repos/Datankare/playform); echo "token check: $code"; [ "$code" = 200 ] && printf %s "$T" | gh secret set FOUNDATION_SYNC_TOKEN --repo Datankare/playform && echo "secret stored"; unset T; pbcopy < /dev/null
+   ```
+
+3. Run the sync (`gh workflow run sync-from-foundation.yml --ref develop` in Playform) and confirm it
+   succeeds.
+4. Update **Expires**, **Rotate by** and the history above.
+
+If the token lapses, the sync fails and opens a "Sync from platform-foundation is failing" issue in
+Playform (verified 2026-10-20, issue #573).
+
+---
+
 ## ACRCloud — Song Identification
 
 ### Current State
@@ -78,4 +118,4 @@ Procedures for rotating external service credentials. Each rotation is logged wi
 
 ---
 
-_Last updated: April 25, 2026 (TASK-026 rotation complete)_
+_Last updated: October 20, 2026 (Playform sync token replaced; TASK-121)_

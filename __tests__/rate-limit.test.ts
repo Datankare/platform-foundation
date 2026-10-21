@@ -9,6 +9,7 @@ import { RedisRateLimiter } from "../platform/rate-limit/redis-limiter";
 import {
   createRateLimiter,
   getRateLimiter,
+  setRateLimiter,
   resetRateLimiter,
   DEFAULT_RULES,
 } from "../platform/rate-limit/index";
@@ -280,43 +281,58 @@ describe("DEFAULT_RULES", () => {
 // ============================================================
 // Factory / Singleton
 // ============================================================
-describe("Rate limiter factory", () => {
+describe("Rate limiter factory (ADR-052)", () => {
+  const saved = { ...process.env };
   afterEach(() => {
     resetRateLimiter();
-    delete process.env.UPSTASH_REDIS_REST_URL;
-    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    process.env = { ...saved };
   });
 
-  it("creates InMemory when no Redis env", () => {
-    const limiter = createRateLimiter();
-    expect(limiter.name).toBe("memory");
+  it("defaults to the in-memory store", () => {
+    delete process.env.RATE_LIMIT_STORE;
+    expect(createRateLimiter().name).toBe("memory");
   });
 
-  it("creates Redis when env is set", () => {
+  it("reads RATE_LIMIT_STORE", () => {
+    process.env.RATE_LIMIT_STORE = "upstash";
     process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
     process.env.UPSTASH_REDIS_REST_TOKEN = "token";
-    const limiter = createRateLimiter();
-    expect(limiter.name).toBe("redis");
+    expect(createRateLimiter().name).toBe("redis");
   });
 
-  it("falls back to memory if Redis env incomplete", () => {
+  it("builds the Supabase store from the Supabase settings", () => {
+    process.env.SUPABASE_URL = "https://abc.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "eyJa.b.c";
+    expect(createRateLimiter({ provider: "supabase" }).name).toBe("supabase");
+  });
+
+  it("refuses a shared store with missing credentials instead of falling back to memory", () => {
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
     process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
-    const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
-    const limiter = createRateLimiter({ provider: "redis" });
-    expect(limiter.name).toBe("memory");
-    consoleSpy.mockRestore();
+    expect(() => createRateLimiter({ provider: "upstash" })).toThrow(
+      /Refusing to fall back/
+    );
+    delete process.env.SUPABASE_URL;
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    expect(() => createRateLimiter({ provider: "supabase" })).toThrow(
+      /Refusing to fall back/
+    );
   });
 
-  it("getRateLimiter returns singleton", () => {
-    const a = getRateLimiter();
-    const b = getRateLimiter();
-    expect(a).toBe(b);
+  it("refuses an unknown store", () => {
+    expect(() =>
+      createRateLimiter({ provider: "dynamo" as unknown as "memory" })
+    ).toThrow(/not a rate-limit store/);
   });
 
-  it("resetRateLimiter clears singleton", () => {
+  it("getRateLimiter returns one shared instance until reset; setRateLimiter replaces it", () => {
     const a = getRateLimiter();
+    expect(getRateLimiter()).toBe(a);
     resetRateLimiter();
     const b = getRateLimiter();
-    expect(a).not.toBe(b);
+    expect(b).not.toBe(a);
+    const c = createRateLimiter({ provider: "memory" });
+    setRateLimiter(c);
+    expect(getRateLimiter()).toBe(c);
   });
 });

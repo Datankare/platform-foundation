@@ -23,6 +23,7 @@ import {
   sameState,
   ssoRedirectUri,
 } from "@/platform/auth/sso";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 function endAttempt(response: NextResponse): NextResponse {
   response.cookies.set(SSO_COOKIE, "", {
@@ -37,6 +38,9 @@ function endAttempt(response: NextResponse): NextResponse {
 }
 
 export async function POST(request: NextRequest) {
+  // ADR-052: rate limited before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_SESSION);
+  if (limited) return limited;
   let body: { code?: unknown; state?: unknown };
   try {
     body = await request.json();

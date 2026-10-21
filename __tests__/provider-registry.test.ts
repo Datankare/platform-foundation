@@ -235,6 +235,7 @@ describe("auth-init backward compat", () => {
       process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
       process.env.GUEST_USAGE_STORE = "supabase";
       process.env.SOCIAL_STORE = "supabase";
+      process.env.RATE_LIMIT_STORE = "supabase";
       delete process.env.E2E_IN_MEMORY_STORES;
       realAuth();
     };
@@ -284,6 +285,7 @@ describe("auth-init backward compat", () => {
       delete process.env.BUDGET_STORE;
       delete process.env.GUEST_USAGE_STORE;
       delete process.env.SOCIAL_STORE;
+      delete process.env.RATE_LIMIT_STORE;
       expect(await boot()).not.toThrow();
     });
 
@@ -294,6 +296,7 @@ describe("auth-init backward compat", () => {
       delete process.env.BUDGET_STORE;
       delete process.env.GUEST_USAGE_STORE;
       delete process.env.SOCIAL_STORE;
+      delete process.env.RATE_LIMIT_STORE;
       process.env.E2E_IN_MEMORY_STORES = "true";
       realAuth();
       expect(await boot()).not.toThrow();
@@ -325,6 +328,7 @@ describe("auth-init backward compat", () => {
         delete process.env[v];
       }
       process.env.SOCIAL_STORE = "supabase";
+      delete process.env.RATE_LIMIT_STORE;
       delete process.env.SUPABASE_URL;
       delete process.env.NEXT_PUBLIC_SUPABASE_URL;
       delete process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -344,6 +348,7 @@ describe("auth-init backward compat", () => {
       }
       process.env.SUPABASE_URL = "https://example.supabase.co";
       process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      process.env.RATE_LIMIT_STORE = "supabase";
       delete process.env.SOCIAL_STORE;
       delete process.env.E2E_IN_MEMORY_STORES;
       expect(await boot()).toThrow(/SOCIAL_STORE/);
@@ -415,6 +420,7 @@ describe("auth-init backward compat", () => {
       process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
       process.env.GUEST_USAGE_STORE = "supabase";
       process.env.SOCIAL_STORE = "supabase";
+      process.env.RATE_LIMIT_STORE = "supabase";
       delete process.env.NEXT_PUBLIC_SUPABASE_URL;
       delete process.env.E2E_IN_MEMORY_STORES;
     };

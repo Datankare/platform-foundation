@@ -9,8 +9,12 @@ import { passwordRuleViolations } from "@/platform/auth/password-policy";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/platform/errors";
 import { authResultResponse } from "@/platform/auth/auth-response";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 export async function POST(request: NextRequest) {
+  // ADR-052: rate limited before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_ACCOUNT);
+  if (limited) return limited;
   initAuth();
 
   let body: { email?: string; password?: string };

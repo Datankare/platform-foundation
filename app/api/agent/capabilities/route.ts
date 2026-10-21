@@ -13,12 +13,16 @@
  * TASK-086 for why liveness is /api/health's job, not this endpoint's.
  */
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getActiveProviders } from "@/platform/providers/registry";
 import { listWorkflows, buildCapabilities } from "@/platform/agents";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // ADR-052: rate limited before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
+  if (limited) return limited;
   const requestId = generateRequestId();
 
   const capabilities = buildCapabilities(

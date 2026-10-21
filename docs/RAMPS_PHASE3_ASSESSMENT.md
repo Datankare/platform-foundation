@@ -42,7 +42,7 @@ Phase 3 delivered four sprints building the language and voice infrastructure: t
 
 ---
 
-## M — Maintainability
+## M — Manageability
 
 | Indicator          | Phase 2 Close | Phase 3 Close | Delta                         |
 | ------------------ | ------------- | ------------- | ----------------------------- |

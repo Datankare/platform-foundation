@@ -26,6 +26,7 @@ import {
   randomToken,
   ssoRedirectUri,
 } from "@/platform/auth/sso";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 function backToSignIn(request: NextRequest, code: ErrorCode): NextResponse {
   const url = new URL("/auth", request.nextUrl.origin);
@@ -39,6 +40,9 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ provider: string }> }
 ) {
+  // ADR-052: rate limited before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_SESSION);
+  if (limited) return limited;
   const { provider } = await context.params;
 
   // ADR-050 D3: only configured providers are offered — and only they can be started.

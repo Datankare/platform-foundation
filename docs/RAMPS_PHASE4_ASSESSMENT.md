@@ -44,7 +44,7 @@ The conformance system paid for itself before the phase closed: building the con
 
 ---
 
-## M — Maintainability
+## M — Manageability
 
 | Indicator                          | Phase 3 Close | Phase 4 Close | Delta                                                    |
 | ---------------------------------- | ------------- | ------------- | -------------------------------------------------------- |

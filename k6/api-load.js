@@ -7,10 +7,10 @@
  *
  * Usage:
  *   # Dry run (every sprint) — tests Vercel infra, middleware, cold starts
- *   K6_BASE_URL=https://playform-inky.vercel.app DRY_RUN=1 k6 run k6/api-load.js
+ *   K6_BASE_URL=https://<staging-host> DRY_RUN=1 k6 run k6/api-load.js
  *
  *   # Live burst (every phase close) — tests real API latency under load
- *   K6_BASE_URL=https://playform-inky.vercel.app DRY_RUN=0 k6 run k6/api-load.js
+ *   K6_BASE_URL=https://<staging-host> DRY_RUN=0 k6 run k6/api-load.js
  *
  *   # Custom concurrency
  *   K6_BASE_URL=... K6_PEAK_VUS=50 k6 run k6/api-load.js

@@ -52,11 +52,12 @@ BEGIN
     'guest_usage','user_devices','user_entitlements','groups','group_memberships',
     'group_invites','review_queue','user_strikes','content_safety_audit','agent_budgets',
     'agent_trajectories','proposals','effect_ledger','app_sessions','document_embeddings',
-    'applied_migrations'
+    'rate_limit_events','applied_migrations'
   ]) AS t WHERE to_regclass('public.' || t) IS NULL;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing tables: %', missing; END IF;
   SELECT string_agg(f, ', ') INTO missing FROM unnest(ARRAY[
-    'agent_budget_consume','guest_allowance_consume','has_permission','is_admin'
+    'agent_budget_consume','guest_allowance_consume','has_permission','is_admin',
+    'rate_limit_hit','rate_limit_reset'
   ]) AS f WHERE NOT EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public' AND p.proname = f);
@@ -75,5 +76,53 @@ BEGIN
   END IF;
 END $$;
 SQL
+
+step "rate limiting behaves (ADR-052)"
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE r record; n integer;
+BEGIN
+  -- Counts up to the limit, then refuses with a positive retry-after within the window.
+  SELECT * INTO r FROM public.rate_limit_hit('replay:a', 2, 60);
+  IF NOT r.allowed OR r.used <> 1 THEN RAISE EXCEPTION 'first hit: %', r; END IF;
+  SELECT * INTO r FROM public.rate_limit_hit('replay:a', 2, 60);
+  IF NOT r.allowed OR r.used <> 2 THEN RAISE EXCEPTION 'second hit: %', r; END IF;
+  SELECT * INTO r FROM public.rate_limit_hit('replay:a', 2, 60);
+  IF r.allowed OR r.used <> 2 OR r.retry_after_seconds NOT BETWEEN 1 AND 60 THEN
+    RAISE EXCEPTION 'over the limit: %', r;
+  END IF;
+  -- A refusal is not counted.
+  SELECT count(*) INTO n FROM public.rate_limit_events WHERE bucket = 'replay:a';
+  IF n <> 2 THEN RAISE EXCEPTION 'refusal was counted: % rows', n; END IF;
+  -- Peeking does not count; buckets are independent.
+  SELECT * INTO r FROM public.rate_limit_hit('replay:b', 1, 60, false);
+  IF NOT r.allowed OR r.used <> 0 THEN RAISE EXCEPTION 'peek: %', r; END IF;
+  SELECT * INTO r FROM public.rate_limit_hit('replay:b', 1, 60);
+  IF NOT r.allowed OR r.used <> 1 THEN RAISE EXCEPTION 'independent bucket: %', r; END IF;
+  -- Reset forgets a bucket.
+  PERFORM public.rate_limit_reset('replay:a');
+  SELECT * INTO r FROM public.rate_limit_hit('replay:a', 2, 60);
+  IF NOT r.allowed OR r.used <> 1 THEN RAISE EXCEPTION 'after reset: %', r; END IF;
+  -- Invalid input is refused, not coerced.
+  BEGIN
+    PERFORM public.rate_limit_hit('replay:c', 0, 60);
+    RAISE EXCEPTION 'a zero limit was accepted';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE 'rate_limit_hit: invalid limit%' THEN RAISE; END IF;
+  END;
+  DELETE FROM public.rate_limit_events WHERE bucket LIKE 'replay:%';
+END $$;
+SQL
+
+# Concurrency: 20 simultaneous requests for one bucket with a limit of 5 admit exactly 5.
+tmp=$(mktemp -d)
+for i in $(seq 20); do
+  "${PSQL[@]}" -At -c "SELECT allowed FROM public.rate_limit_hit('replay:concurrent', 5, 60)" >"$tmp/$i" &
+done
+wait
+admitted=$(cat "$tmp"/* | grep -c '^t$' || true)
+rm -rf "$tmp"
+"${PSQL[@]}" -At -c "DELETE FROM public.rate_limit_events WHERE bucket = 'replay:concurrent'" >/dev/null
+[ "$admitted" -eq 5 ] || { echo "✗ concurrent rate_limit_hit admitted $admitted of 20 with a limit of 5"; exit 1; }
 
 echo "✓ replay: baseline + $applied migration(s) it does not record, checks passed"

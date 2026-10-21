@@ -15,8 +15,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { mintGuestToken } from "@/platform/auth/guest-token";
 import { internalError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
-export async function POST(request?: NextRequest) {
+export async function POST(request: NextRequest) {
+  // ADR-052: rate limited before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_GUEST);
+  if (limited) return limited;
+
   let minted: Awaited<ReturnType<typeof mintGuestToken>>;
   try {
     minted = await mintGuestToken();

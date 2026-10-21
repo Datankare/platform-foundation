@@ -51,7 +51,7 @@ Phase 2 delivered six sprints (1–6) plus a maintenance sprint, building the Ge
 
 ---
 
-## M — Maintainability
+## M — Manageability
 
 | Indicator                    | Status | Evidence                                                         |
 | ---------------------------- | ------ | ---------------------------------------------------------------- |

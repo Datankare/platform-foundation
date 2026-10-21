@@ -21,6 +21,7 @@ import { logger } from "@/lib/logger";
 import { PurgePipeline } from "@/platform/gdpr";
 import type { PurgeRequest } from "@/platform/gdpr";
 import { apiError } from "@/platform/errors";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 /** Valid purge reasons */
 const VALID_REASONS = new Set([
@@ -31,6 +32,9 @@ const VALID_REASONS = new Set([
 ]);
 
 export async function POST(request: NextRequest) {
+  // ADR-052: rate limited before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
+  if (limited) return limited;
   // Auth + permission guard
   const auth = await requireAuth(request);
   if (auth.error) return auth.error;

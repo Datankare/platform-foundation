@@ -93,6 +93,20 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     shape: /^[\w+/=-]{43,}$/,
     shapeHint: "at least 32 random bytes, base64 (e.g. openssl rand -base64 48)",
   },
+  {
+    name: "RATE_LIMIT_STORE",
+    aliases: [],
+    shape: /^(supabase|upstash|memory)$/,
+    shapeHint:
+      "one of: supabase, upstash, memory (memory is refused in production — ADR-052)",
+  },
+  {
+    name: "TRUSTED_PROXY_HOPS",
+    aliases: [],
+    shape: /^[1-5]$/,
+    shapeHint:
+      "how many proxies in front of the app append to X-Forwarded-For, 1–5 (Vercel: 1)",
+  },
 ];
 
 /** Auth providers that are test doubles (ADR-050 D1). */
@@ -109,6 +123,7 @@ export const SUPABASE_SELECTORS: readonly string[] = [
   "EFFECT_LEDGER",
   "APPROVAL_POLICY_STORE",
   "GUEST_USAGE_STORE",
+  "RATE_LIMIT_STORE",
   "REALTIME_PROVIDER",
 ];
 
@@ -173,6 +188,24 @@ export function getAuthProviderSetting(env: EnvSource = process.env): string | u
 /** ADR-050 D4: the guest-token signing secret. */
 export function getGuestTokenSecret(env: EnvSource = process.env): string | undefined {
   return resolveSetting("GUEST_TOKEN_SECRET", env);
+}
+
+/** ADR-052: the rate-limit store selection (default "memory"; refused in production). */
+export function getRateLimitStoreSetting(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("RATE_LIMIT_STORE", env);
+}
+
+/**
+ * ADR-052: how many proxies in front of the app append to X-Forwarded-For. The client address
+ * is the entry that many places from the right; entries to its left are caller-supplied and
+ * never trusted. Default 1 (Vercel, or one load balancer).
+ */
+export function getTrustedProxyHops(env: EnvSource = process.env): number {
+  const v = resolveSetting("TRUSTED_PROXY_HOPS", env);
+  const n = v === undefined ? 1 : Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= 5 ? n : 1;
 }
 
 export interface CognitoSettings {
@@ -318,6 +351,15 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
       violations.push(
         `NEXT_PUBLIC_COGNITO_REGION does not match the region of NEXT_PUBLIC_COGNITO_USER_POOL_ID`
       );
+    }
+  }
+
+  // ADR-052: the Upstash rate-limit store needs its credentials.
+  if (getRateLimitStoreSetting(env) === "upstash") {
+    for (const name of ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"]) {
+      if (raw(env, name) === undefined) {
+        violations.push(`${name} is required by RATE_LIMIT_STORE=upstash but not set`);
+      }
     }
   }
 

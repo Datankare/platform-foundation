@@ -1,0 +1,11 @@
+# Known gitleaks false positives, one fingerprint per line (commit:file:rule:line).
+# Each needs a reason. The scan runs in .github/workflows/secret-scan.yml.
+#
+# 87e86ef — docs/ENV_REFERENCE.md showed a truncated placeholder PEM ("MIIE...") as an example
+# value for DELEGATION_JWT_PRIVATE_KEY. Not a key. The example was replaced with a non-PEM
+# description in 2026-10.
+87e86efe3d03482e1838d149122cbe5ff3e15c20:docs/ENV_REFERENCE.md:private-key:226
+#
+# 5a22199 — a test fixture: the environment-contract test feeds the made-up value "sb_secret_abc123"
+# to prove a non-JWT Supabase key is refused. Not a credential.
+5a221995ba9831653afa80644cd26036061676b1:platform/providers/__tests__/environment-contract.test.ts:generic-api-key:168
