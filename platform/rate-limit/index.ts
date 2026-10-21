@@ -1,11 +1,13 @@
 /**
  * Rate Limiter — barrel exports and factory.
  *
- * Usage:
- *   import { getRateLimiter, DEFAULT_RULES } from "@/platform/rate-limit";
- *   const limiter = getRateLimiter();
- *   const result = await limiter.check(userId, DEFAULT_RULES.AI_PER_USER);
- *   if (!result.allowed) { return res.status(429)... }
+ * Routes enforce a limit with one call (ADR-052):
+ *   import { enforceRateLimit, DEFAULT_RULES } from "@/platform/rate-limit";
+ *   const limited = await enforceRateLimit(request, DEFAULT_RULES.AI_PER_USER, { actorId });
+ *   if (limited) return limited;
+ *
+ * The store behind the shared limiter is a provider slot (RATE_LIMIT_STORE: supabase, upstash,
+ * memory), set by the provider registry; every store passes the same conformance kit.
  *
  * @module platform/rate-limit
  */
@@ -29,65 +31,16 @@ export { TOKEN_BUDGET_RULES } from "./token-aware";
 export { InMemoryRateLimiter } from "./memory-limiter";
 export { RedisRateLimiter } from "./redis-limiter";
 export type { RedisRateLimiterConfig } from "./redis-limiter";
+export { SupabaseRateLimiter } from "./supabase-limiter";
+export type { SupabaseRateLimiterConfig } from "./supabase-limiter";
+export { enforceRateLimit } from "./enforce";
+export type { RateLimitSubject } from "./enforce";
+export { getClientIp } from "./client-ip";
 
-import { InMemoryRateLimiter } from "./memory-limiter";
-import { RedisRateLimiter } from "./redis-limiter";
-import type { RateLimiter } from "./types";
-import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
-
-/** Singleton rate limiter instance */
-/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
-const LIMITER_KEY = "platform.rateLimit.limiter";
-function readLimiterInstance(): RateLimiter | null {
-  return getSingleton<RateLimiter | null>(LIMITER_KEY, () => null);
-}
-function writeLimiterInstance(next: RateLimiter | null): void {
-  setSingleton<RateLimiter | null>(LIMITER_KEY, next);
-}
-
-/**
- * Create a rate limiter from environment config.
- * Redis if UPSTASH_REDIS_REST_URL is set, otherwise in-memory.
- */
-export function createRateLimiter(config?: {
-  provider?: "redis" | "memory";
-  namespace?: string;
-}): RateLimiter {
-  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
-  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
-  const provider = config?.provider ?? (redisUrl ? "redis" : "memory");
-  const namespace = config?.namespace ?? "rl:";
-
-  if (provider === "redis" && redisUrl && redisToken) {
-    return new RedisRateLimiter({ url: redisUrl, token: redisToken, namespace });
-  }
-
-  if (provider === "redis") {
-    console.warn(
-      "[rate-limit] Redis config incomplete — falling back to in-memory limiter. " +
-        "Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for distributed rate limiting."
-    );
-  }
-
-  return new InMemoryRateLimiter({ namespace, cleanupIntervalMs: 0 });
-}
-
-/** Get the singleton rate limiter. */
-export function getRateLimiter(): RateLimiter {
-  const existing = readLimiterInstance();
-  if (existing) return existing;
-  const created = createRateLimiter();
-  writeLimiterInstance(created);
-  return created;
-}
-
-/** Reset the singleton (for testing only). */
-export function resetRateLimiter(): void {
-  // Three reads became one: the second `in` check could not be narrowed by the first, and
-  // each call is a registry lookup.
-  const existing = readLimiterInstance();
-  if (existing && "destroy" in existing) {
-    (existing as InMemoryRateLimiter).destroy();
-  }
-  writeLimiterInstance(null);
-}
+export {
+  createRateLimiter,
+  getRateLimiter,
+  setRateLimiter,
+  resetRateLimiter,
+} from "./factory";
+export type { RateLimitStoreType } from "./factory";

@@ -215,6 +215,12 @@ TASK-102/105 (deployed smoke test; topology recorded and checked by deployed com
 smoke test exposed, and the 2026-10-07 dependency advisories (Next.js 16.3.8). Breaking changes make the
 release **PF v3.0.0** (semver), with [`MIGRATION_v2_to_v3.md`](MIGRATION_v2_to_v3.md).
 
+**Also closed in 7A (2026-10-20), found while hardening the public repository:** TASK-133 (`/api/stream`
+verified nothing past the proxy's presence check — now signed-in users only, bounded server-side) and
+TASK-134 (the rate limiter was used by no route — ADR-052: every route limited through one shared,
+swappable store, Postgres by default, fail-closed, with CI checks for both). Consumers adopt both at the
+next sync (migration 039, `RATE_LIMIT_STORE`).
+
 **Sprint 7B — screen strings (ADR-051, TASK-110).** A dedicated sprint after Sprint 7 closes: every
 user-visible screen string in PF and Playform through the catalog until the ratchet set in 7A A4 reaches
 zero; remaining platform reason strings. ADR-051 Accepted at 7B close. Which locales ship is a separate

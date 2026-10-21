@@ -173,14 +173,15 @@ and audio conversion, which have their own).
 
 ## Caching & realtime
 
-| Variable                   | Required                      | Default  | Values                                        |
-| -------------------------- | ----------------------------- | -------- | --------------------------------------------- |
-| `CACHE_PROVIDER`           | No                            | `memory` | `upstash` `memory`                            |
-| `UPSTASH_REDIS_REST_URL`   | With `CACHE_PROVIDER=upstash` | —        | Upstash Redis REST endpoint.                  |
-| `UPSTASH_REDIS_REST_TOKEN` | With `CACHE_PROVIDER=upstash` | —        | Upstash Redis REST token. Server-side secret. |
-| `REALTIME_PROVIDER`        | No                            | `mock`   | `supabase` `mock`                             |
+| Variable                   | Required                      | Default  | Values                                                                                                                                                                       |
+| -------------------------- | ----------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CACHE_PROVIDER`           | No                            | `memory` | `upstash` `memory`                                                                                                                                                           |
+| `UPSTASH_REDIS_REST_URL`   | With `CACHE_PROVIDER=upstash` | —        | Upstash Redis REST endpoint.                                                                                                                                                 |
+| `UPSTASH_REDIS_REST_TOKEN` | With `CACHE_PROVIDER=upstash` | —        | Upstash Redis REST token. Server-side secret.                                                                                                                                |
+| `REALTIME_PROVIDER`        | No                            | `mock`   | `supabase` `mock`                                                                                                                                                            |
+| `TRUSTED_PROXY_HOPS`       | No                            | `1`      | `1`–`5` — proxies in front of the app that append to `X-Forwarded-For`; the client address is that many entries from the right (ADR-052). Vercel, or one load balancer: `1`. |
 
-Selecting `CACHE_PROVIDER=upstash` requires the two `UPSTASH_REDIS_REST_*` variables. Selecting
+Selecting `CACHE_PROVIDER=upstash` or `RATE_LIMIT_STORE=upstash` requires the two `UPSTASH_REDIS_REST_*` variables. Selecting
 `REALTIME_PROVIDER=supabase` reuses the Supabase connection variables above.
 
 ---
@@ -199,18 +200,19 @@ Selecting `CACHE_PROVIDER=upstash` requires the two `UPSTASH_REDIS_REST_*` varia
 Each store selects between an in-memory implementation (default, ephemeral) and Supabase
 (durable). Selecting `supabase` for any of these requires the three Supabase variables above.
 
-| Variable                | Required          | Default  | Values                                                                                                                               |
-| ----------------------- | ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `MODERATION_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                  |
-| `SOCIAL_STORE`          | Yes in production | `memory` | `supabase` `memory` — groups and memberships; production refuses `memory`, and `supabase` without credentials is an error (TASK-107) |
-| `APP_STATE_STORE`       | No                | `memory` | `supabase` `memory` (required `supabase` in production — ADR-049 D1)                                                                 |
-| `TRAJECTORY_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                  |
-| `BUDGET_STORE`          | No                | `memory` | `supabase` `memory`                                                                                                                  |
-| `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory agent stores under a production build; never set on a deployment)                       |
-| `PROPOSAL_STORE`        | No                | `memory` | `supabase` `memory`                                                                                                                  |
-| `EFFECT_LEDGER`         | No                | `memory` | `supabase` `memory`                                                                                                                  |
-| `APPROVAL_POLICY_STORE` | No                | `memory` | `supabase` `memory`                                                                                                                  |
-| `GUEST_USAGE_STORE`     | Yes in production | `memory` | `supabase` `memory` — counts the guest translate allowance (ADR-050 D4); production refuses `memory`; `supabase` needs migration 037 |
+| Variable                | Required          | Default  | Values                                                                                                                                                                                                     |
+| ----------------------- | ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MODERATION_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `SOCIAL_STORE`          | Yes in production | `memory` | `supabase` `memory` — groups and memberships; production refuses `memory`, and `supabase` without credentials is an error (TASK-107)                                                                       |
+| `APP_STATE_STORE`       | No                | `memory` | `supabase` `memory` (required `supabase` in production — ADR-049 D1)                                                                                                                                       |
+| `TRAJECTORY_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `BUDGET_STORE`          | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory agent stores under a production build; never set on a deployment)                                                                                             |
+| `PROPOSAL_STORE`        | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `EFFECT_LEDGER`         | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `APPROVAL_POLICY_STORE` | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `GUEST_USAGE_STORE`     | Yes in production | `memory` | `supabase` `memory` — counts the guest translate allowance (ADR-050 D4); production refuses `memory`; `supabase` needs migration 037                                                                       |
+| `RATE_LIMIT_STORE`      | Yes in production | `memory` | `supabase` `upstash` `memory` — where the shared rate-limit counters live (ADR-052); production refuses `memory`; `supabase` needs migration 039; `upstash` needs the two `UPSTASH_REDIS_REST_*` variables |
 
 For anything agentic that must survive a restart (trajectories, budgets, proposals, the effect
 ledger, the approval policy), set these to `supabase` in production. In-memory is correct for
@@ -288,8 +290,8 @@ as long as the maximum token lifetime.
 `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
 `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` · `NEXT_PUBLIC_COGNITO_REGION` · `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
 `NEXT_PUBLIC_SUPABASE_ANON_KEY` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` ·
-`PROPOSAL_STORE` · `REALTIME_PROVIDER` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` · `SSO_PROVIDERS` ·
-`STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` · `TRANSLATION_PROVIDER` ·
+`PROPOSAL_STORE` · `RATE_LIMIT_STORE` · `REALTIME_PROVIDER` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` · `SSO_PROVIDERS` ·
+`STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` · `TRUSTED_PROXY_HOPS` · `TRANSLATION_PROVIDER` ·
 `TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` · `UPSTASH_REDIS_REST_URL` · `VERCEL` · `VERCEL_GIT_COMMIT_SHA`
 
 ---

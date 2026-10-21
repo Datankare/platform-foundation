@@ -24,6 +24,7 @@ import { NextRequest } from "next/server";
 import { getOrchestrator } from "@/platform/ai/orchestrator";
 import { STREAM_FEATURE, validateStreamRequest } from "@/platform/ai/stream-policy";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { apiError, apiErrorBody } from "@/platform/errors";
 import { checkSafety } from "@/lib/safety";
 import { logger, generateRequestId } from "@/lib/logger";
@@ -38,6 +39,12 @@ export async function POST(request: NextRequest) {
     allowGuests: false,
   });
   if (guard.error) return guard.error;
+
+  // ADR-052: per verified user, before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.AI_PER_USER, {
+    actorId: guard.actor.id,
+  });
+  if (limited) return limited;
 
   let body: unknown;
   try {

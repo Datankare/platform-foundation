@@ -1,6 +1,7 @@
 /**
  * ADR-050 D3 / TASK-104 — optional features are offered only when configured.
  */
+import { NextRequest } from "next/server";
 import {
   FEATURE_REQUIREMENTS,
   featureAvailability,
@@ -165,7 +166,7 @@ describe("GET /api/features", () => {
     const orig = { ...process.env };
     process.env = { ...orig, ...ACR, ...FFMPEG, GOOGLE_API_KEY: "secret-google-key" };
     try {
-      const res = GET();
+      const res = await GET(new NextRequest("http://localhost/api/features"));
       expect(res.status).toBe(200);
       expect(res.headers.get("Cache-Control")).toBe("public, max-age=60");
       const text = await res.text();

@@ -27,6 +27,7 @@ import type {
   ModerationResult,
 } from "@/platform/moderation/types";
 import { apiError, errorFromResult } from "@/platform/errors";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "active",
@@ -103,6 +104,9 @@ async function derivePreviousStatus(
 }
 
 export async function POST(request: NextRequest) {
+  // ADR-052: rate limited before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
+  if (limited) return limited;
   const auth = await requireAuth(request);
   if (auth.error) return auth.error;
 

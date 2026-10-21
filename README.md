@@ -30,7 +30,7 @@ from day one.
 - ✅ Platform config table (runtime key-value settings)
 - ✅ super_admin role separation + anti-self-elevation guard
 - ✅ Admin UI with GenAI-native command bar
-- ✅ Rate limiting (per-IP sliding window)
+- ✅ Rate limiting on every API route — one shared, swappable store (Postgres, Redis or memory), fail-closed (ADR-052)
 - ✅ Password policy (12 char, rotation, history)
 - ✅ Immutable audit log
 - ✅ CognitoAuthProvider (full AuthProvider implementation, fetch-based)
@@ -107,7 +107,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 39 migrations (001–038), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 40 migrations (001–039), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -116,7 +116,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                            |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–051`                        | 51 Architecture Decision Records                                                   |
+| `docs/adr/ADR-001–052`                        | 52 Architecture Decision Records                                                   |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                    |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
@@ -174,8 +174,8 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 39 database migrations
-├── docs/adr/               ← 51 ADRs
+├── supabase/migrations/    ← 40 database migrations
+├── docs/adr/               ← 52 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -244,7 +244,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.5.0 — Datankare_
-_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 51 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 7A · 269 suites · 3,470 tests · 92.18% statement coverage · 52 ADRs · 18 GenAI principles · 27 conformance kits · 21 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
 _Last updated: September 24, 2026 (v2.5.0 — Phase 5 Sprint 6 close: multimodal AI — multimodal provider interface (ADR-044), screenModality safety seam (ADR-046), screened multimodal input, governed image generation (ADR-045), and provenance + synthetic-media detection (ADR-047); all fail-closed on one shared substrate, with L21 conformance kits)_

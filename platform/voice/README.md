@@ -98,7 +98,7 @@ See `audio-format-types.ts` for the `CANONICAL_FORMAT` constant and `AudioFormat
 
 ### Rate Limiting (P13)
 
-`SONG_IDENTIFY` rule in `platform/rate-limit/types.ts`: 10 identifications per user per hour. Enforcement at API route layer via `getRateLimiter().check(userId, DEFAULT_RULES.SONG_IDENTIFY)`.
+`SONG_IDENTIFY` rule in `platform/rate-limit/types.ts`: 10 identifications per user per hour. The consumer's identification route enforces it with `enforceRateLimit(request, DEFAULT_RULES.SONG_IDENTIFY, { actorId })` (ADR-052).
 
 ### Cost Tracking (P5)
 

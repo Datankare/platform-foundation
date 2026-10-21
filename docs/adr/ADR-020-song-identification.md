@@ -46,7 +46,7 @@ ACRCloud was selected over AudD.io for higher recognition accuracy on partial/no
 
 ### Rate Limiting (P13)
 
-`SONG_IDENTIFY` rule added to `DEFAULT_RULES` in `platform/rate-limit/types.ts`: 10 identifications per user per hour. Enforcement wired via `getRateLimiter().check(userId, DEFAULT_RULES.SONG_IDENTIFY)` at the API route layer.
+`SONG_IDENTIFY` rule added to `DEFAULT_RULES` in `platform/rate-limit/types.ts`: 10 identifications per user per hour. The consumer's identification route enforces it with `enforceRateLimit(request, DEFAULT_RULES.SONG_IDENTIFY, { actorId })` (ADR-052). _(Corrected 2026-10: this ADR said enforcement was wired; in platform-foundation no route called the limiter — TASK-134.)_
 
 Rationale:
 

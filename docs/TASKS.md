@@ -2832,6 +2832,38 @@ listed as public by design with a reason. `useRealtimeStream` takes an access-to
 account-status check fails closed on an unknown feature, so the route answers `account.restricted`
 until then). Routes in a consumer's own `app/api` are checked by the same test after sync.
 
+### TASK-134 — The rate limiter existed, but no route used it
+
+| Field        | Detail                                                               |
+| ------------ | -------------------------------------------------------------------- |
+| **ID**       | TASK-134                                                             |
+| **Type**     | Security — abuse protection                                          |
+| **Severity** | High — sign-in and account flows open to brute force and email abuse |
+| **Phase**    | Phase 5                                                              |
+| **Target**   | Phase 5, Sprint 7A                                                   |
+| **Status**   | Resolved (platform-foundation develop); consumer action below        |
+| **Logged**   | 2026-10-20                                                           |
+
+**What:** `platform/rate-limit` (sliding window, memory and Redis stores) had shipped since Phase 2, and
+ADR-020, two READMEs and SEC-002 described routes as limited. No route called it. The only limiter in
+use was a separate per-instance one on admin routes (`platform/auth/rate-limit.ts`), which does not hold
+across serverless instances. Sign-in, every account flow, guest minting and the AI routes had no limit,
+and no environment configured a shared store. Found by the B-2 route survey; raised in part by the
+2026-10-17 engineering assessment (the admin limiter).
+
+**Resolved (ADR-052):** every API route calls `enforceRateLimit` (or `adminGuard`), checked by
+`__tests__/api-route-rate-limit.test.ts`; the store is a provider slot (`RATE_LIMIT_STORE`: `supabase`,
+`upstash`, `memory`) with one conformance kit for all three; the Postgres store (migration 039) is an exact
+sliding window serialised per bucket, exercised on real Postgres in the migration replay, concurrency
+included; production refuses the in-memory store; the limiter fails closed; the caller's address comes
+from `X-Forwarded-For` at `TRUSTED_PROXY_HOPS` from the right. The per-instance admin limiter is removed;
+the documents that claimed enforcement are corrected; SEC-002's resolution is restated.
+
+**Consumer action (at the next sync):** apply migration 039 to every database; set
+`RATE_LIMIT_STORE=supabase` on every deployment (production will not boot without a shared store); call
+`enforceRateLimit` in the consumer's own routes (the synced test checks them); reset the limiter
+singleton (`platform.rateLimit.limiter`) before each test in the consumer's `jest.setup.ts`.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:

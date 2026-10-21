@@ -104,7 +104,7 @@ graph TD
 | [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md) | The platform layers and how they compose.                                  |
 | [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md)       | Agent clusters, workflow, and the governed-authority layer.                |
 | [AUX_DESIGN.md](AUX_DESIGN.md)                       | The agent user-experience surface.                                         |
-| [adr/](adr/)                                         | 51 Architecture Decision Records — every decision and its rationale.       |
+| [adr/](adr/)                                         | 52 Architecture Decision Records — every decision and its rationale.       |
 
 ### Developer Guides
 

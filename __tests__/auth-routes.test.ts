@@ -425,7 +425,7 @@ describe("POST /api/auth/new-password-challenge", () => {
 // POST /api/auth/guest
 // ============================================================
 describe("POST /api/auth/guest", () => {
-  let handler: () => Promise<Response>;
+  let handler: (req: NextRequest) => Promise<Response>;
 
   beforeEach(async () => {
     const mod = await import("@/app/api/auth/guest/route");
@@ -433,7 +433,9 @@ describe("POST /api/auth/guest", () => {
   });
 
   it("mints a platform-signed guest token, whatever the auth provider", async () => {
-    const res = await handler();
+    const res = await handler(
+      new NextRequest("http://localhost/api/auth/guest", { method: "POST" })
+    );
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);

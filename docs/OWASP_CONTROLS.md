@@ -104,12 +104,12 @@ phase. No category may be left unaddressed.
 
 **Risk:** Weak authentication allowing identity compromise.
 
-| Control            | Implementation                                 | Status                           |
-| ------------------ | ---------------------------------------------- | -------------------------------- |
-| Auth provider      | Battle-tested provider (not hand-rolled)       | Template — implement per project |
-| Session management | Short-lived JWTs + refresh tokens              | Template — implement per project |
-| Rate limiting      | Per-endpoint throttling to prevent brute force | Template — implement per project |
-| COPPA compliance   | Age verification for under-13 users            | Template — implement per project |
+| Control            | Implementation                                                                                                  | Status                                     |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Auth provider      | Battle-tested provider (not hand-rolled)                                                                        | Template — implement per project           |
+| Session management | Short-lived JWTs + refresh tokens                                                                               | Template — implement per project           |
+| Rate limiting      | Every API route limited through one shared store; sign-in 10 per 15 minutes per address; fails closed (ADR-052) | Implemented — CI fails any unlimited route |
+| COPPA compliance   | Age verification for under-13 users                                                                             | Template — implement per project           |
 
 **Verification:** Auth integration tests, rate limit tests, session expiry tests.
 

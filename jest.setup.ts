@@ -21,9 +21,19 @@ process.env.LOG_LEVEL = "silent";
 // resolves it — matching prod and keeping this out of every individual suite.
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
+import { resetSingleton } from "@/platform/kernel/singleton";
 beforeAll(() => {
   registerPlatformAgents();
   registerAdaptiveReference();
+});
+
+// ADR-052: every test starts with no rate-limit history. Routes are rate limited, and tests
+// in one file share a network address ("unknown"), so counts would otherwise carry from one
+// test into the next. A test about limits counts within itself. The singleton is cleared by
+// key, not through platform/rate-limit, so that importing here never loads the limiter modules
+// ahead of a test file's own jest.mock of their dependencies.
+beforeEach(() => {
+  resetSingleton("platform.rateLimit.limiter");
 });
 
 afterAll(() => {
