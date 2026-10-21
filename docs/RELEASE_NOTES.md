@@ -9,6 +9,42 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v4.1.0 — an app declares its own route guards and settings
+
+Date: 2026-10-21
+
+The first consumer sync of v4.0.0 showed that the two route checks recognised only the platform's
+verifiers and limiters by name, while a consumer that wraps them — a route guard adding its own
+account rules, an agent context verifying two principals — had no way to say so: the checks are
+synced files a consumer cannot edit. The same class of gap as learning 110, closed the same way as
+ADR-051's app codes.
+
+### What a consumer inherits on sync
+
+- **`platform/route-policy/app-route-policy.ts` (consumer-owned, shipped empty; TASK-136).** Declare the
+  app's verifier and limiter wrappers by name, and its own public or rate-limit-exempt routes with a
+  reason. **Checked, not trusted:** the route checks locate each declared function's definition and
+  require it to call a platform verifier (or `enforceRateLimit`), directly or through another declared
+  wrapper; a wrapper that does neither, or cannot be found, fails CI.
+- Both route checks share one helper (`__tests__/helpers/route-policy.ts`) with self-tests of the checker.
+  Wrapper definitions are looked for in source only — never in tests or Jest manual mocks
+  (`__mocks__/`), which re-declare a wrapper's name without its behaviour.
+- **`docs/APP_ENV_REFERENCE.md` (consumer-owned, shipped as a template).** The app's own settings and
+  its per-environment provider choices. The docs check now reads it with `ENV_REFERENCE.md`, so a
+  consumer can inherit the docs check (and `ENV_REFERENCE.md`) instead of excluding them.
+- **`PLATFORM_VERSION` (`platform/version.ts`).** The platform release the synced code is; a
+  consumer's `package.json` is its own. The release-notes check now tracks it, not `package.json`.
+
+### Actions for a consumer
+
+1. Add `platform/route-policy/app-route-policy.ts` to the sync exclude list, then declare your wrappers in it.
+2. Add `docs/APP_ENV_REFERENCE.md` to the sync exclude list and fill it in. If you had excluded
+   `docs/ENV_REFERENCE.md` or `__tests__/docs-integrity.test.ts`, stop excluding them; the docs check
+   then also needs your own `README.md` (ADR and migration counts), `docs/README.md` (lists every doc)
+   and `docs/TAD.md` (indexes every ADR, carries a review date).
+
+---
+
 ## v4.0.0 — public-repository hardening: rate limiting, verified callers, secret scanning
 
 Date: 2026-10-21

@@ -2,6 +2,8 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
+> **v4.1.0** — an app declares its own route guards (`platform/route-policy/app-route-policy.ts`) and the route checks verify each one calls a platform verifier or limiter; an app documents its own settings in `docs/APP_ENV_REFERENCE.md`; `PLATFORM_VERSION` names the synced release (TASK-136). Non-breaking — see [RELEASE_NOTES](docs/RELEASE_NOTES.md).
+>
 > **v4.0.0** — public-repository hardening: rate limiting on every API route through one shared, swappable store (ADR-052), `/api/stream` verifies its caller and bounds every request, CI checks that every route verifies its caller and is rate limited, a secret scan over every commit, a security policy and a component register. **Breaking** (production requires `RATE_LIMIT_STORE`) — see [MIGRATION_v3_to_v4](docs/MIGRATION_v3_to_v4.md).
 >
 > **v3.1.0** — consumer seams: an app's own API error codes merged into the catalog (ADR-051 D1), consumer migrations replayed after the schema baseline, and guest tokens minted by the platform under any auth provider. Non-breaking — see [RELEASE_NOTES](docs/RELEASE_NOTES.md).
@@ -104,7 +106,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v4.0.0)
+- ✅ Versioned releases (v4.1.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
@@ -245,8 +247,8 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 
 ---
 
-_Platform Foundation v2.5.0 — Datankare_
-_Phase 5 Sprint 7A · 269 suites · 3,470 tests · 92.18% statement coverage · 52 ADRs · 18 GenAI principles · 27 conformance kits · 21 provider slots_
+_Platform Foundation v4.1.0 — Datankare_
+_Phase 5 Sprint 7A · 270 suites · 3,474 tests · 92.18% statement coverage · 52 ADRs · 18 GenAI principles · 27 conformance kits · 21 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
 _Last updated: September 24, 2026 (v2.5.0 — Phase 5 Sprint 6 close: multimodal AI — multimodal provider interface (ADR-044), screenModality safety seam (ADR-046), screened multimodal input, governed image generation (ADR-045), and provenance + synthetic-media detection (ADR-047); all fail-closed on one shared substrate, with L21 conformance kits)_

@@ -41,5 +41,5 @@ Postgres was chosen as the default deployment store because it is already run, a
 ## 3. Consequences
 
 - A consumer sets `RATE_LIMIT_STORE` (and applies migration 039 for `supabase`) on every deployment; production will not boot without it.
-- A consumer's own routes are checked by the same CI test after sync; each calls `enforceRateLimit` or is exempted with a reason. A consumer's `jest.setup` resets the limiter before each test, as the platform's does.
+- A consumer's own routes are checked by the same CI test after sync; each calls `enforceRateLimit` (directly or through a wrapper declared in `platform/route-policy/app-route-policy.ts`, v4.1.0) or is exempted with a reason. A consumer's `jest.setup` resets the limiter before each test, as the platform's does.
 - The previous `platform/auth/rate-limit.ts` (per-instance, admin only) is removed. `createRateLimiter({ provider: "redis" })` becomes `{ provider: "upstash" }`, and the Upstash store is no longer selected implicitly by the presence of its variables.

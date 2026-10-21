@@ -33,6 +33,12 @@ Two tests arrive with the sync and scan **every** route under `app/api`, includi
   `requireActor`, `requireAuth`, `adminGuard`), or is listed as public by design with a reason. A
   presence check in a proxy is not verification.
 
+From v4.1.0, an app that verifies or limits through its own wrappers declares them, and its own
+public or exempt routes, in `platform/route-policy/app-route-policy.ts` (consumer-owned: add it to the
+sync exclude list). Each declared wrapper must call a platform verifier or `enforceRateLimit` itself;
+the checks confirm it. Also from v4.1.0, document your own settings in `docs/APP_ENV_REFERENCE.md`
+(consumer-owned) rather than excluding the synced `docs/ENV_REFERENCE.md` — see the v4.1.0 release notes.
+
 ## 3. Tests — consumers with their own `jest.setup.ts` (sync-excluded)
 
 Routes are now rate limited, and tests in one file share an address, so counts carry between tests. Add,
