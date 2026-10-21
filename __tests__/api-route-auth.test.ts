@@ -5,25 +5,32 @@
  * verification to the route handler. A handler that forgets to verify is therefore open to any
  * request carrying "Authorization: Bearer <anything>" — which is how /api/stream ran
  * unauthenticated until 2026-10 (TASK-133). This test makes the rule mechanical: each route
- * file must call a verifier, or be listed below as public by design, with the reason.
+ * file must call a verifier, or be listed as public by design, with the reason.
+ *
+ * An app's own verifier wrappers and public routes are declared in
+ * platform/route-policy/app-route-policy.ts (TASK-136); each wrapper must itself call a platform
+ * verifier, directly or through another declared wrapper.
  */
 
-import { readdirSync, readFileSync, statSync } from "fs";
-import { join, relative } from "path";
+import { APP_ROUTE_POLICY } from "@/platform/route-policy/app-route-policy";
+import {
+  apiRoutes,
+  callCount,
+  isWrapperSource,
+  read,
+  resolveDeclared,
+} from "./helpers/route-policy";
 
-const ROOT = process.cwd();
-const API_DIR = join(ROOT, "app", "api");
-
-/** Calls that verify the caller (token signature, guest signature, or admin permission). */
-const VERIFIERS = [
-  /\brequireActorWithStatus\s*\(/,
-  /\brequireActor\s*\(/,
-  /\brequireAuth\s*\(/,
-  /\badminGuard\s*\(/,
+/** The platform's verifiers: token signature, guest signature, or admin permission. */
+const PLATFORM_VERIFIERS = [
+  "requireActorWithStatus",
+  "requireActor",
+  "requireAuth",
+  "adminGuard",
 ];
 
-/** Routes with no verifier, by design. Each needs a reason; a stale entry fails the test. */
-const PUBLIC_BY_DESIGN: Readonly<Record<string, string>> = {
+/** The platform's routes with no verifier, by design. Each needs a reason. */
+const PLATFORM_PUBLIC: Readonly<Record<string, string>> = {
   "app/api/health/route.ts":
     "Liveness for monitors and the deploy smoke test; no user data.",
   "app/api/features/route.ts":
@@ -48,45 +55,94 @@ const PUBLIC_BY_DESIGN: Readonly<Record<string, string>> = {
     "Completes hosted sign-in; verifies state and PKCE.",
 };
 
-function routeFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) out.push(...routeFiles(p));
-    else if (name === "route.ts") out.push(relative(ROOT, p).split("\\").join("/"));
-  }
-  return out;
-}
-
-const ROUTES = routeFiles(API_DIR).sort();
+const ROUTES = apiRoutes();
+const PUBLIC: Readonly<Record<string, string>> = {
+  ...PLATFORM_PUBLIC,
+  ...APP_ROUTE_POLICY.publicRoutes,
+};
+const VERIFIERS = resolveDeclared(PLATFORM_VERIFIERS, APP_ROUTE_POLICY.verifiers);
 
 describe("API route caller verification (TASK-133)", () => {
   it("finds a plausible number of routes (self-test before any absence counts)", () => {
     expect(ROUTES.length).toBeGreaterThan(20);
   });
 
+  it("accepts each declared app verifier only if it calls a platform verifier", () => {
+    expect(VERIFIERS.problems).toEqual([]);
+  });
+
   it("every route verifies its caller or is public by design", () => {
-    const unverified = ROUTES.filter((f) => {
-      if (PUBLIC_BY_DESIGN[f]) return false;
-      const src = readFileSync(join(ROOT, f), "utf-8");
-      return !VERIFIERS.some((v) => v.test(src));
-    });
+    const unverified = ROUTES.filter(
+      (f) => !PUBLIC[f] && callCount(read(f), VERIFIERS.accepted) === 0
+    );
     expect(unverified).toEqual([]);
   });
 
-  it("lists no public route that no longer exists", () => {
-    const missing = Object.keys(PUBLIC_BY_DESIGN).filter((f) => !ROUTES.includes(f));
-    expect(missing).toEqual([]);
-  });
-
-  it("gives every public route a reason", () => {
-    for (const [f, reason] of Object.entries(PUBLIC_BY_DESIGN)) {
-      expect({ f, hasReason: reason.trim().length > 10 }).toEqual({ f, hasReason: true });
+  it("lists no public route that does not exist, and gives each a reason", () => {
+    for (const [f, reason] of Object.entries(PUBLIC)) {
+      expect({
+        f,
+        exists: ROUTES.includes(f),
+        hasReason: reason.trim().length > 10,
+      }).toEqual({
+        f,
+        exists: true,
+        hasReason: true,
+      });
     }
   });
+});
 
-  it("the self-test catches a route with no verifier", () => {
-    const src = "export async function POST() { return new Response('open'); }";
-    expect(VERIFIERS.some((v) => v.test(src))).toBe(false);
+describe("route verification — self-tests of the checker", () => {
+  it("catches a route with no verifier", () => {
+    expect(
+      callCount(
+        "export async function POST() { return new Response('open'); }",
+        PLATFORM_VERIFIERS
+      )
+    ).toBe(0);
+  });
+
+  it("accepts a declared wrapper that calls a platform verifier, even through another wrapper", () => {
+    const defs = (name: string) =>
+      ({
+        guardA: [
+          {
+            file: "lib/a.ts",
+            source:
+              "export async function guardA(r) { return requireActorWithStatus(r); }",
+          },
+        ],
+        guardB: [
+          {
+            file: "lib/b.ts",
+            source: "export async function guardB(r) { return guardA(r); }",
+          },
+        ],
+      })[name] ?? [];
+    const r = resolveDeclared(PLATFORM_VERIFIERS, ["guardB", "guardA"], defs);
+    expect(r.problems).toEqual([]);
+    expect(r.accepted).toEqual(expect.arrayContaining(["guardA", "guardB"]));
+  });
+
+  it("refuses a declared wrapper that verifies nothing, or that cannot be found", () => {
+    const defs = (name: string) =>
+      name === "fake"
+        ? [{ file: "lib/f.ts", source: "export function fake() { return true; }" }]
+        : [];
+    const r = resolveDeclared(PLATFORM_VERIFIERS, ["fake", "missing"], defs);
+    expect(r.accepted).not.toContain("fake");
+    expect(r.problems).toEqual([
+      "missing: no definition found",
+      "fake: its definition calls no platform function (or accepted wrapper)",
+    ]);
+  });
+
+  it("looks for wrapper definitions in source only — never in tests or Jest manual mocks", () => {
+    expect(isWrapperSource("lib/route-guard.ts")).toBe(true);
+    expect(isWrapperSource("lib/__mocks__/route-guard.ts")).toBe(false);
+    expect(isWrapperSource("lib/__tests__/route-guard.ts")).toBe(false);
+    expect(isWrapperSource("lib/route-guard.test.ts")).toBe(false);
+    expect(isWrapperSource("lib/route-guard.md")).toBe(false);
   });
 });

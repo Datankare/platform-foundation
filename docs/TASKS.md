@@ -2897,6 +2897,42 @@ review did not. Learning 114.
 the repository and checked by `checkEnvironmentContract` in CI before promotion; secrets checked for
 presence and shape by the deploy pipeline without being displayed.
 
+### TASK-136 — The route checks could not recognise a consumer's own guards
+
+| Field        | Detail                                          |
+| ------------ | ----------------------------------------------- |
+| **ID**       | TASK-136                                        |
+| **Type**     | Platform extension point                        |
+| **Severity** | Medium — blocks a consumer from adopting v4.0.0 |
+| **Phase**    | Phase 5                                         |
+| **Target**   | Phase 5, Sprint 7A                              |
+| **Status**   | Resolved (PF v4.1.0); Playform at v0.7.0        |
+| **Logged**   | 2026-10-21                                      |
+
+**What:** a simulation of the v4.0.0 sync into Playform failed the two new route checks for twelve
+Playform routes that do verify their callers — through `requireAuthWithStatus` (its route guard) and
+`resolveAgentRouteContext` (two-principal agent context), which the checks did not know. The checks are
+synced files, so a consumer could not extend them. Learning 110's class: a contract that a consumer must
+satisfy has to ship the consumer's extension point.
+
+**Resolved (PF v4.1.0):** `platform/route-policy/app-route-policy.ts` (consumer-owned, shipped empty)
+declares an app's verifier and limiter wrappers and its own public or exempt routes. The checks locate
+each wrapper's definition and accept it only if it calls a platform verifier or `enforceRateLimit`,
+directly or through another accepted wrapper; self-tests cover the transitive case, a wrapper that
+verifies nothing, and one that cannot be found. Definitions are looked for in source only: a Jest manual
+mock (`lib/__mocks__/route-guard.ts`) re-declares a wrapper's name, and counting it made Playform's real
+guard look ambiguous — found by the v4.1.0 sync simulation, fixed with a self-test.
+
+**Same class, docs (PF v4.1.0):** Playform excluded `docs/ENV_REFERENCE.md` and
+`__tests__/docs-integrity.test.ts` as "app-owned" but never wrote its own, so nothing checked Playform's
+docs, and its TAD still described March 2026. The check needed two consumer seams:
+`docs/APP_ENV_REFERENCE.md` (the app's own settings, read with ENV_REFERENCE) and `PLATFORM_VERSION`
+(the release-notes check had compared the platform's notes with the app's `package.json`). Playform now
+inherits both files and the check, and owns its README, docs index and TAD. An audit of every Playform
+exclusion (learning 115) also found its twelve auth routes byte-identical to the platform's yet excluded —
+now inherited, with the platform's `auth-routes` test — one exclusion naming a file that no longer existed
+(removed), and an orphaned `components/admin/styles.ts` left by a sync (removed).
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:

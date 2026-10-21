@@ -8,7 +8,8 @@
  * 9 of 35 ADRs and 2 of 38 routes for months because nothing failed when it fell behind).
  *
  * The load-bearing checks: every ADR referenced in the docs exists; the ADR index is complete;
- * ENV_REFERENCE documents every environment variable the code actually reads; the required
+ * ENV_REFERENCE (with the app's APP_ENV_REFERENCE) documents every environment variable the code
+ * actually reads; the required
  * adopter docs exist; and the architecture docs carry a recent review date.
  *
  * Each check self-tests first (Gotcha 64): a check that passes by finding nothing is
@@ -23,6 +24,7 @@ import {
   HARNESS_ONLY_SETTINGS,
   SUPABASE_SELECTORS,
 } from "@/platform/providers/environment-contract";
+import { PLATFORM_VERSION } from "@/platform/version";
 
 const ROOT = process.cwd();
 const DOCS = join(ROOT, "docs");
@@ -30,6 +32,18 @@ const ADR_DIR = join(DOCS, "adr");
 
 function read(rel: string): string {
   return readFileSync(join(ROOT, rel), "utf-8");
+}
+
+/**
+ * The environment reference: the platform's ENV_REFERENCE.md (synced) plus the consuming app's
+ * APP_ENV_REFERENCE.md (consumer-owned), so an app documents its own settings without editing a
+ * synced file.
+ */
+function envReference(): string {
+  return ["docs/ENV_REFERENCE.md", "docs/APP_ENV_REFERENCE.md"]
+    .filter((rel) => existsSync(join(ROOT, rel)))
+    .map(read)
+    .join("\n");
 }
 
 // ── ADRs ────────────────────────────────────────────────────────────────
@@ -138,8 +152,8 @@ describe("docs integrity — environment variables", () => {
     expect(codeVars.length).toBeGreaterThan(20);
   });
 
-  it("documents every environment variable the code reads in ENV_REFERENCE.md", () => {
-    const ref = read("docs/ENV_REFERENCE.md");
+  it("documents every environment variable the code reads (ENV_REFERENCE or APP_ENV_REFERENCE)", () => {
+    const ref = envReference();
     const undocumented = codeVars.filter((v) => !ref.includes(v));
     expect(undocumented).toEqual([]);
   });
@@ -147,7 +161,7 @@ describe("docs integrity — environment variables", () => {
   it("documents every setting the environment contract reads (ADR-050 D2)", () => {
     // The contract reads its settings by name (env[name]), which the process.env scan above
     // cannot see — so its declarations are checked directly.
-    const ref = read("docs/ENV_REFERENCE.md");
+    const ref = envReference();
     const declared = [
       ...ENVIRONMENT_CONTRACT.flatMap((d) => [d.name, ...d.aliases]),
       ...SUPABASE_SELECTORS,
@@ -182,14 +196,24 @@ describe("docs integrity — required adopter docs exist", () => {
 // ── Release notes track the current version ────────────────────────────────
 
 describe("docs integrity — release notes", () => {
-  it("RELEASE_NOTES has an entry for the current major line", () => {
-    // The package/tag version line the notes must cover. We assert the notes mention the
-    // current major (e.g. a "v2" / "2.0" heading) so a major release cannot ship without a
-    // release-notes entry. Kept coarse (major) so patch releases don't force a churn edit.
+  it("RELEASE_NOTES has an entry for the platform's current major line", () => {
+    // The notes are the platform's, so they track PLATFORM_VERSION — in a consumer,
+    // package.json is the app's own version. We assert the notes mention the current major
+    // (e.g. a "v2" heading) so a major release cannot ship without a release-notes entry.
+    // Kept coarse (major) so patch releases don't force a churn edit.
     const notes = read("docs/RELEASE_NOTES.md");
-    const major = Number(JSON.parse(read("package.json")).version.split(".")[0]);
+    const major = Number(PLATFORM_VERSION.split(".")[0]);
     expect(Number.isInteger(major)).toBe(true);
     expect(notes).toMatch(new RegExp(`^## v${major}\\.\\d+\\.\\d+`, "m"));
+  });
+
+  it("PLATFORM_VERSION is platform-foundation's package version (bump both together)", () => {
+    const pkg = JSON.parse(read("package.json")) as { name: string; version: string };
+    // In a consumer the package is the app's: there is nothing to compare, and its version
+    // is its own. In platform-foundation the two must agree.
+    const expected = pkg.name === "platform-foundation" ? pkg.version : PLATFORM_VERSION;
+    expect(PLATFORM_VERSION).toBe(expected);
+    expect(PLATFORM_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
 

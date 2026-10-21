@@ -38,7 +38,7 @@ graph TD
         PLAT[PLATFORM_ARCHITECTURE<br/>the layers]
         AGENT[AGENT_ARCHITECTURE<br/>agents + governed authority]
         AUX[AUX_DESIGN<br/>agent UX surface]
-        ADR[(adr/ · 43 ADRs<br/>every decision + rationale)]
+        ADR[(adr/ · 52 ADRs<br/>every decision + rationale)]
     end
 
     subgraph GUIDES["Developer Guides"]
@@ -93,6 +93,7 @@ graph TD
 | [API_ERRORS.md](API_ERRORS.md)                       | Every API error code — HTTP status, message, params, what the caller should do. Generated (ADR-051).                |
 | [APP_API_ERRORS.md](APP_API_ERRORS.md)               | The consuming app's own `app.*` error codes (ADR-051 D1). Generated; consumer-owned — empty in platform-foundation. |
 | [ENV_REFERENCE.md](ENV_REFERENCE.md)                 | Every environment variable — purpose, required, default, values, incl. delegation keys.                             |
+| [APP_ENV_REFERENCE.md](APP_ENV_REFERENCE.md)         | The consuming app's own settings and its per-environment provider choices. Consumer-owned — a template here.        |
 | [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md)       | Upgrading from v1.x: the breaking rung-1 retirement + adoption steps.                                               |
 | [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md)       | Upgrading from v2.x: stricter production boot, signed guests, coded errors, removed guest lifecycle.                |
 | [MIGRATION_v3_to_v4.md](MIGRATION_v3_to_v4.md)       | Upgrading from v3.x: required rate-limit store, route checks for verification and limits, stricter `/api/stream`.   |
