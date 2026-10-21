@@ -37,12 +37,12 @@ _Last reviewed: 2026-10-20._
 
 ## Tooling
 
-| Tool                      | Licence                                     | Note                                                            |
-| ------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
-| gitleaks                  | MIT                                         | Secret scan in CI                                               |
-| Semgrep (community rules) | LGPL-2.1                                    | Static analysis in CI                                           |
-| CodeQL                    | GitHub terms (free for public repositories) | Static analysis in CI                                           |
-| OpenTofu (planned)        | MPL-2.0                                     | Infrastructure as code, Sprint 7P — chosen over Terraform (BSL) |
+| Tool                      | Licence                                     | Note                                                                                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| gitleaks                  | MIT                                         | Secret scan in CI                                                                                                                                                                                                                                |
+| Semgrep (community rules) | LGPL-2.1                                    | Static analysis in CI                                                                                                                                                                                                                            |
+| CodeQL                    | GitHub terms (free for public repositories) | Static analysis in CI on platform-foundation. Not run on Playform: code scanning on a private repository needs paid GitHub Code Security (decided 2026-10, for cost); Playform relies on Semgrep and its synced platform code being scanned here |
+| OpenTofu (planned)        | MPL-2.0                                     | Infrastructure as code, Sprint 7P — chosen over Terraform (BSL)                                                                                                                                                                                  |
 
 ## Changing this register
 

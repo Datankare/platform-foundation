@@ -221,6 +221,11 @@ TASK-134 (the rate limiter was used by no route — ADR-052: every route limited
 swappable store, Postgres by default, fail-closed, with CI checks for both). Consumers adopt both at the
 next sync (migration 039, `RATE_LIMIT_STORE`).
 
+**Released (2026-10-20/21):** Playform v0.6.0 to production (`045ae8b`, smoke and manual checks passed;
+migration 038 applied after release); platform-foundation v4.0.0 (the hardening above). 7A closes when
+Playform adopts v4.0.0 (migration 039, `RATE_LIMIT_STORE`, its own routes limited and verified) as v0.7.0;
+then Sprint 7R.
+
 **Sprint 7B — screen strings (ADR-051, TASK-110).** A dedicated sprint after Sprint 7 closes: every
 user-visible screen string in PF and Playform through the catalog until the ratchet set in 7A A4 reaches
 zero; remaining platform reason strings. ADR-051 Accepted at 7B close. Which locales ship is a separate

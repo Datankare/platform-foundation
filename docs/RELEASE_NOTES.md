@@ -9,6 +9,51 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v4.0.0 — public-repository hardening: rate limiting, verified callers, secret scanning
+
+Date: 2026-10-21
+
+Preparing the repository for public use found two controls that existed on paper only: a rate limiter
+no route called, and a streaming route that verified nothing past the proxy's presence check. Both are
+fixed so they cannot silently recur — CI now checks every API route for both — and the repository itself
+was hardened for public readers.
+
+**This release is breaking** for a consumer that deploys: production now requires a shared rate-limit
+store. Upgrade with [`MIGRATION_v3_to_v4.md`](MIGRATION_v3_to_v4.md).
+
+### What a consumer inherits on sync
+
+- **Rate limiting on every API route (ADR-052, TASK-134).** `enforceRateLimit(request, rule, { actorId? })`
+  — `429 rate.limited` with `Retry-After`; `503 service.unavailable` when the store cannot answer (fail
+  closed). The store is a provider slot, `RATE_LIMIT_STORE` = `supabase` (migration 039: an exact sliding
+  window in Postgres, serialised per bucket) · `upstash` · `memory`, with one conformance kit for all three;
+  production refuses `memory`. Spoof-resistant caller address (`TRUSTED_PROXY_HOPS`). Rules per route group:
+  sign-in 10 per 15 minutes, account flows 10 per hour, guest minting 20 per hour, AI 20 per minute per user.
+- **`/api/stream` verifies its caller (TASK-133).** Signed-in users only, account-governed under the
+  `stream` feature; every request field bounded server-side and refused with a coded error when out of
+  bounds; input screened before the model; upstream errors reported by code only.
+- **CI checks over every route.** `__tests__/api-route-auth.test.ts` (each route verifies its caller or is
+  public by design, with a reason) and `__tests__/api-route-rate-limit.test.ts` (each handler is limited or
+  the route is exempt, with a reason). They scan a consumer's own routes after sync.
+- **Migration replay checks behaviour.** The CI replay now exercises the rate-limit functions on real
+  Postgres, including concurrency (20 simultaneous requests, limit 5: exactly 5 admitted).
+- **Repository hygiene.** A full-history secret scan in CI (gitleaks, pinned and checksum-verified; known
+  false positives listed by fingerprint); Semgrep results uploaded to code scanning; `SECURITY.md` (private
+  vulnerability reporting); [`COMPONENT_REGISTER.md`](COMPONENT_REGISTER.md) (licence verdict and exit
+  path for each dependency and service); resource identifiers removed from docs and examples; the
+  licence names its owner; RAMPS "M" is Manageability throughout.
+- **Removed.** `platform/auth/rate-limit.ts` (the per-instance admin limiter). `createRateLimiter`'s
+  `"redis"` provider is now `"upstash"`, chosen explicitly.
+
+### Actions for a deploying consumer
+
+1. Apply migration 039 to every database; set `RATE_LIMIT_STORE=supabase` on every deployment.
+2. Rate-limit and verify your own routes until both route tests pass; reset the limiter in your
+   `jest.setup.ts`.
+3. To offer streaming, add `stream` to `account_status.known_features`.
+
+---
+
 ## v3.1.0 — consumer seams: app error codes, consumer migrations, platform guests
 
 Date: 2026-10-09

@@ -2096,21 +2096,23 @@ own Cognito pool, Google client, guest secret and durable stores; `/api/health` 
 
 ### TASK-100 — E2E journey tests pass when the user sees an error
 
-| Field        | Detail                                                    |
-| ------------ | --------------------------------------------------------- |
-| **ID**       | TASK-100                                                  |
-| **Type**     | Test integrity                                            |
-| **Severity** | Medium — green CI while users fail                        |
-| **Phase**    | Phase 5                                                   |
-| **Target**   | Phase 5, Sprint 7A                                        |
-| **Status**   | In progress — B2a done (Playform); B2b at the v3.0.0 sync |
-| **Logged**   | 2026-09-26                                                |
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-100                               |
+| **Type**     | Test integrity                         |
+| **Severity** | Medium — green CI while users fail     |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7A                     |
+| **Status**   | Resolved (Playform v0.6.0, 2026-10-20) |
+| **Logged**   | 2026-09-26                             |
 
 **What:** The translate journeys wait for the translation card **or any alert**, so they passed while every real user got "Invalid or expired token".
 
 **Resolution:** Assert a real translation result; add explicit error-path and guest-limit journeys (Playform-owned `e2e/`).
 
 **Progress (7A B2a, Playform `ac291cd`, `78efda2`):** journeys assert a real translation (`e2e/helpers/journey.ts` `expectTranslation`: text visible and non-empty, Play button, no app alert); an error-path journey (a coded dispatch failure must show the server message and no result); `__tests__/e2e-journey-integrity.test.ts` fails CI on "result or any alert" or a raw `[role=alert]` locator. Found on the way: a "no error notification" check that looked for a test id no element has (could never fail), and Next.js's route announcer — an always-present, empty `role="alert"` — which any "no alert" check must exclude (`appAlerts()`). **B2b (at the sync):** the guest-limit journey, with the Playform guest wiring.
+
+**Closed (2026-10-20):** B2b shipped in Playform v0.6.0 — four guest journeys, including the allowance refused at the limit + 1, run in Playform's CI; the production smoke test translates as a guest.
 
 ### TASK-101 — SSO buttons are never wired to the identity provider
 
@@ -2144,15 +2146,15 @@ on dev and staging.
 
 ### TASK-102 — No test runs against a deployed environment
 
-| Field        | Detail                                                  |
-| ------------ | ------------------------------------------------------- |
-| **ID**       | TASK-102                                                |
-| **Type**     | CI integrity                                            |
-| **Severity** | High — configuration is untested                        |
-| **Phase**    | Phase 5                                                 |
-| **Target**   | Phase 5, Sprint 7A                                      |
-| **Status**   | In progress — PF done; Playform workflow at the 7A sync |
-| **Logged**   | 2026-09-26                                              |
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-102                               |
+| **Type**     | CI integrity                           |
+| **Severity** | High — configuration is untested       |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7A                     |
+| **Status**   | Resolved (Playform v0.6.0, 2026-10-20) |
+| **Logged**   | 2026-09-26                             |
 
 **What:** Unit, integration and E2E tests all run on CI-built code with test settings; nothing checked `playform-dev` itself, so a missing database, mock auth and the wrong deployed branch all went unnoticed.
 
@@ -2170,6 +2172,8 @@ every non-browser client (agents, this smoke test, k6) got a 307 instead of the 
 the sync:** its own `proxy.ts` (sync-excluded) takes both fixes, and its `.github/workflows/deploy-smoke.yml`
 runs the script on every successful Vercel deployment of `playform-dev`, `playform-staging` and `playform`
 with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
+
+**Closed (2026-10-20):** Playform's `deploy-smoke.yml` runs on every production deployment of dev, staging and production. On the v0.6.0 release it caught a malformed `SUPABASE_URL` in production before any user (production refused to boot; fixed in settings, redeployed, smoke passed) — learning 114.
 
 ### TASK-103 — Deployment settings are unvalidated and can shadow each other
 
@@ -2209,15 +2213,15 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 
 ### TASK-105 — Vercel project-to-branch mapping is undocumented and was wrong
 
-| Field        | Detail                                                                                |
-| ------------ | ------------------------------------------------------------------------------------- |
-| **ID**       | TASK-105                                                                              |
-| **Type**     | Deployment topology                                                                   |
-| **Severity** | Medium — the deployed address ran old code                                            |
-| **Phase**    | Phase 5                                                                               |
-| **Target**   | Phase 5, Sprint 7A                                                                    |
-| **Status**   | In progress — topology documented and verified; checked by the smoke test at the sync |
-| **Logged**   | 2026-09-26                                                                            |
+| Field        | Detail                                     |
+| ------------ | ------------------------------------------ |
+| **ID**       | TASK-105                                   |
+| **Type**     | Deployment topology                        |
+| **Severity** | Medium — the deployed address ran old code |
+| **Phase**    | Phase 5                                    |
+| **Target**   | Phase 5, Sprint 7A                         |
+| **Status**   | Resolved (2026-10-20)                      |
+| **Logged**   | 2026-09-26                                 |
 
 **What:** `playform-dev` tracked `main`, so its address served v0.5.0 while new code went only to preview addresses. Fixed for `playform-dev` (now `develop`) during 7A; staging and production unverified.
 
@@ -2233,6 +2237,8 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 
 The production project's default address redirects (308) to `playform.datankare.com`. Resource identifiers (pool ids, project refs) are kept out of the repository. `/api/health` now reports `commit`
 (`VERCEL_GIT_COMMIT_SHA`, 12 characters) so the smoke test proves which build each address serves.
+
+**Closed (2026-10-20):** the smoke test confirmed each address serves its branch's commit — dev and staging on `797496a`, production on `045ae8b` (Playform v0.6.0).
 
 ### TASK-106 — Refresh-token rotation is off
 
@@ -2504,15 +2510,15 @@ reconfigure Dependabot to target `develop` only. Done when no update PR is older
 
 ### TASK-119 — Consumer migrations were never replayed after the baseline (`playform-prod` lacks Playform's schema)
 
-| Field        | Detail                                                                 |
-| ------------ | ---------------------------------------------------------------------- |
-| **ID**       | TASK-119                                                               |
-| **Type**     | Defect — schema integrity                                              |
-| **Severity** | High — production is missing a consumer's tables and configuration     |
-| **Phase**    | Phase 5                                                                |
-| **Target**   | Phase 5, Sprint 7A                                                     |
-| **Status**   | Resolved in PF (v3.1.0); `playform-prod` gets the migrations at v0.6.0 |
-| **Logged**   | 2026-10-09                                                             |
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-119                                                           |
+| **Type**     | Defect — schema integrity                                          |
+| **Severity** | High — production is missing a consumer's tables and configuration |
+| **Phase**    | Phase 5                                                            |
+| **Target**   | Phase 5, Sprint 7A                                                 |
+| **Status**   | Resolved (2026-10-20)                                              |
+| **Logged**   | 2026-10-09                                                         |
 
 **What:** `scripts/migration-replay.sh` and `__tests__/schema-baseline.test.ts` treated every migration
 numbered at or below `baseline-covers-through` (037) as inside the baseline. Playform's own migrations
@@ -2532,6 +2538,8 @@ baseline on Postgres 16 + pgvector, and the replay checks pass.
 **Playform (v0.6.0):** the CI replay job runs on Playform; the seven migrations, then 038, are applied to
 `playform-prod` in replay order from the files (SQL Editor), and `applied_migrations` is compared with the
 files afterwards. Close when that comparison shows nothing missing.
+
+**Closed (2026-10-20):** `playform-prod` holds 007 and 031–036 (compared with the files, nothing missing) and, after v0.6.0 went live, 038 — 47 recorded migrations.
 
 ### TASK-120 — ADR-051 consumer error codes were specified but not built; guest tokens depended on the auth provider
 
@@ -2568,7 +2576,7 @@ sign-in screen calls it. `SMOKE_TRANSLATION_FIELD` names the field a consumer's 
 | **Severity** | Medium — platform changes silently not inherited |
 | **Phase**    | Phase 5                                          |
 | **Target**   | Phase 5, Sprint 7A                               |
-| **Status**   | Open — fix in Playform v0.6.0                    |
+| **Status**   | Resolved (Playform v0.6.0, 2026-10-20)           |
 | **Logged**   | 2026-10-09                                       |
 
 **What:** `sync-from-foundation` failed on every run from 2026-09-28 (`could not read Username`, exit 128):
@@ -2581,6 +2589,8 @@ platform-foundation checkout uses its own read-only token (`FOUNDATION_READ_TOKE
 only, Contents read) so the token that writes to Playform no longer reaches platform-foundation; both tokens'
 expiry dates are recorded in `ROTATION_RUNBOOK.md` with a reminder before each.
 
+**Closed (2026-10-20), as built:** platform-foundation is public, so the sync reads it with the workflow's own `github.token`; no second token was needed. `FOUNDATION_SYNC_TOKEN` is used only to open the sync pull request in Playform and is scoped to Playform alone (Contents and Pull requests). The alert was exercised: a deliberate failure opened issue #573 (closed). The token was replaced on 2026-10-20 and its expiry is recorded in `ROTATION_RUNBOOK.md`.
+
 ### TASK-122 — The migration replay depended on an anonymous Docker Hub pull
 
 | Field        | Detail                                      |
@@ -2590,7 +2600,7 @@ expiry dates are recorded in `ROTATION_RUNBOOK.md` with a reminder before each.
 | **Severity** | Medium — a release blocked by a third party |
 | **Phase**    | Phase 5                                     |
 | **Target**   | Phase 5, Sprint 7A                          |
-| **Status**   | Resolved (PF v3.1.0); Playform at v0.6.0    |
+| **Status**   | Resolved (2026-10-20)                       |
 | **Logged**   | 2026-10-09                                  |
 
 **What:** the Migration replay job ran Postgres as a `pgvector/pgvector:pg17` service container. On the v3.1.0
@@ -2602,6 +2612,8 @@ runner, creates the `17/main` cluster when the image has not (GitHub's runner im
 creation — the first attempt failed on exactly that), and uses whichever port the cluster gets; nothing is
 pulled from Docker Hub. Playform's replay job
 (added at v0.6.0) takes the same form.
+
+**Closed (2026-10-20):** Playform's replay job ran green on the v0.6.0 promotion.
 
 ### TASK-123 — Playform UX polish: visible defaults and listening feedback
 
@@ -2641,7 +2653,7 @@ disabled, and a billing budget with alerts).
 
 **Plan:** one Anthropic workspace per environment, each with its own key and spend limit; one Google key per
 environment, each restricted to the same three APIs; a separate CI key; keys recorded by name (never value)
-in `ROTATION_RUNBOOK.md`, with rotation dates.
+in `ROTATION_RUNBOOK.md`, with rotation dates. Each key is created as a **Sensitive** environment variable, scoped to its one environment (Vercel flags the current shared keys "Needs attention" because they are not).
 
 ### TASK-125 — Register Datankare as an LLC and assign the platform's copyright to it
 
@@ -2863,6 +2875,27 @@ the documents that claimed enforcement are corrected; SEC-002's resolution is re
 `RATE_LIMIT_STORE=supabase` on every deployment (production will not boot without a shared store); call
 `enforceRateLimit` in the consumer's own routes (the synced test checks them); reset the limiter
 singleton (`platform.rateLimit.limiter`) before each test in the consumer's `jest.setup.ts`.
+
+### TASK-135 — Check a deployment's settings against the contract before promoting
+
+| Field        | Detail                                                 |
+| ------------ | ------------------------------------------------------ |
+| **ID**       | TASK-135                                               |
+| **Type**     | Operations — release safety                            |
+| **Severity** | Medium — a bad setting is caught only after the deploy |
+| **Phase**    | Phase 5                                                |
+| **Target**   | Phase 5, Sprint 7P                                     |
+| **Status**   | Open                                                   |
+| **Logged**   | 2026-10-20                                             |
+
+**What:** on the Playform v0.6.0 release, production's `SUPABASE_URL` carried `/rest/v1/`. The manual
+pre-promotion review compared only the project reference, so it passed; the environment contract refused
+the boot and the smoke test failed, before any user (production had none). The contract worked; the
+review did not. Learning 114.
+
+**Plan:** environment settings as code (with TASK-128): non-secret settings declared per environment in
+the repository and checked by `checkEnvironmentContract` in CI before promotion; secrets checked for
+presence and shape by the deploy pipeline without being displayed.
 
 ## Known Issue — TASK-020 numbering collision
 
