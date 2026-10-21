@@ -11,7 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requirePermission } from "@/platform/auth/middleware";
-import { checkRateLimit } from "@/platform/auth/rate-limit";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { apiError } from "@/platform/errors";
 
 const DEV_BYPASS = process.env.ADMIN_DEV_BYPASS === "true";
@@ -25,8 +25,9 @@ export async function adminGuard(
   request: NextRequest,
   permission: string
 ): Promise<NextResponse | null> {
-  // Rate limit always applies
-  const limited = checkRateLimit(request);
+  // Rate limit always applies — counted per network address before any verification, in the
+  // shared store (ADR-052), so it holds across instances.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.ADMIN_OPS);
   if (limited) return limited;
 
   // Dev bypass — NEVER in production

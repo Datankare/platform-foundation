@@ -72,28 +72,28 @@ exceeds the benefit for stateless API calls that are already file-isolated.
 
 ## Infrastructure
 
-| Service     | Purpose                                     | Region    | Account             |
-| ----------- | ------------------------------------------- | --------- | ------------------- |
-| AWS Cognito | Authentication, MFA, SSO, password policies | us-east-1 | playform-auth       |
-| Supabase    | PostgreSQL, RLS, data API                   | us-east-1 | Datankare/playform  |
-| Vercel      | Hosting, CI/CD                              | —         | ramansud's projects |
+| Service     | Purpose                                     | Region    | Account            |
+| ----------- | ------------------------------------------- | --------- | ------------------ |
+| AWS Cognito | Authentication, MFA, SSO, password policies | us-east-1 | playform-auth      |
+| Supabase    | PostgreSQL, RLS, data API                   | us-east-1 | Datankare/playform |
+| Vercel      | Hosting, CI/CD                              | —         | Datankare          |
 
 ### Cognito Details
 
-- User Pool ID: us-east-1_VRyIcnOuP
+- User Pool ID: `<pool-id>` (resource identifiers are not recorded in the repository; this original pool was deleted with its AWS account — see ADR-050)
 - App Client: playform-web (SPA, PKCE, no client secret)
-- Client ID: 5pb44pg40irb5v5p0k2atl7brk
+- Client ID: `<client-id>`
 - MFA: Optional, TOTP (authenticator apps)
 - Device tracking: User opt-in, bypass MFA for trusted devices
 - Sign-in: Email only
 - Self-registration: Enabled
 - Email verification: Required
 - Password policy: 12+ chars, uppercase + lowercase + number + special
-- Token signing: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_VRyIcnOuP/.well-known/jwks.json
+- Token signing: `https://cognito-idp.<region>.amazonaws.com/<pool-id>/.well-known/jwks.json`
 
 ### Supabase Details
 
-- Project URL: https://gjkngtsrgcjjvmyqrjmp.supabase.co
+- Project URL: `https://<project-ref>.supabase.co`
 - Region: us-east-1 (East US, North Virginia)
 - Auto-RLS: Enabled on all new tables
 - Data API: Enabled

@@ -31,6 +31,7 @@
  *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
  *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
  *   GUEST_USAGE_STORE      = "supabase" | "memory"  (default: "memory"; required in production — ADR-050 D4)
+ *   RATE_LIMIT_STORE       = "supabase" | "upstash" | "memory" (default: "memory"; refused in production — ADR-052)
  *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
  *   EFFECT_LEDGER          = "supabase" | "memory"  (default: "memory")
  *
@@ -52,6 +53,12 @@ import {
   SupabaseSocialStore,
 } from "@/platform/social";
 import { logger } from "@/lib/logger";
+import {
+  createRateLimiter,
+  peekRateLimiter,
+  RATE_LIMITER_NAMES,
+  setRateLimiter,
+} from "@/platform/rate-limit/factory";
 import {
   getAcrCloudConfig,
   setSongIdProvider,
@@ -83,6 +90,7 @@ import {
   getAuthProviderSetting,
   getCognitoSettings,
   getSupabaseUrl,
+  getRateLimitStoreSetting,
 } from "@/platform/providers/environment-contract";
 import {
   SupabaseGuestUsageStore,
@@ -113,6 +121,7 @@ export type ProposalStoreType = "supabase" | "memory";
 export type EffectLedgerType = "supabase" | "memory";
 export type ApprovalPolicyStoreType = "supabase" | "memory";
 export type GuestUsageStoreType = "supabase" | "memory";
+export type RateLimiterStoreType = "supabase" | "upstash" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -135,6 +144,7 @@ export interface ProviderSelections {
   effectLedger: EffectLedgerType;
   approvalPolicyStore: ApprovalPolicyStoreType;
   guestUsageStore: GuestUsageStoreType;
+  rateLimiter: RateLimiterStoreType;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +175,7 @@ function getProviderSelections(): ProviderSelections {
     approvalPolicyStore:
       (process.env.APPROVAL_POLICY_STORE as ApprovalPolicyStoreType) ?? "memory",
     guestUsageStore: (process.env.GUEST_USAGE_STORE as GuestUsageStoreType) ?? "memory",
+    rateLimiter: (getRateLimitStoreSetting() as RateLimiterStoreType) ?? "memory",
   };
 }
 
@@ -484,6 +495,20 @@ function initGuestUsageStore(type: GuestUsageStoreType): void {
   requireDurableStoreInProduction("GUEST_USAGE_STORE", "the guest allowance");
 }
 
+function initRateLimiter(type: RateLimiterStoreType): void {
+  // ADR-052 D3: a per-instance counter does not hold across serverless instances, so a limit
+  // set on it is not a limit. Production refuses it, as it refuses in-memory stores.
+  if (type === "memory") {
+    requireDurableStoreInProduction("RATE_LIMIT_STORE", "rate limiting");
+  }
+  // Idempotent: a limiter of the selected store already installed (one created by a request
+  // that arrived first) keeps its counts.
+  if (peekRateLimiter()?.name === RATE_LIMITER_NAMES[type]) return;
+  // A shared store with missing credentials throws inside createRateLimiter rather than
+  // falling back to memory.
+  setRateLimiter(createRateLimiter({ provider: type }));
+}
+
 function initProposalStore(type: ProposalStoreType): void {
   if (type === "supabase") {
     const url = getSupabaseUrl() ?? "";
@@ -605,6 +630,7 @@ export function initProviders(): ProviderSelections {
   initProposalStore(selections.proposalStore);
   initApprovalPolicyStore(selections.approvalPolicyStore);
   initGuestUsageStore(selections.guestUsageStore);
+  initRateLimiter(selections.rateLimiter);
   initEffectLedger(selections.effectLedger);
   initSocialStore(selections.socialStore);
   initEmbeddingProvider(selections.embeddingProvider);
@@ -636,6 +662,7 @@ export function initProviders(): ProviderSelections {
     proposalStore: selections.proposalStore,
     approvalPolicyStore: selections.approvalPolicyStore,
     guestUsageStore: selections.guestUsageStore,
+    rateLimiter: selections.rateLimiter,
     effectLedger: selections.effectLedger,
     socialStore: selections.socialStore,
     embeddingProvider: selections.embeddingProvider,

@@ -7,7 +7,7 @@
  * Uses fetchWithTimeout (not raw fetch) per platform convention.
  *
  * Infrastructure:
- *   Service: https://ffmpeg.datankare.com (ECS Fargate, us-east-1)
+ *   Service: AUDIO_CONVERTER_URL (deployment tracked in TASK-025)
  *   Auth: X-Service-Key header (AUDIO_CONVERTER_KEY env var)
  *   Limits: 10MB max input, 30s timeout
  *

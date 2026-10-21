@@ -35,8 +35,8 @@ export interface RateLimitRule {
 
 /** Rate limiter configuration */
 export interface RateLimitConfig {
-  /** Backend type: "redis" | "memory" */
-  provider: "redis" | "memory";
+  /** Where the shared counters live (ADR-052): "supabase" | "upstash" | "memory" */
+  provider: "supabase" | "upstash" | "memory";
   /** Key prefix for rate limit counters. Default: "rl:" */
   namespace?: string;
 }
@@ -78,8 +78,14 @@ export const DEFAULT_RULES: Record<string, RateLimitRule> = {
   API_GLOBAL: { id: "api:global", maxRequests: 100, windowSeconds: 60 },
   /** AI endpoint: 20 requests per minute per user */
   AI_PER_USER: { id: "ai:per-user", maxRequests: 20, windowSeconds: 60 },
-  /** Auth endpoints: 10 attempts per 15 minutes */
+  /** Credential attempts (sign-in and its challenges): 10 per 15 minutes per IP */
   AUTH_LOGIN: { id: "auth:login", maxRequests: 10, windowSeconds: 900 },
+  /** Account flows that send email or create accounts: 10 per hour per IP */
+  AUTH_ACCOUNT: { id: "auth:account", maxRequests: 10, windowSeconds: 3600 },
+  /** Guest token minting: 20 per hour per IP */
+  AUTH_GUEST: { id: "auth:guest", maxRequests: 20, windowSeconds: 3600 },
+  /** Session plumbing (hosted sign-in redirects, sign-out): 30 per minute per IP */
+  AUTH_SESSION: { id: "auth:session", maxRequests: 30, windowSeconds: 60 },
   /** Admin operations: 30 per minute */
   ADMIN_OPS: { id: "admin:ops", maxRequests: 30, windowSeconds: 60 },
   /** Song identification: 10 per hour per user */

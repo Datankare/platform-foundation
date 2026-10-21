@@ -8,6 +8,7 @@ import { MAX_INPUT_CHARACTERS } from "@/shared/config/limits";
 import { apiError } from "@/platform/errors";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
 import { enforceGuestAllowance } from "@/platform/auth/guest-allowance";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -18,6 +19,12 @@ export async function POST(request: NextRequest) {
   // the validation is paid, so an anonymous request never reaches them.
   const guard = await requireActorWithStatus(request, "translate", { allowGuests: true });
   if (guard.error) return guard.error;
+
+  // ADR-052: per verified actor (user or guest), before any work.
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.AI_PER_USER, {
+    actorId: guard.actor.id,
+  });
+  if (limited) return limited;
 
   try {
     const body = await request.json();

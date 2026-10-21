@@ -2,6 +2,8 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
+> **v4.0.0** — public-repository hardening: rate limiting on every API route through one shared, swappable store (ADR-052), `/api/stream` verifies its caller and bounds every request, CI checks that every route verifies its caller and is rate limited, a secret scan over every commit, a security policy and a component register. **Breaking** (production requires `RATE_LIMIT_STORE`) — see [MIGRATION_v3_to_v4](docs/MIGRATION_v3_to_v4.md).
+>
 > **v3.1.0** — consumer seams: an app's own API error codes merged into the catalog (ADR-051 D1), consumer migrations replayed after the schema baseline, and guest tokens minted by the platform under any auth provider. Non-breaking — see [RELEASE_NOTES](docs/RELEASE_NOTES.md).
 >
 > **v3.0.0** — Phase 5 Sprint 7A, deployment & auth readiness: a declared, fail-closed deployment environment contract (ADR-050), signed guest tokens and a governed guest allowance, coded API errors in one translatable catalog (ADR-051), Google sign-in via the hosted identity provider, a schema baseline with migration replay in CI, and a deployed smoke test. **Breaking** — see [MIGRATION_v2_to_v3](docs/MIGRATION_v2_to_v3.md).
@@ -14,7 +16,7 @@ from day one.
 
 ### Governing Principles (pre-wired)
 
-- **RAMPS** — Reliability · Accessibility (WCAG 2.2) · Maintainability · Performance · Security
+- **RAMPS** — Reliability · Accessibility (WCAG 2.2) · Manageability · Performance · Security
 - **AAA** — Authentication · Authorization · Analytics
 - **Foundation as Fabric** — Infrastructure woven in, never bolted on
 - **Continuous Confidence** — Full test suite, green means nothing is broken
@@ -30,7 +32,7 @@ from day one.
 - ✅ Platform config table (runtime key-value settings)
 - ✅ super_admin role separation + anti-self-elevation guard
 - ✅ Admin UI with GenAI-native command bar
-- ✅ Rate limiting (per-IP sliding window)
+- ✅ Rate limiting on every API route — one shared, swappable store (Postgres, Redis or memory), fail-closed (ADR-052)
 - ✅ Password policy (12 char, rotation, history)
 - ✅ Immutable audit log
 - ✅ CognitoAuthProvider (full AuthProvider implementation, fetch-based)
@@ -102,12 +104,12 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 - ✅ Self-policing doc gates — roadmap-consistency test, conflict-marker test
 - ✅ Lighthouse baseline: 97/100/100/100
 - ✅ 22-point sustainability gate + 8-point accessibility gate (A1-A8) + phase boundary protocol (E1-E15)
-- ✅ Versioned releases (v3.1.0)
+- ✅ Versioned releases (v4.0.0)
 - ✅ WCAG AA accessibility: `aria-live`, `aria-busy`, `role="alert"`, contrast compliance
 
 ### Database (Supabase)
 
-- ✅ 39 migrations (001–038), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 40 migrations (001–039), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -116,7 +118,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 | Document                                      | Purpose                                                                            |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–051`                        | 51 Architecture Decision Records                                                   |
+| `docs/adr/ADR-001–052`                        | 52 Architecture Decision Records                                                   |
 | `docs/TAD.md`                                 | Technical Architecture Document                                                    |
 | `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
 | `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
@@ -129,6 +131,8 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 | `docs/RAMPS_PHASE1–3_ASSESSMENT.md`           | Earlier phase baselines                                                            |
 | `docs/SECURITY_DEBT.md`                       | Tracked deferrals with phase assignments                                           |
 | `docs/OWASP_CONTROLS.md`                      | Verified OWASP Top 10 controls                                                     |
+| `docs/COMPONENT_REGISTER.md`                  | Dependencies and hosted services — licence verdicts and exit paths                 |
+| `SECURITY.md`                                 | How to report a vulnerability privately; supported versions                        |
 | `docs/SUSTAINABILITY_CHECKLIST.md`            | 22-point gate + 8-point accessibility gate + phase boundary protocol               |
 | `CONTRIBUTING.md`                             | Branch workflow, seed separation, standing rules                                   |
 
@@ -172,8 +176,8 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 39 database migrations
-├── docs/adr/               ← 51 ADRs
+├── supabase/migrations/    ← 40 database migrations
+├── docs/adr/               ← 52 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
 ```
@@ -242,7 +246,7 @@ See [Engineering Learnings](docs/ENGINEERING_LEARNINGS.md) for adopted principle
 ---
 
 _Platform Foundation v2.5.0 — Datankare_
-_Phase 5 Sprint 4 · 231 suites · 2,858 tests · 90.52% coverage · 51 ADRs · 18 GenAI principles · 25 conformance kits · 19 provider slots_
+_Phase 5 Sprint 7A · 269 suites · 3,470 tests · 92.18% statement coverage · 52 ADRs · 18 GenAI principles · 27 conformance kits · 21 provider slots_
 _Built with Foundation as Fabric · Continuous Confidence_
 
 _Last updated: September 24, 2026 (v2.5.0 — Phase 5 Sprint 6 close: multimodal AI — multimodal provider interface (ADR-044), screenModality safety seam (ADR-046), screened multimodal input, governed image generation (ADR-045), and provenance + synthetic-media detection (ADR-047); all fail-closed on one shared substrate, with L21 conformance kits)_

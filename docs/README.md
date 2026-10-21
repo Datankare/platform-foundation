@@ -10,7 +10,7 @@ document is catalogued in [The full catalog](#the-full-catalog) with a one-line 
 
 - **Adopting the platform** → [SETUP_AND_INTEGRATION](SETUP_AND_INTEGRATION.md), then
   [ENV_REFERENCE](ENV_REFERENCE.md).
-- **Upgrading from v2.x** → [MIGRATION_v2_to_v3](MIGRATION_v2_to_v3.md). From v1.x → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md) first.
+- **Upgrading from v3.x** → [MIGRATION_v3_to_v4](MIGRATION_v3_to_v4.md). From v2.x → [MIGRATION_v2_to_v3](MIGRATION_v2_to_v3.md) first; from v1.x → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md) before that.
 - **Building agents** → [AGENT_DELEGATION_GUIDE](AGENT_DELEGATION_GUIDE.md) +
   [AGENT_ARCHITECTURE](AGENT_ARCHITECTURE.md).
 - **Understanding the architecture** → [TAD](TAD.md) →
@@ -29,6 +29,7 @@ graph TD
         ENV[ENV_REFERENCE<br/>every environment variable]
         MIG[MIGRATION_v1_to_v2<br/>upgrading from v1.x]
         MIG3[MIGRATION_v2_to_v3<br/>upgrading from v2.x]
+        MIG4[MIGRATION_v3_to_v4<br/>upgrading from v3.x]
         REL[RELEASE_NOTES<br/>what shipped, per release]
     end
 
@@ -94,6 +95,7 @@ graph TD
 | [ENV_REFERENCE.md](ENV_REFERENCE.md)                 | Every environment variable — purpose, required, default, values, incl. delegation keys.                             |
 | [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md)       | Upgrading from v1.x: the breaking rung-1 retirement + adoption steps.                                               |
 | [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md)       | Upgrading from v2.x: stricter production boot, signed guests, coded errors, removed guest lifecycle.                |
+| [MIGRATION_v3_to_v4.md](MIGRATION_v3_to_v4.md)       | Upgrading from v3.x: required rate-limit store, route checks for verification and limits, stricter `/api/stream`.   |
 | [RELEASE_NOTES.md](RELEASE_NOTES.md)                 | What shipped, per release, newest first.                                                                            |
 
 ### Architecture
@@ -104,7 +106,7 @@ graph TD
 | [PLATFORM_ARCHITECTURE.md](PLATFORM_ARCHITECTURE.md) | The platform layers and how they compose.                                  |
 | [AGENT_ARCHITECTURE.md](AGENT_ARCHITECTURE.md)       | Agent clusters, workflow, and the governed-authority layer.                |
 | [AUX_DESIGN.md](AUX_DESIGN.md)                       | The agent user-experience surface.                                         |
-| [adr/](adr/)                                         | 41 Architecture Decision Records — every decision and its rationale.       |
+| [adr/](adr/)                                         | 52 Architecture Decision Records — every decision and its rationale.       |
 
 ### Developer Guides
 
@@ -115,13 +117,14 @@ graph TD
 
 ### Principles & Standards
 
-| Doc                                                                | What it is                                            |
-| ------------------------------------------------------------------ | ----------------------------------------------------- |
-| [GENAI_MANIFESTO.md](GENAI_MANIFESTO.md)                           | The GenAI-native principles the platform is built on. |
-| [OWASP_CONTROLS.md](OWASP_CONTROLS.md)                             | OWASP Top 10 control mapping.                         |
-| [SUSTAINABILITY_CHECKLIST.md](SUSTAINABILITY_CHECKLIST.md)         | Sustainability review checklist.                      |
-| [SUSTAINABILITY_REVIEW_PROMPT.md](SUSTAINABILITY_REVIEW_PROMPT.md) | The prompt used for sustainability reviews.           |
-| [LIGHTHOUSE.md](LIGHTHOUSE.md)                                     | Lighthouse performance/accessibility guidance.        |
+| Doc                                                                | What it is                                                                   |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [GENAI_MANIFESTO.md](GENAI_MANIFESTO.md)                           | The GenAI-native principles the platform is built on.                        |
+| [OWASP_CONTROLS.md](OWASP_CONTROLS.md)                             | OWASP Top 10 control mapping.                                                |
+| [COMPONENT_REGISTER.md](COMPONENT_REGISTER.md)                     | Every dependency and hosted service, with its licence verdict and exit path. |
+| [SUSTAINABILITY_CHECKLIST.md](SUSTAINABILITY_CHECKLIST.md)         | Sustainability review checklist.                                             |
+| [SUSTAINABILITY_REVIEW_PROMPT.md](SUSTAINABILITY_REVIEW_PROMPT.md) | The prompt used for sustainability reviews.                                  |
+| [LIGHTHOUSE.md](LIGHTHOUSE.md)                                     | Lighthouse performance/accessibility guidance.                               |
 
 ### Planning & Tracking
 

@@ -16,6 +16,12 @@ jobs:
   semgrep:
     name: Semgrep Analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Results go to the repository's code scanning (free for public repositories). The upload
+      # was removed while the repository was private (it needed paid Code Security); restored once
+      # public, so findings appear under Security and the stale "Semgrep OSS" tool status clears.
+      security-events: write
 
     steps:
       - name: Checkout
@@ -27,14 +33,13 @@ jobs:
       - name: Run Semgrep
         run: semgrep scan --config p/owasp-top-ten --config p/typescript --error .
 
-      - name: Run Semgrep (artifact)
+      - name: Run Semgrep (SARIF for code scanning)
         if: always()
-        run: semgrep scan --config p/owasp-top-ten --config p/typescript --json --output semgrep-results.json . || true
+        run: semgrep scan --config p/owasp-top-ten --config p/typescript --sarif --output semgrep.sarif . || true
 
-      - name: Upload results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
+      - name: Upload to code scanning
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
         with:
-          name: semgrep-results
-          path: semgrep-results.json
-          retention-days: 30
+          sarif_file: semgrep.sarif
+          category: semgrep

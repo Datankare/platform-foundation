@@ -118,20 +118,25 @@ components/auth/SsoButtons.tsx
 
 ### TASK-025 — ALB for ffmpeg-service (stable URL)
 
-| Field        | Detail            |
-| ------------ | ----------------- |
-| **ID**       | TASK-025          |
-| **Type**     | Infrastructure    |
-| **Severity** | Medium            |
-| **Phase**    | Phase 5, Sprint 6 |
-| **Target**   | Phase 5, Sprint 7 |
-| **Status**   | Open              |
-| **Logged**   | 2026-04-16        |
+| Field        | Detail                 |
+| ------------ | ---------------------- |
+| **ID**       | TASK-025               |
+| **Type**     | Infrastructure         |
+| **Severity** | Medium                 |
+| **Phase**    | Phase 5, Sprint 6      |
+| **Target**   | Phase 5, Sprint 7P     |
+| **Status**   | Open — service retired |
+| **Logged**   | 2026-04-16             |
 
 **What:** ECS Fargate public IP changes on task restart.
 Add ALB or Elastic IP for stable URL.
 Currently using direct IP — acceptable for development,
 not production.
+
+**Update (2026-10-20):** the service no longer runs. Its load balancer and the AWS account it ran in are gone,
+and the `ffmpeg` DNS record was removed in the 2026-10 hardening. Song identification cannot convert
+audio until the service is back. Decision deferred to Sprint 7P: rebuild it as a container on the AWS
+environment (TASK-128), or retire server-side conversion for client-side WAV capture.
 
 **Migrated from:** SECURITY_DEBT.md (Sprint 3c — not security-related)
 
@@ -406,7 +411,7 @@ froze.
 | **Source**   | Phase 5 Sprint 0 k6 re-baseline finding       |
 
 **What:** `k6/api-load.js`'s `DRY_RUN=0` ("live, ~$5") profile is stale — it predates
-Sprint 3d, which added `requireAuthWithStatus` to `/api/process` and `/api/stream`. The
+Sprint 3d, which added `requireAuthWithStatus` to `/api/process` (and, in Playform, guarded `/api/stream` — in platform-foundation that route was unguarded until TASK-133). The
 script sends no auth header, so every live request 401s at the guard before reaching
 moderation, translate/classify, or the orchestrator. A live run today costs ~$0 and
 measures only 401-rejection latency.
@@ -1966,7 +1971,7 @@ the TASK-091 baseline.
 
 **Resolved (2026-10-07):** `playform-prod` built from the baseline (39 migrations recorded, 36 tables, all
 with row-level security); Vercel `playform` production settings point at it (Production scope only), with its
-own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable stores; `/api/health` 200 at
+own Cognito pool, Google client, guest secret and durable stores; `/api/health` 200 at
 `https://playform.datankare.com`; first real sign-up and sign-in verified (which found TASK-117).
 
 ### TASK-093 — Language lists are not in alphabetical order
@@ -2091,21 +2096,23 @@ own Cognito pool `us-east-1_l5B9bbdFh`, Google client, guest secret and durable 
 
 ### TASK-100 — E2E journey tests pass when the user sees an error
 
-| Field        | Detail                                                    |
-| ------------ | --------------------------------------------------------- |
-| **ID**       | TASK-100                                                  |
-| **Type**     | Test integrity                                            |
-| **Severity** | Medium — green CI while users fail                        |
-| **Phase**    | Phase 5                                                   |
-| **Target**   | Phase 5, Sprint 7A                                        |
-| **Status**   | In progress — B2a done (Playform); B2b at the v3.0.0 sync |
-| **Logged**   | 2026-09-26                                                |
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-100                               |
+| **Type**     | Test integrity                         |
+| **Severity** | Medium — green CI while users fail     |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7A                     |
+| **Status**   | Resolved (Playform v0.6.0, 2026-10-20) |
+| **Logged**   | 2026-09-26                             |
 
 **What:** The translate journeys wait for the translation card **or any alert**, so they passed while every real user got "Invalid or expired token".
 
 **Resolution:** Assert a real translation result; add explicit error-path and guest-limit journeys (Playform-owned `e2e/`).
 
 **Progress (7A B2a, Playform `ac291cd`, `78efda2`):** journeys assert a real translation (`e2e/helpers/journey.ts` `expectTranslation`: text visible and non-empty, Play button, no app alert); an error-path journey (a coded dispatch failure must show the server message and no result); `__tests__/e2e-journey-integrity.test.ts` fails CI on "result or any alert" or a raw `[role=alert]` locator. Found on the way: a "no error notification" check that looked for a test id no element has (could never fail), and Next.js's route announcer — an always-present, empty `role="alert"` — which any "no alert" check must exclude (`appAlerts()`). **B2b (at the sync):** the guest-limit journey, with the Playform guest wiring.
+
+**Closed (2026-10-20):** B2b shipped in Playform v0.6.0 — four guest journeys, including the allowance refused at the limit + 1, run in Playform's CI; the production smoke test translates as a guest.
 
 ### TASK-101 — SSO buttons are never wired to the identity provider
 
@@ -2139,15 +2146,15 @@ on dev and staging.
 
 ### TASK-102 — No test runs against a deployed environment
 
-| Field        | Detail                                                  |
-| ------------ | ------------------------------------------------------- |
-| **ID**       | TASK-102                                                |
-| **Type**     | CI integrity                                            |
-| **Severity** | High — configuration is untested                        |
-| **Phase**    | Phase 5                                                 |
-| **Target**   | Phase 5, Sprint 7A                                      |
-| **Status**   | In progress — PF done; Playform workflow at the 7A sync |
-| **Logged**   | 2026-09-26                                              |
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-102                               |
+| **Type**     | CI integrity                           |
+| **Severity** | High — configuration is untested       |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7A                     |
+| **Status**   | Resolved (Playform v0.6.0, 2026-10-20) |
+| **Logged**   | 2026-09-26                             |
 
 **What:** Unit, integration and E2E tests all run on CI-built code with test settings; nothing checked `playform-dev` itself, so a missing database, mock auth and the wrong deployed branch all went unnoticed.
 
@@ -2165,6 +2172,8 @@ every non-browser client (agents, this smoke test, k6) got a 307 instead of the 
 the sync:** its own `proxy.ts` (sync-excluded) takes both fixes, and its `.github/workflows/deploy-smoke.yml`
 runs the script on every successful Vercel deployment of `playform-dev`, `playform-staging` and `playform`
 with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
+
+**Closed (2026-10-20):** Playform's `deploy-smoke.yml` runs on every production deployment of dev, staging and production. On the v0.6.0 release it caught a malformed `SUPABASE_URL` in production before any user (production refused to boot; fixed in settings, redeployed, smoke passed) — learning 114.
 
 ### TASK-103 — Deployment settings are unvalidated and can shadow each other
 
@@ -2204,15 +2213,15 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 
 ### TASK-105 — Vercel project-to-branch mapping is undocumented and was wrong
 
-| Field        | Detail                                                                                |
-| ------------ | ------------------------------------------------------------------------------------- |
-| **ID**       | TASK-105                                                                              |
-| **Type**     | Deployment topology                                                                   |
-| **Severity** | Medium — the deployed address ran old code                                            |
-| **Phase**    | Phase 5                                                                               |
-| **Target**   | Phase 5, Sprint 7A                                                                    |
-| **Status**   | In progress — topology documented and verified; checked by the smoke test at the sync |
-| **Logged**   | 2026-09-26                                                                            |
+| Field        | Detail                                     |
+| ------------ | ------------------------------------------ |
+| **ID**       | TASK-105                                   |
+| **Type**     | Deployment topology                        |
+| **Severity** | Medium — the deployed address ran old code |
+| **Phase**    | Phase 5                                    |
+| **Target**   | Phase 5, Sprint 7A                         |
+| **Status**   | Resolved (2026-10-20)                      |
+| **Logged**   | 2026-09-26                                 |
 
 **What:** `playform-dev` tracked `main`, so its address served v0.5.0 while new code went only to preview addresses. Fixed for `playform-dev` (now `develop`) during 7A; staging and production unverified.
 
@@ -2220,14 +2229,16 @@ with the deployment's commit as `SMOKE_EXPECTED_COMMIT`.
 
 **Topology (verified 2026-10-08, ADR-050 D6):**
 
-| Vercel project     | Branch    | Address                               | Database (Supabase)                   | Cognito pool          |
-| ------------------ | --------- | ------------------------------------- | ------------------------------------- | --------------------- |
-| `playform-dev`     | `develop` | `https://playform-dev.vercel.app`     | `playform` (shared with staging)      | `us-east-1_9pRbNsCbE` |
-| `playform-staging` | `staging` | `https://playform-staging.vercel.app` | `playform` (shared with dev)          | `us-east-1_9pRbNsCbE` |
-| `playform`         | `main`    | `https://playform.datankare.com`      | `playform-prod` (built from baseline) | `us-east-1_l5B9bbdFh` |
+| Vercel project     | Branch    | Address                          | Database (Supabase)                   | Cognito pool     |
+| ------------------ | --------- | -------------------------------- | ------------------------------------- | ---------------- |
+| `playform-dev`     | `develop` | the project's default address    | `playform` (shared with staging)      | dev/staging pool |
+| `playform-staging` | `staging` | the project's default address    | `playform` (shared with dev)          | dev/staging pool |
+| `playform`         | `main`    | `https://playform.datankare.com` | `playform-prod` (built from baseline) | production pool  |
 
-`playform-inky.vercel.app` redirects (308) to `playform.datankare.com`. `/api/health` now reports `commit`
+The production project's default address redirects (308) to `playform.datankare.com`. Resource identifiers (pool ids, project refs) are kept out of the repository. `/api/health` now reports `commit`
 (`VERCEL_GIT_COMMIT_SHA`, 12 characters) so the smoke test proves which build each address serves.
+
+**Closed (2026-10-20):** the smoke test confirmed each address serves its branch's commit — dev and staging on `797496a`, production on `045ae8b` (Playform v0.6.0).
 
 ### TASK-106 — Refresh-token rotation is off
 
@@ -2499,15 +2510,15 @@ reconfigure Dependabot to target `develop` only. Done when no update PR is older
 
 ### TASK-119 — Consumer migrations were never replayed after the baseline (`playform-prod` lacks Playform's schema)
 
-| Field        | Detail                                                                 |
-| ------------ | ---------------------------------------------------------------------- |
-| **ID**       | TASK-119                                                               |
-| **Type**     | Defect — schema integrity                                              |
-| **Severity** | High — production is missing a consumer's tables and configuration     |
-| **Phase**    | Phase 5                                                                |
-| **Target**   | Phase 5, Sprint 7A                                                     |
-| **Status**   | Resolved in PF (v3.1.0); `playform-prod` gets the migrations at v0.6.0 |
-| **Logged**   | 2026-10-09                                                             |
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-119                                                           |
+| **Type**     | Defect — schema integrity                                          |
+| **Severity** | High — production is missing a consumer's tables and configuration |
+| **Phase**    | Phase 5                                                            |
+| **Target**   | Phase 5, Sprint 7A                                                 |
+| **Status**   | Resolved (2026-10-20)                                              |
+| **Logged**   | 2026-10-09                                                         |
 
 **What:** `scripts/migration-replay.sh` and `__tests__/schema-baseline.test.ts` treated every migration
 numbered at or below `baseline-covers-through` (037) as inside the baseline. Playform's own migrations
@@ -2527,6 +2538,8 @@ baseline on Postgres 16 + pgvector, and the replay checks pass.
 **Playform (v0.6.0):** the CI replay job runs on Playform; the seven migrations, then 038, are applied to
 `playform-prod` in replay order from the files (SQL Editor), and `applied_migrations` is compared with the
 files afterwards. Close when that comparison shows nothing missing.
+
+**Closed (2026-10-20):** `playform-prod` holds 007 and 031–036 (compared with the files, nothing missing) and, after v0.6.0 went live, 038 — 47 recorded migrations.
 
 ### TASK-120 — ADR-051 consumer error codes were specified but not built; guest tokens depended on the auth provider
 
@@ -2563,7 +2576,7 @@ sign-in screen calls it. `SMOKE_TRANSLATION_FIELD` names the field a consumer's 
 | **Severity** | Medium — platform changes silently not inherited |
 | **Phase**    | Phase 5                                          |
 | **Target**   | Phase 5, Sprint 7A                               |
-| **Status**   | Open — fix in Playform v0.6.0                    |
+| **Status**   | Resolved (Playform v0.6.0, 2026-10-20)           |
 | **Logged**   | 2026-10-09                                       |
 
 **What:** `sync-from-foundation` failed on every run from 2026-09-28 (`could not read Username`, exit 128):
@@ -2576,6 +2589,8 @@ platform-foundation checkout uses its own read-only token (`FOUNDATION_READ_TOKE
 only, Contents read) so the token that writes to Playform no longer reaches platform-foundation; both tokens'
 expiry dates are recorded in `ROTATION_RUNBOOK.md` with a reminder before each.
 
+**Closed (2026-10-20), as built:** platform-foundation is public, so the sync reads it with the workflow's own `github.token`; no second token was needed. `FOUNDATION_SYNC_TOKEN` is used only to open the sync pull request in Playform and is scoped to Playform alone (Contents and Pull requests). The alert was exercised: a deliberate failure opened issue #573 (closed). The token was replaced on 2026-10-20 and its expiry is recorded in `ROTATION_RUNBOOK.md`.
+
 ### TASK-122 — The migration replay depended on an anonymous Docker Hub pull
 
 | Field        | Detail                                      |
@@ -2585,7 +2600,7 @@ expiry dates are recorded in `ROTATION_RUNBOOK.md` with a reminder before each.
 | **Severity** | Medium — a release blocked by a third party |
 | **Phase**    | Phase 5                                     |
 | **Target**   | Phase 5, Sprint 7A                          |
-| **Status**   | Resolved (PF v3.1.0); Playform at v0.6.0    |
+| **Status**   | Resolved (2026-10-20)                       |
 | **Logged**   | 2026-10-09                                  |
 
 **What:** the Migration replay job ran Postgres as a `pgvector/pgvector:pg17` service container. On the v3.1.0
@@ -2597,6 +2612,290 @@ runner, creates the `17/main` cluster when the image has not (GitHub's runner im
 creation — the first attempt failed on exactly that), and uses whichever port the cluster gets; nothing is
 pulled from Docker Hub. Playform's replay job
 (added at v0.6.0) takes the same form.
+
+**Closed (2026-10-20):** Playform's replay job ran green on the v0.6.0 promotion.
+
+### TASK-123 — Playform UX polish: visible defaults and listening feedback
+
+| Field        | Detail                                        |
+| ------------ | --------------------------------------------- |
+| **ID**       | TASK-123                                      |
+| **Type**     | Feature — user experience (Playform)          |
+| **Severity** | Low — users are left guessing, nothing breaks |
+| **Phase**    | Phase 5                                       |
+| **Target**   | Phase 5, Sprint 8                             |
+| **Status**   | Open                                          |
+| **Logged**   | 2026-10-12                                    |
+
+**What:** found in manual testing on dev (Raman, 2026-10-12). (1) The default translation languages
+(Spanish, French) are not shown anywhere; show them next to **Add languages**. (2) Music/microphone input
+gives no feedback: while listening, the input area is blank. Explain how the microphone works and show live
+feedback while listening (a level meter or waveform and a "Listening…" status). More items may be added
+before the sprint opens.
+
+### TASK-124 — One API key per environment, each with its own spend limit
+
+| Field        | Detail                                                     |
+| ------------ | ---------------------------------------------------------- |
+| **ID**       | TASK-124                                                   |
+| **Type**     | Operations — credential hygiene                            |
+| **Severity** | Medium — production cannot be revoked or capped on its own |
+| **Phase**    | Phase 5                                                    |
+| **Target**   | Phase 5, Sprint 7O                                         |
+| **Status**   | Open                                                       |
+| **Logged**   | 2026-10-20                                                 |
+
+**What:** dev, staging and production (and CI) share one Anthropic key and one Google key, so a leak in any
+environment exposes all of them, and production cannot be revoked or rate-capped separately. Found during the
+2026-10 account hardening, which put organisation-level caps in place (Anthropic monthly limit with prepaid
+credit only; Google keys restricted to the three APIs used, daily quotas, unused premium voice models
+disabled, and a billing budget with alerts).
+
+**Plan:** one Anthropic workspace per environment, each with its own key and spend limit; one Google key per
+environment, each restricted to the same three APIs; a separate CI key; keys recorded by name (never value)
+in `ROTATION_RUNBOOK.md`, with rotation dates. Each key is created as a **Sensitive** environment variable, scoped to its one environment (Vercel flags the current shared keys "Needs attention" because they are not).
+
+### TASK-125 — Register Datankare as an LLC and assign the platform's copyright to it
+
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-125                                                           |
+| **Type**     | Governance — legal                                                 |
+| **Severity** | Medium — needed before the platform is showcased or monetised      |
+| **Phase**    | Phase 5                                                            |
+| **Target**   | Before the platform is publicly showcased; required before Phase 6 |
+| **Status**   | Open                                                               |
+| **Logged**   | 2026-10-20                                                         |
+
+**What:** the copyright notice named "RKS"; it now names the owner, Raman K. Sud. Once Datankare is
+registered as an LLC, a written IP assignment transfers the platform to it and the notice in `LICENSE` is
+updated. The MIT terms are unchanged either way.
+
+### TASK-126 — Tenancy model: one codebase, shared or dedicated deployment
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-126                                                                 |
+| **Type**     | Architecture                                                             |
+| **Severity** | High — the most expensive change to make late; blocks monetisation       |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7R (decision and groundwork), Sprint 7T (implementation) |
+| **Status**   | Open                                                                     |
+| **Logged**   | 2026-10-20                                                               |
+
+**What:** the platform has no tenant concept. No table carries a tenant or organisation; row-level security
+is written for users and admins; roles are global; config, rate limits, AI budgets, caches, audit and metrics
+are global; there is no tenant lifecycle. Server code reaches the database with the service-role key, so
+row-level security does not protect server paths. Raised by an independent engineering assessment
+(2026-10-17).
+
+**Decision (2026-10-17):** both models from one codebase. A dedicated per-client deployment is the shared
+deployment running with exactly one tenant — one code path, two deployment shapes.
+
+**Plan:** an ADR in Sprint 7R covering tenant identity (one Cognito pool with a tenant claim, or a pool per
+tenant), tenant admin roles, row-level security under a database role that cannot bypass it, per-tenant
+config, limits, budgets, cache keys, audit and metrics, the tenant lifecycle, and taking service-role access
+off request paths. Sprint 7R plumbs a tenant context through requests and agents (one default tenant) and adds
+a cross-tenant isolation conformance kit; Sprint 7T carries tenancy through every table, policy and cache.
+
+### TASK-127 — Split the foundation from product modules
+
+| Field        | Detail                                                                      |
+| ------------ | --------------------------------------------------------------------------- |
+| **ID**       | TASK-127                                                                    |
+| **Type**     | Architecture                                                                |
+| **Severity** | Medium — every consumer inherits, patches and tests features it may not use |
+| **Phase**    | Phase 5                                                                     |
+| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7S (implementation)                   |
+| **Status**   | Open                                                                        |
+| **Logged**   | 2026-10-20                                                                  |
+
+**What:** games, social groups and agents, song identification, audio conversion and the voice pipeline live
+in the foundation, so every consumer inherits them. Raised by the 2026-10-17 assessment.
+
+**Plan:** an ADR in Sprint 7R defining the core (identity and roles, errors and catalogs, config, agents and
+AI governance, content safety, consent) and optional modules; sync becomes "core plus the modules a consumer
+opts into"; a lint rule stops the core importing a module. Sprint 7S moves the modules out.
+
+### TASK-128 — Deploy anywhere: a container image, infrastructure as code, a second host
+
+| Field        | Detail                                                                      |
+| ------------ | --------------------------------------------------------------------------- |
+| **ID**       | TASK-128                                                                    |
+| **Type**     | Architecture — deployability                                                |
+| **Severity** | High — portability off the current hosts is designed for but untested       |
+| **Phase**    | Phase 5                                                                     |
+| **Target**   | Phase 5, Sprint 7R (decision, container build), Sprint 7P (AWS environment) |
+| **Status**   | Open                                                                        |
+| **Logged**   | 2026-10-20                                                                  |
+
+**What:** only Vercel has been deployed to; `infra/` holds placeholders; the environment contract detects a
+hosted deployment through `VERCEL=1`; the cache provider speaks Upstash's REST protocol only.
+
+**Decision (2026-10-17):** Vercel stays a first-class host, and AWS, GCP and Azure become supported targets.
+AWS first (the account and identity pool already exist), built after Sprint 7T so it is provisioned once on
+the final schema.
+
+**Plan:** Sprint 7R — the container image as the portable unit, a host-agnostic environment contract, the
+deploy smoke test passing against a container build. Sprint 7P — OpenTofu modules for AWS (network, ECS,
+RDS Postgres with point-in-time recovery, Valkey, load balancer, DNS and certificates); CI deploys the same
+commit to Vercel and AWS and the smoke test must pass on both; a Valkey provider over the standard Redis
+protocol. GCP and Azure follow with the same image.
+
+### TASK-129 — Operations baseline: recovery, alerting, objectives, background work
+
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-129                                                  |
+| **Type**     | Operations                                                |
+| **Severity** | High — required for any mission-critical claim            |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7O (implementation) |
+| **Status**   | Open                                                      |
+| **Logged**   | 2026-10-20                                                |
+
+**What:** no backup or restore design (recovery relies on the database plan's defaults), no RPO or RTO, no
+alerting or on-call runbooks, no service-level objectives, and no durable queue or scheduler (retries and
+timed jobs run as API routes or CI schedules). These were Phase 9 items; brought forward.
+
+**Plan:** an ADR in Sprint 7R; Sprint 7O delivers point-in-time recovery with a tested restore drill, RPO
+and RTO targets, alerting and runbooks, SLO monitoring across both hosts, and a durable queue and scheduler.
+
+### TASK-130 — Security assurance: dynamic testing, compliance mapping, data residency
+
+| Field        | Detail               |
+| ------------ | -------------------- |
+| **ID**       | TASK-130             |
+| **Type**     | Security — assurance |
+| **Severity** | Medium               |
+| **Phase**    | Phase 5              |
+| **Target**   | Phase 5, Sprint 7O   |
+| **Status**   | Open                 |
+| **Logged**   | 2026-10-20           |
+
+**What:** static analysis, dependency audit and secret scanning run in CI, but there is no dynamic testing
+(DAST) against a deployed environment, no mapping to SOC 2, ISO 27001, India's DPDP Act or GDPR processor
+obligations, and no data-residency control. Raised by the 2026-10-17 assessment. SEC-001 (CSP) remains
+tracked in `SECURITY_DEBT.md`.
+
+**Plan:** DAST against staging in CI; a compliance control map; data residency as part of the tenancy
+placement decision (TASK-126).
+
+### TASK-131 — More Indian languages and locale-aware formats
+
+| Field        | Detail                   |
+| ------------ | ------------------------ |
+| **ID**       | TASK-131                 |
+| **Type**     | Feature — multi-language |
+| **Severity** | Low                      |
+| **Phase**    | Phase 5                  |
+| **Target**   | Phase 5, Sprint 7B       |
+| **Status**   | Open                     |
+| **Logged**   | 2026-10-20               |
+
+**What:** Hindi, Bengali, Kannada, Malayalam and Telugu are supported; Marathi, Tamil and Gujarati are not.
+Dates, numbers and currency are not yet locale-formatted. Tenant- and user-level language settings belong to
+TASK-126.
+
+### TASK-132 — A second maintainer with merge rights
+
+| Field        | Detail                         |
+| ------------ | ------------------------------ |
+| **ID**       | TASK-132                       |
+| **Type**     | Governance                     |
+| **Severity** | Medium — key-person risk       |
+| **Phase**    | Phase 5                        |
+| **Target**   | Before the Phase 9 launch gate |
+| **Status**   | Open                           |
+| **Logged**   | 2026-10-20                     |
+
+**What:** one person authors almost every commit. The ADRs, task register and engineering learnings keep the
+platform legible; a second maintainer with merge rights removes the single point of failure.
+
+### TASK-133 — /api/stream ran any prompt for any request carrying a bearer header
+
+| Field        | Detail                                                        |
+| ------------ | ------------------------------------------------------------- |
+| **ID**       | TASK-133                                                      |
+| **Type**     | Security — authentication                                     |
+| **Severity** | High — unauthenticated, unbounded model calls on the platform |
+| **Phase**    | Phase 5                                                       |
+| **Target**   | Phase 5, Sprint 7A                                            |
+| **Status**   | Resolved (platform-foundation develop); consumer action below |
+| **Logged**   | 2026-10-20                                                    |
+
+**What:** `proxy.ts` checks only that credentials are _present_ on `/api/*` and leaves verification
+to the route handler. `/api/stream` (added Phase 2, Sprint 5) never verified them, so any request
+with `Authorization: Bearer <anything>` — or a `pf_has_session=true` cookie — reached the orchestrator
+with a caller-chosen prompt, system prompt, tier and `maxTokens`, with no screening and no limit.
+Found by the route survey for B-2 (rate limiting). TASK-046's note that Sprint 3d had guarded the route
+was true of Playform, whose own `proxy.ts` verifies tokens; Playform's dev, staging and production
+were probed on 2026-10-20 and refused both forms with 401.
+
+**Resolved:** the route verifies its caller (`requireActorWithStatus`, signed-in users only, account
+status under the `stream` feature); every field is bounded server-side (`platform/ai/stream-policy.ts`:
+prompt ≤ 4,000 characters, system ≤ 2,000, `maxTokens` 1–1,024, tier `fast` or `standard`,
+temperature 0–1) and refused with a coded error when out of bounds; prompt and system prompt are
+screened before any model call; an upstream failure reaches the client by code only. A new test,
+`__tests__/api-route-auth.test.ts`, fails CI for any API route that neither calls a verifier nor is
+listed as public by design with a reason. `useRealtimeStream` takes an access-token getter.
+
+**Consumer action:** add `stream` to `account_status.known_features` to offer streaming (the
+account-status check fails closed on an unknown feature, so the route answers `account.restricted`
+until then). Routes in a consumer's own `app/api` are checked by the same test after sync.
+
+### TASK-134 — The rate limiter existed, but no route used it
+
+| Field        | Detail                                                               |
+| ------------ | -------------------------------------------------------------------- |
+| **ID**       | TASK-134                                                             |
+| **Type**     | Security — abuse protection                                          |
+| **Severity** | High — sign-in and account flows open to brute force and email abuse |
+| **Phase**    | Phase 5                                                              |
+| **Target**   | Phase 5, Sprint 7A                                                   |
+| **Status**   | Resolved (platform-foundation develop); consumer action below        |
+| **Logged**   | 2026-10-20                                                           |
+
+**What:** `platform/rate-limit` (sliding window, memory and Redis stores) had shipped since Phase 2, and
+ADR-020, two READMEs and SEC-002 described routes as limited. No route called it. The only limiter in
+use was a separate per-instance one on admin routes (`platform/auth/rate-limit.ts`), which does not hold
+across serverless instances. Sign-in, every account flow, guest minting and the AI routes had no limit,
+and no environment configured a shared store. Found by the B-2 route survey; raised in part by the
+2026-10-17 engineering assessment (the admin limiter).
+
+**Resolved (ADR-052):** every API route calls `enforceRateLimit` (or `adminGuard`), checked by
+`__tests__/api-route-rate-limit.test.ts`; the store is a provider slot (`RATE_LIMIT_STORE`: `supabase`,
+`upstash`, `memory`) with one conformance kit for all three; the Postgres store (migration 039) is an exact
+sliding window serialised per bucket, exercised on real Postgres in the migration replay, concurrency
+included; production refuses the in-memory store; the limiter fails closed; the caller's address comes
+from `X-Forwarded-For` at `TRUSTED_PROXY_HOPS` from the right. The per-instance admin limiter is removed;
+the documents that claimed enforcement are corrected; SEC-002's resolution is restated.
+
+**Consumer action (at the next sync):** apply migration 039 to every database; set
+`RATE_LIMIT_STORE=supabase` on every deployment (production will not boot without a shared store); call
+`enforceRateLimit` in the consumer's own routes (the synced test checks them); reset the limiter
+singleton (`platform.rateLimit.limiter`) before each test in the consumer's `jest.setup.ts`.
+
+### TASK-135 — Check a deployment's settings against the contract before promoting
+
+| Field        | Detail                                                 |
+| ------------ | ------------------------------------------------------ |
+| **ID**       | TASK-135                                               |
+| **Type**     | Operations — release safety                            |
+| **Severity** | Medium — a bad setting is caught only after the deploy |
+| **Phase**    | Phase 5                                                |
+| **Target**   | Phase 5, Sprint 7P                                     |
+| **Status**   | Open                                                   |
+| **Logged**   | 2026-10-20                                             |
+
+**What:** on the Playform v0.6.0 release, production's `SUPABASE_URL` carried `/rest/v1/`. The manual
+pre-promotion review compared only the project reference, so it passed; the environment contract refused
+the boot and the smoke test failed, before any user (production had none). The contract worked; the
+review did not. Learning 114.
+
+**Plan:** environment settings as code (with TASK-128): non-secret settings declared per environment in
+the repository and checked by `checkEnvironmentContract` in CI before promotion; secrets checked for
+presence and shape by the deploy pipeline without being displayed.
 
 ## Known Issue — TASK-020 numbering collision
 

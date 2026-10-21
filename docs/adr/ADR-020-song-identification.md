@@ -26,7 +26,7 @@ All audio entering the platform is normalized to **WAV 16kHz mono 16-bit PCM** b
 - Ensures consistent input to all downstream consumers (STT, song ID, future analysis)
 - Privacy by design: canonical conversion removes device/software identifiers embedded in containers
 
-Conversion is performed by the `AudioFormatConverter` provider interface, defaulting to the `ffmpeg-service` deployment at `ffmpeg.datankare.com` (ECS Fargate). Uses `fetchWithTimeout` per platform convention (not raw fetch).
+Conversion is performed by the `AudioFormatConverter` provider interface, defaulting to the `ffmpeg-service` deployment at `AUDIO_CONVERTER_URL` (originally ECS Fargate; retired 2026-10 — see TASK-025). Uses `fetchWithTimeout` per platform convention (not raw fetch).
 
 ### Song Identification Provider
 
@@ -46,7 +46,7 @@ ACRCloud was selected over AudD.io for higher recognition accuracy on partial/no
 
 ### Rate Limiting (P13)
 
-`SONG_IDENTIFY` rule added to `DEFAULT_RULES` in `platform/rate-limit/types.ts`: 10 identifications per user per hour. Enforcement wired via `getRateLimiter().check(userId, DEFAULT_RULES.SONG_IDENTIFY)` at the API route layer.
+`SONG_IDENTIFY` rule added to `DEFAULT_RULES` in `platform/rate-limit/types.ts`: 10 identifications per user per hour. The consumer's identification route enforces it with `enforceRateLimit(request, DEFAULT_RULES.SONG_IDENTIFY, { actorId })` (ADR-052). _(Corrected 2026-10: this ADR said enforcement was wired; in platform-foundation no route called the limiter — TASK-134.)_
 
 Rationale:
 
@@ -110,10 +110,10 @@ Two new slots added (total: 10):
 
 ## Infrastructure
 
-| Service        | Endpoint                                              | Notes                           |
-| -------------- | ----------------------------------------------------- | ------------------------------- |
-| FFmpeg service | `https://ffmpeg.datankare.com/convert`                | ECS Fargate, X-Service-Key auth |
-| ACRCloud       | `https://identify-us-west-2.acrcloud.com/v1/identify` | HMAC-SHA1 signed                |
+| Service        | Endpoint                                              | Notes                         |
+| -------------- | ----------------------------------------------------- | ----------------------------- |
+| FFmpeg service | `${AUDIO_CONVERTER_URL}/convert`                      | X-Service-Key auth (TASK-025) |
+| ACRCloud       | `https://identify-us-west-2.acrcloud.com/v1/identify` | HMAC-SHA1 signed              |
 
 Both providers use `fetchWithTimeout` from `@/lib/fetchWithTimeout` (not raw fetch), getting retry + timeout + logging for free.
 
