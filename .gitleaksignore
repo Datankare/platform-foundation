@@ -1,6 +1,9 @@
 # Known gitleaks false positives, one fingerprint per line (commit:file:rule:line).
 # Each needs a reason. The scan runs in .github/workflows/secret-scan.yml.
 #
+# These are platform-foundation's commits. A consuming app keeps its own list and excludes this file
+# from the sync (docs/SETUP_AND_INTEGRATION.md, "The consumer seams").
+#
 # 87e86ef — docs/ENV_REFERENCE.md showed a truncated placeholder PEM ("MIIE...") as an example
 # value for DELEGATION_JWT_PRIVATE_KEY. Not a key. The example was replaced with a non-PEM
 # description in 2026-10.

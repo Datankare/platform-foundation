@@ -151,6 +151,21 @@ sync.
 - **What the consumer keeps private.** A `.github/sync-config.json` `exclude` list names the
   files the consumer owns even if they share a path with the platform (its own agent
   vocabulary, product pages, product-specific tests). Those are never overwritten by the sync.
+- **The consumer seams — always excluded, always the consumer's own.** The platform ships these
+  empty or as templates; each holds facts only the consumer knows:
+
+  | File                                                                        | What the consumer puts there                                                                                                 |
+  | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+  | `platform/errors/app-codes.ts`, `messages/app/**`, `docs/APP_API_ERRORS.md` | Its own error codes and messages (ADR-051 D1)                                                                                |
+  | `platform/route-policy/app-route-policy.ts`                                 | Its own route guards and public or exempt routes (TASK-136)                                                                  |
+  | `docs/APP_ENV_REFERENCE.md`                                                 | Its own settings and per-environment provider choices                                                                        |
+  | `.gitleaksignore`                                                           | Its own secret-scan false positives. Each entry names a commit, so the platform's list can never match a consumer's history. |
+  | `coverage-baseline.json`, `screen-literal-baseline.json`                    | Its own ratchet baselines, measured on its own tree                                                                          |
+
+- **Exclude only what you own or deliberately do not take** (learning 115). An excluded file must
+  exist in the consumer, or be a platform file the consumer chose not to take. A file the consumer
+  owns that is identical to the platform's should be inherited instead: excluding it silently stops
+  platform fixes from reaching it.
 - **Deletions are manual.** The sync adds and updates; it does **not** delete. If the platform
   renames or removes a file (e.g. splits a module into a directory), the corresponding stale
   file must be removed in the consumer on the sync branch before merging. Check for orphaned

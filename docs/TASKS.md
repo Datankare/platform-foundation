@@ -2931,7 +2931,9 @@ docs, and its TAD still described March 2026. The check needed two consumer seam
 inherits both files and the check, and owns its README, docs index and TAD. An audit of every Playform
 exclusion (learning 115) also found its twelve auth routes byte-identical to the platform's yet excluded —
 now inherited, with the platform's `auth-routes` test — one exclusion naming a file that no longer existed
-(removed), and an orphaned `components/admin/styles.ts` left by a sync (removed).
+(removed), and an orphaned `components/admin/styles.ts` left by a sync (removed). On Playform's first secret
+scan, the synced `.gitleaksignore` could not cover a Playform commit: the list names commits, so it is a
+consumer seam too. SETUP_AND_INTEGRATION now lists every consumer seam.
 
 ## Known Issue — TASK-020 numbering collision
 
