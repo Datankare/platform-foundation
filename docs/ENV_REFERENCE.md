@@ -5,6 +5,10 @@ default, and its valid values. If you are standing the platform up for the first
 with [Minimum to run](#minimum-to-run); reach for the full tables when you switch a provider
 from its mock default to a real one.
 
+A consuming app documents the settings of its own, and which provider it selects in each of its
+environments, in [APP_ENV_REFERENCE.md](APP_ENV_REFERENCE.md) (consumer-owned; a template here). The
+docs check reads both files.
+
 Platform Foundation follows one rule everywhere: **every external dependency is a swappable
 provider, and every provider defaults to a safe in-memory or mock implementation.** That means
 the platform boots and every test passes with _no_ configuration at all — you only set a
