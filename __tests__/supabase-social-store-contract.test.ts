@@ -40,7 +40,10 @@ function applyFilters(rows: Row[], params: URLSearchParams): Row[] {
       } else if (v.startsWith("eq.")) {
         if (String(row[k]) !== v.slice(3)) return false;
       } else if (v.startsWith("in.(")) {
-        const set = v.slice(4, -1).split(",");
+        // PostgREST list syntax: comma-separated, a value may be double-quoted with \-escapes.
+        const set = [...v.slice(4, -1).matchAll(/"((?:\\.|[^"\\])*)"|([^,]+)/g)].map(
+          (m) => (m[1] !== undefined ? m[1].replace(/\\(.)/g, "$1") : m[2])
+        );
         if (!set.includes(String(row[k]))) return false;
       }
     }

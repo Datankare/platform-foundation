@@ -21,8 +21,7 @@
 import { useState, useCallback, useRef } from "react";
 
 export interface StreamRequestOptions {
-  /** System prompt */
-  system?: string;
+  // No system prompt: the server always uses the platform's (audit X-11).
   /** Maximum tokens to generate */
   maxTokens?: number;
   /** Temperature (0–1) */
@@ -94,7 +93,6 @@ export function useRealtimeStream(
             headers,
             body: JSON.stringify({
               prompt,
-              system: options?.system,
               maxTokens: options?.maxTokens,
               temperature: options?.temperature,
               tier: options?.tier,

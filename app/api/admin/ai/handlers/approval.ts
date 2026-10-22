@@ -6,11 +6,10 @@
  * ApprovalRule shape and delegates the versioning + audit to the store.
  */
 
-import { getApprovalPolicyStore } from "@/platform/agents";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { approvalRulesProblem, getApprovalPolicyStore } from "@/platform/agents";
 import type { ActorType, ApprovalRule } from "@/platform/agents";
 import type { EffectType, RiskLevel } from "@/platform/kernel";
-import type { ActionResult } from "./shared";
+import { runAudited, type ActionResult } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -27,23 +26,35 @@ export async function handleSetApprovalPolicy(
     requiredApprover: r.required_approver as ActorType,
   }));
 
-  try {
-    const policy = await getApprovalPolicyStore().setRules(rules, actorId);
-    await writeAuditLog({
+  const problem = approvalRulesProblem(rules);
+  if (problem) {
+    return {
+      success: false,
+      error: problem,
+      code: "request.invalid_value",
+      params: { field: "rules", allowed: problem },
+    };
+  }
+
+  return runAudited(
+    {
       action: "admin_action",
       actorId,
-      details: {
-        type: "set_approval_policy",
-        prompt_action: true,
-        version: policy.version,
-        rule_count: rules.length,
-      },
-    });
-    return {
-      success: true,
-      result: `Approval policy updated (version ${policy.version}, ${rules.length} rule${rules.length === 1 ? "" : "s"})`,
-    };
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
+      details: { type: "set_approval_policy", prompt_action: true, rules },
+    },
+    async () => {
+      try {
+        const policy = await getApprovalPolicyStore().setRules(rules, actorId);
+        return {
+          success: true,
+          result: `Approval policy updated (version ${policy.version}, ${rules.length} rule${rules.length === 1 ? "" : "s"})`,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+  );
 }

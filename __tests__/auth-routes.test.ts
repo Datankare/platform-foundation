@@ -59,6 +59,15 @@ jest.mock("@/platform/auth/audit", () => ({
 
 jest.mock("@/platform/auth/password-policy", () => ({
   passwordRuleViolations: jest.fn().mockReturnValue([]),
+  getGlobalPasswordPolicy: jest.fn().mockResolvedValue({
+    rotationDays: 0,
+    minLength: 16,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumber: true,
+    requireSpecial: false,
+    passwordHistoryCount: 0,
+  }),
 }));
 
 function makeRequest(body: unknown, headers?: Record<string, string>): NextRequest {
@@ -215,6 +224,15 @@ describe("POST /api/auth/sign-up", () => {
     expect(res.status).toBe(400);
     expect(body.code).toBe("auth.password_policy");
     expect(body.params.rules).toEqual(["min_length"]);
+  });
+
+  it("checks the password against the stored global policy, not a hard-coded one", async () => {
+    const { passwordRuleViolations } = await import("@/platform/auth/password-policy");
+    await handler(makeRequest({ email: "new@example.com", password: "SecurePass1!" }));
+    expect(passwordRuleViolations).toHaveBeenLastCalledWith(
+      "SecurePass1!",
+      expect.objectContaining({ minLength: 16, requireSpecial: false })
+    );
   });
 });
 

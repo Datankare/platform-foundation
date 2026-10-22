@@ -1,6 +1,6 @@
 {
   "name": "platform-foundation",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "license": "MIT",
   "engines": {
     "node": ">=22"
@@ -54,6 +54,7 @@
     "eslint-config-next": "15.3.3",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-regexp": "^3.1.1",
+    "fast-check": "4.10.2",
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.4.1",
     "prettier": "3.9.6",
@@ -111,18 +112,6 @@
       "jest.setup.ts",
       "platform/auth/index.ts",
       "lib/supabase/index.ts",
-      "platform/auth/permissions.ts",
-      "platform/auth/permissions-cache.ts",
-      "platform/auth/entitlements.ts",
-      "platform/auth/audit.ts",
-      "platform/auth/profile.ts",
-      "platform/auth/devices.ts",
-      "platform/auth/consent.ts",
-      "platform/auth/coppa.ts",
-      "platform/auth/password-policy.ts",
-      "platform/auth/gdpr-deletion.ts",
-      "platform/auth/data-export.ts",
-      "platform/auth/admin-guard.ts",
       "app/admin/page.tsx",
       "components/admin/ActionConfirmPanel.tsx",
       "components/admin/AdminConfigPanels.tsx",
@@ -130,8 +119,7 @@
       "components/admin/AdminDataViews.tsx",
       "components/admin/AdminPasswordPanel.tsx",
       "components/admin/AdminPromptBar.tsx",
-      "components/admin/ExecutionResultsPanel.tsx",
-      "platform/auth/platform-config.ts"
+      "components/admin/ExecutionResultsPanel.tsx"
     ],
     "transform": {
       "^.+\\.[tj]sx?$": [

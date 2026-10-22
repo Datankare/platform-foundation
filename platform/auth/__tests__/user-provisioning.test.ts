@@ -14,16 +14,15 @@ jest.mock("@/platform/providers/environment-contract", () => ({
   getSupabaseUrl: () => supabaseUrl,
 }));
 
-const mockAudit = jest.fn();
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: (...a: any[]) => mockAudit(...a),
-}));
-
 type R = { data: any; error: any };
 let usersRead: R;
 let roleRead: R;
 let insertResult: R;
 let upsertArgs: any[] = [];
+/** Writes in order: "audit:<outcome>" for audit_log inserts, "upsert" for the users row. */
+let writes: string[] = [];
+let auditError: { message: string } | null = null;
+const mockAudit = jest.fn();
 
 function chain(result: () => R) {
   const c: any = {
@@ -32,14 +31,31 @@ function chain(result: () => R) {
     maybeSingle: jest.fn(() => Promise.resolve(result())),
     upsert: jest.fn((...a: any[]) => {
       upsertArgs = a;
+      writes.push("upsert");
       return { select: jest.fn(() => Promise.resolve(insertResult)) };
     }),
   };
   return c;
 }
 
+// The real audit module writes through this client, so the order of writes is observable.
+function auditChain() {
+  return {
+    insert: jest.fn((row: any) => {
+      if (auditError) return Promise.resolve({ data: null, error: auditError });
+      mockAudit(row);
+      writes.push(`audit:${row.details?.outcome}`);
+      return Promise.resolve({ data: null, error: null });
+    }),
+  };
+}
+
 const mockFrom = jest.fn((table: string) =>
-  table === "roles" ? chain(() => roleRead) : chain(() => usersRead)
+  table === "audit_log"
+    ? auditChain()
+    : table === "roles"
+      ? chain(() => roleRead)
+      : chain(() => usersRead)
 );
 jest.mock("@/lib/supabase/server", () => ({
   getSupabaseServiceClient: () => ({ from: (t: string) => mockFrom(t) }),
@@ -56,6 +72,8 @@ beforeEach(() => {
   roleRead = { data: { id: "role-free" }, error: null };
   insertResult = { data: [{ id: SUB }], error: null };
   upsertArgs = [];
+  writes = [];
+  auditError = null;
 });
 
 describe("ensureUserProvisioned (TASK-117)", () => {
@@ -75,8 +93,23 @@ describe("ensureUserProvisioned (TASK-117)", () => {
     });
     expect(upsertArgs[1]).toEqual({ onConflict: "id", ignoreDuplicates: true });
     expect(mockAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "account_created", targetId: SUB })
+      expect.objectContaining({ action: "account_created", target_id: SUB })
     );
+    // The record precedes the row.
+    expect(writes).toEqual(["audit:attempted", "upsert"]);
+  });
+
+  it("creates no row when the audit record cannot be written, and reports failure", async () => {
+    auditError = { message: "down" };
+    expect(await ensureUserProvisioned(SUB)).toBe("failed");
+    expect(upsertArgs).toEqual([]);
+    expect(writes).toEqual([]);
+  });
+
+  it("records the failed outcome when the insert fails after the attempt is on file", async () => {
+    insertResult = { data: null, error: { message: "dup sub" } };
+    expect(await ensureUserProvisioned(SUB)).toBe("failed");
+    expect(writes).toEqual(["audit:attempted", "upsert", "audit:failed"]);
   });
 
   it("leaves an existing row untouched", async () => {
@@ -86,10 +119,10 @@ describe("ensureUserProvisioned (TASK-117)", () => {
     expect(mockAudit).not.toHaveBeenCalled();
   });
 
-  it("treats a concurrent creation (insert ignored) as existing, without a second audit", async () => {
+  it("treats a concurrent creation (insert ignored) as existing; only the attempt is on file", async () => {
     insertResult = { data: [], error: null };
     expect(await ensureUserProvisioned(SUB)).toBe("existing");
-    expect(mockAudit).not.toHaveBeenCalled();
+    expect(writes).toEqual(["audit:attempted", "upsert"]);
   });
 
   it("stores no email when the token has none", async () => {
@@ -105,10 +138,6 @@ describe("ensureUserProvisioned (TASK-117)", () => {
     ],
     ["the default role is missing", () => (roleRead = { data: null, error: null })],
     [
-      "the insert fails",
-      () => (insertResult = { data: null, error: { message: "dup sub" } }),
-    ],
-    [
       "the client throws",
       () =>
         mockFrom.mockImplementationOnce(() => {
@@ -118,7 +147,8 @@ describe("ensureUserProvisioned (TASK-117)", () => {
   ])("fails (never allows) when %s", async (_label, arrange) => {
     arrange();
     expect(await ensureUserProvisioned(SUB)).toBe("failed");
-    expect(mockAudit).not.toHaveBeenCalled();
+    // Nothing written: neither a record nor a row (the insert failure is covered above).
+    expect(writes).toEqual([]);
   });
 
   it("refuses a subject that is not a UUID, without touching the database", async () => {

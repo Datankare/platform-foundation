@@ -71,7 +71,15 @@ export {
   getUserEntitlements,
 } from "@/platform/auth/entitlements";
 
-export { writeAuditLog, getAuditLogForUser } from "@/platform/auth/audit";
+export {
+  AUDIT_ACTIONS,
+  audited,
+  auditedResponse,
+  AuditWriteError,
+  getAuditLogForUser,
+  recordAudit,
+  writeAuditLog,
+} from "@/platform/auth/audit";
 export type { AuditAction, AuditEntry } from "@/platform/auth/audit";
 
 // Sprint 4 — Profile & Privacy
@@ -154,7 +162,5 @@ export {
   getConfigNumber,
   getConfigBoolean,
   listConfig,
-  setConfig,
-  deleteConfig,
   clearConfigCache,
 } from "@/platform/auth/platform-config";

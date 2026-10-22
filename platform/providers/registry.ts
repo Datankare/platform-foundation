@@ -47,6 +47,11 @@ import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { createCognitoAuthProvider } from "@/platform/auth/cognito-provider";
 import { resetCache } from "@/platform/cache";
 import { SupabaseModerationStore, setModerationStore } from "@/platform/moderation/store";
+import { SupabaseStrikeStore, setStrikeStore } from "@/platform/moderation/strikes";
+import {
+  SupabaseReviewQueueStore,
+  setReviewQueueStore,
+} from "@/platform/moderation/review-store";
 import {
   setSocialStore,
   InMemorySocialStore,
@@ -86,6 +91,7 @@ import {
 } from "@/platform/app-framework";
 import { getSingleton, resetSingleton, setSingleton } from "@/platform/kernel/singleton";
 import {
+  allowsHarnessSwitches,
   assertEnvironmentContract,
   getAuthProviderSetting,
   getCognitoSettings,
@@ -112,6 +118,8 @@ export type STTProviderType = "google" | "mock";
 export type SongIdProviderType = "acrcloud" | "mock";
 export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
 export type ModerationStoreType = "supabase" | "memory";
+export type StrikeStoreType = "supabase" | "memory";
+export type ReviewQueueStoreType = "supabase" | "memory";
 export type SocialStoreType = "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
 export type AppStateStoreType = "supabase" | "memory";
@@ -135,6 +143,8 @@ export interface ProviderSelections {
   songId: SongIdProviderType;
   audioConverter: AudioConverterType;
   moderationStore: ModerationStoreType;
+  strikeStore: StrikeStoreType;
+  reviewQueueStore: ReviewQueueStoreType;
   socialStore: SocialStoreType;
   embeddingProvider: EmbeddingProviderType;
   appStateStore: AppStateStoreType;
@@ -164,6 +174,9 @@ function getProviderSelections(): ProviderSelections {
     songId: (process.env.SONG_ID_PROVIDER as SongIdProviderType) ?? "mock",
     audioConverter: (process.env.AUDIO_CONVERTER as AudioConverterType) ?? "mock",
     moderationStore: (process.env.MODERATION_STORE as ModerationStoreType) ?? "memory",
+    strikeStore: (process.env.STRIKE_STORE as StrikeStoreType) ?? "memory",
+    reviewQueueStore:
+      (process.env.REVIEW_QUEUE_STORE as ReviewQueueStoreType) ?? "memory",
     socialStore: (process.env.SOCIAL_STORE as SocialStoreType) ?? "memory",
     embeddingProvider:
       (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
@@ -336,19 +349,51 @@ function initAudioConverter(type: AudioConverterType): void {
 
 function initModerationStore(type: ModerationStoreType): void {
   if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-    if (!url || !key) {
-      logger.warn(
-        "MODERATION_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
-      );
-      return;
-    }
-
+    const { url, key } = requireSupabaseFor("MODERATION_STORE", "moderation decisions");
     setModerationStore(new SupabaseModerationStore(url, key));
     return;
   }
+  // The moderation audit trail is what appeals and overturns are judged from (audit X-21).
+  requireDurableStoreInProduction("MODERATION_STORE", "moderation decisions");
+}
+
+function initStrikeStore(type: StrikeStoreType): void {
+  if (type === "supabase") {
+    requireSupabaseFor("STRIKE_STORE", "strikes");
+    setStrikeStore(new SupabaseStrikeStore());
+    return;
+  }
+  // Per-instance strikes never reach the ban threshold across instances (audit X-3).
+  requireDurableStoreInProduction("STRIKE_STORE", "strikes");
+}
+
+function initReviewQueueStore(type: ReviewQueueStoreType): void {
+  if (type === "supabase") {
+    const { url, key } = requireSupabaseFor(
+      "REVIEW_QUEUE_STORE",
+      "the human review queue"
+    );
+    setReviewQueueStore(new SupabaseReviewQueueStore(url, key));
+    return;
+  }
+  // A per-instance queue loses escalations, ban reviews and appeals (audit X-3).
+  requireDurableStoreInProduction("REVIEW_QUEUE_STORE", "the human review queue");
+}
+
+/**
+ * The Supabase credentials a durable slot needs, or a refusal to boot: a slot that asked for a
+ * durable store never falls back to memory (audit X-21 — the moderation store did, silently).
+ */
+function requireSupabaseFor(envVar: string, noun: string): { url: string; key: string } {
+  const url = getSupabaseUrl() ?? "";
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!url || !key) {
+    throw new Error(
+      `${envVar}=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. ` +
+        `Refusing to fall back to in-memory ${noun}.`
+    );
+  }
+  return { url, key };
 }
 
 function initAppStateStore(type: AppStateStoreType): void {
@@ -387,9 +432,10 @@ function requireDurableStoreInProduction(envVar: string, noun: string): void {
   // A production BUILD run under an E2E harness (Playwright starts the app with `next start`,
   // which forces NODE_ENV=production) is not a deployment: no Supabase is provisioned for the
   // test, so it legitimately runs on in-memory stores. The harness opts out explicitly via
-  // E2E_IN_MEMORY_STORES=true; a real deployment never sets it, so it still fails closed. The
-  // opt-out is logged so an accidental production use is visible rather than silent.
-  if (process.env.E2E_IN_MEMORY_STORES === "true") {
+  // E2E_IN_MEMORY_STORES=true, honoured only where DEPLOYMENT_HOST marks the run as local or CI
+  // (TASK-140) — a deployment, or a run that forgets the marker, still fails closed. The opt-out is
+  // logged so an accidental production use is visible rather than silent.
+  if (process.env.E2E_IN_MEMORY_STORES === "true" && allowsHarnessSwitches()) {
     logger.warn(
       `${envVar} is "memory" in a production build — permitted by E2E_IN_MEMORY_STORES ` +
         `(test harness only; never set on a deployment)`,
@@ -471,6 +517,9 @@ function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
     setApprovalPolicyStore(new SupabaseApprovalPolicyStore(url, key));
     return;
   }
+
+  // type is "memory" (explicit or defaulted): refused in production (audit X-21).
+  requireDurableStoreInProduction("APPROVAL_POLICY_STORE", "the approval policy");
 }
 
 function initGuestUsageStore(type: GuestUsageStoreType): void {
@@ -526,6 +575,9 @@ function initProposalStore(type: ProposalStoreType): void {
     setProposalStore(new SupabaseProposalStore(url, key));
     return;
   }
+
+  // type is "memory" (explicit or defaulted): refused in production (audit X-21).
+  requireDurableStoreInProduction("PROPOSAL_STORE", "proposals (held actions)");
 }
 
 function initEffectLedger(type: EffectLedgerType): void {
@@ -546,6 +598,9 @@ function initEffectLedger(type: EffectLedgerType): void {
     setEffectLedger(new SupabaseEffectLedger(url, key));
     return;
   }
+
+  // type is "memory" (explicit or defaulted): refused in production (audit X-21).
+  requireDurableStoreInProduction("EFFECT_LEDGER", "the effect ledger");
 }
 
 function initSocialStore(type: SocialStoreType): void {
@@ -624,6 +679,8 @@ export function initProviders(): ProviderSelections {
   initSongIdProvider(selections.songId);
   initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
+  initStrikeStore(selections.strikeStore);
+  initReviewQueueStore(selections.reviewQueueStore);
   initAppStateStore(selections.appStateStore);
   initTrajectoryStore(selections.trajectoryStore);
   initBudgetStore(selections.budgetStore);
@@ -656,6 +713,8 @@ export function initProviders(): ProviderSelections {
     songId: selections.songId,
     audioConverter: selections.audioConverter,
     moderationStore: selections.moderationStore,
+    strikeStore: selections.strikeStore,
+    reviewQueueStore: selections.reviewQueueStore,
     appStateStore: selections.appStateStore,
     trajectoryStore: selections.trajectoryStore,
     budgetStore: selections.budgetStore,

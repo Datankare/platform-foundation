@@ -23,7 +23,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard, getAdminActorId } from "@/platform/auth/admin-guard";
+import { requireAdmin } from "@/platform/auth/admin-guard";
+import { holds } from "@/platform/auth/role-governance";
 import { logger, generateRequestId } from "@/lib/logger";
 import {
   buildConfigManagerPrompt,
@@ -34,7 +35,7 @@ import { isApprovalRequired } from "@/platform/admin/config-approval";
 import type { Step } from "@/platform/agents/types";
 import type { ConfigToolResult } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
-import { apiError } from "@/platform/errors";
+import { apiError, readJsonObject } from "@/platform/errors";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,8 +57,6 @@ interface ConfigAIRequest {
   message: string;
   /** Conversation history (previous turns) */
   history?: ConversationMessage[];
-  /** Admin's role for permission context */
-  adminRole?: "admin" | "super_admin";
 }
 
 interface ConfigAIResponse {
@@ -84,12 +83,15 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
   // Permission check — any admin with config_view can converse
-  const denied = await adminGuard(request, "config_view");
-  if (denied) return denied;
+  const guard = await requireAdmin(request, "config_view");
+  if (guard.error) return guard.error;
+  const { admin } = guard;
+
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const body = read.body as Partial<ConfigAIRequest>;
 
   try {
-    const body: ConfigAIRequest = await request.json();
-
     if (!body.message || typeof body.message !== "string") {
       return apiError("request.missing_fields", {
         params: { fields: ["message"] },
@@ -97,8 +99,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const actorId = getAdminActorId(request);
-    const adminRole = body.adminRole ?? "admin";
+    const actorId = admin.userId;
+    // The tier the assistant describes comes from the verified admin's permissions, never
+    // from the request body.
+    const canManageSafety = holds(admin, "config_manage_safety");
+    const adminRole = canManageSafety ? "super_admin" : "admin";
 
     // Build agent context
     const identity = buildConfigAgentIdentity(actorId);
@@ -106,7 +111,7 @@ export async function POST(request: NextRequest) {
     const systemPrompt = buildConfigManagerPrompt({
       adminUserId: actorId,
       adminRole,
-      permissionTier: adminRole === "super_admin" ? "safety" : "standard",
+      permissionTier: canManageSafety ? "safety" : "standard",
       approvalRequired,
     });
 

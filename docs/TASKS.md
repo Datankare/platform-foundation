@@ -2982,13 +2982,15 @@ platform's and Playform's migration sets.
 | **Type**     | Audit integrity                             |
 | **Severity** | Medium — admin actions cannot be attributed |
 | **Phase**    | Phase 5                                     |
-| **Target**   | Phase 5, Sprint 7R                          |
-| **Status**   | Open                                        |
+| **Target**   | Phase 5, Sprint 7X                          |
+| **Status**   | Fixed on develop (Sprint 7X, v5.0.0)        |
 | **Logged**   | 2026-10-21                                  |
 
 **What:** `adminGuard` verifies the caller and then returns `null`, so routes cannot name the admin who acted. `getAdminActorId` (`platform/auth/admin-guard.ts`) returns the placeholder `"authenticated-admin"` (or `"dev-admin"`), and admin audit records carry it. Three routes recover the actor with a second `optionalAuth` call. Found by the Sprint 7R tenancy survey.
 
 **Plan:** `adminGuard` returns the verified admin (user and tenant); `getAdminActorId` is removed; every admin audit write names the admin; a test fails any admin audit record without a real actor (R2).
+
+**Fixed (Sprint 7X):** `requireAdmin` returns the verified admin (`userId`, `sub`, role, permissions); `getAdminActorId` is removed; every admin audit record names the admin, and the audit module refuses a non-UUID actor, so a placeholder can no longer be written (`audit-fail-closed`). The tenant joins the admin identity with R3.
 
 ### TASK-139 — The cache falls back to memory in production without saying so
 
@@ -3015,12 +3017,14 @@ platform's and Playform's migration sets.
 | **Severity** | High — on any other host, mock sign-in and in-memory stores would be accepted in production |
 | **Phase**    | Phase 5                                                                                     |
 | **Target**   | Phase 5, Sprint 7R                                                                          |
-| **Status**   | Open                                                                                        |
+| **Status**   | Fixed on develop (Sprint 7X, v5.0.0)                                                        |
 | **Logged**   | 2026-10-21                                                                                  |
 
 **What:** The environment contract treats a deployment as hosted only when `VERCEL=1`, and only a hosted deployment refuses `E2E_IN_MEMORY_STORES` and `E2E_TEST_DOUBLE_AUTH` (and reports `ADMIN_DEV_BYPASS`, which `adminGuard` separately ignores in any production build). A container or any other host would accept the first two in production. The deployed commit is read only from `VERCEL_GIT_COMMIT_SHA` and the version from `npm_package_version`. Not exploitable today (only Vercel is deployed); must be closed before any other host. Found by the Sprint 7R deploy-anywhere survey.
 
 **Plan:** Inverted, so forgetting a setting cannot reopen it: the harness switches are accepted only with a positive non-hosted marker (`DEPLOYMENT_HOST=local` or `ci`); any other value, or none, refuses them. The commit from `GIT_COMMIT_SHA` then `VERCEL_GIT_COMMIT_SHA`; the version from the `platform/version.ts` constant (ADR-055 D2) (R2).
+
+**Fixed (Sprint 7X):** as planned — `DEPLOYMENT_HOST` in the contract; the harness switches are accepted in production only with `local` or `ci`; the commit from `GIT_COMMIT_SHA` then `VERCEL_GIT_COMMIT_SHA`; the version from `PLATFORM_VERSION` (`environment-contract` tests). The monkey run (`fuzz.yml`) starts the production build with `DEPLOYMENT_HOST=ci`.
 
 ### TASK-141 — Timed duties have no trigger
 
@@ -3086,6 +3090,58 @@ platform's and Playform's migration sets.
 
 **Plan:** Periods computed in UTC, with a test that fixes the time zone (R2).
 
+### TASK-145 — Tests confirmed; nothing proved what the system refuses (October 2026 audit)
+
+| Field        | Detail                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------- |
+| **ID**       | TASK-145                                                                                |
+| **Type**     | Security — assurance (umbrella for the October 2026 whole-system adversarial review)    |
+| **Severity** | Critical — privilege escalation and missing audit in production while every test passed |
+| **Phase**    | Phase 5                                                                                 |
+| **Target**   | Phase 5, Sprint 7X (Wave 1: v5.0.0; Waves 2 and 3 follow)                               |
+| **Status**   | Wave 1 fixed on develop (v5.0.0); Waves 2 and 3 open                                    |
+| **Logged**   | 2026-10-21                                                                              |
+
+**What:** A moderator could make themselves `super_admin` through the AI command bar, any admin could assign any role, and role changes left no audit record — while unit, integration and end-to-end tests, CodeQL, Semgrep and every sprint-close review passed. Route tests stubbed the admin guard; a self-elevation check was tested but never called; no test acted as the wrong role (learning 116). The independent whole-system review that followed found 7 Critical and 18 High findings and many Medium and Low ones; the register is [audits/2026-10-REGISTER.md](audits/2026-10-REGISTER.md).
+
+**Wave 1 (Sprint 7X, v5.0.0):** every Critical and High finding in platform code, and the Medium and Low ones on the same paths, each with the test that would have caught it; Adversarial Validation adopted as a core tenet with the checks that enforce it ([ASSURANCE.md](ASSURANCE.md)): authorization matrix, real guards, security wiring, coverage-ignore policy, paid-route quota, JSON bodies, REST URL encoding, property-test depth, the monkey run, weekly migration parity and ZAP.
+
+**Release review (2026-10-22):** three independent reviewers of the v5.0.0 diff found 2 High, 9 Medium and 14 Low issues (RR-1–RR-25 in the register); every High and most of the rest are fixed in v5.0.0 with their tests, including a pre-existing defect that stored governed config values as JSON text (migration 045).
+
+**Wave 2:** runtime holds (X-10), purge handlers and export/erasure routes (X-15), age consent (X-16), sessions (X-17), multimodal safety and provenance (X-18), guest continuation (X-20), remaining fire-and-forget writes (X-22), and the Medium and Low items the register marks Wave 2 (including RR-8, RR-15, RR-17, RR-19, RR-23). **Wave 3:** latent modules (X-25) before any route reaches them. Consumer-owned findings (X-9 and others) are fixed in the consumer's adoption.
+
+### TASK-146 — Privileged and isolation paths are not yet tested against real Postgres
+
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-146                                                                      |
+| **Type**     | Assurance — test fidelity                                                     |
+| **Severity** | Medium — a database-only behaviour (a constraint, a grant, a type) can differ |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | Phase 5, Sprint 7X Wave 2                                                     |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-10-22                                                                    |
+
+**What:** Adversarial Validation practice 5 asks that privileged and data-isolation paths run against real Postgres. Today the routes run against `FakeDatabase` (filters evaluated, unique constraints, failures injected, filter strings refused) and the SQL runs against real Postgres only in the migration replay. Uuid and enum column semantics — the cause of X-8 and E-15 — are exactly what an in-memory database does not reproduce. Recorded in [ASSURANCE.md](ASSURANCE.md) §3.
+
+**Plan:** The migration-replay database serves a route-level suite in CI: the role-change, config, moderation and audit paths run as each role against it, with the same hostile cases.
+
+### TASK-147 — Generated hostile input covers few suites; the monkey run is bounded by rate limits
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-147                                                     |
+| **Type**     | Assurance — test breadth                                     |
+| **Severity** | Medium — hand-picked hostile cases miss what nobody imagined |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | Phase 5, Sprint 7X Wave 2                                    |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-10-22                                                   |
+
+**What:** Property tests cover sanitization, output screening, paging and search; most suites use hand-picked hostile cases only. The monkey run sweeps every route as every caller first, but from one address most of its random steps are then refused with 429 — correctly, since it must not bypass the limits. Recorded in [ASSURANCE.md](ASSURANCE.md) §3.
+
+**Plan:** Property tests for every validator and every route's body schema (generated bodies, `fast-check`); the monkey run gains a sequence mode that paces itself under each route's limit, and invariants after each step on the data it may see (no other user's records).
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -3131,5 +3187,6 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
+_Last updated: October 22, 2026 (TASK-145 Wave 1 fixed; TASK-138 and TASK-140 fixed in Sprint 7X; TASK-146 and TASK-147 filed — the gaps ASSURANCE.md records)_
 _Last updated: August 13, 2026 (TASK-083 filed — the sync cannot distinguish an upstream deletion from a Playform-owned file)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_

@@ -164,15 +164,14 @@ describe("SupabaseStrikeStore", () => {
       expect(strikes).toHaveLength(0);
     });
 
-    it("returns empty array on error", async () => {
+    it("fails closed on error: throws rather than reporting no strikes", async () => {
       const chain = createChainMock({
         data: null,
         error: { message: "DB error" },
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      const strikes = await store.getActiveStrikes("user-1");
-      expect(strikes).toEqual([]);
+      await expect(store.getActiveStrikes("user-1")).rejects.toThrow(/DB error/);
     });
   });
 

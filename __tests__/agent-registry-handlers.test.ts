@@ -12,24 +12,29 @@ import {
 } from "@/app/api/admin/ai/handlers/agents";
 
 const getConfig = jest.fn();
-const setConfig = jest.fn();
+const writeGovernedConfig = jest.fn();
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: (...a: unknown[]) => getConfig(...a),
-  setConfig: (...a: unknown[]) => setConfig(...a),
 }));
-const writeAuditLog = jest.fn();
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: (...a: unknown[]) => writeAuditLog(...a),
+jest.mock("@/platform/admin/governed-config", () => ({
+  ...jest.requireActual("@/platform/admin/governed-config"),
+  writeGovernedConfig: (...a: unknown[]) => writeGovernedConfig(...a),
 }));
 
-const ACTOR = "admin-1";
+/** The verified admin the command bar passes; the governed write checks its tier permission. */
+const ACTOR = {
+  userId: "00000000-0000-4000-8000-00000000a001",
+  sub: "sub-admin",
+  roleName: "admin",
+  permissions: ["admin_manage_agents", "admin_manage_config", "config_manage_safety"],
+};
+/** The value the handler asked the governed write to store. */
+const written = (n = 0): any => writeGovernedConfig.mock.calls[n][1].value;
 
 beforeEach(() => {
   getConfig.mockReset();
-  setConfig.mockReset();
-  writeAuditLog.mockReset();
-  setConfig.mockResolvedValue({ success: true });
-  writeAuditLog.mockResolvedValue(undefined);
+  writeGovernedConfig.mockReset();
+  writeGovernedConfig.mockResolvedValue({ kind: "applied", result: {} });
 });
 
 describe("handleRegisterAgent", () => {
@@ -40,8 +45,7 @@ describe("handleRegisterAgent", () => {
       ACTOR
     );
     expect(r.success).toBe(true);
-    const written = setConfig.mock.calls[0][1] as [string, any][];
-    expect(written).toEqual([
+    expect(written()).toEqual([
       [
         "agent:x",
         {
@@ -52,7 +56,10 @@ describe("handleRegisterAgent", () => {
         },
       ],
     ]);
-    expect(writeAuditLog).toHaveBeenCalledTimes(1);
+    expect(writeGovernedConfig).toHaveBeenCalledWith(
+      ACTOR,
+      expect.objectContaining({ changeComment: expect.stringMatching(/^Command bar: /) })
+    );
   });
 
   it("rejects a duplicate agent", async () => {
@@ -61,7 +68,7 @@ describe("handleRegisterAgent", () => {
     ]);
     const r = await handleRegisterAgent({ agent_id: "agent:x" }, ACTOR);
     expect(r.success).toBe(false);
-    expect(setConfig).not.toHaveBeenCalled();
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
 
   it("requires agent_id", async () => {
@@ -82,18 +89,17 @@ describe("handleSuspendAgent", () => {
   it("suspends an active agent", async () => {
     const r = await handleSuspendAgent({ agent_id: "agent:x" }, ACTOR);
     expect(r.success).toBe(true);
-    const written = setConfig.mock.calls[0][1] as [string, any][];
-    expect(written[0][1].status).toBe("suspended");
+    expect(written()[0][1].status).toBe("suspended");
   });
   it("reactivates when reactivate=true", async () => {
     const r = await handleSuspendAgent({ agent_id: "agent:x", reactivate: true }, ACTOR);
     expect(r.success).toBe(true);
-    expect((setConfig.mock.calls[0][1] as any)[0][1].status).toBe("active");
+    expect(written()[0][1].status).toBe("active");
   });
   it("fails on unknown agent", async () => {
     const r = await handleSuspendAgent({ agent_id: "agent:none" }, ACTOR);
     expect(r.success).toBe(false);
-    expect(setConfig).not.toHaveBeenCalled();
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
 });
 
@@ -112,10 +118,7 @@ describe("handleSetAgentScope", () => {
       ACTOR
     );
     expect(r.success).toBe(true);
-    expect((setConfig.mock.calls[0][1] as any)[0][1].scopes).toEqual([
-      "speak",
-      "transcribe",
-    ]);
+    expect(written()[0][1].scopes).toEqual(["speak", "transcribe"]);
   });
   it("fails on unknown agent", async () => {
     const r = await handleSetAgentScope({ agent_id: "agent:none", scopes: [] }, ACTOR);
@@ -135,11 +138,11 @@ describe("handleSetAgentTtl", () => {
       ACTOR
     );
     expect(r.success).toBe(true);
-    expect((setConfig.mock.calls[0][1] as any)[0][1].maxTokenTtl).toBe(1800);
+    expect(written()[0][1].maxTokenTtl).toBe(1800);
   });
   it("rejects a non-positive ttl", async () => {
     const r = await handleSetAgentTtl({ agent_id: "agent:x", max_token_ttl: 0 }, ACTOR);
     expect(r.success).toBe(false);
-    expect(setConfig).not.toHaveBeenCalled();
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
 });

@@ -4,8 +4,10 @@
  * D1 — No test doubles in production. A production context refuses to boot on the mock auth
  *      provider (unset AUTH_PROVIDER included — it defaults to the mock). The only exception is
  *      an E2E harness running the production build, which opts in with E2E_TEST_DOUBLE_AUTH=true;
- *      the store opt-out (E2E_IN_MEMORY_STORES) does not extend to auth. Harness opt-outs and
- *      ADMIN_DEV_BYPASS are refused outright on a hosted deployment (VERCEL=1).
+ *      the store opt-out (E2E_IN_MEMORY_STORES) does not extend to auth. Harness switches are
+ *      accepted in production only where DEPLOYMENT_HOST positively says the run is not a
+ *      deployment ("local" or "ci"); a deployment that sets anything else, or forgets the setting,
+ *      refuses them (ADR-055 D2, TASK-140). Host detection never depends on one vendor's variable.
  *      Guest tokens are signed under GUEST_TOKEN_SECRET (D4), required with a real auth provider.
  * D2 — Each setting is declared once: one canonical name, its accepted aliases, and its shape.
  *      Boot validates presence and shape and fails closed naming the setting. An alias set on
@@ -101,6 +103,13 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
       "one of: supabase, upstash, memory (memory is refused in production — ADR-052)",
   },
   {
+    name: "DEPLOYMENT_HOST",
+    aliases: [],
+    shape: /^[a-z][a-z0-9-]{1,31}$/,
+    shapeHint:
+      'a lower-case host name, e.g. vercel, container, aws; "local" or "ci" only for runs that are not deployments',
+  },
+  {
     name: "TRUSTED_PROXY_HOPS",
     aliases: [],
     shape: /^[1-5]$/,
@@ -115,6 +124,8 @@ export const TEST_DOUBLE_AUTH_PROVIDERS: ReadonlySet<string> = new Set(["mock"])
 /** Selections that make the Supabase settings required. */
 export const SUPABASE_SELECTORS: readonly string[] = [
   "MODERATION_STORE",
+  "STRIKE_STORE",
+  "REVIEW_QUEUE_STORE",
   "SOCIAL_STORE",
   "APP_STATE_STORE",
   "TRAJECTORY_STORE",
@@ -127,7 +138,7 @@ export const SUPABASE_SELECTORS: readonly string[] = [
   "REALTIME_PROVIDER",
 ];
 
-/** Test-harness switches that must never reach a hosted deployment. */
+/** Test-harness switches that must never reach a deployment. */
 export const HARNESS_ONLY_SETTINGS: readonly string[] = [
   "E2E_IN_MEMORY_STORES",
   "E2E_TEST_DOUBLE_AUTH",
@@ -257,9 +268,17 @@ export function isProductionContext(env: EnvSource = process.env): boolean {
   return env.NODE_ENV === "production";
 }
 
-/** A hosted deployment (Vercel sets VERCEL=1 at build and runtime). */
-export function isHostedDeployment(env: EnvSource = process.env): boolean {
-  return env.VERCEL === "1";
+/** DEPLOYMENT_HOST values that mark a run as not a deployment: local work and CI. */
+export const NON_DEPLOYMENT_HOSTS: ReadonlySet<string> = new Set(["local", "ci"]);
+
+/**
+ * Whether the test-harness switches may be honoured (ADR-055 D2, TASK-140). True only when
+ * DEPLOYMENT_HOST positively marks the run as local or CI — never by the absence of a host's own
+ * variable — so a deployment that forgets the setting refuses them.
+ */
+export function allowsHarnessSwitches(env: EnvSource = process.env): boolean {
+  const host = raw(env, "DEPLOYMENT_HOST");
+  return host !== undefined && NON_DEPLOYMENT_HOSTS.has(host);
 }
 
 /**
@@ -268,14 +287,14 @@ export function isHostedDeployment(env: EnvSource = process.env): boolean {
  */
 export function checkEnvironmentContract(env: EnvSource): string[] {
   const violations: string[] = [];
-  const hosted = isHostedDeployment(env);
+  const harnessAllowed = allowsHarnessSwitches(env);
 
-  // Harness-only switches on a hosted deployment.
-  if (hosted) {
+  // Harness-only switches outside a local or CI run.
+  if (!harnessAllowed) {
     for (const name of HARNESS_ONLY_SETTINGS) {
       if (raw(env, name) !== undefined) {
         violations.push(
-          `${name} is set on a hosted deployment — it is for local/test only`
+          `${name} is set but DEPLOYMENT_HOST is not "local" or "ci" — it is for local and CI runs only`
         );
       }
     }
@@ -306,7 +325,7 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
   // D1: no test-double auth.
   const auth = getAuthProviderSetting(env) ?? "mock";
   if (TEST_DOUBLE_AUTH_PROVIDERS.has(auth)) {
-    const harness = raw(env, "E2E_TEST_DOUBLE_AUTH") === "true" && !hosted;
+    const harness = raw(env, "E2E_TEST_DOUBLE_AUTH") === "true" && harnessAllowed;
     if (!harness) {
       violations.push(
         `AUTH_PROVIDER is ${raw(env, "AUTH_PROVIDER") ? `"${auth}"` : "unset (defaults to mock)"} — ` +

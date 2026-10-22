@@ -4,22 +4,25 @@
 
 import { handleSetApprovalPolicy } from "@/app/api/admin/ai/handlers/approval";
 
+import { FakeDatabase } from "./helpers/fake-database";
+import { getSupabaseServiceClient } from "@/lib/supabase/server";
+
 const setRules = jest.fn();
 jest.mock("@/platform/agents", () => ({
+  ...jest.requireActual("@/platform/agents"),
   getApprovalPolicyStore: () => ({ setRules }),
 }));
-const writeAuditLog = jest.fn();
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: (...a: unknown[]) => writeAuditLog(...a),
-}));
+// The real audit module writes to an in-memory database (helpers/fake-database.ts).
+jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
+let db: FakeDatabase;
 
-const ACTOR = "admin-1";
+const ACTOR = "00000000-0000-4000-8000-00000000a001";
 
 beforeEach(() => {
   setRules.mockReset();
-  writeAuditLog.mockReset();
   setRules.mockResolvedValue({ version: 2, default: "user", rules: [] });
-  writeAuditLog.mockResolvedValue(undefined);
+  db = new FakeDatabase({ audit_log: [] });
+  (getSupabaseServiceClient as jest.Mock).mockReturnValue(db.client());
 });
 
 describe("handleSetApprovalPolicy", () => {
@@ -29,7 +32,7 @@ describe("handleSetApprovalPolicy", () => {
         default_approver: "user",
         rules: [
           { max_risk: "consequential", required_approver: "user" },
-          { max_risk: "ordinary", effects: ["network"], required_approver: "agent" },
+          { max_risk: "ordinary", effects: ["externalCall"], required_approver: "agent" },
         ],
       },
       ACTOR
@@ -38,10 +41,10 @@ describe("handleSetApprovalPolicy", () => {
     const passed = setRules.mock.calls[0][0];
     expect(passed).toEqual([
       { maxRisk: "consequential", requiredApprover: "user" },
-      { maxRisk: "ordinary", effects: ["network"], requiredApprover: "agent" },
+      { maxRisk: "ordinary", effects: ["externalCall"], requiredApprover: "agent" },
     ]);
     expect(setRules.mock.calls[0][1]).toBe(ACTOR);
-    expect(writeAuditLog).toHaveBeenCalledTimes(1);
+    expect(db.rows("audit_log")).toHaveLength(1);
   });
 
   it("omits effects when empty", async () => {
@@ -75,5 +78,43 @@ describe("handleSetApprovalPolicy", () => {
     );
     expect(r.success).toBe(false);
     expect(r.error).toBe("version conflict");
+  });
+});
+
+describe("handleSetApprovalPolicy — refused policies", () => {
+  it.each([
+    [
+      "an agent approving restricted actions",
+      { max_risk: "restricted", required_approver: "agent" },
+    ],
+    [
+      "a system approver for the restricted effect",
+      {
+        max_risk: "ordinary",
+        effects: ["restricted"],
+        required_approver: "system",
+      },
+    ],
+    ["an unknown risk level", { max_risk: "low", required_approver: "user" }],
+    [
+      "an unknown effect",
+      { max_risk: "ordinary", effects: ["teleport"], required_approver: "user" },
+    ],
+    ["an unknown approver", { max_risk: "ordinary", required_approver: "anyone" }],
+  ])("refuses %s, storing and recording nothing", async (_label, rule) => {
+    const r = await handleSetApprovalPolicy({ rules: [rule] }, ACTOR);
+    expect(r).toMatchObject({ success: false, code: "request.invalid_value" });
+    expect(setRules).not.toHaveBeenCalled();
+    expect(db.rows("audit_log")).toHaveLength(0);
+  });
+
+  it("does not change the policy when the audit log is unavailable", async () => {
+    db.failWrites("audit_log");
+    const r = await handleSetApprovalPolicy(
+      { rules: [{ max_risk: "ordinary", required_approver: "user" }] },
+      ACTOR
+    );
+    expect(r).toMatchObject({ success: false, code: "service.unavailable" });
+    expect(setRules).not.toHaveBeenCalled();
   });
 });

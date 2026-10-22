@@ -18,7 +18,7 @@
 import { logger } from "@/lib/logger";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { getStrikeStore } from "./strikes";
 import { getReviewQueueStore } from "./review-store";
 import { loadEscalationSlaHours, loadRemedialAction } from "./config";
@@ -185,6 +185,16 @@ export async function submitAppeal(
     };
   }
 
+  // Validate: bounded — the reason reaches a reviewer's screen and the assist prompt.
+  if (input.appealReason.length > MAX_APPEAL_REASON_CHARS) {
+    return {
+      success: false,
+      error: `Appeal reason must be at most ${MAX_APPEAL_REASON_CHARS} characters`,
+      errorCode: "request.text_too_long",
+      errorParams: { max: MAX_APPEAL_REASON_CHARS },
+    };
+  }
+
   // Validate: within appeal window
   const windowHours = await loadAppealWindowHours();
   const decisionTime = new Date(decisionTimestamp).getTime();
@@ -254,6 +264,7 @@ export async function claimItem(
       errorParams: { status: item.status },
     };
   }
+  if (isSelfReview(item, reviewerId)) return SELF_REVIEW;
 
   return store.update(itemId, {
     status: "claimed",
@@ -362,6 +373,7 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
       errorCode: "moderation.not_claimer",
     };
   }
+  if (isSelfReview(item, input.reviewerId)) return SELF_REVIEW;
   if (input.decision === "modify" && !input.modifiedAction) {
     return {
       success: false,
@@ -370,43 +382,65 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
     };
   }
 
-  const now = new Date().toISOString();
-
-  const result = await store.update(input.itemId, {
-    status: "resolved",
-    resolvedBy: input.reviewerId,
-    resolvedAt: now,
-    decision: input.decision,
-    reviewerNotes: input.reviewerNotes,
-    modifiedAction: input.modifiedAction,
-  });
-
-  if (!result.success) return result;
-
-  // ── Side effects (commitment) ──────────────────────────────────
-  if (input.decision === "overturn") {
-    await applyOverturnSideEffects(item, input.reviewerId);
+  // Recorded before anything changes; with no record nothing changes (audit X-8). The account
+  // and strike are restored before the item is marked resolved, so a failed restoration leaves
+  // the item claimed and retryable rather than resolved with the user still banned.
+  try {
+    return await audited(
+      {
+        action: "admin_action",
+        actorId: input.reviewerId,
+        targetId: item.targetUserId,
+        details: {
+          type: "review_resolution",
+          reviewItemId: item.id,
+          source: item.source,
+          decision: input.decision,
+          reviewerNotes: input.reviewerNotes,
+          modifiedAction: input.modifiedAction,
+          originalAction: item.moderationResult.action,
+          trajectoryId: item.moderationResult.trajectoryId,
+        },
+      },
+      async (): Promise<ReviewResult> => {
+        if (input.decision === "overturn") {
+          const failure = await applyOverturnSideEffects(item, input.reviewerId);
+          if (failure)
+            return { success: false, error: failure, errorCode: "internal.error" };
+        }
+        return store.update(input.itemId, {
+          status: "resolved",
+          resolvedBy: input.reviewerId,
+          resolvedAt: new Date().toISOString(),
+          decision: input.decision,
+          reviewerNotes: input.reviewerNotes,
+          modifiedAction: input.modifiedAction,
+        });
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError) {
+      return {
+        success: false,
+        error: "The audit log is unavailable, so the decision was not applied.",
+        errorCode: "service.unavailable",
+        errorParams: { service: "audit" },
+      };
+    }
+    throw err;
   }
-
-  // Audit log (fire-and-forget)
-  writeAuditLog({
-    action: "admin_action",
-    actorId: input.reviewerId,
-    targetId: item.targetUserId,
-    details: {
-      type: "review_resolution",
-      reviewItemId: item.id,
-      source: item.source,
-      decision: input.decision,
-      reviewerNotes: input.reviewerNotes,
-      modifiedAction: input.modifiedAction,
-      originalAction: item.moderationResult.action,
-      trajectoryId: item.moderationResult.trajectoryId,
-    },
-  });
-
-  return result;
 }
+
+/** A moderator never reviews a case about their own account (audit X-6). */
+function isSelfReview(item: ReviewQueueItem, reviewerId: string): boolean {
+  return item.targetUserId === reviewerId;
+}
+
+const SELF_REVIEW: ReviewResult = {
+  success: false,
+  error: "A moderator cannot review a case about their own account",
+  errorCode: "moderation.self_review",
+};
 
 // ---------------------------------------------------------------------------
 // Release expired claims
@@ -457,7 +491,7 @@ export async function getQueueStats() {
 async function applyOverturnSideEffects(
   item: ReviewQueueItem,
   reviewerId: string
-): Promise<void> {
+): Promise<string | null> {
   // 1. Restore account status (escalations never changed it).
   if (item.source === "escalation") {
     logger.info("Review: overturn of escalation — account status unchanged", {
@@ -467,7 +501,8 @@ async function applyOverturnSideEffects(
       route: "platform/moderation/review-service",
     });
   } else {
-    await restoreAccountStatus(item, reviewerId);
+    const failure = await restoreAccountStatus(item, reviewerId);
+    if (failure) return failure;
   }
 
   // 2. Expire the strike caused by the overturned decision.
@@ -495,30 +530,140 @@ async function applyOverturnSideEffects(
       });
     }
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     logger.error("Review: strike expiry failed", {
       userId: item.targetUserId,
-      error: err instanceof Error ? err.message : String(err),
+      error: message,
       route: "platform/moderation/review-service",
     });
+    return `strike expiry failed: ${message}`;
   }
+  return null;
+}
+
+/** Longest appeal reason accepted (release review, Sprint 7X). */
+export const MAX_APPEAL_REASON_CHARS = 2000;
+
+/** Account statuses, least to most severe. */
+const SEVERITY: readonly AccountStatus[] = [
+  "active",
+  "warned",
+  "restricted",
+  "suspended",
+  "banned",
+];
+
+/** The status change recorded for a Guardian decision, newest first among a user's records. */
+interface StatusChangeRecord {
+  readonly guardianDecisionId?: unknown;
+  readonly previousStatus?: unknown;
+  readonly newStatus?: unknown;
+  readonly outcome?: unknown;
 }
 
 /**
- * Restore a user's account status when a status-changing decision is overturned.
- *
- * Restores to `item.previousAccountStatus` when known, otherwise falls back to
- * "active". A consequence timer (`suspended_until` / `restricted_until`) is only
- * cleared when we are NOT restoring the user *into* that consequence — this
- * prevents an overturn from wiping a separate, still-valid restriction.
+ * The most recent status change applied to an account (Sentinel's `sentinel_status_change`
+ * record), or null when there is none. A change whose recorded outcome is "failed" never
+ * happened and is skipped. Throws when the records cannot be read (fail closed).
+ */
+async function latestStatusChange(userId: string): Promise<StatusChangeRecord | null> {
+  const supabase = getSupabaseServiceClient();
+  const { data, error } = await (supabase
+    .from("audit_log" as never)
+    .select("details, created_at")
+    .eq("target_id", userId)
+    .eq("action", "admin_action")
+    .order("created_at", { ascending: false })
+    .limit(200) as unknown as Promise<{
+    data: { details: Record<string, unknown> | null }[] | null;
+    error: { message: string } | null;
+  }>);
+  if (error) throw new Error(`status history unreadable: ${error.message}`);
+  const changes = (data ?? [])
+    .map((row) => row.details ?? {})
+    .filter((d) => d.type === "sentinel_status_change");
+  // An attempt whose failure was recorded did not change the account.
+  const failed = new Set(
+    changes
+      .filter((d) => d.outcome === "failed")
+      .map((d) => `${String(d.guardianDecisionId)}:${String(d.newStatus)}`)
+  );
+  return (
+    changes.find(
+      (d) =>
+        d.outcome !== "failed" &&
+        !failed.has(`${String(d.guardianDecisionId)}:${String(d.newStatus)}`)
+    ) ?? null
+  );
+}
+
+/**
+ * Lift the consequence of an overturned decision — and only that decision's (release review,
+ * Sprint 7X). The account is restored only when the overturned decision is the one that set
+ * its current status: the latest recorded status change names this decision and its new status
+ * is the account's status now. Then it is restored to the status recorded before that change,
+ * which must be less severe (an overturn never imposes a consequence, audit X-2). If a later
+ * decision set the current status, or no record shows this decision changed the account, the
+ * status is left as it is: overturning a warning must not lift a later ban. Returns a failure
+ * message, or null.
  */
 async function restoreAccountStatus(
   item: ReviewQueueItem,
   reviewerId: string
-): Promise<void> {
-  const restoreTo: AccountStatus = item.previousAccountStatus ?? "active";
+): Promise<string | null> {
+  const decisionId = item.originalDecisionId ?? item.moderationResult.trajectoryId;
+  const supabase = getSupabaseServiceClient();
 
   try {
-    const supabase = getSupabaseServiceClient();
+    const { data: current, error: readError } = await (supabase
+      .from("users" as never)
+      .select("account_status")
+      .eq("id", item.targetUserId)
+      .maybeSingle() as unknown as Promise<{
+      data: { account_status: AccountStatus } | null;
+      error: { message: string } | null;
+    }>);
+    if (readError) return `account status unreadable: ${readError.message}`;
+    if (!current) return "account not found";
+
+    const change = await latestStatusChange(item.targetUserId);
+    const inForce =
+      change !== null &&
+      change.guardianDecisionId === decisionId &&
+      change.newStatus === current.account_status &&
+      typeof change.previousStatus === "string" &&
+      SEVERITY.includes(change.previousStatus as AccountStatus);
+    if (!inForce) {
+      logger.warn(
+        "Review: the overturned decision did not set the account's current status — left unchanged",
+        {
+          userId: item.targetUserId,
+          reviewerId,
+          reviewItemId: item.id,
+          current: current.account_status,
+          route: "platform/moderation/review-service",
+        }
+      );
+      return null;
+    }
+    const restoreTo = change.previousStatus as AccountStatus;
+
+    const now = SEVERITY.indexOf(current.account_status);
+    const to = SEVERITY.indexOf(restoreTo);
+    if (to < 0 || to >= now) {
+      logger.warn(
+        "Review: overturn would not lower the account's status — left unchanged",
+        {
+          userId: item.targetUserId,
+          reviewerId,
+          reviewItemId: item.id,
+          current: current.account_status,
+          recordedPrevious: restoreTo,
+          route: "platform/moderation/review-service",
+        }
+      );
+      return null;
+    }
 
     const updateData: Record<string, unknown> = {
       account_status: restoreTo,
@@ -530,12 +675,13 @@ async function restoreAccountStatus(
     if (restoreTo !== "suspended") updateData.suspended_until = null;
     if (restoreTo !== "restricted") updateData.restricted_until = null;
 
-    await (supabase
+    const { error } = await (supabase
       .from("users" as never)
       .update(updateData as never)
       .eq("id", item.targetUserId) as unknown as Promise<{
       error: { message: string } | null;
     }>);
+    if (error) return `account status restore failed: ${error.message}`;
 
     logger.info("Review: account status restored on overturn", {
       userId: item.targetUserId,
@@ -545,13 +691,16 @@ async function restoreAccountStatus(
       restoredTo: restoreTo,
       route: "platform/moderation/review-service",
     });
+    return null;
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     logger.error("Review: account status restoration failed", {
       userId: item.targetUserId,
       reviewerId,
-      error: err instanceof Error ? err.message : String(err),
+      error: message,
       route: "platform/moderation/review-service",
     });
+    return `account status restore failed: ${message}`;
   }
 }
 
@@ -560,24 +709,18 @@ async function restoreAccountStatus(
 // ---------------------------------------------------------------------------
 //
 // 1. F1 — overturn restores to item.previousAccountStatus, NOT unconditionally
-//    "active". Escalations skip status restoration entirely (Guardian "escalate"
-//    never changes account status). When previousAccountStatus is unknown for a
-//    status-changing source, the fallback is "active". A consequence timer is
-//    only nulled when we are not restoring INTO that consequence, so an
-//    independent suspension/restriction is not wrongly lifted.
+//    "active", and only ever to a status LESS severe than the account's current one
+//    (X-2): an overturn lifts a consequence, it cannot impose one. Escalations skip
+//    status restoration entirely (Guardian "escalate" never changes account status).
 //
-// 2. previousAccountStatus is populated by producers that own the status change:
-//    - middleware escalation → undefined (correct; no status change)
-//    - appeals route → derived best-effort from the original Sentinel decision's
-//      platform-audit entry (details.previousStatus); undefined if not found
-//    - Sentinel ban_review auto-submit is NOT wired yet (ADR-024 §Integration
-//      lists it, but no producer calls submitForReview with source "ban_review").
-//      Until wired, ban_review items only arrive via the appeals path. Wiring
-//      Sentinel → review (passing SentinelResult.previousStatus) is a follow-up.
+// 2. previousAccountStatus comes only from producers that own the status change, never
+//    from a request body: Sentinel's ban_review submission (SentinelResult.previousStatus)
+//    and the appeals route (derived from the original Sentinel audit record). The manual
+//    submit route accepts escalations only (Sprint 7X).
 //
-// 3. Strike "expiry" currently only IDENTIFIES the related strike (logs it). It
-//    does not yet mutate the strike record. Actual expiry is a follow-up; the
-//    StrikeStore exposes expireStrikes() but there is no per-strike expire API.
+// 3. Overturn side effects run BEFORE the item is marked resolved; a failure leaves the item
+//    claimed and returns the error, so a moderator can retry instead of a resolved item with
+//    the user still banned.
 //
 // 4. submitAppeal accepts only a "block" action. A block is the user-facing
 //    punishment a user would contest; "escalate" already routes to human
@@ -610,8 +753,8 @@ export interface ReapResult {
  *     "block"; the already-withheld content becomes a concrete, appealable block.
  *   - "escalate_higher": ratchet priority to "critical" and keep it queued; items
  *     already at "critical" are skipped (a one-way ratchet, so re-running is safe).
- * Attributable via the audit log (actorId "escalation-reaper"), mirroring
- * resolveItem. `now` is injectable for deterministic tests.
+ * Each change is recorded first (agent "escalation-reaper"); an item whose record cannot be
+ * written is left for the next sweep. `now` is injectable for deterministic tests.
  */
 export async function reapOverdueEscalations(
   now: Date = new Date()
@@ -632,51 +775,73 @@ export async function reapOverdueEscalations(
   for (const item of overdue) {
     if (remedial === "escalate_higher") {
       if (item.priority === "critical") continue; // one-way ratchet -> idempotent
-      const res = await store.update(item.id, {
-        status: "pending",
-        priority: "critical",
-      });
-      if (!res.success) continue;
-      escalatedHigher++;
-      writeAuditLog({
-        action: "admin_action",
-        actorId: "escalation-reaper",
-        targetId: item.targetUserId,
-        details: {
-          type: "escalation_sla_escalate_higher",
-          reviewItemId: item.id,
-          slaHours,
-          trajectoryId: item.moderationResult.trajectoryId,
-          reapedAt: now.toISOString(),
+      const res = await reapAudited(
+        {
+          action: "admin_action",
+          agent: REAPER,
+          targetId: item.targetUserId,
+          details: {
+            type: "escalation_sla_escalate_higher",
+            reviewItemId: item.id,
+            slaHours,
+            trajectoryId: item.moderationResult.trajectoryId,
+            reapedAt: now.toISOString(),
+          },
         },
-      });
+        () => store.update(item.id, { status: "pending", priority: "critical" })
+      );
+      if (res.success) escalatedHigher++;
       continue;
     }
 
-    const res = await store.update(item.id, {
-      status: "resolved",
-      decision: "modify",
-      modifiedAction: "block",
-      resolvedBy: "escalation-reaper",
-      resolvedAt: now.toISOString(),
-      reviewerNotes: `Auto-blocked: escalation exceeded the ${slaHours}h SLA without human review (ADR-041).`,
-    });
-    if (!res.success) continue;
-    blocked++;
-    writeAuditLog({
-      action: "admin_action",
-      actorId: "escalation-reaper",
-      targetId: item.targetUserId,
-      details: {
-        type: "escalation_sla_block",
-        reviewItemId: item.id,
-        slaHours,
-        originalAction: item.moderationResult.action,
-        trajectoryId: item.moderationResult.trajectoryId,
-        reapedAt: now.toISOString(),
+    const res = await reapAudited(
+      {
+        action: "admin_action",
+        agent: REAPER,
+        targetId: item.targetUserId,
+        details: {
+          type: "escalation_sla_block",
+          reviewItemId: item.id,
+          slaHours,
+          originalAction: item.moderationResult.action,
+          trajectoryId: item.moderationResult.trajectoryId,
+          reapedAt: now.toISOString(),
+        },
       },
-    });
+      () =>
+        store.update(item.id, {
+          status: "resolved",
+          decision: "modify",
+          modifiedAction: "block",
+          resolvedBy: REAPER,
+          resolvedAt: now.toISOString(),
+          reviewerNotes: `Auto-blocked: escalation exceeded the ${slaHours}h SLA without human review (ADR-041).`,
+        })
+    );
+    if (res.success) blocked++;
   }
 
   return { scanned: overdue.length, blocked, escalatedHigher, slaHours, cutoff };
+}
+
+/** The reaper's name in the audit log and on items it resolves. */
+const REAPER = "escalation-reaper";
+
+/** One reaper change under audited(); an unwritable record skips the item (next sweep retries). */
+async function reapAudited(
+  entry: Parameters<typeof audited>[0],
+  act: () => Promise<ReviewResult>
+): Promise<ReviewResult> {
+  try {
+    return await audited(entry, act);
+  } catch (err) {
+    if (err instanceof AuditWriteError) {
+      return {
+        success: false,
+        error: "audit unavailable",
+        errorCode: "service.unavailable",
+      };
+    }
+    throw err;
+  }
 }

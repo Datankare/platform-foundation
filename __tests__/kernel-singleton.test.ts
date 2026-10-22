@@ -131,7 +131,6 @@ describe("the store survives a second copy of this module", () => {
     let seen: unknown;
     await new Promise<void>((resolve) => {
       jest.isolateModules(() => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const fresh = require("@/platform/kernel/singleton");
         seen = fresh.getSingleton(KEY, () => "created by the second copy");
         resolve();
@@ -144,7 +143,6 @@ describe("the store survives a second copy of this module", () => {
   it("keys registered by a second copy are visible to the first", async () => {
     await new Promise<void>((resolve) => {
       jest.isolateModules(() => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const fresh = require("@/platform/kernel/singleton");
         fresh.setSingleton(OTHER, "from the second copy");
         resolve();

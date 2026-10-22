@@ -1,0 +1,50 @@
+name: "Migration parity"
+
+# Weekly, and on demand: does each live database have exactly this branch's migrations
+# (scripts/migration-parity.mjs, audit X-24)? Credentials come from GitHub Environments named
+# "staging" and "production", each with SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets.
+# A repository without them (platform-foundation itself has no deployment) skips with a notice.
+# Protect both Environments (deployment branches staging / main; reviewers on production): the
+# service-role key must not be readable by a workflow dispatched from another branch.
+
+on:
+  schedule:
+    - cron: "0 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: Migration parity (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: staging
+            branch: staging
+          - environment: production
+            branch: main
+    environment: ${{ matrix.environment }}
+    steps:
+      - name: Checkout the branch deployed to ${{ matrix.environment }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ matrix.branch }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Compare
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::notice::No ${{ matrix.environment }} database credentials in this repository — skipped."
+            exit 0
+          fi
+          node scripts/migration-parity.mjs "${{ matrix.environment }}"

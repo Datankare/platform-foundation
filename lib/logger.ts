@@ -8,7 +8,8 @@ import { generateId } from "@/platform/agents/utils";
  * - Runtime-configurable via LOG_LEVEL environment variable
  * - Every log entry is structured JSON with mandatory fields
  * - Trace context (traceId, spanId) auto-injected when observability is initialized
- * - Never logs: API keys, user input content, audio data, PII
+ * - Never logs: API keys, user input content, audio data, PII — credential and personal-data
+ *   fields are redacted in emit() whatever the caller passes (redact, REDACTED_KEYS)
  *
  * OWASP A09: Security Logging and Monitoring
  *
@@ -68,6 +69,24 @@ function shouldLog(level: LogLevel): boolean {
   return LOG_LEVEL_PRIORITY[level] <= LOG_LEVEL_PRIORITY[configured];
 }
 
+/**
+ * Fields never written to a log, at any depth, whatever a caller passes: personal data and
+ * credentials (ring 6). Enforced here so one forgotten call site cannot leak them.
+ */
+const REDACTED_KEYS =
+  /^(?:email|password|newpassword|oldpassword|token|accesstoken|refreshtoken|idtoken|authorization|cookie|phone|phonenumber|secret|apikey|api_key)$/i;
+
+/** A copy of `value` with every REDACTED_KEYS field replaced, to a bounded depth. */
+export function redact(value: unknown, depth = 0): unknown {
+  if (depth > 4 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = REDACTED_KEYS.test(k) ? "[redacted]" : redact(v, depth + 1);
+  }
+  return out;
+}
+
 function emit(level: LogLevel, message: string, fields?: Partial<LogEntry>): void {
   if (!shouldLog(level)) return;
 
@@ -76,7 +95,7 @@ function emit(level: LogLevel, message: string, fields?: Partial<LogEntry>): voi
     level,
     environment: process.env.NODE_ENV ?? "development",
     message,
-    ...fields,
+    ...(fields ? (redact(fields) as Partial<LogEntry>) : {}),
   };
 
   const output = JSON.stringify(entry);

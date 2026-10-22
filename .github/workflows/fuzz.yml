@@ -1,0 +1,104 @@
+name: "Fuzz and monkey"
+
+# Adversarial Validation, run deeper than a commit can afford (docs/ASSURANCE.md):
+#   1. every property test (fast-check) with FC_NUM_RUNS generated cases and a fresh seed;
+#   2. the monkey run (scripts/monkey/monkey.mjs): a production build started on the E2E harness
+#      (mock auth and AI, in-memory stores — DEPLOYMENT_HOST=ci), hit on every route and handler
+#      as every kind of caller with hostile bodies, headers and random sequences, checking that
+#      no uncoded 500, privileged success, leak or hang occurs. The provider key is a canary that
+#      must never appear in a response.
+# Runs on every promotion PR (staging, main), weekly, and on demand. On demand it can instead
+# target a deployed URL (staging): then only anonymous, forged and guest callers are used.
+# A failure prints the seed; re-run with MONKEY_SEED to replay it.
+
+on:
+  pull_request:
+    branches: [staging, main]
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Deployed URL to monkey-test instead of a local build (e.g. staging)"
+        required: false
+        default: ""
+      steps:
+        description: "Random monkey steps"
+        required: false
+        default: "3000"
+
+permissions:
+  contents: read
+
+jobs:
+  properties:
+    name: Property tests (deep)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Property tests, 5,000 cases each
+        run: |
+          files=$(grep -rlE "from [\"']fast-check[\"']" __tests__ platform lib app --include='*.test.ts' --include='*.test.tsx')
+          echo "property test files: $files"
+          npx jest $files
+        env:
+          FC_NUM_RUNS: "5000"
+
+  monkey:
+    name: Monkey run
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        if: ${{ !inputs.target_url }}
+        run: npm run build
+
+      - name: Start the build on the E2E harness
+        if: ${{ !inputs.target_url }}
+        run: |
+          set -euo pipefail
+          canary="canary-$(openssl rand -hex 12)"
+          echo "::add-mask::$canary"
+          echo "MONKEY_CANARY=$canary" >> "$GITHUB_ENV"
+          DEPLOYMENT_HOST=ci E2E_IN_MEMORY_STORES=true E2E_TEST_DOUBLE_AUTH=true \
+          RATE_LIMIT_STORE=memory AI_PROVIDER=mock AUTH_PROVIDER=mock \
+          GUEST_TOKEN_SECRET="$(openssl rand -base64 32)" ANTHROPIC_API_KEY="$canary" \
+            nohup npx next start -p 3000 > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://127.0.0.1:3000/api/health && exit 0
+            sleep 1
+          done
+          echo "server did not start"; cat server.log; exit 1
+
+      - name: Monkey
+        run: node scripts/monkey/monkey.mjs
+        env:
+          MONKEY_BASE_URL: ${{ inputs.target_url || 'http://127.0.0.1:3000' }}
+          MONKEY_STEPS: ${{ inputs.steps || '3000' }}
+          MONKEY_MOCK_USER: ${{ inputs.target_url && '0' || '1' }}
+
+      - name: Server log
+        if: failure() && !inputs.target_url
+        run: tail -n 200 server.log

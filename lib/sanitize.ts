@@ -37,8 +37,17 @@ export function sanitizeForPrompt(text: string): string {
   // Strip known injection patterns
   const stripped = text.replace(PROMPT_INJECTION_PATTERN, "");
 
+  // Escape the markup characters, so nothing inside can close the delimiter or open a tag of
+  // its own. Stripping named tags was not enough: "</user_input>" was not on the list, so one
+  // input could end the data block and append instructions — one bypass for every surface that
+  // screens through the classifier (audit X-4).
+  const escaped = stripped
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
   // Wrap in XML delimiter — model is instructed to treat this as data only
-  return `<user_input>${stripped}</user_input>`;
+  return `<user_input>${escaped}</user_input>`;
 }
 
 /**

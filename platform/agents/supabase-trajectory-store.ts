@@ -202,7 +202,7 @@ export class SupabaseTrajectoryStore implements TrajectoryStore {
 
       const res = await fetchWithTimeout(
         this.endpoint(
-          `?id=eq.${encodeURIComponent(trajectoryId)}&version=eq.${current.version}`
+          `?id=eq.${encodeURIComponent(trajectoryId)}&version=eq.${encodeURIComponent(String(current.version))}`
         ),
         {
           timeoutMs: 10_000,

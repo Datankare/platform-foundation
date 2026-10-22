@@ -1,31 +1,42 @@
 /**
  * Sprint 7a.3 — Integration tests for admin API routes
  *
- * Tests admin routes with mocked Supabase and admin guard.
- * Verifies request handling, response format, and error cases.
+ * Tests admin routes with mocked Supabase. The admin guard is real: requests are sent as a
+ * caller holding super_admin's real permissions (helpers/test-identities.ts), and the abuse
+ * cases are sent as the roles that must be refused.
  */
 
 import { NextRequest } from "next/server";
+import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
+import { FakeDatabase } from "./helpers/fake-database";
 
-// Mock admin guard — always allow in tests
-jest.mock("@/platform/auth/admin-guard", () => ({
-  adminGuard: jest.fn().mockResolvedValue(null),
-}));
+jest.mock("@/platform/auth/middleware", () =>
+  require("@/__tests__/helpers/test-identities").mockMiddleware()
+);
+jest.mock("@/platform/auth/account-status-guard", () =>
+  require("@/__tests__/helpers/test-identities").mockAccountStatus()
+);
+jest.mock("@/platform/rate-limit", () =>
+  require("@/__tests__/helpers/test-identities").mockRateLimit()
+);
 
-// Mock audit log — fire-and-forget
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: jest.fn().mockResolvedValue(undefined),
-}));
-
-// Mock permissions cache
-jest.mock("@/platform/auth/permissions-cache", () => ({
-  invalidatePermissions: jest.fn(),
-}));
+// Permission lookups answer from the callers' real role permissions
+jest.mock("@/platform/auth/permissions-cache", () =>
+  require("@/__tests__/helpers/test-identities").mockPermissionsCache()
+);
 
 // ── Helper ──────────────────────────────────────────────────────────────
 
-function makeRequest(url: string, method: string = "GET", body?: unknown): NextRequest {
-  const opts: RequestInit = { method, headers: { "Content-Type": "application/json" } };
+function makeRequest(
+  url: string,
+  method: string = "GET",
+  body?: unknown,
+  caller: CallerName = "super_admin"
+): NextRequest {
+  const opts: RequestInit = {
+    method,
+    headers: { "Content-Type": "application/json", ...authAs(caller) },
+  };
   if (body) opts.body = JSON.stringify(body);
   return new NextRequest(`http://localhost:3000${url}`, opts as never);
 }
@@ -188,48 +199,116 @@ describe("GET /api/admin/users", () => {
 });
 
 describe("PATCH /api/admin/users", () => {
+  const TARGET = "00000000-0000-4000-8000-0000000000c1";
+  let db: FakeDatabase;
+
   beforeEach(() => {
     jest.resetModules();
-    jest.doMock("@/lib/supabase/server", () => {
-      const mockFrom = jest.fn().mockImplementation(() => {
-        /* eslint-disable @typescript-eslint/no-explicit-any */
-        const builder: Record<string, any> = {};
-        builder.select = jest.fn().mockReturnValue(builder);
-        builder.update = jest.fn().mockReturnValue(builder);
-        builder.eq = jest.fn().mockReturnValue(builder);
-        builder.single = jest
-          .fn()
-          .mockResolvedValue({ data: { role_id: "r-old" }, error: null });
-        builder.then = (resolve: (v: unknown) => void) =>
-          resolve({ data: null, error: null });
-        return builder;
-      });
-
-      return {
-        getSupabaseServiceClient: () => ({ from: mockFrom }),
-      };
+    db = new FakeDatabase({
+      permissions: [
+        { id: "p-play", code: "can_play" },
+        { id: "p-roles", code: "admin_manage_roles" },
+      ],
+      roles: [
+        { id: "r-free", name: "free" },
+        { id: "r-mod", name: "moderator" },
+        { id: "r-power", name: "power" },
+        { id: "r-super", name: "super_admin" },
+      ],
+      role_permissions: [
+        { role_id: "r-free", permission_id: "p-play" },
+        { role_id: "r-power", permission_id: "p-roles" },
+      ],
+      users: [
+        {
+          id: TARGET,
+          email: "t@x.com",
+          cognito_sub: "sub-t",
+          role_id: "r-free",
+          deleted_at: null,
+        },
+        {
+          id: CALLERS.admin.userId,
+          email: "admin@x.com",
+          cognito_sub: CALLERS.admin.sub,
+          role_id: "r-free",
+          deleted_at: null,
+        },
+      ],
     });
+    jest.doMock("@/lib/supabase/server", () => ({
+      getSupabaseServiceClient: () => db.client(),
+    }));
   });
 
-  it("returns 400 without userId", async () => {
+  const patch = async (body: unknown, caller: CallerName = "admin") => {
     const { PATCH } = await import("@/app/api/admin/users/route");
-    const req = makeRequest("/api/admin/users", "PATCH", { roleId: "r1" });
-    const res = await PATCH(req);
+    return PATCH(makeRequest("/api/admin/users", "PATCH", body, caller));
+  };
+  const roleOf = (id: string) => db.rows("users").find((u) => u.id === id)?.role_id;
 
+  it("returns 400 without userId", async () => {
+    const res = await patch({ roleId: "r-mod" });
     expect(res.status).toBe(400);
   });
 
-  it("returns success for valid role change", async () => {
+  it("returns 400 for a malformed body", async () => {
     const { PATCH } = await import("@/app/api/admin/users/route");
-    const req = makeRequest("/api/admin/users", "PATCH", {
-      userId: "p1",
-      roleId: "r-new",
+    const req = new NextRequest("http://localhost:3000/api/admin/users", {
+      method: "PATCH",
+      body: "{nope",
+      headers: { "Content-Type": "application/json", ...authAs("admin") },
     });
-    const res = await PATCH(req);
-    const body = await res.json();
+    expect((await PATCH(req)).status).toBe(400);
+  });
 
+  it("changes the role and records who did it", async () => {
+    const res = await patch({ userId: TARGET, roleId: "r-mod" });
     expect(res.status).toBe(200);
-    expect(body.success).toBe(true);
+    expect((await res.json()).success).toBe(true);
+    expect(roleOf(TARGET)).toBe("r-mod");
+    expect(db.rows("audit_log")[0]).toMatchObject({
+      action: "role_changed",
+      actor_id: CALLERS.admin.userId,
+      target_id: TARGET,
+    });
+  });
+
+  it.each([
+    [
+      "an unknown user",
+      { userId: "00000000-0000-4000-8000-0000000000ff", roleId: "r-mod" },
+      404,
+    ],
+    ["an unknown role", { userId: TARGET, roleId: "r-ghost" }, 404],
+    ["super_admin", { userId: TARGET, roleId: "r-super" }, 403],
+    [
+      "a role with a permission the admin lacks",
+      { userId: TARGET, roleId: "r-power" },
+      403,
+    ],
+  ])("refuses %s and changes nothing", async (_label, body, status) => {
+    const res = await patch(body);
+    expect(res.status).toBe(status);
+    expect(roleOf(TARGET)).toBe("r-free");
+  });
+
+  it("refuses an admin changing their own role", async () => {
+    const res = await patch({ userId: CALLERS.admin.userId, roleId: "r-mod" });
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("auth.role_self_change");
+  });
+
+  it.each([
+    "anonymous",
+    "free",
+    "moderator",
+    "safety_approver",
+    "suspended_super_admin",
+  ] as const)("refuses %s", async (caller) => {
+    const res = await patch({ userId: TARGET, roleId: "r-mod" }, caller);
+    expect([401, 403]).toContain(res.status);
+    expect(roleOf(TARGET)).toBe("r-free");
   });
 });
 
@@ -287,41 +366,33 @@ describe("GET /api/admin/audit", () => {
 describe("GET /api/admin/password-policy", () => {
   beforeEach(() => {
     jest.resetModules();
-    jest.doMock("@/lib/supabase/server", () => {
-      const mockFrom = jest.fn().mockImplementation(() => {
-        /* eslint-disable @typescript-eslint/no-explicit-any */
-        const builder: Record<string, any> = {};
-        builder.select = jest.fn().mockReturnValue(builder);
-        builder.is = jest.fn().mockReturnValue(builder);
-        builder.single = jest.fn().mockResolvedValue({
-          data: {
-            min_length: 12,
-            rotation_days: 90,
-            require_uppercase: true,
-            require_lowercase: true,
-            require_number: true,
-            require_special: true,
-            password_history_count: 5,
-          },
-          error: null,
-        });
-        return builder;
-      });
-
-      return {
-        getSupabaseServiceClient: () => ({ from: mockFrom }),
-      };
+    const db = new FakeDatabase({
+      password_policy: [
+        {
+          role_id: null,
+          user_id: null,
+          min_length: 14,
+          rotation_days: 90,
+          require_uppercase: true,
+          require_lowercase: true,
+          require_number: true,
+          require_special: true,
+          password_history_count: 5,
+        },
+      ],
     });
+    jest.doMock("@/lib/supabase/server", () => ({
+      getSupabaseServiceClient: () => db.client(),
+    }));
   });
 
-  it("returns password policy", async () => {
+  it("returns the stored global password policy", async () => {
     const { GET } = await import("@/app/api/admin/password-policy/route");
-    const req = makeRequest("/api/admin/password-policy");
-    const res = await GET(req);
+    const res = await GET(makeRequest("/api/admin/password-policy"));
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.policy.minLength).toBe(12);
+    expect(body.policy.minLength).toBe(14);
     expect(body.policy.requireSpecial).toBe(true);
     expect(body.policy.passwordHistoryCount).toBe(5);
   });

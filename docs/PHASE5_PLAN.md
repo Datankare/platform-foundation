@@ -275,7 +275,26 @@ reaches Postgres directly through one data layer and a transaction-mode pooler, 
 | R4  | Core/module boundary       | `definePlatformModule` and extensible registries (providers, agents, prompts and evals, content types, features, goals, rate rules, consent and moderation lists, health probes, kit manifest); the 22 boundary imports removed; `import/no-restricted-paths` on; the module manifest                                        | TASK-127                     |
 | R5  | Background work and health | `platform/jobs`: Postgres-backed queue and scheduler with retries, idempotency and dead letters; every timed duty registered and running; live/ready health (readiness: boot, database, selected cache; realtime and modules degrade); the scheduled load test fixed                                                         | TASK-129, 141, 142, 143      |
 | R6  | Container                  | Standalone output, Dockerfile, graceful shutdown, and a CI job that builds the image, runs it and passes the deploy smoke test against it                                                                                                                                                                                    | TASK-128                     |
-| R7  | Close                      | ADR-053–056 Accepted; Playform adoption (consumer-seams docs, Dependabot updates bundled); platform-foundation v5.0.0, Playform v0.8.0 — one promotion per repository                                                                                                                                                        | —                            |
+| R7  | Close                      | ADR-053–056 Accepted; Playform adoption (consumer-seams docs, Dependabot updates bundled); platform-foundation v6.0.0 (v5.0.0 is Sprint 7X), Playform v0.9.0 — one promotion per repository                                                                                                                                  | —                            |
+
+#### Sprint 7X — Adversarial audit remediation (inserted 2026-10-21, inside 7R)
+
+An independent whole-system adversarial review (2026-10-21; [register](audits/2026-10-REGISTER.md),
+TASK-145) found 7 Critical and 18 High findings in production code while every test passed. They are
+fixed before 7R continues, as a standalone release: they are urgent production security fixes, the one
+case the bundling rule allows a cycle of its own. Adversarial Validation became a core tenet
+([ASSURANCE.md](ASSURANCE.md)).
+
+| Wave | Scope                                                                                                                                                                                                                                 | Release                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 1    | Every Critical and High finding in platform code (X-1–X-8, X-11–X-14, X-21, X-24; X-10, X-15, X-22, X-25 in part), with the Medium and Low on the same paths; the checks that keep each pattern closed; TASK-138 and TASK-140 from R2 | PF v5.0.0; Playform v0.8.0 (adoption, X-9 and its own routes) |
+| 2    | X-10 runtime holds, X-15 purge and erasure, X-16, X-17, X-18, X-20, X-22 remainder, the register's Wave 2 Medium and Low items; TASK-146, TASK-147                                                                                    | Bundled with 7R close (v6.0.0)                                |
+| 3    | X-25 latent modules, before any route reaches them                                                                                                                                                                                    | With the module that wires them                               |
+
+**Deploy prerequisites for Wave 1** (each environment, before promotion): migrations 041–045; the six
+durable stores set to `supabase`; `DEPLOYMENT_HOST` set ([MIGRATION_v4_to_v5](MIGRATION_v4_to_v5.md) §1).
+Not in scope by decision: a quarterly scheduled audit task — the release and phase-close reviews are the
+cadence.
 
 ### Sprint 7 — Playform adoption + real providers
 

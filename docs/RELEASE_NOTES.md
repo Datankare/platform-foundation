@@ -9,6 +9,70 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v5.0.0 — Adversarial Validation: the October 2026 audit fixed, and the checks that keep it fixed
+
+Date: 2026-10-22
+
+An independent whole-system adversarial review (nine auditors, eight static and one dynamic) found that
+the perimeter held but the inside did not: a moderator could make themselves `super_admin` through the
+AI command bar, admin and moderation audit records were never written, strikes and the review queue
+lived in per-instance memory, `/api/stream` was an unscreened model proxy, and no route capped paid
+calls per day — while every test passed. v5.0.0 fixes the Critical and High findings that live in the
+platform ([register](audits/2026-10-REGISTER.md)) and adds, for each pattern behind them, a check that
+runs on every commit. **Adversarial Validation** is now a core tenet ([ASSURANCE.md](ASSURANCE.md)).
+
+**This release is breaking**: production refuses to start on settings v4 accepted, ungoverned config
+APIs are removed, and new checks scan your code. Upgrade with
+[`MIGRATION_v4_to_v5.md`](MIGRATION_v4_to_v5.md); its section 1 must be done before deploying.
+
+### What a consumer inherits on sync
+
+- **Authorization that holds on every path.** `requireAdmin` returns the verified admin, refuses staff
+  not in good standing, and answers 503 (never access) when permissions cannot be resolved. Role
+  governance (`platform/auth/role-governance.ts`): nobody grants what they do not hold, protected
+  roles stay protected. The AI command bar checks each action's own permission, offers only the tools
+  the admin holds, and reads only tables they may read.
+- **Audit that fails closed.** `audited`/`recordAudit`: the record is written first; no record, no
+  action. Real user ids only; agents and processes named in `agent`. `auditedResponse` for routes.
+- **Governed configuration only.** `writeGovernedConfig`: tier, validation, history, two-person and
+  dual-control checks on every write path; the dual-control list itself is always dual-controlled.
+- **Moderation that cannot be turned against users.** Durable strike and review-queue stores
+  (`STRIKE_STORE`, `REVIEW_QUEUE_STORE`); an overturn only lowers status; no self-review; the safety
+  check knows the user; the classifier's input wrapper cannot be closed from inside.
+- **AI spend and output bounded.** A daily paid-request quota per user or guest (governed
+  `ai.daily_paid_requests_per_actor`, migration 044), required on every paid route by CI. `/api/stream`
+  uses the platform's system prompt and releases output only after screening it (`screenStream`).
+- **Fail-closed defaults.** Every durable store refuses `memory` in production; boot failure stops the
+  server; harness switches need `DEPLOYMENT_HOST=ci|local`; the paid health probe is cached.
+- **Checks that scan your code too** — see [ASSURANCE.md](ASSURANCE.md) §2: the authorization matrix,
+  real guards in tests, paid-route quota, JSON bodies, REST URL encoding, security wiring (with the
+  consumer-owned register `platform/assurance/unwired-security.ts`), coverage ignores, property-test
+  depth.
+- **Dynamic and weekly checks.** `fuzz.yml` (deep property tests and the monkey run against a
+  production build, on every promotion PR and weekly), `migration-parity.yml`, `zap-scan.yml`; every
+  workflow least-privilege.
+- **Test infrastructure** for hostile tests: `FakeDatabase` (filters evaluated, writes recorded,
+  failures injected, filter strings refused), `test-identities` (real roles from the migrations, the
+  real guard), store conformance kits for strikes and the review queue, `fast-check`.
+- **Fixed by the independent release review** (register, RR-1–RR-25): an overturn lifts only its own
+  decision's consequence; governed config values are stored as JSON, not JSON text (migration 045
+  repairs existing rows); the input safety check follows the pipeline's final action; approval
+  decisions are audited and an approved change is applied or reopened; failed role lookups stop the
+  change; the reviewer-assist route is quota-counted, self-review-checked and injection-safe; the
+  checks' own blind spots closed.
+- Migrations **041–045**; error codes `admin.self_target`, `admin.target_not_found`, `admin.config_invalid_value`,
+  `auth.grant_exceeds_own`, `auth.role_protected`, `moderation.self_review`,
+  `request.field_not_accepted`.
+
+### Actions for a consumer
+
+1. Follow [`MIGRATION_v4_to_v5.md`](MIGRATION_v4_to_v5.md) section 1 before deploying.
+2. Add `platform/assurance/unwired-security.ts` to the sync exclude list.
+3. Fix what the new checks report in your routes (section 5), and adopt the consumer-side fixes your own
+   routes need (the register's **Consumer** rows).
+
+---
+
 ## v4.1.0 — an app declares its own route guards and settings
 
 Date: 2026-10-21

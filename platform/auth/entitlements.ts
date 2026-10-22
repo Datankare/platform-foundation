@@ -13,7 +13,7 @@
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, audited } from "@/platform/auth/audit";
 
 export interface EntitlementGrant {
   userId: string;
@@ -38,37 +38,43 @@ export async function grantEntitlement(
   const supabase = getSupabaseServiceClient();
 
   try {
-    const { error } = await supabase.from("user_entitlements").upsert(
+    // Recorded before the grant takes effect; no record, no grant (Adversarial Validation, 6).
+    return await audited(
       {
-        user_id: grant.userId,
-        entitlement_group_id: grant.entitlementGroupId,
-        granted_by: grant.grantedBy,
-        expires_at: grant.expiresAt || null,
-        revoked_at: null,
+        action: "entitlement_granted",
+        actorId: grant.grantedBy,
+        targetId: grant.userId,
+        details: {
+          entitlementGroupId: grant.entitlementGroupId,
+          expiresAt: grant.expiresAt || null,
+        },
       },
-      { onConflict: "user_id,entitlement_group_id" }
+      async () => {
+        const { error } = await supabase.from("user_entitlements").upsert(
+          {
+            user_id: grant.userId,
+            entitlement_group_id: grant.entitlementGroupId,
+            granted_by: grant.grantedBy,
+            expires_at: grant.expiresAt || null,
+            revoked_at: null,
+          },
+          { onConflict: "user_id,entitlement_group_id" }
+        );
+
+        if (error) {
+          logger.error("Failed to grant entitlement", {
+            error: error.message,
+            route: "platform/auth/entitlements",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
     );
-
-    if (error) {
-      logger.error("Failed to grant entitlement", {
-        error: error.message,
-        route: "platform/auth/entitlements",
-      });
-      return { success: false, error: error.message };
-    }
-
-    await writeAuditLog({
-      action: "entitlement_granted",
-      actorId: grant.grantedBy,
-      targetId: grant.userId,
-      details: {
-        entitlementGroupId: grant.entitlementGroupId,
-        expiresAt: grant.expiresAt || null,
-      },
-    });
-
-    return { success: true };
   } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
     const message = err instanceof Error ? err.message : "Grant failed";
     logger.error("Entitlement grant error", {
       error: message,
@@ -88,35 +94,40 @@ export async function revokeEntitlement(
   const supabase = getSupabaseServiceClient();
 
   try {
-    const { error } = await supabase
-      .from("user_entitlements")
-      .update({
-        revoked_at: new Date().toISOString(),
-        revoked_by: revoke.revokedBy,
-      })
-      .eq("user_id", revoke.userId)
-      .eq("entitlement_group_id", revoke.entitlementGroupId)
-      .is("revoked_at", null);
-
-    if (error) {
-      logger.error("Failed to revoke entitlement", {
-        error: error.message,
-        route: "platform/auth/entitlements",
-      });
-      return { success: false, error: error.message };
-    }
-
-    await writeAuditLog({
-      action: "entitlement_revoked",
-      actorId: revoke.revokedBy,
-      targetId: revoke.userId,
-      details: {
-        entitlementGroupId: revoke.entitlementGroupId,
+    return await audited(
+      {
+        action: "entitlement_revoked",
+        actorId: revoke.revokedBy,
+        targetId: revoke.userId,
+        details: {
+          entitlementGroupId: revoke.entitlementGroupId,
+        },
       },
-    });
+      async () => {
+        const { error } = await supabase
+          .from("user_entitlements")
+          .update({
+            revoked_at: new Date().toISOString(),
+            revoked_by: revoke.revokedBy,
+          })
+          .eq("user_id", revoke.userId)
+          .eq("entitlement_group_id", revoke.entitlementGroupId)
+          .is("revoked_at", null);
 
-    return { success: true };
+        if (error) {
+          logger.error("Failed to revoke entitlement", {
+            error: error.message,
+            route: "platform/auth/entitlements",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
+    );
   } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
     const message = err instanceof Error ? err.message : "Revoke failed";
     logger.error("Entitlement revoke error", {
       error: message,

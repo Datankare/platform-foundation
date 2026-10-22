@@ -9,7 +9,7 @@ import { NextRequest } from "next/server";
 import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
 import { logger } from "@/lib/logger";
-import { apiError } from "@/platform/errors";
+import { apiError, readJsonObject } from "@/platform/errors";
 import { authResultResponse } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
@@ -19,12 +19,9 @@ export async function POST(request: NextRequest) {
   if (limited) return limited;
   initAuth();
 
-  let body: { email?: string; password?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return apiError("request.invalid_json", { request });
-  }
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const body = read.body as { email?: string; password?: string };
 
   if (!body.email || !body.password) {
     return apiError("request.missing_fields", {
@@ -37,7 +34,7 @@ export async function POST(request: NextRequest) {
   const result = await auth.signIn(body.email, body.password);
 
   if (!result.success) {
-    logger.warn("Sign in failed", { email: body.email, error: result.error });
+    logger.warn("Sign in failed", { route: "api/auth/sign-in", error: result.error });
   }
 
   const response = authResultResponse(result, { request, context: "Sign in failed" });

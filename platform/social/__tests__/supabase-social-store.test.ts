@@ -382,3 +382,21 @@ describe("SupabaseSocialStore", () => {
     });
   });
 });
+
+describe("hostile ids (audit F-17)", () => {
+  it.each(["g#", "g&user_id=eq.x", "g,id.neq.0"])(
+    "removes one member: the id %p cannot truncate or add filters",
+    async (groupId) => {
+      const store = createStore();
+      mockFetchOk([]);
+      await store.removeMember(groupId, "u1");
+      const url = new URL(
+        String(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0])
+      );
+      expect(url.hash).toBe("");
+      expect(url.searchParams.get("group_id")).toBe(`eq.${groupId}`);
+      expect(url.searchParams.get("user_id")).toBe("eq.u1");
+      expect(url.searchParams.get("left_at")).toBe("is.null");
+    }
+  );
+});

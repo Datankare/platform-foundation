@@ -42,3 +42,9 @@ export const PENDING_EVAL: readonly string[] = [];
  *  lane. Their conformance is the tool-schema, tested by the admin AI suite. The meta-test
  *  verifies each is genuinely parserless, so this cannot hide a parseable prompt. */
 export const TOOL_USE_EXEMPT: readonly string[] = ["config-manager", "admin-command-bar"];
+
+/** Registered prompts whose output is free text shown to the user (no structured contract), so
+ *  they have no parse*Response either. Their conformance is output screening: the stream is
+ *  released only after the moderation pipeline passes it (platform/ai/screened-stream.ts,
+ *  __tests__/screened-stream.test.ts). The meta-test verifies each is genuinely parserless. */
+export const FREE_TEXT_EXEMPT: readonly string[] = ["stream-assistant"];

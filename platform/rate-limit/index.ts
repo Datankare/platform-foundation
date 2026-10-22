@@ -34,6 +34,12 @@ export type { RedisRateLimiterConfig } from "./redis-limiter";
 export { SupabaseRateLimiter } from "./supabase-limiter";
 export type { SupabaseRateLimiterConfig } from "./supabase-limiter";
 export { enforceRateLimit } from "./enforce";
+export {
+  DAILY_PAID_QUOTA_KEY,
+  DEFAULT_DAILY_PAID_QUOTA,
+  dailyPaidQuota,
+  enforceDailyPaidQuota,
+} from "./daily-quota";
 export type { RateLimitSubject } from "./enforce";
 export { getClientIp } from "./client-ip";
 

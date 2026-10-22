@@ -2,7 +2,8 @@
  * __tests__/api-route-rate-limit.test.ts — Every API route is rate limited (ADR-052, TASK-134)
  *
  * The shared limiter existed for months while no route called it (TASK-134). This test makes the
- * rule mechanical: each route handler must call enforceRateLimit, or adminGuard (which calls it),
+ * rule mechanical: each route handler must call enforceRateLimit, or adminGuard or requireAdmin
+ * (which call it),
  * or the route must be listed as exempt with the reason.
  *
  * An app's own limiter wrappers and exemptions are declared in
@@ -19,12 +20,12 @@ import {
   resolveDeclared,
 } from "./helpers/route-policy";
 
-const PLATFORM_LIMITERS = ["enforceRateLimit", "adminGuard"];
+const PLATFORM_LIMITERS = ["enforceRateLimit", "adminGuard", "requireAdmin"];
 
 /** The platform's routes not rate limited, by design. Each needs a reason. */
 const PLATFORM_EXEMPT: Readonly<Record<string, string>> = {
   "app/api/health/route.ts":
-    "Liveness must not depend on the limiter's own store; it reads no user data and makes no paid call.",
+    "Liveness must not depend on the limiter's own store; it reads no user data, and its one paid probe (song ID) runs at most once per 15 minutes per instance (CachedHealthProbe, audit X-13).",
 };
 
 const ROUTES = apiRoutes();

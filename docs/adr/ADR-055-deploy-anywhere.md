@@ -37,6 +37,6 @@ The platform has been deployed only on Vercel. The decision of 2026-10-17 keeps 
 
 ## 4. Consequences
 
-- Every deployment sets `DEPLOYMENT_HOST`; the E2E harness and local development set `ci` or `local` to use the harness switches.
+- A deployment sets `DEPLOYMENT_HOST` to name its host; safety does not depend on it, since the harness switches need `local` or `ci`. The E2E harness and local development set `ci` or `local` to use them (a consumer's own E2E configuration included).
 - `TRUSTED_PROXY_HOPS` is set per host (Vercel 1; a load balancer alone 1; a CDN in front of a load balancer 2).
 - A host is supported only when the smoke test passes on it in CI.

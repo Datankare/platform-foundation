@@ -90,41 +90,41 @@ export async function resolvePermissions(
     }
   }
 
-  // 5. Get entitlement permissions (active, not expired, not revoked)
+  // 5. Entitlement permissions — only from grants that are not revoked and not expired, in
+  //    groups that are active (audit X-14: expiry was never read and inactive groups still
+  //    granted their permissions).
   const { data: userEntitlements } = await supabase
     .from("user_entitlements")
-    .select("entitlement_group_id")
+    .select("entitlement_group_id, expires_at")
     .eq("user_id", user.id)
     .is("revoked_at", null);
 
   const activeEntitlements: string[] = [];
+  const now = Date.now();
+  const grantedGroupIds = (userEntitlements ?? [])
+    .filter((pe: { expires_at?: string | null }) => {
+      if (!pe.expires_at) return true;
+      const expires = Date.parse(pe.expires_at);
+      // An unreadable expiry is treated as expired: fail closed.
+      return Number.isFinite(expires) && expires > now;
+    })
+    .map((pe: { entitlement_group_id: string }) => pe.entitlement_group_id);
 
-  if (userEntitlements && userEntitlements.length > 0) {
-    const now = new Date().toISOString();
-    const entitlementGroupIds = userEntitlements
-      .filter(
-        (pe: { entitlement_group_id: string; expires_at?: string | null }) =>
-          !pe.expires_at || pe.expires_at > now
-      )
-      .map((pe: { entitlement_group_id: string }) => pe.entitlement_group_id);
+  if (grantedGroupIds.length > 0) {
+    const { data: groups } = await supabase
+      .from("entitlement_groups")
+      .select("id, code")
+      .in("id", grantedGroupIds)
+      .eq("is_active", true);
 
-    if (entitlementGroupIds.length > 0) {
-      // Get entitlement group codes for the response
-      const { data: groups } = await supabase
-        .from("entitlement_groups")
-        .select("id, code")
-        .in("id", entitlementGroupIds)
-        .eq("is_active", true);
+    const activeGroupIds = (groups ?? []).map((g: { id: string }) => g.id);
+    for (const g of groups ?? []) activeEntitlements.push(g.code);
 
-      for (const g of groups || []) {
-        activeEntitlements.push(g.code);
-      }
-
-      // Get permissions from active entitlement groups
+    if (activeGroupIds.length > 0) {
       const { data: entitlementPerms } = await supabase
         .from("entitlement_permissions")
         .select("permission_id")
-        .in("entitlement_group_id", entitlementGroupIds);
+        .in("entitlement_group_id", activeGroupIds);
 
       for (const ep of entitlementPerms || []) {
         permissionIds.add(ep.permission_id);

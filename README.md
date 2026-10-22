@@ -2,6 +2,8 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
+> **v5.0.0** — **Adversarial Validation**: the October 2026 whole-system adversarial review's Critical and High findings fixed — authorization on every path including the AI command bar, audit that fails closed, governed configuration only, durable moderation stores, a daily paid-request quota, a screened `/api/stream` — and, for each pattern behind them, a check that runs on every commit, plus a monkey/fuzz run against the production build ([ASSURANCE](docs/ASSURANCE.md), [register](docs/audits/2026-10-REGISTER.md)). **Breaking** — see [MIGRATION_v4_to_v5](docs/MIGRATION_v4_to_v5.md).
+>
 > **v4.1.0** — an app declares its own route guards (`platform/route-policy/app-route-policy.ts`) and the route checks verify each one calls a platform verifier or limiter; an app documents its own settings in `docs/APP_ENV_REFERENCE.md`; `PLATFORM_VERSION` names the synced release (TASK-136). Non-breaking — see [RELEASE_NOTES](docs/RELEASE_NOTES.md).
 >
 > **v4.0.0** — public-repository hardening: rate limiting on every API route through one shared, swappable store (ADR-052), `/api/stream` verifies its caller and bounds every request, CI checks that every route verifies its caller and is rate limited, a secret scan over every commit, a security policy and a component register. **Breaking** (production requires `RATE_LIMIT_STORE`) — see [MIGRATION_v3_to_v4](docs/MIGRATION_v3_to_v4.md).
@@ -22,6 +24,28 @@ from day one.
 - **AAA** — Authentication · Authorization · Analytics
 - **Foundation as Fabric** — Infrastructure woven in, never bolted on
 - **Continuous Confidence** — Full test suite, green means nothing is broken
+- **Adversarial Validation** — every test carries its hostile cases; every practice relied on is a check that runs
+
+### Adversarial Validation — the highlight for adopters
+
+Green tests prove what a system does, not what it refuses. In October 2026 every test passed while a
+moderator could make themselves `super_admin` through the AI command bar. Since v5.0.0 the platform
+holds itself — and any app built on it — to this:
+
+| Practice                    | What runs                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Abuse cases per actor       | Every real role (read from the migrations) against every admin permission, with the real guard — no stubs |
+| Every second path           | An authorization matrix over every route guard and every AI command-bar action                            |
+| Hostile and generated input | Property tests (`fast-check`), searched 5,000 cases deep on every promotion                               |
+| Monkey sequences            | Every route, every caller, hostile bodies and random sequences against the production build               |
+| Injected failure            | Audit, stores and lookups fail on purpose: the system refuses, never proceeds                             |
+| No unused security code     | Every security control has a production caller, or a registered reason                                    |
+| Findings become tests       | Every audit finding ships with the test that would have caught it                                         |
+| Independent review          | Each release and each phase close reviewed by agents that did not build it                                |
+
+Cadence — every commit: CI; every change: threat model and hostile tests; every release: independent
+review plus fuzz and monkey testing on staging; weekly: dependency audit, ZAP scan, migration parity.
+See [ASSURANCE.md](docs/ASSURANCE.md).
 
 ### Identity & Access (Phase 1 — complete)
 
@@ -111,7 +135,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 41 migrations (001–040), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 46 migrations (001–045), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -178,7 +202,7 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 41 database migrations
+├── supabase/migrations/    ← 46 database migrations
 ├── docs/adr/               ← 56 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils

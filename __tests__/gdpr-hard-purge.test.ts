@@ -163,7 +163,7 @@ describe("PurgePipeline", () => {
     }).toThrow("already registered");
   });
 
-  it("returns completed with no handlers", async () => {
+  it("fails, never reports completed, when no handlers are registered (X-15)", async () => {
     const pipeline = new PurgePipeline();
     const result = await pipeline.execute({
       userId: "user-1",
@@ -171,7 +171,7 @@ describe("PurgePipeline", () => {
       reason: "user-request",
     });
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("failed");
     expect(result.steps).toHaveLength(0);
     expect(result.totalDeleted).toBe(0);
   });

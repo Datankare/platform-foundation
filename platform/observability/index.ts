@@ -218,6 +218,7 @@ export {
   createMetricsSink,
 } from "./metrics-sink";
 export {
+  CachedHealthProbe,
   HealthRegistry,
   SupabaseHealthProbe,
   LLMProviderHealthProbe,

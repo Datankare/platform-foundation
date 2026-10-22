@@ -2,15 +2,17 @@
  * app/api/admin/entitlements/route.ts — Admin entitlement management
  *
  * GET: List entitlement groups with user counts
- * PATCH: Toggle active status
+ * PATCH: Turn a group on or off — refused unless the admin holds every permission it grants
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
+import { checkPermissionGrant } from "@/platform/auth/role-governance";
+import { clearPermissionsCache } from "@/platform/auth/permissions-cache";
+import { auditedResponse } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
-import { apiError, internalError } from "@/platform/errors";
+import { apiError, internalError, readJsonObject } from "@/platform/errors";
 
 export async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_entitlements");
@@ -57,13 +59,16 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const denied = await adminGuard(request, "admin_manage_entitlements");
-  if (denied) return denied;
+  const verified = await requireAdmin(request, "admin_manage_entitlements");
+  if (verified.error) return verified.error;
+  const { admin } = verified;
 
-  const body = await request.json();
-  const { groupId, isActive } = body;
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const body = read.body as { groupId?: unknown; isActive?: unknown };
+  const { groupId, isActive } = body ?? {};
 
-  if (!groupId || typeof isActive !== "boolean") {
+  if (typeof groupId !== "string" || !groupId || typeof isActive !== "boolean") {
     return apiError("request.missing_fields", {
       params: { fields: ["groupId", "isActive"] },
       request,
@@ -72,24 +77,74 @@ export async function PATCH(request: NextRequest) {
 
   const supabase = getSupabaseServiceClient();
 
-  const { error } = await supabase
+  // An active group grants its permissions to everyone who holds it, so turning one on or off
+  // is granting or removing those permissions (TASK-145): the admin must hold every one.
+  const { data: group } = await supabase
     .from("entitlement_groups")
-    .update({ is_active: isActive })
-    .eq("id", groupId);
-
-  if (error) {
-    return internalError(error, { request, context: "Admin entitlements query failed" });
+    .select("id, code")
+    .eq("id", groupId)
+    .maybeSingle();
+  if (!group) {
+    return apiError("admin.target_not_found", {
+      params: { target: "entitlement" },
+      request,
+    });
   }
+  // An unread permission list is not an empty one: it stops the change (release review).
+  const { data: links, error: linkError } = await supabase
+    .from("entitlement_permissions")
+    .select("permission_id")
+    .eq("entitlement_group_id", group.id);
+  const ids = (links ?? []).map((l: { permission_id: string }) => l.permission_id);
+  const { data: perms, error: permError } = ids.length
+    ? await supabase.from("permissions").select("code").in("id", ids)
+    : { data: [] as { code: string }[], error: null };
+  if (linkError || permError) {
+    logger.error("Entitlement group permissions unreadable", {
+      route: "api/admin/entitlements",
+      error: (linkError ?? permError)?.message,
+    });
+    return apiError("service.unavailable", {
+      params: { service: "entitlements" },
+      request,
+    });
+  }
+  const refused = checkPermissionGrant(
+    admin,
+    (perms ?? []).map((p: { code: string }) => p.code)
+  );
+  if (refused) return apiError(refused.code, { params: refused.params, request });
 
-  await writeAuditLog({
-    action: "admin_action",
-    actorId: "dev-admin",
-    details: {
-      type: "entitlement_toggle",
-      groupId,
-      isActive,
+  return auditedResponse(
+    {
+      action: "admin_action",
+      actorId: admin.userId,
+      details: {
+        type: "entitlement_toggle",
+        groupId: group.id,
+        code: group.code,
+        isActive,
+      },
     },
-  });
-
-  return NextResponse.json({ success: true });
+    async () => {
+      const { error } = await supabase
+        .from("entitlement_groups")
+        .update({ is_active: isActive })
+        .eq("id", group.id);
+      if (error) {
+        return {
+          success: false,
+          error: error.message,
+          response: internalError(error, {
+            request,
+            context: "Admin entitlements query failed",
+          }),
+        };
+      }
+      // Holders' cached permissions change with the group.
+      clearPermissionsCache();
+      return { success: true, response: NextResponse.json({ success: true }) };
+    },
+    () => apiError("service.unavailable", { params: { service: "audit" }, request })
+  );
 }

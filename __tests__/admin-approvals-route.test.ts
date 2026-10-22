@@ -5,28 +5,37 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req-test",
 }));
-jest.mock("@/platform/auth/admin-guard", () => ({
-  adminGuard: jest.fn().mockResolvedValue(null),
-}));
+jest.mock("@/platform/auth/middleware", () =>
+  require("@/__tests__/helpers/test-identities").mockMiddleware()
+);
+jest.mock("@/platform/auth/permissions-cache", () =>
+  require("@/__tests__/helpers/test-identities").mockPermissionsCache()
+);
+jest.mock("@/platform/auth/account-status-guard", () =>
+  require("@/__tests__/helpers/test-identities").mockAccountStatus()
+);
+jest.mock("@/platform/rate-limit", () =>
+  require("@/__tests__/helpers/test-identities").mockRateLimit()
+);
 jest.mock("@/platform/admin/pending-approvals", () => ({
   listPendingApprovals: jest.fn(),
 }));
 
-import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { NextRequest } from "next/server";
+import { authAs, type CallerName } from "@/__tests__/helpers/test-identities";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 import { GET } from "@/app/api/admin/approvals/route";
 
-const mockGuard = adminGuard as jest.Mock;
 const mockList = listPendingApprovals as jest.Mock;
 
-function req(): NextRequest {
-  return new NextRequest("http://localhost/api/admin/approvals");
+function req(caller: CallerName = "safety_approver"): NextRequest {
+  return new NextRequest("http://localhost/api/admin/approvals", {
+    headers: authAs(caller),
+  });
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGuard.mockResolvedValue(null);
 });
 
 describe("GET /api/admin/approvals", () => {
@@ -41,14 +50,14 @@ describe("GET /api/admin/approvals", () => {
     expect(body.approvals[0].id).toBe("p1");
   });
 
-  it("passes the guard's denial through and never lists", async () => {
-    mockGuard.mockResolvedValue(
-      NextResponse.json({ error: "forbidden" }, { status: 403 })
-    );
-    const res = await GET(req());
-    expect(res.status).toBe(403);
-    expect(mockList).not.toHaveBeenCalled();
-  });
+  it.each(["anonymous", "guest", "free", "suspended_super_admin"] as const)(
+    "refuses %s and never lists",
+    async (caller) => {
+      const res = await GET(req(caller));
+      expect([401, 403]).toContain(res.status);
+      expect(mockList).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns 500 when listing fails", async () => {
     mockList.mockRejectedValue(new Error("boom"));

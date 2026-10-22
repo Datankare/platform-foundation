@@ -25,11 +25,14 @@ const DETAIL_NOTICE =
   "Probe detail is withheld from unauthenticated callers (OWASP A05) and sent to the " +
   "configured error reporter. Correlate using requestId.";
 
-/** The deployed commit (first 12 characters), or null when not built by the host. */
+/**
+ * The deployed commit (first 12 characters), or null when unknown. Host-neutral (ADR-055 D2):
+ * GIT_COMMIT_SHA, baked into a container image at build, then the commit Vercel provides.
+ */
 export function deployedCommit(
   env: Readonly<Record<string, string | undefined>> = process.env
 ) {
-  const sha = env.VERCEL_GIT_COMMIT_SHA?.trim();
+  const sha = (env.GIT_COMMIT_SHA?.trim() || env.VERCEL_GIT_COMMIT_SHA?.trim()) ?? "";
   return sha && /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 12).toLowerCase() : null;
 }
 

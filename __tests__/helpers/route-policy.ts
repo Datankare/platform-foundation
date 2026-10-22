@@ -31,8 +31,27 @@ function walk(dir: string, accept: (rel: string) => boolean): string[] {
   return out;
 }
 
-/** Every API route file, e.g. "app/api/process/route.ts". */
+/** Where else a Next.js app can put API routes: the checks do not scan them, so they refuse them. */
+const UNSCANNED_ROUTE_DIRS = ["src/app/api", "pages/api", "src/pages/api"];
+
+/**
+ * Every API route file, e.g. "app/api/process/route.ts". Throws when routes exist anywhere the
+ * route checks do not scan, so a consumer's routes cannot pass by being elsewhere (release
+ * review, Sprint 7X).
+ */
 export function apiRoutes(): string[] {
+  const elsewhere = UNSCANNED_ROUTE_DIRS.filter((d) => {
+    try {
+      return statSync(join(ROOT, d)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+  if (elsewhere.length > 0) {
+    throw new Error(
+      `API routes in ${elsewhere.join(", ")} are not covered by the route checks; keep routes in app/api.`
+    );
+  }
   return walk(join(ROOT, "app", "api"), (rel) => rel.endsWith("/route.ts")).sort();
 }
 
@@ -54,6 +73,36 @@ function sourceFiles(): string[] {
   return ["lib", "platform", "app"].flatMap((d) => walk(join(ROOT, d), isWrapperSource));
 }
 
+/**
+ * Every production source file: the app, platform, shared libraries, hooks, components and the
+ * root entry points — no tests, mocks or scripts.
+ */
+export function productionSources(): string[] {
+  apiRoutes(); // refuses routes outside app/api
+  try {
+    if (statSync(join(ROOT, "src")).isDirectory()) {
+      throw new Error(
+        "Source under src/ is not covered by the source checks; use the root layout."
+      );
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("Source under src/")) throw e;
+  }
+  const roots = ["instrumentation.ts", "proxy.ts", "middleware.ts"].filter((f) => {
+    try {
+      return statSync(join(ROOT, f)).isFile();
+    } catch {
+      return false;
+    }
+  });
+  return [
+    ...["lib", "platform", "app", "hooks", "components", "shared"].flatMap((d) =>
+      walk(join(ROOT, d), isWrapperSource)
+    ),
+    ...roots,
+  ];
+}
+
 export const read = (rel: string): string => readFileSync(join(ROOT, rel), "utf-8");
 
 /** A regular expression matching a call to `name(`. */
@@ -65,6 +114,30 @@ export function definitionsOf(name: string): string[] {
     `(?:function\\s+${name}\\s*[(<]|(?:const|let)\\s+${name}\\s*(?::[^=]+)?=)`
   );
   return sourceFiles().filter((f) => def.test(read(f)));
+}
+
+const withoutComments = (src: string): string =>
+  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+/**
+ * The body of `name`'s definition in `src`, comments removed — what the wrapper itself does,
+ * not whatever else its file contains (release review: a call anywhere in the file, even in a
+ * comment, accepted the wrapper). Empty when the definition is not found.
+ */
+export function definitionBody(src: string, name: string): string {
+  const code = withoutComments(src);
+  const def = new RegExp(
+    `(?:function\\s+${name}\\s*[(<]|(?:const|let)\\s+${name}\\s*(?::[^=]+)?=)`
+  ).exec(code);
+  if (!def) return "";
+  // From the definition to the next top-level declaration (formatted code starts each at
+  // column 0): the function's signature and body, and nothing else in the file.
+  const start = def.index;
+  const rest = code.slice(start + def[0].length);
+  const next = /\n(?:export\s|async\s+function\s|function\s|const\s|let\s|class\s)/.exec(
+    rest
+  );
+  return code.slice(start, start + def[0].length + (next ? next.index : rest.length));
 }
 
 export interface ResolvedNames {
@@ -94,7 +167,7 @@ export function resolveDeclared(
         `${name}: ${found.length === 0 ? "no definition found" : `defined in ${found.length} files`}`
       );
     } else {
-      pending.set(name, found[0].source);
+      pending.set(name, definitionBody(found[0].source, name));
     }
   }
   let progressed = true;

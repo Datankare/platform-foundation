@@ -28,6 +28,17 @@ const eslintConfig = [
       ],
     },
   },
+  {
+    // CommonJS scripts (scripts/*.cjs) load modules with require by definition.
+    files: ["**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
+    // A jest.mock factory is hoisted above every import, so it can only reach a shared test
+    // helper through require (e.g. __tests__/helpers/test-identities.ts). Tests only.
+    files: ["**/__tests__/**/*.ts", "**/*.test.ts"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
 ];
 
 export default eslintConfig;

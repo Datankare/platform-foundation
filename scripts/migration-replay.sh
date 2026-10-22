@@ -87,6 +87,94 @@ BEGIN
 END $$;
 SQL
 
+step "role catalog the tests use matches the database"
+# scripts/role-catalog.cjs computes each role's permissions from the SQL; test identities and the
+# authorization matrix are built from it. Equal here means those tests use the real roles.
+for view in pairs inheritance; do
+  if [ "$view" = pairs ]; then
+    query="SELECT r.name || '|' || p.code FROM public.role_permissions rp JOIN public.roles r ON r.id = rp.role_id JOIN public.permissions p ON p.id = rp.permission_id ORDER BY 1"
+  else
+    query="SELECT r.name || '|' || f.name FROM public.role_inheritance ri JOIN public.roles r ON r.id = ri.role_id JOIN public.roles f ON f.id = ri.inherits_from_id ORDER BY 1"
+  fi
+  expected=$(node "$ROOT/scripts/role-catalog.cjs" "--$view" | sed '/^$/d' | LC_ALL=C sort)
+  actual=$("${PSQL[@]}" -At -c "$query" | LC_ALL=C sort)
+  if [ "$expected" != "$actual" ]; then
+    echo "✗ role catalog ($view) differs from the database:"
+    diff <(echo "$expected") <(echo "$actual") || true
+    exit 1
+  fi
+done
+missing=$(comm -23 <(node -e 'process.stdout.write(require(process.argv[1]).loadRoleCatalog().permissions.join("\n")+"\n")' "$ROOT/scripts/role-catalog.cjs" | LC_ALL=C sort) \
+  <("${PSQL[@]}" -At -c "SELECT code FROM public.permissions" | LC_ALL=C sort))
+[ -z "$missing" ] || { echo "✗ permissions in the catalog but not the database: $missing"; exit 1; }
+
+step "every audit action the code records is accepted by the database"
+# platform/auth/audit.ts AUDIT_ACTIONS is the list the code may write; an action the enum rejects
+# means that record is never written (audit X-8).
+code_actions=$(sed -n '/^export const AUDIT_ACTIONS = \[/,/^\] as const;/p' "$ROOT/platform/auth/audit.ts" \
+  | grep -oE '"[a-z_]+"' | tr -d '"' | LC_ALL=C sort -u)
+[ -n "$code_actions" ] || { echo "✗ could not read AUDIT_ACTIONS from platform/auth/audit.ts"; exit 1; }
+db_actions=$("${PSQL[@]}" -At -c "SELECT unnest(enum_range(NULL::public.audit_action))::text" | LC_ALL=C sort -u)
+missing=$(comm -23 <(echo "$code_actions") <(echo "$db_actions"))
+[ -z "$missing" ] || { echo "✗ audit actions the database rejects: $missing"; exit 1; }
+
+step "config values are JSON, and stringified values are repaired (045)"
+"${PSQL[@]}" <<'SQL'
+BEGIN;
+-- No governed value of a non-string type is stored as JSON text.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM public.platform_config
+             WHERE value_type NOT IN ('string','string_enum') AND jsonb_typeof(value) = 'string') THEN
+    RAISE EXCEPTION 'a non-string setting is stored as JSON text';
+  END IF;
+END $$;
+-- Rows written the old way are repaired; strings and non-JSON text are left alone.
+UPDATE public.platform_config SET value = to_jsonb('200'::text) WHERE key = 'ai.daily_paid_requests_per_actor';
+UPDATE public.platform_config SET value = to_jsonb('["ai.daily_paid_requests_per_actor"]'::text)
+  WHERE key = 'config.dual_control_keys';
+INSERT INTO public.platform_config (key, value, default_value, description, category, value_type, permission_tier)
+  VALUES ('replay.text_setting', to_jsonb('123'::text), to_jsonb('123'::text), 'replay', 'replay', 'string', 'standard'),
+         ('replay.bad_number', to_jsonb('not json'::text), '1', 'replay', 'replay', 'number', 'standard');
+SELECT public.normalize_config_json();
+DO $$ BEGIN
+  IF (SELECT jsonb_typeof(value) FROM public.platform_config WHERE key = 'ai.daily_paid_requests_per_actor') <> 'number'
+  OR (SELECT jsonb_typeof(value) FROM public.platform_config WHERE key = 'config.dual_control_keys') <> 'array'
+  OR (SELECT jsonb_typeof(value) FROM public.platform_config WHERE key = 'replay.text_setting') <> 'string'
+  OR (SELECT jsonb_typeof(value) FROM public.platform_config WHERE key = 'replay.bad_number') <> 'string' THEN
+    RAISE EXCEPTION 'normalize_config_json repaired the wrong rows';
+  END IF;
+END $$;
+ROLLBACK;
+SQL
+
+step "daily paid-call quota is governed and dual-controlled (044)"
+"${PSQL[@]}" -tAc "SELECT 1 FROM public.platform_config c, public.platform_config d WHERE c.key = 'ai.daily_paid_requests_per_actor' AND c.value = '200'::jsonb AND c.permission_tier = 'safety' AND d.key = 'config.dual_control_keys' AND d.value @> '[\"ai.daily_paid_requests_per_actor\"]'::jsonb" | grep -qx 1 || { echo "✗ 044 quota setting missing or not dual-controlled"; exit 1; }
+
+step "one password policy per scope (042)"
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE r uuid;
+BEGIN
+  -- The global scope (both null) is unique too: NULLS NOT DISTINCT.
+  IF NOT EXISTS (SELECT 1 FROM public.password_policy WHERE role_id IS NULL AND user_id IS NULL) THEN
+    INSERT INTO public.password_policy (role_id, user_id) VALUES (NULL, NULL);
+  END IF;
+  BEGIN
+    INSERT INTO public.password_policy (role_id, user_id) VALUES (NULL, NULL);
+    RAISE EXCEPTION 'a second global password policy was accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  SELECT id INTO r FROM public.roles ORDER BY name LIMIT 1;
+  INSERT INTO public.password_policy (role_id, user_id) VALUES (r, NULL);
+  BEGIN
+    INSERT INTO public.password_policy (role_id, user_id) VALUES (r, NULL);
+    RAISE EXCEPTION 'a second password policy for one role was accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  DELETE FROM public.password_policy WHERE role_id = r;
+END $$;
+SQL
+
 step "rate limiting behaves (ADR-052)"
 "${PSQL[@]}" -At <<'SQL'
 DO $$

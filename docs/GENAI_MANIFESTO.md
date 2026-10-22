@@ -79,6 +79,7 @@ System quality is continuously measured.
 - **Pre-release Evals:** Changes to prompts or models require passing an automated benchmark suite.
 - **Signal Monitoring:** Production traffic is monitored for hallucination and drift signals.
 - **Success Metrics:** Tracking goes beyond "latency" to include task success and accuracy.
+- **Adversarial Validation (core tenet):** Every test proves what the system refuses, not only what it does. Every category of test — unit, component, integration, conformance, end-to-end, evals, load — carries hostile cases: each actor attempting what it must not do, every second path to the same effect, generated malformed and injected input, random monkey sequences checked against invariants, real guards and real data stores on privileged paths, and injected failures that must fail closed. The standard and its enforcement are in [CONTRIBUTING](../CONTRIBUTING.md#adversarial-validation--a-core-tenet).
 
 ## 10. Human Oversight and Control
 

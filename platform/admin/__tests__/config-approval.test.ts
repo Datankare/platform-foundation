@@ -22,7 +22,7 @@ jest.mock("@/lib/logger", () => ({
 
 // Gotcha #34: platform-config mock for getConfig
 jest.mock("@/platform/auth/platform-config", () => ({
-  getConfig: jest.fn().mockResolvedValue(false),
+  getConfigOrThrow: jest.fn().mockResolvedValue(false),
 }));
 
 const mockSupabase = {
@@ -44,7 +44,7 @@ import {
   getApproval,
   countPendingApprovals,
 } from "../config-approval";
-import { getConfig } from "@/platform/auth/platform-config";
+import { getConfigOrThrow } from "@/platform/auth/platform-config";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -86,19 +86,42 @@ beforeEach(() => {
 
 describe("isApprovalRequired", () => {
   it("returns false when feature is disabled", async () => {
-    (getConfig as jest.Mock).mockResolvedValue(false);
+    (getConfigOrThrow as jest.Mock).mockResolvedValue(false);
     const result = await isApprovalRequired();
     expect(result).toBe(false);
   });
 
   it("returns true when feature is enabled", async () => {
-    (getConfig as jest.Mock).mockResolvedValue(true);
+    (getConfigOrThrow as jest.Mock).mockResolvedValue(true);
     const result = await isApprovalRequired();
     expect(result).toBe(true);
   });
 
+  it.each([
+    ["a missing flag", new Error("not found")],
+    ["an unreadable flag", new Error("DB down")],
+  ])(
+    "fails closed on %s — the default no longer switches approval off",
+    async (_label, err) => {
+      (getConfigOrThrow as jest.Mock).mockRejectedValue(err);
+      await expect(isApprovalRequired()).resolves.toBe(true);
+    }
+  );
+
+  it.each([
+    ['the string "false"', "false"],
+    ["null", null],
+    ["0", 0],
+  ])(
+    "treats %s as enabled: only the boolean false disables it",
+    async (_label, value) => {
+      (getConfigOrThrow as jest.Mock).mockResolvedValue(value);
+      await expect(isApprovalRequired()).resolves.toBe(true);
+    }
+  );
+
   it("fails closed on error (P11)", async () => {
-    (getConfig as jest.Mock).mockRejectedValue(new Error("DB down"));
+    (getConfigOrThrow as jest.Mock).mockRejectedValue(new Error("DB down"));
     const result = await isApprovalRequired();
     expect(result).toBe(true);
   });

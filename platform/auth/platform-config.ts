@@ -16,7 +16,7 @@
  */
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import type {
   ConfigValueType,
@@ -103,6 +103,30 @@ export async function getConfig<T = unknown>(key: string, defaultValue?: T): Pro
 }
 
 /**
+ * Get a config value, or throw when it is missing or cannot be read. For settings that guard
+ * something (dual control, two-person approval): a caller that cannot read one must fail
+ * closed, which getConfig's default makes impossible to tell apart from a stored value.
+ */
+export async function getConfigOrThrow<T = unknown>(key: string): Promise<T> {
+  const cached = getCached(key);
+  if (cached !== undefined) return cached as T;
+  const supabase = getSupabaseServiceClient();
+  const { data, error } = await (supabase
+    .from("platform_config" as never)
+    .select("value")
+    .eq("key", key)
+    .single() as unknown as Promise<{
+    data: { value: unknown } | null;
+    error: { message: string } | null;
+  }>);
+  if (error || !data) {
+    throw new Error(`Config key "${key}" unreadable: ${error?.message ?? "not found"}`);
+  }
+  setCache(key, data.value);
+  return data.value as T;
+}
+
+/**
  * Get a config value as a typed primitive (string, number, boolean).
  * Convenience wrapper around getConfig that handles JSON parsing.
  */
@@ -177,93 +201,11 @@ export async function listConfig(category?: string): Promise<ConfigEntry[]> {
 }
 
 // ── Write Operations ────────────────────────────────────────────────────
-
-/**
- * Set a config value. Creates or updates the key.
- * Clears the cache entry and writes an audit log.
- *
- * @deprecated Use {@link setConfigWithHistory} instead. This function
- * bypasses validation (value_type, min/max, allowed_values), does not
- * write to platform_config_history, and does not check permission tiers.
- * It exists for backward compatibility with pre-Sprint-3a code paths.
- * All new code should use setConfigWithHistory().
- */
-export async function setConfig(
-  key: string,
-  value: unknown,
-  actorId: string,
-  description?: string,
-  category?: string
-): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseServiceClient();
-
-  const upsertData: Record<string, unknown> = {
-    key,
-    value: JSON.stringify(value),
-    updated_by: actorId,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (description !== undefined) upsertData.description = description;
-  if (category !== undefined) upsertData.category = category;
-
-  const { error } = await (supabase
-    .from("platform_config" as never)
-    .upsert(upsertData as never, { onConflict: "key" }) as unknown as Promise<{
-    error: { message: string } | null;
-  }>);
-
-  if (error) {
-    logger.error("Config update failed", {
-      key,
-      error: error.message,
-      route: "platform/auth/platform-config",
-    });
-    return { success: false, error: error.message };
-  }
-
-  // Invalidate cache
-  cache.delete(key);
-
-  await writeAuditLog({
-    action: "admin_action",
-    actorId,
-    details: { type: "config_updated", key, value },
-  });
-
-  return { success: true };
-}
-
-/**
- * Delete a config key.
- */
-export async function deleteConfig(
-  key: string,
-  actorId: string
-): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseServiceClient();
-
-  const { error } = await supabase.from("platform_config").delete().eq("key", key);
-
-  if (error) {
-    logger.error("Config delete failed", {
-      key,
-      error: error.message,
-      route: "platform/auth/platform-config",
-    });
-    return { success: false, error: error.message };
-  }
-
-  cache.delete(key);
-
-  await writeAuditLog({
-    action: "admin_action",
-    actorId,
-    details: { type: "config_deleted", key },
-  });
-
-  return { success: true };
-}
+//
+// Admin changes go through platform/admin/governed-config.ts (writeGovernedConfig), which
+// checks the key's tier permission and then calls setConfigWithHistory below via the governed
+// config tool. The unvalidated setConfig and deleteConfig were removed in Sprint 7X (audit X-7);
+// config keys are created and removed only by migrations.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Sprint 3a Enhancements — Validation, History, Permission Tiers
@@ -345,21 +287,6 @@ function parseAllowedValues(raw: unknown): readonly string[] | null {
   return null;
 }
 
-/**
- * Sanitize a search query for use in PostgREST .or() filter strings.
- *
- * PostgREST filter syntax uses commas, parentheses, and dots as operators.
- * User input containing these characters could break or manipulate queries.
- * This strips all characters that have special meaning in PostgREST filters.
- *
- * Security: S1 from L15 adversarial review — never interpolate raw user
- * input into PostgREST filter strings.
- */
-function sanitizeForPostgrest(input: string): string {
-  // Strip PostgREST operators and SQL LIKE wildcards
-  return input.replace(/[%_,().\\/"']/g, "").trim();
-}
-
 /** Parse a permission_tier string. Falls back to "standard". */
 function parsePermissionTier(raw: string): PermissionTier {
   return raw === "safety" ? "safety" : "standard";
@@ -416,14 +343,6 @@ export async function listEnhancedConfig(
   if (options?.valueType) {
     query = query.eq("value_type", options.valueType);
   }
-  if (options?.query) {
-    // S1: sanitize before interpolating into PostgREST filter string
-    const safeQuery = sanitizeForPostgrest(options.query);
-    if (safeQuery.length > 0) {
-      query = query.or(`key.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`);
-    }
-  }
-
   const { data, error } = (await query) as {
     data: EnhancedConfigRow[] | null;
     error: { message: string } | null;
@@ -431,7 +350,19 @@ export async function listEnhancedConfig(
 
   if (error || !data) return [];
 
-  return data.map(mapEnhancedRow);
+  // Text search is done here, on the (small) list of settings — never by building a filter
+  // string from input (release review, Sprint 7X; it was a sanitized .or() before).
+  const needle = (options?.query ?? "").trim().toLowerCase();
+  const rows = needle
+    ? data.filter(
+        (r) =>
+          String(r.key).toLowerCase().includes(needle) ||
+          String(r.description ?? "")
+            .toLowerCase()
+            .includes(needle)
+      )
+    : data;
+  return rows.map(mapEnhancedRow);
 }
 
 /**
@@ -593,8 +524,9 @@ async function writeConfigHistory(
     const supabase = getSupabaseServiceClient();
     const { error } = await (supabase.from("platform_config_history" as never).insert({
       config_key: configKey,
-      previous_value: previousValue !== undefined ? JSON.stringify(previousValue) : null,
-      new_value: JSON.stringify(newValue),
+      // jsonb columns take the value itself (a stringified value is stored as a JSON string).
+      previous_value: previousValue !== undefined ? previousValue : null,
+      new_value: newValue ?? null,
       changed_by: changedBy,
       change_comment: changeComment,
       change_source: changeSource,
@@ -674,12 +606,12 @@ export async function getConfigHistory(
 /**
  * Set a config value with full validation, history logging, and audit.
  *
- * Unlike the original setConfig(), this function:
+ * This function:
  *   1. Loads the entry metadata to validate against
  *   2. Validates the proposed value (type, range, allowed values)
- *   3. Writes the change to platform_config
- *   4. Writes a history record to platform_config_history
- *   5. Writes the standard audit log
+ *   3. Writes the audit record — and stops, changing nothing, if it cannot (audited)
+ *   4. Writes the change to platform_config
+ *   5. Writes a history record to platform_config_history
  *
  * Returns validation errors if the value is invalid.
  * Returns a permission error if the key doesn't exist (fail-closed).
@@ -720,54 +652,67 @@ export async function setConfigWithHistory(
   // 3. Capture previous value for history
   const previousValue = entry.value;
 
-  // 4. Write the config update
+  // 4–6. Record the change, then make it (audited): with no audit record the value is not
+  //      changed (audit X-8 — this record was fire-and-forget). Then cache and history.
   const supabase = getSupabaseServiceClient();
-  const { error } = await (supabase
-    .from("platform_config" as never)
-    .update({
-      value: JSON.stringify(value),
-      updated_by: actorId,
-      updated_at: new Date().toISOString(),
-    } as never)
-    .eq("key", key) as unknown as Promise<{
-    error: { message: string } | null;
-  }>);
+  try {
+    return await audited(
+      {
+        action: "admin_action",
+        actorId,
+        details: {
+          type: "config_updated_with_history",
+          key,
+          previousValue,
+          newValue: value,
+          changeComment,
+          changeSource,
+        },
+      },
+      async () => {
+        const { error } = await (supabase
+          .from("platform_config" as never)
+          .update({
+            // The value itself: jsonb stores a JSON.stringify'd value as a string, so a governed
+            // list or number read back as text and every check built on it failed (release
+            // review, Sprint 7X; migration 045 repairs values written that way).
+            value,
+            updated_by: actorId,
+            updated_at: new Date().toISOString(),
+          } as never)
+          .eq("key", key) as unknown as Promise<{
+          error: { message: string } | null;
+        }>);
 
-  if (error) {
-    logger.error("Config update failed", {
-      key,
-      error: error.message,
-      route: "platform/auth/platform-config",
-    });
-    return { success: false, error: error.message };
+        if (error) {
+          logger.error("Config update failed", {
+            key,
+            error: error.message,
+            route: "platform/auth/platform-config",
+          });
+          return { success: false, error: error.message };
+        }
+
+        cache.delete(key);
+
+        const historyResult = await writeConfigHistory(
+          key,
+          previousValue,
+          value,
+          actorId,
+          changeComment,
+          changeSource
+        );
+        return { success: true, historyWriteFailed: !historyResult.success };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError) {
+      return {
+        success: false,
+        error: "The audit log is unavailable, so the value was not changed.",
+      };
+    }
+    throw err;
   }
-
-  // 5. Invalidate cache
-  cache.delete(key);
-
-  // 6. Write history record — await result, surface failures
-  const historyResult = await writeConfigHistory(
-    key,
-    previousValue,
-    value,
-    actorId,
-    changeComment,
-    changeSource
-  );
-
-  // 7. Write audit log (fire-and-forget)
-  writeAuditLog({
-    action: "admin_action",
-    actorId,
-    details: {
-      type: "config_updated_with_history",
-      key,
-      previousValue,
-      newValue: value,
-      changeComment,
-      changeSource,
-    },
-  });
-
-  return { success: true, historyWriteFailed: !historyResult.success };
 }
