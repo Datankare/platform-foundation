@@ -60,6 +60,10 @@ APIs are removed, and new checks scan your code. Upgrade with
   decisions are audited and an approved change is applied or reopened; failed role lookups stop the
   change; the reviewer-assist route is quota-counted, self-review-checked and injection-safe; the
   checks' own blind spots closed.
+- **Security update:** Next.js 16.3.8 → 16.4.2 (critical advisories GHSA-2464-fhr4-w9xw,
+  GHSA-673q-mjm6-r5xr — remote code execution; GHSA-p3m5-59mp-jv5r — denial of service) and
+  `@sentry/nextjs` → 10.76.2 (GHSA-mchm-gjx6-7h55, tunnel-route middleware bypass). A consumer pins
+  its own `next` in its own `package.json`: bump it to 16.4.2 now, independent of adopting v5.0.0.
 - Migrations **041–045**; error codes `admin.self_target`, `admin.target_not_found`, `admin.config_invalid_value`,
   `auth.grant_exceeds_own`, `auth.role_protected`, `moderation.self_review`,
   `request.field_not_accepted`.
