@@ -12,3 +12,8 @@
 # 5a22199 — a test fixture: the environment-contract test feeds the made-up value "sb_secret_abc123"
 # to prove a non-JWT Supabase key is refused. Not a credential.
 5a221995ba9831653afa80644cd26036061676b1:platform/providers/__tests__/environment-contract.test.ts:generic-api-key:168
+#
+# 273b41e — scripts/monkey/monkey.mjs held a deliberately forged token for the monkey
+# run: an unsigned JWT (alg "none", sub "admin", no signature) sent to prove forged callers
+# are refused. Not a credential. It is now built at run time, so no literal remains.
+273b41e69c44bad91643f7d589ddd26db277ab8d:scripts/monkey/monkey.mjs:jwt:194

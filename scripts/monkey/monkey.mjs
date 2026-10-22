@@ -189,9 +189,15 @@ function segment(route) {
 }
 
 // ── Callers ─────────────────────────────────────────────────────────────────
+const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64url");
 const callers = [
   { name: "anonymous", auth: null },
-  { name: "forged", auth: "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9." },
+  // An unsigned token claiming to be an admin, built at run time (a literal one reads as a leaked
+  // JWT to the secret scan): alg "none", sub "admin", no signature.
+  {
+    name: "forged",
+    auth: `Bearer ${b64url({ alg: "none" })}.${b64url({ sub: "admin" })}.`,
+  },
   { name: "garbage", auth: "Bearer " + "A".repeat(40) },
 ];
 
