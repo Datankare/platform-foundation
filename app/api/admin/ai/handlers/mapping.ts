@@ -3,14 +3,16 @@
  *
  * GenAI-native governance admin (ADR-035) over the agent.capability_features config store. The
  * store is a json_array of [capability, features[]] pairs; the handler reads it, sets or
- * removes one capability's feature list, and writes it back through the governed config path.
+ * removes one capability's feature list, and writes it back through writeGovernedConfig — the
+ * key's tier permission, validation, history, two-person approval and dual control (audit X-7).
  * Vocabulary-free — capability and feature names are opaque strings the handler does not
  * enumerate.
  */
 
-import { getConfig, setConfig } from "@/platform/auth/platform-config";
-import { writeAuditLog } from "@/platform/auth/audit";
-import type { ActionResult } from "./shared";
+import { getConfig } from "@/platform/auth/platform-config";
+import { writeGovernedConfig } from "@/platform/admin/governed-config";
+import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import { fromGovernedConfig, type ActionResult } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -29,7 +31,7 @@ async function readPairs(): Promise<[string, string[]][]> {
  */
 export async function handleSetCapabilityMapping(
   input: Record<string, any>,
-  actorId: string
+  admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const capability: string = input.capability;
   if (!capability) return { success: false, error: "capability is required" };
@@ -56,21 +58,10 @@ export async function handleSetCapabilityMapping(
     summary = `Mapped "${capability}" to [${features.join(", ")}]`;
   }
 
-  try {
-    await setConfig(
-      CAPABILITY_FEATURES_KEY,
-      pairs,
-      actorId,
-      "Capability -> required features (governed via admin)",
-      "agent"
-    );
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-  await writeAuditLog({
-    action: "admin_action",
-    actorId,
-    details: { type: "set_capability_mapping", prompt_action: true, summary },
+  const outcome = await writeGovernedConfig(admin, {
+    key: CAPABILITY_FEATURES_KEY,
+    value: pairs,
+    changeComment: `Command bar: ${summary}`,
   });
-  return { success: true, result: summary };
+  return fromGovernedConfig(outcome, CAPABILITY_FEATURES_KEY, summary);
 }

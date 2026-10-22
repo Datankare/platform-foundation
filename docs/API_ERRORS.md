@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**47 codes** in 11 areas.
+**54 codes** in 12 areas.
 
 ## Account
 
@@ -29,6 +29,14 @@ Every error the API returns has this body (ADR-051 D3):
 | `account.not_found`       | 403  | Your account could not be found.                           | —                             | Show sign-in / contact support.                                                                     |
 | `account.not_provisioned` | 503  | Your account is still being set up. Try again in a moment. | —                             | Retry shortly; the account's platform record could not be created. If it persists, contact support. |
 | `account.restricted`      | 403  | Your account cannot use this feature right now.            | `feature` (id), `status` (id) | Show the restriction; offer appeal.                                                                 |
+
+## Admin
+
+| Code                         | HTTP | Message (en)                                     | Params        | What the caller should do                                             |
+| ---------------------------- | ---- | ------------------------------------------------ | ------------- | --------------------------------------------------------------------- |
+| `admin.config_invalid_value` | 422  | That value is not allowed for {key}.             | `key` (id)    | Show the setting's allowed type and range, and ask for a valid value. |
+| `admin.self_target`          | 403  | You cannot take this action on your own account. | —             | Another administrator must take this action on your account.          |
+| `admin.target_not_found`     | 404  | No {target} matches that request.                | `target` (id) | Refresh the list and pick an existing item.                           |
 
 ## Approvals
 
@@ -42,24 +50,26 @@ Every error the API returns has this body (ADR-051 D3):
 
 ## Authentication and sign-in
 
-| Code                       | HTTP | Message (en)                                                   | Params                                 | What the caller should do                                                                                                                                  |
-| -------------------------- | ---- | -------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth.account_exists`      | 409  | An account with this email already exists.                     | —                                      | Offer sign-in or password reset.                                                                                                                           |
-| `auth.challenge_failed`    | 401  | Verification did not complete. Try again.                      | —                                      | Restart the challenge.                                                                                                                                     |
-| `auth.code_expired`        | 400  | That code has expired. Request a new one.                      | —                                      | Offer resend.                                                                                                                                              |
-| `auth.code_invalid`        | 400  | That code is not correct.                                      | —                                      | Let the user retry.                                                                                                                                        |
-| `auth.email_not_verified`  | 403  | Verify your email to continue.                                 | —                                      | Show the verification step.                                                                                                                                |
-| `auth.guest_invalid`       | 401  | Your guest session has expired. Start a new one or sign in.    | —                                      | Start a new guest session or show sign-in.                                                                                                                 |
-| `auth.invalid_credentials` | 401  | Email or password is incorrect.                                | —                                      | Let the user retry.                                                                                                                                        |
-| `auth.password_policy`     | 400  | The password does not meet the requirements.                   | `rules` (list, optional)               | Show the password rules; `rules` lists the ids that failed when known (min_length, uppercase, lowercase, number, special, breached, repeated, sequential). |
-| `auth.permission_denied`   | 403  | You do not have permission to do this.                         | `permission` (id)                      | Hide or disable the action.                                                                                                                                |
-| `auth.required`            | 401  | Sign in to continue.                                           | —                                      | Show sign-in.                                                                                                                                              |
-| `auth.role_database_only`  | 403  | The {role} role can only be assigned directly in the database. | `role` (id)                            | Explain; no API path.                                                                                                                                      |
-| `auth.role_self_change`    | 403  | You cannot change your own role.                               | —                                      | Ask another administrator.                                                                                                                                 |
-| `auth.sign_in_required`    | 401  | Sign in to use this feature.                                   | —                                      | Show sign-in (guest on a users-only route).                                                                                                                |
-| `auth.sso_failed`          | 401  | Single sign-on did not complete. Try another sign-in method.   | `provider` (id, optional)              | Offer another sign-in method.                                                                                                                              |
-| `auth.token_invalid`       | 401  | Your session has expired. Sign in again.                       | —                                      | Refresh the token, else show sign-in.                                                                                                                      |
-| `auth.too_many_attempts`   | 429  | Too many attempts. Try again later.                            | `retryAfterSeconds` (number, optional) | Back off.                                                                                                                                                  |
+| Code                       | HTTP | Message (en)                                                                        | Params                                 | What the caller should do                                                                                                                                  |
+| -------------------------- | ---- | ----------------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth.account_exists`      | 409  | An account with this email already exists.                                          | —                                      | Offer sign-in or password reset.                                                                                                                           |
+| `auth.challenge_failed`    | 401  | Verification did not complete. Try again.                                           | —                                      | Restart the challenge.                                                                                                                                     |
+| `auth.code_expired`        | 400  | That code has expired. Request a new one.                                           | —                                      | Offer resend.                                                                                                                                              |
+| `auth.code_invalid`        | 400  | That code is not correct.                                                           | —                                      | Let the user retry.                                                                                                                                        |
+| `auth.email_not_verified`  | 403  | Verify your email to continue.                                                      | —                                      | Show the verification step.                                                                                                                                |
+| `auth.grant_exceeds_own`   | 403  | You cannot grant or remove the {permission} permission, because you do not hold it. | `permission` (id)                      | Ask an administrator who holds the permission.                                                                                                             |
+| `auth.guest_invalid`       | 401  | Your guest session has expired. Start a new one or sign in.                         | —                                      | Start a new guest session or show sign-in.                                                                                                                 |
+| `auth.invalid_credentials` | 401  | Email or password is incorrect.                                                     | —                                      | Let the user retry.                                                                                                                                        |
+| `auth.password_policy`     | 400  | The password does not meet the requirements.                                        | `rules` (list, optional)               | Show the password rules; `rules` lists the ids that failed when known (min_length, uppercase, lowercase, number, special, breached, repeated, sequential). |
+| `auth.permission_denied`   | 403  | You do not have permission to do this.                                              | `permission` (id)                      | Hide or disable the action.                                                                                                                                |
+| `auth.required`            | 401  | Sign in to continue.                                                                | —                                      | Show sign-in.                                                                                                                                              |
+| `auth.role_database_only`  | 403  | The {role} role can only be assigned directly in the database.                      | `role` (id)                            | Explain; no API path.                                                                                                                                      |
+| `auth.role_protected`      | 403  | The {role} role can only be changed directly in the database.                       | `role` (id)                            | Explain; no API path.                                                                                                                                      |
+| `auth.role_self_change`    | 403  | You cannot change your own role.                                                    | —                                      | Ask another administrator.                                                                                                                                 |
+| `auth.sign_in_required`    | 401  | Sign in to use this feature.                                                        | —                                      | Show sign-in (guest on a users-only route).                                                                                                                |
+| `auth.sso_failed`          | 401  | Single sign-on did not complete. Try another sign-in method.                        | `provider` (id, optional)              | Offer another sign-in method.                                                                                                                              |
+| `auth.token_invalid`       | 401  | Your session has expired. Sign in again.                                            | —                                      | Refresh the token, else show sign-in.                                                                                                                      |
+| `auth.too_many_attempts`   | 429  | Too many attempts. Try again later.                                                 | `retryAfterSeconds` (number, optional) | Back off.                                                                                                                                                  |
 
 ## Content
 
@@ -100,6 +110,7 @@ Every error the API returns has this body (ADR-051 D3):
 | `moderation.not_claimer`              | 409  | Only the reviewer who claimed this item can change it.                           | `action` (id)    | Refresh the queue.                        |
 | `moderation.not_own_decision`         | 403  | You can only appeal your own moderation decisions.                               | —                | —                                         |
 | `moderation.review_item_not_found`    | 404  | That review item was not found.                                                  | —                | —                                         |
+| `moderation.self_review`              | 403  | You cannot review a moderation case about your own account.                      | —                | Route the item to another moderator.      |
 
 ## Rate limits
 
@@ -109,14 +120,15 @@ Every error the API returns has this body (ADR-051 D3):
 
 ## Request validation
 
-| Code                     | HTTP | Message (en)                                    | Params                         | What the caller should do       |
-| ------------------------ | ---- | ----------------------------------------------- | ------------------------------ | ------------------------------- |
-| `request.invalid_body`   | 400  | The request body is not in the expected shape.  | —                              | Fix the client request.         |
-| `request.invalid_json`   | 400  | The request body is not valid JSON.             | —                              | Fix the client request.         |
-| `request.invalid_value`  | 400  | {field} must be one of: {allowed}.              | `field` (id), `allowed` (list) | Send one of the allowed values. |
-| `request.missing_fields` | 400  | Required: {fields}.                             | `fields` (list)                | Send the listed fields.         |
-| `request.text_empty`     | 400  | Enter some text.                                | —                              | Prompt for text.                |
-| `request.text_too_long`  | 400  | Text must be {max, number} characters or fewer. | `max` (number)                 | Shorten the text.               |
+| Code                         | HTTP | Message (en)                                    | Params                         | What the caller should do                   |
+| ---------------------------- | ---- | ----------------------------------------------- | ------------------------------ | ------------------------------------------- |
+| `request.field_not_accepted` | 400  | {field} cannot be set by the request.           | `field` (id)                   | Stop sending the field; the server sets it. |
+| `request.invalid_body`       | 400  | The request body is not in the expected shape.  | —                              | Fix the client request.                     |
+| `request.invalid_json`       | 400  | The request body is not valid JSON.             | —                              | Fix the client request.                     |
+| `request.invalid_value`      | 400  | {field} must be one of: {allowed}.              | `field` (id), `allowed` (list) | Send one of the allowed values.             |
+| `request.missing_fields`     | 400  | Required: {fields}.                             | `fields` (list)                | Send the listed fields.                     |
+| `request.text_empty`         | 400  | Enter some text.                                | —                              | Prompt for text.                            |
+| `request.text_too_long`      | 400  | Text must be {max, number} characters or fewer. | `max` (number)                 | Shorten the text.                           |
 
 ## Service availability
 

@@ -10,7 +10,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { requireAdmin } from "@/platform/auth/admin-guard";
+import { enforceDailyPaidQuota } from "@/platform/rate-limit";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getReviewQueueStore } from "@/platform/moderation/review-store";
 import { generateReviewRecommendation } from "@/platform/moderation/review-assist";
@@ -22,8 +23,9 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const denied = await adminGuard(request, MODERATE_PERMISSION);
-  if (denied) return denied;
+  const verified = await requireAdmin(request, MODERATE_PERMISSION);
+  if (verified.error) return verified.error;
+  const { admin } = verified;
 
   const requestId = generateRequestId();
   const { id } = await context.params;
@@ -33,6 +35,13 @@ export async function POST(
     if (!item) {
       return apiError("moderation.review_item_not_found", { request });
     }
+    // No assist on a case about the moderator's own account (as claim and resolve).
+    if (item.targetUserId === admin.userId) {
+      return apiError("moderation.self_review", { request });
+    }
+    // A paid model call: counted against the moderator's daily quota (release review).
+    const quota = await enforceDailyPaidQuota(request, admin.userId);
+    if (quota) return quota;
 
     const recommendation = await generateReviewRecommendation(item, requestId);
     return NextResponse.json({ recommendation });

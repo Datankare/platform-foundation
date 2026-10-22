@@ -6,9 +6,10 @@
  *   POST   /api/moderation/review        — manual submit
  *   PATCH  /api/moderation/review/[id]   — claim / unclaim / resolve
  *
- * The review service and auth guards are mocked — these tests verify the route
- * layer: RBAC gating ("can_moderate"), request validation, query parsing,
- * reviewer-id derivation from the token, status-code mapping, and error paths.
+ * The review service is mocked; the admin guard is real, with callers holding their real
+ * roles' permissions (helpers/test-identities.ts). These tests verify the route layer: RBAC
+ * gating ("can_moderate") for every role, request validation, query parsing, the reviewer id
+ * taken from the verified moderator, status-code mapping, and error paths.
  */
 
 jest.mock("@/lib/logger", () => ({
@@ -16,13 +17,18 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: jest.fn(() => "test-req-id"),
 }));
 
-jest.mock("@/platform/auth/admin-guard", () => ({
-  adminGuard: jest.fn().mockResolvedValue(null),
-}));
-
-jest.mock("@/platform/auth/middleware", () => ({
-  optionalAuth: jest.fn().mockResolvedValue({ user: { sub: "rev-1" }, accessToken: "t" }),
-}));
+jest.mock("@/platform/auth/middleware", () =>
+  require("@/__tests__/helpers/test-identities").mockMiddleware()
+);
+jest.mock("@/platform/auth/permissions-cache", () =>
+  require("@/__tests__/helpers/test-identities").mockPermissionsCache()
+);
+jest.mock("@/platform/auth/account-status-guard", () =>
+  require("@/__tests__/helpers/test-identities").mockAccountStatus()
+);
+jest.mock("@/platform/rate-limit", () =>
+  require("@/__tests__/helpers/test-identities").mockRateLimit()
+);
 
 jest.mock("@/platform/moderation/review-service", () => ({
   getQueue: jest.fn(),
@@ -33,9 +39,8 @@ jest.mock("@/platform/moderation/review-service", () => ({
   resolveItem: jest.fn(),
 }));
 
-import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
-import { optionalAuth } from "@/platform/auth/middleware";
+import { NextRequest } from "next/server";
+import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
 import {
   getQueue,
   getQueueStats,
@@ -49,22 +54,38 @@ import { PATCH } from "@/app/api/moderation/review/[id]/route";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
+const REVIEWER = CALLERS.moderator.userId;
+/** A moderation result with the fields the review pipeline reads. */
+const mr = (action: string) => ({
+  action,
+  reasoning: "Held for review.",
+  trajectoryId: "traj-manual",
+  contextFactors: [],
+  blocklistMatches: [],
+});
+const REVIEWER_ID = "00000000-0000-4000-8000-0000000000e9";
+const TARGET = "00000000-0000-4000-8000-0000000000c1";
+
 function jsonRequest(
   method: string,
   body?: unknown,
-  url = "http://localhost/api/moderation/review"
+  url = "http://localhost/api/moderation/review",
+  caller: CallerName = "moderator"
 ): NextRequest {
   return new NextRequest(url, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authAs(caller) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 }
 
-function getRequest(query: Record<string, string> = {}): NextRequest {
+function getRequest(
+  query: Record<string, string> = {},
+  caller: CallerName = "moderator"
+): NextRequest {
   const url = new URL("http://localhost/api/moderation/review");
   Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
-  return new NextRequest(url, { method: "GET" });
+  return new NextRequest(url, { method: "GET", headers: authAs(caller) });
 }
 
 function patchCtx(id: string) {
@@ -73,11 +94,6 @@ function patchCtx(id: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (adminGuard as jest.Mock).mockResolvedValue(null);
-  (optionalAuth as jest.Mock).mockResolvedValue({
-    user: { sub: "rev-1" },
-    accessToken: "t",
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -93,7 +109,6 @@ describe("GET /api/moderation/review", () => {
 
     expect(res.status).toBe(200);
     expect(data.items).toHaveLength(1);
-    expect(adminGuard).toHaveBeenCalledWith(expect.anything(), "can_moderate");
     expect(getQueue).toHaveBeenCalledWith(expect.objectContaining({ status: "pending" }));
   });
 
@@ -104,8 +119,8 @@ describe("GET /api/moderation/review", () => {
       getRequest({
         source: "escalation",
         priority: "high",
-        targetUserId: "u1",
-        claimedBy: "rev-1",
+        targetUserId: TARGET,
+        claimedBy: REVIEWER_ID,
         since: "2026-01-01",
         before: "2026-12-31",
         limit: "5",
@@ -116,14 +131,30 @@ describe("GET /api/moderation/review", () => {
       expect.objectContaining({
         source: "escalation",
         priority: "high",
-        targetUserId: "u1",
-        claimedBy: "rev-1",
+        targetUserId: TARGET,
+        claimedBy: REVIEWER_ID,
         since: "2026-01-01",
         before: "2026-12-31",
         limit: 5,
       })
     );
   });
+
+  it("caps the page size", async () => {
+    (getQueue as jest.Mock).mockResolvedValue([]);
+    await GET(getRequest({ limit: "1000000000" }));
+    expect(getQueue).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
+  });
+
+  it.each(["targetUserId", "claimedBy"])(
+    "refuses a %s that is not a user id, without querying",
+    async (field) => {
+      const res = await GET(getRequest({ [field]: "x,id.neq.0" }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("request.invalid_value");
+      expect(getQueue).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns stats with ?view=stats", async () => {
     (getQueueStats as jest.Mock).mockResolvedValue({ pendingCount: 3 });
@@ -136,14 +167,15 @@ describe("GET /api/moderation/review", () => {
     expect(getQueue).not.toHaveBeenCalled();
   });
 
-  it("returns the guard response when RBAC denies", async () => {
-    (adminGuard as jest.Mock).mockResolvedValueOnce(
-      NextResponse.json({ error: "denied" }, { status: 403 })
-    );
-
-    const res = await GET(getRequest());
-
-    expect(res.status).toBe(403);
+  it.each([
+    "anonymous",
+    "guest",
+    "free",
+    "safety_approver",
+    "suspended_super_admin",
+  ] as const)("refuses %s (no can_moderate, or not in good standing)", async (caller) => {
+    const res = await GET(getRequest({}, caller));
+    expect([401, 403]).toContain(res.status);
     expect(getQueue).not.toHaveBeenCalled();
   });
 
@@ -169,9 +201,9 @@ describe("POST /api/moderation/review", () => {
 
     const res = await POST(
       jsonRequest("POST", {
-        source: "ban_review",
-        moderationResult: { action: "block" },
-        targetUserId: "u1",
+        source: "escalation",
+        moderationResult: mr("escalate"),
+        targetUserId: TARGET,
       })
     );
     const data = await res.json();
@@ -180,8 +212,8 @@ describe("POST /api/moderation/review", () => {
     expect(data.item.id).toBe("review-9");
     expect(submitForReview).toHaveBeenCalledWith(
       expect.objectContaining({
-        source: "ban_review",
-        targetUserId: "u1",
+        source: "escalation",
+        targetUserId: TARGET,
         requestId: "test-req-id",
       })
     );
@@ -194,12 +226,68 @@ describe("POST /api/moderation/review", () => {
     expect(submitForReview).not.toHaveBeenCalled();
   });
 
+  it("refuses a hand-made ban_review, and never passes a previous status through (X-2)", async () => {
+    const res = await POST(
+      jsonRequest("POST", {
+        source: "ban_review",
+        moderationResult: mr("block"),
+        targetUserId: TARGET,
+        previousAccountStatus: "banned",
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(submitForReview).not.toHaveBeenCalled();
+  });
+
+  it("drops a previousAccountStatus sent with an escalation", async () => {
+    (submitForReview as jest.Mock).mockResolvedValue({
+      success: true,
+      item: { id: "r" },
+    });
+    await POST(
+      jsonRequest("POST", {
+        source: "escalation",
+        moderationResult: mr("escalate"),
+        targetUserId: TARGET,
+        previousAccountStatus: "banned",
+      })
+    );
+    expect(
+      (submitForReview as jest.Mock).mock.calls[0][0].previousAccountStatus
+    ).toBeUndefined();
+  });
+
+  it.each(["u1", "x,y", 7])("refuses the target id %p", async (targetUserId) => {
+    const res = await POST(
+      jsonRequest("POST", { source: "escalation", moderationResult: {}, targetUserId })
+    );
+    expect(res.status).toBe(400);
+    expect(submitForReview).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["null", null],
+    ["an empty object", {}],
+    ["an unknown action", { ...mr("block"), action: "nuke" }],
+    ["no trajectory id", { ...mr("block"), trajectoryId: 5 }],
+  ])("refuses a moderation result that is %s", async (_label, moderationResult) => {
+    const res = await POST(
+      jsonRequest("POST", {
+        source: "escalation",
+        moderationResult,
+        targetUserId: TARGET,
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(submitForReview).not.toHaveBeenCalled();
+  });
+
   it("rejects the appeal source (appeals have their own endpoint)", async () => {
     const res = await POST(
       jsonRequest("POST", {
         source: "appeal",
-        moderationResult: { action: "block" },
-        targetUserId: "u1",
+        moderationResult: mr("block"),
+        targetUserId: TARGET,
       })
     );
 
@@ -215,9 +303,9 @@ describe("POST /api/moderation/review", () => {
 
     const res = await POST(
       jsonRequest("POST", {
-        source: "ban_review",
-        moderationResult: { action: "block" },
-        targetUserId: "u1",
+        source: "escalation",
+        moderationResult: mr("block"),
+        targetUserId: TARGET,
       })
     );
 
@@ -227,7 +315,7 @@ describe("POST /api/moderation/review", () => {
   it("returns 400 on invalid JSON", async () => {
     const req = new NextRequest("http://localhost/api/moderation/review", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authAs("moderator") },
       body: "{not json",
     });
 
@@ -255,7 +343,7 @@ describe("PATCH /api/moderation/review/[id]", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(claimItem).toHaveBeenCalledWith("review-1", "rev-1");
+    expect(claimItem).toHaveBeenCalledWith("review-1", REVIEWER);
     expect(data.item.status).toBe("claimed");
   });
 
@@ -271,7 +359,7 @@ describe("PATCH /api/moderation/review/[id]", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(unclaimItem).toHaveBeenCalledWith("review-1", "rev-1");
+    expect(unclaimItem).toHaveBeenCalledWith("review-1", REVIEWER);
   });
 
   it("resolves with decision and notes", async () => {
@@ -293,7 +381,7 @@ describe("PATCH /api/moderation/review/[id]", () => {
     expect(resolveItem).toHaveBeenCalledWith(
       expect.objectContaining({
         itemId: "review-1",
-        reviewerId: "rev-1",
+        reviewerId: REVIEWER,
         decision: "uphold",
         reviewerNotes: "Confirmed violation.",
       })
@@ -372,36 +460,34 @@ describe("PATCH /api/moderation/review/[id]", () => {
     expect(res.status).toBe(400);
   });
 
-  it("falls back to dev-admin when there is no token", async () => {
-    (optionalAuth as jest.Mock).mockResolvedValueOnce({ user: null, accessToken: null });
+  it("never takes the reviewer from the body (audit X-8)", async () => {
     (claimItem as jest.Mock).mockResolvedValue({
       success: true,
       item: { id: "review-1" },
     });
-
-    await PATCH(jsonRequest("PATCH", { action: "claim" }), patchCtx("review-1"));
-
-    expect(claimItem).toHaveBeenCalledWith("review-1", "dev-admin");
-  });
-
-  it("returns the guard response when RBAC denies", async () => {
-    (adminGuard as jest.Mock).mockResolvedValueOnce(
-      NextResponse.json({ error: "denied" }, { status: 403 })
-    );
-
-    const res = await PATCH(
-      jsonRequest("PATCH", { action: "claim" }),
+    await PATCH(
+      jsonRequest("PATCH", { action: "claim", reviewerId: CALLERS.super_admin.userId }),
       patchCtx("review-1")
     );
-
-    expect(res.status).toBe(403);
-    expect(claimItem).not.toHaveBeenCalled();
+    expect(claimItem).toHaveBeenCalledWith("review-1", REVIEWER);
   });
+
+  it.each(["anonymous", "free", "safety_approver", "suspended_super_admin"] as const)(
+    "refuses %s",
+    async (caller) => {
+      const res = await PATCH(
+        jsonRequest("PATCH", { action: "claim" }, undefined, caller),
+        patchCtx("review-1")
+      );
+      expect([401, 403]).toContain(res.status);
+      expect(claimItem).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns 400 on invalid JSON", async () => {
     const req = new NextRequest("http://localhost/api/moderation/review/review-1", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authAs("moderator") },
       body: "{bad",
     });
 

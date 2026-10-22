@@ -5,6 +5,11 @@
       "not_provisioned": "Your account is still being set up. Try again in a moment.",
       "restricted": "Your account cannot use this feature right now."
     },
+    "admin": {
+      "config_invalid_value": "That value is not allowed for {key}.",
+      "self_target": "You cannot take this action on your own account.",
+      "target_not_found": "No {target} matches that request."
+    },
     "approvals": {
       "decision_conflict": "This decision could not be recorded; the item changed. Refresh and try again.",
       "expired": "This approval has expired. Request the change again.",
@@ -18,12 +23,14 @@
       "code_expired": "That code has expired. Request a new one.",
       "code_invalid": "That code is not correct.",
       "email_not_verified": "Verify your email to continue.",
+      "grant_exceeds_own": "You cannot grant or remove the {permission} permission, because you do not hold it.",
       "guest_invalid": "Your guest session has expired. Start a new one or sign in.",
       "invalid_credentials": "Email or password is incorrect.",
       "password_policy": "The password does not meet the requirements.",
       "permission_denied": "You do not have permission to do this.",
       "required": "Sign in to continue.",
       "role_database_only": "The {role} role can only be assigned directly in the database.",
+      "role_protected": "The {role} role can only be changed directly in the database.",
       "role_self_change": "You cannot change your own role.",
       "sign_in_required": "Sign in to use this feature.",
       "sso_failed": "Single sign-on did not complete. Try another sign-in method.",
@@ -53,12 +60,14 @@
       "modified_action_required": "Choose the modified action.",
       "not_claimer": "Only the reviewer who claimed this item can change it.",
       "not_own_decision": "You can only appeal your own moderation decisions.",
-      "review_item_not_found": "That review item was not found."
+      "review_item_not_found": "That review item was not found.",
+      "self_review": "You cannot review a moderation case about your own account."
     },
     "rate": {
       "limited": "Too many requests. Try again in a moment."
     },
     "request": {
+      "field_not_accepted": "{field} cannot be set by the request.",
       "invalid_body": "The request body is not in the expected shape.",
       "invalid_json": "The request body is not valid JSON.",
       "invalid_value": "{field} must be one of: {allowed}.",

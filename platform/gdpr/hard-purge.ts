@@ -96,11 +96,13 @@ export class PurgePipeline {
     const steps: PurgeStepResult[] = [];
     let overallStatus: PurgeStatus = "in-progress";
 
+    // Fail closed (audit X-15): with no handlers nothing is deleted, so the purge has failed.
+    // Reporting "completed" here told callers personal data was erased when none was.
     if (this.handlers.length === 0) {
       return {
         purgeId,
         userId: request.userId,
-        status: "completed",
+        status: "failed",
         steps: [],
         requestedAt,
         completedAt: new Date().toISOString(),

@@ -2,8 +2,7 @@
  * platform/auth/__tests__/platform-config.test.ts
  *
  * Tests for the runtime configuration service.
- * Covers both original functions (getConfig, setConfig, listConfig,
- * deleteConfig) and Sprint 3a enhancements (getEnhancedConfig,
+ * Covers the read functions (getConfig, listConfig) and Sprint 3a enhancements (getEnhancedConfig,
  * listEnhancedConfig, validateConfigValue, setConfigWithHistory,
  * getConfigHistory, getPermissionTier).
  */
@@ -21,10 +20,6 @@ jest.mock("@/lib/logger", () => ({
     debug: jest.fn(),
   },
   generateRequestId: jest.fn(() => "test-request-id"),
-}));
-
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Chainable Supabase mock builder
@@ -63,18 +58,14 @@ import {
   getConfigNumber,
   getConfigBoolean,
   listConfig,
-  setConfig,
-  deleteConfig,
   clearConfigCache,
   getEnhancedConfig,
   listEnhancedConfig,
   getPermissionTier,
   validateConfigValue,
-  setConfigWithHistory,
   getConfigHistory,
 } from "../platform-config";
 import type { EnhancedConfigEntry } from "@/platform/admin/types";
-import { writeAuditLog } from "@/platform/auth/audit";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -259,47 +250,14 @@ describe("listConfig", () => {
   });
 });
 
-describe("setConfig", () => {
-  it("upserts value and clears cache", async () => {
-    const chain = createChainMock({ data: null, error: null });
-    mockSupabase.from.mockReturnValue(chain);
-
-    const result = await setConfig("k1", "v1", "user-1");
-    expect(result.success).toBe(true);
-    expect(chain.upsert).toHaveBeenCalled();
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "admin_action",
-        actorId: "user-1",
-      })
-    );
-  });
-
-  it("returns error on DB failure", async () => {
-    const chain = createChainMock({
-      data: null,
-      error: { message: "write failed" },
-    });
-    mockSupabase.from.mockReturnValue(chain);
-
-    const result = await setConfig("k1", "v1", "user-1");
-    expect(result.success).toBe(false);
-    expect(result.error).toBe("write failed");
-  });
-});
-
-describe("deleteConfig", () => {
-  it("deletes key and writes audit", async () => {
-    const chain = createChainMock({ data: null, error: null });
-    // delete().eq() chain needs special handling
-    chain.delete = jest.fn().mockReturnValue({
-      eq: jest.fn().mockResolvedValue({ error: null }),
-    });
-    mockSupabase.from.mockReturnValue(chain);
-
-    const result = await deleteConfig("k1", "user-1");
-    expect(result.success).toBe(true);
-    expect(writeAuditLog).toHaveBeenCalled();
+describe("removed write paths (audit X-7)", () => {
+  it("exports no unvalidated setConfig or deleteConfig", async () => {
+    const mod: Record<string, unknown> = await import("../platform-config");
+    expect(mod.setConfig).toBeUndefined();
+    expect(mod.deleteConfig).toBeUndefined();
+    const barrel: Record<string, unknown> = await import("@/platform/auth");
+    expect(barrel.setConfig).toBeUndefined();
+    expect(barrel.deleteConfig).toBeUndefined();
   });
 });
 
@@ -462,31 +420,27 @@ describe("listEnhancedConfig", () => {
     expect(result).toHaveLength(1);
   });
 
-  it("applies search query filter", async () => {
-    const chain = createChainMock({ data: [], error: null });
+  it("searches key and description in code, with no filter string (release review)", async () => {
+    const rows = [
+      { key: "moderation.level", description: "x", category: "m", value: 1 },
+      { key: "rate_limit_rpm", description: "Moderation burst", category: "r", value: 2 },
+      { key: "other", description: "nothing", category: "o", value: 3 },
+    ];
+    const chain = createChainMock({ data: rows, error: null });
     mockSupabase.from.mockReturnValue(chain);
 
-    await listEnhancedConfig({ query: "moderation" });
-    expect(chain.or).toHaveBeenCalledWith(expect.stringContaining("moderation"));
+    const found = await listEnhancedConfig({ query: "MODERATION" });
+    expect(found.map((e) => e.key)).toEqual(["moderation.level", "rate_limit_rpm"]);
+    expect(chain.or).not.toHaveBeenCalled();
   });
 
-  it("sanitizes search query to strip PostgREST operators (S1)", async () => {
-    const chain = createChainMock({ data: [], error: null });
+  it("treats filter syntax in a search as text", async () => {
+    const chain = createChainMock({
+      data: [{ key: "a", description: "b", category: "c", value: 1 }],
+      error: null,
+    });
     mockSupabase.from.mockReturnValue(chain);
-
-    await listEnhancedConfig({ query: "mod,eration.level(1)" });
-
-    // Should strip commas, dots, parens — result is "moderationlevel1"
-    expect(chain.or).toHaveBeenCalledWith(expect.not.stringContaining(",eration"));
-  });
-
-  it("skips search when query sanitizes to empty string (S1)", async () => {
-    const chain = createChainMock({ data: [], error: null });
-    mockSupabase.from.mockReturnValue(chain);
-
-    await listEnhancedConfig({ query: ".,()%" });
-
-    // All characters stripped — or() should NOT be called
+    expect(await listEnhancedConfig({ query: "x,key.neq.0" })).toEqual([]);
     expect(chain.or).not.toHaveBeenCalled();
   });
 
@@ -696,160 +650,8 @@ describe("validateConfigValue", () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-// setConfigWithHistory
-// ═══════════════════════════════════════════════════════════════════════
-
-describe("setConfigWithHistory", () => {
-  it("validates, writes config, writes history, writes audit", async () => {
-    // First call: getEnhancedConfig (select...single)
-    const enhancedChain = createChainMock({
-      data: {
-        key: "rate_limit_rpm",
-        value: 100,
-        description: "Rate limit",
-        category: "system",
-        updated_at: "2026-04-22T00:00:00Z",
-        default_value: 100,
-        value_type: "number",
-        min_value: 10,
-        max_value: 1000,
-        allowed_values: null,
-        permission_tier: "standard",
-      },
-      error: null,
-    });
-
-    // Second call: update
-    const updateChain = createChainMock({ data: null, error: null });
-
-    // Third call: history insert
-    const historyChain = createChainMock({ data: null, error: null });
-
-    let callCount = 0;
-    mockSupabase.from.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) return enhancedChain;
-      if (callCount === 2) return updateChain;
-      return historyChain;
-    });
-
-    const result = await setConfigWithHistory(
-      "rate_limit_rpm",
-      200,
-      "admin-1",
-      "Increasing rate limit for load test"
-    );
-
-    expect(result.success).toBe(true);
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "admin_action",
-        actorId: "admin-1",
-        details: expect.objectContaining({
-          type: "config_updated_with_history",
-          key: "rate_limit_rpm",
-          previousValue: 100,
-          newValue: 200,
-        }),
-      })
-    );
-  });
-
-  it("rejects when key not found", async () => {
-    const chain = createChainMock({ data: null, error: { message: "not found" } });
-    mockSupabase.from.mockReturnValue(chain);
-
-    const result = await setConfigWithHistory("nonexistent", "val", "admin-1", "comment");
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("not found");
-  });
-
-  it("surfaces historyWriteFailed when history write fails (F1)", async () => {
-    // First call: getEnhancedConfig
-    const enhancedChain = createChainMock({
-      data: {
-        key: "rate_limit_rpm",
-        value: 100,
-        description: "Rate limit",
-        category: "system",
-        updated_at: "2026-04-22T00:00:00Z",
-        default_value: 100,
-        value_type: "number",
-        min_value: 10,
-        max_value: 1000,
-        allowed_values: null,
-        permission_tier: "standard",
-      },
-      error: null,
-    });
-
-    // Second call: config update (succeeds)
-    const updateChain = createChainMock({ data: null, error: null });
-
-    // Third call: history insert (FAILS)
-    const historyChain = createChainMock({
-      data: null,
-      error: { message: "connection refused" },
-    });
-
-    let callCount = 0;
-    mockSupabase.from.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) return enhancedChain;
-      if (callCount === 2) return updateChain;
-      return historyChain;
-    });
-
-    const result = await setConfigWithHistory(
-      "rate_limit_rpm",
-      200,
-      "admin-1",
-      "Testing history failure"
-    );
-
-    // Config change succeeded but history write failed
-    expect(result.success).toBe(true);
-    expect(result.historyWriteFailed).toBe(true);
-  });
-
-  it("returns validation errors for invalid value", async () => {
-    const chain = createChainMock({
-      data: {
-        key: "rate_limit_rpm",
-        value: 100,
-        description: null,
-        category: "system",
-        updated_at: "2026-04-22T00:00:00Z",
-        default_value: 100,
-        value_type: "number",
-        min_value: 10,
-        max_value: 1000,
-        allowed_values: null,
-        permission_tier: "standard",
-      },
-      error: null,
-    });
-    mockSupabase.from.mockReturnValue(chain);
-
-    const result = await setConfigWithHistory(
-      "rate_limit_rpm",
-      9999,
-      "admin-1",
-      "Too high"
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.error).toBe("Validation failed");
-    expect(result.validationErrors).toBeDefined();
-    expect(result.validationErrors![0]).toContain("exceeds maximum");
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// getConfigHistory
-// ═══════════════════════════════════════════════════════════════════════
+// setConfigWithHistory: platform/auth/__tests__/set-config-with-history.test.ts (in-memory
+// database, real audit module).
 
 describe("getConfigHistory", () => {
   it("returns mapped history records", async () => {

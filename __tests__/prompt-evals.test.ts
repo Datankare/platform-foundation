@@ -13,7 +13,12 @@
 import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { listPrompts } from "@/prompts";
-import { EVAL_SUITES, PENDING_EVAL, TOOL_USE_EXEMPT } from "@/prompts/evals";
+import {
+  EVAL_SUITES,
+  FREE_TEXT_EXEMPT,
+  PENDING_EVAL,
+  TOOL_USE_EXEMPT,
+} from "@/prompts/evals";
 import { runDeterministic } from "@/prompts/evals/runner";
 
 const ROOT = process.cwd();
@@ -47,9 +52,13 @@ describe("prompt eval harness conformance (ADR-038)", () => {
   const covered = new Set(EVAL_SUITES.map((s) => s.prompt));
   const registered = listPrompts();
 
-  it("every registered prompt is covered by a suite or TOOL_USE_EXEMPT (nothing lingers)", () => {
+  it("every registered prompt is covered by a suite or an exemption (nothing lingers)", () => {
     const unaccounted = registered.filter(
-      (p) => !covered.has(p) && !TOOL_USE_EXEMPT.includes(p) && !PENDING_EVAL.includes(p)
+      (p) =>
+        !covered.has(p) &&
+        !TOOL_USE_EXEMPT.includes(p) &&
+        !FREE_TEXT_EXEMPT.includes(p) &&
+        !PENDING_EVAL.includes(p)
     );
     expect(unaccounted).toEqual([]);
   });
@@ -58,8 +67,8 @@ describe("prompt eval harness conformance (ADR-038)", () => {
     expect([...PENDING_EVAL]).toEqual([]);
   });
 
-  it("TOOL_USE_EXEMPT holds only registered, genuinely parserless prompts", () => {
-    for (const name of TOOL_USE_EXEMPT) {
+  it("the exemptions hold only registered, genuinely parserless prompts", () => {
+    for (const name of [...TOOL_USE_EXEMPT, ...FREE_TEXT_EXEMPT]) {
       expect(registered).toContain(name);
       const file = promptFileFor(name);
       expect(file).not.toBeNull();

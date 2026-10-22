@@ -1,41 +1,62 @@
 /**
  * app/api/admin/ai/handlers/config.ts — password-policy action handler.
+ *
+ * The command bar's input uses snake_case field names; they are mapped to the policy's fields and
+ * validated exactly as the password-policy admin route validates them.
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
-import type { ActionResult } from "./shared";
+import {
+  applyPasswordPolicyChange,
+  getGlobalPasswordPolicy,
+  saveGlobalPasswordPolicy,
+} from "@/platform/auth/password-policy";
+import { runAudited, type ActionResult } from "./shared";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+const FIELDS: Readonly<Record<string, string>> = {
+  min_length: "minLength",
+  rotation_days: "rotationDays",
+  require_uppercase: "requireUppercase",
+  require_lowercase: "requireLowercase",
+  require_number: "requireNumber",
+  require_special: "requireSpecial",
+  password_history_count: "passwordHistoryCount",
+};
 
 export async function handleUpdatePasswordPolicy(
-  input: Record<string, any>,
+  input: Readonly<Record<string, unknown>>,
   actorId: string
 ): Promise<ActionResult> {
-  const supabase = getSupabaseServiceClient();
+  const change: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(input ?? {})) {
+    change[FIELDS[field] ?? field] = value;
+  }
 
-  const { error } = await supabase.from("password_policy").upsert(
+  const current = await getGlobalPasswordPolicy();
+  const applied = applyPasswordPolicyChange(current, change);
+  if ("field" in applied) {
+    return {
+      success: false,
+      error: `${applied.field} must be ${applied.allowed}`,
+      code: "request.invalid_value",
+      params: { field: applied.field, allowed: applied.allowed },
+    };
+  }
+
+  return runAudited(
     {
-      role_id: null,
-      user_id: null,
-      min_length: input.min_length,
-      rotation_days: input.rotation_days,
-      require_uppercase: input.require_uppercase,
-      require_lowercase: input.require_lowercase,
-      require_number: input.require_number,
-      require_special: input.require_special,
-      password_history_count: input.password_history_count,
+      action: "admin_action",
+      actorId,
+      details: {
+        type: "update_password_policy",
+        prompt_action: true,
+        previous: current,
+        policy: applied.policy,
+      },
     },
-    { onConflict: "role_id,user_id" }
+    async () => {
+      const saved = await saveGlobalPasswordPolicy(applied.policy);
+      if (!saved.success) return { success: false, error: saved.error };
+      return { success: true, result: "Password policy updated" };
+    }
   );
-
-  if (error) return { success: false, error: error.message };
-
-  await writeAuditLog({
-    action: "admin_action",
-    actorId,
-    details: { type: "update_password_policy", prompt_action: true },
-  });
-
-  return { success: true, result: "Password policy updated" };
 }

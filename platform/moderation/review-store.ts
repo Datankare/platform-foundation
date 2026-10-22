@@ -400,7 +400,7 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
   async getById(id: string): Promise<ReviewQueueItem | undefined> {
     try {
       const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${id}`,
+        `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${encodeURIComponent(id)}`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -484,7 +484,7 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
       if (fields.priority !== undefined) dbFields.priority = fields.priority;
 
       const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${id}`,
+        `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${encodeURIComponent(id)}`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -585,7 +585,7 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
     try {
       const cutoff = new Date(Date.now() - timeoutMs).toISOString();
       const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?status=eq.claimed&claimed_at=lt.${cutoff}`,
+        `${this.supabaseUrl}/rest/v1/review_queue?status=eq.claimed&claimed_at=lt.${encodeURIComponent(cutoff)}`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect

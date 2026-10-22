@@ -14,7 +14,7 @@
  */
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
 export interface DeletionModule {
@@ -66,72 +66,85 @@ export async function softDeleteUser(
   requestedBy: string
 ): Promise<{ success: boolean; errors: string[] }> {
   const supabase = getSupabaseServiceClient();
-  const errors: string[] = [];
 
-  // 1. Anonymize user record
-  const anonymized = {
-    email: null,
-    display_name: "[deleted]",
-    real_name: null,
-    avatar_url: null,
-    date_of_birth: null,
-    deleted_at: new Date().toISOString(),
-  };
+  try {
+    // Recorded before anything is deleted; no record, no deletion (Adversarial Validation, 6).
+    // A partial deletion reports failure, which audited() records as a follow-up.
+    return await audited(
+      {
+        action: "account_deleted",
+        actorId: requestedBy,
+        targetId: userId,
+        details: {
+          phase: "soft_delete",
+          moduleCount: registeredModules.length,
+        },
+      },
+      async () => {
+        const errors: string[] = [];
 
-  const { error: userError } = await supabase
-    .from("users")
-    .update(anonymized)
-    .eq("id", userId)
-    .is("deleted_at", null);
+        // 1. Anonymize user record
+        const anonymized = {
+          email: null,
+          display_name: "[deleted]",
+          real_name: null,
+          avatar_url: null,
+          date_of_birth: null,
+          deleted_at: new Date().toISOString(),
+        };
 
-  if (userError) {
-    errors.push(`users: ${userError.message}`);
+        const { error: userError } = await supabase
+          .from("users")
+          .update(anonymized)
+          .eq("id", userId)
+          .is("deleted_at", null);
+
+        if (userError) {
+          errors.push(`users: ${userError.message}`);
+        }
+
+        // 2. Run soft delete on all registered modules
+        for (const mod of registeredModules) {
+          const result = await mod.softDelete(userId);
+          if (!result.success) {
+            errors.push(`${mod.moduleName}: ${result.error || "Unknown error"}`);
+          }
+        }
+
+        // 3. Record in deletion manifest
+        const { error: manifestError } = await supabase.from("deletion_manifest").insert({
+          user_id: userId,
+          requested_by: requestedBy,
+          phase: "soft_delete",
+          status: errors.length === 0 ? "completed" : "partial",
+          module_results: JSON.stringify(
+            registeredModules.map((m) => ({
+              module: m.moduleName,
+              tables: m.tables,
+            }))
+          ),
+          errors: errors.length > 0 ? JSON.stringify(errors) : null,
+        });
+
+        if (manifestError) {
+          logger.error("Failed to write deletion manifest", {
+            userId,
+            error: manifestError.message,
+            route: "platform/auth/gdpr-deletion",
+          });
+          // The manifest is what the hard purge works from: without it the erasure would
+          // never complete, so the deletion has not succeeded.
+          errors.push(`deletion manifest: ${manifestError.message}`);
+        }
+
+        return { success: errors.length === 0, errors };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, errors: ["audit unavailable"] };
+    throw err;
   }
-
-  // 2. Run soft delete on all registered modules
-  for (const mod of registeredModules) {
-    const result = await mod.softDelete(userId);
-    if (!result.success) {
-      errors.push(`${mod.moduleName}: ${result.error || "Unknown error"}`);
-    }
-  }
-
-  // 3. Record in deletion manifest
-  const { error: manifestError } = await supabase.from("deletion_manifest").insert({
-    user_id: userId,
-    requested_by: requestedBy,
-    phase: "soft_delete",
-    status: errors.length === 0 ? "completed" : "partial",
-    module_results: JSON.stringify(
-      registeredModules.map((m) => ({
-        module: m.moduleName,
-        tables: m.tables,
-      }))
-    ),
-    errors: errors.length > 0 ? JSON.stringify(errors) : null,
-  });
-
-  if (manifestError) {
-    logger.error("Failed to write deletion manifest", {
-      userId,
-      error: manifestError.message,
-      route: "platform/auth/gdpr-deletion",
-    });
-  }
-
-  // 4. Audit log
-  await writeAuditLog({
-    action: "account_deleted",
-    actorId: requestedBy,
-    targetId: userId,
-    details: {
-      phase: "soft_delete",
-      moduleCount: registeredModules.length,
-      errorCount: errors.length,
-    },
-  });
-
-  return { success: errors.length === 0, errors };
 }
 
 /**

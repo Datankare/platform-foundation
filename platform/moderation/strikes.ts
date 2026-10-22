@@ -263,15 +263,22 @@ export class SupabaseStrikeStore implements StrikeStore {
         error: { message: string } | null;
       }>);
 
-      if (error || !data) return [];
+      // Fail closed: an unreadable strike history is not "no strikes" — that would let every
+      // block during an outage pass without consequence (Sprint 7X). Callers surface the error.
+      if (error) throw new Error(`strike history unreadable: ${error.message}`);
 
       // Filter out time-expired but not yet marked
       const now = new Date();
-      return data
+      return (data ?? [])
         .filter((r) => r.expires_at === null || new Date(r.expires_at) > now)
         .map(mapRowToStrike);
-    } catch {
-      return [];
+    } catch (err) {
+      logger.error("Strike history could not be read", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/moderation/strikes",
+      });
+      throw err;
     }
   }
 

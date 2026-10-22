@@ -9,7 +9,7 @@
  */
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
 export interface DeviceRecord {
@@ -23,8 +23,7 @@ export interface DeviceRecord {
 }
 
 /**
- * Register or update a device for a user.
- * Called on every sign-in to track last used time.
+ * Register a new device for a user (audited), or refresh a known device's last-used time.
  */
 export async function registerDevice(
   userId: string,
@@ -33,34 +32,61 @@ export async function registerDevice(
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseServiceClient();
 
-  const { error } = await supabase.from("user_devices").upsert(
-    {
-      user_id: userId,
-      device_id: deviceId,
-      device_name: deviceName || null,
-      last_used_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id,device_id" }
-  );
-
-  if (error) {
-    logger.error("Device registration failed", {
-      userId,
-      deviceId,
-      error: error.message,
-      route: "platform/auth/devices",
-    });
-    return { success: false, error: error.message };
+  // A device already on file only has its last-used time refreshed: that is not a new
+  // security event, so it is not audited (and sign-in does not depend on the audit log).
+  const { data: known } = await supabase
+    .from("user_devices")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+  if (known) {
+    const { error } = await supabase
+      .from("user_devices")
+      .update({ last_used_at: new Date().toISOString() })
+      .eq("id", known.id);
+    return error ? { success: false, error: error.message } : { success: true };
   }
 
-  await writeAuditLog({
-    action: "device_registered",
-    actorId: userId,
-    targetId: userId,
-    details: { deviceId, deviceName },
-  });
+  try {
+    // A new device is recorded before it is registered; no record, no device (Adversarial
+    // Validation, practice 6).
+    return await audited(
+      {
+        action: "device_registered",
+        actorId: userId,
+        targetId: userId,
+        details: { deviceId, deviceName },
+      },
+      async () => {
+        const { error } = await supabase.from("user_devices").upsert(
+          {
+            user_id: userId,
+            device_id: deviceId,
+            device_name: deviceName || null,
+            last_used_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id,device_id" }
+        );
 
-  return { success: true };
+        if (error) {
+          logger.error("Device registration failed", {
+            userId,
+            deviceId,
+            error: error.message,
+            route: "platform/auth/devices",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
+    throw err;
+  }
 }
 
 /**
@@ -97,28 +123,37 @@ export async function removeDevice(
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseServiceClient();
 
-  const { error } = await supabase
-    .from("user_devices")
-    .delete()
-    .eq("user_id", userId)
-    .eq("device_id", deviceId);
+  try {
+    return await audited(
+      {
+        action: "device_removed",
+        actorId: userId,
+        targetId: userId,
+        details: { deviceId },
+      },
+      async () => {
+        const { error } = await supabase
+          .from("user_devices")
+          .delete()
+          .eq("user_id", userId)
+          .eq("device_id", deviceId);
 
-  if (error) {
-    logger.error("Device removal failed", {
-      userId,
-      deviceId,
-      error: error.message,
-      route: "platform/auth/devices",
-    });
-    return { success: false, error: error.message };
+        if (error) {
+          logger.error("Device removal failed", {
+            userId,
+            deviceId,
+            error: error.message,
+            route: "platform/auth/devices",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
+    throw err;
   }
-
-  await writeAuditLog({
-    action: "device_removed",
-    actorId: userId,
-    targetId: userId,
-    details: { deviceId },
-  });
-
-  return { success: true };
 }

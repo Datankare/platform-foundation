@@ -130,8 +130,8 @@ describe("writeAuditLog", () => {
 
     await writeAuditLog({
       action: "role_changed",
-      actorId: "admin-1",
-      targetId: "user-1",
+      actorId: "00000000-0000-4000-8000-00000000a001",
+      targetId: "00000000-0000-4000-8000-00000000b001",
       details: { oldRole: "free", newRole: "monthly" },
     });
 
@@ -143,7 +143,10 @@ describe("writeAuditLog", () => {
     const { writeAuditLog } = await import("@/platform/auth/audit");
 
     await expect(
-      writeAuditLog({ action: "login_success", actorId: "user-1" })
+      writeAuditLog({
+        action: "login_success",
+        actorId: "00000000-0000-4000-8000-00000000b001",
+      })
     ).resolves.toBeUndefined();
   });
 });
@@ -157,9 +160,9 @@ describe("grantEntitlement", () => {
 
     const { grantEntitlement } = await import("@/platform/auth/entitlements");
     const result = await grantEntitlement({
-      userId: "user-1",
+      userId: "00000000-0000-4000-8000-00000000b001",
       entitlementGroupId: "group-1",
-      grantedBy: "admin-1",
+      grantedBy: "00000000-0000-4000-8000-00000000a001",
       expiresAt: "2026-12-31T23:59:59Z",
     });
 
@@ -175,9 +178,9 @@ describe("revokeEntitlement", () => {
 
     const { revokeEntitlement } = await import("@/platform/auth/entitlements");
     const result = await revokeEntitlement({
-      userId: "user-1",
+      userId: "00000000-0000-4000-8000-00000000b001",
       entitlementGroupId: "group-1",
-      revokedBy: "admin-1",
+      revokedBy: "00000000-0000-4000-8000-00000000a001",
     });
 
     expect(result.success).toBe(true);
@@ -190,7 +193,7 @@ describe("getUserEntitlements", () => {
     queryResponses["user_entitlements:data"] = { data: [], error: null };
 
     const { getUserEntitlements } = await import("@/platform/auth/entitlements");
-    const result = await getUserEntitlements("user-1");
+    const result = await getUserEntitlements("00000000-0000-4000-8000-00000000b001");
 
     expect(result).toHaveLength(0);
   });

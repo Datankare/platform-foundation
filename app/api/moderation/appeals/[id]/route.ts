@@ -5,13 +5,12 @@
  *
  * ADR-024. RBAC (F6): gated on "can_moderate". Scoped to appeal items only —
  * the target must exist and have source "appeal" (escalations and ban reviews
- * are managed under /api/moderation/review/[id]). Reviewer identity is derived
- * from the verified token, never the request body.
+ * are managed under /api/moderation/review/[id]). Reviewer identity is the
+ * verified moderator (requireAdmin), never the request body.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
-import { optionalAuth } from "@/platform/auth/middleware";
+import { requireAdmin } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import {
   claimItem,
@@ -21,37 +20,31 @@ import {
 import { getReviewQueueStore } from "@/platform/moderation/review-store";
 import type { ReviewDecision } from "@/platform/moderation/review-types";
 import type { ModerationAction } from "@/platform/moderation/types";
-import { apiError, errorFromResult } from "@/platform/errors";
+import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
-
-async function resolveReviewerId(request: NextRequest): Promise<string> {
-  const { user } = await optionalAuth(request);
-  return user?.sub ?? "dev-admin";
-}
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const denied = await adminGuard(request, MODERATE_PERMISSION);
-  if (denied) return denied;
+  const verified = await requireAdmin(request, MODERATE_PERMISSION);
+  if (verified.error) return verified.error;
+  // The reviewer is the verified moderator's users.id — the id space of target_user_id — never
+  // a value from the body, and never a placeholder (audit X-8).
+  const reviewerId = verified.admin.userId;
 
   const requestId = generateRequestId();
   const { id } = await context.params;
-  const reviewerId = await resolveReviewerId(request);
 
-  let body: {
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const body = read.body as {
     action?: string;
     decision?: ReviewDecision;
     reviewerNotes?: string;
     modifiedAction?: ModerationAction;
   };
-  try {
-    body = await request.json();
-  } catch {
-    return apiError("request.invalid_json", { request });
-  }
 
   try {
     // Scope guard: this endpoint only operates on appeal items.

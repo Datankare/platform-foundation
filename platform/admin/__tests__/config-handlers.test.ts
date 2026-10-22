@@ -34,7 +34,7 @@ jest.mock("@/platform/auth/platform-config", () => ({
   setConfigWithHistory: (...args: any[]) => mockSetConfigWithHistory(...args),
   getConfigHistory: (...args: any[]) => mockGetConfigHistory(...args),
   getPermissionTier: (...args: any[]) => mockGetPermissionTier(...args),
-  getConfig: (...args: any[]) => mockGetConfig(...args),
+  getConfigOrThrow: (...args: any[]) => mockGetConfig(...args),
 }));
 
 const mockIsApprovalRequired = jest.fn();
@@ -47,6 +47,19 @@ jest.mock("../config-approval", () => ({
   isApprovalRequired: (...args: any[]) => mockIsApprovalRequired(...args),
   requestApproval: (...args: any[]) => mockRequestApproval(...args),
   approveChange: (...args: any[]) => mockApproveApprovalChange(...args),
+  // The module's contract (unit-tested in config-approval.test.ts).
+  approveAndApply: async (id: string, by: string, note: string, apply: any) => {
+    const r = await mockApproveApprovalChange(id, by, note);
+    if (!r.success || !r.record) return r;
+    const a = await apply(r.record);
+    return a.success
+      ? r
+      : {
+          success: false,
+          error: `Approved but not applied: ${a.error}`,
+          errorCode: "service.unavailable",
+        };
+  },
   rejectChange: (...args: any[]) => mockRejectApprovalChange(...args),
   listApprovals: (...args: any[]) => mockListApprovals(...args),
 }));
@@ -518,7 +531,7 @@ describe("handleApproveChange", () => {
     expect(mockSetConfigWithHistory).toHaveBeenCalled();
   });
 
-  it("surfaces apply failure when approval succeeds but config write fails (B11)", async () => {
+  it("reports failure, not success, when the approved change cannot be applied (B11, release review)", async () => {
     mockApproveApprovalChange.mockResolvedValue({
       success: true,
       record: {
@@ -540,9 +553,8 @@ describe("handleApproveChange", () => {
     });
 
     expect(result.success).toBe(true); // Tool executed
-    expect((result.data as any).approved).toBe(true);
-    expect((result.data as any).applied).toBe(false);
-    expect((result.data as any).applyError).toContain("Database connection");
+    expect((result.data as any).success).toBe(false);
+    expect((result.data as any).error).toContain("Database connection");
   });
 
   it("returns error when approval fails", async () => {
@@ -711,6 +723,50 @@ describe("dispatchConfigTool", () => {
 
     expect(result.held).toBeFalsy();
   });
+
+  it.each([
+    [
+      "the key list cannot be read",
+      () => mockGetConfig.mockRejectedValue(new Error("down")),
+    ],
+    [
+      "the key list is not a list",
+      () => mockGetConfig.mockResolvedValue("signups_enabled"),
+    ],
+  ])("holds every config write when %s (fail closed)", async (_label, arrange) => {
+    arrange();
+    mockGetEnhancedConfig.mockResolvedValue(null);
+    const result = await dispatchConfigTool(
+      "update_config",
+      { key: "rate_limit_rpm", value: 1, changeComment: "x", actorId: "admin-1" },
+      {
+        trajectoryId: "traj-dc-3",
+        agentId: "agent-test",
+        onBehalfOf: "admin-1",
+        steps: [],
+      }
+    );
+    expect(result.held).toBe(true);
+  });
+
+  it.each(["config.dual_control_keys", "config.require_two_person_approval"])(
+    "always holds a change to %s, even when the list omits it",
+    async (key) => {
+      mockGetConfig.mockResolvedValue([]);
+      mockGetEnhancedConfig.mockResolvedValue(null);
+      const result = await dispatchConfigTool(
+        "update_config",
+        { key, value: [], changeComment: "remove dual control", actorId: "admin-1" },
+        {
+          trajectoryId: `traj-dc-${key}`,
+          agentId: "agent-test",
+          onBehalfOf: "admin-1",
+          steps: [],
+        }
+      );
+      expect(result.held).toBe(true);
+    }
+  );
 
   it("works without context (backward compatible)", async () => {
     mockListEnhancedConfig.mockResolvedValue([]);

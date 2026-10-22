@@ -27,6 +27,7 @@ const PLATFORM_VERIFIERS = [
   "requireActor",
   "requireAuth",
   "adminGuard",
+  "requireAdmin",
 ];
 
 /** The platform's routes with no verifier, by design. Each needs a reason. */
@@ -136,6 +137,23 @@ describe("route verification — self-tests of the checker", () => {
       "missing: no definition found",
       "fake: its definition calls no platform function (or accepted wrapper)",
     ]);
+  });
+
+  it("judges a wrapper by its own body: a call elsewhere in its file, or in a comment, does not count", () => {
+    const defs = (name: string) =>
+      name === "fake"
+        ? [
+            {
+              file: "lib/f.ts",
+              source:
+                "// requireAuth(request) is called by the real guard\n" +
+                "export function fake() { return true; }\n" +
+                "export async function other(r) { return requireAuth(r); }",
+            },
+          ]
+        : [];
+    const r = resolveDeclared(PLATFORM_VERIFIERS, ["fake"], defs);
+    expect(r.accepted).not.toContain("fake");
   });
 
   it("looks for wrapper definitions in source only — never in tests or Jest manual mocks", () => {

@@ -49,6 +49,21 @@ export const PLATFORM_ERROR_CODES = {
     ],
     action: "Show the restriction; offer appeal.",
   },
+  "admin.config_invalid_value": {
+    status: 422,
+    params: [{ name: "key", kind: "id" }],
+    action: "Show the setting's allowed type and range, and ask for a valid value.",
+  },
+  "admin.self_target": {
+    status: 403,
+    params: [],
+    action: "Another administrator must take this action on your account.",
+  },
+  "admin.target_not_found": {
+    status: 404,
+    params: [{ name: "target", kind: "id" }],
+    action: "Refresh the list and pick an existing item.",
+  },
   "approvals.decision_conflict": {
     status: 409,
     params: [],
@@ -99,6 +114,11 @@ export const PLATFORM_ERROR_CODES = {
     params: [],
     action: "Show the verification step.",
   },
+  "auth.grant_exceeds_own": {
+    status: 403,
+    params: [{ name: "permission", kind: "id" }],
+    action: "Ask an administrator who holds the permission.",
+  },
   "auth.guest_invalid": {
     status: 401,
     params: [],
@@ -126,6 +146,11 @@ export const PLATFORM_ERROR_CODES = {
     action: "Show sign-in.",
   },
   "auth.role_database_only": {
+    status: 403,
+    params: [{ name: "role", kind: "id" }],
+    action: "Explain; no API path.",
+  },
+  "auth.role_protected": {
     status: 403,
     params: [{ name: "role", kind: "id" }],
     action: "Explain; no API path.",
@@ -232,6 +257,11 @@ export const PLATFORM_ERROR_CODES = {
     params: [],
     action: "—",
   },
+  "moderation.self_review": {
+    status: 403,
+    params: [],
+    action: "Route the item to another moderator.",
+  },
   "rate.limited": {
     status: 429,
     params: [{ name: "retryAfterSeconds", kind: "number", optional: true }],
@@ -246,6 +276,11 @@ export const PLATFORM_ERROR_CODES = {
     status: 400,
     params: [],
     action: "Fix the client request.",
+  },
+  "request.field_not_accepted": {
+    status: 400,
+    params: [{ name: "field", kind: "id" }],
+    action: "Stop sending the field; the server sets it.",
   },
   "request.invalid_value": {
     status: 400,

@@ -26,7 +26,7 @@ import type {
   ModerationAuditRecord,
   ModerationResult,
 } from "@/platform/moderation/types";
-import { apiError, errorFromResult } from "@/platform/errors";
+import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
@@ -89,8 +89,12 @@ async function derivePreviousStatus(
     for (const entry of entries) {
       const details: Record<string, unknown> = entry.details ?? {};
       if (
-        details.type === "sentinel_decision" &&
-        details.trajectoryId === trajectoryId &&
+        (details.type === "sentinel_status_change" ||
+          details.type === "sentinel_decision") &&
+        // The appealed decision is the Guardian's; Sentinel records it as guardianDecisionId
+        // (its own run id is trajectoryId, which never matched — Sprint 7X).
+        (details.guardianDecisionId === trajectoryId ||
+          details.trajectoryId === trajectoryId) &&
         typeof details.previousStatus === "string" &&
         VALID_STATUSES.has(details.previousStatus)
       ) {
@@ -112,15 +116,15 @@ export async function POST(request: NextRequest) {
 
   const requestId = generateRequestId();
 
-  let body: { originalDecisionId?: string; appealReason?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return apiError("request.invalid_json", { request });
-  }
-
-  const { originalDecisionId, appealReason } = body;
-  if (!originalDecisionId || !appealReason) {
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const { originalDecisionId, appealReason } = read.body;
+  if (
+    typeof originalDecisionId !== "string" ||
+    !originalDecisionId ||
+    typeof appealReason !== "string" ||
+    !appealReason
+  ) {
     return apiError("request.missing_fields", {
       params: { fields: ["originalDecisionId", "appealReason"] },
       request,

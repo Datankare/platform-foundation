@@ -85,11 +85,13 @@ required; in production boot refuses without them (ADR-050 D2).
 
 ### Runtime
 
-| Variable                | Required             | Default | Notes                                                                                                                                                                          |
-| ----------------------- | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `NODE_ENV`              | No (set by tooling)  | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand.                                                                                   |
-| `VERCEL`                | No (set by the host) | —       | Vercel sets `1` on every deployment. The environment contract refuses harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`) when it is set.                                           |
-| `VERCEL_GIT_COMMIT_SHA` | No (set by the host) | —       | The commit a Vercel deployment was built from. `/api/health` reports its first 12 characters as `commit` so the deployed smoke test can prove which code is live (ADR-050 D6). |
+| Variable                | Required                    | Default | Notes                                                                                                                                                                                                                                                                           |
+| ----------------------- | --------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`              | No (set by tooling)         | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand.                                                                                                                                                                                    |
+| `DEPLOYMENT_HOST`       | No                          | —       | Names the host: `vercel`, `container`, `aws`, … (lower case). `local` and `ci` mark a run that is not a deployment, and only they let production accept the test-harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`); any other value, or none, refuses them (ADR-055 D2, TASK-140). |
+| `GIT_COMMIT_SHA`        | No (set by the image build) | —       | The commit a container image was built from (a build argument). `/api/health` reports it, else `VERCEL_GIT_COMMIT_SHA` (ADR-055 D2).                                                                                                                                            |
+| `VERCEL`                | No (set by the host)        | —       | Vercel sets `1` on every deployment. The platform no longer reads it to decide anything; `DEPLOYMENT_HOST` does (TASK-140).                                                                                                                                                     |
+| `VERCEL_GIT_COMMIT_SHA` | No (set by the host)        | —       | The commit a Vercel deployment was built from. `/api/health` reports its first 12 characters as `commit` so the deployed smoke test can prove which code is live (ADR-050 D6).                                                                                                  |
 
 ### Production environment contract (ADR-050 D1/D2)
 
@@ -106,10 +108,10 @@ aliases listed in this reference.
 
 ## Authentication
 
-| Variable                                      | Required          | Default | Values                                                                                                       |
-| --------------------------------------------- | ----------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
-| `AUTH_PROVIDER` / `NEXT_PUBLIC_AUTH_PROVIDER` | Yes in production | `mock`  | `cognito` `mock` — `mock` is a test double, refused in production (ADR-050 D1)                               |
-| `E2E_TEST_DOUBLE_AUTH`                        | No                | —       | `true` (E2E harness only — permits the mock auth provider under a production build; refused when `VERCEL=1`) |
+| Variable                                      | Required          | Default | Values                                                                                                                                  |
+| --------------------------------------------- | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_PROVIDER` / `NEXT_PUBLIC_AUTH_PROVIDER` | Yes in production | `mock`  | `cognito` `mock` — `mock` is a test double, refused in production (ADR-050 D1)                                                          |
+| `E2E_TEST_DOUBLE_AUTH`                        | No                | —       | `true` (E2E harness only — permits the mock auth provider under a production build; honoured only with `DEPLOYMENT_HOST=local` or `ci`) |
 
 Selecting `cognito` requires the AWS Cognito settings. The `NEXT_PUBLIC_COGNITO_*` names are the
 single source, read by both browser and server; the non-prefixed `COGNITO_*` names are aliases,
@@ -206,21 +208,23 @@ Each store selects between an in-memory implementation (default, ephemeral) and 
 
 | Variable                | Required          | Default  | Values                                                                                                                                                                                                     |
 | ----------------------- | ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MODERATION_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `MODERATION_STORE`      | Yes in production | `memory` | `supabase` `memory` — moderation decisions (the record appeals are judged from); production refuses `memory`; `supabase` without credentials is an error (Sprint 7X)                                       |
+| `STRIKE_STORE`          | Yes in production | `memory` | `supabase` `memory` — strikes toward the ban ladder; production refuses `memory`; `supabase` without credentials is an error (Sprint 7X, audit X-3)                                                        |
+| `REVIEW_QUEUE_STORE`    | Yes in production | `memory` | `supabase` `memory` — the human review queue (escalations, ban reviews, appeals); production refuses `memory` (Sprint 7X, audit X-3)                                                                       |
 | `SOCIAL_STORE`          | Yes in production | `memory` | `supabase` `memory` — groups and memberships; production refuses `memory`, and `supabase` without credentials is an error (TASK-107)                                                                       |
-| `APP_STATE_STORE`       | No                | `memory` | `supabase` `memory` (required `supabase` in production — ADR-049 D1)                                                                                                                                       |
-| `TRAJECTORY_STORE`      | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
-| `BUDGET_STORE`          | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
-| `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory agent stores under a production build; never set on a deployment)                                                                                             |
-| `PROPOSAL_STORE`        | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
-| `EFFECT_LEDGER`         | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
-| `APPROVAL_POLICY_STORE` | No                | `memory` | `supabase` `memory`                                                                                                                                                                                        |
+| `APP_STATE_STORE`       | Yes in production | `memory` | `supabase` `memory` — activity sessions; production refuses `memory` (ADR-049 D1)                                                                                                                          |
+| `TRAJECTORY_STORE`      | Yes in production | `memory` | `supabase` `memory` — agent trajectories; production refuses `memory` (ADR-048 D3)                                                                                                                         |
+| `BUDGET_STORE`          | Yes in production | `memory` | `supabase` `memory` — agent budget accumulation; production refuses `memory` (ADR-048 D3)                                                                                                                  |
+| `PROPOSAL_STORE`        | Yes in production | `memory` | `supabase` `memory` — held actions awaiting approval; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                  |
+| `EFFECT_LEDGER`         | Yes in production | `memory` | `supabase` `memory` — at-most-once external effects; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                   |
+| `APPROVAL_POLICY_STORE` | Yes in production | `memory` | `supabase` `memory` — who approves held actions; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                       |
 | `GUEST_USAGE_STORE`     | Yes in production | `memory` | `supabase` `memory` — counts the guest translate allowance (ADR-050 D4); production refuses `memory`; `supabase` needs migration 037                                                                       |
 | `RATE_LIMIT_STORE`      | Yes in production | `memory` | `supabase` `upstash` `memory` — where the shared rate-limit counters live (ADR-052); production refuses `memory`; `supabase` needs migration 039; `upstash` needs the two `UPSTASH_REDIS_REST_*` variables |
+| `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory stores under a production build; honoured only with `DEPLOYMENT_HOST=local` or `ci`; never set on a deployment)                                               |
 
-For anything agentic that must survive a restart (trajectories, budgets, proposals, the effect
-ledger, the approval policy), set these to `supabase` in production. In-memory is correct for
-tests and local exploration.
+Every store above is `supabase` in production: a production build refuses to start on an
+in-memory store (and `instrumentation.ts` lets that refusal stop the server — Sprint 7X). In-memory
+is correct for tests and local exploration.
 
 ---
 
@@ -286,17 +290,20 @@ as long as the maximum token lifetime.
 ## Full alphabetical index
 
 `ACRCLOUD_ACCESS_KEY` · `ACRCLOUD_ACCESS_SECRET` · `ACRCLOUD_HOST` · `ADMIN_DEV_BYPASS` ·
-`AI_PROVIDER` · `ANTHROPIC_API_KEY` · `APP_STATE_STORE` · `APPROVAL_POLICY_STORE` ·
-`AUDIO_CONVERTER` · `AUDIO_CONVERTER_KEY` · `AUDIO_CONVERTER_URL` · `AUTH_PROVIDER` ·
-`BUDGET_STORE` · `CACHE_PROVIDER` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` ·
-`COGNITO_USER_POOL_ID` · `DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` ·
-`E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` · `ERROR_REPORTER` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `GUEST_USAGE_STORE` · `LOG_LEVEL` ·
-`MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
-`NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` · `NEXT_PUBLIC_COGNITO_REGION` · `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
-`NEXT_PUBLIC_SUPABASE_ANON_KEY` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` ·
-`PROPOSAL_STORE` · `RATE_LIMIT_STORE` · `REALTIME_PROVIDER` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` · `SSO_PROVIDERS` ·
-`STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` · `TRUSTED_PROXY_HOPS` · `TRANSLATION_PROVIDER` ·
-`TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` · `UPSTASH_REDIS_REST_URL` · `VERCEL` · `VERCEL_GIT_COMMIT_SHA`
+`AI_PROVIDER` · `ANTHROPIC_API_KEY` · `APPROVAL_POLICY_STORE` · `APP_STATE_STORE` ·
+`AUDIO_CONVERTER` · `AUDIO_CONVERTER_KEY` · `AUDIO_CONVERTER_URL` · `AUTH_PROVIDER` · `BUDGET_STORE` ·
+`CACHE_PROVIDER` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` · `COGNITO_USER_POOL_ID` ·
+`DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` · `DEPLOYMENT_HOST` ·
+`E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` ·
+`ERROR_REPORTER` · `GIT_COMMIT_SHA` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `GUEST_USAGE_STORE` ·
+`LOG_LEVEL` · `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
+`NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` · `NEXT_PUBLIC_COGNITO_REGION` ·
+`NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` · `NEXT_PUBLIC_SUPABASE_ANON_KEY` ·
+`NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` · `PROPOSAL_STORE` · `RATE_LIMIT_STORE` ·
+`REALTIME_PROVIDER` · `REVIEW_QUEUE_STORE` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` ·
+`SSO_PROVIDERS` · `STRIKE_STORE` · `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` ·
+`TRANSLATION_PROVIDER` · `TRUSTED_PROXY_HOPS` · `TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` ·
+`UPSTASH_REDIS_REST_URL` · `VERCEL` · `VERCEL_GIT_COMMIT_SHA`
 
 ---
 

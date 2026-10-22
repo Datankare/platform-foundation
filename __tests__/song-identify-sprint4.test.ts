@@ -801,6 +801,8 @@ describe("Registry — Sprint 4a provider slots", () => {
       "songId",
       "audioConverter",
       "moderationStore",
+      "strikeStore",
+      "reviewQueueStore",
       "socialStore",
       "embeddingProvider",
       "appStateStore",

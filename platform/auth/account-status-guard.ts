@@ -598,3 +598,30 @@ export async function checkAccountStatus(
 //    array, suspended users get access to everything. The fallback
 //    covers this (defaults to ["*"]), but a config change could
 //    override it. Add a config validation rule in a future sprint.
+
+// ---------------------------------------------------------------------------
+// Staff standing (TASK-145, audit X-6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a staff member may exercise privileged powers right now: an account that is active or
+ * merely warned, or whose restriction or suspension has expired. A restricted, suspended or banned
+ * account — or one whose state cannot be read — may not administer, moderate or approve anything.
+ * Fails closed: an unreadable state is "banned" (loadAccountState).
+ */
+export async function isInGoodStanding(userId: string): Promise<boolean> {
+  if (!userId || !UUID_PATTERN.test(userId)) return false;
+  const state = await loadAccountState(userId);
+  if (state.notProvisioned) return false;
+  switch (state.accountStatus) {
+    case "active":
+    case "warned":
+      return true;
+    case "restricted":
+      return isExpired(state.restrictedUntil);
+    case "suspended":
+      return isExpired(state.suspendedUntil);
+    default:
+      return false;
+  }
+}

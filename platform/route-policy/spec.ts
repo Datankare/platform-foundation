@@ -23,4 +23,12 @@ export interface AppRoutePolicy {
   readonly publicRoutes: Readonly<Record<string, string>>;
   /** The app's routes exempt from rate limiting (path → reason). */
   readonly rateLimitExempt: Readonly<Record<string, string>>;
+  /**
+   * Names of the app's functions that make a paid provider call (model, translation, speech,
+   * song identification…). A route calling one must count it against the daily paid-request quota
+   * (enforceDailyPaidQuota, audit X-12) before the call — `__tests__/api-route-paid-quota.test.ts`.
+   */
+  readonly paidCalls?: readonly string[];
+  /** The app's routes that make a paid call without the daily quota, by design (path → reason). */
+  readonly paidQuotaExempt?: Readonly<Record<string, string>>;
 }

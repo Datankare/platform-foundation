@@ -204,7 +204,7 @@ export class CognitoAuthProvider implements AuthProvider {
         UserAttributes: [{ Name: "email", Value: email }],
       });
 
-      logger.info("User signed up", { email, confirmed: result.UserConfirmed });
+      logger.info("User signed up", { confirmed: result.UserConfirmed });
 
       return {
         success: true,
@@ -251,7 +251,7 @@ export class CognitoAuthProvider implements AuthProvider {
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
 
-      logger.info("User signed in", { email });
+      logger.info("User signed in", { route: "platform/auth/cognito-provider" });
 
       return {
         success: true,

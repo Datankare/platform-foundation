@@ -19,7 +19,7 @@ describe("getOwnProfile", () => {
         table: "users",
         response: {
           data: {
-            id: "p1",
+            id: "00000000-0000-4000-8000-00000000b001",
             email: "alice@example.com",
             display_name: "Alice",
             avatar_url: null,
@@ -48,10 +48,10 @@ describe("getOwnProfile", () => {
     }));
 
     const { getOwnProfile } = await import("@/platform/auth/profile");
-    const profile = await getOwnProfile("p1");
+    const profile = await getOwnProfile("00000000-0000-4000-8000-00000000b001");
 
     expect(profile).not.toBeNull();
-    expect(profile!.id).toBe("p1");
+    expect(profile!.id).toBe("00000000-0000-4000-8000-00000000b001");
     expect(profile!.email).toBe("alice@example.com");
     expect(profile!.displayName).toBe("Alice");
     expect(profile!.profileVisibility).toBe("public");
@@ -88,7 +88,7 @@ describe("getPublicProfile", () => {
         table: "users",
         response: {
           data: {
-            id: "p1",
+            id: "00000000-0000-4000-8000-00000000b001",
             email: "alice@example.com",
             display_name: "Alice",
             avatar_url: "https://example.com/avatar.jpg",
@@ -117,10 +117,10 @@ describe("getPublicProfile", () => {
     }));
 
     const { getPublicProfile } = await import("@/platform/auth/profile");
-    const profile = await getPublicProfile("p1");
+    const profile = await getPublicProfile("00000000-0000-4000-8000-00000000b001");
 
     expect(profile).not.toBeNull();
-    expect(profile!.id).toBe("p1");
+    expect(profile!.id).toBe("00000000-0000-4000-8000-00000000b001");
     expect(profile!.displayName).toBe("Alice");
     expect(profile!.languagePreference).toBe("en");
     // Private fields should NOT be present
@@ -134,7 +134,7 @@ describe("getPublicProfile", () => {
         table: "users",
         response: {
           data: {
-            id: "p1",
+            id: "00000000-0000-4000-8000-00000000b001",
             email: "bob@example.com",
             display_name: "Bob",
             avatar_url: null,
@@ -163,10 +163,10 @@ describe("getPublicProfile", () => {
     }));
 
     const { getPublicProfile } = await import("@/platform/auth/profile");
-    const profile = await getPublicProfile("p1");
+    const profile = await getPublicProfile("00000000-0000-4000-8000-00000000b001");
 
     expect(profile).not.toBeNull();
-    expect(profile!.id).toBe("p1");
+    expect(profile!.id).toBe("00000000-0000-4000-8000-00000000b001");
     expect(profile!.displayName).toBeUndefined();
   });
 });
@@ -178,8 +178,8 @@ describe("updateProfile", () => {
 
   it("converts camelCase to snake_case and updates", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "users", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
+      { table: "users", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -187,13 +187,14 @@ describe("updateProfile", () => {
     }));
 
     const { updateProfile } = await import("@/platform/auth/profile");
-    const result = await updateProfile("p1", {
+    const result = await updateProfile("00000000-0000-4000-8000-00000000b001", {
       displayName: "NewName",
       languagePreference: "fr",
     });
 
     expect(result.success).toBe(true);
-    const builder = mockClient._fromCalls[0].builder;
+    const builder = mockClient._fromCalls[1].builder;
+    expect(mockClient._fromCalls[0].table).toBe("audit_log");
     expect(builder.update).toHaveBeenCalledWith({
       display_name: "NewName",
       language_preference: "fr",
@@ -206,7 +207,7 @@ describe("updateProfile", () => {
     }));
 
     const { updateProfile } = await import("@/platform/auth/profile");
-    const result = await updateProfile("p1", {});
+    const result = await updateProfile("00000000-0000-4000-8000-00000000b001", {});
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("No valid fields to update");
@@ -222,8 +223,10 @@ describe("registerDevice", () => {
 
   it("upserts device and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
+      // a new device: the known-device lookup finds nothing
       { table: "user_devices", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
+      { table: "user_devices", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -231,7 +234,11 @@ describe("registerDevice", () => {
     }));
 
     const { registerDevice } = await import("@/platform/auth/devices");
-    const result = await registerDevice("p1", "device-123", "iPhone 15");
+    const result = await registerDevice(
+      "00000000-0000-4000-8000-00000000b001",
+      "device-123",
+      "iPhone 15"
+    );
 
     expect(result.success).toBe(true);
     expect(mockClient.from).toHaveBeenCalledWith("user_devices");
@@ -239,6 +246,9 @@ describe("registerDevice", () => {
 
   it("returns error on upsert failure", async () => {
     const mockClient = createSequentialMockSupabase([
+      // a new device: the known-device lookup finds nothing
+      { table: "user_devices", response: { data: null, error: null } },
+      { table: "audit_log", response: { data: null, error: null } },
       {
         table: "user_devices",
         response: { data: null, error: { message: "constraint violation" } },
@@ -250,7 +260,10 @@ describe("registerDevice", () => {
     }));
 
     const { registerDevice } = await import("@/platform/auth/devices");
-    const result = await registerDevice("p1", "device-123");
+    const result = await registerDevice(
+      "00000000-0000-4000-8000-00000000b001",
+      "device-123"
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("constraint violation");
@@ -270,7 +283,7 @@ describe("listUserDevices", () => {
           data: [
             {
               id: "d1",
-              user_id: "p1",
+              user_id: "00000000-0000-4000-8000-00000000b001",
               device_id: "dev-1",
               device_name: "iPhone",
               is_trusted: true,
@@ -288,7 +301,7 @@ describe("listUserDevices", () => {
     }));
 
     const { listUserDevices } = await import("@/platform/auth/devices");
-    const devices = await listUserDevices("p1");
+    const devices = await listUserDevices("00000000-0000-4000-8000-00000000b001");
 
     expect(devices).toHaveLength(1);
     expect(devices[0].deviceId).toBe("dev-1");
@@ -309,7 +322,7 @@ describe("listUserDevices", () => {
     }));
 
     const { listUserDevices } = await import("@/platform/auth/devices");
-    const devices = await listUserDevices("p1");
+    const devices = await listUserDevices("00000000-0000-4000-8000-00000000b001");
 
     expect(devices).toEqual([]);
   });
@@ -324,8 +337,8 @@ describe("grantConsent", () => {
 
   it("inserts consent record and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "consent_records", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
+      { table: "consent_records", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -334,7 +347,7 @@ describe("grantConsent", () => {
 
     const { grantConsent } = await import("@/platform/auth/consent");
     const result = await grantConsent({
-      userId: "p1",
+      userId: "00000000-0000-4000-8000-00000000b001",
       consentType: "marketing",
       consentVersion: "1.0",
     });
@@ -351,8 +364,8 @@ describe("revokeConsent", () => {
 
   it("sets revoked_at and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "consent_records", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
+      { table: "consent_records", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -361,12 +374,13 @@ describe("revokeConsent", () => {
 
     const { revokeConsent } = await import("@/platform/auth/consent");
     const result = await revokeConsent({
-      userId: "p1",
+      userId: "00000000-0000-4000-8000-00000000b001",
       consentType: "marketing",
     });
 
     expect(result.success).toBe(true);
-    const builder = mockClient._fromCalls[0].builder;
+    const builder = mockClient._fromCalls[1].builder;
+    expect(mockClient._fromCalls[0].table).toBe("audit_log");
     expect(builder.update).toHaveBeenCalled();
   });
 });
@@ -380,8 +394,8 @@ describe("recordAgeVerification", () => {
 
   it("updates user with age data and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "users", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
+      { table: "users", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -389,7 +403,10 @@ describe("recordAgeVerification", () => {
     }));
 
     const { recordAgeVerification } = await import("@/platform/auth/coppa");
-    const result = await recordAgeVerification("p1", "2000-06-15");
+    const result = await recordAgeVerification(
+      "00000000-0000-4000-8000-00000000b001",
+      "2000-06-15"
+    );
 
     expect(result.success).toBe(true);
     expect(result.result).toBeDefined();
@@ -399,6 +416,7 @@ describe("recordAgeVerification", () => {
 
   it("returns error on DB failure", async () => {
     const mockClient = createSequentialMockSupabase([
+      { table: "audit_log", response: { data: null, error: null } },
       {
         table: "users",
         response: { data: null, error: { message: "update failed" } },
@@ -410,7 +428,10 @@ describe("recordAgeVerification", () => {
     }));
 
     const { recordAgeVerification } = await import("@/platform/auth/coppa");
-    const result = await recordAgeVerification("p1", "2020-01-01");
+    const result = await recordAgeVerification(
+      "00000000-0000-4000-8000-00000000b001",
+      "2020-01-01"
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("update failed");
@@ -424,8 +445,8 @@ describe("recordParentalConsent", () => {
 
   it("updates user parental consent status", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "users", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
+      { table: "users", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -433,10 +454,15 @@ describe("recordParentalConsent", () => {
     }));
 
     const { recordParentalConsent } = await import("@/platform/auth/coppa");
-    const result = await recordParentalConsent("p1", "granted", "parent@example.com");
+    const result = await recordParentalConsent(
+      "00000000-0000-4000-8000-00000000b001",
+      "granted",
+      "parent@example.com"
+    );
 
     expect(result.success).toBe(true);
-    const builder = mockClient._fromCalls[0].builder;
+    const builder = mockClient._fromCalls[1].builder;
+    expect(mockClient._fromCalls[0].table).toBe("audit_log");
     expect(builder.update).toHaveBeenCalled();
   });
 });

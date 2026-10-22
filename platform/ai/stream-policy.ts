@@ -17,8 +17,6 @@ export const STREAM_FEATURE = "stream";
 
 /** Longest prompt accepted, in characters. */
 export const STREAM_MAX_PROMPT_CHARACTERS = 4000;
-/** Longest caller-supplied system prompt accepted, in characters. */
-export const STREAM_MAX_SYSTEM_CHARACTERS = 2000;
 /** Most output tokens a single request may ask for; also the default. */
 export const STREAM_MAX_TOKENS = 1024;
 /** Model tiers a caller may choose. */
@@ -28,7 +26,6 @@ export type StreamTier = (typeof STREAM_TIERS)[number];
 
 export interface StreamRequestInput {
   readonly prompt: string;
-  readonly system?: string;
   readonly tier: StreamTier;
   readonly maxTokens: number;
   readonly temperature?: number;
@@ -42,7 +39,8 @@ export type StreamValidation =
         | "request.invalid_body"
         | "request.text_empty"
         | "request.text_too_long"
-        | "request.invalid_value";
+        | "request.invalid_value"
+        | "request.field_not_accepted";
       readonly params?: Record<string, string | number | readonly string[]>;
     };
 
@@ -64,21 +62,10 @@ export function validateStreamRequest(body: unknown): StreamValidation {
     };
   }
 
+  // The system prompt is the platform's (prompts/assistant/stream-v1.ts), never the caller's:
+  // a caller-supplied one replaced the platform's instructions (audit X-11).
   if (b.system !== undefined) {
-    if (typeof b.system !== "string") {
-      return {
-        ok: false,
-        code: "request.invalid_value",
-        params: { field: "system", allowed: ["text"] },
-      };
-    }
-    if (b.system.length > STREAM_MAX_SYSTEM_CHARACTERS) {
-      return {
-        ok: false,
-        code: "request.text_too_long",
-        params: { max: STREAM_MAX_SYSTEM_CHARACTERS },
-      };
-    }
+    return { ok: false, code: "request.field_not_accepted", params: { field: "system" } };
   }
 
   const tier = b.tier ?? "standard";
@@ -122,7 +109,6 @@ export function validateStreamRequest(body: unknown): StreamValidation {
     ok: true,
     input: {
       prompt: b.prompt,
-      system: b.system as string | undefined,
       tier: tier as StreamTier,
       maxTokens,
       temperature: b.temperature as number | undefined,

@@ -1,38 +1,46 @@
 /**
  * __tests__/moderation-reap-route.test.ts — ADR-041 reaper route (option A).
  *
- * Gated on "can_moderate"; returns the sweep summary; passes the guard's denial
- * through untouched; 500 on failure. The pure sweep is covered by the conformance
+ * Gated on "can_moderate" by the real guard (helpers/test-identities.ts); returns the sweep
+ * summary; refuses every role without it; 500 on failure. The pure sweep is covered by the conformance
  * kit (escalation-sla.test.ts) — here we pin the route contract.
  */
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req-test",
 }));
-jest.mock("@/platform/auth/admin-guard", () => ({
-  adminGuard: jest.fn().mockResolvedValue(null),
-}));
+jest.mock("@/platform/auth/middleware", () =>
+  require("@/__tests__/helpers/test-identities").mockMiddleware()
+);
+jest.mock("@/platform/auth/permissions-cache", () =>
+  require("@/__tests__/helpers/test-identities").mockPermissionsCache()
+);
+jest.mock("@/platform/auth/account-status-guard", () =>
+  require("@/__tests__/helpers/test-identities").mockAccountStatus()
+);
+jest.mock("@/platform/rate-limit", () =>
+  require("@/__tests__/helpers/test-identities").mockRateLimit()
+);
 jest.mock("@/platform/moderation/review-service", () => ({
   reapOverdueEscalations: jest.fn(),
 }));
 
-import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { NextRequest } from "next/server";
+import { authAs, type CallerName } from "@/__tests__/helpers/test-identities";
 import { reapOverdueEscalations } from "@/platform/moderation/review-service";
 import { POST } from "@/app/api/admin/moderation/reap-escalations/route";
 
-const mockGuard = adminGuard as jest.Mock;
 const mockReap = reapOverdueEscalations as jest.Mock;
 
-function req(): NextRequest {
+function req(caller: CallerName = "moderator"): NextRequest {
   return new NextRequest("http://localhost/api/admin/moderation/reap-escalations", {
     method: "POST",
+    headers: authAs(caller),
   });
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGuard.mockResolvedValue(null);
 });
 
 describe("POST /api/admin/moderation/reap-escalations", () => {
@@ -56,14 +64,14 @@ describe("POST /api/admin/moderation/reap-escalations", () => {
     expect(mockReap).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the guard's denial through and never runs the sweep", async () => {
-    mockGuard.mockResolvedValue(
-      NextResponse.json({ error: "forbidden" }, { status: 403 })
-    );
-    const res = await POST(req());
-    expect(res.status).toBe(403);
-    expect(mockReap).not.toHaveBeenCalled();
-  });
+  it.each(["anonymous", "free", "safety_approver", "suspended_super_admin"] as const)(
+    "refuses %s and never runs the sweep",
+    async (caller) => {
+      const res = await POST(req(caller));
+      expect([401, 403]).toContain(res.status);
+      expect(mockReap).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns 500 when the sweep throws", async () => {
     mockReap.mockRejectedValue(new Error("store down"));

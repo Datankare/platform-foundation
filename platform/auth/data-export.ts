@@ -11,7 +11,7 @@
  */
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, auditRowsForUser, recordAudit } from "@/platform/auth/audit";
 
 export interface ExportModule {
   moduleName: string;
@@ -46,13 +46,17 @@ export function getExportModules(): ExportModule[] {
   return [...registeredExportModules];
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
- * Export all user data across all registered modules.
- * Returns a structured JSON object suitable for download.
+ * Collect all of a user's data across all registered modules, without disclosing it. The id is
+ * checked first: it is used in a filter string below, where a crafted value could widen the
+ * read to other users' audit records (TASK-145 pattern).
  */
-export async function exportUserData(
+async function collectUserData(
   userId: string
 ): Promise<{ data: Record<string, unknown>; errors: string[] }> {
+  if (!UUID.test(userId)) return { data: {}, errors: ["invalid user id"] };
   const supabase = getSupabaseServiceClient();
   const errors: string[] = [];
   const exportData: Record<string, unknown> = {};
@@ -96,12 +100,7 @@ export async function exportUserData(
   exportData.entitlements = entitlements || [];
 
   // 5. Audit log (user as actor or target)
-  const { data: auditEntries } = await supabase
-    .from("audit_log")
-    .select("*")
-    .or(`actor_id.eq.${userId},target_id.eq.${userId}`)
-    .order("created_at", { ascending: false })
-    .limit(500);
+  const { data: auditEntries } = await auditRowsForUser(supabase, userId, "*", 500);
 
   exportData.auditLog = auditEntries || [];
 
@@ -124,19 +123,36 @@ export async function exportUserData(
     version: "1.0",
   };
 
-  // 8. Audit log the export
-  await writeAuditLog({
-    action: "profile_updated",
-    actorId: userId,
-    targetId: userId,
-    details: {
-      type: "data_export",
-      moduleCount: registeredExportModules.length + 5,
-      errorCount: errors.length,
-    },
-  });
-
   return { data: exportData, errors };
+}
+
+/**
+ * Export all user data across all registered modules, as a structured JSON object suitable for
+ * download. The export is recorded before anything is disclosed: collecting only reads, the
+ * export takes effect when the data is returned, so no record means no data (Adversarial
+ * Validation, practice 6).
+ */
+export async function exportUserData(
+  userId: string
+): Promise<{ data: Record<string, unknown>; errors: string[] }> {
+  const collected = await collectUserData(userId);
+  if (collected.errors.includes("invalid user id")) return collected;
+  try {
+    await recordAudit({
+      action: "data_exported",
+      actorId: userId,
+      targetId: userId,
+      details: {
+        moduleCount: registeredExportModules.length + 5,
+        errorCount: collected.errors.length,
+      },
+    });
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { data: {}, errors: ["audit unavailable"] };
+    throw err;
+  }
+  return collected;
 }
 
 /**
@@ -146,7 +162,8 @@ export async function exportUserData(
 export async function estimateExportSize(
   userId: string
 ): Promise<{ estimatedBytes: number }> {
-  const { data } = await exportUserData(userId);
+  // Only the size leaves this function, so this is not an export and is not recorded as one.
+  const { data } = await collectUserData(userId);
   const json = JSON.stringify(data);
   return { estimatedBytes: new TextEncoder().encode(json).length };
 }

@@ -1,0 +1,50 @@
+name: "ZAP baseline scan"
+
+# Weekly passive OWASP ZAP scan of a deployed instance, and on demand. The target is the
+# repository variable ZAP_TARGET_URL (or the dispatch input); platform-foundation has no
+# deployment of its own, so without one the scan skips with a notice. A consuming app sets the
+# variable to its staging or production URL.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "URL to scan (default: the ZAP_TARGET_URL variable)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    name: ZAP baseline
+    runs-on: ubuntu-latest
+    env:
+      TARGET: ${{ inputs.target_url || vars.ZAP_TARGET_URL }}
+    steps:
+      - name: Skip without a target
+        if: ${{ !env.TARGET }}
+        run: echo "::notice::No ZAP_TARGET_URL — nothing to scan."
+      - name: Checkout
+        if: ${{ env.TARGET }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: OWASP ZAP baseline scan
+        if: ${{ env.TARGET }}
+        uses: zaproxy/action-baseline@7c4deb10e6261301961c86d65d54a516394f9aed # v0.14.0
+        with:
+          target: ${{ env.TARGET }}
+          cmd_options: "-a -j"
+          allow_issue_writing: false
+          fail_action: false
+      - name: Upload report
+        if: ${{ always() && env.TARGET }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: zap-baseline-report
+          path: report_html.html
+          retention-days: 30

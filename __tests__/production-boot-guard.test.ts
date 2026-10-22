@@ -6,9 +6,10 @@
  * Layer 3, forcing the v2.5.1 patch. This drives the real boot entry point — instrumentation
  * `register()` — through a simulated production boot and asserts both halves of the contract:
  *
- *   - fail-closed: in production on in-memory stores with no opt-out, register() swallows the
- *     guard throw (it must not crash the process) BUT boot does NOT complete — observability and
- *     probes never initialize, which is exactly what left health at 503 and Guardian unregistered.
+ *   - fail-closed: in production on in-memory stores with no opt-out, register() throws, so
+ *     Next.js aborts startup (Sprint 7X, audit X-21). It used to swallow the throw and leave a
+ *     half-started server serving on defaults — observability and probes uninitialized, health
+ *     at 503, Guardian unregistered.
  *   - opt-out: with the harness opt-outs (E2E_IN_MEMORY_STORES=true for stores, E2E_TEST_DOUBLE_AUTH=true
  *     for auth — ADR-050 D1), boot completes end-to-end (observability initializes).
  *   - ADR-050 D1: the store opt-out alone does not cover auth — boot still fails closed.
@@ -49,7 +50,7 @@ describe("production boot guard (TASK-089)", () => {
     process.env = { ...origEnv };
   });
 
-  it("fail-closed: production + in-memory stores + no opt-out — register() swallows the throw but boot does not complete", () => {
+  it("fail-closed: production + in-memory stores + no opt-out — register() throws, so the server does not start", () => {
     setNodeEnv("production");
     delete process.env.E2E_IN_MEMORY_STORES;
     delete process.env.E2E_TEST_DOUBLE_AUTH;
@@ -57,7 +58,7 @@ describe("production boot guard (TASK-089)", () => {
     delete process.env.BUDGET_STORE;
     const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 
-    expect(() => register()).not.toThrow();
+    expect(() => register()).toThrow(/refusing to boot|Refusing to boot/);
     expect(tryGetObservability()).toBeFalsy();
     expect(errSpy).toHaveBeenCalledWith(
       "[instrumentation] Failed to initialize:",
@@ -67,7 +68,7 @@ describe("production boot guard (TASK-089)", () => {
     errSpy.mockRestore();
   });
 
-  it("ADR-050 D1: production + E2E_IN_MEMORY_STORES=true but mock auth — boot does not complete", () => {
+  it("ADR-050 D1: production + E2E_IN_MEMORY_STORES=true but mock auth — the server does not start", () => {
     setNodeEnv("production");
     process.env.E2E_IN_MEMORY_STORES = "true";
     delete process.env.E2E_TEST_DOUBLE_AUTH;
@@ -77,7 +78,7 @@ describe("production boot guard (TASK-089)", () => {
     delete process.env.BUDGET_STORE;
     const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 
-    expect(() => register()).not.toThrow();
+    expect(() => register()).toThrow();
     expect(tryGetObservability()).toBeFalsy();
     expect(errSpy).toHaveBeenCalledWith(
       "[instrumentation] Failed to initialize:",
@@ -87,11 +88,11 @@ describe("production boot guard (TASK-089)", () => {
     errSpy.mockRestore();
   });
 
-  it("opt-out: production + E2E_IN_MEMORY_STORES=true + E2E_TEST_DOUBLE_AUTH=true — boot completes (observability initializes)", () => {
+  it("opt-out: production + DEPLOYMENT_HOST=ci + E2E_IN_MEMORY_STORES=true + E2E_TEST_DOUBLE_AUTH=true — boot completes (observability initializes)", () => {
     setNodeEnv("production");
     process.env.E2E_IN_MEMORY_STORES = "true";
     process.env.E2E_TEST_DOUBLE_AUTH = "true";
-    delete process.env.VERCEL;
+    process.env.DEPLOYMENT_HOST = "ci";
     delete process.env.TRAJECTORY_STORE;
     delete process.env.BUDGET_STORE;
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});

@@ -124,7 +124,7 @@ export class SupabaseActivityStateStore<TState> implements ActivityStateStore<TS
     // Do NOT split this into read-then-update — that reopens the race it closes.
     const res = await fetchWithTimeout(
       this.endpoint(
-        `?id=eq.${encodeURIComponent(sessionId)}&version=eq.${expectedVersion}`
+        `?id=eq.${encodeURIComponent(sessionId)}&version=eq.${encodeURIComponent(String(expectedVersion))}`
       ),
       {
         timeoutMs: 10_000,

@@ -22,6 +22,7 @@ import { CURATOR_V1 } from "./social/curator-v1";
 import { GATEKEEPER_V1 } from "./social/gatekeeper-v1";
 import { MATCHMAKER_V1 } from "./social/matchmaker-v1";
 import { PACING_V1 } from "./adaptive/pacing-v1";
+import { STREAM_ASSISTANT_V1 } from "./assistant/stream-v1";
 
 // ---------------------------------------------------------------------------
 // Registry types
@@ -56,6 +57,7 @@ const PROMPT_REGISTRY: Record<string, PromptConfig> = {
   gatekeeper: GATEKEEPER_V1,
   matchmaker: MATCHMAKER_V1,
   "adaptive-pacing": PACING_V1,
+  "stream-assistant": STREAM_ASSISTANT_V1,
 };
 
 /**
@@ -85,3 +87,4 @@ export type {
   ClassifierOutput,
 } from "./safety/classify-v1";
 export { buildAdminSystemPrompt } from "./admin/command-bar-v1";
+export { buildStreamSystemPrompt } from "./assistant/stream-v1";

@@ -112,64 +112,70 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 
 ## ADR Index
 
-| ADR     | Title                                         |
-| ------- | --------------------------------------------- |
-| ADR-001 | Platform / Game Layer Separation              |
-| ADR-002 | Next.js + React Stack                         |
-| ADR-003 | GenAI-Native Architecture                     |
-| ADR-004 | Four Governing Principles                     |
-| ADR-005 | Content Safety Architecture                   |
-| ADR-006 | Database Architecture                         |
-| ADR-007 | Monorepo Structure                            |
-| ADR-008 | Input Pipeline Architecture                   |
-| ADR-009 | Security Standards & OWASP Compliance         |
-| ADR-010 | OWASP Controls                                |
-| ADR-011 | Security Headers                              |
-| ADR-012 | Auth Architecture                             |
-| ADR-013 | Role Hierarchy                                |
-| ADR-014 | Observability Architecture                    |
-| ADR-015 | GenAI-Native Stack                            |
-| ADR-016 | Content Safety Architecture                   |
-| ADR-017 | GenAI-Native Surface Map                      |
-| ADR-018 | Realtime Architecture                         |
-| ADR-019 | Voice Pipeline Architecture                   |
-| ADR-020 | Song Identification                           |
-| ADR-021 | Social System Architecture                    |
-| ADR-022 | Agent Runtime Architecture                    |
-| ADR-023 | RAG Architecture                              |
-| ADR-024 | Human Review & Appeals                        |
-| ADR-025 | Reviewer Assist                               |
-| ADR-026 | Database Reconciliation                       |
-| ADR-027 | Provider Conformance Kits                     |
-| ADR-028 | Application Framework                         |
-| ADR-029 | Agentic Workflow Framework                    |
-| ADR-030 | Agent User Experience                         |
-| ADR-031 | Action Identity & Lifecycle                   |
-| ADR-032 | Bundle-Safe Singletons                        |
-| ADR-033 | Agent Identity (rung 2 — attested delegation) |
-| ADR-034 | Per-Account Feature Restriction               |
-| ADR-035 | GenAI-Native Governance Admin                 |
-| ADR-036 | Adaptive Behavior Framework                   |
-| ADR-037 | Dynamic Content Generation Framework          |
-| ADR-038 | Prompt Evaluation Harness                     |
-| ADR-039 | Agent Registry Unification                    |
-| ADR-040 | Held-Action & Dual-Control Admin              |
-| ADR-041 | Escalation SLA & Remedial Action              |
-| ADR-042 | Application-Specific RAG & Knowledge Bases    |
-| ADR-043 | UGC Input-Surface Screening                   |
-| ADR-044 | Multimodal Provider Interface                 |
-| ADR-045 | Governed Image Generation                     |
-| ADR-046 | Multimodal Content Safety                     |
-| ADR-047 | Multimodal Provenance & Synthetic-Media Det.  |
-| ADR-048 | Governed Agent Budget & Durability Config     |
-| ADR-049 | Activity Session Durability & Ownership       |
-| ADR-050 | Deployment Environment Contract               |
-| ADR-051 | Codes and Messages — One Translatable Catalog |
-| ADR-052 | Rate Limiting — One Shared, Swappable Limiter |
+| ADR     | Title                                            |
+| ------- | ------------------------------------------------ |
+| ADR-001 | Platform / Game Layer Separation                 |
+| ADR-002 | Next.js + React Stack                            |
+| ADR-003 | GenAI-Native Architecture                        |
+| ADR-004 | Four Governing Principles                        |
+| ADR-005 | Content Safety Architecture                      |
+| ADR-006 | Database Architecture                            |
+| ADR-007 | Monorepo Structure                               |
+| ADR-008 | Input Pipeline Architecture                      |
+| ADR-009 | Security Standards & OWASP Compliance            |
+| ADR-010 | OWASP Controls                                   |
+| ADR-011 | Security Headers                                 |
+| ADR-012 | Auth Architecture                                |
+| ADR-013 | Role Hierarchy                                   |
+| ADR-014 | Observability Architecture                       |
+| ADR-015 | GenAI-Native Stack                               |
+| ADR-016 | Content Safety Architecture                      |
+| ADR-017 | GenAI-Native Surface Map                         |
+| ADR-018 | Realtime Architecture                            |
+| ADR-019 | Voice Pipeline Architecture                      |
+| ADR-020 | Song Identification                              |
+| ADR-021 | Social System Architecture                       |
+| ADR-022 | Agent Runtime Architecture                       |
+| ADR-023 | RAG Architecture                                 |
+| ADR-024 | Human Review & Appeals                           |
+| ADR-025 | Reviewer Assist                                  |
+| ADR-026 | Database Reconciliation                          |
+| ADR-027 | Provider Conformance Kits                        |
+| ADR-028 | Application Framework                            |
+| ADR-029 | Agentic Workflow Framework                       |
+| ADR-030 | Agent User Experience                            |
+| ADR-031 | Action Identity & Lifecycle                      |
+| ADR-032 | Bundle-Safe Singletons                           |
+| ADR-033 | Agent Identity (rung 2 — attested delegation)    |
+| ADR-034 | Per-Account Feature Restriction                  |
+| ADR-035 | GenAI-Native Governance Admin                    |
+| ADR-036 | Adaptive Behavior Framework                      |
+| ADR-037 | Dynamic Content Generation Framework             |
+| ADR-038 | Prompt Evaluation Harness                        |
+| ADR-039 | Agent Registry Unification                       |
+| ADR-040 | Held-Action & Dual-Control Admin                 |
+| ADR-041 | Escalation SLA & Remedial Action                 |
+| ADR-042 | Application-Specific RAG & Knowledge Bases       |
+| ADR-043 | UGC Input-Surface Screening                      |
+| ADR-044 | Multimodal Provider Interface                    |
+| ADR-045 | Governed Image Generation                        |
+| ADR-046 | Multimodal Content Safety                        |
+| ADR-047 | Multimodal Provenance & Synthetic-Media Det.     |
+| ADR-048 | Governed Agent Budget & Durability Config        |
+| ADR-049 | Activity Session Durability & Ownership          |
+| ADR-050 | Deployment Environment Contract                  |
+| ADR-051 | Codes and Messages — One Translatable Catalog    |
+| ADR-052 | Rate Limiting — One Shared, Swappable Limiter    |
+| ADR-053 | Tenancy — One Codebase, Shared or Dedicated      |
+| ADR-054 | The Foundation Core and Optional Product Modules |
+| ADR-055 | Deploy Anywhere — One Container Image, Any Host  |
+| ADR-056 | Operations Baseline                              |
 
 ---
 
 _Confidential & Proprietary — Datankare — March 2026_
+
+_Last reviewed: October 2026 (Sprint 7R entry gate — ADR-053 tenancy, ADR-054 core/modules, ADR-055 deploy anywhere, ADR-056 operations baseline, all Proposed; server code to reach Postgres directly)_
 
 _Last reviewed: October 2026 (Sprint 7A close — ADR-050 Accepted, PF v3.0.0; ADR-051 Proposed until Sprint 7B; schema baseline + migration replay)_
 

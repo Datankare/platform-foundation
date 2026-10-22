@@ -183,3 +183,121 @@ describe("isBreachedPassword", () => {
     expect(isBreachedPassword("Admin")).toBe(true);
   });
 });
+
+// ── Global policy: read by sign-up, changed by admins (Sprint 7X) ────────────
+
+import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import {
+  applyPasswordPolicyChange,
+  DEFAULT_POLICY,
+  getGlobalPasswordPolicy,
+  PASSWORD_POLICY_LIMITS,
+  saveGlobalPasswordPolicy,
+} from "@/platform/auth/password-policy";
+import { FakeDatabase } from "./helpers/fake-database";
+
+describe("applyPasswordPolicyChange", () => {
+  it("changes only the fields sent", () => {
+    const out = applyPasswordPolicyChange(DEFAULT_POLICY, { minLength: 20 });
+    expect(out).toEqual({ policy: { ...DEFAULT_POLICY, minLength: 20 } });
+  });
+
+  it.each([
+    ["minLength", PASSWORD_POLICY_LIMITS.minLength.min - 1],
+    ["minLength", PASSWORD_POLICY_LIMITS.minLength.max + 1],
+    ["minLength", Number.NaN],
+    ["minLength", Number.POSITIVE_INFINITY],
+    ["rotationDays", -1],
+    ["passwordHistoryCount", 1.5],
+    ["requireNumber", 1],
+    ["requireNumber", null],
+    ["__proto__", true],
+    ["constructor", 1],
+  ])("refuses %s = %p", (field, value) => {
+    const change = JSON.parse(JSON.stringify({ [field]: value })) as Record<
+      string,
+      unknown
+    >;
+    if (Number.isNaN(value) || value === Number.POSITIVE_INFINITY) change[field] = value;
+    const out = applyPasswordPolicyChange(DEFAULT_POLICY, change);
+    expect("field" in out).toBe(true);
+  });
+
+  it("accepts the bounds themselves", () => {
+    const out = applyPasswordPolicyChange(DEFAULT_POLICY, {
+      minLength: 8,
+      rotationDays: 0,
+      passwordHistoryCount: 24,
+    });
+    expect("policy" in out).toBe(true);
+  });
+});
+
+describe("getGlobalPasswordPolicy / saveGlobalPasswordPolicy", () => {
+  const use = (client: unknown) =>
+    (getSupabaseServiceClient as jest.Mock).mockReturnValue(client);
+
+  it("returns the defaults when none is stored", async () => {
+    use(new FakeDatabase({ password_policy: [] }).client());
+    await expect(getGlobalPasswordPolicy()).resolves.toEqual(DEFAULT_POLICY);
+  });
+
+  it("keeps a stored zero (no rotation, no history) rather than replacing it", async () => {
+    use(
+      new FakeDatabase({
+        password_policy: [
+          {
+            role_id: null,
+            user_id: null,
+            min_length: 10,
+            rotation_days: 0,
+            password_history_count: 0,
+            require_uppercase: false,
+            require_lowercase: true,
+            require_number: true,
+            require_special: false,
+          },
+        ],
+      }).client()
+    );
+    await expect(getGlobalPasswordPolicy()).resolves.toMatchObject({
+      minLength: 10,
+      rotationDays: 0,
+      passwordHistoryCount: 0,
+      requireUppercase: false,
+    });
+  });
+
+  it("falls back to the defaults when the policy cannot be read", async () => {
+    use({
+      from: () => ({
+        select: () => ({
+          is: () => ({
+            is: () => ({
+              maybeSingle: async () => ({ data: null, error: { message: "down" } }),
+            }),
+          }),
+        }),
+      }),
+    });
+    await expect(getGlobalPasswordPolicy()).resolves.toEqual(DEFAULT_POLICY);
+  });
+
+  it("reports a read failure when saving, writing nothing", async () => {
+    use({
+      from: () => ({
+        select: () => ({
+          is: () => ({
+            is: () => ({
+              maybeSingle: async () => ({ data: null, error: { message: "down" } }),
+            }),
+          }),
+        }),
+      }),
+    });
+    await expect(saveGlobalPasswordPolicy(DEFAULT_POLICY)).resolves.toEqual({
+      success: false,
+      error: "down",
+    });
+  });
+});

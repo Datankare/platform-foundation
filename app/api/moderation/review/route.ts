@@ -24,14 +24,40 @@ import type {
   ReviewItemSource,
   ReviewQueryOptions,
 } from "@/platform/moderation/review-types";
-import type { AccountStatus, ModerationResult } from "@/platform/moderation/types";
+import type { ModerationResult } from "@/platform/moderation/types";
 import type { ExplanationChain } from "@/platform/rag/types";
-import { apiError, errorFromResult } from "@/platform/errors";
+import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
+/** Most queue items one list request returns. */
+const MAX_LIST = 200;
 
 /** Sources an admin may submit manually here. Appeals use the appeals route. */
-const VALID_SUBMIT_SOURCES: readonly ReviewItemSource[] = ["escalation", "ban_review"];
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * What a moderator may submit by hand. ban_review items are created only by Sentinel, which
+ * records the account's real previous status; a hand-made one could name any previous status
+ * and be overturned into it (audit X-2). Appeals have their own endpoint.
+ */
+const VALID_SUBMIT_SOURCES: readonly ReviewItemSource[] = ["escalation"];
+
+/**
+ * The fields of a moderation result the review pipeline reads. A hand-submitted result that
+ * lacks them would fail later, inside the service, as an uncoded error (release review).
+ */
+function isModerationResultShape(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const m = value as Record<string, unknown>;
+  return (
+    typeof m.action === "string" &&
+    ["allow", "warn", "block", "escalate"].includes(m.action) &&
+    typeof m.reasoning === "string" &&
+    typeof m.trajectoryId === "string" &&
+    Array.isArray(m.contextFactors) &&
+    Array.isArray(m.blocklistMatches)
+  );
+}
 
 /** Translate query-string params into ReviewQueryOptions (only present keys). */
 function buildQueryOptions(params: URLSearchParams): ReviewQueryOptions {
@@ -63,7 +89,7 @@ function buildQueryOptions(params: URLSearchParams): ReviewQueryOptions {
   const limit = params.get("limit");
   if (limit) {
     const n = Number.parseInt(limit, 10);
-    if (Number.isFinite(n) && n > 0) options.limit = n;
+    if (Number.isFinite(n) && n > 0) options.limit = Math.min(n, MAX_LIST);
   }
 
   return options;
@@ -81,6 +107,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ stats });
     }
 
+    // User filters are ids: anything else is refused, not sent to the database (where a
+    // non-UUID against a uuid column is an error, not "no match").
+    for (const field of ["targetUserId", "claimedBy"] as const) {
+      const v = request.nextUrl.searchParams.get(field);
+      if (v && !USER_ID.test(v)) {
+        return apiError("request.invalid_value", {
+          params: { field, allowed: ["a user id"] },
+          request,
+        });
+      }
+    }
     const options = buildQueryOptions(request.nextUrl.searchParams);
     const items = await getQueue(options);
     return NextResponse.json({ items });
@@ -100,18 +137,14 @@ export async function POST(request: NextRequest) {
 
   const requestId = generateRequestId();
 
-  let body: {
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const body = read.body as {
     source?: ReviewItemSource;
     moderationResult?: unknown;
     targetUserId?: string;
     explanationChain?: unknown;
-    previousAccountStatus?: unknown;
   };
-  try {
-    body = await request.json();
-  } catch {
-    return apiError("request.invalid_json", { request });
-  }
 
   const { source, moderationResult, targetUserId } = body;
 
@@ -120,6 +153,15 @@ export async function POST(request: NextRequest) {
       params: { fields: ["source", "moderationResult", "targetUserId"] },
       request,
     });
+  }
+  if (typeof targetUserId !== "string" || !USER_ID.test(targetUserId)) {
+    return apiError("request.invalid_value", {
+      params: { field: "targetUserId", allowed: ["a user id"] },
+      request,
+    });
+  }
+  if (!isModerationResultShape(moderationResult)) {
+    return apiError("request.invalid_body", { request });
   }
   if (!VALID_SUBMIT_SOURCES.includes(source)) {
     return apiError("request.invalid_value", {
@@ -135,7 +177,6 @@ export async function POST(request: NextRequest) {
       targetUserId,
       requestId,
       explanationChain: body.explanationChain as ExplanationChain | undefined,
-      previousAccountStatus: body.previousAccountStatus as AccountStatus | undefined,
     });
 
     if (!result.success) {

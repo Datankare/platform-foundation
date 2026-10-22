@@ -60,6 +60,12 @@ export {
 export type { Modality, AIImageBlock, AIAudioBlock, ProviderCapabilities } from "./types";
 export { screenMultimodalInput, detectMultimodalInput } from "./screen-input";
 export {
+  screenStream,
+  OUTPUT_SCREEN_WINDOW,
+  OUTPUT_SCREEN_OVERLAP,
+} from "./screened-stream";
+export type { OutputScreen, ScreenedEvent, ScreenStreamOptions } from "./screened-stream";
+export {
   generateGoverned,
   defaultRiskPolicy,
   setGenerationRiskPolicy,

@@ -3,15 +3,14 @@
  *
  * PATCH — claim, unclaim, or resolve a single review item.
  *
- * ADR-024. RBAC (F6): gated on "can_moderate". The reviewer identity is derived
- * from the verified token (optionalAuth) — NEVER from the request body — so
+ * ADR-024. RBAC (F6): gated on "can_moderate". The reviewer identity is the
+ * verified moderator (requireAdmin) — NEVER the request body — so
  * claim/resolve ownership cannot be spoofed by a caller. P17: claim is cognition
  * (reversible), resolve is commitment (durable side effects).
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
-import { optionalAuth } from "@/platform/auth/middleware";
+import { requireAdmin } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import {
   claimItem,
@@ -20,42 +19,31 @@ import {
 } from "@/platform/moderation/review-service";
 import type { ReviewDecision } from "@/platform/moderation/review-types";
 import type { ModerationAction } from "@/platform/moderation/types";
-import { apiError, errorFromResult } from "@/platform/errors";
+import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
 
 const MODERATE_PERMISSION = "can_moderate";
-
-/**
- * The acting reviewer's id, taken from the verified token. Falls back to
- * "dev-admin" only when there is no token (ADMIN_DEV_BYPASS local flow), which
- * mirrors getAdminActorId in admin-guard.
- */
-async function resolveReviewerId(request: NextRequest): Promise<string> {
-  const { user } = await optionalAuth(request);
-  return user?.sub ?? "dev-admin";
-}
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const denied = await adminGuard(request, MODERATE_PERMISSION);
-  if (denied) return denied;
+  const verified = await requireAdmin(request, MODERATE_PERMISSION);
+  if (verified.error) return verified.error;
+  // The reviewer is the verified moderator's users.id — the id space of target_user_id — never
+  // a value from the body, and never a placeholder (audit X-8).
+  const reviewerId = verified.admin.userId;
 
   const requestId = generateRequestId();
   const { id } = await context.params;
-  const reviewerId = await resolveReviewerId(request);
 
-  let body: {
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const body = read.body as {
     action?: string;
     decision?: ReviewDecision;
     reviewerNotes?: string;
     modifiedAction?: ModerationAction;
   };
-  try {
-    body = await request.json();
-  } catch {
-    return apiError("request.invalid_json", { request });
-  }
 
   try {
     switch (body.action) {

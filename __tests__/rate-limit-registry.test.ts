@@ -47,6 +47,12 @@ describe("rate limiter (ADR-052)", () => {
       "BUDGET_STORE",
       "GUEST_USAGE_STORE",
       "SOCIAL_STORE",
+      "MODERATION_STORE",
+      "STRIKE_STORE",
+      "REVIEW_QUEUE_STORE",
+      "PROPOSAL_STORE",
+      "EFFECT_LEDGER",
+      "APPROVAL_POLICY_STORE",
     ]) {
       process.env[v] = "supabase";
     }

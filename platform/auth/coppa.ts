@@ -14,7 +14,7 @@
  */
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
 export type ParentalConsentStatus = "not_required" | "pending" | "granted" | "denied";
@@ -105,29 +105,46 @@ export async function recordAgeVerification(
       : "not_required",
   };
 
-  const { error } = await supabase.from("users").update(updateData).eq("id", userId);
+  try {
+    // Recorded before the age data takes effect; no record, no change (Adversarial Validation, 6).
+    return await audited(
+      {
+        action: "profile_updated",
+        actorId: userId,
+        targetId: userId,
+        details: {
+          field: "age_verification",
+          contentRatingLevel: evaluation.contentRatingLevel,
+          requiresParentalConsent: evaluation.requiresParentalConsent,
+        },
+      },
+      async (): Promise<{
+        success: boolean;
+        result?: AgeVerificationResult;
+        error?: string;
+      }> => {
+        const { error } = await supabase
+          .from("users")
+          .update(updateData)
+          .eq("id", userId);
 
-  if (error) {
-    logger.error("Age verification failed", {
-      userId,
-      error: error.message,
-      route: "platform/auth/coppa",
-    });
-    return { success: false, error: error.message };
+        if (error) {
+          logger.error("Age verification failed", {
+            userId,
+            error: error.message,
+            route: "platform/auth/coppa",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true, result: evaluation };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
+    throw err;
   }
-
-  await writeAuditLog({
-    action: "profile_updated",
-    actorId: userId,
-    targetId: userId,
-    details: {
-      field: "age_verification",
-      contentRatingLevel: evaluation.contentRatingLevel,
-      requiresParentalConsent: evaluation.requiresParentalConsent,
-    },
-  });
-
-  return { success: true, result: evaluation };
 }
 
 /**
@@ -145,24 +162,36 @@ export async function recordParentalConsent(
     parental_consent_email: parentEmail || null,
   };
 
-  const { error } = await supabase.from("users").update(updateData).eq("id", userId);
+  try {
+    return await audited(
+      {
+        action: status === "granted" ? "consent_granted" : "consent_denied",
+        actorId: userId,
+        targetId: userId,
+        details: { type: "parental_consent", consentStatus: status },
+      },
+      async () => {
+        const { error } = await supabase
+          .from("users")
+          .update(updateData)
+          .eq("id", userId);
 
-  if (error) {
-    logger.error("Parental consent recording failed", {
-      userId,
-      consentStatus: status,
-      error: error.message,
-      route: "platform/auth/coppa",
-    });
-    return { success: false, error: error.message };
+        if (error) {
+          logger.error("Parental consent recording failed", {
+            userId,
+            consentStatus: status,
+            error: error.message,
+            route: "platform/auth/coppa",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
+    throw err;
   }
-
-  await writeAuditLog({
-    action: "consent_granted",
-    actorId: userId,
-    targetId: userId,
-    details: { type: "parental_consent", consentStatus: status },
-  });
-
-  return { success: true };
 }

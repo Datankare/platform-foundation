@@ -40,30 +40,14 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
       if (input.remove?.length) parts.push(`remove: ${input.remove.join(", ")}`);
       return `Update permissions on "${input.role_name}" — ${parts.join("; ")}`;
     }
-    case "assign_role_to_user":
-      return `Assign role "${input.role_name}" to ${input.user_emails?.join(", ") || input.user_ids?.join(", ")}`;
     case "change_user_role":
       return `Change "${input.user_identifier}" to role "${input.new_role}"`;
-    case "bulk_change_role":
-      return `Change ${input.user_identifiers?.length || 0} users to role "${input.new_role}"`;
-    case "delete_user":
-      return `Delete user "${input.user_identifier}" (soft-delete, GDPR)`;
     case "create_entitlement_group": {
       const perms = input.permissions?.length
         ? ` with: ${input.permissions.join(", ")}`
         : "";
       return `Create entitlement "${input.display_name || input.code}"${perms}`;
     }
-    case "grant_entitlement": {
-      const expiry = input.expires_in_days
-        ? ` (expires in ${input.expires_in_days} days)`
-        : "";
-      return `Grant "${input.entitlement_code}" to ${input.user_identifiers?.length || 0} users${expiry}`;
-    }
-    case "revoke_entitlement":
-      return `Revoke "${input.entitlement_code}" from ${input.user_identifiers?.length || 0} users`;
-    case "delete_entitlement_group":
-      return `Delete entitlement group "${input.code}"`;
     case "update_password_policy": {
       const changes: string[] = [];
       if (input.min_length) changes.push(`min length: ${input.min_length}`);
@@ -95,19 +79,12 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
         : `Map capability "${input.capability}" to features: ${(input.features || []).join(", ") || "none"}`;
     case "search":
       return `Search ${input.table} table`;
-    case "search_audit":
-      return `Search audit log: "${input.filter}"`;
     default:
       return `${tool}: ${JSON.stringify(input)}`;
   }
 }
 
-const destructiveTools = new Set([
-  "delete_role",
-  "delete_user",
-  "delete_entitlement_group",
-  "revoke_entitlement",
-]);
+const destructiveTools = new Set(["delete_role"]);
 
 export default function ActionConfirmPanel({
   plan,
