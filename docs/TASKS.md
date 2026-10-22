@@ -2935,6 +2935,31 @@ now inherited, with the platform's `auth-routes` test — one exclusion naming a
 scan, the synced `.gitleaksignore` could not cover a Playform commit: the list names commits, so it is a
 consumer seam too. SETUP_AND_INTEGRATION now lists every consumer seam.
 
+### TASK-137 — Anyone with the public key could reset or exhaust an agent's budget
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-137                                                                 |
+| **Type**     | Security — database privilege                                            |
+| **Severity** | High — defeats the governed AI cost cap, or stops Guardian (fail-closed) |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7R                                                       |
+| **Status**   | Fixed on develop (migration 040); applied to each database by hand       |
+| **Logged**   | 2026-10-21                                                               |
+
+**What:** `agent_budget_consume()` runs as its owner (`SECURITY DEFINER`, so it bypasses row-level
+security on `agent_budgets`) and was executable by `anon` and `authenticated` — the database's default
+grant, never revoked. Through the REST API, anyone holding the project's public key could call it: a
+negative delta resets an agent's daily spend and defeats the governed cap (ADR-048); a large positive one
+exhausts the budget, and Guardian, which fails closed, then refuses all content. Found by the Sprint 7R
+tenancy survey. The platform calls it only with the service role.
+
+**Fixed (migration 040):** execute revoked from `public`, `anon` and `authenticated`, granted to
+`service_role` (the pattern of 037 and 039); the function refuses negative or non-finite deltas. The
+migration replay now fails on any function that writes, runs as its owner and is executable by `anon` or
+`authenticated`, so the class cannot return — verified to fail before 040 and pass after, on the
+platform's and Playform's migration sets.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:

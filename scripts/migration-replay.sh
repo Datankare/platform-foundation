@@ -67,6 +67,16 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tables without row-level security: %', missing; END IF;
+  -- No function that writes and runs as its owner (SECURITY DEFINER) is executable by anon or
+  -- authenticated: it would bypass row-level security for anyone holding the public key (TASK-137).
+  SELECT string_agg(p.proname, ', ') INTO missing FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef AND p.provolatile = 'v'
+      AND (has_function_privilege('anon', p.oid, 'EXECUTE')
+        OR has_function_privilege('authenticated', p.oid, 'EXECUTE'));
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'owner-rights functions that anon or authenticated can execute: %', missing;
+  END IF;
   -- Governance seed is present.
   IF NOT EXISTS (SELECT 1 FROM public.roles WHERE name = 'super_admin') THEN
     RAISE EXCEPTION 'seed missing: super_admin role';
