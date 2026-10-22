@@ -29,7 +29,9 @@ const UNENCODED = new RegExp(
 /** A string filter built with interpolation. */
 const STRING_FILTER = /\.(?:or|filter)\(\s*`[^`]*\$\{/g;
 
-const TEMPLATE = /`(?:\\[\s\S]|\$\{[^}]*\}|[^`\\])*`/g;
+// The alternatives are disjoint (a `$` is either the start of `${…}` or a lone `$`), so the match
+// is linear — no catastrophic backtracking on a long template (CodeQL js/redos).
+const TEMPLATE = /`(?:\\[\s\S]|\$\{[^}]*\}|\$(?!\{)|[^`\\$])*`/g;
 
 interface Hit {
   readonly file: string;

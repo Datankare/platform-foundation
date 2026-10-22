@@ -12,6 +12,9 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { join, relative } from "path";
 
 /** Modules that decide who may do what. Tests use them as they are. */
+/** Escape every regular-expression metacharacter (CodeQL js/incomplete-sanitization). */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+
 const GUARDS = ["@/platform/auth/admin-guard", "@/platform/auth/role-governance"];
 
 const ROOT = process.cwd();
@@ -45,8 +48,8 @@ describe("no stubbed guards", () => {
   it.each(GUARDS)("no test mocks or spies on %s", (guard) => {
     // By its alias or by any relative path ending in the module's name, and with jest.spyOn on
     // the module object (release review: a relative path or a spy evaded the check).
-    const moduleName = guard.split("/").pop() as string;
-    const path = `(?:${guard.replace(/[/.-]/g, "\\$&")}|(?:\\.{1,2}/)+(?:[\\w.-]+/)*${moduleName})`;
+    const moduleName = escapeRegExp(guard.split("/").pop() as string);
+    const path = `(?:${escapeRegExp(guard)}|(?:\\.{1,2}/)+(?:[\\w.-]+/)*${moduleName})`;
     const mock = new RegExp(
       `jest\\.(?:mock|doMock|unstable_mockModule|requireMock)\\(\\s*["'\`]${path}["'\`]`
     );
