@@ -73,27 +73,6 @@ export const rolesSchemas: Record<string, AdminTool[]> = {
         required: ["role_name"],
       },
     },
-    {
-      name: "assign_role_to_user",
-      description: "Assign a role to one or more users.",
-      input_schema: {
-        type: "object",
-        properties: {
-          role_name: { type: "string", description: "Role to assign" },
-          user_ids: {
-            type: "array",
-            items: { type: "string" },
-            description: "User IDs to assign the role to",
-          },
-          user_emails: {
-            type: "array",
-            items: { type: "string" },
-            description: "User emails to assign the role to",
-          },
-        },
-        required: ["role_name"],
-      },
-    },
   ],
   users: [
     {
@@ -109,36 +88,6 @@ export const rolesSchemas: Record<string, AdminTool[]> = {
           new_role: { type: "string", description: "New role name" },
         },
         required: ["user_identifier", "new_role"],
-      },
-    },
-    {
-      name: "bulk_change_role",
-      description: "Change role for multiple users at once.",
-      input_schema: {
-        type: "object",
-        properties: {
-          user_identifiers: {
-            type: "array",
-            items: { type: "string" },
-            description: "User emails or IDs",
-          },
-          new_role: { type: "string", description: "New role name" },
-        },
-        required: ["user_identifiers", "new_role"],
-      },
-    },
-    {
-      name: "delete_user",
-      description: "Soft-delete a user (GDPR). Anonymizes PII, preserves audit trail.",
-      input_schema: {
-        type: "object",
-        properties: {
-          user_identifier: {
-            type: "string",
-            description: "User email or ID",
-          },
-        },
-        required: ["user_identifier"],
       },
     },
   ],

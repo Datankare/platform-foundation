@@ -10,7 +10,7 @@ import {
   getCognitoSettings,
   getSsoProviders,
   getSupabaseUrl,
-  isHostedDeployment,
+  allowsHarnessSwitches,
   resolveSetting,
   type EnvSource,
 } from "@/platform/providers/environment-contract";
@@ -22,7 +22,7 @@ const GUEST_SECRET = "a".repeat(64);
 function valid(extra: Record<string, string | undefined> = {}): EnvSource {
   return {
     NODE_ENV: "production",
-    VERCEL: "1",
+    DEPLOYMENT_HOST: "vercel",
     AUTH_PROVIDER: "cognito",
     NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_AbC123",
     NEXT_PUBLIC_COGNITO_CLIENT_ID: "abc123def456",
@@ -74,39 +74,71 @@ describe("D1 — no test-double auth in production", () => {
   it("the store opt-out does not extend to auth", () => {
     const v = checkEnvironmentContract({
       NODE_ENV: "production",
+      DEPLOYMENT_HOST: "ci",
       E2E_IN_MEMORY_STORES: "true",
     });
     expect(v.join("\n")).toMatch(/AUTH_PROVIDER/);
   });
 
-  it("an E2E harness (not hosted) may opt in with E2E_TEST_DOUBLE_AUTH=true", () => {
-    expect(
-      checkEnvironmentContract({
-        NODE_ENV: "production",
-        E2E_IN_MEMORY_STORES: "true",
-        E2E_TEST_DOUBLE_AUTH: "true",
-      })
-    ).toEqual([]);
-  });
+  it.each(["local", "ci"])(
+    "an E2E harness may opt in with E2E_TEST_DOUBLE_AUTH=true where DEPLOYMENT_HOST=%s",
+    (host) => {
+      expect(
+        checkEnvironmentContract({
+          NODE_ENV: "production",
+          DEPLOYMENT_HOST: host,
+          E2E_IN_MEMORY_STORES: "true",
+          E2E_TEST_DOUBLE_AUTH: "true",
+        })
+      ).toEqual([]);
+    }
+  );
 
-  it("the auth opt-out is refused on a hosted deployment", () => {
+  it("the auth opt-out is refused on a deployment", () => {
     const v = checkEnvironmentContract(
       valid({ AUTH_PROVIDER: "mock", E2E_TEST_DOUBLE_AUTH: "true" })
     );
     expect(v).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^E2E_TEST_DOUBLE_AUTH is set on a hosted deployment/),
+        expect.stringMatching(/^E2E_TEST_DOUBLE_AUTH is set but DEPLOYMENT_HOST is not/),
         expect.stringMatching(/mock provider is a test double/),
       ])
     );
   });
 
+  it.each([
+    ["DEPLOYMENT_HOST unset — a deployment that forgot the marker", undefined],
+    ["a container", "container"],
+    ["Vercel", "vercel"],
+    ["AWS", "aws"],
+  ])("refuses the harness switches with %s (TASK-140)", (_label, host) => {
+    const v = checkEnvironmentContract({
+      NODE_ENV: "production",
+      DEPLOYMENT_HOST: host,
+      E2E_IN_MEMORY_STORES: "true",
+      E2E_TEST_DOUBLE_AUTH: "true",
+    });
+    expect(v).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^E2E_IN_MEMORY_STORES is set but DEPLOYMENT_HOST/),
+        expect.stringMatching(/^E2E_TEST_DOUBLE_AUTH is set but DEPLOYMENT_HOST/),
+        expect.stringMatching(/mock provider is a test double/),
+      ])
+    );
+  });
+
+  it("refuses a malformed DEPLOYMENT_HOST", () => {
+    expect(checkEnvironmentContract(valid({ DEPLOYMENT_HOST: "Vercel Prod" }))).toEqual([
+      expect.stringMatching(/^DEPLOYMENT_HOST has the wrong shape/),
+    ]);
+  });
+
   it.each(["E2E_IN_MEMORY_STORES", "E2E_TEST_DOUBLE_AUTH", "ADMIN_DEV_BYPASS"])(
-    "refuses harness switch %s on a hosted deployment",
+    "refuses harness switch %s on a deployment",
     (name) => {
       const v = checkEnvironmentContract(valid({ [name]: "true" }));
       expect(v).toEqual([
-        `${name} is set on a hosted deployment — it is for local/test only`,
+        `${name} is set but DEPLOYMENT_HOST is not "local" or "ci" — it is for local and CI runs only`,
       ]);
     }
   );
@@ -261,7 +293,11 @@ describe("required settings", () => {
 
   it("the harness mock needs no guest secret", () => {
     expect(
-      checkEnvironmentContract({ NODE_ENV: "production", E2E_TEST_DOUBLE_AUTH: "true" })
+      checkEnvironmentContract({
+        NODE_ENV: "production",
+        DEPLOYMENT_HOST: "ci",
+        E2E_TEST_DOUBLE_AUTH: "true",
+      })
     ).toEqual([]);
   });
 });
@@ -298,8 +334,12 @@ describe("resolvers", () => {
   it("resolveSetting and helpers default to process.env", () => {
     expect(() => resolveSetting("SUPABASE_URL")).not.toThrow();
     expect(() => getCognitoSettings()).not.toThrow();
-    expect(isHostedDeployment({ VERCEL: "1" })).toBe(true);
-    expect(isHostedDeployment({})).toBe(false);
+    expect(allowsHarnessSwitches({ DEPLOYMENT_HOST: "ci" })).toBe(true);
+    expect(allowsHarnessSwitches({ DEPLOYMENT_HOST: "local" })).toBe(true);
+    expect(allowsHarnessSwitches({ DEPLOYMENT_HOST: "vercel" })).toBe(false);
+    expect(allowsHarnessSwitches({ VERCEL: "1" })).toBe(false);
+    expect(allowsHarnessSwitches({})).toBe(false);
+    expect(() => allowsHarnessSwitches()).not.toThrow();
   });
 });
 

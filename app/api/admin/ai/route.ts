@@ -9,23 +9,40 @@
  * through natural language → AI plan → human confirm → execute.
  *
  * Phase 2: refactored to use platform/ai orchestration layer (ADR-015).
+ *
+ * The planner is offered only the tools the verified admin may run, and reads a panel's data
+ * only with that panel's page permission (TASK-145). The execute route checks every action again.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { requireAdmin } from "@/platform/auth/admin-guard";
+import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
+import { PANEL_CONTEXT_PERMISSIONS, toolPermission } from "./tool-permissions";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getOrchestrator } from "@/platform/ai";
 import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS, type AdminTool } from "./tool-schemas";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
-import { apiError } from "@/platform/errors";
+import { apiError, readJsonObject } from "@/platform/errors";
+import { enforceDailyPaidQuota } from "@/platform/rate-limit";
 
-function getToolsForPanel(panel: string): AdminTool[] {
-  return [...SHARED_TOOLS, ...(PANEL_TOOL_SCHEMAS[panel] || [])];
+/** The longest command an admin may send to the planner. */
+const MAX_PROMPT_CHARS = 4000;
+
+function getToolsForPanel(panel: string, admin: VerifiedAdmin): AdminTool[] {
+  const panelTools = Object.prototype.hasOwnProperty.call(PANEL_TOOL_SCHEMAS, panel)
+    ? PANEL_TOOL_SCHEMAS[panel]
+    : [];
+  return [...SHARED_TOOLS, ...panelTools].filter((tool) => {
+    const permission = toolPermission(tool.name);
+    return permission !== undefined && holds(admin, permission);
+  });
 }
 
-async function getContextForPanel(panel: string): Promise<string> {
+async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<string> {
+  const permission = PANEL_CONTEXT_PERMISSIONS[panel];
+  if (!permission || !holds(admin, permission)) return "";
   const supabase = getSupabaseServiceClient();
 
   if (panel === "roles") {
@@ -74,21 +91,37 @@ async function getContextForPanel(panel: string): Promise<string> {
 }
 
 export async function POST(request: NextRequest) {
-  const denied = await adminGuard(request, "can_access_admin");
-  if (denied) return denied;
+  const verified = await requireAdmin(request, "can_access_admin");
+  if (verified.error) return verified.error;
+  const { admin } = verified;
 
   const requestId = generateRequestId();
-  const { prompt, panel } = await request.json();
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const body = read.body as { prompt?: unknown; panel?: unknown };
+  const { prompt, panel } = body ?? {};
 
-  if (!prompt || !panel) {
+  if (typeof prompt !== "string" || !prompt || typeof panel !== "string" || !panel) {
     return apiError("request.missing_fields", {
       params: { fields: ["prompt", "panel"] },
       request,
     });
   }
 
-  const tools = getToolsForPanel(panel);
-  const context = await getContextForPanel(panel);
+  // A bounded request: the plan call is paid for per token.
+  if (prompt.length > MAX_PROMPT_CHARS) {
+    return apiError("request.text_too_long", {
+      params: { max: MAX_PROMPT_CHARS },
+      request,
+    });
+  }
+
+  // The plan call is paid: it counts against the admin's daily paid-request quota (audit X-12).
+  const quota = await enforceDailyPaidQuota(request, admin.userId);
+  if (quota) return quota;
+
+  const tools = getToolsForPanel(panel, admin);
+  const context = await getContextForPanel(panel, admin);
   const config = getPromptConfig("admin-command-bar");
 
   try {

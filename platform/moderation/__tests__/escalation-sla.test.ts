@@ -9,11 +9,12 @@
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: jest.fn(async (_key: string, dflt: unknown) => dflt),
 }));
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: jest.fn(async () => {}),
-}));
+// The real audit module, writing to an in-memory database: each reaper change is recorded first.
+jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
 
 import { getConfig } from "@/platform/auth/platform-config";
+import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { FakeDatabase } from "@/__tests__/helpers/fake-database";
 import { InMemoryReviewQueueStore, setReviewQueueStore } from "../review-store";
 import { submitForReview, reapOverdueEscalations } from "../review-service";
 import type { ModerationResult } from "../types";
@@ -44,7 +45,10 @@ function makeModerationResult(
 }
 
 let store: InMemoryReviewQueueStore;
+let db: FakeDatabase;
 beforeEach(() => {
+  db = new FakeDatabase({ audit_log: [] });
+  (getSupabaseServiceClient as jest.Mock).mockReturnValue(db.client());
   store = new InMemoryReviewQueueStore();
   setReviewQueueStore(store);
   mockGetConfig.mockImplementation(async (_key: string, dflt: unknown) => dflt);
@@ -52,7 +56,12 @@ beforeEach(() => {
   mockGetConfig.mockImplementation(async (_key: string, dflt: unknown) => dflt);
 });
 
-async function submit(source: ReviewItemSource = "escalation", user = "u1") {
+/** A distinct user id per name, as the audit log requires real ids. */
+const uid = (name: string) =>
+  `00000000-0000-4000-8000-${Buffer.from(name).toString("hex").padStart(12, "0").slice(-12)}`;
+
+async function submit(source: ReviewItemSource = "escalation", name = "u1") {
+  const user = uid(name);
   return submitForReview({
     source,
     moderationResult: makeModerationResult(),
@@ -128,5 +137,27 @@ describe("ADR-041 escalation SLA reaper — escalate_higher remedial", () => {
     expect(second.escalatedHigher).toBe(0);
     const items = await store.query({});
     expect(items[0].priority).toBe("critical");
+  });
+});
+
+describe("ADR-041 reaper — recorded first (audit X-8)", () => {
+  it("records each block under the reaper's name before making it", async () => {
+    await submit();
+    await reapOverdueEscalations(WAY_LATER);
+    expect(db.rows("audit_log")[0]).toMatchObject({
+      actor_id: null,
+      details: expect.objectContaining({
+        agent: "escalation-reaper",
+        type: "escalation_sla_block",
+      }),
+    });
+  });
+
+  it("leaves an item for the next sweep when its record cannot be written", async () => {
+    await submit();
+    db.failWrites("audit_log");
+    const res = await reapOverdueEscalations(WAY_LATER);
+    expect(res.blocked).toBe(0);
+    expect((await store.query({}))[0].status).toBe("pending");
   });
 });

@@ -5,13 +5,14 @@
  * agent.trusted_agents config store. No specific agent ids or capability names are baked in —
  * a handler mutates whatever the store contains. The store is a json_array of
  * [agentId, {owner, scopes[], status, maxTokenTtl}] pairs; handlers read it, apply one change,
- * and write it back through the governed config path (history + two-person approval at the
- * config layer for the safety tier).
+ * and write it back through writeGovernedConfig — the key's tier permission, validation,
+ * history, two-person approval and dual control, the same as the config page (audit X-7).
  */
 
-import { getConfig, setConfig } from "@/platform/auth/platform-config";
-import { writeAuditLog } from "@/platform/auth/audit";
-import type { ActionResult } from "./shared";
+import { getConfig } from "@/platform/auth/platform-config";
+import { writeGovernedConfig } from "@/platform/admin/governed-config";
+import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import { fromGovernedConfig, type ActionResult } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -32,32 +33,21 @@ async function readRegistry(): Promise<[string, TrustedAgentRecord][]> {
 
 async function writeRegistry(
   pairs: [string, TrustedAgentRecord][],
-  actorId: string,
+  admin: VerifiedAdmin,
   summary: string
 ): Promise<ActionResult> {
-  try {
-    await setConfig(
-      TRUSTED_AGENTS_KEY,
-      pairs,
-      actorId,
-      "Trusted-agent registry (governed via admin)",
-      "agent"
-    );
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-  await writeAuditLog({
-    action: "admin_action",
-    actorId,
-    details: { type: "agent_registry", prompt_action: true, summary },
+  const outcome = await writeGovernedConfig(admin, {
+    key: TRUSTED_AGENTS_KEY,
+    value: pairs,
+    changeComment: `Command bar: ${summary}`,
   });
-  return { success: true, result: summary };
+  return fromGovernedConfig(outcome, TRUSTED_AGENTS_KEY, summary);
 }
 
 /** Register a new trusted agent, or fail if it already exists. */
 export async function handleRegisterAgent(
   input: Record<string, any>,
-  actorId: string
+  admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const agentId: string = input.agent_id;
   if (!agentId) return { success: false, error: "agent_id is required" };
@@ -72,13 +62,13 @@ export async function handleRegisterAgent(
     maxTokenTtl: typeof input.max_token_ttl === "number" ? input.max_token_ttl : 300,
   };
   pairs.push([agentId, record]);
-  return writeRegistry(pairs, actorId, `Registered agent ${agentId}`);
+  return writeRegistry(pairs, admin, `Registered agent ${agentId}`);
 }
 
 /** Suspend or reactivate an agent. */
 export async function handleSuspendAgent(
   input: Record<string, any>,
-  actorId: string
+  admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const agentId: string = input.agent_id;
   const reactivate: boolean = input.reactivate === true;
@@ -88,7 +78,7 @@ export async function handleSuspendAgent(
   entry[1].status = reactivate ? "active" : "suspended";
   return writeRegistry(
     pairs,
-    actorId,
+    admin,
     `${reactivate ? "Reactivated" : "Suspended"} agent ${agentId}`
   );
 }
@@ -96,7 +86,7 @@ export async function handleSuspendAgent(
 /** Replace an agent's scope set. */
 export async function handleSetAgentScope(
   input: Record<string, any>,
-  actorId: string
+  admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const agentId: string = input.agent_id;
   const scopes: string[] = Array.isArray(input.scopes) ? input.scopes : [];
@@ -104,17 +94,13 @@ export async function handleSetAgentScope(
   const entry = pairs.find(([id]) => id === agentId);
   if (!entry) return { success: false, error: `Agent "${agentId}" is not registered` };
   entry[1].scopes = scopes;
-  return writeRegistry(
-    pairs,
-    actorId,
-    `Set scope of ${agentId} to [${scopes.join(", ")}]`
-  );
+  return writeRegistry(pairs, admin, `Set scope of ${agentId} to [${scopes.join(", ")}]`);
 }
 
 /** Set an agent's per-agent token-TTL ceiling (seconds). */
 export async function handleSetAgentTtl(
   input: Record<string, any>,
-  actorId: string
+  admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const agentId: string = input.agent_id;
   const ttl: number = input.max_token_ttl;
@@ -128,5 +114,5 @@ export async function handleSetAgentTtl(
   const entry = pairs.find(([id]) => id === agentId);
   if (!entry) return { success: false, error: `Agent "${agentId}" is not registered` };
   entry[1].maxTokenTtl = ttl;
-  return writeRegistry(pairs, actorId, `Set token ceiling of ${agentId} to ${ttl}s`);
+  return writeRegistry(pairs, admin, `Set token ceiling of ${agentId} to ${ttl}s`);
 }

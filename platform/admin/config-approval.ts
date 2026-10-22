@@ -24,7 +24,7 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
 import type { ErrorCode } from "@/platform/errors/registry";
-import { getConfig } from "@/platform/auth/platform-config";
+import { getConfigOrThrow } from "@/platform/auth/platform-config";
 import type {
   ConfigApprovalRecord,
   ConfigApprovalStatus,
@@ -91,7 +91,10 @@ function parseApprovalStatus(raw: string): ConfigApprovalStatus {
  */
 export async function isApprovalRequired(): Promise<boolean> {
   try {
-    return await getConfig<boolean>("config.require_two_person_approval", false);
+    // getConfigOrThrow, not getConfig: a default of false made a missing or unreadable flag
+    // switch two-person approval off — the opposite of what this function promises.
+    const value = await getConfigOrThrow<unknown>("config.require_two_person_approval");
+    return value !== false;
   } catch {
     // P11: fail-closed — require approval if we can't check
     logger.warn("Could not check approval requirement — failing closed", {
@@ -146,8 +149,10 @@ export async function requestApproval(params: {
       .from("config_pending_approvals" as never)
       .insert({
         config_key: params.configKey,
-        current_value: JSON.stringify(params.currentValue),
-        proposed_value: JSON.stringify(params.proposedValue),
+        // jsonb columns take the value itself: a JSON.stringify'd value is stored as a JSON
+        // string, and an approved number would be applied as "5" (release review, Sprint 7X).
+        current_value: params.currentValue ?? null,
+        proposed_value: params.proposedValue ?? null,
         requested_by: params.requestedBy,
         change_comment: params.changeComment,
         impact_summary: params.impactSummary ?? null,
@@ -185,6 +190,7 @@ export interface ConfigApprovalResult {
   record?: ConfigApprovalRecord;
   error?: string;
   errorCode?: ErrorCode;
+  errorParams?: Record<string, string | number>;
 }
 
 /**
@@ -198,6 +204,55 @@ export async function approveChange(
   reviewComment: string
 ): Promise<ConfigApprovalResult> {
   return reviewChange(approvalId, reviewerId, reviewComment, "approved");
+}
+
+/**
+ * Approve a pending change and apply it, as one outcome (release review, Sprint 7X): if the
+ * change cannot be applied, the approval is reopened (back to pending, reviewer cleared), so an
+ * approved change is never left unapplied and unable to be approved again. The reviewer is
+ * checked against the key's own tier by the caller.
+ */
+export async function approveAndApply(
+  approvalId: string,
+  reviewerId: string,
+  reviewComment: string,
+  apply: (record: ConfigApprovalRecord) => Promise<{ success: boolean; error?: string }>
+): Promise<ConfigApprovalResult & { applyError?: string }> {
+  const approved = await approveChange(approvalId, reviewerId, reviewComment);
+  if (!approved.success || !approved.record) return approved;
+  const applied = await apply(approved.record);
+  if (applied.success) return approved;
+
+  const supabase = getSupabaseServiceClient();
+  const { error } = await (supabase
+    .from("config_pending_approvals" as never)
+    .update({
+      status: "pending",
+      reviewed_by: null,
+      review_comment: null,
+      reviewed_at: null,
+    } as never)
+    .eq("id", approvalId)
+    .eq("status", "approved") as unknown as Promise<{
+    error: { message: string } | null;
+  }>);
+  if (error) {
+    logger.error(
+      "Approved change could not be applied, and the approval could not be reopened",
+      {
+        approvalId,
+        error: error.message,
+        route: "platform/admin/config-approval",
+      }
+    );
+  }
+  return {
+    success: false,
+    error: `Approved but not applied: ${applied.error ?? "unknown error"}`,
+    errorCode: "service.unavailable",
+    errorParams: { service: "config" },
+    applyError: applied.error,
+  };
 }
 
 /**
@@ -427,9 +482,9 @@ export async function countPendingApprovals(): Promise<number> {
 // Gotchas (L17)
 // ---------------------------------------------------------------------------
 //
-// 1. isApprovalRequired() reads from platform_config via getConfig(), which
-//    has a 60s cache. HOWEVER: both setConfig() and setConfigWithHistory()
-//    call cache.delete(key) on write, so changes through the platform's own
+// 1. isApprovalRequired() reads from platform_config via getConfigOrThrow(), which
+//    has a 60s cache. HOWEVER: setConfigWithHistory()
+//    calls cache.delete(key) on write, so changes through the platform's own
 //    API take effect immediately. The 60s window only applies to direct DB
 //    changes (e.g., Supabase dashboard, migration scripts). If immediate
 //    effect is needed after a direct DB change, call clearConfigCache().

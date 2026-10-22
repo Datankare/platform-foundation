@@ -9,8 +9,6 @@
  * max-lines-per-function (300).
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 // ── Mocks ───────────────────────────────────────────────────────────────
 
 jest.mock("@/lib/logger", () => ({
@@ -21,10 +19,6 @@ jest.mock("@/lib/logger", () => ({
     debug: jest.fn(),
   },
   generateRequestId: jest.fn(() => "test-request-id"),
-}));
-
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("@/platform/auth/platform-config", () => ({
@@ -38,12 +32,22 @@ jest.mock("@/platform/auth/platform-config", () => ({
   }),
 }));
 
+// An in-memory database (real filters, real audit module): every target account starts banned.
+
+const { FakeDatabase: MockFakeDatabase } = require("@/__tests__/helpers/fake-database");
+const mockAccounts = () =>
+  new MockFakeDatabase({
+    users: [
+      "00000000-0000-4000-8000-00000000b001",
+      "00000000-0000-4000-8000-00000000b002",
+      "00000000-0000-4000-8000-00000000b003",
+      "00000000-0000-4000-8000-00000000b004",
+    ].map((id) => ({ id, account_status: "banned" })),
+    audit_log: [],
+  });
+let mockDb = mockAccounts();
 const mockSupabase = {
-  from: jest.fn().mockReturnValue({
-    update: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    then: (resolve: any) => resolve({ error: null }),
-  }),
+  from: jest.fn((table: string) => mockDb.client().from(table)),
 };
 
 jest.mock("@/lib/supabase/server", () => ({
@@ -98,6 +102,7 @@ beforeEach(() => {
   const strikeStore = new InMemoryStrikeStore();
   setStrikeStore(strikeStore);
   jest.clearAllMocks();
+  mockDb = mockAccounts();
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -109,7 +114,7 @@ describe("submitForReview", () => {
     const result = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 
@@ -123,7 +128,7 @@ describe("submitForReview", () => {
     const result = await submitForReview({
       source: "ban_review",
       moderationResult: makeModerationResult({ action: "block" }),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 
@@ -150,7 +155,7 @@ describe("submitForReview", () => {
     const result = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
       explanationChain: chain,
     });
@@ -172,7 +177,7 @@ describe("submitAppeal", () => {
       {
         originalDecisionId: "traj-orig-1",
         moderationResult: makeModerationResult({ action: "block" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "I was translating a historical document about conflict.",
         requestId: "req-1",
       },
@@ -191,7 +196,7 @@ describe("submitAppeal", () => {
       {
         originalDecisionId: "traj-orig-1",
         moderationResult: makeModerationResult({ action: "allow" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "This should not be allowed to be appealed.",
         requestId: "req-1",
       },
@@ -208,7 +213,7 @@ describe("submitAppeal", () => {
       {
         originalDecisionId: "traj-orig-1",
         moderationResult: makeModerationResult({ action: "block" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "unfair",
         requestId: "req-1",
       },
@@ -228,7 +233,7 @@ describe("submitAppeal", () => {
       {
         originalDecisionId: "traj-orig-1",
         moderationResult: makeModerationResult({ action: "block" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "I was translating a historical document about conflict.",
         requestId: "req-1",
       },
@@ -245,7 +250,7 @@ describe("submitAppeal", () => {
       {
         originalDecisionId: "traj-orig-dup",
         moderationResult: makeModerationResult({ action: "block" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "First appeal for this decision with enough text.",
         requestId: "req-1",
       },
@@ -256,7 +261,7 @@ describe("submitAppeal", () => {
       {
         originalDecisionId: "traj-orig-dup",
         moderationResult: makeModerationResult({ action: "block" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "Second appeal for the same decision should fail.",
         requestId: "req-2",
       },
@@ -278,15 +283,18 @@ describe("claimItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 
-    const result = await claimItem(submitted.item!.id, "admin-1");
+    const result = await claimItem(
+      submitted.item!.id,
+      "00000000-0000-4000-8000-00000000a001"
+    );
 
     expect(result.success).toBe(true);
     expect(result.item!.status).toBe("claimed");
-    expect(result.item!.claimedBy).toBe("admin-1");
+    expect(result.item!.claimedBy).toBe("00000000-0000-4000-8000-00000000a001");
     expect(result.item!.claimedAt).toBeDefined();
   });
 
@@ -294,12 +302,15 @@ describe("claimItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
-    const result = await claimItem(submitted.item!.id, "admin-2");
+    const result = await claimItem(
+      submitted.item!.id,
+      "00000000-0000-4000-8000-00000000a002"
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not pending");
@@ -307,7 +318,7 @@ describe("claimItem", () => {
   });
 
   it("rejects claim on nonexistent item", async () => {
-    const result = await claimItem("nonexistent", "admin-1");
+    const result = await claimItem("nonexistent", "00000000-0000-4000-8000-00000000a001");
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not found");
@@ -320,12 +331,15 @@ describe("unclaimItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
-    const result = await unclaimItem(submitted.item!.id, "admin-1");
+    const result = await unclaimItem(
+      submitted.item!.id,
+      "00000000-0000-4000-8000-00000000a001"
+    );
 
     expect(result.success).toBe(true);
     expect(result.item!.status).toBe("pending");
@@ -336,12 +350,15 @@ describe("unclaimItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
-    const result = await unclaimItem(submitted.item!.id, "admin-2");
+    const result = await unclaimItem(
+      submitted.item!.id,
+      "00000000-0000-4000-8000-00000000a002"
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("claiming reviewer");
@@ -358,14 +375,14 @@ describe("resolveItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "uphold",
       reviewerNotes: "Classifier was correct — content violates policy.",
     });
@@ -373,7 +390,7 @@ describe("resolveItem", () => {
     expect(result.success).toBe(true);
     expect(result.item!.status).toBe("resolved");
     expect(result.item!.decision).toBe("uphold");
-    expect(result.item!.resolvedBy).toBe("admin-1");
+    expect(result.item!.resolvedBy).toBe("00000000-0000-4000-8000-00000000a001");
     expect(result.item!.resolvedAt).toBeDefined();
   });
 
@@ -381,14 +398,14 @@ describe("resolveItem", () => {
     const submitted = await submitForReview({
       source: "ban_review",
       moderationResult: makeModerationResult({ action: "block" }),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "overturn",
       reviewerNotes: "False positive — user was translating historical text.",
     });
@@ -402,14 +419,14 @@ describe("resolveItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
     const noAction = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "modify",
       reviewerNotes: "Severity should be lowered.",
     });
@@ -423,14 +440,14 @@ describe("resolveItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "modify",
       reviewerNotes: "Downgraded to warning.",
       modifiedAction: "warn",
@@ -445,14 +462,14 @@ describe("resolveItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-2",
+      reviewerId: "00000000-0000-4000-8000-00000000a002",
       decision: "uphold",
       reviewerNotes: "Wrong reviewer.",
     });
@@ -466,13 +483,13 @@ describe("resolveItem", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "uphold",
       reviewerNotes: "Not claimed.",
     });
@@ -483,28 +500,25 @@ describe("resolveItem", () => {
   });
 
   it("writes audit log on resolution", async () => {
-    const { writeAuditLog } = jest.requireMock("@/platform/auth/audit");
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
     await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "uphold",
       reviewerNotes: "Confirmed violation.",
     });
 
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "admin_action",
-        actorId: "admin-1",
-        targetId: "user-1",
-      })
-    );
+    expect(mockDb.rows("audit_log")[0]).toMatchObject({
+      action: "admin_action",
+      actor_id: "00000000-0000-4000-8000-00000000a001",
+      target_id: "00000000-0000-4000-8000-00000000b001",
+    });
   });
 });
 
@@ -517,14 +531,14 @@ describe("releaseExpiredClaims", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 
     const oldTime = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
     await reviewStore.update(submitted.item!.id, {
       status: "claimed",
-      claimedBy: "admin-1",
+      claimedBy: "00000000-0000-4000-8000-00000000a001",
       claimedAt: oldTime,
     });
 
@@ -539,7 +553,7 @@ describe("getQueue", () => {
     await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 
@@ -554,7 +568,7 @@ describe("getQueueStats", () => {
     await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 

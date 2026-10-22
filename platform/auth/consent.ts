@@ -9,7 +9,7 @@
  */
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
 export interface ConsentRecord {
@@ -34,36 +34,46 @@ export async function grantConsent(params: {
 }): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseServiceClient();
 
-  const { error } = await supabase.from("consent_records").insert({
-    user_id: params.userId,
-    consent_type: params.consentType,
-    consent_version: params.consentVersion,
-    granted: true,
-    ip_address: params.ipAddress || null,
-    user_agent: params.userAgent || null,
-  });
+  try {
+    // Recorded before the consent takes effect; no record, no consent (Adversarial Validation, 6).
+    return await audited(
+      {
+        action: "consent_granted",
+        actorId: params.userId,
+        targetId: params.userId,
+        details: {
+          consentType: params.consentType,
+          consentVersion: params.consentVersion,
+        },
+      },
+      async () => {
+        const { error } = await supabase.from("consent_records").insert({
+          user_id: params.userId,
+          consent_type: params.consentType,
+          consent_version: params.consentVersion,
+          granted: true,
+          ip_address: params.ipAddress || null,
+          user_agent: params.userAgent || null,
+        });
 
-  if (error) {
-    logger.error("Consent grant failed", {
-      userId: params.userId,
-      consentType: params.consentType,
-      error: error.message,
-      route: "platform/auth/consent",
-    });
-    return { success: false, error: error.message };
+        if (error) {
+          logger.error("Consent grant failed", {
+            userId: params.userId,
+            consentType: params.consentType,
+            error: error.message,
+            route: "platform/auth/consent",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
+    throw err;
   }
-
-  await writeAuditLog({
-    action: "consent_granted",
-    actorId: params.userId,
-    targetId: params.userId,
-    details: {
-      consentType: params.consentType,
-      consentVersion: params.consentVersion,
-    },
-  });
-
-  return { success: true };
 }
 
 /**
@@ -76,31 +86,40 @@ export async function revokeConsent(params: {
 }): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseServiceClient();
 
-  const { error } = await supabase
-    .from("consent_records")
-    .update({ revoked_at: new Date().toISOString() })
-    .eq("user_id", params.userId)
-    .eq("consent_type", params.consentType)
-    .is("revoked_at", null);
+  try {
+    return await audited(
+      {
+        action: "consent_revoked",
+        actorId: params.userId,
+        targetId: params.userId,
+        details: { consentType: params.consentType },
+      },
+      async () => {
+        const { error } = await supabase
+          .from("consent_records")
+          .update({ revoked_at: new Date().toISOString() })
+          .eq("user_id", params.userId)
+          .eq("consent_type", params.consentType)
+          .is("revoked_at", null);
 
-  if (error) {
-    logger.error("Consent revocation failed", {
-      userId: params.userId,
-      consentType: params.consentType,
-      error: error.message,
-      route: "platform/auth/consent",
-    });
-    return { success: false, error: error.message };
+        if (error) {
+          logger.error("Consent revocation failed", {
+            userId: params.userId,
+            consentType: params.consentType,
+            error: error.message,
+            route: "platform/auth/consent",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
+    throw err;
   }
-
-  await writeAuditLog({
-    action: "consent_revoked",
-    actorId: params.userId,
-    targetId: params.userId,
-    details: { consentType: params.consentType },
-  });
-
-  return { success: true };
 }
 
 /**

@@ -24,7 +24,7 @@ than contractual commitments.
 
 | Version            | Supported                                                        |
 | ------------------ | ---------------------------------------------------------------- |
-| Latest 3.x release | Yes                                                              |
+| Latest 5.x release | Yes                                                              |
 | Earlier versions   | No — upgrade to the latest release (see `docs/RELEASE_NOTES.md`) |
 
 ## How security is managed here
@@ -34,6 +34,12 @@ than contractual commitments.
 - **Automated checks on every change.** CodeQL and Semgrep static analysis, a production
   dependency audit that blocks merges, a full-history secret scan (gitleaks), and GitHub secret
   scanning with push protection.
+- **Independent adversarial reviews.** Each release, and each phase as a whole, is reviewed by
+  auditors that did not build the code ([`docs/audits/BRIEF.md`](docs/audits/BRIEF.md)); findings are
+  registered in [`docs/audits/`](docs/audits/), each fixed one with the test that would have caught
+  it. A finding still open is described there without exploit detail until it is fixed.
+- **Hostile checks that run** — the authorization matrix, real guards in tests, security wiring, a
+  fuzz and monkey run against the production build: [`docs/ASSURANCE.md`](docs/ASSURANCE.md).
 - **Controls mapped to OWASP Top 10** in [`docs/OWASP_CONTROLS.md`](docs/OWASP_CONTROLS.md).
 - **No resource identifiers or credentials in the repository.** Configuration is read from the
   environment; see [`docs/ENV_REFERENCE.md`](docs/ENV_REFERENCE.md).

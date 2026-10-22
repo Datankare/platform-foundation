@@ -52,8 +52,9 @@ export function createQueryBuilder(
     builder[method] = jest.fn().mockReturnValue(builder);
   }
 
-  // .single() resolves the query
+  // .single() and .maybeSingle() resolve the query
   builder.single = jest.fn().mockResolvedValue(response);
+  builder.maybeSingle = jest.fn().mockResolvedValue(response);
 
   // Also make the builder itself thenable (for queries without .single())
   builder.then = (resolve: any) => resolve(response);

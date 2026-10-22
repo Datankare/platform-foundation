@@ -102,6 +102,50 @@ export function resolveApprover(
   };
 }
 
+const EFFECTS: readonly string[] = [
+  "stateWrite",
+  "externalCall",
+  "sendMessage",
+  "restricted",
+];
+
+const APPROVERS: readonly string[] = ["user", "agent", "system"];
+
+/**
+ * Why `rules` cannot be stored, or null. Every store checks this before saving.
+ *
+ * ADR-030 keeps agent and system approval reachable by policy for classes of action that have
+ * earned it — but never for a restricted (dual-control, catastrophic-if-wrong) action, which
+ * always needs an independent human (ADR-039, ADR-040). Risk levels, effects and approvers must
+ * be ones the gate knows, or a rule would silently never match.
+ */
+export function approvalRulesProblem(rules: readonly ApprovalRule[]): string | null {
+  if (!Array.isArray(rules)) return "rules must be a list";
+  if (rules.length > 50) return "at most 50 rules";
+  for (const [i, rule] of rules.entries()) {
+    if (!rule || typeof rule !== "object") return `rule ${i + 1} is not an object`;
+    if (!RISK_ORDER.includes(rule.maxRisk)) {
+      return `rule ${i + 1}: maxRisk must be one of ${RISK_ORDER.join(", ")}`;
+    }
+    if (!APPROVERS.includes(rule.requiredApprover)) {
+      return `rule ${i + 1}: requiredApprover must be one of ${APPROVERS.join(", ")}`;
+    }
+    if (
+      rule.effects !== undefined &&
+      (!Array.isArray(rule.effects) ||
+        rule.effects.some((e: string) => !EFFECTS.includes(e)))
+    ) {
+      return `rule ${i + 1}: effects must be from ${EFFECTS.join(", ")}`;
+    }
+    const coversRestricted =
+      rule.maxRisk === "restricted" || (rule.effects ?? []).includes("restricted");
+    if (coversRestricted && rule.requiredApprover !== "user") {
+      return `rule ${i + 1}: a restricted action is always approved by a person ("user")`;
+    }
+  }
+  return null;
+}
+
 /** In-memory policy store. The A1 default implementation; swapped for Supabase in A3. */
 export class InMemoryApprovalPolicyStore implements ApprovalPolicyStore {
   private policy: ApprovalPolicy;
@@ -118,6 +162,8 @@ export class InMemoryApprovalPolicyStore implements ApprovalPolicyStore {
     rules: readonly ApprovalRule[],
     _decidedBy: string
   ): Promise<ApprovalPolicy> {
+    const problem = approvalRulesProblem(rules);
+    if (problem) throw new Error(`approval-policy setRules refused: ${problem}`);
     this.policy = {
       version: this.policy.version + 1,
       default: this.policy.default,

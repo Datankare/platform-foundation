@@ -5,24 +5,29 @@
 import { handleSetCapabilityMapping } from "@/app/api/admin/ai/handlers/mapping";
 
 const getConfig = jest.fn();
-const setConfig = jest.fn();
+const writeGovernedConfig = jest.fn();
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: (...a: unknown[]) => getConfig(...a),
-  setConfig: (...a: unknown[]) => setConfig(...a),
 }));
-const writeAuditLog = jest.fn();
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: (...a: unknown[]) => writeAuditLog(...a),
+jest.mock("@/platform/admin/governed-config", () => ({
+  ...jest.requireActual("@/platform/admin/governed-config"),
+  writeGovernedConfig: (...a: unknown[]) => writeGovernedConfig(...a),
 }));
 
-const ACTOR = "admin-1";
+/** The verified admin the command bar passes; the governed write checks its tier permission. */
+const ACTOR = {
+  userId: "00000000-0000-4000-8000-00000000a001",
+  sub: "sub-admin",
+  roleName: "admin",
+  permissions: ["admin_manage_agents", "admin_manage_config", "config_manage_safety"],
+};
+/** The value the handler asked the governed write to store. */
+const written = (n = 0): unknown => writeGovernedConfig.mock.calls[n][1].value;
 
 beforeEach(() => {
   getConfig.mockReset();
-  setConfig.mockReset();
-  writeAuditLog.mockReset();
-  setConfig.mockResolvedValue({ success: true });
-  writeAuditLog.mockResolvedValue(undefined);
+  writeGovernedConfig.mockReset();
+  writeGovernedConfig.mockResolvedValue({ kind: "applied", result: {} });
 });
 
 describe("handleSetCapabilityMapping", () => {
@@ -33,9 +38,11 @@ describe("handleSetCapabilityMapping", () => {
       ACTOR
     );
     expect(r.success).toBe(true);
-    const written = setConfig.mock.calls[0][1] as [string, string[]][];
-    expect(written).toContainEqual(["summarize", ["translate", "speak"]]);
-    expect(writeAuditLog).toHaveBeenCalledTimes(1);
+    expect(written()).toContainEqual(["summarize", ["translate", "speak"]]);
+    expect(writeGovernedConfig).toHaveBeenCalledWith(
+      ACTOR,
+      expect.objectContaining({ changeComment: expect.stringMatching(/^Command bar: /) })
+    );
   });
 
   it("replaces an existing capability's feature list", async () => {
@@ -44,8 +51,7 @@ describe("handleSetCapabilityMapping", () => {
       { capability: "translate", features: ["translate", "tts"] },
       ACTOR
     );
-    const written = setConfig.mock.calls[0][1] as [string, string[]][];
-    expect(written).toEqual([["translate", ["translate", "tts"]]]);
+    expect(written()).toEqual([["translate", ["translate", "tts"]]]);
   });
 
   it("removes a mapping when remove=true", async () => {
@@ -58,21 +64,20 @@ describe("handleSetCapabilityMapping", () => {
       ACTOR
     );
     expect(r.success).toBe(true);
-    const written = setConfig.mock.calls[0][1] as [string, string[]][];
-    expect(written).toEqual([["translate", ["translate"]]]);
+    expect(written()).toEqual([["translate", ["translate"]]]);
   });
 
   it("requires a capability", async () => {
     const r = await handleSetCapabilityMapping({ features: ["x"] }, ACTOR);
     expect(r.success).toBe(false);
-    expect(setConfig).not.toHaveBeenCalled();
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
 
   it("rejects an empty feature list when not removing", async () => {
     getConfig.mockResolvedValue([]);
     const r = await handleSetCapabilityMapping({ capability: "x", features: [] }, ACTOR);
     expect(r.success).toBe(false);
-    expect(setConfig).not.toHaveBeenCalled();
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
 
   it("fails to remove a mapping that does not exist", async () => {
@@ -82,12 +87,21 @@ describe("handleSetCapabilityMapping", () => {
       ACTOR
     );
     expect(r.success).toBe(false);
-    expect(setConfig).not.toHaveBeenCalled();
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
 
   it("returns the store error on write failure", async () => {
     getConfig.mockResolvedValue([]);
-    setConfig.mockRejectedValue(new Error("write failed"));
+    writeGovernedConfig.mockResolvedValue({
+      kind: "failed",
+      result: {
+        toolId: "update_config",
+        success: false,
+        data: null,
+        error: "write failed",
+        durationMs: 0,
+      },
+    });
     const r = await handleSetCapabilityMapping(
       { capability: "x", features: ["y"] },
       ACTOR

@@ -5,10 +5,14 @@ import { textToSpeech } from "@/lib/tts";
 import { ProcessResponse } from "@/types";
 import { logger, generateRequestId } from "@/lib/logger";
 import { MAX_INPUT_CHARACTERS } from "@/shared/config/limits";
-import { apiError } from "@/platform/errors";
+import { apiError, readJsonObject } from "@/platform/errors";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
 import { enforceGuestAllowance } from "@/platform/auth/guest-allowance";
-import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import {
+  DEFAULT_RULES,
+  enforceDailyPaidQuota,
+  enforceRateLimit,
+} from "@/platform/rate-limit";
 
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -26,8 +30,15 @@ export async function POST(request: NextRequest) {
   });
   if (limited) return limited;
 
+  // Malformed or non-object bodies are a coded 400, not a 500 (audit I-5).
+  const read = await readJsonObject(request);
+  if (!read.ok) {
+    logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
+    return read.response;
+  }
+  const body = read.body;
+
   try {
-    const body = await request.json();
     const { text } = body;
 
     if (!text || typeof text !== "string") {
@@ -50,7 +61,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Counted after cheap validation, before the first paid call (the safety classifier).
+    // Counted after cheap validation, before the first paid call (the safety classifier):
+    // the actor's daily paid-request quota (audit X-12), then a guest's governed allowance.
+    const quota = await enforceDailyPaidQuota(request, guard.actor.id);
+    if (quota) {
+      logger.response(
+        "/api/process",
+        "POST",
+        quota.status,
+        requestId,
+        Date.now() - start
+      );
+      return quota;
+    }
     const allowance = await enforceGuestAllowance(guard.actor, { request });
     if (allowance.error) {
       logger.response(
@@ -63,7 +86,10 @@ export async function POST(request: NextRequest) {
       return allowance.error;
     }
 
-    const safety = await checkSafety(trimmed);
+    const safety = await checkSafety(trimmed, {
+      requestId,
+      ...(guard.actor.kind === "user" ? { userId: guard.actor.id } : {}),
+    });
 
     if (!safety.safe) {
       logger.response("/api/process", "POST", 422, requestId, Date.now() - start);

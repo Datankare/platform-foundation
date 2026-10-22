@@ -13,7 +13,7 @@ import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
 import { authResultResponse } from "@/platform/auth/auth-response";
 import { isFeatureAvailable } from "@/platform/features";
-import { apiError } from "@/platform/errors";
+import { apiError, readJsonObject } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import {
   SSO_COOKIE,
@@ -41,12 +41,9 @@ export async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_SESSION);
   if (limited) return limited;
-  let body: { code?: unknown; state?: unknown };
-  try {
-    body = await request.json();
-  } catch {
-    return endAttempt(apiError("request.invalid_json", { request }));
-  }
+  const read = await readJsonObject(request);
+  if (!read.ok) return endAttempt(read.response);
+  const body = read.body as { code?: unknown; state?: unknown };
 
   if (typeof body.code !== "string" || !body.code || typeof body.state !== "string") {
     return endAttempt(

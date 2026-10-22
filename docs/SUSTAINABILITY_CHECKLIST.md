@@ -177,6 +177,8 @@ Then paste Part A and Part B below.
 - [ ] Tests written alongside code, not after
 - [ ] E2E tests for critical user journeys
 - [ ] Architectural invariant tests for design decisions (e.g., fail-closed)
+- [ ] Adversarial validation (CONTRIBUTING, core tenet): abuse cases per actor, every second path, generated hostile input, monkey sequences, real guards and stores on privileged paths, injected failure — for every category of test added
+- [ ] No guard stubbed in a test that asserts authorization; no unused security code
 
 ### A10. State & Immutability
 
@@ -270,6 +272,8 @@ Then paste Part A and Part B below.
 - [ ] Unexpected input types tested (null, undefined, empty, oversized)
 - [ ] Network failure and timeout scenarios tested
 - [ ] Boundary conditions tested (empty arrays, max values, off-by-one)
+- [ ] Hostile input generated, not only hand-picked (property-based tests, fuzzing against the running app)
+- [ ] Every finding from review or audit has its executable test
 
 ---
 

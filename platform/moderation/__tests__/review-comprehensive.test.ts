@@ -8,8 +8,6 @@
  *   - Barrel API contract (public surface wired correctly)
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 // ── Mocks ───────────────────────────────────────────────────────────────
 
 jest.mock("@/lib/logger", () => ({
@@ -20,10 +18,6 @@ jest.mock("@/lib/logger", () => ({
     debug: jest.fn(),
   },
   generateRequestId: jest.fn(() => "test-request-id"),
-}));
-
-jest.mock("@/platform/auth/audit", () => ({
-  writeAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("@/platform/auth/platform-config", () => ({
@@ -37,12 +31,22 @@ jest.mock("@/platform/auth/platform-config", () => ({
   }),
 }));
 
+// An in-memory database (real filters, real audit module): every target account starts banned.
+
+const { FakeDatabase: MockFakeDatabase } = require("@/__tests__/helpers/fake-database");
+const mockAccounts = () =>
+  new MockFakeDatabase({
+    users: [
+      "00000000-0000-4000-8000-00000000b001",
+      "00000000-0000-4000-8000-00000000b002",
+      "00000000-0000-4000-8000-00000000b003",
+      "00000000-0000-4000-8000-00000000b004",
+    ].map((id) => ({ id, account_status: "banned" })),
+    audit_log: [],
+  });
+let mockDb = mockAccounts();
 const mockSupabase = {
-  from: jest.fn().mockReturnValue({
-    update: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    then: (resolve: any) => resolve({ error: null }),
-  }),
+  from: jest.fn((table: string) => mockDb.client().from(table)),
 };
 
 jest.mock("@/lib/supabase/server", () => ({
@@ -67,7 +71,6 @@ import {
 } from "../review-service";
 import { InMemoryStrikeStore, setStrikeStore } from "../strikes";
 import type { ModerationResult } from "../types";
-import { logger } from "@/lib/logger";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -130,7 +133,7 @@ describe("InMemoryReviewQueueStore — edge cases", () => {
       priority: "high",
       status: "pending",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
     await store.submit({
@@ -138,7 +141,7 @@ describe("InMemoryReviewQueueStore — edge cases", () => {
       priority: "normal",
       status: "pending",
       moderationResult: makeModerationResult({ action: "block" }),
-      targetUserId: "user-2",
+      targetUserId: "00000000-0000-4000-8000-00000000b002",
       requestId: "req-2",
     });
 
@@ -157,7 +160,7 @@ describe("InMemoryReviewQueueStore — edge cases", () => {
       priority: "high",
       status: "pending",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
 
@@ -176,19 +179,23 @@ describe("InMemoryReviewQueueStore — edge cases", () => {
       priority: "high",
       status: "pending",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-1",
     });
     await store.update(r1.item!.id, {
       status: "claimed",
-      claimedBy: "admin-1",
+      claimedBy: "00000000-0000-4000-8000-00000000a001",
       claimedAt: new Date().toISOString(),
     });
 
-    const results = await store.query({ claimedBy: "admin-1" });
+    const results = await store.query({
+      claimedBy: "00000000-0000-4000-8000-00000000a001",
+    });
     expect(results).toHaveLength(1);
 
-    const empty = await store.query({ claimedBy: "admin-999" });
+    const empty = await store.query({
+      claimedBy: "00000000-0000-4000-8000-00000000a999",
+    });
     expect(empty).toHaveLength(0);
   });
 });
@@ -214,6 +221,21 @@ describe("ReviewService — error paths", () => {
     strikeStore = new InMemoryStrikeStore();
     setStrikeStore(strikeStore);
     jest.clearAllMocks();
+    mockDb = mockAccounts();
+  });
+
+  it("submitAppeal rejects a reason longer than 2,000 characters (release review)", async () => {
+    const result = await submitAppeal(
+      {
+        originalDecisionId: "traj-long",
+        moderationResult: makeModerationResult({ action: "block" }),
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
+        appealReason: "x".repeat(2001),
+        requestId: "req-long",
+      },
+      new Date().toISOString()
+    );
+    expect(result).toMatchObject({ success: false, errorCode: "request.text_too_long" });
   });
 
   it("submitAppeal rejects warn action", async () => {
@@ -221,7 +243,7 @@ describe("ReviewService — error paths", () => {
       {
         originalDecisionId: "traj-1",
         moderationResult: makeModerationResult({ action: "warn" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "This warning was not justified for my content.",
         requestId: "req-1",
       },
@@ -237,7 +259,7 @@ describe("ReviewService — error paths", () => {
       {
         originalDecisionId: "traj-1",
         moderationResult: makeModerationResult({ action: "allow" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "This should not be appealable at all.",
         requestId: "req-1",
       },
@@ -253,7 +275,7 @@ describe("ReviewService — error paths", () => {
       {
         originalDecisionId: "traj-1",
         moderationResult: makeModerationResult({ action: "escalate" }),
-        appealingUserId: "user-1",
+        appealingUserId: "00000000-0000-4000-8000-00000000b001",
         appealReason: "I want to contest this escalation decision right now.",
         requestId: "req-1",
       },
@@ -271,15 +293,15 @@ describe("ReviewService — error paths", () => {
         action: "block",
         trajectoryId: "traj-no-strike",
       }),
-      targetUserId: "user-no-strike",
+      targetUserId: "00000000-0000-4000-8000-00000000b003",
       requestId: "req-1",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
     // No strikes in store — overturn should still succeed
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "overturn",
       reviewerNotes: "False positive, no strikes to expire.",
     });
@@ -291,7 +313,7 @@ describe("ReviewService — error paths", () => {
   it("resolveItem handles overturn when related strike IS found", async () => {
     // Record a strike first
     await strikeStore.recordStrike({
-      userId: "user-with-strike",
+      userId: "00000000-0000-4000-8000-00000000b004",
       category: "violence",
       severity: "medium",
       moderationAuditId: null,
@@ -309,14 +331,14 @@ describe("ReviewService — error paths", () => {
         action: "block",
         trajectoryId: "traj-with-strike",
       }),
-      targetUserId: "user-with-strike",
+      targetUserId: "00000000-0000-4000-8000-00000000b004",
       requestId: "req-2",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "overturn",
       reviewerNotes: "Strike should be identified for expiry.",
     });
@@ -324,49 +346,65 @@ describe("ReviewService — error paths", () => {
     expect(result.success).toBe(true);
     // The strike caused by the overturned decision is actually expired now,
     // resolved via guardianDecisionId === item.moderationResult.trajectoryId.
-    const remaining = await strikeStore.getActiveStrikes("user-with-strike");
+    const remaining = await strikeStore.getActiveStrikes(
+      "00000000-0000-4000-8000-00000000b004"
+    );
     expect(remaining).toHaveLength(0);
   });
 
-  it("resolveItem handles Supabase failure gracefully on overturn", async () => {
-    // Make Supabase throw
-    mockSupabase.from.mockImplementationOnce(() => {
-      throw new Error("Connection refused");
-    });
-
+  it("resolveItem does not resolve an overturn whose account restore fails", async () => {
     const submitted = await submitForReview({
       source: "ban_review",
       moderationResult: makeModerationResult({ action: "block" }),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-3",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
 
+    // The decision under review is the one in force (release review: only then is a restore tried).
+    mockDb.rows("audit_log").push({
+      id: "chg-1",
+      action: "admin_action",
+      target_id: "00000000-0000-4000-8000-00000000b001",
+      created_at: "2026-10-01T00:00:00Z",
+      details: {
+        type: "sentinel_status_change",
+        previousStatus: "active",
+        newStatus: "banned",
+        guardianDecisionId: submitted.item!.moderationResult.trajectoryId,
+        outcome: "attempted",
+      },
+    });
+    mockDb.failWrites("users");
     const result = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "overturn",
-      reviewerNotes: "Supabase is down but resolution should still succeed.",
+      reviewerNotes: "The database refuses the restore.",
     });
 
-    // Resolution itself succeeds — side effect failure is logged
-    expect(result.success).toBe(true);
-    expect(logger.error).toHaveBeenCalledWith(
-      "Review: account status restoration failed",
-      expect.objectContaining({ userId: "user-1" })
-    );
+    // Not resolved: the item stays claimed for a retry, and the user is still banned.
+    expect(result.success).toBe(false);
+    expect((await reviewStore.getById(submitted.item!.id))?.status).toBe("claimed");
+    expect(mockDb.rows("users")[0].account_status).toBe("banned");
   });
 
   it("concurrent claim — second reviewer rejected", async () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-4",
     });
 
-    const claim1 = await claimItem(submitted.item!.id, "admin-1");
-    const claim2 = await claimItem(submitted.item!.id, "admin-2");
+    const claim1 = await claimItem(
+      submitted.item!.id,
+      "00000000-0000-4000-8000-00000000a001"
+    );
+    const claim2 = await claimItem(
+      submitted.item!.id,
+      "00000000-0000-4000-8000-00000000a002"
+    );
 
     expect(claim1.success).toBe(true);
     expect(claim2.success).toBe(false);
@@ -377,20 +415,20 @@ describe("ReviewService — error paths", () => {
     const submitted = await submitForReview({
       source: "escalation",
       moderationResult: makeModerationResult(),
-      targetUserId: "user-1",
+      targetUserId: "00000000-0000-4000-8000-00000000b001",
       requestId: "req-5",
     });
-    await claimItem(submitted.item!.id, "admin-1");
+    await claimItem(submitted.item!.id, "00000000-0000-4000-8000-00000000a001");
     await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "uphold",
       reviewerNotes: "First resolution.",
     });
 
     const secondResolve = await resolveItem({
       itemId: submitted.item!.id,
-      reviewerId: "admin-1",
+      reviewerId: "00000000-0000-4000-8000-00000000a001",
       decision: "overturn",
       reviewerNotes: "Should fail — already resolved.",
     });

@@ -152,7 +152,7 @@ export class SupabaseSocialStore implements SocialStore {
   async getGroupById(groupId: string): Promise<Group | undefined> {
     try {
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/groups?id=eq.${groupId}&limit=1`,
+        `${this.url}/rest/v1/groups?id=eq.${encodeURIComponent(groupId)}&limit=1`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -175,7 +175,7 @@ export class SupabaseSocialStore implements SocialStore {
     try {
       // Get active membership group IDs
       const memResponse = await fetchWithTimeout(
-        `${this.url}/rest/v1/group_memberships?user_id=eq.${userId}&left_at=is.null&select=group_id`,
+        `${this.url}/rest/v1/group_memberships?user_id=eq.${encodeURIComponent(userId)}&left_at=is.null&select=group_id`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -189,11 +189,16 @@ export class SupabaseSocialStore implements SocialStore {
       const memberships = await memResponse.json();
       if (!Array.isArray(memberships) || memberships.length === 0) return [];
 
+      // Each id double-quoted (PostgREST decodes %2C back to a comma inside in.(), so encoding
+      // alone does not keep a value whole), then encoded.
       const groupIds = memberships
-        .map((m: Record<string, unknown>) => String(m.group_id))
+        .map((m: Record<string, unknown>) =>
+          encodeURIComponent(`"${String(m.group_id).replace(/["\\]/g, "\\$&")}"`)
+        )
         .join(",");
 
       const grpResponse = await fetchWithTimeout(
+        // url-encoded: each id is quoted and encoded where the list is built; the commas are the operator's
         `${this.url}/rest/v1/groups?id=in.(${groupIds})`,
         {
           timeoutMs: 10_000,
@@ -219,7 +224,7 @@ export class SupabaseSocialStore implements SocialStore {
   ): Promise<GroupResult> {
     try {
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/groups?id=eq.${groupId}`,
+        `${this.url}/rest/v1/groups?id=eq.${encodeURIComponent(groupId)}`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -302,7 +307,7 @@ export class SupabaseSocialStore implements SocialStore {
   ): Promise<MembershipResult> {
     try {
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/group_memberships?group_id=eq.${groupId}&user_id=eq.${userId}&left_at=is.null`,
+        `${this.url}/rest/v1/group_memberships?group_id=eq.${encodeURIComponent(groupId)}&user_id=eq.${encodeURIComponent(userId)}&left_at=is.null`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -344,7 +349,7 @@ export class SupabaseSocialStore implements SocialStore {
   async getMembers(groupId: string): Promise<readonly Membership[]> {
     try {
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/group_memberships?group_id=eq.${groupId}&left_at=is.null`,
+        `${this.url}/rest/v1/group_memberships?group_id=eq.${encodeURIComponent(groupId)}&left_at=is.null`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -365,7 +370,7 @@ export class SupabaseSocialStore implements SocialStore {
   async getMembership(groupId: string, userId: string): Promise<Membership | undefined> {
     try {
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/group_memberships?group_id=eq.${groupId}&user_id=eq.${userId}&order=joined_at.desc&limit=1`,
+        `${this.url}/rest/v1/group_memberships?group_id=eq.${encodeURIComponent(groupId)}&user_id=eq.${encodeURIComponent(userId)}&order=joined_at.desc&limit=1`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -438,7 +443,7 @@ export class SupabaseSocialStore implements SocialStore {
     try {
       // Only resolve pending invites
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/group_invites?id=eq.${inviteId}&status=eq.pending`,
+        `${this.url}/rest/v1/group_invites?id=eq.${encodeURIComponent(inviteId)}&status=eq.pending`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -481,7 +486,7 @@ export class SupabaseSocialStore implements SocialStore {
   async listPendingInvites(userId: string): Promise<readonly GroupInvite[]> {
     try {
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/group_invites?invitee_id=eq.${userId}&status=eq.pending&order=created_at.desc`,
+        `${this.url}/rest/v1/group_invites?invitee_id=eq.${encodeURIComponent(userId)}&status=eq.pending&order=created_at.desc`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect
@@ -502,7 +507,7 @@ export class SupabaseSocialStore implements SocialStore {
   async getInviteById(inviteId: string): Promise<GroupInvite | undefined> {
     try {
       const response = await fetchWithTimeout(
-        `${this.url}/rest/v1/group_invites?id=eq.${inviteId}&limit=1`,
+        `${this.url}/rest/v1/group_invites?id=eq.${encodeURIComponent(inviteId)}&limit=1`,
         {
           timeoutMs: 10_000,
           // Retry is the caller's: reduceCommit loops on version conflict and the effect

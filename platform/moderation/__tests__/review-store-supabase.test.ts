@@ -159,6 +159,19 @@ describe("SupabaseReviewQueueStore", () => {
       expect(item!.id).toBe("uuid-1");
     });
 
+    it.each(["x&status=eq.pending", "x#", "x,id.neq.0", "../review_queue"])(
+      "sends a hostile id %p as one encoded value, adding no filter (audit E-16)",
+      async (id) => {
+        const fetchMock = mockFetchResponse([]);
+        global.fetch = fetchMock;
+        await store.getById(id);
+        const url = new URL(String((fetchMock as jest.Mock).mock.calls[0][0]));
+        expect([...url.searchParams.keys()]).toEqual(["id"]);
+        expect(url.searchParams.get("id")).toBe(`eq.${id}`);
+        expect(url.hash).toBe("");
+      }
+    );
+
     it("returns undefined on empty result", async () => {
       global.fetch = mockFetchResponse([]);
 

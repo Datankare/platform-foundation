@@ -21,7 +21,7 @@ import type {
   ApprovalRule,
   ActorType,
 } from "./approval-policy-store";
-import { DEFAULT_APPROVAL_POLICY } from "./approval-policy-store";
+import { approvalRulesProblem, DEFAULT_APPROVAL_POLICY } from "./approval-policy-store";
 import { generateUuid } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
@@ -103,6 +103,8 @@ export class SupabaseApprovalPolicyStore implements ApprovalPolicyStore {
     rules: readonly ApprovalRule[],
     decidedBy: string
   ): Promise<ApprovalPolicy> {
+    const problem = approvalRulesProblem(rules);
+    if (problem) throw new Error(`approval-policy setRules refused: ${problem}`);
     let lastErr: Error | null = null;
     for (let attempt = 0; attempt < MAX_VERSION_CONFLICT_RETRIES; attempt++) {
       const current = await this.load();

@@ -27,8 +27,8 @@ describe("writeAuditLog", () => {
 
     await writeAuditLog({
       action: "role_changed",
-      actorId: "admin-1",
-      targetId: "user-1",
+      actorId: "00000000-0000-4000-8000-00000000a001",
+      targetId: "00000000-0000-4000-8000-00000000b001",
       details: { oldRole: "free", newRole: "admin" },
       ipAddress: "1.2.3.4",
       userAgent: "Mozilla/5.0",
@@ -38,8 +38,8 @@ describe("writeAuditLog", () => {
     const builder = mockClient._fromCalls[0].builder;
     expect(builder.insert).toHaveBeenCalledWith({
       action: "role_changed",
-      actor_id: "admin-1",
-      target_id: "user-1",
+      actor_id: "00000000-0000-4000-8000-00000000a001",
+      target_id: "00000000-0000-4000-8000-00000000b001",
       details: { oldRole: "free", newRole: "admin" },
       ip_address: "1.2.3.4",
       user_agent: "Mozilla/5.0",
@@ -102,8 +102,8 @@ describe("getAuditLogForUser", () => {
           data: [
             {
               action: "role_changed",
-              actor_id: "admin-1",
-              target_id: "user-1",
+              actor_id: "00000000-0000-4000-8000-00000000a001",
+              target_id: "00000000-0000-4000-8000-00000000b001",
               details: { newRole: "admin" },
               ip_address: "1.2.3.4",
               user_agent: "Mozilla",
@@ -121,13 +121,26 @@ describe("getAuditLogForUser", () => {
 
     const { getAuditLogForUser } = await import("@/platform/auth/audit");
 
-    const entries = await getAuditLogForUser("user-1");
+    const entries = await getAuditLogForUser("00000000-0000-4000-8000-00000000b001");
 
     expect(entries).toHaveLength(1);
     expect(entries[0].action).toBe("role_changed");
-    expect(entries[0].actorId).toBe("admin-1");
-    expect(entries[0].targetId).toBe("user-1");
+    expect(entries[0].actorId).toBe("00000000-0000-4000-8000-00000000a001");
+    expect(entries[0].targetId).toBe("00000000-0000-4000-8000-00000000b001");
   });
+
+  it.each(["user-1", "x,actor_id.neq.null", "", "%"])(
+    "reads nothing for the non-id %p rather than splicing it into a filter",
+    async (id) => {
+      const mockClient = createSequentialMockSupabase([]);
+      jest.doMock("@/lib/supabase/server", () => ({
+        getSupabaseServiceClient: () => mockClient,
+      }));
+      const { getAuditLogForUser } = await import("@/platform/auth/audit");
+      await expect(getAuditLogForUser(id)).resolves.toEqual([]);
+      expect(mockClient.from).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns empty array on error", async () => {
     const mockClient = createSequentialMockSupabase([
@@ -143,7 +156,7 @@ describe("getAuditLogForUser", () => {
 
     const { getAuditLogForUser } = await import("@/platform/auth/audit");
 
-    const entries = await getAuditLogForUser("user-1");
+    const entries = await getAuditLogForUser("00000000-0000-4000-8000-00000000b001");
     expect(entries).toEqual([]);
   });
 });
@@ -157,10 +170,10 @@ describe("grantEntitlement", () => {
 
   it("upserts user_entitlements and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
+      // audit record first (fail-closed)
+      { table: "audit_log", response: { data: null, error: null } },
       // upsert user_entitlements
       { table: "user_entitlements", response: { data: null, error: null } },
-      // writeAuditLog
-      { table: "audit_log", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -170,9 +183,9 @@ describe("grantEntitlement", () => {
     const { grantEntitlement } = await import("@/platform/auth/entitlements");
 
     const result = await grantEntitlement({
-      userId: "p1",
+      userId: "00000000-0000-4000-8000-00000000b001",
       entitlementGroupId: "eg1",
-      grantedBy: "admin-1",
+      grantedBy: "00000000-0000-4000-8000-00000000a001",
       expiresAt: "2027-01-01T00:00:00Z",
     });
 
@@ -182,6 +195,7 @@ describe("grantEntitlement", () => {
 
   it("returns error on upsert failure", async () => {
     const mockClient = createSequentialMockSupabase([
+      { table: "audit_log", response: { data: null, error: null } },
       {
         table: "user_entitlements",
         response: { data: null, error: { message: "duplicate key" } },
@@ -195,9 +209,9 @@ describe("grantEntitlement", () => {
     const { grantEntitlement } = await import("@/platform/auth/entitlements");
 
     const result = await grantEntitlement({
-      userId: "p1",
+      userId: "00000000-0000-4000-8000-00000000b001",
       entitlementGroupId: "eg1",
-      grantedBy: "admin-1",
+      grantedBy: "00000000-0000-4000-8000-00000000a001",
     });
 
     expect(result.success).toBe(false);
@@ -212,8 +226,8 @@ describe("revokeEntitlement", () => {
 
   it("sets revoked_at and writes audit log", async () => {
     const mockClient = createSequentialMockSupabase([
-      { table: "user_entitlements", response: { data: null, error: null } },
       { table: "audit_log", response: { data: null, error: null } },
+      { table: "user_entitlements", response: { data: null, error: null } },
     ]);
 
     jest.doMock("@/lib/supabase/server", () => ({
@@ -223,15 +237,19 @@ describe("revokeEntitlement", () => {
     const { revokeEntitlement } = await import("@/platform/auth/entitlements");
 
     const result = await revokeEntitlement({
-      userId: "p1",
+      userId: "00000000-0000-4000-8000-00000000b001",
       entitlementGroupId: "eg1",
-      revokedBy: "admin-1",
+      revokedBy: "00000000-0000-4000-8000-00000000a001",
     });
 
     expect(result.success).toBe(true);
-    const builder = mockClient._fromCalls[0].builder;
+    const builder = mockClient._fromCalls[1].builder;
+    expect(mockClient._fromCalls[0].table).toBe("audit_log");
     expect(builder.update).toHaveBeenCalled();
-    expect(builder.eq).toHaveBeenCalledWith("user_id", "p1");
+    expect(builder.eq).toHaveBeenCalledWith(
+      "user_id",
+      "00000000-0000-4000-8000-00000000b001"
+    );
   });
 });
 
@@ -265,7 +283,10 @@ describe("resolvePermissions", () => {
       // 1. Get user
       {
         table: "users",
-        response: { data: { id: "p1", role_id: "r1" }, error: null },
+        response: {
+          data: { id: "00000000-0000-4000-8000-00000000b001", role_id: "r1" },
+          error: null,
+        },
       },
       // 2. Get role name
       {
@@ -309,7 +330,7 @@ describe("resolvePermissions", () => {
     const result = await resolvePermissions("test-sub");
 
     expect(result).not.toBeNull();
-    expect(result!.userId).toBe("p1");
+    expect(result!.userId).toBe("00000000-0000-4000-8000-00000000b001");
     expect(result!.roleName).toBe("admin");
     expect(result!.permissions).toContain("can_play");
     expect(result!.permissions).toContain("admin_manage_roles");

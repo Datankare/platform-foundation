@@ -2,10 +2,21 @@
  * __tests__/admin-thin-routes.test.ts — coverage remediation (ADR-040 "B").
  *
  * The five thin read-only governance GET routes: each is adminGuard-gated and returns a
- * JSON view. Covers authorized, guard-denied passthrough, and the shape-coercion / error
- * branches so the final coverage flip lands above the branch floor.
+ * JSON view. The guard is real (helpers/test-identities.ts): authorized as super_admin, refused
+ * as a moderator, plus the shape-coercion and error branches.
  */
-jest.mock("@/platform/auth/admin-guard", () => ({ adminGuard: jest.fn() }));
+jest.mock("@/platform/auth/middleware", () =>
+  require("@/__tests__/helpers/test-identities").mockMiddleware()
+);
+jest.mock("@/platform/auth/permissions-cache", () =>
+  require("@/__tests__/helpers/test-identities").mockPermissionsCache()
+);
+jest.mock("@/platform/auth/account-status-guard", () =>
+  require("@/__tests__/helpers/test-identities").mockAccountStatus()
+);
+jest.mock("@/platform/rate-limit", () =>
+  require("@/__tests__/helpers/test-identities").mockRateLimit()
+);
 jest.mock("@/platform/auth/platform-config", () => ({ getConfig: jest.fn() }));
 jest.mock("@/platform/agents", () => ({
   getApprovalPolicyStore: jest.fn(),
@@ -17,8 +28,8 @@ jest.mock("@/platform/providers/registry", () => ({
 }));
 jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
 
-import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { NextRequest } from "next/server";
+import { authAs, type CallerName } from "@/__tests__/helpers/test-identities";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getApprovalPolicyStore } from "@/platform/agents";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
@@ -29,15 +40,13 @@ import { GET as capabilitiesGET } from "@/app/api/admin/capabilities/route";
 import { GET as capabilityMappingGET } from "@/app/api/admin/capability-mapping/route";
 import { GET as perAccountGET } from "@/app/api/admin/per-account/route";
 
-const mockGuard = adminGuard as jest.Mock;
 const mockConfig = getConfig as jest.Mock;
 const mockPolicyStore = getApprovalPolicyStore as jest.Mock;
 const mockSupabase = getSupabaseServiceClient as jest.Mock;
 
-function req(path: string): NextRequest {
-  return new NextRequest(`http://localhost${path}`);
+function req(path: string, caller: CallerName = "super_admin"): NextRequest {
+  return new NextRequest(`http://localhost${path}`, { headers: authAs(caller) });
 }
-const denial = () => NextResponse.json({ error: "forbidden" }, { status: 403 });
 
 function supa(result: { data: unknown; error: { message: string } | null }) {
   const limit = () => Promise.resolve(result);
@@ -46,7 +55,6 @@ function supa(result: { data: unknown; error: { message: string } | null }) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGuard.mockResolvedValue(null);
 });
 
 describe("GET /api/admin/agent-registry", () => {
@@ -61,9 +69,10 @@ describe("GET /api/admin/agent-registry", () => {
     const res = await agentRegistryGET(req("/api/admin/agent-registry"));
     expect((await res.json()).agents).toEqual([]);
   });
-  it("passes the guard denial through", async () => {
-    mockGuard.mockResolvedValue(denial());
-    expect((await agentRegistryGET(req("/api/admin/agent-registry"))).status).toBe(403);
+  it("refuses a moderator, who lacks the page's permission", async () => {
+    expect(
+      (await agentRegistryGET(req("/api/admin/agent-registry", "moderator"))).status
+    ).toBe(403);
   });
 });
 
@@ -75,9 +84,10 @@ describe("GET /api/admin/approval-policy", () => {
     const res = await approvalPolicyGET(req("/api/admin/approval-policy"));
     expect((await res.json()).policy.version).toBe(3);
   });
-  it("passes the guard denial through", async () => {
-    mockGuard.mockResolvedValue(denial());
-    expect((await approvalPolicyGET(req("/api/admin/approval-policy"))).status).toBe(403);
+  it("refuses a moderator, who lacks the page's permission", async () => {
+    expect(
+      (await approvalPolicyGET(req("/api/admin/approval-policy", "moderator"))).status
+    ).toBe(403);
   });
 });
 
@@ -87,9 +97,10 @@ describe("GET /api/admin/capabilities", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ capabilities: [] });
   });
-  it("passes the guard denial through", async () => {
-    mockGuard.mockResolvedValue(denial());
-    expect((await capabilitiesGET(req("/api/admin/capabilities"))).status).toBe(403);
+  it("refuses a moderator, who lacks the page's permission", async () => {
+    expect(
+      (await capabilitiesGET(req("/api/admin/capabilities", "moderator"))).status
+    ).toBe(403);
   });
 });
 
@@ -104,10 +115,10 @@ describe("GET /api/admin/capability-mapping", () => {
     const res = await capabilityMappingGET(req("/api/admin/capability-mapping"));
     expect((await res.json()).mappings).toEqual([]);
   });
-  it("passes the guard denial through", async () => {
-    mockGuard.mockResolvedValue(denial());
+  it("refuses a moderator, who lacks the page's permission", async () => {
     expect(
-      (await capabilityMappingGET(req("/api/admin/capability-mapping"))).status
+      (await capabilityMappingGET(req("/api/admin/capability-mapping", "moderator")))
+        .status
     ).toBe(403);
   });
 });
@@ -128,8 +139,9 @@ describe("GET /api/admin/per-account", () => {
     const res = await perAccountGET(req("/api/admin/per-account"));
     expect((await res.json()).restrictions).toEqual([]);
   });
-  it("passes the guard denial through", async () => {
-    mockGuard.mockResolvedValue(denial());
-    expect((await perAccountGET(req("/api/admin/per-account"))).status).toBe(403);
+  it("refuses a moderator, who lacks the page's permission", async () => {
+    expect((await perAccountGET(req("/api/admin/per-account", "moderator"))).status).toBe(
+      403
+    );
   });
 });

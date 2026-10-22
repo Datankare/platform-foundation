@@ -71,6 +71,7 @@ const EXPECTED_EXPORTS = [
   "approvalPolicy",
   // Sprint 3c A1 — admin-governable approval policy
   "DEFAULT_APPROVAL_POLICY",
+  "approvalRulesProblem",
   "InMemoryApprovalPolicyStore",
   "getApprovalPolicyStore",
   "resolveApprover",

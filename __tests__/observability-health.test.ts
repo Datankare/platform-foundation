@@ -191,3 +191,45 @@ describe("HttpHealthProbe", () => {
     expect(result.detail).toBeTruthy();
   });
 });
+
+describe("CachedHealthProbe (audit X-13)", () => {
+  const { CachedHealthProbe } = require("@/platform/observability/health");
+  const result = (status: string) => ({ name: "paid", status, checkedAt: "t" });
+
+  it("runs the wrapped probe at most once per interval", async () => {
+    let t = 0;
+    const inner = { name: "paid", check: jest.fn(async () => result("healthy")) };
+    const probe = new CachedHealthProbe(inner, 60_000, () => t);
+    for (let i = 0; i < 100; i += 1) await probe.check();
+    expect(inner.check).toHaveBeenCalledTimes(1);
+    t = 60_001;
+    await probe.check();
+    expect(inner.check).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one in-flight call between concurrent checks", async () => {
+    let release: (v: unknown) => void = () => {};
+    const inner = {
+      name: "paid",
+      check: jest.fn(() => new Promise((r) => (release = r))),
+    };
+    const probe = new CachedHealthProbe(inner, 60_000);
+    const checks = Array.from({ length: 20 }, () => probe.check());
+    release(result("degraded"));
+    const results = await Promise.all(checks);
+    expect(inner.check).toHaveBeenCalledTimes(1);
+    expect(results.every((r: { status: string }) => r.status === "degraded")).toBe(true);
+  });
+
+  it("caches an unhealthy result too, so an outage does not multiply calls", async () => {
+    const inner = { name: "paid", check: jest.fn(async () => result("unhealthy")) };
+    const probe = new CachedHealthProbe(inner, 60_000);
+    await probe.check();
+    await probe.check();
+    expect(inner.check).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a non-positive interval", () => {
+    expect(() => new CachedHealthProbe({ name: "x", check: jest.fn() }, 0)).toThrow();
+  });
+});

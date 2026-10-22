@@ -302,3 +302,41 @@ export class HttpHealthProbe implements HealthProbe {
     }
   }
 }
+
+/**
+ * CachedHealthProbe — runs a costly probe at most once per `ttlMs` and shares that result.
+ *
+ * /api/health is public and rate-limit-exempt, so a probe that calls a paid provider (song
+ * identification bills per call) turned every health request into a paid call anyone could
+ * repeat (audit X-13). Wrapped, the paid call happens at most once per interval per instance;
+ * concurrent checks share one in-flight call; the reported result carries when it was taken.
+ */
+export class CachedHealthProbe implements HealthProbe {
+  readonly name: string;
+  private last: { result: HealthCheckResult; at: number } | null = null;
+  private inFlight: Promise<HealthCheckResult> | null = null;
+
+  constructor(
+    private readonly probe: HealthProbe,
+    private readonly ttlMs: number,
+    private readonly now: () => number = Date.now
+  ) {
+    if (!(ttlMs > 0)) throw new Error("CachedHealthProbe needs a positive ttlMs");
+    this.name = probe.name;
+  }
+
+  async check(timeoutMs?: number): Promise<HealthCheckResult> {
+    if (this.last && this.now() - this.last.at < this.ttlMs) return this.last.result;
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.probe
+      .check(timeoutMs)
+      .then((result) => {
+        this.last = { result, at: this.now() };
+        return result;
+      })
+      .finally(() => {
+        this.inFlight = null;
+      });
+    return this.inFlight;
+  }
+}

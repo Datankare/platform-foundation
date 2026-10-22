@@ -29,7 +29,7 @@ export interface PasswordPolicy {
   passwordHistoryCount: number;
 }
 
-const DEFAULT_POLICY: PasswordPolicy = {
+export const DEFAULT_POLICY: PasswordPolicy = {
   rotationDays: 90,
   minLength: 12,
   requireUppercase: true,
@@ -160,14 +160,15 @@ const BREACHED_PASSWORDS = new Set([
 
 function toPolicy(row: Record<string, unknown>): PasswordPolicy {
   return {
-    rotationDays: (row.rotation_days as number) || DEFAULT_POLICY.rotationDays,
-    minLength: (row.min_length as number) || DEFAULT_POLICY.minLength,
+    rotationDays: (row.rotation_days as number | null) ?? DEFAULT_POLICY.rotationDays,
+    minLength: (row.min_length as number | null) ?? DEFAULT_POLICY.minLength,
     requireUppercase: row.require_uppercase as boolean,
     requireLowercase: row.require_lowercase as boolean,
     requireNumber: row.require_number as boolean,
     requireSpecial: row.require_special as boolean,
     passwordHistoryCount:
-      (row.password_history_count as number) || DEFAULT_POLICY.passwordHistoryCount,
+      (row.password_history_count as number | null) ??
+      DEFAULT_POLICY.passwordHistoryCount,
   };
 }
 
@@ -216,6 +217,117 @@ export async function getEffectivePasswordPolicy(
     route: "platform/auth/password-policy",
   });
   return DEFAULT_POLICY;
+}
+
+// ============================================================
+// Global policy — read by sign-up, changed by admins (Sprint 7X)
+// ============================================================
+
+/**
+ * The bounds an admin's change must stay within. The floor follows NIST SP 800-63B (at least 8
+ * characters); a policy below it is refused, not clamped.
+ */
+export const PASSWORD_POLICY_LIMITS = {
+  minLength: { min: 8, max: 128 },
+  rotationDays: { min: 0, max: 3650 },
+  passwordHistoryCount: { min: 0, max: 24 },
+} as const;
+
+const NUMERIC = ["minLength", "rotationDays", "passwordHistoryCount"] as const;
+const BOOLEAN = [
+  "requireUppercase",
+  "requireLowercase",
+  "requireNumber",
+  "requireSpecial",
+] as const;
+
+export type PasswordPolicyChange =
+  | { readonly policy: PasswordPolicy }
+  | { readonly field: string; readonly allowed: string };
+
+/**
+ * Apply an admin's change to the current policy. Only the fields present change; each must be
+ * an integer within PASSWORD_POLICY_LIMITS or a boolean. Unknown fields are refused, so a typo
+ * is not silently ignored.
+ */
+export function applyPasswordPolicyChange(
+  current: PasswordPolicy,
+  change: Readonly<Record<string, unknown>>
+): PasswordPolicyChange {
+  const next: Record<string, unknown> = { ...current };
+  for (const [field, value] of Object.entries(change)) {
+    if ((NUMERIC as readonly string[]).includes(field)) {
+      const { min, max } = PASSWORD_POLICY_LIMITS[field as (typeof NUMERIC)[number]];
+      if (
+        typeof value !== "number" ||
+        !Number.isInteger(value) ||
+        value < min ||
+        value > max
+      ) {
+        return { field, allowed: `an integer from ${min} to ${max}` };
+      }
+    } else if ((BOOLEAN as readonly string[]).includes(field)) {
+      if (typeof value !== "boolean") return { field, allowed: "true or false" };
+    } else {
+      return { field, allowed: [...NUMERIC, ...BOOLEAN].join(", ") };
+    }
+    next[field] = value;
+  }
+  return { policy: next as unknown as PasswordPolicy };
+}
+
+function toRow(policy: PasswordPolicy): Record<string, unknown> {
+  return {
+    min_length: policy.minLength,
+    rotation_days: policy.rotationDays,
+    require_uppercase: policy.requireUppercase,
+    require_lowercase: policy.requireLowercase,
+    require_number: policy.requireNumber,
+    require_special: policy.requireSpecial,
+    password_history_count: policy.passwordHistoryCount,
+  };
+}
+
+/** The global policy (no role, no user), or the defaults when none is stored. */
+export async function getGlobalPasswordPolicy(): Promise<PasswordPolicy> {
+  const supabase = getSupabaseServiceClient();
+  const { data, error } = await supabase
+    .from("password_policy")
+    .select("*")
+    .is("role_id", null)
+    .is("user_id", null)
+    .maybeSingle();
+  if (error) {
+    logger.error("Global password policy unreadable, using the defaults", {
+      error: error.message,
+      route: "platform/auth/password-policy",
+    });
+    return DEFAULT_POLICY;
+  }
+  return data ? toPolicy(data) : DEFAULT_POLICY;
+}
+
+/**
+ * Store the global policy: update the global row, or create it when there is none. (The table
+ * has no unique key the upsert could use; migration 042 adds one so two globals cannot exist.)
+ */
+export async function saveGlobalPasswordPolicy(
+  policy: PasswordPolicy
+): Promise<{ success: true } | { success: false; error: string }> {
+  const supabase = getSupabaseServiceClient();
+  const { data: existing, error: readError } = await supabase
+    .from("password_policy")
+    .select("id")
+    .is("role_id", null)
+    .is("user_id", null)
+    .maybeSingle();
+  if (readError) return { success: false, error: readError.message };
+  const { error } = existing
+    ? await supabase.from("password_policy").update(toRow(policy)).eq("id", existing.id)
+    : await supabase
+        .from("password_policy")
+        .insert({ role_id: null, user_id: null, ...toRow(policy) });
+  return error ? { success: false, error: error.message } : { success: true };
 }
 
 // ============================================================

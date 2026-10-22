@@ -43,7 +43,7 @@ import { submitForReview } from "./review-service";
 import { loadStrikeThresholds } from "./config";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { audited, writeAuditLog } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
@@ -307,11 +307,35 @@ export class Sentinel {
         default: {
           // Step 4 — apply-consequence (last step)
           if (acc.newStatus !== acc.currentStatus) {
-            await updateUserStatus(
-              userId,
-              acc.newStatus,
-              acc.consequence,
-              this.identity.actorId
+            // Recorded before the account changes; with no record it does not change
+            // (audit X-8). A thrown error fails this step, so the run reports the
+            // consequence as not applied.
+            await audited(
+              {
+                action: "admin_action",
+                agent: this.identity.actorId,
+                targetId: userId,
+                details: {
+                  type: "sentinel_status_change",
+                  category,
+                  severity,
+                  consequence: acc.consequence,
+                  previousStatus: acc.currentStatus,
+                  newStatus: acc.newStatus,
+                  totalActiveStrikes: acc.updatedSummary.totalActive,
+                  trajectoryId: ctx.trajectoryId,
+                  guardianDecisionId: moderationResult.trajectoryId,
+                },
+              },
+              // The failure of the update is recorded too ("failed"), so the history never
+              // shows a change that did not happen (release review, Sprint 7X).
+              () =>
+                updateUserStatus(
+                  userId,
+                  acc.newStatus,
+                  acc.consequence,
+                  this.identity.actorId
+                )
             );
             reasonParts.push(`Status changed: ${acc.currentStatus} -> ${acc.newStatus}.`);
           } else {
@@ -355,10 +379,11 @@ export class Sentinel {
       );
     }
 
-    // Fire-and-forget audit log
-    writeAuditLog({
+    // The decision record (also read by the appeals route for previousStatus). Best effort: the
+    // decision itself is already made; a status change was recorded before it was applied.
+    await writeAuditLog({
       action: "admin_action",
-      actorId: this.identity.actorId,
+      agent: this.identity.actorId,
       targetId: userId,
       details: {
         type: "sentinel_decision",
@@ -369,6 +394,7 @@ export class Sentinel {
         newStatus: acc.newStatus,
         totalActiveStrikes: acc.updatedSummary.totalActive,
         trajectoryId,
+        guardianDecisionId: moderationResult.trajectoryId,
       },
     });
 
@@ -492,12 +518,13 @@ async function updateUserStatus(
       updateData.ban_reason = "Automatic ban: strike threshold exceeded";
     }
 
-    await (supabase
+    const { error } = await (supabase
       .from("users" as never)
       .update(updateData as never)
       .eq("id", userId) as unknown as Promise<{
       error: { message: string } | null;
     }>);
+    if (error) throw new Error(error.message);
   } catch (err) {
     logger.error("Sentinel: user status update failed", {
       userId,
@@ -505,6 +532,9 @@ async function updateUserStatus(
       error: err instanceof Error ? err.message : String(err),
       route: "platform/moderation/sentinel",
     });
+    // Surfaced: the step fails and the run reports the consequence as not applied, rather
+    // than the run completing as if the account had changed.
+    throw err;
   }
 }
 

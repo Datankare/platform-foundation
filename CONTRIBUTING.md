@@ -242,6 +242,37 @@ npm run format            # Prettier fix (auto-writes)
 - Green main always — never merge a failing test
 - Every bug gets a regression test before it gets a fix
 - Flaky tests are bugs — fix them immediately, never mute them
+- Every test category validates adversarially (below)
+
+### Adversarial Validation — a core tenet
+
+Tests that only confirm specified behaviour prove what the system does; they do not prove what it
+refuses. In October 2026 a moderator could make themselves `super_admin` through the AI command bar,
+and role changes left no audit record, while every unit, integration and end-to-end test passed: the
+route tests stubbed the admin guard, a self-elevation check was tested but never called, and no test
+ever acted as the wrong role (TASK-145, learning 116). From that point, **every category of test** —
+unit, component, integration, conformance kits, end-to-end, prompt evals and load tests — is written
+with its hostile counterpart, at the time it is written:
+
+| #   | Practice                    | What the tests must do                                                                                                                                                                              |
+| --- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Abuse cases per actor       | Each actor — anonymous, guest, user, moderator, safety approver, admin, agent, another tenant — attempts what it must not do; the test asserts the refusal and that nothing changed.                |
+| 2   | Every second path           | An effect reachable by more than one path (route, AI command bar, agent tool, job, database function) is tested on every path with the same expectations.                                           |
+| 3   | Hostile and generated input | Malformed, oversized, wrong-typed, filter and SQL syntax, prompt injection, internal URLs (SSRF), control characters — generated (property-based with `fast-check`, fuzzing), not only hand-picked. |
+| 4   | Monkey sequences            | Random actors performing random actions, with invariants checked after every step: no uncoded 5xx, no privilege change, no other user's or tenant's data, coded errors only, limits hold.           |
+| 5   | Real guards, real stores    | A test that asserts authorization never stubs the guard it asserts; privileged and data-isolation paths run against a database that evaluates filters, and against real Postgres (TASK-146).        |
+| 6   | Injected failure            | Each dependency errors, times out or partly writes; the system fails closed, records what happened, and a security-relevant write that fails fails the action.                                      |
+| 7   | Findings become tests       | Every review, audit or incident finding ships with the executable test that would have caught it, so its protection outlives the review.                                                            |
+| 8   | No unused security code     | A guard, check or rule that nothing calls is a failure, not a safeguard.                                                                                                                            |
+
+**Enforcement.** CI runs the authorization matrix (every route and command-bar action mapped to its
+permission), the per-role abuse suite with real guards, the no-unused-security-code check, and — on every
+promotion PR and weekly — the fuzz and monkey job against the production build (`fuzz.yml`); the
+sustainability checklist (A9, B11) and the L15 sprint-close review ask for the hostile cases explicitly;
+each release and each phase close has an independent adversarial review by agents that did not build
+the code ([docs/audits/BRIEF.md](docs/audits/BRIEF.md)). The full list, the cadence and what is not yet
+done: [docs/ASSURANCE.md](docs/ASSURANCE.md). A change that adds behaviour without its hostile tests is
+not done.
 
 ---
 

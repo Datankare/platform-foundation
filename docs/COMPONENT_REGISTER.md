@@ -10,14 +10,14 @@ Datankare component rule:
 Each external dependency sits behind a provider interface with a conformance kit (ADR-027), which
 is what makes the exit paths below real rather than aspirational.
 
-_Last reviewed: 2026-10-20._
+_Last reviewed: 2026-10-22._
 
 ## Libraries and runtime
 
 | Component                                  | Licence          | Verdict |
 | ------------------------------------------ | ---------------- | ------- |
 | Next.js, React, TypeScript, Tailwind CSS   | MIT              | Pass    |
-| Jest, Playwright                           | MIT / Apache-2.0 | Pass    |
+| Jest, Playwright, fast-check               | MIT / Apache-2.0 | Pass    |
 | jose, ajv, intl-messageformat, safe-regex2 | MIT              | Pass    |
 | PostgreSQL, pgvector                       | PostgreSQL       | Pass    |
 | Sentry JavaScript SDK                      | MIT              | Pass    |
@@ -42,6 +42,7 @@ _Last reviewed: 2026-10-20._
 | gitleaks                  | MIT                                         | Secret scan in CI                                                                                                                                                                                                                                |
 | Semgrep (community rules) | LGPL-2.1                                    | Static analysis in CI                                                                                                                                                                                                                            |
 | CodeQL                    | GitHub terms (free for public repositories) | Static analysis in CI on platform-foundation. Not run on Playform: code scanning on a private repository needs paid GitHub Code Security (decided 2026-10, for cost); Playform relies on Semgrep and its synced platform code being scanned here |
+| OWASP ZAP (baseline scan) | Apache-2.0                                  | Weekly passive scan of a deployed instance (`zap-scan.yml`)                                                                                                                                                                                      |
 | OpenTofu (planned)        | MPL-2.0                                     | Infrastructure as code, Sprint 7P — chosen over Terraform (BSL)                                                                                                                                                                                  |
 
 ## Changing this register

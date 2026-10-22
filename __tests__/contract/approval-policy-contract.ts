@@ -116,4 +116,23 @@ export function runApprovalPolicyStoreContract(
       expect(final.rules.length).toBeGreaterThan(0);
     });
   });
+
+  describe("refuses unsafe or meaningless rules (Sprint 7X)", () => {
+    it.each([
+      [{ maxRisk: "restricted", requiredApprover: "agent" }],
+      [{ maxRisk: "ordinary", effects: ["restricted"], requiredApprover: "system" }],
+      [{ maxRisk: "low", requiredApprover: "user" }],
+      [{ maxRisk: "ordinary", effects: ["teleport"], requiredApprover: "user" }],
+      [{ maxRisk: "ordinary", requiredApprover: "anyone" }],
+    ])("refuses %p and keeps the current policy", async (rule) => {
+      const before = await store.load();
+      await expect(
+        store.setRules([rule as unknown as ApprovalRule], "admin-1")
+      ).rejects.toThrow(/refused/);
+      const after = await store.load();
+      expect(after.version).toBe(before.version);
+      // A restricted action still resolves to a person.
+      expect(resolveApprover(after, "restricted", ["restricted"]).actorType).toBe("user");
+    });
+  });
 }

@@ -241,6 +241,20 @@ describe("GET /api/health — deployed commit (ADR-050 D6, TASK-105)", () => {
     ).toBe("e3c3fe4a1b2c");
   });
 
+  it("prefers GIT_COMMIT_SHA (a container build), then the host's commit (ADR-055 D2)", () => {
+    expect(deployedCommit({ GIT_COMMIT_SHA: "1234567890abcdef" })).toBe("1234567890ab");
+    expect(
+      deployedCommit({
+        GIT_COMMIT_SHA: "1234567890abcdef",
+        VERCEL_GIT_COMMIT_SHA: "fedcba0987654321",
+      })
+    ).toBe("1234567890ab");
+    expect(
+      deployedCommit({ GIT_COMMIT_SHA: " ", VERCEL_GIT_COMMIT_SHA: "fedcba0987654321" })
+    ).toBe("fedcba098765");
+    expect(deployedCommit({ GIT_COMMIT_SHA: "main" })).toBeNull();
+  });
+
   it("is null when not built by the host, or when the value is not a commit", () => {
     expect(deployedCommit({})).toBeNull();
     expect(deployedCommit({ VERCEL_GIT_COMMIT_SHA: "  " })).toBeNull();

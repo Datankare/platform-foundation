@@ -1,4 +1,4 @@
-import { logger, generateRequestId } from "@/lib/logger";
+import { logger, generateRequestId, redact } from "@/lib/logger";
 
 describe("logger", () => {
   const originalEnv = process.env;
@@ -153,5 +153,27 @@ describe("logger", () => {
     expect(console.error).not.toHaveBeenCalled();
     expect(console.warn).not.toHaveBeenCalled();
     expect(console.log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["email", { email: "a@b.com" }],
+    ["password", { password: "hunter2" }],
+    ["a nested token", { context: { accessToken: "abc" } }],
+    ["an authorization header", { headers: { Authorization: "Bearer x" } }],
+    ["a field in an array", { items: [{ phone: "555" }] }],
+  ])("never writes %s to the log (ring 6)", (_label, fields) => {
+    process.env.LOG_LEVEL = "error";
+    logger.error("leak attempt", fields as never);
+    const output = (console.error as jest.Mock).mock.calls[0][0] as string;
+    expect(output).not.toMatch(/a@b\.com|hunter2|"abc"|Bearer x|555/);
+    expect(output).toContain("[redacted]");
+  });
+
+  it("redact leaves other fields, primitives and the input untouched", () => {
+    const input = { route: "/x", email: "e", n: 1 };
+    expect(redact(input)).toEqual({ route: "/x", email: "[redacted]", n: 1 });
+    expect(input.email).toBe("e");
+    expect(redact("s")).toBe("s");
+    expect(redact(null)).toBeNull();
   });
 });

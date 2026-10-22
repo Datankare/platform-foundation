@@ -9,9 +9,10 @@
  *
  * ensureUserProvisioned() creates the row the first time an authenticated user reaches a
  * guarded route: default role (DEFAULT_USER_ROLE), defaults for everything else, an
- * `account_created` audit entry. It is idempotent and race-safe — the insert ignores a row that
- * already exists, so two first requests at once create one row — and it never changes an
- * existing row (a banned user stays banned).
+ * `account_created` audit entry, written before the row (no entry, no row: `failed`). It is
+ * idempotent and race-safe — the insert ignores a row that already exists, so two first
+ * requests at once create one row — and it never changes an existing row (a banned user stays
+ * banned).
  *
  * GenAI Principles: P11 (fail-closed — a provisioning failure is reported, never treated as
  * allowed), P13 (governance — the default role is a seeded role, not code-defined permissions)
@@ -22,7 +23,7 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
 import { getSupabaseUrl } from "@/platform/providers/environment-contract";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, audited } from "@/platform/auth/audit";
 
 /** The role every new account starts with (seeded by the schema baseline). */
 export const DEFAULT_USER_ROLE = "free";
@@ -84,19 +85,37 @@ export async function ensureUserProvisioned(
       return fail(userId, "role", `default role "${DEFAULT_USER_ROLE}" is missing`);
 
     const email = profile.email?.trim() ? profile.email.trim().toLowerCase() : null;
-    const inserted = await (supabase
-      .from("users" as never)
-      .upsert(
+    const roleId = role.data.id;
+    // Recorded before the account is created; no record, no account (Adversarial Validation, 6).
+    // Two concurrent first requests each record an attempt; only one creates the row.
+    let inserted: Awaited<Result<{ id: string }[]>>;
+    try {
+      inserted = await audited(
         {
-          id: userId,
-          cognito_sub: userId,
-          email,
-          email_verified: profile.emailVerified === true,
-          role_id: role.data.id,
-        } as never,
-        { onConflict: "id", ignoreDuplicates: true }
-      )
-      .select("id") as unknown as Result<{ id: string }[]>);
+          action: "account_created",
+          actorId: userId,
+          targetId: userId,
+          details: { role: DEFAULT_USER_ROLE, via: "first_authenticated_request" },
+        },
+        () =>
+          supabase
+            .from("users" as never)
+            .upsert(
+              {
+                id: userId,
+                cognito_sub: userId,
+                email,
+                email_verified: profile.emailVerified === true,
+                role_id: roleId,
+              } as never,
+              { onConflict: "id", ignoreDuplicates: true }
+            )
+            .select("id") as unknown as Result<{ id: string }[]>
+      );
+    } catch (err) {
+      if (err instanceof AuditWriteError) return fail(userId, "audit", err);
+      throw err;
+    }
     if (inserted.error) return fail(userId, "insert", inserted.error.message);
 
     // Empty result: another request created it between the read and the insert.
@@ -106,12 +125,6 @@ export async function ensureUserProvisioned(
       userId,
       role: DEFAULT_USER_ROLE,
       route: "platform/auth/user-provisioning",
-    });
-    void writeAuditLog({
-      action: "account_created",
-      actorId: userId,
-      targetId: userId,
-      details: { role: DEFAULT_USER_ROLE, via: "first_authenticated_request" },
     });
     return "created";
   } catch (err) {

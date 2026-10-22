@@ -38,12 +38,12 @@ import {
   validateConfigValue,
   setConfigWithHistory,
   getConfigHistory,
-  getConfig,
+  getConfigOrThrow,
 } from "@/platform/auth/platform-config";
 import {
   isApprovalRequired,
   requestApproval as createApprovalRequest,
-  approveChange as approveApprovalChange,
+  approveAndApply,
   rejectChange as rejectApprovalChange,
 } from "./config-approval";
 import { generateImpactReport, isModerationConfig } from "./config-impact";
@@ -573,33 +573,23 @@ export async function handleApproveChange(
   input: ApproveChangeInput
 ): Promise<ConfigToolResult> {
   return executeToolCall("approve_change", async () => {
-    const result = await approveApprovalChange(
+    // Approved and applied as one outcome; a change that cannot be applied is reopened
+    // (release review, Sprint 7X — it was left approved, unapplied, and reported as success).
+    const result = await approveAndApply(
       input.approvalId,
       input.reviewerId,
-      input.reviewComment
+      input.reviewComment,
+      (record) =>
+        setConfigWithHistory(
+          record.configKey,
+          record.proposedValue,
+          input.reviewerId,
+          `Approved: ${record.changeComment}`,
+          "config_agent"
+        )
     );
-
-    if (!result.success) {
-      return result;
-    }
-
-    // Gotcha #4 from config-approval: approval doesn't apply the change.
-    // Apply it now that approval is granted.
-    const record = result.record!;
-    const applyResult = await setConfigWithHistory(
-      record.configKey,
-      record.proposedValue,
-      input.reviewerId,
-      `Approved: ${record.changeComment}`,
-      "config_agent"
-    );
-
-    return {
-      approved: true,
-      applied: applyResult.success,
-      applyError: applyResult.error,
-      approval: record,
-    };
+    if (!result.success) return result;
+    return { approved: true, applied: true, approval: result.record };
   });
 }
 
@@ -972,6 +962,30 @@ const REQUIRED_FIELDS: Record<string, readonly string[]> = {
  *     tool schema level (P6) + handler validation (validateConfigValue).
  *     See Gotcha #3.
  */
+/** Settings whose changes are always dual-controlled, whatever config.dual_control_keys says. */
+export const ALWAYS_DUAL_CONTROLLED: readonly string[] = [
+  "config.dual_control_keys",
+  "config.require_two_person_approval",
+];
+
+/** Whether a change to `key` needs a runtime hold and an independent approver (ADR-039 F2b-2). */
+export async function isDualControlledKey(key: string): Promise<boolean> {
+  if (ALWAYS_DUAL_CONTROLLED.includes(key)) return true;
+  try {
+    const keys = await getConfigOrThrow<unknown>("config.dual_control_keys");
+    return !Array.isArray(keys) || keys.includes(key);
+  } catch {
+    logger.warn(
+      "config.dual_control_keys unreadable — holding the change (fail closed)",
+      {
+        route: "platform/admin/config-handlers",
+        key,
+      }
+    );
+    return true;
+  }
+}
+
 /** Roster lookup — CONFIG_TOOLS is the single source of truth for what is dispatchable. */
 const CONFIG_TOOL_BY_ID: ReadonlyMap<string, Tool> = new Map(
   CONFIG_TOOLS.map((tool) => [tool.id, tool])
@@ -1019,10 +1033,17 @@ export async function dispatchConfigTool(
   // gating threshold (restricted), so nothing holds here; dual-control (F2b-2) raises risk on
   // named keys to cross it. config-approval remains the domain two-person gate.
   const trajectoryStore = getTrajectoryStore();
+  // The human the config agent acts for is recorded on every hold, so the decision route can
+  // refuse that person approving their own change (ADR-040; audit X-10 — holds named only the
+  // agent, and the requester check compared unrelated ids).
+  const principal =
+    context?.onBehalfOf ??
+    (typeof input.actorId === "string" ? input.actorId : undefined);
   const actor: AgentIdentity = {
     actorType: "agent",
     actorId: context?.agentId ?? "config-manager",
     agentRole: "config-manager",
+    ...(principal ? { onBehalfOf: principal } : {}),
   };
   const existingTrajectoryId = context?.trajectoryId;
   let trajectoryId: string;
@@ -1041,12 +1062,14 @@ export async function dispatchConfigTool(
   // catastrophic-if-wrong, so raise its risk to `restricted` — crossing the gating threshold
   // forces a runtime hold cleared by an independent human (approval policy default = "user"),
   // on top of config-approval's domain two-person gate. Non-listed keys stay below the line.
-  const dualControlKeys = await getConfig<string[]>("config.dual_control_keys", []);
+  //
+  // Fail closed (audit X-7): when the key list cannot be read, every config write is held; and
+  // the settings that govern dual control itself are always held, so emptying the list cannot
+  // be the step that turns it off.
   const targetKey = typeof input.key === "string" ? input.key : undefined;
   const isDualControl =
     toolId === "update_config" &&
-    targetKey !== undefined &&
-    dualControlKeys.includes(targetKey);
+    (targetKey === undefined || (await isDualControlledKey(targetKey)));
   const effectiveTool: Tool = isDualControl
     ? { ...tool, declaredRisk: "restricted" }
     : tool;

@@ -23,6 +23,8 @@ import { runSTTProviderContract } from "./stt-provider-contract";
 import { runSongIdProviderContract } from "./song-id-provider-contract";
 import { runAudioConverterContract } from "./audio-converter-contract";
 import { runModerationStoreContract } from "./moderation-store-contract";
+import { runStrikeStoreContract } from "./strike-store-contract";
+import { runReviewQueueStoreContract } from "./review-queue-store-contract";
 import { runSocialStoreContract } from "./social-store-contract";
 import { runGuestUsageStoreContract } from "./guest-usage-store-contract";
 import { runRateLimiterContract } from "./rate-limiter-contract";
@@ -71,6 +73,8 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   songId: { kind: "registry", kit: runSongIdProviderContract },
   audioConverter: { kind: "registry", kit: runAudioConverterContract },
   moderationStore: { kind: "registry", kit: runModerationStoreContract },
+  strikeStore: { kind: "registry", kit: runStrikeStoreContract },
+  reviewQueueStore: { kind: "registry", kit: runReviewQueueStoreContract },
   socialStore: { kind: "registry", kit: runSocialStoreContract },
   embeddingProvider: { kind: "registry", kit: runEmbeddingProviderContract },
   appStateStore: { kind: "registry", kit: runAppStateStoreContract },

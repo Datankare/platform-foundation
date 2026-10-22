@@ -5,7 +5,8 @@
  *   POST   /api/moderation/appeals        — user submits an appeal
  *   PATCH  /api/moderation/appeals/[id]   — moderator claims/unclaims/resolves
  *
- * Services, stores, and auth are mocked. These verify the security-critical
+ * Services and stores are mocked; token verification and the admin guard run with real roles
+ * (helpers/test-identities.ts). These verify the security-critical
  * route logic: token-derived identity, server-side decision fetch + ownership
  * check (no cross-user appeals), F1 previousStatus derivation, appeal-scoping,
  * RBAC gating, status mapping, and error paths.
@@ -16,14 +17,18 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: jest.fn(() => "test-req-id"),
 }));
 
-jest.mock("@/platform/auth/middleware", () => ({
-  requireAuth: jest.fn(),
-  optionalAuth: jest.fn(),
-}));
-
-jest.mock("@/platform/auth/admin-guard", () => ({
-  adminGuard: jest.fn().mockResolvedValue(null),
-}));
+jest.mock("@/platform/auth/middleware", () =>
+  require("@/__tests__/helpers/test-identities").mockMiddleware()
+);
+jest.mock("@/platform/auth/permissions-cache", () =>
+  require("@/__tests__/helpers/test-identities").mockPermissionsCache()
+);
+jest.mock("@/platform/auth/account-status-guard", () =>
+  require("@/__tests__/helpers/test-identities").mockAccountStatus()
+);
+jest.mock("@/platform/rate-limit", () =>
+  require("@/__tests__/helpers/test-identities").mockRateLimit()
+);
 
 jest.mock("@/platform/moderation/store", () => ({
   getModerationStore: jest.fn(),
@@ -58,9 +63,8 @@ jest.mock("@/lib/supabase/server", () => ({
   getSupabaseServiceClient: jest.fn(() => mockSupabase),
 }));
 
-import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, optionalAuth } from "@/platform/auth/middleware";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { NextRequest } from "next/server";
+import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
 import { getModerationStore } from "@/platform/moderation/store";
 import { getAuditLogForUser } from "@/platform/auth/audit";
 import {
@@ -78,18 +82,20 @@ import { PATCH } from "@/app/api/moderation/appeals/[id]/route";
 const mockQueryAudits = jest.fn();
 const mockGetById = jest.fn();
 
-function postReq(body: unknown): NextRequest {
+const REVIEWER = CALLERS.moderator.userId;
+
+function postReq(body: unknown, caller: CallerName = "free"): NextRequest {
   return new NextRequest("http://localhost/api/moderation/appeals", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authAs(caller) },
     body: JSON.stringify(body),
   });
 }
 
-function patchReq(body: unknown): NextRequest {
+function patchReq(body: unknown, caller: CallerName = "moderator"): NextRequest {
   return new NextRequest("http://localhost/api/moderation/appeals/a1", {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authAs(caller) },
     body: JSON.stringify(body),
   });
 }
@@ -128,15 +134,6 @@ const GOOD_REASON = "I was translating a historical document about a conflict.";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (requireAuth as jest.Mock).mockResolvedValue({
-    user: { sub: "cog-1" },
-    accessToken: "t",
-  });
-  (adminGuard as jest.Mock).mockResolvedValue(null);
-  (optionalAuth as jest.Mock).mockResolvedValue({
-    user: { sub: "rev-1" },
-    accessToken: "t",
-  });
   (getModerationStore as jest.Mock).mockReturnValue({ queryAudits: mockQueryAudits });
   (getReviewQueueStore as jest.Mock).mockReturnValue({ getById: mockGetById });
   (getAuditLogForUser as jest.Mock).mockResolvedValue([]);
@@ -172,13 +169,27 @@ describe("POST /api/moderation/appeals", () => {
     );
   });
 
-  it("returns the auth error when unauthenticated", async () => {
-    (requireAuth as jest.Mock).mockResolvedValue({
-      error: NextResponse.json({ error: "auth" }, { status: 401 }),
-    });
+  it.each([
+    ["null", null, "request.invalid_body"],
+    ["an array", [], "request.invalid_body"],
+    [
+      "a non-string decision id",
+      { originalDecisionId: 5, appealReason: GOOD_REASON },
+      "request.missing_fields",
+    ],
+  ])(
+    "answers %s with a coded 400, not a crash (found by the monkey run)",
+    async (_label, body, code) => {
+      const res = await POST(postReq(body));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe(code);
+      expect(submitAppeal).not.toHaveBeenCalled();
+    }
+  );
 
+  it("returns the auth error when unauthenticated", async () => {
     const res = await POST(
-      postReq({ originalDecisionId: "traj-1", appealReason: GOOD_REASON })
+      postReq({ originalDecisionId: "traj-1", appealReason: GOOD_REASON }, "anonymous")
     );
 
     expect(res.status).toBe(401);
@@ -246,6 +257,29 @@ describe("POST /api/moderation/appeals", () => {
     );
   });
 
+  it("matches Sentinel's status change by the Guardian decision id it records", async () => {
+    mockQueryAudits.mockResolvedValue([makeAuditRecord({ userId: "u-app" })]);
+    (getAuditLogForUser as jest.Mock).mockResolvedValue([
+      {
+        action: "admin_action",
+        details: {
+          type: "sentinel_status_change",
+          trajectoryId: "sentinel-run-9",
+          guardianDecisionId: "traj-1",
+          previousStatus: "restricted",
+        },
+      },
+    ]);
+    (submitAppeal as jest.Mock).mockResolvedValue({ success: true, item: { id: "a1" } });
+
+    await POST(postReq({ originalDecisionId: "traj-1", appealReason: GOOD_REASON }));
+
+    expect(submitAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ previousAccountStatus: "restricted" }),
+      expect.any(String)
+    );
+  });
+
   it("maps a service validation failure to 400", async () => {
     mockQueryAudits.mockResolvedValue([makeAuditRecord({ userId: "u-app" })]);
     (submitAppeal as jest.Mock).mockResolvedValue({
@@ -280,7 +314,7 @@ describe("POST /api/moderation/appeals", () => {
   it("returns 400 on invalid JSON", async () => {
     const req = new NextRequest("http://localhost/api/moderation/appeals", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authAs("moderator") },
       body: "{bad",
     });
 
@@ -310,7 +344,7 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
       id: "a1",
       source: "appeal",
       status: "claimed",
-      claimedBy: "rev-1",
+      claimedBy: REVIEWER,
     });
     (resolveItem as jest.Mock).mockResolvedValue({
       success: true,
@@ -328,7 +362,11 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
 
     expect(res.status).toBe(200);
     expect(resolveItem).toHaveBeenCalledWith(
-      expect.objectContaining({ itemId: "a1", reviewerId: "rev-1", decision: "overturn" })
+      expect.objectContaining({
+        itemId: "a1",
+        reviewerId: REVIEWER,
+        decision: "overturn",
+      })
     );
   });
 
@@ -342,7 +380,7 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
     const res = await PATCH(patchReq({ action: "claim" }), ctx("a1"));
 
     expect(res.status).toBe(200);
-    expect(claimItem).toHaveBeenCalledWith("a1", "rev-1");
+    expect(claimItem).toHaveBeenCalledWith("a1", REVIEWER);
   });
 
   it("unclaims an appeal item", async () => {
@@ -350,7 +388,7 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
       id: "a1",
       source: "appeal",
       status: "claimed",
-      claimedBy: "rev-1",
+      claimedBy: REVIEWER,
     });
     (unclaimItem as jest.Mock).mockResolvedValue({
       success: true,
@@ -360,7 +398,7 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
     const res = await PATCH(patchReq({ action: "unclaim" }), ctx("a1"));
 
     expect(res.status).toBe(200);
-    expect(unclaimItem).toHaveBeenCalledWith("a1", "rev-1");
+    expect(unclaimItem).toHaveBeenCalledWith("a1", REVIEWER);
   });
 
   it("returns 404 when the item is not an appeal", async () => {
@@ -380,16 +418,14 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns the guard response when RBAC denies", async () => {
-    (adminGuard as jest.Mock).mockResolvedValueOnce(
-      NextResponse.json({ error: "denied" }, { status: 403 })
-    );
-
-    const res = await PATCH(patchReq({ action: "claim" }), ctx("a1"));
-
-    expect(res.status).toBe(403);
-    expect(mockGetById).not.toHaveBeenCalled();
-  });
+  it.each(["anonymous", "free", "safety_approver", "suspended_super_admin"] as const)(
+    "refuses %s before reading the item",
+    async (caller) => {
+      const res = await PATCH(patchReq({ action: "claim" }, caller), ctx("a1"));
+      expect([401, 403]).toContain(res.status);
+      expect(mockGetById).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns 400 when resolve is missing decision/notes", async () => {
     mockGetById.mockResolvedValue({ id: "a1", source: "appeal" });
@@ -428,7 +464,7 @@ describe("PATCH /api/moderation/appeals/[id]", () => {
   it("returns 400 on invalid JSON", async () => {
     const req = new NextRequest("http://localhost/api/moderation/appeals/a1", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authAs("moderator") },
       body: "{bad",
     });
 

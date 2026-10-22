@@ -122,6 +122,7 @@ export {
   resolveApprover,
   InMemoryApprovalPolicyStore,
   DEFAULT_APPROVAL_POLICY,
+  approvalRulesProblem,
 } from "./approval-policy-store";
 export { SupabaseApprovalPolicyStore } from "./supabase-approval-policy-store";
 export type {

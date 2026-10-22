@@ -2385,7 +2385,7 @@ Playform by hand. Screen-literal baseline 297 → 287.
 | **Type**     | Schema integrity                                          |
 | **Severity** | Low — the sink is opt-in; selecting it fails on first use |
 | **Phase**    | Phase 5                                                   |
-| **Target**   | Phase 5, Sprint 7B                                        |
+| **Target**   | Phase 5, Sprint 7R                                        |
 | **Status**   | Open                                                      |
 | **Logged**   | 2026-09-29                                                |
 
@@ -2404,7 +2404,7 @@ or remove the Supabase sink if metrics stay in Sentry/Langfuse.
 | **Type**     | Security hardening (defense in depth)                             |
 | **Severity** | Medium — row-level security is the only barrier for the API roles |
 | **Phase**    | Phase 5                                                           |
-| **Target**   | Phase 6 (before public launch)                                    |
+| **Target**   | Phase 5, Sprint 7T (moved from Phase 6 by ADR-053 D6)             |
 | **Status**   | Open                                                              |
 | **Logged**   | 2026-09-29                                                        |
 
@@ -2698,6 +2698,10 @@ config, limits, budgets, cache keys, audit and metrics, the tenant lifecycle, an
 off request paths. Sprint 7R plumbs a tenant context through requests and agents (one default tenant) and adds
 a cross-tenant isolation conformance kit; Sprint 7T carries tenancy through every table, policy and cache.
 
+**Sprint 7R entry gate (2026-10-21):** ADR-053 (Proposed). Server code reaches Postgres directly through one data
+layer and a transaction-mode pooler, under a role that cannot bypass row-level security (D4; the REST-API
+alternative is recorded in its §3).
+
 ### TASK-127 — Split the foundation from product modules
 
 | Field        | Detail                                                                      |
@@ -2716,6 +2720,9 @@ in the foundation, so every consumer inherits them. Raised by the 2026-10-17 ass
 **Plan:** an ADR in Sprint 7R defining the core (identity and roles, errors and catalogs, config, agents and
 AI governance, content safety, consent) and optional modules; sync becomes "core plus the modules a consumer
 opts into"; a lint rule stops the core importing a module. Sprint 7S moves the modules out.
+
+**Sprint 7R entry gate (2026-10-21):** ADR-054 (Proposed): six modules, self-registration, module migrations and a
+sync that selects modules; 22 boundary imports to remove before the lint rule (R4).
 
 ### TASK-128 — Deploy anywhere: a container image, infrastructure as code, a second host
 
@@ -2742,6 +2749,9 @@ RDS Postgres with point-in-time recovery, Valkey, load balancer, DNS and certifi
 commit to Vercel and AWS and the smoke test must pass on both; a Valkey provider over the standard Redis
 protocol. GCP and Azure follow with the same image.
 
+**Sprint 7R entry gate (2026-10-21):** ADR-055 (Proposed); host-neutral detection closes TASK-140 before any
+other host exists (R2); the image and its CI smoke run are R6.
+
 ### TASK-129 — Operations baseline: recovery, alerting, objectives, background work
 
 | Field        | Detail                                                    |
@@ -2759,7 +2769,11 @@ alerting or on-call runbooks, no service-level objectives, and no durable queue 
 timed jobs run as API routes or CI schedules). These were Phase 9 items; brought forward.
 
 **Plan:** an ADR in Sprint 7R; Sprint 7O delivers point-in-time recovery with a tested restore drill, RPO
-and RTO targets, alerting and runbooks, SLO monitoring across both hosts, and a durable queue and scheduler.
+and RTO targets, alerting and runbooks, and SLO monitoring across both hosts.
+
+**Sprint 7R entry gate (2026-10-21):** ADR-056 (Proposed) sets RPO ≤ 5 minutes and RTO ≤ 1 hour, the job queue
+and scheduler design, health, telemetry, objectives and runbooks. The queue and scheduler move into 7R (R5),
+because timed duties that exist today never run (TASK-141).
 
 ### TASK-130 — Security assurance: dynamic testing, compliance mapping, data residency
 
@@ -2931,7 +2945,202 @@ docs, and its TAD still described March 2026. The check needed two consumer seam
 inherits both files and the check, and owns its README, docs index and TAD. An audit of every Playform
 exclusion (learning 115) also found its twelve auth routes byte-identical to the platform's yet excluded —
 now inherited, with the platform's `auth-routes` test — one exclusion naming a file that no longer existed
-(removed), and an orphaned `components/admin/styles.ts` left by a sync (removed).
+(removed), and an orphaned `components/admin/styles.ts` left by a sync (removed). On Playform's first secret
+scan, the synced `.gitleaksignore` could not cover a Playform commit: the list names commits, so it is a
+consumer seam too. SETUP_AND_INTEGRATION now lists every consumer seam.
+
+### TASK-137 — Anyone with the public key could reset or exhaust an agent's budget
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-137                                                                 |
+| **Type**     | Security — database privilege                                            |
+| **Severity** | High — defeats the governed AI cost cap, or stops Guardian (fail-closed) |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7R                                                       |
+| **Status**   | Fixed on develop (migration 040); applied to each database by hand       |
+| **Logged**   | 2026-10-21                                                               |
+
+**What:** `agent_budget_consume()` runs as its owner (`SECURITY DEFINER`, so it bypasses row-level
+security on `agent_budgets`) and was executable by `anon` and `authenticated` — the database's default
+grant, never revoked. Through the REST API, anyone holding the project's public key could call it: a
+negative delta resets an agent's daily spend and defeats the governed cap (ADR-048); a large positive one
+exhausts the budget, and Guardian, which fails closed, then refuses all content. Found by the Sprint 7R
+tenancy survey. The platform calls it only with the service role.
+
+**Fixed (migration 040):** execute revoked from `public`, `anon` and `authenticated`, granted to
+`service_role` (the pattern of 037 and 039); the function refuses negative or non-finite deltas. The
+migration replay now fails on any function that writes, runs as its owner and is executable by `anon` or
+`authenticated`, so the class cannot return — verified to fail before 040 and pass after, on the
+platform's and Playform's migration sets.
+
+### TASK-138 — Admin audit records name a placeholder, not the admin
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-138                                    |
+| **Type**     | Audit integrity                             |
+| **Severity** | Medium — admin actions cannot be attributed |
+| **Phase**    | Phase 5                                     |
+| **Target**   | Phase 5, Sprint 7X                          |
+| **Status**   | Fixed on develop (Sprint 7X, v5.0.0)        |
+| **Logged**   | 2026-10-21                                  |
+
+**What:** `adminGuard` verifies the caller and then returns `null`, so routes cannot name the admin who acted. `getAdminActorId` (`platform/auth/admin-guard.ts`) returns the placeholder `"authenticated-admin"` (or `"dev-admin"`), and admin audit records carry it. Three routes recover the actor with a second `optionalAuth` call. Found by the Sprint 7R tenancy survey.
+
+**Plan:** `adminGuard` returns the verified admin (user and tenant); `getAdminActorId` is removed; every admin audit write names the admin; a test fails any admin audit record without a real actor (R2).
+
+**Fixed (Sprint 7X):** `requireAdmin` returns the verified admin (`userId`, `sub`, role, permissions); `getAdminActorId` is removed; every admin audit record names the admin, and the audit module refuses a non-UUID actor, so a placeholder can no longer be written (`audit-fail-closed`). The tenant joins the admin identity with R3.
+
+### TASK-139 — The cache falls back to memory in production without saying so
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-139                                                     |
+| **Type**     | Reliability — configuration                                  |
+| **Severity** | Medium — a misconfigured cache silently becomes per instance |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | Phase 5, Sprint 7R                                           |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-10-21                                                   |
+
+**What:** `platform/cache/index.ts` selects Redis only when `UPSTASH_REDIS_REST_URL` is present and otherwise uses an in-memory cache, in production too, silently (it warns only when the URL is set without its token). `CACHE_PROVIDER=upstash` with missing credentials also warns and falls back, and `getCache` otherwise ignores `CACHE_PROVIDER`. The cache is not in the environment contract. Found by the Sprint 7R deploy-anywhere survey.
+
+**Plan:** The cache becomes an explicit `CACHE_PROVIDER` selection, honoured by `getCache` and declared in the contract; production refuses an in-memory cache unless the E2E harness opts out, as for every durable store (ADR-048 D3, ADR-055 D4) (R2).
+
+### TASK-140 — Off Vercel, production would accept the test-harness switches
+
+| Field        | Detail                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-140                                                                                    |
+| **Type**     | Security — configuration                                                                    |
+| **Severity** | High — on any other host, mock sign-in and in-memory stores would be accepted in production |
+| **Phase**    | Phase 5                                                                                     |
+| **Target**   | Phase 5, Sprint 7R                                                                          |
+| **Status**   | Fixed on develop (Sprint 7X, v5.0.0)                                                        |
+| **Logged**   | 2026-10-21                                                                                  |
+
+**What:** The environment contract treats a deployment as hosted only when `VERCEL=1`, and only a hosted deployment refuses `E2E_IN_MEMORY_STORES` and `E2E_TEST_DOUBLE_AUTH` (and reports `ADMIN_DEV_BYPASS`, which `adminGuard` separately ignores in any production build). A container or any other host would accept the first two in production. The deployed commit is read only from `VERCEL_GIT_COMMIT_SHA` and the version from `npm_package_version`. Not exploitable today (only Vercel is deployed); must be closed before any other host. Found by the Sprint 7R deploy-anywhere survey.
+
+**Plan:** Inverted, so forgetting a setting cannot reopen it: the harness switches are accepted only with a positive non-hosted marker (`DEPLOYMENT_HOST=local` or `ci`); any other value, or none, refuses them. The commit from `GIT_COMMIT_SHA` then `VERCEL_GIT_COMMIT_SHA`; the version from the `platform/version.ts` constant (ADR-055 D2) (R2).
+
+**Fixed (Sprint 7X):** as planned — `DEPLOYMENT_HOST` in the contract; the harness switches are accepted in production only with `local` or `ci`; the commit from `GIT_COMMIT_SHA` then `VERCEL_GIT_COMMIT_SHA`; the version from `PLATFORM_VERSION` (`environment-contract` tests). The monkey run (`fuzz.yml`) starts the production build with `DEPLOYMENT_HOST=ci`.
+
+### TASK-141 — Timed duties have no trigger
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-141                                                                 |
+| **Type**     | Operations — background work                                             |
+| **Severity** | High — the escalation SLA (ADR-041) and retention rules are not enforced |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7R                                                       |
+| **Status**   | Open                                                                     |
+| **Logged**   | 2026-10-21                                                               |
+
+**What:** The escalation-SLA reaper is a route nothing calls; `releaseExpiredClaims` and `expireStrikes` have no caller; the GDPR retention purge is manual; the analyst and curator agents have budgets but no schedule. There is no queue, outbox or dead-letter handling. Found by the Sprint 7R operations survey.
+
+**Plan:** `platform/jobs` (ADR-056 D2): a Postgres-backed queue and scheduler, host ticks from Vercel Cron and (7P) EventBridge, each timed duty a registered recurring job, and a CI check that a function documented as scheduled has a registered job (R5).
+
+### TASK-142 — Health does not check the database
+
+| Field        | Detail                                                             |
+| ------------ | ------------------------------------------------------------------ |
+| **ID**       | TASK-142                                                           |
+| **Type**     | Operations — health                                                |
+| **Severity** | Medium — a deployment with an unreachable database reports healthy |
+| **Phase**    | Phase 5                                                            |
+| **Target**   | Phase 5, Sprint 7R                                                 |
+| **Status**   | Open                                                               |
+| **Logged**   | 2026-10-21                                                         |
+
+**What:** `/api/health` runs only the song-identification probe; the database, cache and realtime probes exist but are not registered, and there is no separate readiness check. Found by the Sprint 7R operations survey.
+
+**Plan:** Liveness and readiness split. Readiness requires boot to have completed and the database (and a selected shared cache) to answer; realtime and module probes report degraded without making the instance unready, so one dependency blip cannot take every instance out of rotation. Modules contribute their probes (ADR-054 D4, ADR-056 D4); the deploy smoke test checks readiness (R5).
+
+### TASK-143 — The scheduled load test can never pass
+
+| Field        | Detail                                                      |
+| ------------ | ----------------------------------------------------------- |
+| **ID**       | TASK-143                                                    |
+| **Type**     | CI correctness                                              |
+| **Severity** | Low — a scheduled job that always fails hides real failures |
+| **Phase**    | Phase 5                                                     |
+| **Target**   | Phase 5, Sprint 7R                                          |
+| **Status**   | Open                                                        |
+| **Logged**   | 2026-10-21                                                  |
+
+**What:** `.github/workflows/load-test.yml` runs every Monday against `http://localhost:3000` without starting a server. Found by the Sprint 7R operations survey.
+
+**Plan:** Any run whose target is localhost — the schedule, and a manual run left at its default — starts the built app (or the container image, R6) first; a manual run against a deployed address targets it directly (R5).
+
+### TASK-144 — An agent's budget day is the server's local day
+
+| Field        | Detail                                                      |
+| ------------ | ----------------------------------------------------------- |
+| **ID**       | TASK-144                                                    |
+| **Type**     | Correctness — governed budgets                              |
+| **Severity** | Low — the daily cap resets at a different hour on each host |
+| **Phase**    | Phase 5                                                     |
+| **Target**   | Phase 5, Sprint 7R                                          |
+| **Status**   | Open                                                        |
+| **Logged**   | 2026-10-21                                                  |
+
+**What:** `BudgetTracker.getCurrentPeriod()` (`platform/agents/budget-tracker.ts`) builds `YYYY-MM-DD` from local time. Vercel runs in UTC; a container or another host may not, so the governed daily cap (ADR-048) would reset at different hours. Found by the Sprint 7R tenancy survey.
+
+**Plan:** Periods computed in UTC, with a test that fixes the time zone (R2).
+
+### TASK-145 — Tests confirmed; nothing proved what the system refuses (October 2026 audit)
+
+| Field        | Detail                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------- |
+| **ID**       | TASK-145                                                                                |
+| **Type**     | Security — assurance (umbrella for the October 2026 whole-system adversarial review)    |
+| **Severity** | Critical — privilege escalation and missing audit in production while every test passed |
+| **Phase**    | Phase 5                                                                                 |
+| **Target**   | Phase 5, Sprint 7X (Wave 1: v5.0.0; Waves 2 and 3 follow)                               |
+| **Status**   | Wave 1 fixed on develop (v5.0.0); Waves 2 and 3 open                                    |
+| **Logged**   | 2026-10-21                                                                              |
+
+**What:** A moderator could make themselves `super_admin` through the AI command bar, any admin could assign any role, and role changes left no audit record — while unit, integration and end-to-end tests, CodeQL, Semgrep and every sprint-close review passed. Route tests stubbed the admin guard; a self-elevation check was tested but never called; no test acted as the wrong role (learning 116). The independent whole-system review that followed found 7 Critical and 18 High findings and many Medium and Low ones; the register is [audits/2026-10-REGISTER.md](audits/2026-10-REGISTER.md).
+
+**Wave 1 (Sprint 7X, v5.0.0):** every Critical and High finding in platform code, and the Medium and Low ones on the same paths, each with the test that would have caught it; Adversarial Validation adopted as a core tenet with the checks that enforce it ([ASSURANCE.md](ASSURANCE.md)): authorization matrix, real guards, security wiring, coverage-ignore policy, paid-route quota, JSON bodies, REST URL encoding, property-test depth, the monkey run, weekly migration parity and ZAP.
+
+**Release review (2026-10-22):** three independent reviewers of the v5.0.0 diff found 2 High, 9 Medium and 14 Low issues (RR-1–RR-25 in the register); every High and most of the rest are fixed in v5.0.0 with their tests, including a pre-existing defect that stored governed config values as JSON text (migration 045).
+
+**Wave 2:** runtime holds (X-10), purge handlers and export/erasure routes (X-15), age consent (X-16), sessions (X-17), multimodal safety and provenance (X-18), guest continuation (X-20), remaining fire-and-forget writes (X-22), and the Medium and Low items the register marks Wave 2 (including RR-8, RR-15, RR-17, RR-19, RR-23). **Wave 3:** latent modules (X-25) before any route reaches them. Consumer-owned findings (X-9 and others) are fixed in the consumer's adoption.
+
+### TASK-146 — Privileged and isolation paths are not yet tested against real Postgres
+
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-146                                                                      |
+| **Type**     | Assurance — test fidelity                                                     |
+| **Severity** | Medium — a database-only behaviour (a constraint, a grant, a type) can differ |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | Phase 5, Sprint 7X Wave 2                                                     |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-10-22                                                                    |
+
+**What:** Adversarial Validation practice 5 asks that privileged and data-isolation paths run against real Postgres. Today the routes run against `FakeDatabase` (filters evaluated, unique constraints, failures injected, filter strings refused) and the SQL runs against real Postgres only in the migration replay. Uuid and enum column semantics — the cause of X-8 and E-15 — are exactly what an in-memory database does not reproduce. Recorded in [ASSURANCE.md](ASSURANCE.md) §3.
+
+**Plan:** The migration-replay database serves a route-level suite in CI: the role-change, config, moderation and audit paths run as each role against it, with the same hostile cases.
+
+### TASK-147 — Generated hostile input covers few suites; the monkey run is bounded by rate limits
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-147                                                     |
+| **Type**     | Assurance — test breadth                                     |
+| **Severity** | Medium — hand-picked hostile cases miss what nobody imagined |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | Phase 5, Sprint 7X Wave 2                                    |
+| **Status**   | Open                                                         |
+| **Logged**   | 2026-10-22                                                   |
+
+**What:** Property tests cover sanitization, output screening, paging and search; most suites use hand-picked hostile cases only. The monkey run sweeps every route as every caller first, but from one address most of its random steps are then refused with 429 — correctly, since it must not bypass the limits. Recorded in [ASSURANCE.md](ASSURANCE.md) §3.
+
+**Plan:** Property tests for every validator and every route's body schema (generated bodies, `fast-check`); the monkey run gains a sequence mode that paces itself under each route's limit, and invariants after each step on the data it may see (no other user's records).
 
 ## Known Issue — TASK-020 numbering collision
 
@@ -2978,5 +3187,6 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
+_Last updated: October 22, 2026 (TASK-145 Wave 1 fixed; TASK-138 and TASK-140 fixed in Sprint 7X; TASK-146 and TASK-147 filed — the gaps ASSURANCE.md records)_
 _Last updated: August 13, 2026 (TASK-083 filed — the sync cannot distinguish an upstream deletion from a Playform-owned file)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_

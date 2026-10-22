@@ -16,7 +16,7 @@
  */
 
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { writeAuditLog } from "@/platform/auth/audit";
+import { AuditWriteError, audited, recordAudit } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
 export type ProfileVisibility = "private" | "friends" | "public";
@@ -191,34 +191,46 @@ export async function updateProfile(
 
   const supabase = getSupabaseServiceClient();
 
-  const { error } = await supabase
-    .from("users")
-    .update(dbUpdate)
-    .eq("id", userId)
-    .is("deleted_at", null);
+  try {
+    // Recorded before the profile changes; no record, no change (Adversarial Validation, 6).
+    return await audited(
+      {
+        action: "profile_updated",
+        actorId: userId,
+        targetId: userId,
+        details: { fields: Object.keys(update) },
+      },
+      async () => {
+        const { error } = await supabase
+          .from("users")
+          .update(dbUpdate)
+          .eq("id", userId)
+          .is("deleted_at", null);
 
-  if (error) {
-    logger.error("Profile update failed", {
-      userId,
-      error: error.message,
-      route: "platform/auth/profile",
-    });
-    return { success: false, error: error.message };
+        if (error) {
+          logger.error("Profile update failed", {
+            userId,
+            error: error.message,
+            route: "platform/auth/profile",
+          });
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError)
+      return { success: false, error: "audit unavailable" };
+    throw err;
   }
-
-  await writeAuditLog({
-    action: "profile_updated",
-    actorId: userId,
-    targetId: userId,
-    details: { fields: Object.keys(update) },
-  });
-
-  return { success: true };
 }
 
 /**
  * Get a user's profile for admin viewing.
- * Returns all fields. Audit logged (admin accessed user data).
+ * Returns all fields. Audit logged (admin accessed user data): the access is recorded before
+ * the profile is returned, and when it cannot be recorded AuditWriteError is thrown and nothing
+ * is disclosed. (Null stays "no such profile", so an audit failure is never mistaken for one.)
  */
 export async function getProfileAsAdmin(
   adminId: string,
@@ -227,7 +239,7 @@ export async function getProfileAsAdmin(
   const profile = await getOwnProfile(userId);
 
   if (profile) {
-    await writeAuditLog({
+    await recordAudit({
       action: "profile_viewed_by_admin",
       actorId: adminId,
       targetId: userId,

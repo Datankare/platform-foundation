@@ -18,6 +18,20 @@ function setNodeEnv(v: string): void {
   });
 }
 
+afterEach(() => {
+  for (const v of SAFETY_STORES) delete process.env[v];
+});
+
+/** Moderation and agent stores that refuse memory in production (audit X-3, X-21). */
+const SAFETY_STORES = [
+  "MODERATION_STORE",
+  "STRIKE_STORE",
+  "REVIEW_QUEUE_STORE",
+  "PROPOSAL_STORE",
+  "EFFECT_LEDGER",
+  "APPROVAL_POLICY_STORE",
+];
+
 describe("Provider Registry", () => {
   const origEnv = { ...process.env };
 
@@ -228,6 +242,7 @@ describe("auth-init backward compat", () => {
     // Every guarded store durable, so each test can flip exactly one to memory and assert
     // that the named store (not whichever is initialized first) is what refuses to boot.
     const allDurable = (): void => {
+      for (const v of SAFETY_STORES) process.env[v] = "supabase";
       process.env.APP_STATE_STORE = "supabase";
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";
@@ -298,9 +313,48 @@ describe("auth-init backward compat", () => {
       delete process.env.SOCIAL_STORE;
       delete process.env.RATE_LIMIT_STORE;
       process.env.E2E_IN_MEMORY_STORES = "true";
+      process.env.DEPLOYMENT_HOST = "ci";
       realAuth();
       expect(await boot()).not.toThrow();
+      delete process.env.DEPLOYMENT_HOST;
     });
+
+    it("THROWS in production when E2E_IN_MEMORY_STORES=true but DEPLOYMENT_HOST is not local or ci (TASK-140)", async () => {
+      setNodeEnv("production");
+      delete process.env.APP_STATE_STORE;
+      delete process.env.TRAJECTORY_STORE;
+      delete process.env.BUDGET_STORE;
+      delete process.env.GUEST_USAGE_STORE;
+      delete process.env.SOCIAL_STORE;
+      delete process.env.RATE_LIMIT_STORE;
+      process.env.E2E_IN_MEMORY_STORES = "true";
+      process.env.DEPLOYMENT_HOST = "container";
+      realAuth();
+      expect(await boot()).toThrow(/DEPLOYMENT_HOST/);
+      delete process.env.DEPLOYMENT_HOST;
+    });
+
+    it.each(SAFETY_STORES)(
+      "throws in production when %s is memory (audit X-3, X-21)",
+      async (store) => {
+        setNodeEnv("production");
+        allDurable();
+        process.env[store] = "memory";
+        expect(await boot()).toThrow(new RegExp(store));
+      }
+    );
+
+    it.each(["MODERATION_STORE", "STRIKE_STORE", "REVIEW_QUEUE_STORE"])(
+      "refuses %s=supabase without credentials instead of falling back to memory",
+      async (store) => {
+        setNodeEnv("test");
+        process.env[store] = "supabase";
+        delete process.env.SUPABASE_URL;
+        delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+        delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+        expect(await boot()).toThrow(new RegExp(`${store}=supabase but SUPABASE_URL`));
+      }
+    );
 
     it("does NOT throw in production when every guarded store is supabase with creds", async () => {
       setNodeEnv("production");
@@ -343,6 +397,7 @@ describe("auth-init backward compat", () => {
         "TRAJECTORY_STORE",
         "BUDGET_STORE",
         "GUEST_USAGE_STORE",
+        ...SAFETY_STORES,
       ]) {
         process.env[v] = "supabase";
       }
@@ -366,6 +421,7 @@ describe("auth-init backward compat", () => {
     it("refuses the memory store in production", async () => {
       setNodeEnv("production");
       realAuth();
+      for (const v of SAFETY_STORES) process.env[v] = "supabase";
       process.env.APP_STATE_STORE = "supabase";
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";
@@ -413,6 +469,7 @@ describe("auth-init backward compat", () => {
       return () => initProviders();
     };
     const durable = (): void => {
+      for (const v of SAFETY_STORES) process.env[v] = "supabase";
       process.env.APP_STATE_STORE = "supabase";
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";

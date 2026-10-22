@@ -117,7 +117,7 @@ boot, naming every violation at once, when:
   `SUPABASE_SERVICE_ROLE_KEY` (the legacy JWT), `GUEST_TOKEN_SECRET` (≥ 32 random bytes — required with a
   real auth provider: guest tokens are signed, D4);
 - a required setting is missing (Cognito ids with `cognito`; Supabase URL + key when any slot selects `supabase`);
-- a harness switch (`E2E_*`, `ADMIN_DEV_BYPASS`) is set on a hosted deployment (`VERCEL=1`).
+- a harness switch (`E2E_*`, `ADMIN_DEV_BYPASS`) is set where `DEPLOYMENT_HOST` is not `local` or `ci` — the switches are accepted only on a positive non-deployment marker, so a deployment that forgets the setting still refuses them (TASK-140).
 
 Every reader of these settings goes through the contract's resolvers (`getSupabaseUrl()`,
 `getCognitoSettings()`, `getAuthProviderSetting()`), so what boot validates is what runs.

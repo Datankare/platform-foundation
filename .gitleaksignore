@@ -1,6 +1,9 @@
 # Known gitleaks false positives, one fingerprint per line (commit:file:rule:line).
 # Each needs a reason. The scan runs in .github/workflows/secret-scan.yml.
 #
+# These are platform-foundation's commits. A consuming app keeps its own list and excludes this file
+# from the sync (docs/SETUP_AND_INTEGRATION.md, "The consumer seams").
+#
 # 87e86ef — docs/ENV_REFERENCE.md showed a truncated placeholder PEM ("MIIE...") as an example
 # value for DELEGATION_JWT_PRIVATE_KEY. Not a key. The example was replaced with a non-PEM
 # description in 2026-10.
@@ -9,3 +12,8 @@
 # 5a22199 — a test fixture: the environment-contract test feeds the made-up value "sb_secret_abc123"
 # to prove a non-JWT Supabase key is refused. Not a credential.
 5a221995ba9831653afa80644cd26036061676b1:platform/providers/__tests__/environment-contract.test.ts:generic-api-key:168
+#
+# 273b41e — scripts/monkey/monkey.mjs held a deliberately forged token for the monkey
+# run: an unsigned JWT (alg "none", sub "admin", no signature) sent to prove forged callers
+# are refused. Not a credential. It is now built at run time, so no literal remains.
+273b41e69c44bad91643f7d589ddd26db277ab8d:scripts/monkey/monkey.mjs:jwt:194

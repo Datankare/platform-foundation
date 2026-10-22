@@ -8,8 +8,8 @@
  * Permission routing:
  *   - Read tools (search, get, history, compare, impact, bulk_review):
  *     config_view (all admins)
- *   - Write tools (update, request_approval):
- *     config_manage_standard (admin) or config_manage_safety (super_admin)
+ *   - Write tools (update, request_approval): the target key's tier permission —
+ *     config_manage_standard, or config_manage_safety for a safety-tier or unknown key
  *   - Approval tools (approve, reject):
  *     config_manage_safety (super_admin only)
  *
@@ -17,13 +17,17 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard, getAdminActorId } from "@/platform/auth/admin-guard";
+import { requireAdmin } from "@/platform/auth/admin-guard";
+import { holds } from "@/platform/auth/role-governance";
+import { tierPermission } from "@/platform/admin/governed-config";
 import { logger, generateRequestId } from "@/lib/logger";
 import { dispatchConfigTool } from "@/platform/admin/config-handlers";
 import { getPermissionTier } from "@/platform/auth/platform-config";
 import type { ToolExecutionContext } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
-import { apiError } from "@/platform/errors";
+import { apiError, readJsonObject } from "@/platform/errors";
+import { getApproval } from "@/platform/admin/config-approval";
+import { requiredPermissionForKey } from "@/platform/admin/pending-approvals";
 
 // ---------------------------------------------------------------------------
 // Permission routing
@@ -53,12 +57,15 @@ function getRequiredPermission(toolId: string, _configKey?: string): string {
     return "config_view";
   }
   if (APPROVAL_TOOLS.has(toolId)) {
-    return "config_manage_safety";
+    // Entry only: the approval's own key decides the permission (its tier), checked below with
+    // the record in hand — as the approvals route does (release review, Sprint 7X).
+    return "config_view";
   }
   if (WRITE_TOOLS.has(toolId)) {
-    // Write permission depends on the config key's permission tier
-    // This is checked after reading the key, so we start with standard
-    return "config_manage_standard";
+    // Entry only: the key's own tier permission (config_manage_standard or
+    // config_manage_safety) is checked once the key is known, below. A safety approver holds
+    // config_manage_safety without config_manage_standard, and may edit safety-tier keys.
+    return "config_view";
   }
   // Unknown tool — require highest permission
   return "config_manage_safety";
@@ -82,29 +89,77 @@ interface ExecuteRequest {
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
 
-  try {
-    const body: ExecuteRequest = await request.json();
+  // Verified (and rate limited) before the body is read: every config tool needs at least
+  // config_view, and nothing about the request is looked at for an unverified caller (audit I-2).
+  const guard = await requireAdmin(request, "config_view");
+  if (guard.error) return guard.error;
+  const { admin } = guard;
+  const actorId = admin.userId;
 
-    if (!body.toolId || typeof body.toolId !== "string") {
-      return apiError("request.missing_fields", {
-        params: { fields: ["toolId"] },
-        request,
-      });
+  const read = await readJsonObject(request);
+  if (!read.ok) return read.response;
+  const raw = read.body;
+  if (typeof raw.toolId !== "string" || !raw.toolId) {
+    return apiError("request.missing_fields", {
+      params: { fields: ["toolId"] },
+      request,
+    });
+  }
+  if (
+    raw.input !== undefined &&
+    (typeof raw.input !== "object" || raw.input === null || Array.isArray(raw.input))
+  ) {
+    return apiError("request.invalid_body", { request });
+  }
+  const body: ExecuteRequest = {
+    toolId: raw.toolId,
+    input: (raw.input as Record<string, unknown> | undefined) ?? {},
+  };
+
+  // The tool's own permission, beyond config_view.
+  const basePermission = getRequiredPermission(body.toolId);
+  if (!holds(admin, basePermission)) {
+    return apiError("auth.permission_denied", {
+      params: { permission: basePermission },
+      request,
+    });
+  }
+
+  try {
+    // A write needs the target key's tier permission. update_config names the key `key`,
+    // request_approval names it `configKey`; a write naming neither is held to the safety
+    // tier (fail closed — previously request_approval skipped this check).
+    if (WRITE_TOOLS.has(body.toolId)) {
+      const input = body.input ?? {};
+      const key =
+        typeof input.key === "string"
+          ? input.key
+          : typeof input.configKey === "string"
+            ? input.configKey
+            : undefined;
+      const needed = key
+        ? tierPermission(await getPermissionTier(key))
+        : "config_manage_safety";
+      if (!holds(admin, needed)) {
+        return apiError("auth.permission_denied", {
+          params: { permission: needed },
+          request,
+        });
+      }
     }
 
-    // Determine base permission required
-    const basePermission = getRequiredPermission(body.toolId);
-    const denied = await adminGuard(request, basePermission);
-    if (denied) return denied;
-
-    const actorId = getAdminActorId(request);
-
-    // For write tools, check if the config key requires safety-tier access
-    if (WRITE_TOOLS.has(body.toolId) && body.input?.key) {
-      const tier = await getPermissionTier(body.input.key as string);
-      if (tier === "safety") {
-        const safetyDenied = await adminGuard(request, "config_manage_safety");
-        if (safetyDenied) return safetyDenied;
+    // An approval decision needs the permission of the key it concerns; a missing or unknown
+    // approval is held to the safety tier (fail closed).
+    if (APPROVAL_TOOLS.has(body.toolId)) {
+      const approvalId = body.input.approvalId;
+      const record =
+        typeof approvalId === "string" ? await getApproval(approvalId) : null;
+      const needed = await requiredPermissionForKey(record?.configKey);
+      if (!holds(admin, needed)) {
+        return apiError("auth.permission_denied", {
+          params: { permission: needed },
+          request,
+        });
       }
     }
 

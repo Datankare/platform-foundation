@@ -151,17 +151,43 @@ sync.
 - **What the consumer keeps private.** A `.github/sync-config.json` `exclude` list names the
   files the consumer owns even if they share a path with the platform (its own agent
   vocabulary, product pages, product-specific tests). Those are never overwritten by the sync.
+- **The consumer seams — always excluded, always the consumer's own.** The platform ships these
+  empty or as templates; each holds facts only the consumer knows:
+
+  | File                                                                        | What the consumer puts there                                                                                                 |
+  | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+  | `platform/errors/app-codes.ts`, `messages/app/**`, `docs/APP_API_ERRORS.md` | Its own error codes and messages (ADR-051 D1)                                                                                |
+  | `platform/route-policy/app-route-policy.ts`                                 | Its own route guards, public or exempt routes (TASK-136), and its functions that make paid calls (`paidCalls`)               |
+  | `platform/assurance/unwired-security.ts`                                    | The security controls it has not wired, each with the reason (v5.0.0; checked by `security-wiring`)                          |
+  | `docs/APP_ENV_REFERENCE.md`                                                 | Its own settings and per-environment provider choices                                                                        |
+  | `.gitleaksignore`                                                           | Its own secret-scan false positives. Each entry names a commit, so the platform's list can never match a consumer's history. |
+  | `coverage-baseline.json`, `screen-literal-baseline.json`                    | Its own ratchet baselines, measured on its own tree                                                                          |
+
+- **Exclude only what you own or deliberately do not take** (learning 115). An excluded file must
+  exist in the consumer, or be a platform file the consumer chose not to take. A file the consumer
+  owns that is identical to the platform's should be inherited instead: excluding it silently stops
+  platform fixes from reaching it.
 - **Deletions are manual.** The sync adds and updates; it does **not** delete. If the platform
   renames or removes a file (e.g. splits a module into a directory), the corresponding stale
   file must be removed in the consumer on the sync branch before merging. Check for orphaned
   files after any platform refactor.
 
+### Assurance comes with the sync
+
+The platform's hostile checks are synced files, and they scan the **consumer's** routes and modules too:
+every route verified, rate limited, quota-counted when it makes a paid call, reading JSON safely and
+encoding REST filter values; no test stubbing the admin guard; every security control wired or
+registered; no security module hidden from coverage. The fuzz and monkey workflow runs against the
+consumer's own production build. Treat a failure in a synced check as a finding in your code, not a
+check to exclude — excluding it removes the protection it gives you. What runs and when:
+[ASSURANCE.md](ASSURANCE.md).
+
 ### Adopting a specific version
 
 Consumers pin to a Platform Foundation release tag (e.g. `v2.2.0`) rather than a moving branch,
 and bump deliberately. See [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for what each release
-contains and [`MIGRATION_v1_to_v2.md`](MIGRATION_v1_to_v2.md) when a major version introduces
-breaking changes.
+contains and the migration guide for each major version that introduces breaking changes — the
+latest is [`MIGRATION_v4_to_v5.md`](MIGRATION_v4_to_v5.md).
 
 ### Dependencies: what you own, what you inherit
 
@@ -195,6 +221,7 @@ your own and reconciling per the order above keeps you independent.
 ## 7. Where to go next
 
 - [`ENV_REFERENCE.md`](ENV_REFERENCE.md) — every environment variable.
+- [`ASSURANCE.md`](ASSURANCE.md) — Adversarial Validation: the checks, the cadence, and the gaps.
 - [`AGENT_DELEGATION_GUIDE.md`](AGENT_DELEGATION_GUIDE.md) — building agents that act on a
   user's behalf.
 - [`GENAI_ROADMAP.md`](GENAI_ROADMAP.md) — the capability map, shipped and forthcoming.

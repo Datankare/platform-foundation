@@ -49,16 +49,25 @@ export function register() {
     // probe reports on the instance actually serving traffic.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getSongIdProvider, SongIdHealthProbeAdapter } = require("@/platform/voice");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { initObservability, CachedHealthProbe } = require("@/platform/observability");
+    // The song-ID probe makes a billable identify call; at most one per 15 minutes per
+    // instance, however often /api/health is requested (audit X-13).
     const healthProbes: HealthProbe[] = [
-      new SongIdHealthProbeAdapter(getSongIdProvider()),
+      new CachedHealthProbe(
+        new SongIdHealthProbeAdapter(getSongIdProvider()),
+        15 * 60_000
+      ),
     ];
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { initObservability } = require("@/platform/observability");
+    const { PLATFORM_VERSION } = require("@/platform/version");
     initObservability({
       sentryDsn: process.env.SENTRY_DSN,
       environment: process.env.NODE_ENV ?? "development",
-      version: process.env.npm_package_version ?? "0.0.0",
+      // The platform release (platform/version.ts) — npm_package_version is unset under a
+      // standalone server, so it cannot identify a container build (ADR-055 D2).
+      version: PLATFORM_VERSION,
       traceSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
       healthProbes,
     });
@@ -69,5 +78,9 @@ export function register() {
     });
   } catch (err) {
     console.error("[instrumentation] Failed to initialize:", err);
+    // Fail closed (audit X-21): in production a server whose providers did not initialize
+    // must not start and serve on whatever defaults it has — Next.js aborts startup when
+    // register() throws. Outside production the error is logged and development continues.
+    if (process.env.NODE_ENV === "production") throw err;
   }
 }
