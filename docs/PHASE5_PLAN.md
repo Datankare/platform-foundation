@@ -253,11 +253,29 @@ Hosting means Vercel and AWS, GCP or Azure; AWS first.
 | **7R** | Decisions and groundwork: an ADR each for tenancy, the foundation/product split, deploy-anywhere and the operations baseline; tenant context plumbed through requests and agents (one default tenant); a cross-tenant isolation conformance kit; the core/module import boundary enforced; a container image with the deploy smoke test passing against it | TASK-126–129       |
 | **7T** | Tenancy through every table, policy, cache key, config, limit, budget, audit record and metric; service-role access off request paths                                                                                                                                                                                                                      | TASK-126           |
 | **7P** | AWS environment through OpenTofu (network, ECS, RDS Postgres with point-in-time recovery, Valkey, load balancer, DNS, certificates); CI deploys the same commit to Vercel and AWS, smoke test on both; Valkey provider; ffmpeg service decision                                                                                                            | TASK-128, TASK-025 |
-| **7S** | Product modules (games, social, song identification, voice) out of the core; sync becomes core plus opted-in modules                                                                                                                                                                                                                                       | TASK-127           |
-| **7O** | Operations baseline live on both hosts: point-in-time recovery with a tested restore, RPO/RTO, alerting and runbooks, SLOs, durable queue and scheduler; per-environment keys; DAST and compliance mapping                                                                                                                                                 | TASK-129, 124, 130 |
+| **7S** | Product modules (social, voice, song identification, audio conversion, translation, games) out of the core; sync becomes core plus opted-in modules                                                                                                                                                                                                        | TASK-127           |
+| **7O** | Operations baseline live on both hosts: point-in-time recovery with a tested restore, RPO/RTO, alerting and runbooks, SLOs (the queue and scheduler moved to 7R); per-environment keys; DAST and compliance mapping                                                                                                                                        | TASK-129, 124, 130 |
 
 Order rationale: AWS is built after tenancy so it is provisioned once, on the final schema; the operations
 baseline needs both hosts to exist. Phase 9 shrinks accordingly.
+
+#### Sprint 7R — OPEN (entry gate 2026-10-21)
+
+The entry gate surveyed the code for tenancy, the core/module boundary, host coupling and operations
+(findings in ADR-053–056 §1) and fixed one finding at once: an owner-rights budget function callable with
+the public key (TASK-137, migration 040, applied to every database). Decision of 2026-10-21: server code
+reaches Postgres directly through one data layer and a transaction-mode pooler, not Supabase's REST API
+(ADR-053 D4, alternative recorded in §3).
+
+| #   | Milestone                  | Delivers                                                                                                                                                                                                                                                                                                                     | Tasks                        |
+| --- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| R1  | Entry gate                 | ADR-053 tenancy, ADR-054 core/modules, ADR-055 deploy anywhere, ADR-056 operations baseline (Proposed); this plan; the principle mapping; the survey's findings filed                                                                                                                                                        | TASK-126–129, 137–144        |
+| R2  | Integrity fixes            | `adminGuard` returns the verified admin and every admin audit record names them; `ai_metrics` created; UTC budget days; the cache refuses its production fallback; `DEPLOYMENT_HOST` and host-neutral hosted detection, commit and version                                                                                   | TASK-113, 138, 139, 140, 144 |
+| R3  | Tenant context             | `TenantContext` in request-scoped storage, failing closed; `TENANCY_MODE` / `TENANT_ID` in the contract; `tenants` and `tenant_domains` with one default tenant; `tenantId` on actors, guest tokens, agent identity, workflow context, budget scopes and trajectories; the isolation conformance kit on the in-memory stores | TASK-126                     |
+| R4  | Core/module boundary       | `definePlatformModule` and extensible registries (providers, agents, prompts and evals, content types, features, goals, rate rules, consent and moderation lists, health probes, kit manifest); the 22 boundary imports removed; `import/no-restricted-paths` on; the module manifest                                        | TASK-127                     |
+| R5  | Background work and health | `platform/jobs`: Postgres-backed queue and scheduler with retries, idempotency and dead letters; every timed duty registered and running; live/ready health (readiness: boot, database, selected cache; realtime and modules degrade); the scheduled load test fixed                                                         | TASK-129, 141, 142, 143      |
+| R6  | Container                  | Standalone output, Dockerfile, graceful shutdown, and a CI job that builds the image, runs it and passes the deploy smoke test against it                                                                                                                                                                                    | TASK-128                     |
+| R7  | Close                      | ADR-053–056 Accepted; Playform adoption (consumer-seams docs, Dependabot updates bundled); platform-foundation v5.0.0, Playform v0.8.0 — one promotion per repository                                                                                                                                                        | —                            |
 
 ### Sprint 7 — Playform adoption + real providers
 
@@ -309,6 +327,10 @@ adoption, then real providers, then the live exit proof, then the Phase 5 exit g
 | ADR-029 | Agentic Workflow Framework           |
 | ADR-030 | Agent User Experience (AUX)          |
 | ADR-031 | Action Identity & Lifecycle Protocol |
+| ADR-053 | Tenancy (Sprint 7R)                  |
+| ADR-054 | Core and product modules (Sprint 7R) |
+| ADR-055 | Deploy anywhere (Sprint 7R)          |
+| ADR-056 | Operations baseline (Sprint 7R)      |
 
 > Next sequential ADR is **032** (028 and the 031 stub shipped in Sprint 1). ADR-031 was minted in Sprint 1 as a stub and is authored in full in Sprint 2; it was absent from this roster until then. Note: TASK-039's "ADR-021 candidate" tag is stale — ADR-021 is the social system.
 
@@ -747,3 +769,36 @@ Expected release: **PF v2.5.0** (minor — M1 adds a governed config surface).
 **Summary:** Sprint 6.5 delivers **P12 / P13** as Core (a governed, durable, binding cost cap on the admin-owned control plane). **P10 / P17** advance (dual-control on spend caps; commitment-boundary audit fix). **P3 / P4 / P6 / P18** extend (durable-by-default in production, fail-closed, schema-validated config). The remaining principles have no maintenance-sprint deliverable (–) — expected for a hardening sprint. 18/18 accounted for.
 
 **Pre-code gate satisfied** — this table precedes any Sprint 6.5 implementation (L12).
+
+## GenAI 18-Principle Mapping — Sprint 7R (L12 pre-code gate)
+
+> Mapped against `docs/GENAI_MANIFESTO.md` before any Sprint 7R code (L12): tenancy groundwork (ADR-053), the core/module
+> boundary (ADR-054), the container (ADR-055) and background work and health (ADR-056). Core = primary deliverer ·
+> Extend = fabric applied to a new surface · Advance = moves a partial forward · – = no deliverable.
+
+| #   | Principle             | Sprint 7R | How                                                                                                                                                                                                                     |
+| --- | --------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven         | –         | No deliverable                                                                                                                                                                                                          |
+| 2   | Agentic Execution     | Extend    | Scheduled agents run as registered jobs inside their tenant's context, not on an external caller                                                                                                                        |
+| 3   | Total Observability   | Extend    | Readiness reports boot, database and cache; admin audit names the real admin; `ai_metrics` exists; tenant on trajectories and budgets (every record in 7T)                                                              |
+| 4   | Structural Safety     | **Core**  | Tenant context fails closed; the isolation kit proves A cannot reach B on the in-memory stores (Postgres in 7T); owner-rights functions closed to the public key; harness switches refused unless explicitly non-hosted |
+| 5   | Versioned Artifacts   | Extend    | The module manifest and container image are versioned with the commit; `PLATFORM_VERSION` and commit on every deployment                                                                                                |
+| 6   | Structured Outputs    | –         | No deliverable                                                                                                                                                                                                          |
+| 7   | Provider-Aware        | Extend    | The cache's silent production fallback refused (Valkey provider in 7P); modules register their providers instead of the core naming them                                                                                |
+| 8   | Context & Memory      | Advance   | Tenant joins the context every agent run carries; RAG's existing tenant scope gains a source                                                                                                                            |
+| 9   | Automated Eval        | Extend    | Module prompts and evals register through the module, still gated by the prompt-registry checks                                                                                                                         |
+| 10  | Human Oversight       | Extend    | Dead-lettered jobs surface to an operator; the escalation reaper finally runs on its SLA (ADR-041)                                                                                                                      |
+| 11  | Resilient Degradation | **Core**  | Durable retries with backoff and dead letters; graceful shutdown; readiness gates traffic; a cache that cannot connect refuses boot                                                                                     |
+| 12  | Economic Transparency | Extend    | Budget days in UTC; budget scope carries the tenant, ready for per-tenant caps in 7T                                                                                                                                    |
+| 13  | Control Plane         | **Core**  | Tenancy mode, tenant and host declared in the environment contract; the module manifest published (sync opt-in in 7S); every timed duty registered                                                                      |
+| 14  | Feedback Loops        | –         | No deliverable                                                                                                                                                                                                          |
+| 15  | Agent Identity        | Advance   | `AgentIdentity` carries the tenant of the principal; an agent can never set it                                                                                                                                          |
+| 16  | Cognitive Memory      | –         | No deliverable                                                                                                                                                                                                          |
+| 17  | Cognition-Commitment  | –         | No deliverable                                                                                                                                                                                                          |
+| 18  | Durable Trajectories  | Extend    | Trajectories record the tenant; jobs are durable rows with idempotency keys                                                                                                                                             |
+
+**Summary:** Sprint 7R is structural. **P4 / P11 / P13** are Core: tenant isolation that fails closed and is proven by a kit,
+durable background work and honest health, and tenancy, host and modules declared on the control plane. **P8 / P15** advance (tenant
+in agent context and identity); the rest extend or have no deliverable. 18/18 accounted for.
+
+**Pre-code gate satisfied** — this table precedes any Sprint 7R implementation (L12).
