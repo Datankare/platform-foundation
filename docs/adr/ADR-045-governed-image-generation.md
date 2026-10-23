@@ -13,13 +13,13 @@ This is deliberately **not** a new approval system: generation becomes a new **e
 
 ## 2. Decisions
 
-**D1 $\u2014 Generation is an external effect, not a plain call.** It runs through the `platform/agents/external-effect.ts` machinery: a draft with a derived idempotency key (`effect-ledger`), a downstream `call(idempotencyKey)`, and `reconcile` on retry. Generation **spends money and creates a durable artifact**, which is precisely the class of action P17 requires to be *"durable, idempotent, and explicitly approved."* Idempotency is structural $\u2014 a retried generation returns the prior result, never a second charge.
+**D1 $\u2014 Generation is an external effect, not a plain call.** It runs through the `platform/agents/external-effect.ts` machinery: a draft with a derived idempotency key (`effect-ledger`), a downstream `call(idempotencyKey)`, and `reconcile` on retry. Generation **spends money and creates a durable artifact**, which is precisely the class of action P17 requires to be _"durable, idempotent, and explicitly approved."_ Idempotency is structural $\u2014 a retried generation returns the prior result, never a second charge.
 
 **D2 $\u2014 Draft → screen → commit; nothing leaks before commit.** The generated image is a **draft** $\u2014 not surfaced, stored, or billed $\u2014 until it passes the ADR-046 `screenModality` output check and is committed. Low-risk drafts auto-commit **at** the boundary (not bypassing it); high-risk drafts are held. _"No agent thinking-out-loud leaks into the real world as a side effect"_ (P17) applies to generated pixels exactly as to any external action.
 
 **D3 $\u2014 Risk classification drives an admin-governed commit policy.** A risk tier $\u2014 computed from requester trust, the input-screen verdict, the output-screen verdict, the target surface, and the content category $\u2014 maps, via an `ApprovalPolicy` (`platform/agents/approval-policy-store.ts`, extended for a generation effect), to a commit path: **low → auto-commit; high → held-for-Confirm** through the ADR-040 dual-control gating (`gating.ts` / `pending-approvals.ts`). The policy and its thresholds are central admin config, independent of app logic (P13), and Confirm is an explicit human authority (P10).
 
-**D4 $\u2014 Two kinds of category rule; screening is never one of them.** *Commit-gating* categories (e.g. `avatar`, `icon` → auto-commit-eligible) are admin-tunable. *Prohibited / forced-escalate* categories are admin-tunable in strictness but **cannot be auto-committed away**. Screening itself is **always-on and non-configurable** $\u2014 the policy governs _commit-gating_, never _whether to screen_ (Standing Rule 11). The **hard-refuse invariants** (CSAM, real-person sexual imagery) live in ADR-046 **above** this tier system and are reachable by no configuration path.
+**D4 $\u2014 Two kinds of category rule; screening is never one of them.** _Commit-gating_ categories (e.g. `avatar`, `icon` → auto-commit-eligible) are admin-tunable. _Prohibited / forced-escalate_ categories are admin-tunable in strictness but **cannot be auto-committed away**. Screening itself is **always-on and non-configurable** $\u2014 the policy governs _commit-gating_, never _whether to screen_ (Standing Rule 11). The **hard-refuse invariants** (CSAM, real-person sexual imagery) live in ADR-046 **above** this tier system and are reachable by no configuration path.
 
 **D5 $\u2014 Provenance is part of commit.** On commit, the ADR-047 C2PA content credential + watermark is attached; an image that is not screened, credentialed, and committed does not exist as far as the platform is concerned. The credential is a schema-validated structured artifact (P6), recorded on the trajectory (P3/P18).
 
@@ -27,7 +27,7 @@ This is deliberately **not** a new approval system: generation becomes a new **e
 
 ## 3. Alternatives considered
 
-(a) **A plain screened provider call** (generate → screen → return) $\u2014 rejected: it makes image generation the one money-spending, state-creating output that bypasses the commitment boundary every other external effect honors. "Plain" is retained only as the *low-tier auto-commit* case $\u2014 auto-commit **at** the boundary, not a path around it.
+(a) **A plain screened provider call** (generate → screen → return) $\u2014 rejected: it makes image generation the one money-spending, state-creating output that bypasses the commitment boundary every other external effect honors. "Plain" is retained only as the _low-tier auto-commit_ case $\u2014 auto-commit **at** the boundary, not a path around it.
 
 (b) **A dedicated image-approval system** (its own queue, ledger, admin surface) $\u2014 rejected: it duplicates ADR-040/041 and drifts. Generation is an effect type, not a new governance domain.
 

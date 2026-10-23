@@ -8,7 +8,7 @@
  * admin's identity is not available client-side.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
 
 const thClass =
@@ -35,9 +35,13 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => {
+  // Fresh data from the page replaces the rows, adjusted during render (React's pattern for
+  // state that follows a prop) rather than in an effect, which rendered the stale rows first.
+  const [shownData, setShownData] = useState(data);
+  if (data !== shownData) {
+    setShownData(data);
     setRows(data?.approvals ?? []);
-  }, [data]);
+  }
 
   async function decide(row: PendingApproval, decision: "approve" | "reject") {
     setBusyId(row.id);

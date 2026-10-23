@@ -9,6 +9,55 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v5.1.1 — Dependencies, and no state set inside an effect
+
+Date: 2026-10-23
+
+Clears every open Dependabot update, and fixes the platform's own sign-in page in a production
+build ([register](audits/2026-10-REGISTER.md) PR-17). No migration.
+
+### What a consumer inherits on sync
+
+- **Next's lint configuration 16** (`eslint-config-next` 16.4.2) in flat-config form, with React's
+  newer hook rules. Every component that set state inside an effect now does not:
+  - a component that loads data drops a response for a request it has since replaced
+    (`ReviewDashboard` — its Refresh included —, the admin console, `DualControlKeysPanel`,
+    `useProfileForm`), so a slow earlier response never overwrites a newer one;
+  - state that follows a prop is adjusted during render (`HeldActionsPanel`,
+    `useRealtimeChannel`), so the old value never renders first;
+  - the auth session is an external store read with `useSyncExternalStore`
+    (`platform/auth/context.tsx`): the server render and hydration both show loading, storage is
+    read once on the client, and a stale or corrupt session is purged as before;
+  - the sign-in page reads a failed SSO attempt's `?error=` the same way (`useReturnError`).
+- **The browser signs in through the server.** `createBrowserAuthProvider()`
+  (`platform/auth/browser-auth-provider`, Playform's, adopted by the platform) posts to the
+  `/api/auth/*` routes and reads a failure from the status, not the body (a coded error keeps
+  its code; a reply that is not JSON is `internal.error`); a method with no route answers
+  `feature.not_configured` without a request, never a fake success. The platform's sign-in page registers it instead of starting
+  every server provider in the browser, which in a production build refused to boot on the
+  browser's absent store settings and left the page on "Loading...".
+- **The auth screens meet WCAG AA contrast.** With the page rendering at last, the baseline
+  accessibility audit reached the sign-in form and found secondary text (`text-gray-500/600` on
+  the dark card) at 3.7:1; every auth component now uses `text-gray-400`. Sign-in, register and
+  forgot-password pass axe (WCAG 2 A/AA) in a production build.
+- React and React DOM 19.3.1 (React DOM 19.3 requires React 19.3), `@sentry/nextjs` 11.8
+  (every call the error reporter makes was checked against it), `@supabase/supabase-js` 2.117,
+  Playwright 1.63, Prettier 3.9.10 (two ADRs reformatted), and the patch group.
+- Removed, unused: `@anthropic-ai/sdk`, `dotenv`, `@eslint/eslintrc` (the flat config needs no
+  compatibility layer).
+- Dependabot ignores ESLint 10 (the React, accessibility and import plugins in Next's
+  configuration declare ESLint up to 9) and `@types/node` majors above the Node we run (24;
+  `@types/node` moves from 25 to 24 to match).
+
+### Upgrading
+
+Your own `eslint.config.mjs` is yours (sync-excluded): replace `FlatCompat` with
+`eslint-config-next/core-web-vitals`, `eslint-config-next/typescript` and
+`eslint-config-prettier/flat`, as PF's does, and fix what React's hook rules report in your own
+components the same ways.
+
+---
+
 ## v5.1.0 — Held actions decided and resumed only as approved
 
 Date: 2026-10-22

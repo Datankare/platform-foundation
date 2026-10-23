@@ -78,9 +78,9 @@ export default function NewPasswordForm({
         </div>
 
         {tooShort && (
-          <p className="text-xs text-gray-500">Password must be at least 8 characters.</p>
+          <p className="text-xs text-gray-400">Password must be at least 8 characters.</p>
         )}
-        {mismatch && <p className="text-xs text-gray-500">Passwords do not match.</p>}
+        {mismatch && <p className="text-xs text-gray-400">Passwords do not match.</p>}
 
         {error && (
           <div
@@ -101,7 +101,7 @@ export default function NewPasswordForm({
         </button>
       </form>
 
-      <p className="text-center text-sm text-gray-500">
+      <p className="text-center text-sm text-gray-400">
         <button
           onClick={onCancel}
           className="text-blue-400 hover:text-blue-300 transition"

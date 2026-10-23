@@ -36,6 +36,10 @@ async function callConfigAi(
   return (await res.json().catch(() => ({}))) as ConfigAiResult;
 }
 
+function readKeys(): Promise<ConfigAiResult> {
+  return callConfigAi("get_config", { key: "config.dual_control_keys" });
+}
+
 export function DualControlKeysPanel() {
   const [keys, setKeys] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,18 +48,22 @@ export function DualControlKeysPanel() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    const res = await callConfigAi("get_config", { key: "config.dual_control_keys" });
+  function showKeys(res: ConfigAiResult) {
     const value = res.data?.value;
     setKeys(Array.isArray(value) ? (value as string[]) : []);
     if (res.error) setError(res.error);
     setLoading(false);
   }
 
+  // The first read; a response that arrives after unmount is dropped.
   useEffect(() => {
-    void load();
+    let current = true;
+    void readKeys().then((res) => {
+      if (current) showKeys(res);
+    });
+    return () => {
+      current = false;
+    };
   }, []);
 
   async function commit(next: string[], change: string) {

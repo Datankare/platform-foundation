@@ -107,7 +107,7 @@ export default function EmailVerificationForm({
         </button>
       </div>
 
-      <p className="text-center text-sm text-gray-500">
+      <p className="text-center text-sm text-gray-400">
         <button
           onClick={onBackToLogin}
           className="text-blue-400 hover:text-blue-300 transition"
