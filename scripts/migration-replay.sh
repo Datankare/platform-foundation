@@ -52,7 +52,7 @@ BEGIN
     'guest_usage','user_devices','user_entitlements','groups','group_memberships',
     'group_invites','review_queue','user_strikes','content_safety_audit','agent_budgets',
     'agent_trajectories','proposals','effect_ledger','app_sessions','document_embeddings',
-    'rate_limit_events','applied_migrations'
+    'rate_limit_events','applied_migrations','ai_metrics'
   ]) AS t WHERE to_regclass('public.' || t) IS NULL;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing tables: %', missing; END IF;
   SELECT string_agg(f, ', ') INTO missing FROM unnest(ARRAY[
@@ -107,6 +107,26 @@ done
 missing=$(comm -23 <(node -e 'process.stdout.write(require(process.argv[1]).loadRoleCatalog().permissions.join("\n")+"\n")' "$ROOT/scripts/role-catalog.cjs" | LC_ALL=C sort) \
   <("${PSQL[@]}" -At -c "SELECT code FROM public.permissions" | LC_ALL=C sort))
 [ -z "$missing" ] || { echo "✗ permissions in the catalog but not the database: $missing"; exit 1; }
+
+step "ai_metrics is server-only (TASK-113)"
+open_to=$("${PSQL[@]}" -At -c "SELECT string_agg(r, ',') FROM unnest(ARRAY['anon','authenticated']) r WHERE has_table_privilege(r, 'public.ai_metrics', 'SELECT,INSERT,UPDATE,DELETE')")
+[ -z "$open_to" ] || { echo "✗ ai_metrics is readable or writable by: $open_to"; exit 1; }
+sink_ok=$("${PSQL[@]}" -At -c "SELECT has_table_privilege('service_role', 'public.ai_metrics', 'SELECT') AND has_table_privilege('service_role', 'public.ai_metrics', 'INSERT')")
+[ "$sink_ok" = "t" ] || { echo "✗ the service role cannot read and write ai_metrics (the sink would fail)"; exit 1; }
+
+step "the default role the code provisions exists and is the default (TASK-148)"
+# platform/auth/user-provisioning.ts DEFAULT_USER_ROLE is the role every new user gets; if the
+# database lacks it, or another role is the default, first sign-in fails or diverges.
+default_role=$(sed -nE 's/^export const DEFAULT_USER_ROLE = "([a-z_]+)";$/\1/p' "$ROOT/platform/auth/user-provisioning.ts")
+[ -n "$default_role" ] || { echo "✗ could not read DEFAULT_USER_ROLE from platform/auth/user-provisioning.ts"; exit 1; }
+db_default=$("${PSQL[@]}" -At -c "SELECT string_agg(name, ',' ORDER BY name) FROM public.roles WHERE is_default")
+[ "$db_default" = "$default_role" ] || { echo "✗ default role: code provisions '$default_role', database default is '$db_default'"; exit 1; }
+
+step "no migration is recorded as applied while its effect is absent (TASK-148)"
+# 007_seed_separation creates the `registered` role; a database without it must not record 007 as
+# applied. 047 corrects the record.
+claimed=$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.applied_migrations WHERE filename = '007_seed_separation.sql' AND confidence <> 'absent' AND NOT EXISTS (SELECT 1 FROM public.roles WHERE name = 'registered')")
+[ "$claimed" = "0" ] || { echo "✗ 007_seed_separation recorded as applied, but no registered role exists"; exit 1; }
 
 step "every audit action the code records is accepted by the database"
 # platform/auth/audit.ts AUDIT_ACTIONS is the list the code may write; an action the enum rejects

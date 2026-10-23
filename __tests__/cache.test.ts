@@ -314,35 +314,40 @@ describe("RedisCacheProvider", () => {
 // ============================================================
 // Factory / Singleton
 // ============================================================
-describe("Cache factory", () => {
+describe("Cache factory — the cache is chosen, never inferred (TASK-139)", () => {
   afterEach(() => {
     resetCache();
+    delete process.env.CACHE_PROVIDER;
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
   });
 
-  it("creates InMemory provider when no Redis env", () => {
+  it("creates the in-memory cache when nothing is chosen", () => {
     const cache = createCacheProvider();
     expect(cache.name).toBe("memory");
   });
 
-  it("creates Redis provider when env is set", () => {
+  it("creates Redis when CACHE_PROVIDER=upstash with its credentials", () => {
+    process.env.CACHE_PROVIDER = "upstash";
     process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
     process.env.UPSTASH_REDIS_REST_TOKEN = "token";
-    const cache = createCacheProvider();
-    expect(cache.name).toBe("redis");
+    expect(createCacheProvider().name).toBe("redis");
   });
 
-  it("falls back to memory if Redis env is incomplete", () => {
+  it("a Redis URL alone no longer selects Redis — the choice is CACHE_PROVIDER", () => {
     process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
-    // No token
-    const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
-    const cache = createCacheProvider({ provider: "redis" });
-    expect(cache.name).toBe("memory");
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Redis config incomplete")
-    );
-    consoleSpy.mockRestore();
+    process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+    expect(createCacheProvider().name).toBe("memory");
+    process.env.CACHE_PROVIDER = "memory";
+    expect(createCacheProvider().name).toBe("memory");
+  });
+
+  it("Redis chosen without its credentials throws — never a silent per-instance cache", () => {
+    process.env.CACHE_PROVIDER = "upstash";
+    process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
+    expect(() => createCacheProvider()).toThrow(/UPSTASH_REDIS_REST_TOKEN/);
+    expect(() => createCacheProvider({ provider: "redis" })).toThrow(/not set/);
+    expect(() => getCache()).toThrow(/CACHE_PROVIDER=upstash/);
   });
 
   it("getCache returns singleton", () => {

@@ -123,19 +123,14 @@ describe("Provider Registry", () => {
     expect(selections.cache).toBe("upstash");
   });
 
-  it("warns when CACHE_PROVIDER=upstash but config missing", async () => {
+  it("refuses CACHE_PROVIDER=upstash without its credentials (TASK-139: no silent fallback)", async () => {
     process.env.CACHE_PROVIDER = "upstash";
 
     const { initProviders, resetProviders } =
       await import("@/platform/providers/registry");
     resetProviders();
 
-    const { logger } = jest.requireMock("@/lib/logger");
-    initProviders();
-
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("falling back to memory")
-    );
+    expect(() => initProviders()).toThrow(/CACHE_PROVIDER=upstash/);
   });
 
   it("warns when AI_PROVIDER=anthropic but key missing", async () => {
@@ -234,6 +229,8 @@ describe("auth-init backward compat", () => {
     process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
     process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
     process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
+    // TASK-139: a deployment declares its cache.
+    process.env.CACHE_PROVIDER = "memory";
     delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
     delete process.env.E2E_TEST_DOUBLE_AUTH;
   };

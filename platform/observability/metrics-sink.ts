@@ -101,7 +101,7 @@ const FLUSH_INTERVAL_MS = 10_000; // 10 seconds
  * Requires Supabase URL and service role key. If not configured,
  * falls back to InMemoryMetricsSink behavior with a startup warning.
  *
- * Table schema (migration 008):
+ * Table schema (migration 048_ai_metrics.sql, TASK-113; server-only — RLS on, no public grants):
  *   id         UUID PRIMARY KEY
  *   name       TEXT NOT NULL
  *   timestamp  TIMESTAMPTZ NOT NULL

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import type { AgeVerificationResult } from "@/platform/auth/coppa";
+import { evaluateAge, type AgeVerificationResult } from "@/platform/auth/age";
 
 interface AgeGateProps {
   onVerified: (result: AgeVerificationResult, dateOfBirth: string) => void;
@@ -56,33 +56,20 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
       return;
     }
 
-    const dob = new Date(y, m - 1, d);
-    if (dob.getFullYear() !== y || dob.getMonth() !== m - 1 || dob.getDate() !== d) {
-      setError("Please enter a valid date");
-      return;
-    }
-
-    if (dob > new Date()) {
-      setError("Date of birth cannot be in the future");
-      return;
-    }
-
     const dateOfBirth = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 
-    // Calculate age inline (same logic as coppa.ts but avoids server import)
-    const now = new Date();
-    let age = now.getFullYear() - dob.getFullYear();
-    const monthDiff = now.getMonth() - dob.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) {
-      age--;
+    // The one age calculation the server also uses (platform/auth/age.ts, TASK-144).
+    let result: AgeVerificationResult;
+    try {
+      result = evaluateAge(dateOfBirth);
+    } catch (err) {
+      setError(
+        err instanceof RangeError && /future/.test(err.message)
+          ? "Date of birth cannot be in the future"
+          : "Please enter a valid date"
+      );
+      return;
     }
-
-    const result: AgeVerificationResult = {
-      isMinor: age < 18,
-      age,
-      requiresParentalConsent: age < 13,
-      contentRatingLevel: age < 13 ? 1 : age < 18 ? 2 : 3,
-    };
 
     onVerified(result, dateOfBirth);
   };

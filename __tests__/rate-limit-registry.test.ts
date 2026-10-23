@@ -25,6 +25,7 @@ const realAuth = (): void => {
   process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
   process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
+  process.env.CACHE_PROVIDER = "memory"; // TASK-139: a deployment declares its cache
   delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
   delete process.env.E2E_TEST_DOUBLE_AUTH;
 };

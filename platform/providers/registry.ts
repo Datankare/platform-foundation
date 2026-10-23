@@ -16,7 +16,8 @@
  *
  * Environment variables (all optional — omit for mock/fallback):
  *   AUTH_PROVIDER      = "cognito" | "mock"      (default: "mock"; "mock" refused in production — ADR-050 D1)
- *   CACHE_PROVIDER     = "upstash" | "memory"    (default: "memory")
+ *   CACHE_PROVIDER     = "upstash" | "memory"    (default outside production: "memory";
+ *                                                   required in production — TASK-139)
  *   AI_PROVIDER        = "anthropic" | "mock"    (default: "mock")
  *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
  *   REALTIME_PROVIDER  = "supabase" | "mock"     (default: "mock")
@@ -94,6 +95,7 @@ import {
   allowsHarnessSwitches,
   assertEnvironmentContract,
   getAuthProviderSetting,
+  getCacheProviderSetting,
   getCognitoSettings,
   getSupabaseUrl,
   getRateLimitStoreSetting,
@@ -164,7 +166,7 @@ export interface ProviderSelections {
 function getProviderSelections(): ProviderSelections {
   return {
     auth: (getAuthProviderSetting() as AuthProviderType) ?? "mock",
-    cache: (process.env.CACHE_PROVIDER as CacheProviderType) ?? "memory",
+    cache: (getCacheProviderSetting() as CacheProviderType | undefined) ?? "memory",
     ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
     realtime: (process.env.REALTIME_PROVIDER as RealtimeProviderType) ?? "mock",
@@ -224,16 +226,15 @@ function initCacheProvider(type: CacheProviderType): void {
     const url = process.env.UPSTASH_REDIS_REST_URL ?? "";
     const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? "";
 
+    // Fail closed (TASK-139): never a silent fallback to a per-instance cache.
     if (!url || !token) {
-      logger.warn(
-        "CACHE_PROVIDER=upstash but UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN missing — falling back to memory"
+      throw new Error(
+        "CACHE_PROVIDER=upstash but UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN is not set"
       );
-      return;
     }
-
-    resetCache();
-    return;
   }
+  // The cache singleton is built from the same selection on first use.
+  resetCache();
 }
 
 function initAIProvider(type: AIProviderType): void {

@@ -34,6 +34,7 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     APP_STATE_STORE: "supabase",
     TRAJECTORY_STORE: "supabase",
     BUDGET_STORE: "supabase",
+    CACHE_PROVIDER: "memory",
     ...extra,
   };
 }
@@ -152,10 +153,67 @@ describe("D1 — no test-double auth in production", () => {
     }
     expect(err).toBeInstanceOf(EnvironmentContractError);
     const e = err as EnvironmentContractError;
-    expect(e.violations.length).toBe(2);
+    expect(e.violations.length).toBe(3);
     expect(e.message).toMatch(/refusing to boot/);
     expect(e.message).toMatch(/SUPABASE_URL has the wrong shape/);
     expect(e.message).toMatch(/AUTH_PROVIDER/);
+    expect(e.message).toMatch(/CACHE_PROVIDER is required/);
+  });
+});
+
+describe("the cache is chosen, never inferred (TASK-139)", () => {
+  it("a deployment must declare CACHE_PROVIDER — even with the Redis URL set", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({
+          CACHE_PROVIDER: undefined,
+          UPSTASH_REDIS_REST_URL: "https://r.upstash.io",
+        })
+      )
+    ).toEqual([
+      "CACHE_PROVIDER is required: upstash (shared), or memory (per instance, declared on purpose)",
+    ]);
+  });
+
+  it("accepts memory when declared, and upstash with its credentials", () => {
+    expect(checkEnvironmentContract(valid({ CACHE_PROVIDER: "memory" }))).toEqual([]);
+    expect(
+      checkEnvironmentContract(
+        valid({
+          CACHE_PROVIDER: "upstash",
+          UPSTASH_REDIS_REST_URL: "https://r.upstash.io",
+          UPSTASH_REDIS_REST_TOKEN: "t",
+        })
+      )
+    ).toEqual([]);
+  });
+
+  it("upstash without its credentials is refused, naming each", () => {
+    expect(checkEnvironmentContract(valid({ CACHE_PROVIDER: "upstash" }))).toEqual([
+      "UPSTASH_REDIS_REST_URL is required by CACHE_PROVIDER=upstash but not set",
+      "UPSTASH_REDIS_REST_TOKEN is required by CACHE_PROVIDER=upstash but not set",
+    ]);
+  });
+
+  it.each(["redis", "Memory", "upstash ", "none"])("refuses the value %p", (v) => {
+    expect(checkEnvironmentContract(valid({ CACHE_PROVIDER: v }))).toEqual([
+      expect.stringMatching(/^CACHE_PROVIDER has the wrong shape/),
+    ]);
+  });
+
+  it("a local or CI run may leave it unset; a deployment claiming to be one may not hide behind it", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({ CACHE_PROVIDER: undefined, DEPLOYMENT_HOST: "ci" })
+      )
+    ).toEqual([]);
+    expect(
+      checkEnvironmentContract(
+        valid({ CACHE_PROVIDER: undefined, DEPLOYMENT_HOST: "container" })
+      )
+    ).toEqual([
+      "CACHE_PROVIDER is required: upstash (shared), or memory (per instance, declared on purpose)",
+    ]);
   });
 });
 
@@ -275,6 +333,7 @@ describe("required settings", () => {
         NEXT_PUBLIC_COGNITO_USER_POOL_ID: "eu-west-1_X",
         NEXT_PUBLIC_COGNITO_CLIENT_ID: "c",
         GUEST_TOKEN_SECRET: GUEST_SECRET,
+        CACHE_PROVIDER: "memory",
       })
     ).toEqual([]);
   });

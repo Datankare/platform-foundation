@@ -63,9 +63,11 @@ The checks in §2 arrive with the sync and run over **your** routes and modules 
 - `platform/assurance/unwired-security.ts` — your register of security controls you have not wired;
 - the GitHub Environments `staging` and `production` with `SUPABASE_URL` and
   `SUPABASE_SERVICE_ROLE_KEY` (migration parity), and the `ZAP_TARGET_URL` variable (ZAP scan).
-  **Protect both Environments**: deployment branches limited to `staging` and `main` respectively,
-  and required reviewers on `production`. Without that, anyone with write access could dispatch a
-  modified copy of the workflow from their own branch and read the service-role key.
+  **Protect both Environments**: deployment branches limited to `main` for both (the workflow runs
+  from the default branch and checks out the branch it compares; a `staging` limit refuses the
+  staging run). Without that, anyone with write access could dispatch a modified copy of the
+  workflow from their own branch and read the service-role key. The check knows the schema
+  baseline's own record (`000_baseline.sql`), so a database built from it compares cleanly.
 
 Add both files to your sync exclude list. See [SETUP_AND_INTEGRATION.md](SETUP_AND_INTEGRATION.md) §6.
 

@@ -4,8 +4,10 @@ name: "Migration parity"
 # (scripts/migration-parity.mjs, audit X-24)? Credentials come from GitHub Environments named
 # "staging" and "production", each with SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets.
 # A repository without them (platform-foundation itself has no deployment) skips with a notice.
-# Protect both Environments (deployment branches staging / main; reviewers on production): the
-# service-role key must not be readable by a workflow dispatched from another branch.
+# Protect both Environments: limit each one's deployment branches to `main`. GitHub runs this
+# workflow from the default branch (`main`) and the job then checks out the branch it compares,
+# so a limit of `staging` would refuse the staging run. The service-role key must not be readable
+# by a workflow dispatched from another branch; `main` takes changes only through reviewed PRs.
 
 on:
   schedule:

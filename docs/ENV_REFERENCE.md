@@ -179,13 +179,13 @@ and audio conversion, which have their own).
 
 ## Caching & realtime
 
-| Variable                   | Required                      | Default  | Values                                                                                                                                                                       |
-| -------------------------- | ----------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CACHE_PROVIDER`           | No                            | `memory` | `upstash` `memory`                                                                                                                                                           |
-| `UPSTASH_REDIS_REST_URL`   | With `CACHE_PROVIDER=upstash` | —        | Upstash Redis REST endpoint.                                                                                                                                                 |
-| `UPSTASH_REDIS_REST_TOKEN` | With `CACHE_PROVIDER=upstash` | —        | Upstash Redis REST token. Server-side secret.                                                                                                                                |
-| `REALTIME_PROVIDER`        | No                            | `mock`   | `supabase` `mock`                                                                                                                                                            |
-| `TRUSTED_PROXY_HOPS`       | No                            | `1`      | `1`–`5` — proxies in front of the app that append to `X-Forwarded-For`; the client address is that many entries from the right (ADR-052). Vercel, or one load balancer: `1`. |
+| Variable                   | Required                      | Default                     | Values                                                                                                                                                                              |
+| -------------------------- | ----------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CACHE_PROVIDER`           | Yes in production             | `memory` outside production | `upstash` (shared) or `memory` (per instance) — chosen, never inferred: a Redis URL alone no longer selects Redis, and `upstash` without its credentials refuses to boot (TASK-139) |
+| `UPSTASH_REDIS_REST_URL`   | With `CACHE_PROVIDER=upstash` | —                           | Upstash Redis REST endpoint.                                                                                                                                                        |
+| `UPSTASH_REDIS_REST_TOKEN` | With `CACHE_PROVIDER=upstash` | —                           | Upstash Redis REST token. Server-side secret.                                                                                                                                       |
+| `REALTIME_PROVIDER`        | No                            | `mock`                      | `supabase` `mock`                                                                                                                                                                   |
+| `TRUSTED_PROXY_HOPS`       | No                            | `1`                         | `1`–`5` — proxies in front of the app that append to `X-Forwarded-For`; the client address is that many entries from the right (ADR-052). Vercel, or one load balancer: `1`.        |
 
 Selecting `CACHE_PROVIDER=upstash` or `RATE_LIMIT_STORE=upstash` requires the two `UPSTASH_REDIS_REST_*` variables. Selecting
 `REALTIME_PROVIDER=supabase` reuses the Supabase connection variables above.

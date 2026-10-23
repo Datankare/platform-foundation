@@ -2386,7 +2386,7 @@ Playform by hand. Screen-literal baseline 297 → 287.
 | **Severity** | Low — the sink is opt-in; selecting it fails on first use |
 | **Phase**    | Phase 5                                                   |
 | **Target**   | Phase 5, Sprint 7R                                        |
-| **Status**   | Open                                                      |
+| **Status**   | Fixed on develop (Sprint 7R R2)                           |
 | **Logged**   | 2026-09-29                                                |
 
 **What:** `platform/observability/metrics-sink.ts` reads and writes `ai_metrics` through PostgREST,
@@ -2395,6 +2395,8 @@ during the TASK-091 audit (the schema-parity script checks store columns, not th
 
 **Resolution:** a migration that creates `ai_metrics` (with row-level security and its self-record),
 or remove the Supabase sink if metrics stay in Sentry/Langfuse.
+
+**Fixed (Sprint 7R R2):** migration `048_ai_metrics.sql` creates the table, server-only (row-level security on, no policy, no grants to `anon` or `authenticated`); the replay checks both. The schema-parity check now fails on any file that reaches a table through the REST API but whose columns it cannot read — the gap that hid this — and reads row builders (`batch.map(() => ({…}))`), `URLSearchParams` filters and quoted identifiers.
 
 ### TASK-114 — Every table grants ALL to `anon` and `authenticated`
 
@@ -3001,12 +3003,14 @@ platform's and Playform's migration sets.
 | **Severity** | Medium — a misconfigured cache silently becomes per instance |
 | **Phase**    | Phase 5                                                      |
 | **Target**   | Phase 5, Sprint 7R                                           |
-| **Status**   | Open                                                         |
+| **Status**   | Fixed on develop (Sprint 7R R2)                              |
 | **Logged**   | 2026-10-21                                                   |
 
 **What:** `platform/cache/index.ts` selects Redis only when `UPSTASH_REDIS_REST_URL` is present and otherwise uses an in-memory cache, in production too, silently (it warns only when the URL is set without its token). `CACHE_PROVIDER=upstash` with missing credentials also warns and falls back, and `getCache` otherwise ignores `CACHE_PROVIDER`. The cache is not in the environment contract. Found by the Sprint 7R deploy-anywhere survey.
 
 **Plan:** The cache becomes an explicit `CACHE_PROVIDER` selection, honoured by `getCache` and declared in the contract; production refuses an in-memory cache unless the E2E harness opts out, as for every durable store (ADR-048 D3, ADR-055 D4) (R2).
+
+**Fixed (Sprint 7R R2):** `CACHE_PROVIDER` is declared in the environment contract and read through one resolver by the cache, the registry and the contract. A deployment must set it; a Redis URL alone no longer selects Redis; `upstash` without its credentials refuses to boot, in the cache and the registry alike. Decision, against the plan's wording: `memory` is accepted when declared, because the cache holds nothing authoritative (losing it costs hits, not correctness) — the defect was the silence, not the in-memory cache. Deploy prerequisite: `CACHE_PROVIDER` in every Vercel project before the 7R promotion.
 
 ### TASK-140 — Off Vercel, production would accept the test-harness switches
 
@@ -3083,12 +3087,14 @@ platform's and Playform's migration sets.
 | **Severity** | Low — the daily cap resets at a different hour on each host |
 | **Phase**    | Phase 5                                                     |
 | **Target**   | Phase 5, Sprint 7R                                          |
-| **Status**   | Open                                                        |
+| **Status**   | Fixed on develop (Sprint 7R R2)                             |
 | **Logged**   | 2026-10-21                                                  |
 
 **What:** `BudgetTracker.getCurrentPeriod()` (`platform/agents/budget-tracker.ts`) builds `YYYY-MM-DD` from local time. Vercel runs in UTC; a container or another host may not, so the governed daily cap (ADR-048) would reset at different hours. Found by the Sprint 7R tenancy survey.
 
 **Plan:** Periods computed in UTC, with a test that fixes the time zone (R2).
+
+**Fixed (Sprint 7R R2):** periods are the UTC date (`toISOString`), tested under several host time zones. The same class of defect was found in the COPPA age gate: `calculateAge` used the host's local date, so west of UTC a child was a day older on the day before a birthday — at 13, the day consent stops being required — and the sign-up gate kept its own copy of the rule in the browser's time. Now one client-safe module (`platform/auth/age.ts`) used by both: the age is taken as of the earliest calendar date anywhere (UTC−12), so it is never overstated; impossible and future dates are refused rather than read as an adult.
 
 ### TASK-145 — Tests confirmed; nothing proved what the system refuses (October 2026 audit)
 
@@ -3142,6 +3148,57 @@ platform's and Playform's migration sets.
 
 **Plan:** Property tests for every validator and every route's body schema (generated bodies, `fast-check`); the monkey run gains a sequence mode that paces itself under each route's limit, and invariants after each step on the data it may see (no other user's records).
 
+### TASK-148 — Migration records claimed what never happened (the role model)
+
+| Field        | Detail                                                                              |
+| ------------ | ----------------------------------------------------------------------------------- |
+| **ID**       | TASK-148                                                                            |
+| **Type**     | Schema integrity — migration records                                                |
+| **Severity** | Medium — a record that claims an effect hides a database that differs from the code |
+| **Phase**    | Phase 5                                                                             |
+| **Target**   | Phase 5, Sprint 7R                                                                  |
+| **Status**   | Fixed on develop (Sprint 7R R2, platform part); Playform's record with its adoption |
+| **Logged**   | 2026-10-23                                                                          |
+
+**What:** The first live run of the migration-parity check (2026-10-23, with credentials) failed on both
+Playform databases. Production records `000_baseline.sql`, which the check did not know (it reads only
+`supabase/migrations/`); dev never recorded Playform's `007_playform_subscription_tiers.sql`. Looking
+closer: `007_seed_separation.sql` creates a generic `registered` default role with an inheritance
+chain, and Playform's 007 makes the paid tiers inherit from it — but no database has `registered`,
+`role_inheritance` is empty everywhere, and `free` is the default. Dev records PF's 007 as "assumed",
+production (through the baseline) as "verified", and production records Playform's 007 as "verified"
+with no effect. The role model in force is flat — each role holds its permissions directly — and the
+code (`DEFAULT_USER_ROLE = "free"`) reads exactly that, so nothing was wrong for users.
+
+**Fixed (platform):** decision — keep the flat model that runs and the code reads; correct the
+records, change no role or permission. Migration `047_role_model_records.sql` marks
+`007_seed_separation.sql` "absent" wherever `registered` does not exist. The parity check accepts the
+baseline's own record. The replay checks that the default role the code provisions is the database's
+only default, and that 007 is never recorded as applied without its role.
+
+**Remaining (Playform, with its 7R adoption):** a Playform migration recording its own
+`007_playform_subscription_tiers.sql` the same way in both databases. Until then the weekly parity
+check reports it.
+
+### TASK-149 — ESLint 9 is out of support; ESLint 10 waits on Next's plugins
+
+| Field        | Detail                                                          |
+| ------------ | --------------------------------------------------------------- |
+| **ID**       | TASK-149                                                        |
+| **Type**     | Dependency hygiene                                              |
+| **Severity** | Low — development tooling only; nothing it checks reaches users |
+| **Phase**    | Phase 5                                                         |
+| **Target**   | Phase 5, Sprint 7R close (re-checked each dependency batch)     |
+| **Status**   | Open                                                            |
+| **Logged**   | 2026-10-23                                                      |
+
+**What:** `npm` reports `eslint@9.39.5` as no longer supported. ESLint 10 is held back (Dependabot
+ignores its major) because the React, accessibility and import plugins in `eslint-config-next` 16.4
+declare ESLint up to 9 and install only by overriding their peer range.
+
+**Plan:** at each dependency batch, check the three plugins' declared ESLint range; move both
+repositories to ESLint 10 together the batch they declare it, and lift the Dependabot ignore.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -3187,7 +3244,7 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: October 23, 2026 (PF v5.1.1 — dependencies, no state set inside an effect, the sign-in page signs in through the server; register PR-1–PR-17)_
+_Last updated: October 23, 2026 (Sprint 7R R2 — integrity fixes: role-model records, ai_metrics, chosen cache, UTC budget day and age; TASK-148, TASK-149)_
 
 _Previously updated: October 22, 2026 (TASK-145 Wave 1 fixed; TASK-138 and TASK-140 fixed in Sprint 7X; TASK-146 and TASK-147 filed — the gaps ASSURANCE.md records)_
 _Last updated: August 13, 2026 (TASK-083 filed — the sync cannot distinguish an upstream deletion from a Playform-owned file)_

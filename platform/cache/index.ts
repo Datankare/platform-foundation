@@ -6,12 +6,15 @@
  *   const cache = createCacheProvider(); // auto-detects from env
  *
  * Environment variables:
- *   UPSTASH_REDIS_REST_URL   — Redis REST endpoint
- *   UPSTASH_REDIS_REST_TOKEN — Redis auth token
+ *   CACHE_PROVIDER           — upstash | memory (TASK-139: chosen, never inferred; production
+ *                              requires it — environment contract)
+ *   UPSTASH_REDIS_REST_URL   — Redis REST endpoint (with CACHE_PROVIDER=upstash)
+ *   UPSTASH_REDIS_REST_TOKEN — Redis auth token (with CACHE_PROVIDER=upstash)
  *   CACHE_NAMESPACE          — Key prefix (default: "pf:")
  *   CACHE_DEFAULT_TTL        — Default TTL in seconds (default: 3600)
  *
- * If Redis env vars are not set, falls back to InMemoryCacheProvider.
+ * Unset CACHE_PROVIDER means the in-memory cache (tests, local). Redis selected without its
+ * credentials throws: an explicit choice is never quietly replaced by another.
  *
  * @module platform/cache
  */
@@ -39,6 +42,7 @@ import { InMemoryCacheProvider } from "./memory-cache";
 import { RedisCacheProvider } from "./redis-cache";
 import type { CacheConfig, CacheProvider } from "./types";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { getCacheProviderSetting } from "@/platform/providers/environment-contract";
 
 /** Singleton cache instance */
 /** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
@@ -55,7 +59,8 @@ function writeCacheInstance(next: CacheProvider | null): void {
  * Primarily for testing or when you need a non-singleton instance.
  */
 export function createCacheProvider(config?: Partial<CacheConfig>): CacheProvider {
-  const provider = config?.provider ?? (getRedisUrl() ? "redis" : "memory");
+  const provider =
+    config?.provider ?? (getCacheProviderSetting() === "upstash" ? "redis" : "memory");
   const namespace = config?.namespace ?? getEnv("CACHE_NAMESPACE", "pf:");
   const defaultTTLSeconds =
     config?.defaultTTLSeconds ?? parseInt(getEnv("CACHE_DEFAULT_TTL", "3600"), 10);
@@ -65,11 +70,11 @@ export function createCacheProvider(config?: Partial<CacheConfig>): CacheProvide
     const token = config?.redisToken ?? getRedisToken();
 
     if (!url || !token) {
-      console.warn(
-        "[cache] Redis config incomplete — falling back to in-memory cache. " +
-          "Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for Redis."
+      // Fail closed (TASK-139): a chosen Redis cache missing its credentials is a
+      // misconfiguration, not a reason to become a per-instance cache without saying so.
+      throw new Error(
+        "CACHE_PROVIDER=upstash but UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN is not set"
       );
-      return new InMemoryCacheProvider({ namespace, defaultTTLSeconds });
     }
 
     return new RedisCacheProvider({ url, token, namespace, defaultTTLSeconds });
@@ -79,8 +84,7 @@ export function createCacheProvider(config?: Partial<CacheConfig>): CacheProvide
 }
 
 /**
- * Get the singleton cache provider.
- * Auto-detects Redis from environment, falls back to in-memory.
+ * Get the singleton cache provider — the one CACHE_PROVIDER selects.
  */
 export function getCache(): CacheProvider {
   const existing = readCacheInstance();

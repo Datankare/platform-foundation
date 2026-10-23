@@ -133,7 +133,8 @@ function columnsFromMigrations() {
         if (!p) continue;
         if (CONSTRAINT_WORDS.has(p.split(" ")[0].toLowerCase().replace(/\($/, "")))
           continue;
-        const cm = /^([a-z_]\w*)\s+[a-z_][\w ]*/i.exec(p);
+        // A column may be a quoted identifier ("timestamp", "values" — words SQL reserves).
+        const cm = /^"?([a-z_]\w*)"?\s+[a-z_][\w ]*/i.exec(p);
         if (cm) add(m[1], cm[1]);
       }
     }
@@ -232,11 +233,24 @@ function columnsFromStores() {
                 table: t,
                 columns: [...cols].sort(),
               });
+            } else {
+              problems.push(
+                `${p.replace(ROOT + "/", "")}: reaches '${t}' but no column it writes or filters could be read — make the row an object literal this check can see`
+              );
             }
           }
           continue;
         }
-        if (distinct.length === 0) continue;
+        if (distinct.length === 0) {
+          // A table named at run time (`/rest/v1/${table}`) with no TABLE constant: nothing here
+          // can say which table it writes, so it is a store nothing checks (TASK-113).
+          if (/\/rest\/v1\/\$\{/.test(src)) {
+            problems.push(
+              `${p.replace(ROOT + "/", "")}: reaches a table named at run time — declare it as const TABLE = "<name>" so this check can read it`
+            );
+          }
+          continue;
+        }
         table = distinct[0];
       }
 
@@ -254,16 +268,38 @@ function columnsFromStores() {
         const open = src.indexOf("{", d.index + d[0].length - 1);
         for (const k of objectKeys(src, open)) cols.add(k);
       }
+      // JSON.stringify(rows) where `const rows = batch.map((e) => ({ ... }))` builds the rows
+      for (const m of src.matchAll(/JSON\.stringify\((\w+)\)/g)) {
+        const d = new RegExp(
+          `const ${m[1]}\\s*(?::[^=]+)?=\\s*[\\w.]+\\.map\\(\\s*\\(?\\w*\\)?\\s*=>\\s*\\(\\s*\\{`
+        ).exec(src);
+        if (!d) continue;
+        const open = src.indexOf("{", d.index + d[0].length - 1);
+        for (const k of objectKeys(src, open)) cols.add(k);
+      }
       // PostgREST filters and explicit selects
       for (const m of src.matchAll(/[?&]([a-z_]\w*)=(?:eq|gte|lte|lt|gt|in|is|not)\./g)) {
+        cols.add(m[1]);
+      }
+      // URLSearchParams filters: params.set("name", `eq.${...}`)
+      for (const m of src.matchAll(
+        /\.set\(\s*"([a-z_]\w*)",\s*`(?:eq|gte|lte|lt|gt|in|is|not)\./g
+      )) {
         cols.add(m[1]);
       }
       for (const m of src.matchAll(/select=([a-z_,]+)/g)) {
         for (const c of m[1].split(",")) if (c) cols.add(c);
       }
 
-      if (cols.size)
+      if (cols.size) {
         out.push({ file: p.replace(ROOT + "/", ""), table, columns: [...cols].sort() });
+      } else {
+        // A file that reaches a table through the REST API but whose columns this cannot read
+        // is a store nothing checks — how ai_metrics went uncreated (TASK-113). Fail, naming it.
+        problems.push(
+          `${p.replace(ROOT + "/", "")}: reaches '${table}' but no column it writes or filters could be read — make the row an object literal this check can see`
+        );
+      }
     }
   };
   walk(join(ROOT, "platform"));

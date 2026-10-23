@@ -103,6 +103,13 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
       "one of: supabase, upstash, memory (memory is refused in production — ADR-052)",
   },
   {
+    name: "CACHE_PROVIDER",
+    aliases: [],
+    shape: /^(upstash|memory)$/,
+    shapeHint:
+      "one of: upstash, memory — required in production; memory keeps the cache per instance (TASK-139)",
+  },
+  {
     name: "DEPLOYMENT_HOST",
     aliases: [],
     shape: /^[a-z][a-z0-9-]{1,31}$/,
@@ -202,6 +209,16 @@ export function getGuestTokenSecret(env: EnvSource = process.env): string | unde
 }
 
 /** ADR-052: the rate-limit store selection (default "memory"; refused in production). */
+/**
+ * The cache selection (TASK-139). Read here so the cache, the registry and the contract use one
+ * value; undefined when unset (outside production that means the in-memory cache).
+ */
+export function getCacheProviderSetting(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("CACHE_PROVIDER", env);
+}
+
 export function getRateLimitStoreSetting(
   env: EnvSource = process.env
 ): string | undefined {
@@ -370,6 +387,26 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
       violations.push(
         `NEXT_PUBLIC_COGNITO_REGION does not match the region of NEXT_PUBLIC_COGNITO_USER_POOL_ID`
       );
+    }
+  }
+
+  // TASK-139: the cache is chosen, never inferred. Before, the cache used Redis when its URL
+  // happened to be set and fell back to a per-instance memory cache otherwise, silently, in
+  // production too. A deployment now declares it; memory is allowed when declared (the cache
+  // holds nothing authoritative — losing it costs hits, not correctness), and upstash needs its
+  // credentials. A local or CI run (DEPLOYMENT_HOST local/ci) is not a deployment and may leave
+  // it unset.
+  const cache = getCacheProviderSetting(env);
+  if (cache === undefined && !harnessAllowed) {
+    violations.push(
+      "CACHE_PROVIDER is required: upstash (shared), or memory (per instance, declared on purpose)"
+    );
+  }
+  if (cache === "upstash") {
+    for (const name of ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"]) {
+      if (raw(env, name) === undefined) {
+        violations.push(`${name} is required by CACHE_PROVIDER=upstash but not set`);
+      }
     }
   }
 

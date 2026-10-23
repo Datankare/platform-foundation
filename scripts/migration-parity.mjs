@@ -36,7 +36,7 @@ if (files.length < 10) {
 let rows;
 try {
   const res = await fetch(
-    `${url}/rest/v1/applied_migrations?select=filename&limit=10000`,
+    `${url}/rest/v1/applied_migrations?select=filename,confidence&limit=10000`,
     {
       headers: { apikey: key, authorization: `Bearer ${key}` },
       signal: AbortSignal.timeout(20_000),
@@ -52,10 +52,45 @@ try {
   process.exit(2);
 }
 
+// A database built from the schema baseline (production, and any new instance) records the
+// baseline itself — supabase/baseline/000_baseline.sql — beside the migrations it covers. That
+// file is known, so its record is not "extra"; it is never required, because a database built
+// from the numbered chain (dev) never ran it (TASK-148, first live run 2026-10-23).
+let baselineFiles = new Set();
+try {
+  baselineFiles = new Set(
+    readdirSync(join(process.cwd(), "supabase", "baseline")).filter((f) =>
+      /^\d+_.*\.sql$/.test(f)
+    )
+  );
+} catch (e) {
+  // A repository without the baseline folder knows no baseline file; anything else is "cannot
+  // check" (exit 2), never reported as drift.
+  if (e.code !== "ENOENT") {
+    console.error(`${label}: supabase/baseline could not be read (${e.code ?? e.name})`);
+    process.exit(2);
+  }
+}
+
 const recorded = new Set(rows.map((r) => r.filename));
 const onDisk = new Set(files);
 const unapplied = files.filter((f) => !recorded.has(f));
-const unknown = [...recorded].filter((f) => !onDisk.has(f)).sort();
+const unknown = [...recorded]
+  .filter((f) => !onDisk.has(f) && !baselineFiles.has(f))
+  .sort();
+
+// A file recorded "absent" is known not applied (its effect is not in this database). It is in
+// parity — the record tells the truth — but it is listed, so it is never mistaken for applied.
+const absent = rows
+  .filter((r) => r.confidence === "absent" && onDisk.has(r.filename))
+  .map((r) => r.filename)
+  .sort();
+if (absent.length) {
+  console.log(
+    `ℹ ${label}: ${absent.length} migration(s) recorded as known not applied (absent):`
+  );
+  for (const f of absent) console.log(`    ${f}`);
+}
 
 if (unapplied.length === 0 && unknown.length === 0) {
   console.log(`✓ ${label}: all ${files.length} migrations recorded, none extra`);

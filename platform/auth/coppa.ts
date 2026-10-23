@@ -19,66 +19,9 @@ import { logger } from "@/lib/logger";
 
 export type ParentalConsentStatus = "not_required" | "pending" | "granted" | "denied";
 
-export interface AgeVerificationResult {
-  isMinor: boolean;
-  age: number;
-  requiresParentalConsent: boolean;
-  contentRatingLevel: number;
-}
-
-const MINOR_AGE_THRESHOLD = 13;
-const TEEN_AGE_THRESHOLD = 18;
-
-/**
- * Calculate age from date of birth.
- */
-export function calculateAge(dateOfBirth: string): number {
-  const dob = new Date(dateOfBirth);
-  const now = new Date();
-  let age = now.getFullYear() - dob.getFullYear();
-  const monthDiff = now.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) {
-    age--;
-  }
-  return age;
-}
-
-/**
- * Determine age verification result and content rating level.
- *
- * Content rating levels:
- * 1 = strictest (under 13, COPPA applies)
- * 2 = moderate (13-17, teen content)
- * 3 = standard (18+, full content)
- */
-export function evaluateAge(dateOfBirth: string): AgeVerificationResult {
-  const age = calculateAge(dateOfBirth);
-
-  if (age < MINOR_AGE_THRESHOLD) {
-    return {
-      isMinor: true,
-      age,
-      requiresParentalConsent: true,
-      contentRatingLevel: 1,
-    };
-  }
-
-  if (age < TEEN_AGE_THRESHOLD) {
-    return {
-      isMinor: true,
-      age,
-      requiresParentalConsent: false,
-      contentRatingLevel: 2,
-    };
-  }
-
-  return {
-    isMinor: false,
-    age,
-    requiresParentalConsent: false,
-    contentRatingLevel: 3,
-  };
-}
+export type { AgeVerificationResult } from "@/platform/auth/age";
+export { calculateAge, evaluateAge } from "@/platform/auth/age";
+import { evaluateAge, type AgeVerificationResult } from "@/platform/auth/age";
 
 /**
  * Record age verification for a user.
@@ -92,7 +35,13 @@ export async function recordAgeVerification(
   result?: AgeVerificationResult;
   error?: string;
 }> {
-  const evaluation = evaluateAge(dateOfBirth);
+  let evaluation: AgeVerificationResult;
+  try {
+    evaluation = evaluateAge(dateOfBirth);
+  } catch (err) {
+    // Not a real, past calendar date: nothing is recorded, and nothing is read as an adult.
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
   const supabase = getSupabaseServiceClient();
 
   const updateData: Record<string, unknown> = {

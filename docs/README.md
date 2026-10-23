@@ -10,7 +10,7 @@ document is catalogued in [The full catalog](#the-full-catalog) with a one-line 
 
 - **Adopting the platform** → [SETUP_AND_INTEGRATION](SETUP_AND_INTEGRATION.md), then
   [ENV_REFERENCE](ENV_REFERENCE.md).
-- **Upgrading from v4.x** → [MIGRATION_v4_to_v5](MIGRATION_v4_to_v5.md). From v3.x → [MIGRATION_v3_to_v4](MIGRATION_v3_to_v4.md) first; from v2.x → [MIGRATION_v2_to_v3](MIGRATION_v2_to_v3.md) first; from v1.x → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md) before that.
+- **Upgrading from v5.x** (Sprint 7R, in progress) → [MIGRATION_v5_to_v6](MIGRATION_v5_to_v6.md). From v4.x → [MIGRATION_v4_to_v5](MIGRATION_v4_to_v5.md) first. From v3.x → [MIGRATION_v3_to_v4](MIGRATION_v3_to_v4.md) first; from v2.x → [MIGRATION_v2_to_v3](MIGRATION_v2_to_v3.md) first; from v1.x → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md) before that.
 - **Building agents** → [AGENT_DELEGATION_GUIDE](AGENT_DELEGATION_GUIDE.md) +
   [AGENT_ARCHITECTURE](AGENT_ARCHITECTURE.md).
 - **Understanding the architecture** → [TAD](TAD.md) →
@@ -88,19 +88,20 @@ graph TD
 
 ### Getting Started
 
-| Doc                                                  | What it is                                                                                                               |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [SETUP_AND_INTEGRATION.md](SETUP_AND_INTEGRATION.md) | Adopt the platform: zero-config boot → real backends → migrations → sync/inheritance.                                    |
-| [KNOWLEDGE_BASES.md](KNOWLEDGE_BASES.md)             | Knowledge bases: isolation levels, scoping, and bringing your own store.                                                 |
-| [API_ERRORS.md](API_ERRORS.md)                       | Every API error code — HTTP status, message, params, what the caller should do. Generated (ADR-051).                     |
-| [APP_API_ERRORS.md](APP_API_ERRORS.md)               | The consuming app's own `app.*` error codes (ADR-051 D1). Generated; consumer-owned — empty in platform-foundation.      |
-| [ENV_REFERENCE.md](ENV_REFERENCE.md)                 | Every environment variable — purpose, required, default, values, incl. delegation keys.                                  |
-| [APP_ENV_REFERENCE.md](APP_ENV_REFERENCE.md)         | The consuming app's own settings and its per-environment provider choices. Consumer-owned — a template here.             |
-| [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md)       | Upgrading from v1.x: the breaking rung-1 retirement + adoption steps.                                                    |
-| [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md)       | Upgrading from v2.x: stricter production boot, signed guests, coded errors, removed guest lifecycle.                     |
-| [MIGRATION_v3_to_v4.md](MIGRATION_v3_to_v4.md)       | Upgrading from v3.x: required rate-limit store, route checks for verification and limits, stricter `/api/stream`.        |
-| [MIGRATION_v4_to_v5.md](MIGRATION_v4_to_v5.md)       | Upgrading from v4.x: durable stores required, fail-closed boot and audit, governed config only, new checks on your code. |
-| [RELEASE_NOTES.md](RELEASE_NOTES.md)                 | What shipped, per release, newest first.                                                                                 |
+| Doc                                                  | What it is                                                                                                                         |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| [SETUP_AND_INTEGRATION.md](SETUP_AND_INTEGRATION.md) | Adopt the platform: zero-config boot → real backends → migrations → sync/inheritance.                                              |
+| [KNOWLEDGE_BASES.md](KNOWLEDGE_BASES.md)             | Knowledge bases: isolation levels, scoping, and bringing your own store.                                                           |
+| [API_ERRORS.md](API_ERRORS.md)                       | Every API error code — HTTP status, message, params, what the caller should do. Generated (ADR-051).                               |
+| [APP_API_ERRORS.md](APP_API_ERRORS.md)               | The consuming app's own `app.*` error codes (ADR-051 D1). Generated; consumer-owned — empty in platform-foundation.                |
+| [ENV_REFERENCE.md](ENV_REFERENCE.md)                 | Every environment variable — purpose, required, default, values, incl. delegation keys.                                            |
+| [APP_ENV_REFERENCE.md](APP_ENV_REFERENCE.md)         | The consuming app's own settings and its per-environment provider choices. Consumer-owned — a template here.                       |
+| [MIGRATION_v1_to_v2.md](MIGRATION_v1_to_v2.md)       | Upgrading from v1.x: the breaking rung-1 retirement + adoption steps.                                                              |
+| [MIGRATION_v2_to_v3.md](MIGRATION_v2_to_v3.md)       | Upgrading from v2.x: stricter production boot, signed guests, coded errors, removed guest lifecycle.                               |
+| [MIGRATION_v3_to_v4.md](MIGRATION_v3_to_v4.md)       | Upgrading from v3.x: required rate-limit store, route checks for verification and limits, stricter `/api/stream`.                  |
+| [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md)       | Upgrading from v5.x (in progress, Sprint 7R): migrations 047–048, `CACHE_PROVIDER` required, UTC budget days, one age calculation. |
+| [MIGRATION_v4_to_v5.md](MIGRATION_v4_to_v5.md)       | Upgrading from v4.x: durable stores required, fail-closed boot and audit, governed config only, new checks on your code.           |
+| [RELEASE_NOTES.md](RELEASE_NOTES.md)                 | What shipped, per release, newest first.                                                                                           |
 
 ### Architecture
 
