@@ -2,6 +2,8 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
+> **v5.1.1** — the platform's sign-in page works in a production build (the browser signs in through the server's routes instead of starting every server provider in the browser); Next's lint configuration 16 (flat config) with React's newer hook rules, so no component sets state inside an effect (stale responses dropped, state that follows a prop adjusted during render, the auth session read as an external store); React 19.3, Sentry 11, Prettier 3.9.10 and the rest of the open Dependabot updates; unused `@anthropic-ai/sdk`, `dotenv` and `@eslint/eslintrc` removed. No migration.
+>
 > **v5.1.0** — held actions decided and resumed only as approved: the durable proposal store keeps the whole proposing identity (migration 046), a resume runs exactly the approved tool and payload as the proposing agent, trajectories are scoped to their user, and the proposing agent or its session can never approve its own action — found by the Playform v0.8.0 release review ([register](docs/audits/2026-10-REGISTER.md)). Apply migration 046 before deploying.
 
 > **v5.0.0** — **Adversarial Validation**: the October 2026 whole-system adversarial review's Critical and High findings fixed — authorization on every path including the AI command bar, audit that fails closed, governed configuration only, durable moderation stores, a daily paid-request quota, a screened `/api/stream` — and, for each pattern behind them, a check that runs on every commit, plus a monkey/fuzz run against the production build ([ASSURANCE](docs/ASSURANCE.md), [register](docs/audits/2026-10-REGISTER.md)). **Breaking** — see [MIGRATION_v4_to_v5](docs/MIGRATION_v4_to_v5.md).

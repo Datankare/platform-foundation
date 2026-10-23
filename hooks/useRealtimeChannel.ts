@@ -44,14 +44,20 @@ export function useRealtimeChannel(channelName: string): UseRealtimeChannelResul
   const [isConnected, setIsConnected] = useState(false);
   const channelRef = useRef<string>(channelName);
 
+  // A new channel starts empty and disconnected: adjusted during render (React's pattern for
+  // state that follows a prop), so the old channel's messages never render under the new name.
+  const [shownChannel, setShownChannel] = useState(channelName);
+  if (channelName !== shownChannel) {
+    setShownChannel(channelName);
+    setIsConnected(false);
+    setMessages([]);
+    setPresence([]);
+  }
+
   useEffect(() => {
     channelRef.current = channelName;
     // Channel subscription will be wired when RealtimeProvider
     // is available in app context (Sprint 5 integration step)
-    setIsConnected(false);
-    setMessages([]);
-    setPresence([]);
-
     return () => {
       setIsConnected(false);
     };

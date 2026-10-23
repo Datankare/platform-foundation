@@ -24,7 +24,7 @@
 
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ReviewDecision,
   ReviewQueueItem,
@@ -123,6 +123,28 @@ interface AssistState {
   rec?: ReviewRecommendation | null;
 }
 
+interface QueueResult {
+  items: ReviewQueueItem[];
+  error: string | null;
+}
+
+/** One read of the review queue; never throws (an outage is an error message). */
+async function fetchQueue(status: ReviewStatus | "all"): Promise<QueueResult> {
+  try {
+    const qs = status === "all" ? "" : `?status=${status}`;
+    const res = await fetch(`/api/moderation/review${qs}`, {
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      return { items: [], error: "Could not load the review queue. Please try again." };
+    }
+    const data = await res.json();
+    return { items: Array.isArray(data.items) ? data.items : [], error: null };
+  } catch {
+    return { items: [], error: "Could not connect to the review service." };
+  }
+}
+
 // ── Container ─────────────────────────────────────────────────────────
 
 export default function ReviewDashboard({ variant = "light" }: ReviewDashboardProps) {
@@ -135,32 +157,46 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
   const [busyId, setBusyId] = useState<string | null>(null);
   const [assist, setAssist] = useState<Record<string, AssistState>>({});
 
-  const load = useCallback(async (status: ReviewStatus | "all") => {
-    setLoading(true);
-    setError(null);
-    try {
-      const qs = status === "all" ? "" : `?status=${status}`;
-      const res = await fetch(`/api/moderation/review${qs}`, {
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        setError("Could not load the review queue. Please try again.");
-        setItems([]);
-        return;
-      }
-      const data = await res.json();
-      setItems(Array.isArray(data.items) ? data.items : []);
-    } catch {
-      setError("Could not connect to the review service.");
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
+  const showQueue = useCallback((queue: QueueResult) => {
+    setItems(queue.items);
+    setError(queue.error);
+    setLoading(false);
   }, []);
 
+  // Every read is numbered; only the newest one is shown. A slow earlier response — the
+  // previous filter's, or a Refresh overtaken by a filter change — never overwrites a newer one.
+  const latestRead = useRef(0);
+
+  /** Reloads the queue (after an action, or Refresh). */
+  const load = useCallback(
+    async (status: ReviewStatus | "all") => {
+      const read = ++latestRead.current;
+      setLoading(true);
+      setError(null);
+      const queue = await fetchQueue(status);
+      if (read === latestRead.current) showQueue(queue);
+    },
+    [showQueue]
+  );
+
+  // The filter's queue; leaving the page drops a response still in flight.
   useEffect(() => {
-    load(filter);
-  }, [filter, load]);
+    let current = true;
+    const read = ++latestRead.current;
+    void fetchQueue(filter).then((queue) => {
+      if (current && read === latestRead.current) showQueue(queue);
+    });
+    return () => {
+      current = false;
+    };
+  }, [filter, showQueue]);
+
+  const selectFilter = (next: ReviewStatus | "all") => {
+    if (next === filter) return;
+    setLoading(true);
+    setError(null);
+    setFilter(next);
+  };
 
   const patchItem = useCallback(async (id: string, body: Record<string, unknown>) => {
     setBusyId(id);
@@ -272,7 +308,7 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
           <button
             key={s}
             type="button"
-            onClick={() => setFilter(s)}
+            onClick={() => selectFilter(s)}
             aria-pressed={filter === s}
             className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
               filter === s ? "bg-blue-600 text-white" : t.filterInactive

@@ -44,7 +44,7 @@ export default function AuthLayout({
         {children}
       </div>
 
-      <p className="text-xs text-gray-500 mt-8">
+      <p className="text-xs text-gray-400 mt-8">
         Foundation as Fabric · Continuous Confidence
       </p>
     </div>

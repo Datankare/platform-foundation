@@ -174,7 +174,7 @@ export default function ProfilePage({
               onChange={form.setProfileVis}
               label="Visible:"
             />
-            <p className="text-xs text-gray-600 mt-1">
+            <p className="text-xs text-gray-400 mt-1">
               Controls whether your profile appears in search results.
             </p>
           </div>
@@ -205,11 +205,11 @@ export default function ProfilePage({
           {/* Account Info (read-only) */}
           <div className="border-t border-gray-800 pt-4">
             <h3 className="text-sm font-medium text-gray-300 mb-2">Account</h3>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-400">
               Member since {new Date(form.profile.createdAt).toLocaleDateString()}
             </p>
             {form.profile.lastLoginAt && (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-400">
                 Last login {new Date(form.profile.lastLoginAt).toLocaleDateString()}
               </p>
             )}

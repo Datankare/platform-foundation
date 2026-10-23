@@ -248,6 +248,59 @@ describe("ReviewDashboard — filter", () => {
 
     await waitFor(() => expect(String(lastCall()[0])).toContain("?status=pending"));
   });
+
+  it("never lets a slow earlier filter's response overwrite the newer one", async () => {
+    let releaseAll!: (v: unknown) => void;
+    fetchMock()
+      .mockReturnValueOnce(new Promise((r) => (releaseAll = r)))
+      .mockResolvedValueOnce(okJson({ items: [makeItem({ id: "pending-1" })] }));
+
+    render(<ReviewDashboard />);
+    fireEvent.click(screen.getByTestId("rd-filter-pending"));
+    await waitFor(() => screen.getByTestId("rd-item-pending-1"));
+
+    releaseAll(okJson({ items: [makeItem({ id: "stale-all" })] }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("rd-item-stale-all")).toBeNull();
+    expect(screen.getByTestId("rd-item-pending-1")).toBeTruthy();
+  });
+
+  it("never lets a Refresh overtaken by a filter change overwrite the newer list", async () => {
+    let releaseRefresh!: (v: unknown) => void;
+    fetchMock()
+      .mockResolvedValueOnce(okJson({ items: [makeItem({ id: "first" })] }))
+      .mockReturnValueOnce(new Promise((r) => (releaseRefresh = r)))
+      .mockResolvedValueOnce(okJson({ items: [makeItem({ id: "pending-1" })] }));
+
+    render(<ReviewDashboard />);
+    await waitFor(() => screen.getByTestId("rd-item-first"));
+    fireEvent.click(screen.getByTestId("rd-refresh"));
+    fireEvent.click(screen.getByTestId("rd-filter-pending"));
+    await waitFor(() => screen.getByTestId("rd-item-pending-1"));
+
+    releaseRefresh(okJson({ items: [makeItem({ id: "stale-refresh" })] }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("rd-item-stale-refresh")).toBeNull();
+    expect(screen.getByTestId("rd-item-pending-1")).toBeTruthy();
+  });
+
+  it("shows loading from the click, and a click on the current filter does not refetch", async () => {
+    let releasePending!: (v: unknown) => void;
+    fetchMock()
+      .mockResolvedValueOnce(okJson({ items: [makeItem()] }))
+      .mockReturnValueOnce(new Promise((r) => (releasePending = r)));
+
+    render(<ReviewDashboard />);
+    await waitFor(() => screen.getByTestId("rd-list"));
+    fireEvent.click(screen.getByTestId("rd-filter-all"));
+    expect(fetchMock()).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("rd-loading")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("rd-filter-pending"));
+    expect(screen.getByTestId("rd-loading")).toBeTruthy();
+    releasePending(okJson({ items: [] }));
+    await waitFor(() => screen.getByTestId("rd-empty"));
+  });
 });
 
 describe("ReviewDashboard — AI assist", () => {

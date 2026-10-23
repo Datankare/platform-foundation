@@ -145,7 +145,7 @@ export default function RegisterForm({
         </button>
       </form>
 
-      <p className="text-center text-sm text-gray-500">
+      <p className="text-center text-sm text-gray-400">
         Already have an account?{" "}
         <button
           onClick={onBackToLogin}
@@ -161,10 +161,10 @@ export default function RegisterForm({
 function PasswordCheck({ label, passed }: { label: string; passed: boolean }) {
   return (
     <div className="flex items-center gap-2 text-xs">
-      <span className={passed ? "text-green-400" : "text-gray-600"}>
+      <span className={passed ? "text-green-400" : "text-gray-400"}>
         {passed ? "\u2713" : "\u2022"}
       </span>
-      <span className={passed ? "text-gray-300" : "text-gray-600"}>{label}</span>
+      <span className={passed ? "text-gray-300" : "text-gray-400"}>{label}</span>
     </div>
   );
 }

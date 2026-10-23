@@ -77,6 +77,14 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     expect(screen.getByText(/strike_ban_threshold/)).toBeDefined();
   });
 
+  it("replaces its rows when the page passes fresh data (no stale first render)", () => {
+    const { rerender } = render(<HeldActionsPanel data={{ approvals: holds }} />);
+    expect(screen.getByRole("button", { name: approveBtn })).toBeTruthy();
+    rerender(<HeldActionsPanel data={{ approvals: [holds[1]] }} />);
+    expect(screen.queryByRole("button", { name: approveBtn })).toBeNull();
+    expect(screen.getByText(/blocklist_only_surfaces/)).toBeTruthy();
+  });
+
   it("shows the empty state when there are no holds", () => {
     render(<HeldActionsPanel data={{ approvals: [] }} />);
     expect(screen.getByText(/No pending approvals/)).toBeDefined();

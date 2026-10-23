@@ -169,7 +169,7 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
         Continue
       </button>
 
-      <p className="text-center text-sm text-gray-500">
+      <p className="text-center text-sm text-gray-400">
         <button
           onClick={onCancel}
           className="text-blue-400 hover:text-blue-300 transition"

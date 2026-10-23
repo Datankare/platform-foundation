@@ -27,7 +27,7 @@ Image and audio $\u2014 arriving as input (ADR-044) or produced by generation (A
 
 (a) **One blended safety score** $\u2014 rejected: it hides which axis fired and prevents independent tuning (an operator can't tighten real-person handling without moving NSFW). Independent axes are the requirement.
 
-(b) **NSFW as a hard block only** $\u2014 rejected as the sole model: NSFW policy legitimately varies by deployment, so it is a tunable *prohibited/escalate* category $\u2014 but CSAM and real-person sexual imagery are **not** NSFW-policy, they are hard-refuse invariants above it. The two must not be conflated.
+(b) **NSFW as a hard block only** $\u2014 rejected as the sole model: NSFW policy legitimately varies by deployment, so it is a tunable _prohibited/escalate_ category $\u2014 but CSAM and real-person sexual imagery are **not** NSFW-policy, they are hard-refuse invariants above it. The two must not be conflated.
 
 (c) **Screening as an admin on/off per surface** $\u2014 rejected: violates Rule 11 / P4. Only commit-gating and axis strictness are tunable; the presence of screening is invariant.
 

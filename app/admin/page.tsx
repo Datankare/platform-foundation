@@ -63,6 +63,14 @@ const ENDPOINTS: Record<string, string> = {
   "capability-mapping": "/api/admin/capability-mapping",
 };
 
+/** One read of a panel's data: undefined when the panel has none or the read failed. */
+async function fetchPanelData(panel: AdminSection): Promise<unknown> {
+  const endpoint = ENDPOINTS[panel];
+  if (!endpoint) return undefined;
+  const res = await fetch(endpoint);
+  return res.ok ? res.json() : undefined;
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
@@ -87,19 +95,26 @@ export default function AdminPage() {
   const [panelData, setPanelData] = useState<Record<string, unknown>>({});
   const [activePanel, setActivePanel] = useState<AdminSection>("roles");
 
-  const refreshData = useCallback(async (panel: AdminSection) => {
-    const endpoint = ENDPOINTS[panel];
-    if (!endpoint) return;
-    const res = await fetch(endpoint);
-    if (res.ok) {
-      const data = await res.json();
-      setPanelData((prev) => ({ ...prev, [panel]: data }));
-    }
+  const showPanelData = useCallback((panel: AdminSection, data: unknown) => {
+    if (data !== undefined) setPanelData((prev) => ({ ...prev, [panel]: data }));
   }, []);
 
+  /** Reloads a panel's data (after an action). */
+  const refreshData = useCallback(
+    async (panel: AdminSection) => showPanelData(panel, await fetchPanelData(panel)),
+    [showPanelData]
+  );
+
+  // The open panel's data; a response for a panel since left is dropped.
   useEffect(() => {
-    refreshData(activePanel);
-  }, [activePanel, refreshData]);
+    let current = true;
+    void fetchPanelData(activePanel).then((data) => {
+      if (current) showPanelData(activePanel, data);
+    });
+    return () => {
+      current = false;
+    };
+  }, [activePanel, showPanelData]);
 
   const handleConfirm = async (actions: ActionPlan["actions"]) => {
     setIsExecuting(true);
@@ -189,7 +204,11 @@ export default function AdminPage() {
     <AdminShell
       adminName="Administrator"
       hasPermission={() => true}
-      onSignOut={() => (window.location.href = "/")}
+      onSignOut={() => {
+        // A full load, not client navigation: leaving the console keeps no in-memory state.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+        window.location.assign("/");
+      }}
       onSectionChange={(section) => setActivePanel(section)}
     >
       {renderSection}
