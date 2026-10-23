@@ -6,32 +6,33 @@
  */
 
 import { NextRequest } from "next/server";
-import { initAuth } from "@/platform/auth/auth-init";
-import { getAuthProvider } from "@/platform/auth/config";
 import { logger } from "@/lib/logger";
-import { apiError, readJsonObject } from "@/platform/errors";
-import { authResultResponse } from "@/platform/auth/auth-response";
+import { readJsonObject, requireTextFields } from "@/platform/errors";
+import { authResultResponse, callAuthProvider } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 export async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_LOGIN);
   if (limited) return limited;
-  initAuth();
 
   const read = await readJsonObject(request);
   if (!read.ok) return read.response;
-  const body = read.body as { email?: string; password?: string };
+  // Typed as text: requireTextFields below refuses anything else before it is used.
+  const body = read.body as { email: string; password: string };
 
-  if (!body.email || !body.password) {
-    return apiError("request.missing_fields", {
-      params: { fields: ["email", "password"] },
+  const invalid = requireTextFields(body, ["email", "password"], request);
+  if (invalid) return invalid;
+
+  const called = await callAuthProvider(
+    (auth) => auth.signIn(body.email, body.password),
+    {
       request,
-    });
-  }
-
-  const auth = getAuthProvider();
-  const result = await auth.signIn(body.email, body.password);
+      context: "Sign in failed",
+    }
+  );
+  if (!called.ok) return called.response;
+  const result = called.result;
 
   if (!result.success) {
     logger.warn("Sign in failed", { route: "api/auth/sign-in", error: result.error });

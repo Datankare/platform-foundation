@@ -16,7 +16,7 @@ Date: 2026-10-22
 The independent review of Playform v0.8.0 drove the agent-approval path end to end against the real
 workflow loop and found that it had never worked on the durable store, and that once it did, one
 approval could release a different action; the independent review of this release then closed the
-remaining gaps ([register](audits/2026-10-REGISTER.md) PR-1–PR-15,
+remaining gaps ([register](audits/2026-10-REGISTER.md) PR-1–PR-16,
 [learning 119](ENGINEERING_LEARNINGS.md)). Apply migration 046 before deploying.
 
 ### What a consumer inherits on sync
@@ -53,6 +53,12 @@ remaining gaps ([register](audits/2026-10-REGISTER.md) PR-1–PR-15,
   `profileUpdateNeedsScreening(update)` tells a route whether an update makes a paid screening call.
   The Cognito provider warns once when tokens carry no `origin_jti` (token revocation off on the app
   client), because then no held action can be approved.
+- **Auth routes take text only.** `requireTextFields(body, names, request)` (`@/platform/errors`)
+  answers a non-text field `request.invalid_body` and an absent or empty one `request.missing_fields`;
+  every auth route uses it. Sign-up applies the built-in password policy when the stored one cannot be
+  read, instead of an uncoded 500 (found by the promotion's monkey run, latent since v5.0.0).
+  `callAuthProvider(call, { request, context })` (`@/platform/auth/auth-response`) answers a provider
+  that throws — yours may — as `internal.error` with a request id; every auth and SSO route uses it.
 
 ### Upgrading
 

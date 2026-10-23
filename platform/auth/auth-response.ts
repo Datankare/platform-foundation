@@ -11,7 +11,10 @@
  */
 
 import { NextResponse } from "next/server";
-import { errorFromResult, type CodedFailure } from "@/platform/errors";
+import { errorFromResult, internalError, type CodedFailure } from "@/platform/errors";
+import { initAuth } from "./auth-init";
+import { getAuthProvider } from "./config";
+import type { AuthProvider } from "./provider";
 
 export interface ProviderResult extends CodedFailure {
   success: boolean;
@@ -39,4 +42,25 @@ export function authResultResponse<T extends ProviderResult>(
     return NextResponse.json(rest);
   }
   return errorFromResult(result, options);
+}
+
+/**
+ * Initialises the providers and calls the registered auth provider for a route. The platform's
+ * providers report failures as results, but a provider is replaceable and may throw, and a
+ * misconfigured server may register none: either is answered as a coded, logged 500 with a
+ * request id, never an uncoded one (PF v5.1.0, PR-16).
+ */
+export async function callAuthProvider<T>(
+  call: (auth: AuthProvider) => Promise<T>,
+  options: {
+    request: { headers: Headers; nextUrl?: { pathname: string } };
+    context: string;
+  }
+): Promise<{ ok: true; result: T } | { ok: false; response: NextResponse }> {
+  try {
+    initAuth();
+    return { ok: true, result: await call(getAuthProvider()) };
+  } catch (err) {
+    return { ok: false, response: internalError(err, options) };
+  }
 }
