@@ -85,7 +85,7 @@ export default function MfaChallengeForm({
         </button>
       </form>
 
-      <p className="text-center text-sm text-gray-500">
+      <p className="text-center text-sm text-gray-400">
         <button
           onClick={onCancel}
           className="text-blue-400 hover:text-blue-300 transition"

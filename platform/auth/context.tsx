@@ -31,6 +31,7 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
+  useSyncExternalStore,
 } from "react";
 
 /** Client-side user representation */
@@ -150,50 +151,90 @@ function getTokenExpiryMs(token: string): number | null {
   }
 }
 
+/**
+ * What the browser holds: a session to restore, nothing, or one to discard. Stale (a
+ * determinable past expiry) or corrupt sessions are discarded rather than restored: restoring
+ * them leaves the client claiming a session while the pf_has_session cookie (max-age 3600) has
+ * expired, so middleware and the client disagree forever and auth pages render blank.
+ */
+type StoredSession =
+  | { kind: "session"; user: AuthUser; accessToken: string }
+  | { kind: "none" }
+  | { kind: "discard" };
+
+/** Reads, never writes: the purge and the cookie re-issue happen in an effect. */
+function readStoredSession(): StoredSession {
+  const storedToken = getStoredValue(TOKEN_STORAGE_KEY);
+  const storedUser = getStoredValue(USER_STORAGE_KEY);
+  if (!storedToken || !storedUser) return { kind: "none" };
+  const expiryMs = getTokenExpiryMs(storedToken);
+  if (expiryMs !== null && expiryMs <= Date.now()) return { kind: "discard" };
+  try {
+    return {
+      kind: "session",
+      user: JSON.parse(storedUser) as AuthUser,
+      accessToken: storedToken,
+    };
+  } catch {
+    /* justified */
+    // Corrupted storage — discard it
+    return { kind: "discard" };
+  }
+}
+
+/**
+ * The session as an external store (React's useSyncExternalStore): read from storage once, on
+ * the client, then changed only by setSession and signOut. The server snapshot is "not read
+ * yet", so the server render and the hydrating render agree (loading) and no state is set
+ * inside an effect.
+ */
+function createSessionStore() {
+  let snapshot: StoredSession | undefined;
+  const listeners = new Set<() => void>();
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getSnapshot(): StoredSession {
+      snapshot ??= readStoredSession();
+      return snapshot;
+    },
+    set(next: StoredSession) {
+      snapshot = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+}
+
+const notReadOnServer = (): undefined => undefined;
+
+function clearStoredSession(): void {
+  removeStoredValue(TOKEN_STORAGE_KEY);
+  removeStoredValue(REFRESH_STORAGE_KEY);
+  removeStoredValue(USER_STORAGE_KEY);
+  clearSessionCookie();
+}
+
 export function AuthContextProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [store] = useState(createSessionStore);
+  const stored = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    notReadOnServer
+  );
+  const isLoading = stored === undefined;
+  const user = stored?.kind === "session" ? stored.user : null;
+  const accessToken = stored?.kind === "session" ? stored.accessToken : null;
 
-  // Restore session from localStorage on mount.
-  // Stale or undecodable-but-expired tokens are purged instead of hydrated:
-  // hydrating them leaves the client claiming a session while the
-  // pf_has_session cookie (max-age 3600) has expired, so middleware and the
-  // client disagree forever and auth pages render blank. On VALID hydration
-  // the cookie is re-issued so both sides agree again.
+  // Bring storage and the middleware cookie in line with what was restored: a discarded session
+  // is purged; a restored one re-issues the cookie so both sides agree again.
   useEffect(() => {
-    const storedToken = getStoredValue(TOKEN_STORAGE_KEY);
-    const storedUser = getStoredValue(USER_STORAGE_KEY);
-
-    if (storedToken && storedUser) {
-      const expiryMs = getTokenExpiryMs(storedToken);
-      if (expiryMs !== null && expiryMs <= Date.now()) {
-        // Stale session — purge everything and start signed-out.
-        removeStoredValue(TOKEN_STORAGE_KEY);
-        removeStoredValue(REFRESH_STORAGE_KEY);
-        removeStoredValue(USER_STORAGE_KEY);
-        clearSessionCookie();
-        setIsLoading(false);
-        return;
-      }
-      try {
-        const parsed = JSON.parse(storedUser) as AuthUser;
-        setUser(parsed);
-        setAccessToken(storedToken);
-        // Re-sync the middleware cookie with the restored client session.
-        setSessionCookie(3600);
-      } catch {
-        /* justified */
-        // localStorage unavailable — return safe default
-        // Corrupted storage — clear it
-        removeStoredValue(TOKEN_STORAGE_KEY);
-        removeStoredValue(REFRESH_STORAGE_KEY);
-        removeStoredValue(USER_STORAGE_KEY);
-        clearSessionCookie();
-      }
-    }
-    setIsLoading(false);
-  }, []);
+    if (stored?.kind === "discard") clearStoredSession();
+    else if (stored?.kind === "session") setSessionCookie(3600);
+  }, [stored]);
 
   const setSession = useCallback(
     (session: {
@@ -211,24 +252,19 @@ export function AuthContextProvider({ children }: { children: React.ReactNode })
         isGuest: session.isGuest ?? false,
       };
 
-      setUser(authUser);
-      setAccessToken(session.accessToken);
       setStoredValue(TOKEN_STORAGE_KEY, session.accessToken);
       setStoredValue(REFRESH_STORAGE_KEY, session.refreshToken);
       setStoredValue(USER_STORAGE_KEY, JSON.stringify(authUser));
       setSessionCookie(3600);
+      store.set({ kind: "session", user: authUser, accessToken: session.accessToken });
     },
-    []
+    [store]
   );
 
   const signOut = useCallback(() => {
-    setUser(null);
-    setAccessToken(null);
-    removeStoredValue(TOKEN_STORAGE_KEY);
-    removeStoredValue(REFRESH_STORAGE_KEY);
-    removeStoredValue(USER_STORAGE_KEY);
-    clearSessionCookie();
-  }, []);
+    clearStoredSession();
+    store.set({ kind: "none" });
+  }, [store]);
 
   const getAccessToken = useCallback(() => {
     return accessToken;

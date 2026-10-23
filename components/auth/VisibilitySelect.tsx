@@ -24,7 +24,7 @@ export default function VisibilitySelect({
 }: VisibilitySelectProps) {
   return (
     <div className="flex items-center gap-2">
-      <label className="text-xs text-gray-500 w-16">{label}</label>
+      <label className="text-xs text-gray-400 w-16">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as ProfileVisibility)}

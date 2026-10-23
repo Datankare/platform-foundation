@@ -60,7 +60,7 @@ export default function LoginForm({
           <div className="flex items-center gap-4" role="separator" aria-label="or">
             <div className="flex-1 h-px bg-gray-700" />
             <span
-              className="text-xs text-gray-500 uppercase tracking-wider"
+              className="text-xs text-gray-400 uppercase tracking-wider"
               aria-hidden="true"
             >
               or
@@ -141,7 +141,7 @@ export default function LoginForm({
         <>
           <div className="flex items-center gap-4">
             <div className="flex-1 h-px bg-gray-700" />
-            <span className="text-xs text-gray-500 uppercase tracking-wider">or</span>
+            <span className="text-xs text-gray-400 uppercase tracking-wider">or</span>
             <div className="flex-1 h-px bg-gray-700" />
           </div>
           <button
@@ -155,7 +155,7 @@ export default function LoginForm({
       )}
 
       {/* Create account link */}
-      <p className="text-center text-sm text-gray-500">
+      <p className="text-center text-sm text-gray-400">
         {"Don't have an account? "}
         <button
           onClick={onCreateAccount}

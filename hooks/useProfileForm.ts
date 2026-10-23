@@ -71,9 +71,7 @@ export function useProfileForm(
   const [languageVis, setLanguageVis] = useState<ProfileVisibility>("private");
   const [timezoneVis, setTimezoneVis] = useState<ProfileVisibility>("private");
 
-  const loadProfile = useCallback(async () => {
-    setIsLoading(true);
-    const data = await onLoadProfile();
+  const showProfile = useCallback((data: UserProfile | null) => {
     if (data) {
       setProfile(data);
       setDisplayName(data.displayName || "");
@@ -88,11 +86,25 @@ export function useProfileForm(
       setTimezoneVis(data.timezoneVisibility);
     }
     setIsLoading(false);
-  }, [onLoadProfile]);
+  }, []);
+
+  // A new loader reads again: loading is shown from this render (adjusted during render, not
+  // in an effect), and a response from a loader that has since been replaced is dropped.
+  const [shownLoader, setShownLoader] = useState(() => onLoadProfile);
+  if (shownLoader !== onLoadProfile) {
+    setShownLoader(() => onLoadProfile);
+    setIsLoading(true);
+  }
 
   useEffect(() => {
-    loadProfile();
-  }, [loadProfile]);
+    let current = true;
+    void onLoadProfile().then((data) => {
+      if (current) showProfile(data);
+    });
+    return () => {
+      current = false;
+    };
+  }, [onLoadProfile, showProfile]);
 
   const handleSave = async () => {
     setError(null);

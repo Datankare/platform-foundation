@@ -29,6 +29,16 @@ updates:
       patch-updates:
         update-types:
           - "patch"
+    ignore:
+      # ESLint 10: eslint-config-next 16.4's plugins (eslint-plugin-react 7.37, jsx-a11y 6.10,
+      # import 2.32) declare peer eslint up to ^9, so npm installs them only by overriding their
+      # peer range. Lift this when eslint-config-next's plugins declare eslint 10.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      # @types/node follows the Node major we run (.nvmrc, CI, Vercel: 24); newer types would
+      # type-check APIs the runtime does not have. Raise it with the runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     target-branch: "develop"
     directory: "/"

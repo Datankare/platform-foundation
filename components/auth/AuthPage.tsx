@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import AuthLayout from "@/components/auth/AuthLayout";
 import LoginForm from "@/components/auth/LoginForm";
 import RegisterForm from "@/components/auth/RegisterForm";
@@ -12,8 +12,7 @@ import { getAuthProvider } from "@/platform/auth/config";
 import { useAuth } from "@/platform/auth/context";
 import type { SsoProvider } from "@/platform/auth/types";
 import { useSsoProviders } from "@/components/auth/useSsoProviders";
-import { isErrorCode, messageKey } from "@/platform/errors/registry";
-import { renderMessage } from "@/platform/errors/messages";
+import { useReturnError } from "@/components/auth/useReturnError";
 
 type AuthView =
   | "login"
@@ -36,7 +35,7 @@ type AuthView =
  */
 export default function AuthPage() {
   const [view, setView] = useState<AuthView>("login");
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [mfaSession, setMfaSession] = useState<string | null>(null);
   const [challengeSession, setChallengeSession] = useState<string | null>(null);
@@ -44,13 +43,13 @@ export default function AuthPage() {
   const ssoProviders = useSsoProviders();
   const { setSession } = useAuth();
 
-  // A failed SSO attempt returns here with ?error=<code> (TASK-101).
-  useEffect(() => {
-    const code = new URLSearchParams(window.location.search).get("error");
-    if (isErrorCode(code)) setError(renderMessage(messageKey(code)));
-  }, []);
+  const { returnError, dismissReturnError } = useReturnError();
+  const error = actionError ?? returnError;
 
-  const clearError = () => setError(null);
+  const clearError = () => {
+    setError(null);
+    dismissReturnError();
+  };
 
   const handleLogin = async (email: string, password: string) => {
     clearError();
@@ -239,6 +238,9 @@ export default function AuthPage() {
   const handleSsoClick = (provider: SsoProvider): Promise<void> => {
     clearError();
     setIsLoading(true);
+    // A full navigation: the route answers with a redirect to the provider's hosted sign-in,
+    // which client navigation cannot follow.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign(`/api/auth/sso/${provider}`);
     return Promise.resolve();
   };
