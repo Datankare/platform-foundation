@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { initAuth } from "@/platform/auth/auth-init";
 import { getAuthProvider } from "@/platform/auth/config";
+import type { AuthProvider } from "@/platform/auth/provider";
 import { isFeatureAvailable } from "@/platform/features";
 import type { ErrorCode } from "@/platform/errors";
 import { logger } from "@/lib/logger";
@@ -50,14 +51,25 @@ export async function GET(
     return backToSignIn(request, "feature.not_configured");
   }
 
-  initAuth();
   const state = randomToken();
   const verifier = randomToken();
-  const result = await getAuthProvider().initiateSso(
-    provider,
-    ssoRedirectUri(request.nextUrl.origin),
-    { state, codeChallenge: await pkceChallenge(verifier) }
-  );
+  let result: Awaited<ReturnType<AuthProvider["initiateSso"]>>;
+  try {
+    initAuth();
+    result = await getAuthProvider().initiateSso(
+      provider,
+      ssoRedirectUri(request.nextUrl.origin),
+      { state, codeChallenge: await pkceChallenge(verifier) }
+    );
+  } catch (err) {
+    // A replaceable provider may throw, a misconfigured server register none: back to sign-in
+    // with a code, never an uncoded 500.
+    logger.error("SSO initiation threw", {
+      provider,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return backToSignIn(request, "auth.sso_failed");
+  }
 
   if (!result.success || !result.redirectUrl) {
     logger.warn("SSO initiation failed", { provider, error: result.error });

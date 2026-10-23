@@ -9,9 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { initAuth } from "@/platform/auth/auth-init";
-import { getAuthProvider } from "@/platform/auth/config";
-import { authResultResponse } from "@/platform/auth/auth-response";
+import { authResultResponse, callAuthProvider } from "@/platform/auth/auth-response";
 import { isFeatureAvailable } from "@/platform/features";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { logger } from "@/lib/logger";
@@ -72,13 +70,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  initAuth();
-  const result = await getAuthProvider().handleSsoCallback(
-    attempt.provider,
-    body.code,
-    ssoRedirectUri(request.nextUrl.origin),
-    { codeVerifier: attempt.verifier }
+  const code = body.code;
+  const called = await callAuthProvider(
+    (auth) =>
+      auth.handleSsoCallback(
+        attempt.provider,
+        code,
+        ssoRedirectUri(request.nextUrl.origin),
+        {
+          codeVerifier: attempt.verifier,
+        }
+      ),
+    { request, context: "SSO callback failed" }
   );
+  if (!called.ok) return endAttempt(called.response);
+  const result = called.result;
 
   if (!result.success || !result.accessToken) {
     logger.warn("SSO callback failed", {

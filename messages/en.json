@@ -11,6 +11,7 @@
       "target_not_found": "No {target} matches that request."
     },
     "approvals": {
+      "approver_not_allowed": "This action needs approval from someone else.",
       "decision_conflict": "This decision could not be recorded; the item changed. Refresh and try again.",
       "expired": "This approval has expired. Request the change again.",
       "hold_not_found": "That held action was not found.",

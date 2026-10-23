@@ -62,7 +62,7 @@ describe("getOwnProfile", () => {
     const mockClient = createSequentialMockSupabase([
       {
         table: "users",
-        response: { data: null, error: { message: "not found" } },
+        response: { data: null, error: { code: "PGRST116", message: "no rows" } },
       },
     ]);
 
@@ -74,6 +74,20 @@ describe("getOwnProfile", () => {
     const profile = await getOwnProfile("nonexistent");
 
     expect(profile).toBeNull();
+  });
+
+  it("throws when the store fails — an outage is not 'not found'", async () => {
+    const mockClient = createSequentialMockSupabase([
+      {
+        table: "users",
+        response: { data: null, error: { code: "57014", message: "statement timeout" } },
+      },
+    ]);
+    jest.doMock("@/lib/supabase/server", () => ({
+      getSupabaseServiceClient: () => mockClient,
+    }));
+    const { getOwnProfile } = await import("@/platform/auth/profile");
+    await expect(getOwnProfile("u")).rejects.toThrow(/profile read failed/);
   });
 });
 

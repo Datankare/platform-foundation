@@ -93,3 +93,70 @@ describe("ProposalStore contract — Supabase (PF reference impl)", () => {
       new SupabaseProposalStore("https://test.supabase.co", "test-service-key"),
   });
 });
+
+describe("SupabaseProposalStore — rows from before migration 046, and tampered identities", () => {
+  const store = () =>
+    new SupabaseProposalStore("https://test.supabase.co", "test-service-key");
+  const row = (over: Row): Row => ({
+    id: "11111111-1111-4111-8111-111111111111",
+    operation_id: "op_x",
+    session_id: "s",
+    trajectory_id: "t",
+    label: "publish",
+    status: "proposed",
+    actor_id: "agent:conductor",
+    actor_role: "conductor",
+    effects: ["restricted"],
+    effective_risk: "restricted",
+    payload: {},
+    observed_version: null,
+    decided_by: null,
+    decided_at: null,
+    decision_note: null,
+    created_at: "2026-10-01T00:00:00Z",
+    updated_at: "2026-10-01T00:00:00Z",
+    ...over,
+  });
+  const legacy = {
+    actorType: "agent",
+    actorId: "agent:conductor",
+    agentRole: "conductor",
+  };
+
+  it.each([
+    ["no actor_identity (a row from before 046)", {}],
+    ["a null actor_identity", { actor_identity: null }],
+    [
+      "an identity whose id disagrees with the column",
+      { actor_identity: { ...legacy, actorId: "agent:other", onBehalfOf: "u1" } },
+    ],
+    [
+      "an identity whose role disagrees with the column",
+      { actor_identity: { ...legacy, agentRole: "admin", onBehalfOf: "u1" } },
+    ],
+    [
+      "an unknown actor type",
+      { actor_identity: { ...legacy, actorType: "root", onBehalfOf: "u1" } },
+    ],
+    ["an identity that is not an object", { actor_identity: "u1" }],
+  ])("reads %s as an agent acting for nobody (fails closed)", async (_label, over) => {
+    rows = [row(over)];
+    const p = await store().getById("11111111-1111-4111-8111-111111111111");
+    expect(p?.actor).toEqual(legacy);
+  });
+
+  it("drops a malformed delegation or non-string session, keeping the rest", async () => {
+    rows = [
+      row({
+        actor_identity: {
+          ...legacy,
+          onBehalfOf: "u1",
+          sessionId: 7,
+          delegation: { scope: "x" },
+        },
+      }),
+    ];
+    const p = await store().getById("11111111-1111-4111-8111-111111111111");
+    expect(p?.actor).toEqual({ ...legacy, onBehalfOf: "u1" });
+  });
+});

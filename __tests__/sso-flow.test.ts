@@ -179,6 +179,13 @@ describe("GET /api/auth/sso/[provider]", () => {
     expect(res.headers.get("location")).toBe(`${ORIGIN}/auth?error=auth.sso_failed`);
     expect(res.cookies.get(SSO_COOKIE)).toBeUndefined();
   });
+
+  it("returns to sign-in with auth.sso_failed when the provider throws (PR-16)", async () => {
+    mockProvider.initiateSso.mockRejectedValue(new Error("network"));
+    const res = await startReq("google");
+    expect(res.headers.get("location")).toBe(`${ORIGIN}/auth?error=auth.sso_failed`);
+    expect(res.cookies.get(SSO_COOKIE)).toBeUndefined();
+  });
 });
 
 // ── POST /api/auth/sso/callback ──────────────────────────────────────────
@@ -288,6 +295,16 @@ describe("POST /api/auth/sso/callback", () => {
     const res = await callbackReq({ code: "c", state }, cookie);
     expect(res.status).toBe(401);
     expect((await res.json()).code).toBe("auth.sso_failed");
+    expect(res.cookies.get("pf_has_session")).toBeUndefined();
+    expect(cleared(res)).toBe(true);
+  });
+
+  it("answers a provider that throws as a coded 500 and ends the attempt (PR-16)", async () => {
+    const { state, cookie } = attemptCookie();
+    mockProvider.handleSsoCallback.mockRejectedValue(new Error("network"));
+    const res = await callbackReq({ code: "c", state }, cookie);
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe("internal.error");
     expect(res.cookies.get("pf_has_session")).toBeUndefined();
     expect(cleared(res)).toBe(true);
   });

@@ -38,6 +38,8 @@ interface ProposalRow {
   status: string;
   actor_id: string;
   actor_role: string;
+  /** The full proposing identity (migration 046); null on older rows. */
+  actor_identity?: unknown;
   effects: unknown;
   effective_risk: string;
   payload: unknown;
@@ -59,12 +61,53 @@ function headers(key: string, prefer?: string): Record<string, string> {
   return h;
 }
 
-function mapRow(row: ProposalRow): ProposalRecord {
-  const actor: AgentIdentity = {
+const ACTOR_TYPES: ReadonlySet<string> = new Set(["user", "agent", "system"]);
+
+/**
+ * The proposing identity. From actor_identity (migration 046) when it is a well-formed identity
+ * whose id and role agree with the indexed columns; otherwise the legacy shape — an agent acting
+ * for nobody — which every ownership check refuses (fail closed).
+ */
+function actorOf(row: ProposalRow): AgentIdentity {
+  const legacy: AgentIdentity = {
     actorType: "agent",
     actorId: row.actor_id,
     agentRole: row.actor_role,
   };
+  const raw = row.actor_identity;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return legacy;
+  const a = raw as Record<string, unknown>;
+  if (
+    typeof a.actorType !== "string" ||
+    !ACTOR_TYPES.has(a.actorType) ||
+    a.actorId !== row.actor_id ||
+    a.agentRole !== row.actor_role
+  ) {
+    return legacy;
+  }
+  return {
+    actorType: a.actorType as AgentIdentity["actorType"],
+    actorId: row.actor_id,
+    agentRole: row.actor_role,
+    ...(typeof a.onBehalfOf === "string" ? { onBehalfOf: a.onBehalfOf } : {}),
+    ...(typeof a.sessionId === "string" ? { sessionId: a.sessionId } : {}),
+    ...(isDelegation(a.delegation) ? { delegation: a.delegation } : {}),
+  };
+}
+
+function isDelegation(v: unknown): v is NonNullable<AgentIdentity["delegation"]> {
+  if (typeof v !== "object" || v === null) return false;
+  const d = v as Record<string, unknown>;
+  return (
+    typeof d.onBehalfOf === "string" &&
+    typeof d.method === "string" &&
+    Array.isArray(d.scope) &&
+    d.scope.every((x) => typeof x === "string")
+  );
+}
+
+function mapRow(row: ProposalRow): ProposalRecord {
+  const actor = actorOf(row);
   return {
     proposalId: row.id,
     operationId: row.operation_id,
@@ -111,6 +154,7 @@ export class SupabaseProposalStore implements ProposalStore {
       status: "proposed",
       actor_id: args.actor.actorId,
       actor_role: args.actor.agentRole,
+      actor_identity: args.actor,
       effects: args.effects,
       effective_risk: args.effectiveRisk,
       payload: args.payload ?? {},
@@ -162,7 +206,7 @@ export class SupabaseProposalStore implements ProposalStore {
 
   async decide(
     proposalId: string,
-    status: Exclude<ProposalStatus, "proposed">,
+    status: Exclude<ProposalStatus, "proposed" | "executed">,
     decidedBy: string,
     note?: string
   ): Promise<ProposalRecord | undefined> {
@@ -189,6 +233,32 @@ export class SupabaseProposalStore implements ProposalStore {
     if (!res.ok) {
       throw new Error(
         `agents: proposal decide failed (${res.status}): ${await res.text()}`
+      );
+    }
+    const rows = (await res.json()) as ProposalRow[];
+    return rows.length ? mapRow(rows[0]) : undefined;
+  }
+
+  async consume(proposalId: string): Promise<ProposalRecord | undefined> {
+    // status=eq.approved is the claim: a second consume, or a concurrent one, matches no row.
+    const res = await fetchWithTimeout(
+      this.endpoint(`?id=eq.${encodeURIComponent(proposalId)}&status=eq.approved`),
+      {
+        timeoutMs: 10_000,
+        // A retried PATCH could not double-claim (the filter guards it), but the caller must
+        // learn whether IT claimed: no transport retry.
+        maxRetries: 0,
+        method: "PATCH",
+        headers: headers(this.key, "return=representation"),
+        body: JSON.stringify({
+          status: "executed",
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    );
+    if (!res.ok) {
+      throw new Error(
+        `agents: proposal consume failed (${res.status}): ${await res.text()}`
       );
     }
     const rows = (await res.json()) as ProposalRow[];

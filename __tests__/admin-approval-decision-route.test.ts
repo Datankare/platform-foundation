@@ -27,6 +27,7 @@ jest.mock("@/platform/agents/proposal-store", () => ({ getProposalStore: jest.fn
 jest.mock("@/platform/agents/gating", () => ({
   approveHeldAction: jest.fn(),
   rejectHeldAction: jest.fn(),
+  principalOf: jest.requireActual("@/platform/agents/gating").principalOf,
 }));
 jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
 jest.mock("@/platform/admin/config-approval", () => {
@@ -128,6 +129,7 @@ beforeEach(() => {
   (getSupabaseServiceClient as jest.Mock).mockReturnValue(db.client());
   holdFor(CALLERS.super_admin.userId);
   mockApproveHeld.mockResolvedValue({ kind: "approved", proposal: {} });
+  mockRejectHeld.mockResolvedValue({ status: "rejected" });
   mockApply.mockResolvedValue({ success: true });
 });
 
@@ -188,10 +190,46 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
     expect((await approveRuntime("moderator")).status).toBe(403);
   });
 
-  it("is idempotent on an already-decided hold", async () => {
-    mockApproveHeld.mockResolvedValue({ kind: "already-decided", proposal: undefined });
-    const body = await (await approveRuntime()).json();
-    expect(body.outcome).toBe("already-decided");
+  it.each(["already-decided", "stale"])(
+    "answers 409 when the approval did not commit (%s) — never a 200 for a decision not made",
+    async (kind) => {
+      mockApproveHeld.mockResolvedValue({ kind, proposal: undefined });
+      const res = await approveRuntime();
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("approvals.decision_conflict");
+    }
+  );
+
+  it("refuses the attested owner approving their agent's hold even under a disagreeing claim", async () => {
+    mockStore.mockReturnValue({
+      getById: jest.fn().mockResolvedValue({
+        proposalId: "p1",
+        actor: {
+          actorType: "agent",
+          actorId: "config-manager-x",
+          agentRole: "config-manager",
+          onBehalfOf: "someone-else",
+          delegation: {
+            onBehalfOf: CALLERS.safety_approver.userId,
+            scope: [],
+            method: "oauth2.1-pkce",
+          },
+        },
+        payload: {},
+      }),
+    });
+    const res = await approveRuntime();
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("approvals.self_approval");
+    expect(mockApproveHeld).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 when a reject lost the race to an approval (register PR-7)", async () => {
+    holdFor(CALLERS.safety_approver.userId);
+    mockRejectHeld.mockResolvedValue(undefined);
+    const res = await POST(req({ decision: "reject", source: "runtime" }), ctx("p1"));
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("approvals.decision_conflict");
   });
 
   describe("config-approval holds", () => {

@@ -194,6 +194,46 @@ describe("CognitoAuthProvider — verifyToken", () => {
     expect(payload!.emailVerified).toBe(true);
   });
 
+  it.each([
+    [
+      "reports origin_jti as the sign-in session (PF v5.1.0)",
+      { origin_jti: "origin-1" },
+      "origin-1",
+    ],
+    ["reports no session without origin_jti", {}, undefined],
+    ["reports no session for an empty origin_jti", { origin_jti: "" }, undefined],
+  ])("%s", async (_label, extra, expected) => {
+    const accessToken = fakeJwt({ sub: "user-123", iat: 1000, exp: 9999, ...extra });
+    mockFetch.mockResolvedValueOnce(
+      cognitoOk({
+        Username: "user-123",
+        UserAttributes: [{ Name: "email", Value: "test@example.com" }],
+      })
+    );
+    const payload = await new CognitoAuthProvider(TEST_CONFIG).verifyToken(accessToken);
+    expect(payload?.sessionId).toBe(expected);
+  });
+
+  it("warns once — not per request — when tokens carry no origin_jti (revocation off)", async () => {
+    const { logger } = jest.requireMock("@/lib/logger");
+    const before = (logger.warn as jest.Mock).mock.calls.filter(([m]: [string]) =>
+      m.includes("origin_jti")
+    ).length;
+    for (let i = 0; i < 3; i++) {
+      mockFetch.mockResolvedValueOnce(
+        cognitoOk({ Username: "user-123", UserAttributes: [] })
+      );
+      await new CognitoAuthProvider(TEST_CONFIG).verifyToken(
+        fakeJwt({ sub: "user-123" })
+      );
+    }
+    const after = (logger.warn as jest.Mock).mock.calls.filter(([m]: [string]) =>
+      m.includes("origin_jti")
+    ).length;
+    expect(after).toBe(1);
+    expect(before).toBeLessThanOrEqual(1);
+  });
+
   it("returns null for invalid token", async () => {
     mockFetch.mockResolvedValueOnce(
       cognitoError("NotAuthorizedException", "Invalid Access Token")

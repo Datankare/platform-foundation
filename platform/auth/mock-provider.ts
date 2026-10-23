@@ -33,6 +33,7 @@ const MOCK_USER_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 const MOCK_EMAIL = "test@example.com";
 const MOCK_ACCESS_TOKEN = "mock-access-token";
 const MOCK_REFRESH_TOKEN = "mock-refresh-token";
+const MOCK_SESSION_ID = "mock-session";
 const MOCK_GUEST_ID = "mock-guest-001";
 
 export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthProvider {
@@ -89,6 +90,8 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
           emailVerified: true,
           iat: Math.floor(Date.now() / 1000),
           exp: Math.floor(Date.now() / 1000) + 3600,
+          // One sign-in session for the one mock token (TokenPayload.sessionId).
+          sessionId: MOCK_SESSION_ID,
         };
       }
       return null;

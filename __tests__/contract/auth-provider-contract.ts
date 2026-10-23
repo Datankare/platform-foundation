@@ -136,6 +136,17 @@ export function runAuthProviderContract(fx: AuthContractFixtures): void {
       const payload = await auth.verifyToken(fx.invalidAccessToken);
       expect(payload).toBeNull();
     });
+
+    it("reports the sign-in session, when it reports one, as a non-empty string (PF v5.1.0)", async () => {
+      const payload = await auth.verifyToken(fx.validAccessToken);
+      const sessionId = payload!.sessionId;
+      // Optional: a provider without sessions omits it, and held-action independence then
+      // falls back to the actor identity alone. One that reports it must report something usable.
+      if (sessionId !== undefined) {
+        expect(typeof sessionId).toBe("string");
+        expect(sessionId.length).toBeGreaterThan(0);
+      }
+    });
   });
 
   describe("refreshToken", () => {

@@ -88,6 +88,13 @@ const EXPECTED_EXPORTS = [
   "resetWorkflowRegistry",
   "resolveWorkflow",
   "runGoal",
+  // PF v5.1.0 — held-action decisions and resume bound to the approval
+  "ApprovalMismatchError",
+  "HeldActionNotApprovedError",
+  "TrajectoryAccessError",
+  "heldActionRefusal",
+  "principalOf",
+  "resumeApprovedAction",
 ].sort();
 
 describe("platform/agents — public API surface", () => {

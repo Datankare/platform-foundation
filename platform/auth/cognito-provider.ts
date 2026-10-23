@@ -172,6 +172,23 @@ function b64urlDecode(str: string): string {
   return Buffer.from(str, "base64url").toString("utf-8");
 }
 
+let warnedWithoutSession = false;
+
+/**
+ * Cognito carries origin_jti only when token revocation is enabled on the app client (the default
+ * for clients created since 2021). Without it there is no sign-in session, and no held action can
+ * be approved (heldActionRefusal refuses when independence cannot be shown) — said once, loudly.
+ */
+function warnOnceWithoutSession(decoded: Record<string, unknown> | null): void {
+  if (warnedWithoutSession || !decoded) return;
+  if (typeof decoded.origin_jti === "string" && decoded.origin_jti) return;
+  warnedWithoutSession = true;
+  logger.warn(
+    "Cognito access tokens carry no origin_jti: enable token revocation on the app client, or no held action can be approved",
+    { route: "platform/auth/cognito-provider" }
+  );
+}
+
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
@@ -287,6 +304,7 @@ export class CognitoAuthProvider implements AuthProvider {
 
       const attrs = result.UserAttributes as Array<{ Name: string; Value: string }>;
       const decoded = decodeJwtPayload(accessToken);
+      warnOnceWithoutSession(decoded);
 
       return {
         sub: result.Username as string,
@@ -294,6 +312,10 @@ export class CognitoAuthProvider implements AuthProvider {
         emailVerified: attrs?.find((a) => a.Name === "email_verified")?.Value === "true",
         iat: (decoded?.iat as number) ?? 0,
         exp: (decoded?.exp as number) ?? 0,
+        // origin_jti: the sign-in this token descends from, kept across refreshes (PF v5.1.0).
+        ...(typeof decoded?.origin_jti === "string" && decoded.origin_jti
+          ? { sessionId: decoded.origin_jti }
+          : {}),
       };
     } catch {
       return null;

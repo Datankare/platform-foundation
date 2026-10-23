@@ -26,10 +26,27 @@ export type {
   ProposalStore,
 } from "@/platform/kernel";
 
+const ONE_LIVE: ReadonlySet<ProposalStatus> = new Set([
+  "proposed",
+  "approved",
+  "executed",
+]);
+
 export class InMemoryProposalStore implements ProposalStore {
   private records: ProposalRecord[] = [];
 
   async create(args: CreateProposalArgs): Promise<ProposalRecord> {
+    // As the database's idx_proposals_one_live (migration 046): at most one proposal per
+    // operation that is open, approved or used.
+    if (
+      this.records.some(
+        (r) => r.operationId === args.operationId && ONE_LIVE.has(r.status)
+      )
+    ) {
+      throw new Error(
+        `agents: operation ${args.operationId} already has an open, approved or used proposal`
+      );
+    }
     const now = new Date().toISOString();
     const record: ProposalRecord = {
       proposalId: generateUuid(),
@@ -56,7 +73,7 @@ export class InMemoryProposalStore implements ProposalStore {
 
   async decide(
     proposalId: string,
-    status: Exclude<ProposalStatus, "proposed">,
+    status: Exclude<ProposalStatus, "proposed" | "executed">,
     decidedBy: string,
     note?: string
   ): Promise<ProposalRecord | undefined> {
@@ -75,6 +92,18 @@ export class InMemoryProposalStore implements ProposalStore {
       decidedAt: now,
       decisionNote: note,
       updatedAt: now,
+    };
+    this.records[i] = updated;
+    return updated;
+  }
+
+  async consume(proposalId: string): Promise<ProposalRecord | undefined> {
+    const i = this.records.findIndex((r) => r.proposalId === proposalId);
+    if (i === -1 || this.records[i].status !== "approved") return undefined;
+    const updated: ProposalRecord = {
+      ...this.records[i],
+      status: "executed",
+      updatedAt: new Date().toISOString(),
     };
     this.records[i] = updated;
     return updated;
