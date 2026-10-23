@@ -14,11 +14,11 @@ v5 deployment, or the deployment will not start.
 
 ## 1. Before you deploy — every deploying consumer
 
-| Do                                                                                                                                                                   | Why                                                                                                                                                                                          |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Apply migrations **041–045** to every database (SQL Editor, in order)                                                                                                | 041 creates four admin permissions (super_admin only); 042 one password policy per scope; 043 audit actions; 044 the daily paid-request quota; 045 repairs config values stored as JSON text |
-| Set `MODERATION_STORE`, `STRIKE_STORE`, `REVIEW_QUEUE_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER`, `APPROVAL_POLICY_STORE` to `supabase` in every deployed environment | Production refuses `memory` (or unset) for every durable store, and `supabase` without credentials is an error                                                                               |
-| Set `DEPLOYMENT_HOST` on every deployment (`vercel`, `container`, …); set `ci` or `local` in your E2E harness (e.g. Playwright's `webServer.env`)                    | The harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`) are accepted only where `DEPLOYMENT_HOST` is `ci` or `local` (TASK-140)                                                                   |
+| Do                                                                                                                                                                   | Why                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apply migrations **040–046** to every database (SQL Editor, in order)                                                                                                | 040 makes the budget function service-only; 041 creates four admin permissions (super_admin only); 042 one password policy per scope; 043 audit actions; 044 the daily paid-request quota; 045 repairs config values stored as JSON text; 046 (v5.1.0) keeps the whole proposing identity on held actions |
+| Set `MODERATION_STORE`, `STRIKE_STORE`, `REVIEW_QUEUE_STORE`, `PROPOSAL_STORE`, `EFFECT_LEDGER`, `APPROVAL_POLICY_STORE` to `supabase` in every deployed environment | Production refuses `memory` (or unset) for every durable store, and `supabase` without credentials is an error                                                                                                                                                                                            |
+| Set `DEPLOYMENT_HOST` on every deployment (`vercel`, `container`, …); set `ci` or `local` in your E2E harness (e.g. Playwright's `webServer.env`)                    | The harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`) are accepted only where `DEPLOYMENT_HOST` is `ci` or `local` (TASK-140)                                                                                                                                                                                |
 
 Full reference: [ENV_REFERENCE.md](ENV_REFERENCE.md).
 
@@ -101,7 +101,24 @@ Add `fast-check` (4.10.2, exact) to your devDependencies if you keep your own `p
 | GitHub Environments `staging`, `production`                     | Secrets `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` for the weekly migration-parity check (`migration-parity.yml`). Limit each Environment's deployment branches (`staging`, `main`) and require reviewers on `production` |
 | Repository variable `ZAP_TARGET_URL`                            | The URL the weekly ZAP scan targets (`zap-scan.yml`). If you keep your own `zap-scan.yml`, exclude it from the sync or move its target to the variable                                                                     |
 
-## 7. After you deploy
+## 7. Deciding held actions (v5.1.0) — consumers with an approval route
+
+A route that approves or rejects a held action calls `heldActionRefusal(proposal, decider,
+decision, policy)` with the caller's identity — including `sessionId` from the verified token
+(`TokenPayload.sessionId`) — and answers each refusal with its code (`approvals.hold_not_found`,
+`approvals.decision_conflict`, `approvals.self_approval`, `approvals.approver_not_allowed`). Without a
+`sessionId` on both the proposing and the deciding identity no approval is possible — independence
+is shown by session, so put the verified token's `sessionId` on the identity your agent routes build
+(both when proposing and when deciding). Consequence: the sign-in session that started a held
+action cannot approve it — a user who started one in a browser approves it from another sign-in
+(another browser or device); refreshing a token keeps the session. With Cognito, sessions come from
+`origin_jti`, present only when token revocation is enabled on the app client. After an
+approval it resumes with `resumeApprovedAction({ proposalId, checkCapability })`, never with
+`advanceGoal` and the caller's goal or input. A route that continues a trajectory answers
+`TrajectoryAccessError` as not found. If you keep your own auth provider, report `sessionId` (stable
+across refreshes) so independence can be shown by session.
+
+## 8. After you deploy
 
 Run the checks in [ASSURANCE.md](ASSURANCE.md) §5 against staging (`fuzz.yml` with `target_url`), and run
 `migration-parity.yml` once by hand. The first parity run may report historical drift between the

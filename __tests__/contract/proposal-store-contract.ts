@@ -52,6 +52,34 @@ export function runProposalStoreContract(fx: ProposalStoreContractFixtures): voi
       expect(p.payload).toEqual({ target: "all" });
     });
 
+    it("keeps the whole proposing identity — owner, kind, delegation, session (PF v5.1.0)", async () => {
+      // The durable store once kept only id and role, so every held action read back as an
+      // agent acting for nobody: ownership checks then refused every decision in production.
+      const delegated: AgentIdentity = {
+        actorType: "agent",
+        actorId: "agent:conductor",
+        agentRole: "conductor",
+        onBehalfOf: "user-1",
+        sessionId: "session-a",
+        delegation: {
+          onBehalfOf: "user-1",
+          scope: ["translate"],
+          method: "oauth2.1-pkce",
+        },
+      };
+      const p = await store.create({ ...base, actor: delegated });
+      expect(p.actor).toEqual(delegated);
+      expect((await store.getById(p.proposalId))?.actor).toEqual(delegated);
+
+      const person: AgentIdentity = {
+        actorType: "user",
+        actorId: "user-2",
+        agentRole: "none",
+      };
+      const q = await store.create({ ...base, operationId: "op_person", actor: person });
+      expect((await store.getById(q.proposalId))?.actor).toEqual(person);
+    });
+
     it("issues distinct proposalIds under one operationId (D3)", async () => {
       const a = await store.create({ ...base });
       const b = await store.create({ ...base, operationId: "op_2" });
@@ -61,6 +89,42 @@ export function runProposalStoreContract(fx: ProposalStoreContractFixtures): voi
     it("records the observed version for stale-approval reconciliation (D5)", async () => {
       const p = await store.create({ ...base, observedVersion: 7 });
       expect(p.observedVersion).toBe(7);
+    });
+  });
+
+  describe("consume (PF v5.1.0 — an approval is used once)", () => {
+    it("claims an approved proposal exactly once", async () => {
+      const p = await store.create({ ...base });
+      await store.decide(p.proposalId, "approved", "alice");
+      const first = await store.consume(p.proposalId);
+      expect(first?.status).toBe("executed");
+      expect(await store.consume(p.proposalId)).toBeUndefined();
+      expect((await store.getById(p.proposalId))?.status).toBe("executed");
+    });
+
+    it("lets only one of two concurrent claims win", async () => {
+      const p = await store.create({ ...base });
+      await store.decide(p.proposalId, "approved", "alice");
+      const results = await Promise.all([
+        store.consume(p.proposalId),
+        store.consume(p.proposalId),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+
+    it("claims nothing that is not approved", async () => {
+      const p = await store.create({ ...base });
+      expect(await store.consume(p.proposalId)).toBeUndefined();
+      await store.decide(p.proposalId, "rejected", "alice");
+      expect(await store.consume(p.proposalId)).toBeUndefined();
+      expect(await store.consume("missing")).toBeUndefined();
+    });
+
+    it("an executed proposal can no longer be decided", async () => {
+      const p = await store.create({ ...base });
+      await store.decide(p.proposalId, "approved", "alice");
+      await store.consume(p.proposalId);
+      expect(await store.decide(p.proposalId, "rejected", "bob")).toBeUndefined();
     });
   });
 
@@ -138,8 +202,14 @@ export function runProposalStoreContract(fx: ProposalStoreContractFixtures): voi
     });
 
     it("applies operationId and trajectoryId together, not either-or", async () => {
-      await store.create({ ...base, operationId: "op_1", trajectoryId: "traj_1" });
+      const first = await store.create({
+        ...base,
+        operationId: "op_1",
+        trajectoryId: "traj_1",
+      });
       await store.create({ ...base, operationId: "op_2", trajectoryId: "traj_1" });
+      // One open proposal per operation (the store's one-live rule): close the first.
+      await store.decide(first.proposalId, "rejected", "alice");
       await store.create({ ...base, operationId: "op_1", trajectoryId: "traj_2" });
 
       const both = await store.query({ operationId: "op_1", trajectoryId: "traj_2" });

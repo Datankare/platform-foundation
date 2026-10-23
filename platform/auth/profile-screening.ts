@@ -89,6 +89,19 @@ async function loadScreenedFields(): Promise<readonly string[]> {
 }
 
 /**
+ * Whether `update` holds any field Guardian screens — the only part of a profile update that makes
+ * a paid classifier call. A route counts its paid-request quota only then (PF v5.1.0).
+ */
+export async function profileUpdateNeedsScreening(
+  update: ProfileUpdate
+): Promise<boolean> {
+  const screened = await loadScreenedFields();
+  return Object.entries(update).some(
+    ([field, value]) => typeof value === "string" && screened.includes(field)
+  );
+}
+
+/**
  * Load length limit for a field from config.
  * Fail-closed: config unavailable → use strictest fallback (P11).
  */
@@ -169,8 +182,14 @@ export async function screenProfileUpdate(
   for (const field of updateKeys) {
     const value = update[field as keyof ProfileUpdate];
 
-    // Only screen string fields that are in the screened list
-    if (typeof value !== "string" || !screenedFields.includes(field)) {
+    if (!screenedFields.includes(field)) continue;
+    // A screened field holds text, or null to clear it. Anything else (an array, an object, a
+    // number) would be stored unscreened — refuse it rather than skip it (Playform v0.8.0
+    // release review: `{"displayName": ["…"]}` reached the database without Guardian).
+    if (value === null) continue;
+    if (typeof value !== "string") {
+      blockedFields.push(field);
+      reasons[field] = `${field} must be text.`;
       continue;
     }
 

@@ -123,10 +123,15 @@ export async function getOwnProfile(userId: string): Promise<UserProfile | null>
     .is("deleted_at", null)
     .single();
 
+  // PGRST116: .single() matched no row — the profile does not exist. Any other error is the
+  // store failing, which is not "not found": it is thrown, so a route can answer 503 rather
+  // than tell the user their profile is gone (Playform v0.8.0 release review).
+  if (error && (error as { code?: string }).code !== "PGRST116") {
+    throw new Error(`profile read failed: ${error.message}`);
+  }
   if (error || !data) {
     logger.warn("Profile not found", {
       userId,
-      error: error?.message,
       route: "platform/auth/profile",
     });
     return null;

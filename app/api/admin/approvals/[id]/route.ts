@@ -19,7 +19,11 @@ import { setConfigWithHistory } from "@/platform/auth/platform-config";
 import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getProposalStore } from "@/platform/agents/proposal-store";
-import { approveHeldAction, rejectHeldAction } from "@/platform/agents/gating";
+import {
+  approveHeldAction,
+  principalOf,
+  rejectHeldAction,
+} from "@/platform/agents/gating";
 import {
   getApproval,
   approveAndApply,
@@ -69,13 +73,23 @@ export async function POST(
 
   // Resolve the hold: who requested it, and the permission required to clear it.
   let requester: string | null;
+  // Everyone who could be the hold's requester: a decider who is any of them is not independent.
+  let requesters: string[];
   let requiredPermission: string;
   if (source === "runtime") {
     const proposal = await getProposalStore().getById(id);
     if (!proposal) {
       return apiError("approvals.hold_not_found", { request });
     }
-    requester = proposal.actor.onBehalfOf ?? proposal.actor.actorId;
+    // Recorded as the attested owner (principalOf), never a bare claim. Independence is checked
+    // against every identity the hold could stand for — the claim, the attestation and the
+    // actor — so a disagreeing claim cannot let the real owner approve their own agent.
+    requester = principalOf(proposal.actor) ?? proposal.actor.actorId;
+    requesters = [
+      proposal.actor.actorId,
+      proposal.actor.onBehalfOf,
+      proposal.actor.delegation?.onBehalfOf,
+    ].filter((x): x is string => typeof x === "string" && x.length > 0);
     requiredPermission = await requiredPermissionForKey(
       proposalConfigKey(proposal.payload)
     );
@@ -85,12 +99,16 @@ export async function POST(
       return apiError("approvals.hold_not_found", { request });
     }
     requester = record.requestedBy ?? null;
+    requesters = requester ? [requester] : [];
     requiredPermission = await requiredPermissionForKey(record.configKey);
   }
 
   // ADR-040 enforcement, server-side: independent + authorized.
   // Holds recorded before Sprint 7X may name the requester by identity-provider subject.
-  if (decision === "approve" && (requester === admin.userId || requester === admin.sub)) {
+  if (
+    decision === "approve" &&
+    requesters.some((r) => r === admin.userId || r === admin.sub)
+  ) {
     return apiError("approvals.self_approval", { request });
   }
   if (!holds(admin, requiredPermission)) {
@@ -120,6 +138,14 @@ export async function POST(
       if (source === "runtime") {
         if (decision === "approve") {
           const outcome = await approveHeldAction({ proposalId: id, decidedBy, note });
+          if (outcome.kind !== "approved") {
+            // Already decided, or stale: nothing was approved — the record says so (PF v5.1.0).
+            return {
+              success: false,
+              error: `approval did not commit (${outcome.kind})`,
+              response: apiError("approvals.decision_conflict", { request }),
+            };
+          }
           return {
             success: true,
             response: NextResponse.json({
@@ -130,7 +156,15 @@ export async function POST(
             }),
           };
         }
-        await rejectHeldAction({ proposalId: id, decidedBy, note });
+        const rejected = await rejectHeldAction({ proposalId: id, decidedBy, note });
+        if (!rejected) {
+          // An approval was recorded first: this is no rejection (PF v5.1.0, register PR-7).
+          return {
+            success: false,
+            error: "rejection did not commit (already decided)",
+            response: apiError("approvals.decision_conflict", { request }),
+          };
+        }
         return {
           success: true,
           response: NextResponse.json({ decision, source, requestId }),

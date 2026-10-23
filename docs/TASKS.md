@@ -3187,6 +3187,8 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: October 22, 2026 (TASK-145 Wave 1 fixed; TASK-138 and TASK-140 fixed in Sprint 7X; TASK-146 and TASK-147 filed — the gaps ASSURANCE.md records)_
+_Last updated: October 22, 2026 (PF v5.1.0 — held-action decisions and resume bound to the approval, found by the Playform v0.8.0 release review and this release's review; register PR-1–PR-15)_
+
+_Previously updated: October 22, 2026 (TASK-145 Wave 1 fixed; TASK-138 and TASK-140 fixed in Sprint 7X; TASK-146 and TASK-147 filed — the gaps ASSURANCE.md records)_
 _Last updated: August 13, 2026 (TASK-083 filed — the sync cannot distinguish an upstream deletion from a Playform-owned file)_
 _Last updated: August 4, 2026 (filed TASK-073 — ADR-030 reserved for AUX; recorded before the phase exit gate rather than after)_

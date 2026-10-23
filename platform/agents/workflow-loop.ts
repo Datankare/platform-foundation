@@ -27,6 +27,7 @@ import type {
   CostSummary,
   HeldAction,
   NextAction,
+  ProposalRecord,
   ProposalStore,
   RiskLevel,
   Step,
@@ -40,7 +41,7 @@ import { PipelineRejectedError, proposeOnce } from "@/platform/action-pipeline";
 import { invokeTool } from "./tool-invoker";
 import { getTrajectoryStore } from "./trajectory-store";
 import { getProposalStore } from "./proposal-store";
-import { approvalPolicy } from "./gating";
+import { approvalPolicy, principalOf } from "./gating";
 import { getApprovalPolicyStore } from "./approval-policy-store";
 
 // ── Definition ────────────────────────────────────────────────────────
@@ -208,11 +209,53 @@ function commitmentCount(steps: readonly Step[]): number {
   return steps.filter((s: Step) => s.boundary === "commitment").length;
 }
 
-/** The proposal step for a held operation, if one was appended. */
-function heldProposalStep(steps: readonly Step[]): Step | undefined {
-  return steps.find(
-    (s: Step) => s.boundary === "cognition" && s.proposalId !== undefined
-  );
+/**
+ * A trajectory that does not exist, or is not the caller's, or was opened for another goal.
+ * One error for all three, so a caller cannot tell which — the trajectoryId of someone else's
+ * workflow reveals nothing and continues nothing (Playform v0.8.0 release review).
+ */
+export class TrajectoryAccessError extends Error {
+  constructor(readonly trajectoryId: string) {
+    super(`trajectory not found: ${trajectoryId}`);
+    this.name = "TrajectoryAccessError";
+  }
+}
+
+/**
+ * Where a new trajectory is scoped: to the user the actor stands for (principalOf), else to the
+ * platform. The scope is what a later continuation is checked against (openTrajectory).
+ */
+function createTrajectory(
+  store: TrajectoryStore,
+  actor: AgentIdentity,
+  goal: AgentGoal
+): Promise<TrajectoryRecord> {
+  const principal = principalOf(actor);
+  const subject = { kind: "agent" as const, id: actor.actorId };
+  return principal
+    ? store.create(subject, goal, "user", principal)
+    : store.create(subject, goal, "platform");
+}
+
+/**
+ * Whether `actor` may continue `record` for `goal`: the same goal it was opened for, and the
+ * same owner — the same user for a user-scoped trajectory; for a platform-scoped one, the same
+ * agent acting for nobody. Trajectories created before PF v5.1.0 are platform-scoped, so a
+ * delegated agent cannot continue one (it fails closed; the workflow is started again).
+ */
+function mayContinue(
+  record: TrajectoryRecord,
+  actor: AgentIdentity,
+  goal: string
+): boolean {
+  if (record.trigger !== goal) return false;
+  // A failed trajectory — a refused capability, a failed step, a mismatched approval — is over.
+  if (record.trajectory.status === "failed") return false;
+  const principal = principalOf(actor);
+  if (principal !== undefined) {
+    return record.scopeType === "user" && record.scopeId === principal;
+  }
+  return record.scopeType === "platform" && record.subject.id === actor.actorId;
 }
 
 async function openTrajectory(
@@ -221,12 +264,26 @@ async function openTrajectory(
 ): Promise<TrajectoryRecord> {
   if (args.trajectoryId) {
     const existing = await store.getById(args.trajectoryId);
-    if (!existing) {
-      throw new Error(`trajectory not found: ${args.trajectoryId}`);
+    if (!existing || !mayContinue(existing, args.actor, args.goal)) {
+      throw new TrajectoryAccessError(args.trajectoryId);
     }
     return existing;
   }
-  return store.create({ kind: "agent", id: args.actor.actorId }, args.goal, "platform");
+  return createTrajectory(store, args.actor, args.goal);
+}
+
+/**
+ * An approved proposal that does not match the step it is resumed at — another tool. Never
+ * executed: an approval covers exactly the action it was given for.
+ */
+export class ApprovalMismatchError extends Error {
+  constructor(
+    readonly proposalId: string,
+    readonly expectedTool: string
+  ) {
+    super(`approved proposal ${proposalId} is not for ${expectedTool}`);
+    this.name = "ApprovalMismatchError";
+  }
 }
 
 /**
@@ -249,6 +306,10 @@ async function runSteps(
   to: number,
   priorOutputs: readonly Record<string, unknown>[]
 ): Promise<Omit<RunResult, "capability">> {
+  // The store the hold was written to (holdStep defaults the same way), so a resume finds the
+  // approval wherever it was recorded.
+  const proposalStore = args.proposalStore ?? getProposalStore();
+
   // Seeded from the trajectory, not from this call. A choreographed hop is a fresh process
   // invocation and knows nothing of the previous one, so a step whose input reads an
   // earlier step's output would see nothing and the two entry points would silently
@@ -266,13 +327,19 @@ async function runSteps(
     };
 
     // Is this step already held with an approved proposal? Then commit it through the
-    // approved path rather than re-attempting a fresh gated call.
-    const approved = await approvedProposalForStep(args, store, trajectoryId);
+    // approved path rather than re-attempting a fresh gated call — with exactly what was
+    // approved: the proposal's own tool and payload, never input recomputed from this call
+    // (a resume must not turn one approval into a different action).
+    const approved = await approvedProposalForStep(proposalStore, trajectoryId, i);
+    if (approved && approved.label !== step.tool.id) {
+      await store.updateStatus(trajectoryId, "failed");
+      throw new ApprovalMismatchError(approved.proposalId, step.tool.id);
+    }
 
     try {
       const result = await invokeTool({
         tool: step.tool,
-        input: step.input(ctx),
+        input: approved ? approved.payload : step.input(ctx),
         actor: args.actor,
         sessionId: args.sessionId ?? trajectoryId,
         trajectoryId,
@@ -280,24 +347,42 @@ async function runSteps(
         cost: step.estimatedCostUSD,
         budgetCeiling: args.budgetMaxUSD,
         trajectoryStore: store,
-        proposalStore: args.proposalStore,
+        proposalStore,
         approvedProposalId: approved?.proposalId,
         operationId: approved?.operationId,
       });
       outputs.push(result.output);
     } catch (err) {
       if (err instanceof PipelineRejectedError) {
+        if (err.reason === "approval-used") {
+          // Another call ran this step on the same approval: nothing to hold or pause here.
+          throw new HeldActionNotApprovedError(approved?.proposalId ?? "");
+        }
         if (err.reason === "requires-approval") {
+          // A concurrent call may have just run this step on its approval (it read the
+          // trajectory before we did): then there is nothing to hold — never re-propose a step
+          // that has run.
+          if (await stepAlreadyRan(store, proposalStore, trajectoryId, i)) {
+            throw new HeldActionNotApprovedError(approved?.proposalId ?? "");
+          }
           // Hold: mint a proposal (idempotent via proposeOnce) and surface who must approve.
-          const held = await holdStep(
-            definition,
-            step,
-            i,
-            ctx,
-            args,
-            store,
-            trajectoryId
-          );
+          // If the step's approval arrived (or was used) between our checks and the proposal,
+          // proposing again is refused — by proposeOnce, or by the store's one-live rule — and
+          // this call stands down rather than pausing a step that has its decision.
+          let held: HeldAction;
+          try {
+            held = await holdStep(definition, step, i, ctx, args, store, trajectoryId);
+          } catch (holdErr) {
+            if (
+              (holdErr instanceof PipelineRejectedError &&
+                holdErr.reason === "approval-used") ||
+              (await stepAlreadyRan(store, proposalStore, trajectoryId, i)) ||
+              (await approvedProposalForStep(proposalStore, trajectoryId, i))
+            ) {
+              throw new HeldActionNotApprovedError(approved?.proposalId ?? "");
+            }
+            throw holdErr;
+          }
           await store.updateStatus(trajectoryId, "paused");
           return { stop: "held", held };
         }
@@ -313,24 +398,45 @@ async function runSteps(
   return { stop: "completed" };
 }
 
+/** Whether step `stepIndex` has already committed, or its approval was already used. */
+async function stepAlreadyRan(
+  store: TrajectoryStore,
+  proposalStore: ProposalStore,
+  trajectoryId: string,
+  stepIndex: number
+): Promise<boolean> {
+  const record = await store.getById(trajectoryId);
+  if (record && commitmentCount(record.trajectory.steps) > stepIndex) return true;
+  const used = await proposalStore.query({
+    operationId: stepOperationId(trajectoryId, stepIndex),
+    status: "executed",
+  });
+  return used.some((p) => p.trajectoryId === trajectoryId);
+}
+
+/** The operation a held step is proposed under: one per trajectory and step index. */
+function stepOperationId(trajectoryId: string, stepIndex: number): string {
+  return `op_${trajectoryId}_${stepIndex}`;
+}
+
 /**
- * The approved proposal awaiting execution on this trajectory, if any.
+ * The approved proposal for THIS step of this trajectory, if any.
  *
- * A resume after approval finds the trajectory's held proposal now `approved`; its
- * operationId is what the pipeline's approved-commit path verifies against.
+ * Looked up by the step's own operation (holdStep proposes under it), not by the first held
+ * proposal on the trajectory — a workflow with two gated steps must not commit the second on
+ * the first one's approval. Its operationId is what the pipeline's approved-commit path
+ * verifies against.
  */
 async function approvedProposalForStep(
-  args: RunGoalArgs,
-  store: TrajectoryStore,
-  trajectoryId: string
-): Promise<{ proposalId: string; operationId: string } | undefined> {
-  const record = await store.getById(trajectoryId);
-  const proposalStep = record ? heldProposalStep(record.trajectory.steps) : undefined;
-  if (!proposalStep?.proposalId || !args.proposalStore) return undefined;
-
-  const proposal = await args.proposalStore.getById(proposalStep.proposalId);
-  if (!proposal || proposal.status !== "approved") return undefined;
-  return { proposalId: proposal.proposalId, operationId: proposal.operationId };
+  proposalStore: ProposalStore,
+  trajectoryId: string,
+  stepIndex: number
+): Promise<ProposalRecord | undefined> {
+  const approved = await proposalStore.query({
+    operationId: stepOperationId(trajectoryId, stepIndex),
+    status: "approved",
+  });
+  return approved.find((p) => p.trajectoryId === trajectoryId);
 }
 
 /**
@@ -350,7 +456,7 @@ async function holdStep(
 ): Promise<HeldAction> {
   const proposalStore = args.proposalStore ?? getProposalStore();
   const effectiveRisk = computeToolRisk(step.tool);
-  const operationId = `op_${trajectoryId}_${stepIndex}`;
+  const operationId = stepOperationId(trajectoryId, stepIndex);
   const approvalPolicyValue = await getApprovalPolicyStore().load();
 
   const proposal = await proposeOnce({
@@ -563,11 +669,7 @@ async function denyResponse(
   store: TrajectoryStore,
   capability: RunResult["capability"]
 ): Promise<AgentResponse<unknown>> {
-  const record = await store.create(
-    { kind: "agent", id: args.actor.actorId },
-    args.goal,
-    "platform"
-  );
+  const record = await createTrajectory(store, args.actor, args.goal);
   const trajectoryId = record.trajectory.trajectoryId;
   await store.updateStatus(trajectoryId, "failed");
   const settled = await store.getById(trajectoryId);
@@ -642,6 +744,65 @@ export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unkn
         );
 
   return assemble(definition, store, trajectoryId, { ...stepResult, capability });
+}
+
+/** A resume of a held action that is not (or no longer) approved. */
+export class HeldActionNotApprovedError extends Error {
+  constructor(readonly proposalId: string) {
+    super(`held action ${proposalId} is not approved`);
+    this.name = "HeldActionNotApprovedError";
+  }
+}
+
+export interface ResumeApprovedActionArgs {
+  readonly proposalId: string;
+  readonly checkCapability?: RunGoalArgs["checkCapability"];
+  readonly budgetMaxUSD?: number;
+  readonly trajectoryStore?: TrajectoryStore;
+  readonly proposalStore?: ProposalStore;
+}
+
+/**
+ * Run the step an approval released — and only that, once (PF v5.1.0).
+ *
+ * Everything comes from the approved proposal and its trajectory, nothing from the caller: the
+ * goal is the one the trajectory was opened for, the actor is the identity that proposed the
+ * action (so the workflow continues as the agent acting for its owner, not as the human who
+ * approved), and the step runs with the proposal's own tool and payload. A caller resuming
+ * with advanceGoal and its own goal or input could otherwise turn one approval into another
+ * action (Playform v0.8.0 release review). The trajectory's next step must be the one the
+ * proposal was made for, so the same approval cannot be replayed to drive later steps. Throws
+ * HeldActionNotApprovedError when the proposal is not approved or its step is not next,
+ * TrajectoryAccessError when its trajectory is gone.
+ */
+export async function resumeApprovedAction(
+  args: ResumeApprovedActionArgs
+): Promise<AgentResponse<unknown>> {
+  const proposalStore = args.proposalStore ?? getProposalStore();
+  const store = args.trajectoryStore ?? getTrajectoryStore();
+  const proposal = await proposalStore.getById(args.proposalId);
+  if (!proposal || proposal.status !== "approved") {
+    throw new HeldActionNotApprovedError(args.proposalId);
+  }
+  const record = await store.getById(proposal.trajectoryId);
+  if (!record) throw new TrajectoryAccessError(proposal.trajectoryId);
+  const next = commitmentCount(record.trajectory.steps);
+  if (stepOperationId(proposal.trajectoryId, next) !== proposal.operationId) {
+    // Already run, or for another step: this approval releases nothing now.
+    throw new HeldActionNotApprovedError(args.proposalId);
+  }
+
+  return advanceGoal({
+    goal: record.trigger as AgentGoal,
+    input: {},
+    actor: proposal.actor,
+    sessionId: proposal.sessionId,
+    trajectoryId: proposal.trajectoryId,
+    trajectoryStore: store,
+    proposalStore,
+    checkCapability: args.checkCapability,
+    budgetMaxUSD: args.budgetMaxUSD,
+  });
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────

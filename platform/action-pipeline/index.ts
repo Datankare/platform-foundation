@@ -45,7 +45,11 @@ import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk
 
 // ── Rejection ─────────────────────────────────────────────────────────
 
-export type PipelineRejectionReason = "requires-approval" | "budget-exceeded";
+export type PipelineRejectionReason =
+  | "requires-approval"
+  | "budget-exceeded"
+  /** The approval was valid but already used by another commit: it released one, not two. */
+  | "approval-used";
 
 /** One applicable spending limit, and whose it is (ADR-029 D8). */
 export interface BudgetCeiling {
@@ -148,6 +152,11 @@ export interface PipelineRequest<TState> {
   readonly approvedProposalId?: string;
   /** Required alongside approvedProposalId to verify approval (ADR-031 D2). */
   readonly proposalStore?: ProposalStore;
+  /**
+   * Required alongside approvedProposalId: the input the action runs with. It must equal the
+   * approved proposal's payload — an approval covers exactly what the approver saw (PF v5.1.0).
+   */
+  readonly approvalInput?: Record<string, unknown>;
 }
 
 export interface PipelineConflict<TState> {
@@ -172,6 +181,28 @@ export function isPipelineConflict<TState>(
   outcome: PipelineOutcome<TState>
 ): outcome is PipelineConflict<TState> {
   return (outcome as PipelineConflict<TState>).conflict === true;
+}
+
+/**
+ * JSON with object keys sorted at every depth, so equal values compare equal as text. The value
+ * is first taken through JSON itself (toJSON, dropped undefined, NaN to null), so the comparison
+ * is of what a durable store keeps — two Dates differ by their time, not both become `{}`.
+ */
+export function canonicalJson(value: unknown): string {
+  const text = JSON.stringify(value);
+  if (text === undefined) return "undefined";
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v && typeof v === "object") {
+      return Object.fromEntries(
+        Object.keys(v as Record<string, unknown>)
+          .sort()
+          .map((k) => [k, sort((v as Record<string, unknown>)[k])])
+      );
+    }
+    return v;
+  };
+  return JSON.stringify(sort(JSON.parse(text)));
 }
 
 // ── The pipeline ──────────────────────────────────────────────────────
@@ -202,10 +233,14 @@ export async function executeActionPipeline<TState>(
     if (
       !proposal ||
       proposal.status !== "approved" ||
-      proposal.operationId !== req.operationId
+      proposal.operationId !== req.operationId ||
+      proposal.label !== req.label ||
+      req.approvalInput === undefined ||
+      canonicalJson(proposal.payload) !== canonicalJson(req.approvalInput)
     ) {
-      // Not approved, or approved for a different operation. Refuse — an unapproved bypass
-      // is the exact hole this guard exists to close.
+      // Not approved, approved for a different operation, or for a different action or input
+      // than the one now running. Refuse — an unapproved bypass is the exact hole this guard
+      // exists to close, and one approval must not release a different action.
       throw new PipelineRejectedError(
         `${req.label}: no approved proposal for operation ${req.operationId} — cannot commit a gated action without approval (ADR-031 D2)`,
         "requires-approval"
@@ -265,6 +300,20 @@ export async function executeActionPipeline<TState>(
     operationId,
     boundary: req.boundary,
   });
+
+  // 5b. Use the approval — atomically, immediately before anything runs. The checks above are
+  // read-then-act; two concurrent commits could both pass them. Only the one whose claim
+  // matches the still-approved row proceeds (PF v5.1.0 review: one approval ran its step three
+  // times under concurrent resumes).
+  if (tier === "two-phase" && req.approvedProposalId && req.proposalStore) {
+    const claimed = await req.proposalStore.consume(req.approvedProposalId);
+    if (!claimed) {
+      throw new PipelineRejectedError(
+        `${req.label}: approval ${req.approvedProposalId} was already used (ADR-031 D2)`,
+        "approval-used"
+      );
+    }
+  }
 
   // 6. Execute, for adapters whose action does something other than transition state.
   // Runs after gating so a refused call never executes, and before commit so a failing
@@ -466,7 +515,12 @@ export async function approveProposal(
   );
   if (!decided) return undefined;
 
-  await req.trajectoryStore.updateStatus(decided.trajectoryId, "running");
+  // Back to running only from the hold's own `paused`: a concurrent continuation may already have
+  // run the approved step and completed the trajectory, which an unconditional write would undo.
+  const trajectory = await req.trajectoryStore.getById(decided.trajectoryId);
+  if (trajectory?.trajectory.status === "paused") {
+    await req.trajectoryStore.updateStatus(decided.trajectoryId, "running");
+  }
   return decided;
 }
 
@@ -671,11 +725,18 @@ export async function compensateTrajectory(
  */
 export async function proposeOnce(req: ProposeRequest): Promise<ProposalRecord> {
   if (req.operationId) {
-    const live = await req.proposalStore.query({
-      operationId: req.operationId,
-      status: "proposed",
-    });
-    if (live.length > 0) return live[0];
+    const existing = await req.proposalStore.query({ operationId: req.operationId });
+    const live = existing.find((p) => p.status === "proposed");
+    if (live) return live;
+    // Approved or already used: this operation has its decision — proposing it again would
+    // ask for a second approval of an action that has one (PF v5.1.0; the database enforces
+    // the same with idx_proposals_one_live, migration 046).
+    if (existing.some((p) => p.status === "approved" || p.status === "executed")) {
+      throw new PipelineRejectedError(
+        `${req.label}: operation ${req.operationId} is already approved`,
+        "approval-used"
+      );
+    }
   }
   return proposeAction(req);
 }

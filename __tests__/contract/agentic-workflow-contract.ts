@@ -98,6 +98,7 @@ function committedStep(index: number, operationId: string, action: string): Step
   };
 }
 
+// eslint-disable-next-line max-lines-per-function -- a conformance kit is one describe tree (ADR-027)
 export function runAgenticWorkflowContract(fx: AgenticWorkflowFixtures): void {
   let trajectoryStore: TrajectoryStore;
   let proposalStore: ProposalStore;

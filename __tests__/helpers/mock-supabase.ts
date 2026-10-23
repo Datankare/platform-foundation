@@ -11,7 +11,7 @@
 
 export interface MockResponse {
   data?: any;
-  error?: { message: string } | null;
+  error?: { message: string; code?: string } | null;
   count?: number;
 }
 

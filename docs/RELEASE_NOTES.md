@@ -9,6 +9,58 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v5.1.0 — Held actions decided and resumed only as approved
+
+Date: 2026-10-22
+
+The independent review of Playform v0.8.0 drove the agent-approval path end to end against the real
+workflow loop and found that it had never worked on the durable store, and that once it did, one
+approval could release a different action; the independent review of this release then closed the
+remaining gaps ([register](audits/2026-10-REGISTER.md) PR-1–PR-15,
+[learning 119](ENGINEERING_LEARNINGS.md)). Apply migration 046 before deploying.
+
+### What a consumer inherits on sync
+
+- **The whole proposing identity, durably.** Proposals keep the actor's kind, the user it acts for,
+  its delegation and its sign-in session (`proposals.actor_identity`, migration 046). Held actions
+  still open from before are superseded by the migration (the agent proposes again).
+- **`heldActionRefusal(proposal, decider, decision, policy)`** — one rule for every decision route:
+  the owner only (anyone else's is "not found"), still open; an approval never by the proposing
+  agent, never through the sign-in session it was proposed through (whoever proposed it), refused
+  when either session is unknown, and only by the approver type the policy requires. New code
+  `approvals.approver_not_allowed` (403). `principalOf(actor)`: a user is themselves; an agent
+  stands for the user it acts for, and only if its attested delegation agrees.
+- **`resumeApprovedAction({ proposalId, checkCapability })`** — runs the step an approval released,
+  once, taking goal, actor, tool and payload from the proposal and its trajectory, never from the
+  caller. The pipeline's approved commit also verifies the action and its input (compared as JSON)
+  and then **uses the approval atomically**: `ProposalStore.consume` moves it `approved` →
+  `executed` (new terminal status), so concurrent resumes run the step once; a loser gets
+  `HeldActionNotApprovedError`, never a fresh hold. An operation that is approved or used is never
+  proposed again (`proposeOnce`; the database's `idx_proposals_one_live`, migration 046, keeps one
+  open, approved or used proposal per operation). `executed` means the approval was used and the
+  action attempted — if it then failed, its trajectory is `failed`; the approval is not reusable.
+  A store you implement yourself adds `consume` and the one-live rule (the kit checks `consume`).
+- **Trajectories belong to their user.** Scoped to the user an actor stands for; continuing another
+  owner's, another goal's or a failed one throws `TrajectoryAccessError` (answer it as not found).
+  Platform-scoped trajectories from before 5.1 cannot be continued by a delegated agent.
+- **`TokenPayload.sessionId`** (optional, stable across refreshes; Cognito: `origin_jti`, reported
+  by the platform's Cognito provider and mock). Carry it into `AgentIdentity.sessionId` where your
+  route builds the acting identity: without it no held action can be approved.
+- `rejectHeldAction` returns the decided record, or nothing when the action was already decided; the
+  admin approvals route answers `approvals.decision_conflict` (409) for a decision that did not
+  commit. `screenProfileUpdate` refuses a non-text value in a screened field instead of skipping it, and
+  `getOwnProfile` throws on a store failure instead of reporting the profile missing;
+  `profileUpdateNeedsScreening(update)` tells a route whether an update makes a paid screening call.
+  The Cognito provider warns once when tokens carry no `origin_jti` (token revocation off on the app
+  client), because then no held action can be approved.
+
+### Upgrading
+
+Apply `046_proposal_actor_identity.sql` (idempotent) to every database before deploying, and see
+[MIGRATION_v4_to_v5.md](MIGRATION_v4_to_v5.md) §7 for a consumer route that decides held actions.
+
+---
+
 ## v5.0.0 — Adversarial Validation: the October 2026 audit fixed, and the checks that keep it fixed
 
 Date: 2026-10-22
