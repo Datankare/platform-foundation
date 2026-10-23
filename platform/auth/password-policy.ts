@@ -290,13 +290,22 @@ function toRow(policy: PasswordPolicy): Record<string, unknown> {
 
 /** The global policy (no role, no user), or the defaults when none is stored. */
 export async function getGlobalPasswordPolicy(): Promise<PasswordPolicy> {
-  const supabase = getSupabaseServiceClient();
-  const { data, error } = await supabase
-    .from("password_policy")
-    .select("*")
-    .is("role_id", null)
-    .is("user_id", null)
-    .maybeSingle();
+  let data: Record<string, unknown> | null;
+  let error: { message: string } | null;
+  try {
+    // An unconfigured or unreachable store is the same case as an unreadable row: the defaults
+    // (the strict built-in policy) apply — sign-up never fails open, and never answers a 500.
+    const supabase = getSupabaseServiceClient();
+    ({ data, error } = await supabase
+      .from("password_policy")
+      .select("*")
+      .is("role_id", null)
+      .is("user_id", null)
+      .maybeSingle());
+  } catch (err) {
+    error = { message: err instanceof Error ? err.message : String(err) };
+    data = null;
+  }
   if (error) {
     logger.error("Global password policy unreadable, using the defaults", {
       error: error.message,
@@ -314,7 +323,13 @@ export async function getGlobalPasswordPolicy(): Promise<PasswordPolicy> {
 export async function saveGlobalPasswordPolicy(
   policy: PasswordPolicy
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const supabase = getSupabaseServiceClient();
+  let supabase: ReturnType<typeof getSupabaseServiceClient>;
+  try {
+    supabase = getSupabaseServiceClient();
+  } catch (err) {
+    // As the read: a client that cannot be created is a failed save, reported, never thrown.
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
   const { data: existing, error: readError } = await supabase
     .from("password_policy")
     .select("id")

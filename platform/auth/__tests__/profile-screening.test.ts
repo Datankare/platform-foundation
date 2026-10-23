@@ -100,6 +100,27 @@ function setupDefaultConfig() {
 
 // ── Tests ───────────────────────────────────────────────────────────────
 
+describe("profileUpdateNeedsScreening", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setupDefaultConfig();
+  });
+
+  it("is true only when a screened field carries text", async () => {
+    const { profileUpdateNeedsScreening } =
+      await import("@/platform/auth/profile-screening");
+    expect(await profileUpdateNeedsScreening({ displayName: "Alice" })).toBe(true);
+    expect(await profileUpdateNeedsScreening({ timezone: "UTC", emailOptIn: true })).toBe(
+      false
+    );
+    expect(
+      await profileUpdateNeedsScreening({ displayName: ["x"] } as unknown as Parameters<
+        typeof profileUpdateNeedsScreening
+      >[0])
+    ).toBe(false);
+  });
+});
+
 describe("screenProfileUpdate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -154,6 +175,34 @@ describe("screenProfileUpdate", () => {
       VALID_USER_ID,
       { emailOptIn: true, pushNotificationsEnabled: false },
       "req-4"
+    );
+    expect(result.allowed).toBe(true);
+    expect(mockScreenContent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an array", ["abusive text"]],
+    ["an object", { text: "abusive text" }],
+    ["a number", 42],
+  ])(
+    "refuses %s in a screened text field instead of storing it unscreened",
+    async (_label, value) => {
+      const result = await screenProfileUpdate(
+        VALID_USER_ID,
+        { displayName: value } as unknown as Parameters<typeof screenProfileUpdate>[1],
+        "req-hostile"
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.blockedFields).toEqual(["displayName"]);
+      expect(mockScreenContent).not.toHaveBeenCalled();
+    }
+  );
+
+  it("lets a screened field be cleared with null, without a Guardian call", async () => {
+    const result = await screenProfileUpdate(
+      VALID_USER_ID,
+      { displayName: null } as unknown as Parameters<typeof screenProfileUpdate>[1],
+      "req-clear"
     );
     expect(result.allowed).toBe(true);
     expect(mockScreenContent).not.toHaveBeenCalled();

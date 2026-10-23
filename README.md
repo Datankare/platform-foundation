@@ -2,6 +2,8 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
+> **v5.1.0** — held actions decided and resumed only as approved: the durable proposal store keeps the whole proposing identity (migration 046), a resume runs exactly the approved tool and payload as the proposing agent, trajectories are scoped to their user, and the proposing agent or its session can never approve its own action — found by the Playform v0.8.0 release review ([register](docs/audits/2026-10-REGISTER.md)). Apply migration 046 before deploying.
+
 > **v5.0.0** — **Adversarial Validation**: the October 2026 whole-system adversarial review's Critical and High findings fixed — authorization on every path including the AI command bar, audit that fails closed, governed configuration only, durable moderation stores, a daily paid-request quota, a screened `/api/stream` — and, for each pattern behind them, a check that runs on every commit, plus a monkey/fuzz run against the production build ([ASSURANCE](docs/ASSURANCE.md), [register](docs/audits/2026-10-REGISTER.md)). **Breaking** — see [MIGRATION_v4_to_v5](docs/MIGRATION_v4_to_v5.md).
 >
 > **v4.1.0** — an app declares its own route guards (`platform/route-policy/app-route-policy.ts`) and the route checks verify each one calls a platform verifier or limiter; an app documents its own settings in `docs/APP_ENV_REFERENCE.md`; `PLATFORM_VERSION` names the synced release (TASK-136). Non-breaking — see [RELEASE_NOTES](docs/RELEASE_NOTES.md).
@@ -135,7 +137,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 46 migrations (001–045), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 47 migrations (001–046), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Row-Level Security policies throughout; service-role gating at the API layer
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -202,7 +204,7 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 46 database migrations
+├── supabase/migrations/    ← 47 database migrations
 ├── docs/adr/               ← 56 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils

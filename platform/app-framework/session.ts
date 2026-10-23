@@ -276,7 +276,12 @@ export async function dispatch<TState, TAction, TConfig>(
     // The pipeline's vocabulary is translated into the session's, so consumers keep the
     // one error type they already catch.
     if (err instanceof PipelineRejectedError) {
-      throw new ActionRejectedError(err.message, err.reason);
+      // Sessions never commit on an approval, so "approval-used" cannot arise here; it would
+      // mean "this needs (a fresh) approval".
+      throw new ActionRejectedError(
+        err.message,
+        err.reason === "approval-used" ? "requires-approval" : err.reason
+      );
     }
     throw err;
   }

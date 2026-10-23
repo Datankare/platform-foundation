@@ -254,6 +254,8 @@ export async function invokeTool<TState = unknown>(
     eventIntent: "tool-call",
     approvedProposalId: args.approvedProposalId,
     proposalStore: args.proposalStore,
+    // What runs is what was approved: the pipeline compares it with the proposal's payload.
+    approvalInput: args.approvedProposalId ? input : undefined,
   });
 
   if (isPipelineConflict(outcome)) {

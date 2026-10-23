@@ -283,6 +283,17 @@ describe("getGlobalPasswordPolicy / saveGlobalPasswordPolicy", () => {
     await expect(getGlobalPasswordPolicy()).resolves.toEqual(DEFAULT_POLICY);
   });
 
+  it("falls back to the defaults, and a save reports failure, when no client can be created", async () => {
+    (getSupabaseServiceClient as jest.Mock).mockImplementation(() => {
+      throw new Error("Missing Supabase environment variables");
+    });
+    await expect(getGlobalPasswordPolicy()).resolves.toEqual(DEFAULT_POLICY);
+    await expect(saveGlobalPasswordPolicy(DEFAULT_POLICY)).resolves.toEqual({
+      success: false,
+      error: "Missing Supabase environment variables",
+    });
+  });
+
   it("reports a read failure when saving, writing nothing", async () => {
     use({
       from: () => ({

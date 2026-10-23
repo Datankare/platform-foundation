@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**54 codes** in 12 areas.
+**55 codes** in 12 areas.
 
 ## Account
 
@@ -40,13 +40,14 @@ Every error the API returns has this body (ADR-051 D3):
 
 ## Approvals
 
-| Code                            | HTTP | Message (en)                                                                  | Params            | What the caller should do                      |
-| ------------------------------- | ---- | ----------------------------------------------------------------------------- | ----------------- | ---------------------------------------------- |
-| `approvals.decision_conflict`   | 409  | This decision could not be recorded; the item changed. Refresh and try again. | —                 | Refresh.                                       |
-| `approvals.expired`             | 409  | This approval has expired. Request the change again.                          | —                 | Tell the requester to submit the change again. |
-| `approvals.hold_not_found`      | 404  | That held action was not found.                                               | —                 | Refresh the list.                              |
-| `approvals.permission_required` | 403  | Clearing this change requires the {permission} permission.                    | `permission` (id) | Route to a holder of it.                       |
-| `approvals.self_approval`       | 409  | You cannot approve your own change; another approver must clear it.           | —                 | Route to another approver.                     |
+| Code                             | HTTP | Message (en)                                                                  | Params            | What the caller should do                                                                |
+| -------------------------------- | ---- | ----------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------- |
+| `approvals.approver_not_allowed` | 403  | This action needs approval from someone else.                                 | —                 | Ask the approver the approval policy names (a person, unless the policy says otherwise). |
+| `approvals.decision_conflict`    | 409  | This decision could not be recorded; the item changed. Refresh and try again. | —                 | Refresh.                                                                                 |
+| `approvals.expired`              | 409  | This approval has expired. Request the change again.                          | —                 | Tell the requester to submit the change again.                                           |
+| `approvals.hold_not_found`       | 404  | That held action was not found.                                               | —                 | Refresh the list.                                                                        |
+| `approvals.permission_required`  | 403  | Clearing this change requires the {permission} permission.                    | `permission` (id) | Route to a holder of it.                                                                 |
+| `approvals.self_approval`        | 409  | You cannot approve your own change; another approver must clear it.           | —                 | Route to another approver.                                                               |
 
 ## Authentication and sign-in
 

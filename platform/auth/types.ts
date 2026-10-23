@@ -46,6 +46,13 @@ export interface TokenPayload {
   emailVerified: boolean;
   iat: number;
   exp: number;
+  /**
+   * The sign-in session this token belongs to, stable across refreshes (e.g. Cognito's
+   * `origin_jti`), when the provider has one. Distinguishes two sessions of the same user — the
+   * user's own and one an agent was given — so a held action proposed through one session can
+   * be required to be decided through another (PF v5.1.0).
+   */
+  sessionId?: string;
   /** Additional claims from the provider (groups, roles, etc.) */
   [key: string]: unknown;
 }

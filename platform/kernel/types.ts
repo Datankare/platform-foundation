@@ -77,6 +77,13 @@ export interface AgentIdentity {
    * container populated by Sprint 3c's identity work — see AgentDelegation.
    */
   readonly delegation?: AgentDelegation;
+  /**
+   * The sign-in session the actor's request was made under (TokenPayload.sessionId), when the
+   * auth provider reports one. Recorded with a held action so the session that proposed it
+   * cannot also approve it: an agent acting through a user's session cannot become the "human"
+   * approver by leaving its delegation token off (Playform v0.8.0 review, PF v5.1.0).
+   */
+  readonly sessionId?: string;
 }
 
 // ── Trajectory (P18) ──────────────────────────────────────────────────
@@ -901,8 +908,14 @@ export interface TrajectoryStore {
  * `rejected` and `superseded` are TERMINAL and produce a trajectory with no stateVersion
  * (D8). They are deliberately distinct from TrajectoryStatus: a trajectory can be paused
  * while its proposal is still `proposed`, and conflating the two would lose that.
+ *
+ * `executed` is TERMINAL too: the approval was used — claimed atomically by the one commit it
+ * released, immediately before the action ran, so it can never release a second (PF v5.1.0). It
+ * records that the action was attempted: if the action then failed, its trajectory says so
+ * (`failed`); the approval is not reusable, because external effects may already have fired.
  */
-export type ProposalStatus = "proposed" | "approved" | "rejected" | "superseded";
+export type ProposalStatus =
+  "proposed" | "approved" | "rejected" | "superseded" | "executed";
 
 /** A held gated action awaiting a decision. */
 export interface ProposalRecord {
@@ -959,10 +972,16 @@ export interface ProposalStore {
   /** Transition a proposal, only from `proposed`. Returns undefined if it already moved. */
   decide(
     proposalId: string,
-    status: Exclude<ProposalStatus, "proposed">,
+    status: Exclude<ProposalStatus, "proposed" | "executed">,
     decidedBy: string,
     note?: string
   ): Promise<ProposalRecord | undefined>;
+  /**
+   * Use an approval: `approved` -> `executed`, atomically, only from `approved`. Returns
+   * undefined when it was not approved (already used, or never approved) — two concurrent
+   * commits on one approval must not both win (PF v5.1.0).
+   */
+  consume(proposalId: string): Promise<ProposalRecord | undefined>;
   query(options: ProposalQuery): Promise<readonly ProposalRecord[]>;
 }
 

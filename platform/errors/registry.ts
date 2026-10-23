@@ -64,6 +64,12 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "target", kind: "id" }],
     action: "Refresh the list and pick an existing item.",
   },
+  "approvals.approver_not_allowed": {
+    status: 403,
+    params: [],
+    action:
+      "Ask the approver the approval policy names (a person, unless the policy says otherwise).",
+  },
   "approvals.decision_conflict": {
     status: 409,
     params: [],

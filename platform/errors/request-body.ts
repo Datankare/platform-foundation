@@ -33,3 +33,31 @@ export async function readJsonObject(request: JsonRequest): Promise<JsonObjectRe
   }
   return { ok: true, body: parsed as Record<string, unknown> };
 }
+
+/**
+ * Require text fields of a JSON body: each a non-empty string. Absent or empty → the coded
+ * `request.missing_fields` naming all of `names`; present but not a string (a number, a list) →
+ * `request.invalid_body`. Returns null when all are text. A route that passed the cast
+ * `body as { email?: string }` on trust once sent a number to the identity provider — or, in
+ * sign-up, to the password rules — and answered an uncoded 500 (PF v5.1.0 monkey run).
+ */
+export function requireTextFields(
+  body: Record<string, unknown>,
+  names: readonly string[],
+  request: { readonly headers: Headers }
+): NextResponse | null {
+  if (
+    names.some(
+      (n) => body[n] !== undefined && body[n] !== null && typeof body[n] !== "string"
+    )
+  ) {
+    return apiError("request.invalid_body", { request });
+  }
+  if (names.some((n) => typeof body[n] !== "string" || body[n] === "")) {
+    return apiError("request.missing_fields", {
+      params: { fields: [...names] },
+      request,
+    });
+  }
+  return null;
+}

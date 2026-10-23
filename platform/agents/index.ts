@@ -107,14 +107,26 @@ export {
   resetWorkflowRegistry,
   runGoal,
   advanceGoal,
+  resumeApprovedAction,
+  TrajectoryAccessError,
+  ApprovalMismatchError,
+  HeldActionNotApprovedError,
 } from "./workflow-loop";
 export type {
   WorkflowDefinition,
   WorkflowStep,
   WorkflowStepContext,
   RunGoalArgs,
+  ResumeApprovedActionArgs,
 } from "./workflow-loop";
-export { approvalPolicy, approveHeldAction, rejectHeldAction } from "./gating";
+export {
+  approvalPolicy,
+  approveHeldAction,
+  rejectHeldAction,
+  heldActionRefusal,
+  principalOf,
+} from "./gating";
+export type { HeldActionRefusal } from "./gating";
 export {
   getApprovalPolicyStore,
   setApprovalPolicyStore,
