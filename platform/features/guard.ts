@@ -1,7 +1,7 @@
 /**
  * platform/features/guard.ts — A route for an optional feature refuses when it isn't configured
  *
- *   const off = requireFeature("music_identification", { request });
+ *   const off = requireFeature("sso_google", { request });
  *   if (off) return off;
  *
  * @module platform/features

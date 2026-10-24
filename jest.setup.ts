@@ -22,6 +22,28 @@ process.env.LOG_LEVEL = "silent";
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
 import { resetSingleton } from "@/platform/kernel/singleton";
+import { registerModules } from "@/platform/modules/registry";
+
+// ADR-054 D4: the app's modules are registered at boot in production (instrumentation.ts), before
+// anything reads a core list. Mirror that here, at load time rather than in beforeAll, because
+// suites enumerate registered lists while they are being defined (the eval meta-test builds one
+// describe per registered suite). The modules' code is loaded in an isolated module registry: a
+// suite's own jest.mock of a module's dependencies must still apply to the copy the suite
+// imports, which it would not if this file had already loaded it (the ADR-037 step-4 finding).
+// The registered set lives in the globalThis carrier, so both copies see it. A suite that needs
+// the modules built from its own mocked copies re-registers them (resetModuleRegistry first).
+//
+// PF_TEST_MODULES=none registers nothing instead: the suites then run as an app that uses no
+// module (npm run test:core — the core's own tests, which must pass without one, ADR-054 §4).
+// Nothing rather than an empty set, so a test that boots through a composition root
+// (instrumentation.ts) can still register the app's list.
+if (process.env.PF_TEST_MODULES !== "none") {
+  jest.isolateModules(() => {
+    const { APP_MODULES } = require("@/platform/modules/app-modules");
+    registerModules(APP_MODULES);
+  });
+}
+
 beforeAll(() => {
   registerPlatformAgents();
   registerAdaptiveReference();

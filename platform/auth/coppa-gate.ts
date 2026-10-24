@@ -29,6 +29,7 @@
 import { withTenantTx } from "@/platform/data";
 import { getConfig } from "@/platform/auth/platform-config";
 import { logger } from "@/lib/logger";
+import { unionWithModules } from "@/platform/modules/compose";
 import type { CoppaGateResult, ContentRatingLevel } from "@/platform/moderation/types";
 
 // ---------------------------------------------------------------------------
@@ -66,18 +67,30 @@ async function isEnforcementEnabled(): Promise<boolean> {
   }
 }
 
+/** The core's content-generating features, refused to COPPA-enforced users without consent. */
+export const CORE_CONSENT_FEATURES: readonly string[] = Object.freeze([
+  "generate",
+  "upload_file",
+]);
+
+/**
+ * The features refused when the governed list cannot be read: the core's, then each registered
+ * module's (translation: translate; voice: transcribe; song-id: identify_song — ADR-054 D4).
+ */
+export function consentFeatureFallback(): readonly string[] {
+  return unionWithModules(
+    "consent feature",
+    CORE_CONSENT_FEATURES,
+    (m) => m.consentFeatures
+  );
+}
+
 /**
  * Load the list of blocked features for COPPA-enforced users.
- * Fail-closed: if config unavailable, block everything (P11).
+ * Fail-closed: if config unavailable, block every content feature the app has (P11).
  */
 async function loadBlockedFeatures(): Promise<readonly string[]> {
-  const fallback = [
-    "translate",
-    "transcribe",
-    "identify_song",
-    "generate",
-    "upload_file",
-  ];
+  const fallback = [...consentFeatureFallback()];
   try {
     const features = await getConfig<string[]>("coppa.blocked_features", fallback);
     return Array.isArray(features) ? features : fallback;

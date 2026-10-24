@@ -1,0 +1,164 @@
+{
+  "$comment": "ADR-054 D6 — each product module and where its files are today (they share core directories until Sprint 7S moves them). Read by eslint.config.mjs (one import/no-restricted-paths zone per module), by __tests__/module-manifest.test.ts (every path exists, every zone file listed exactly once, definitions agree), by __tests__/module-boundary.test.ts (no core file imports a module), by the conformance-coverage test (kitManifest) and by scripts/migration-replay.sh (core migrations, then the selected modules'). seamTests test the app's own composition (PF's module list) and go with the composition roots. sharedDirectories hold several modules' files until 7S: each file there must be listed by exactly one module. Paths are relative to the repository root; a directory stands for every file beneath it. Zone = code + prompts + evals + routes + components. tests and kits sit outside the zones; a file listed there belongs to the module (it may import the module and its dependencies).",
+  "compositionRoots": [
+    "platform/modules/app-modules.ts",
+    "platform/modules/app-home.tsx"
+  ],
+  "seamTests": ["platform/modules/__tests__/app-modules.test.ts"],
+  "sharedDirectories": ["platform/voice"],
+  "modules": {
+    "translation": {
+      "definition": "platform/translation/module.ts",
+      "entry": "platform/translation/index.ts",
+      "dependsOn": [],
+      "code": [
+        "platform/translation",
+        "lib/translate.ts",
+        "lib/tts.ts",
+        "lib/inputValidation.ts"
+      ],
+      "prompts": [],
+      "evals": [],
+      "routes": ["app/api/process"],
+      "components": ["components/SpikeApp.tsx"],
+      "tests": [
+        "__tests__/component.test.ts",
+        "__tests__/google-translate-contract.test.ts",
+        "__tests__/modules/translation.module.test.ts",
+        "__tests__/process-api.test.ts",
+        "__tests__/translate.test.ts",
+        "__tests__/translation-provider.test.ts",
+        "__tests__/translation-sprint1.test.ts",
+        "__tests__/tts-unit.test.ts"
+      ],
+      "kits": ["__tests__/contract/translation-provider-contract.ts"],
+      "kitManifest": "__tests__/contract/modules/translation.ts",
+      "migrations": []
+    },
+    "audio-convert": {
+      "definition": "platform/voice/audio-convert-module.ts",
+      "entry": "platform/voice/audio-convert.ts",
+      "dependsOn": [],
+      "code": [
+        "platform/voice/audio-convert.ts",
+        "platform/voice/audio-convert-health.ts",
+        "platform/voice/audio-convert-module.ts",
+        "platform/voice/audio-converter-readiness.ts",
+        "platform/voice/audio-format-types.ts",
+        "platform/voice/ffmpeg-converter.ts",
+        "platform/voice/mock-audio-converter.ts",
+        "platform/voice/passthrough-converter.ts"
+      ],
+      "prompts": [],
+      "evals": [],
+      "routes": [],
+      "components": [],
+      "tests": [
+        "__tests__/audio-converter.test.ts",
+        "__tests__/modules/audio-convert.module.test.ts"
+      ],
+      "kits": ["__tests__/contract/audio-converter-contract.ts"],
+      "kitManifest": "__tests__/contract/modules/audio-convert.ts",
+      "migrations": []
+    },
+    "voice": {
+      "definition": "platform/voice/voice-module.ts",
+      "entry": "platform/voice/index.ts",
+      "dependsOn": ["translation", "audio-convert"],
+      "code": [
+        "platform/voice/GOTCHAS.md",
+        "platform/voice/README.md",
+        "platform/voice/chunker.ts",
+        "platform/voice/google-stt.ts",
+        "platform/voice/google-tts.ts",
+        "platform/voice/health-probe.ts",
+        "platform/voice/index.ts",
+        "platform/voice/mock-voice.ts",
+        "platform/voice/pipeline.ts",
+        "platform/voice/types.ts",
+        "platform/voice/voice-module.ts",
+        "platform/voice/voices.ts"
+      ],
+      "prompts": [],
+      "evals": [],
+      "routes": [],
+      "components": [],
+      "tests": [
+        "__tests__/google-stt-contract.test.ts",
+        "__tests__/google-tts-contract.test.ts",
+        "__tests__/modules/voice.module.test.ts",
+        "__tests__/stt-provider.test.ts",
+        "__tests__/tts-provider.test.ts",
+        "__tests__/voice-pipeline-sprint3.test.ts",
+        "__tests__/voice-sprint2.test.ts"
+      ],
+      "kits": [
+        "__tests__/contract/tts-provider-contract.ts",
+        "__tests__/contract/stt-provider-contract.ts"
+      ],
+      "kitManifest": "__tests__/contract/modules/voice.ts",
+      "migrations": []
+    },
+    "song-id": {
+      "definition": "platform/voice/song-id-module.ts",
+      "entry": "platform/voice/song-id.ts",
+      "dependsOn": ["audio-convert"],
+      "code": [
+        "platform/voice/acrcloud-identify.ts",
+        "platform/voice/identify-types.ts",
+        "platform/voice/mock-identify.ts",
+        "platform/voice/song-id.ts",
+        "platform/voice/song-id-health.ts",
+        "platform/voice/song-id-module.ts",
+        "platform/voice/song-id-provider.ts"
+      ],
+      "prompts": [],
+      "evals": [],
+      "routes": [],
+      "components": [],
+      "tests": [
+        "__tests__/acrcloud-identify-contract.test.ts",
+        "__tests__/modules/song-id.module.test.ts",
+        "__tests__/song-id-provider.test.ts",
+        "__tests__/song-identify-sprint4.test.ts"
+      ],
+      "kits": ["__tests__/contract/song-id-provider-contract.ts"],
+      "kitManifest": "__tests__/contract/modules/song-id.ts",
+      "migrations": ["supabase/migrations/013_song_id_config.sql"]
+    },
+    "social": {
+      "definition": "platform/social/module.ts",
+      "entry": "platform/social/index.ts",
+      "dependsOn": [],
+      "code": ["platform/social"],
+      "prompts": ["prompts/social"],
+      "evals": ["prompts/evals/social"],
+      "routes": [],
+      "components": [],
+      "tests": [
+        "__tests__/content-type-conformance.test.ts",
+        "__tests__/db/social-store.db.test.ts",
+        "__tests__/helpers/social-isolation-fixtures.ts",
+        "__tests__/modules/social.module.test.ts",
+        "__tests__/social-store.test.ts"
+      ],
+      "kits": ["__tests__/contract/social-store-contract.ts"],
+      "kitManifest": "__tests__/contract/modules/social.ts",
+      "migrations": ["supabase/migrations/015_social_data_model.sql"]
+    },
+    "games": {
+      "definition": "games/module.ts",
+      "entry": "games/module.ts",
+      "dependsOn": [],
+      "code": ["games"],
+      "prompts": [],
+      "evals": [],
+      "routes": [],
+      "components": [],
+      "tests": [],
+      "kits": [],
+      "kitManifest": null,
+      "migrations": []
+    }
+  }
+}

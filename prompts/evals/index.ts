@@ -1,39 +1,36 @@
 /**
  * prompts/evals/index.ts — the eval-suite registry (ADR-038).
  *
- * EVAL_SUITES is the set of prompts with an authored suite. PENDING_EVAL names registered
+ * listEvalSuites() is the set of prompts with an authored suite: the core's (CORE_EVAL_SUITES)
+ * then each registered module's (a module's suites are declared in its definition — ADR-054 D4). PENDING_EVAL names registered
  * prompts that do not yet have one — every entry is a tracked, build-visible commitment, not a
  * silent skip: the meta-test fails if a registered prompt is neither covered nor pending, and
  * fails on any stale pending entry. PENDING_EVAL must shrink to [].
  */
-import type { EvalSuite } from "./types";
+import { composeValues } from "@/platform/modules/compose";
+import { defineSuite, type EvalSuite } from "./types";
 import { SAFETY_CLASSIFY_EVAL } from "./safety/classify.eval";
-import { GATEKEEPER_EVAL } from "./social/gatekeeper.eval";
-import { ANALYST_EVAL } from "./social/analyst.eval";
-import { CURATOR_EVAL } from "./social/curator.eval";
 import { CLASSIFY_AUDIO_EVAL } from "./input/classify-audio.eval";
-import { MATCHMAKER_EVAL } from "./social/matchmaker.eval";
-import { CONCIERGE_EVAL } from "./social/concierge.eval";
 import { RESOLVE_INTENT_EVAL } from "./input/resolve-intent.eval";
 import { PACING_EVAL } from "./adaptive/pacing.eval";
 
-/** Erase a suite's output type for heterogeneous storage; parse+assert stay internally
- *  consistent, so the cast is safe. */
-function defineSuite<O>(s: EvalSuite<O>): EvalSuite<unknown> {
-  return s as EvalSuite<unknown>;
-}
-
-export const EVAL_SUITES: readonly EvalSuite<unknown>[] = [
+/** The core's suites, one per core prompt that has a parseable contract. */
+export const CORE_EVAL_SUITES: readonly EvalSuite<unknown>[] = [
   defineSuite(SAFETY_CLASSIFY_EVAL),
-  defineSuite(GATEKEEPER_EVAL),
-  defineSuite(ANALYST_EVAL),
-  defineSuite(CURATOR_EVAL),
   defineSuite(CLASSIFY_AUDIO_EVAL),
-  defineSuite(MATCHMAKER_EVAL),
-  defineSuite(CONCIERGE_EVAL),
   defineSuite(RESOLVE_INTENT_EVAL),
   defineSuite(PACING_EVAL),
 ];
+
+/** The core's suites then the registered modules', one suite per prompt (refused otherwise). */
+export function listEvalSuites(): readonly EvalSuite<unknown>[] {
+  return composeValues(
+    "eval suite",
+    CORE_EVAL_SUITES,
+    (s) => s.prompt,
+    (m) => m.evals
+  );
+}
 
 export const PENDING_EVAL: readonly string[] = [];
 

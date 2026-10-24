@@ -4,11 +4,8 @@
  */
 import { runSocialStoreContract } from "./contract/social-store-contract";
 import { runTenantIsolationContract } from "./contract/tenant-isolation-contract";
-import {
-  memoryTenant,
-  memoryUser,
-  socialIsolation,
-} from "./helpers/moderation-isolation-fixtures";
+import { memoryTenant, memoryUser } from "./helpers/moderation-isolation-fixtures";
+import { socialIsolation } from "./helpers/social-isolation-fixtures";
 import { InMemorySocialStore } from "@/platform/social/memory-social-store";
 
 describe("SocialStore contract — in-memory store", () => {

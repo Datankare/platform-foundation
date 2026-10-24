@@ -1,7 +1,8 @@
 /**
  * __tests__/singleton-key-coverage.test.ts
  *
- * resetProviders() clears the keys listed in PROVIDER_SINGLETON_KEYS. That list is maintained
+ * resetProviders() clears providerSingletonKeys(): the core's CORE_PROVIDER_SINGLETON_KEYS and
+ * each registered module slot's declared singletonKeys (ADR-054 D4). Those lists are maintained
  * by hand, so a singleton added later and forgotten is a singleton that leaks between tests —
  * the same failure the auth provider had, where reset appeared to work only because
  * jest.resetModules() was doing the clearing.
@@ -16,7 +17,25 @@
 
 import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
-import { PROVIDER_SINGLETON_KEYS } from "@/platform/providers/registry";
+import { providerSingletonKeys } from "@/platform/providers/registry";
+import { getModules } from "@/platform/modules";
+
+const mm = require("../scripts/module-manifest.cjs");
+const MANIFEST = mm.loadManifest();
+
+// The core's keys and the registered modules' slot keys (jest.setup registers the app's modules).
+const PROVIDER_SINGLETON_KEYS = providerSingletonKeys();
+
+/**
+ * Whether a source file's keys are this app's: a core file, or a registered module's. A module the
+ * app does not register declares keys nothing resets — they are checked against the module's own
+ * definition instead (__tests__/module-manifest.test.ts).
+ */
+const REGISTERED = new Set(getModules().map((m) => m.id));
+function inThisApp(rel: string): boolean {
+  const owner: string | null = mm.zoneOf(MANIFEST, rel);
+  return owner === null || REGISTERED.has(owner);
+}
 
 const ROOT = process.cwd();
 
@@ -41,6 +60,8 @@ const EXEMPT: Record<string, string> = {
     "The database connection pools (ADR-053 D4). Closed by closeDataPools(), which ends their connections; clearing the slot would leak them.",
   "platform.rag.kbRegistry":
     "knowledge-base registry (ADR-042); one registry Map per worker, globalThis-anchored.",
+  "platform.modules.registered":
+    "The app's registered modules (ADR-054 D4). Registered before initProviders() and cleared by resetModuleRegistry(), never by resetProviders() — the module set outlives a provider reset.",
 };
 
 function singletonKeysDeclaredInSource(): string[] {
@@ -54,6 +75,7 @@ function singletonKeysDeclaredInSource(): string[] {
         continue;
       }
       if (!entry.name.endsWith(".ts") || entry.name.includes(".test.")) continue;
+      if (!inThisApp(p.slice(ROOT.length + 1))) continue;
       const src = readFileSync(p, "utf-8");
       // `const SOMETHING_KEY = "platform.x.y";` — the shape every conversion produced.
       for (const m of src.matchAll(/const\s+\w*KEY\s*=\s*"(platform\.[\w.]+)"/g)) {

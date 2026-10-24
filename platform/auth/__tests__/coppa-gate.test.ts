@@ -79,13 +79,13 @@ beforeEach(() => {
 describe("checkCoppaGate", () => {
   describe("input validation (S1)", () => {
     it("rejects empty userId", async () => {
-      const result = await checkCoppaGate("", "translate");
+      const result = await checkCoppaGate("", "generate");
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain("Invalid user ID");
     });
 
     it("rejects non-UUID userId", async () => {
-      const result = await checkCoppaGate("not-a-uuid", "translate");
+      const result = await checkCoppaGate("not-a-uuid", "generate");
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain("Invalid user ID");
     });
@@ -103,7 +103,7 @@ describe("checkCoppaGate", () => {
 
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440000",
-        "translate"
+        "generate"
       );
       expect(result.allowed).toBe(true);
     });
@@ -116,7 +116,7 @@ describe("checkCoppaGate", () => {
 
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440000",
-        "translate"
+        "generate"
       );
 
       expect(result.allowed).toBe(true);
@@ -138,7 +138,7 @@ describe("checkCoppaGate", () => {
 
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440001",
-        "translate"
+        "generate"
       );
 
       expect(result.allowed).toBe(true);
@@ -158,7 +158,7 @@ describe("checkCoppaGate", () => {
 
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440002",
-        "translate"
+        "generate"
       );
 
       expect(result.allowed).toBe(true);
@@ -179,7 +179,7 @@ describe("checkCoppaGate", () => {
 
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440003",
-        "translate"
+        "generate"
       );
 
       expect(result.allowed).toBe(false);
@@ -244,7 +244,7 @@ describe("checkCoppaGate", () => {
 
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440004",
-        "translate"
+        "generate"
       );
 
       expect(result.allowed).toBe(false);
@@ -258,7 +258,7 @@ describe("checkCoppaGate", () => {
 
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440000",
-        "translate"
+        "generate"
       );
 
       expect(result.allowed).toBe(false);
@@ -281,10 +281,10 @@ describe("checkCoppaGate", () => {
       });
       mockSupabase.from.mockReturnValue(chain);
 
-      // Should still block — fallback list includes translate
+      // Should still block — the core's fallback list includes generate
       const result = await checkCoppaGate(
         "550e8400-e29b-41d4-a716-446655440003",
-        "translate"
+        "generate"
       );
       expect(result.allowed).toBe(false);
     });

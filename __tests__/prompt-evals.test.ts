@@ -14,7 +14,7 @@ import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { listPrompts } from "@/prompts";
 import {
-  EVAL_SUITES,
+  listEvalSuites,
   FREE_TEXT_EXEMPT,
   PENDING_EVAL,
   TOOL_USE_EXEMPT,
@@ -49,6 +49,8 @@ function promptFileFor(name: string): string | null {
 }
 
 describe("prompt eval harness conformance (ADR-038)", () => {
+  // The core's suites and the registered modules' (jest.setup registers the app's modules).
+  const EVAL_SUITES = listEvalSuites();
   const covered = new Set(EVAL_SUITES.map((s) => s.prompt));
   const registered = listPrompts();
 

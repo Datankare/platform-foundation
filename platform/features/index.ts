@@ -5,9 +5,16 @@
  */
 
 export {
-  FEATURE_REQUIREMENTS,
+  CORE_FEATURE_REQUIREMENTS,
+  listFeatureRequirements,
+  getFeatureRequirement,
   featureAvailability,
   isFeatureAvailable,
 } from "./availability";
-export type { FeatureId, FeatureStatus } from "./availability";
+export type {
+  CoreFeatureId,
+  FeatureId,
+  FeatureRequirement,
+  FeatureStatus,
+} from "./availability";
 export { requireFeature } from "./guard";

@@ -20,7 +20,7 @@
  *   P9  — requestId propagated to service for tracing
  *   P12 — Metadata stripped server-side during format conversion
  *
- * @module platform/voice
+ * @module platform/voice/audio-convert
  */
 
 import type {

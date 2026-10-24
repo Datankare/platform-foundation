@@ -5,9 +5,13 @@ Central provider configuration for platform-foundation. Every external service i
 ## Quick Start
 
 ```typescript
-// App startup (layout.tsx, instrumentation.ts, or similar)
+// App startup (instrumentation.ts)
+import { registerModules } from "@/platform/modules";
+import { APP_MODULES } from "@/platform/modules/app-modules"; // the app's module list (a seam)
 import { initProviders } from "@/platform/providers/registry";
-await initProviders();
+
+registerModules(APP_MODULES); // before the providers: module slots are installed with the core's
+initProviders();
 ```
 
 ## Provider Slots
@@ -18,6 +22,16 @@ await initProviders();
 | **Cache**          | `CACHE_PROVIDER` | `upstash`, `memory` | `memory` |
 | **AI**             | `AI_PROVIDER`    | `anthropic`, `mock` | `mock`   |
 | **Error Reporter** | `ERROR_REPORTER` | `sentry`, `noop`    | `noop`   |
+
+These are the core's slots (`CoreProviderSelections`). A product module declares its own slots in
+its definition (`ModuleProviderSlot` — ADR-054 D4): translation (`TRANSLATION_PROVIDER`), voice
+(`TTS_PROVIDER`, `STT_PROVIDER`), song-id (`SONG_ID_PROVIDER`), audio-convert (`AUDIO_CONVERTER`),
+social (`SOCIAL_STORE`, durable). The app registers its modules before `initProviders()`
+(`platform/modules/app-modules.ts`), and the registry then selects, refuses and resets module slots
+exactly as its own — a durable module slot is refused without `DATABASE_URL`, refused as memory in
+production, required by the environment contract's database check, and cleared by
+`resetProviders()` (its `singletonKeys`). `getActiveProviders()` lists the core's slots, then the
+modules'. The registry names no module.
 
 ## Zero Config = Working Demo
 

@@ -72,8 +72,12 @@ export interface RateLimiter {
   reset(identifier: string, rule: RateLimitRule): Promise<void>;
 }
 
-/** Pre-configured rate limit rules for common use cases */
-export const DEFAULT_RULES: Record<string, RateLimitRule> = {
+/**
+ * The core's rate limit rules. Module rules are not here: a module declares its own in its
+ * definition (ADR-054 D4 — e.g. SONG_IDENTIFY_RULE, song-id) and the route that enforces one
+ * imports it from its module; listRateRules() (./rules.ts) is the whole set, core first.
+ */
+export const DEFAULT_RULES = {
   /** Global API rate limit: 100 requests per minute */
   API_GLOBAL: { id: "api:global", maxRequests: 100, windowSeconds: 60 },
   /** AI endpoint: 20 requests per minute per user */
@@ -88,6 +92,4 @@ export const DEFAULT_RULES: Record<string, RateLimitRule> = {
   AUTH_SESSION: { id: "auth:session", maxRequests: 30, windowSeconds: 60 },
   /** Admin operations: 30 per minute */
   ADMIN_OPS: { id: "admin:ops", maxRequests: 30, windowSeconds: 60 },
-  /** Song identification: 10 per hour per user */
-  SONG_IDENTIFY: { id: "song:identify", maxRequests: 10, windowSeconds: 3600 },
-};
+} satisfies Readonly<Record<string, RateLimitRule>>;

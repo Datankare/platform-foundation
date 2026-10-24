@@ -2732,7 +2732,7 @@ Postgres. Operating guide: [TENANCY_OPERATIONS.md](TENANCY_OPERATIONS.md); ADR-0
 | **Severity** | Medium — every consumer inherits, patches and tests features it may not use |
 | **Phase**    | Phase 5                                                                     |
 | **Target**   | Phase 5, Sprint 7R (decision), Sprint 7S (implementation)                   |
-| **Status**   | Open                                                                        |
+| **Status**   | Boundary implemented on develop (Sprint 7R R4); the move out is 7S          |
 | **Logged**   | 2026-10-20                                                                  |
 
 **What:** games, social groups and agents, song identification, audio conversion and the voice pipeline live
@@ -2744,6 +2744,26 @@ opts into"; a lint rule stops the core importing a module. Sprint 7S moves the m
 
 **Sprint 7R entry gate (2026-10-21):** ADR-054 (Proposed): six modules, self-registration, module migrations and a
 sync that selects modules; 22 boundary imports to remove before the lint rule (R4).
+
+**Sprint 7R R4 (2026-10-24), on develop:** the core/module boundary (ADR-054 §5). `platform/modules`:
+`definePlatformModule` (validated, frozen), `registerModules` (once at boot, idempotent, duplicates and missing
+or cyclic dependencies refused), and the app's list `app-modules.ts` (a consumer seam; instrumentation
+registers it before the providers). Every core registry is the core's list plus the registered modules':
+provider slots (the six module slots keep their settings and refusals, the durable social store included),
+agents (the five social agents moved to the social module; Guardian's `guardian-social` stays core), prompts and
+evals, the curator content type, features, workflow goals (`AgentGoal` open, validated at `registerWorkflow`),
+rate rules (`SONG_IDENTIFY_RULE` moved to song-id), the consent and account-status fallbacks, moderation content
+kinds, health probes (the song-ID probe), and the conformance manifest (per-module kit manifests). The voice
+index is split (voice, `song-id`, `audio-convert` entries); the home page renders the `app-home.tsx` seam. The
+production boundary imports went from 16 core → module (and the voice index's re-exports of song-id and
+audio-convert) to none outside the two composition roots; the 6 test-manifest imports and every core test
+importing a module are gone or listed as the module's tests. `import/no-restricted-paths` is on, its zones
+generated from `platform/modules/manifest.json` (every module file listed, checked both ways); module migrations
+are `NNN_<module>_<name>.sql` and replay after the core's. CI: the boundary, manifest, lint-fixture and
+migration tests, and `npm run test:core` — every core test with no module registered.
+**Remaining (7S):** moving the modules out of the core directories, superseding the core migrations that seed or
+alter module data (002, 005, 007, 010, 012, 014, 037, 049), retiring `lib/translate.ts` and `lib/tts.ts`, the
+guest-usage rename, the sync's `modules` selection, and Playform opting in.
 
 ### TASK-128 — Deploy anywhere: a container image, infrastructure as code, a second host
 

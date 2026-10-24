@@ -186,57 +186,47 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
 
   it("allows an active user", async () => {
     const id = await t.user();
-    await expect(t.run(() => checkAccountStatus(id, "translate"))).resolves.toMatchObject(
-      {
-        allowed: true,
-        accountStatus: "active",
-      }
-    );
+    await expect(t.run(() => checkAccountStatus(id, "generate"))).resolves.toMatchObject({
+      allowed: true,
+      accountStatus: "active",
+    });
     await expect(t.run(() => isInGoodStanding(id))).resolves.toBe(true);
   });
 
   it("reads restriction and suspension windows", async () => {
     const id = await t.user();
     await setStatus(id, "restricted", { restricted_until: hours(5) });
-    await expect(t.run(() => checkAccountStatus(id, "translate"))).resolves.toMatchObject(
-      {
-        allowed: false,
-        accountStatus: "restricted",
-      }
-    );
+    await expect(t.run(() => checkAccountStatus(id, "generate"))).resolves.toMatchObject({
+      allowed: false,
+      accountStatus: "restricted",
+    });
     await expect(t.run(() => isInGoodStanding(id))).resolves.toBe(false);
     await setStatus(id, "suspended", { suspended_until: hours(-1) });
-    await expect(t.run(() => checkAccountStatus(id, "translate"))).resolves.toMatchObject(
-      {
-        allowed: true,
-        reason: "Suspension period has expired",
-      }
-    );
+    await expect(t.run(() => checkAccountStatus(id, "generate"))).resolves.toMatchObject({
+      allowed: true,
+      reason: "Suspension period has expired",
+    });
     await expect(t.run(() => isInGoodStanding(id))).resolves.toBe(true);
     await setStatus(id, "banned", { banned_at: hours(-2) });
-    await expect(t.run(() => checkAccountStatus(id, "translate"))).resolves.toMatchObject(
-      {
-        allowed: false,
-        accountStatus: "banned",
-      }
-    );
+    await expect(t.run(() => checkAccountStatus(id, "generate"))).resolves.toMatchObject({
+      allowed: false,
+      accountStatus: "banned",
+    });
   });
 
   it("denies a feature on the per-account block-list, reporting the real status", async () => {
     const id = await t.user();
     await sql(
       t,
-      "insert into user_feature_restrictions (user_id, feature, created_by) values ($1::uuid, 'translate', 'test')",
+      "insert into user_feature_restrictions (user_id, feature, created_by) values ($1::uuid, 'generate', 'test')",
       [id]
     );
-    await expect(t.run(() => checkAccountStatus(id, "translate"))).resolves.toMatchObject(
-      {
-        allowed: false,
-        accountStatus: "active",
-      }
-    );
+    await expect(t.run(() => checkAccountStatus(id, "generate"))).resolves.toMatchObject({
+      allowed: false,
+      accountStatus: "active",
+    });
     await expect(
-      t.run(() => checkAccountStatus(id, "transcribe"))
+      t.run(() => checkAccountStatus(id, "upload_file"))
     ).resolves.toMatchObject({
       allowed: true,
     });
@@ -245,7 +235,7 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
   it("provisions a user with no row, then allows from the stored row", async () => {
     const sub = uuid();
     await expect(
-      t.run(() => checkAccountStatus(sub, "translate", { email: "n@e.w" }))
+      t.run(() => checkAccountStatus(sub, "generate", { email: "n@e.w" }))
     ).resolves.toMatchObject({ allowed: true, accountStatus: "active" });
     expect(await userRow(t, sub)).toMatchObject({ email: "n@e.w" });
   });
@@ -253,14 +243,14 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
   it("refuses as not provisioned when provisioning cannot be recorded", async () => {
     dataSpy().auditDown = true;
     await expect(
-      t.run(() => checkAccountStatus(uuid(), "translate"))
+      t.run(() => checkAccountStatus(uuid(), "generate"))
     ).resolves.toMatchObject({ allowed: false, code: "account.not_provisioned" });
   });
 
   it("fails closed outside a tenant (the block-list is unreadable)", async () => {
     const id = await t.user();
     await runWithoutTenant(async () => {
-      await expect(checkAccountStatus(id, "translate")).resolves.toMatchObject({
+      await expect(checkAccountStatus(id, "generate")).resolves.toMatchObject({
         allowed: false,
         accountStatus: "banned",
       });
@@ -272,7 +262,7 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
     const other = await createTestTenant();
     const id = await t.user();
     await expect(
-      other.run(() => checkAccountStatus(id, "translate"))
+      other.run(() => checkAccountStatus(id, "generate"))
     ).resolves.toMatchObject({ allowed: false, code: "account.not_provisioned" });
   });
 });
@@ -282,7 +272,7 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
 dbDescribe(`${SUITE} COPPA gate and records`, () => {
   it("allows a user not under enforcement, blocks one under it", async () => {
     const id = await t.user();
-    await expect(t.run(() => checkCoppaGate(id, "translate"))).resolves.toMatchObject({
+    await expect(t.run(() => checkCoppaGate(id, "generate"))).resolves.toMatchObject({
       allowed: true,
       consentStatus: "not_required",
     });
@@ -290,17 +280,15 @@ dbDescribe(`${SUITE} COPPA gate and records`, () => {
       success: true,
     });
     expect((await userRow(t, id))!.coppa_enforcement_active).toBe(true);
-    await expect(t.run(() => checkCoppaGate(id, "translate"))).resolves.toMatchObject({
+    await expect(t.run(() => checkCoppaGate(id, "generate"))).resolves.toMatchObject({
       allowed: false,
     });
   });
 
   it("fails closed for an unknown user, and outside a tenant", async () => {
-    await expect(t.run(() => checkCoppaGate(uuid(), "translate"))).resolves.toMatchObject(
-      {
-        allowed: false,
-      }
-    );
+    await expect(t.run(() => checkCoppaGate(uuid(), "generate"))).resolves.toMatchObject({
+      allowed: false,
+    });
     await runWithoutTenant(async () => {
       await expect(updateCoppaEnforcement(uuid(), false)).resolves.toMatchObject({
         success: false,
@@ -614,12 +602,12 @@ dbDescribe(`${SUITE} tenant isolation: users (ADR-053 D8)`, () => {
     await a.run(() => ensureUserProvisioned(sub));
     // The insert conflicts with A's row and does nothing; B still has no row.
     await expect(b.run(() => ensureUserProvisioned(sub))).resolves.toBe("existing");
-    await expect(
-      b.run(() => checkAccountStatus(sub, "translate"))
-    ).resolves.toMatchObject({
-      allowed: false,
-      code: "account.not_provisioned",
-    });
+    await expect(b.run(() => checkAccountStatus(sub, "generate"))).resolves.toMatchObject(
+      {
+        allowed: false,
+        code: "account.not_provisioned",
+      }
+    );
   });
 });
 

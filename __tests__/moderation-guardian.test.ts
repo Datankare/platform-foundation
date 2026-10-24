@@ -13,6 +13,11 @@ import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { resetAgentRegistry } from "@/platform/agents/registry";
 import { resetModerationStore } from "@/platform/moderation/store";
 import type { ScreeningContext } from "@/platform/moderation/types";
+import { CONTENT_KINDS_FIXTURE, withModules } from "./helpers/modules";
+
+// The content kinds screened here are declared by a fixture module (ADR-054 D4): the core
+// screens what the registered modules declare.
+withModules([CONTENT_KINDS_FIXTURE]);
 
 // Mock logger
 jest.mock("@/lib/logger", () => ({

@@ -39,26 +39,25 @@ export function register() {
   }
 
   try {
+    // ADR-054 D4: the app's modules are registered before the providers initialize, so their
+    // provider slots, agents, prompts, rules and vocabulary are in place when the core composes
+    // them. platform/modules/app-modules.ts is the app's own list (a consumer seam).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { registerModules, createModuleHealthProbes } = require("@/platform/modules");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { APP_MODULES } = require("@/platform/modules/app-modules");
+    registerModules(APP_MODULES);
+
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { initProviders } = require("@/platform/providers");
     initProviders();
 
-    // TASK-041: register the song-ID health probe. The adapter existed but was never
-    // registered, so the probe was dead code (Gotcha #27). It wraps the LIVE provider
-    // stored by initProviders() above — not a freshly constructed duplicate — so the
-    // probe reports on the instance actually serving traffic.
+    // The modules' health probes (TASK-041: the song-ID probe), built now so each wraps the LIVE
+    // provider initProviders() installed — not a freshly constructed duplicate. A probe that
+    // makes a billable call is cached by its module (audit X-13).
+    const healthProbes: HealthProbe[] = createModuleHealthProbes();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getSongIdProvider, SongIdHealthProbeAdapter } = require("@/platform/voice");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { initObservability, CachedHealthProbe } = require("@/platform/observability");
-    // The song-ID probe makes a billable identify call; at most one per 15 minutes per
-    // instance, however often /api/health is requested (audit X-13).
-    const healthProbes: HealthProbe[] = [
-      new CachedHealthProbe(
-        new SongIdHealthProbeAdapter(getSongIdProvider()),
-        15 * 60_000
-      ),
-    ];
+    const { initObservability } = require("@/platform/observability");
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PLATFORM_VERSION } = require("@/platform/version");

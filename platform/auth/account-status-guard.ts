@@ -29,6 +29,7 @@ import { hasDatabase, withTenantTx } from "@/platform/data";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getSingleton, setSingleton } from "@/platform/kernel";
 import { logger } from "@/lib/logger";
+import { unionWithModules } from "@/platform/modules/compose";
 import type { AccountStatus } from "@/platform/moderation/types";
 import {
   ensureUserProvisioned,
@@ -74,14 +75,24 @@ interface UserAccountRow {
 const RESTRICTED_FEATURES_KEY = "account_status.restricted_features";
 const SUSPENDED_FEATURES_KEY = "account_status.suspended_features";
 
-const RESTRICTED_FEATURES_FALLBACK: readonly string[] = [
-  "translate",
-  "transcribe",
-  "identify_song",
+/** The core's features a restricted account is refused (content features and profile edits). */
+export const CORE_RESTRICTED_FEATURES: readonly string[] = Object.freeze([
   "generate",
   "upload_file",
   "update_profile",
-];
+]);
+
+/**
+ * The features refused to a restricted account when the governed list cannot be read: the
+ * core's, then each registered module's (ADR-054 D4).
+ */
+export function restrictedFeatureFallback(): readonly string[] {
+  return unionWithModules(
+    "account-status feature",
+    CORE_RESTRICTED_FEATURES,
+    (m) => m.accountStatusFeatures
+  );
+}
 
 const SUSPENDED_FEATURES_FALLBACK: readonly string[] = ["*"];
 
@@ -141,13 +152,12 @@ const VALID_STATUSES = new Set<string>([
  * Fail-closed: config unavailable → block all content features (P11).
  */
 async function loadRestrictedFeatures(): Promise<readonly string[]> {
+  const fallback = restrictedFeatureFallback();
   try {
-    const features = await getConfig<string[]>(RESTRICTED_FEATURES_KEY, [
-      ...RESTRICTED_FEATURES_FALLBACK,
-    ]);
-    return Array.isArray(features) ? features : [...RESTRICTED_FEATURES_FALLBACK];
+    const features = await getConfig<string[]>(RESTRICTED_FEATURES_KEY, [...fallback]);
+    return Array.isArray(features) ? features : [...fallback];
   } catch {
-    return [...RESTRICTED_FEATURES_FALLBACK];
+    return [...fallback];
   }
 }
 

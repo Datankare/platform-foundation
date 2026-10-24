@@ -12,7 +12,7 @@
  *   P6  — Resilient: every slot has a working fallback
  *   P7  — Provider-aware: realtime abstraction (Sprint 5)
  *   P9  — Observable: provider selections logged at startup
- *   P10 — No late discovery: all provider slots defined here
+ *   P10 — No late discovery: the core's slots defined here, a module's in its definition
  *
  * Environment variables (all optional — omit for mock/fallback):
  *   AUTH_PROVIDER      = "cognito" | "mock"      (default: "mock"; "mock" refused in production — ADR-050 D1)
@@ -21,19 +21,20 @@
  *   AI_PROVIDER        = "anthropic" | "mock"    (default: "mock")
  *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
  *   REALTIME_PROVIDER  = "supabase" | "mock"     (default: "mock")
- *   TRANSLATION_PROVIDER = "google" | "mock"     (default: "mock")
- *   TTS_PROVIDER          = "google" | "mock"     (default: "mock")
- *   STT_PROVIDER          = "google" | "mock"     (default: "mock")
- *   SONG_ID_PROVIDER      = "acrcloud" | "mock"   (default: "mock")
- *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
  *
  * Durable stores — "postgres" (or "supabase", the same store) | "memory" (default: "memory";
  * memory is refused in production unless a local/CI harness opts out, ADR-048 D3, ADR-053 D4):
- *   MODERATION_STORE, STRIKE_STORE, REVIEW_QUEUE_STORE, SOCIAL_STORE, APP_STATE_STORE,
+ *   MODERATION_STORE, STRIKE_STORE, REVIEW_QUEUE_STORE, APP_STATE_STORE,
  *   TRAJECTORY_STORE, BUDGET_STORE, PROPOSAL_STORE, EFFECT_LEDGER, APPROVAL_POLICY_STORE,
  *   GUEST_USAGE_STORE, RATE_LIMIT_STORE (also "upstash", ADR-052)
  *   TENANT_DIRECTORY_STORE = "postgres" | "memory" (shared tenancy requires postgres, ADR-053 D7)
+ *
+ * Module slots (ADR-054 D4): a registered module declares its own slots — translation:
+ * TRANSLATION_PROVIDER; voice: TTS_PROVIDER, STT_PROVIDER; song-id: SONG_ID_PROVIDER; audio-convert:
+ * AUDIO_CONVERTER; social: SOCIAL_STORE (durable) — in its definition (ModuleProviderSlot). They
+ * are selected, refused and reset exactly as the core's slots are, after the core's, in
+ * registration order; the registry names no module.
  *
  * Settings shared by several slots (the database URLs, Cognito ids) are read through the
  * environment contract resolvers, and in production the whole contract is checked before any
@@ -52,11 +53,6 @@ import {
   PostgresReviewQueueStore,
   setReviewQueueStore,
 } from "@/platform/moderation/review-store";
-import {
-  setSocialStore,
-  InMemorySocialStore,
-  PostgresSocialStore,
-} from "@/platform/social";
 import { logger } from "@/lib/logger";
 import {
   createRateLimiter,
@@ -64,12 +60,6 @@ import {
   RATE_LIMITER_NAMES,
   setRateLimiter,
 } from "@/platform/rate-limit/factory";
-import {
-  getAcrCloudConfig,
-  setSongIdProvider,
-  ACRCloudIdentifier,
-  MockSongIdentifier,
-} from "@/platform/voice";
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
 import { setTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { PostgresTrajectoryStore } from "@/platform/agents/postgres-trajectory-store";
@@ -90,7 +80,6 @@ import { setEffectLedger } from "@/platform/agents/effect-ledger";
 import { PostgresEffectLedger } from "@/platform/agents/postgres-effect-ledger";
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
-import { registerSocialContentTypes } from "@/platform/social/content/curator-content";
 import { registerRagReference } from "@/platform/rag/bootstrap";
 import {
   setActivityStateStore,
@@ -111,6 +100,13 @@ import {
   PostgresGuestUsageStore,
   setGuestUsageStore,
 } from "@/platform/auth/guest-allowance";
+import { composeWithModules } from "@/platform/modules/compose";
+import { getModules } from "@/platform/modules/registry";
+import {
+  assertModuleContributions,
+  registerModuleContentTypes,
+} from "@/platform/modules/contributions";
+import type { Contributed, ModuleProviderSlot } from "@/platform/modules/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,15 +117,9 @@ export type CacheProviderType = "upstash" | "memory";
 export type AIProviderType = "anthropic" | "mock";
 export type ErrorReporterType = "sentry" | "noop";
 export type RealtimeProviderType = "supabase" | "mock";
-export type TranslationProviderType = "google" | "mock";
-export type TTSProviderType = "google" | "mock";
-export type STTProviderType = "google" | "mock";
-export type SongIdProviderType = "acrcloud" | "mock";
-export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
 export type ModerationStoreType = "postgres" | "supabase" | "memory";
 export type StrikeStoreType = "postgres" | "supabase" | "memory";
 export type ReviewQueueStoreType = "postgres" | "supabase" | "memory";
-export type SocialStoreType = "postgres" | "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
 export type AppStateStoreType = "postgres" | "supabase" | "memory";
 export type TrajectoryStoreType = "postgres" | "supabase" | "memory";
@@ -140,21 +130,16 @@ export type ApprovalPolicyStoreType = "postgres" | "supabase" | "memory";
 export type GuestUsageStoreType = "postgres" | "supabase" | "memory";
 export type RateLimiterStoreType = "postgres" | "supabase" | "upstash" | "memory";
 
-export interface ProviderSelections {
+/** The core's slots. */
+export interface CoreProviderSelections {
   auth: AuthProviderType;
   cache: CacheProviderType;
   ai: AIProviderType;
   errorReporter: ErrorReporterType;
   realtime: RealtimeProviderType;
-  translation: TranslationProviderType;
-  tts: TTSProviderType;
-  stt: STTProviderType;
-  songId: SongIdProviderType;
-  audioConverter: AudioConverterType;
   moderationStore: ModerationStoreType;
   strikeStore: StrikeStoreType;
   reviewQueueStore: ReviewQueueStoreType;
-  socialStore: SocialStoreType;
   embeddingProvider: EmbeddingProviderType;
   appStateStore: AppStateStoreType;
   trajectoryStore: TrajectoryStoreType;
@@ -166,27 +151,75 @@ export interface ProviderSelections {
   rateLimiter: RateLimiterStoreType;
 }
 
+/**
+ * Every slot's selection: the core's, then each registered module's slot (keyed by its slot
+ * name, e.g. socialStore) in registration order.
+ */
+export type ProviderSelections = CoreProviderSelections &
+  Readonly<Record<string, string>>;
+
+/**
+ * The setting that selects each core slot. Module slots may use neither a core slot's name nor
+ * its setting (moduleSlots() refuses both).
+ */
+const CORE_SLOT_SETTINGS: Readonly<Record<keyof CoreProviderSelections, string>> = {
+  auth: "AUTH_PROVIDER",
+  cache: "CACHE_PROVIDER",
+  ai: "AI_PROVIDER",
+  errorReporter: "ERROR_REPORTER",
+  realtime: "REALTIME_PROVIDER",
+  moderationStore: "MODERATION_STORE",
+  strikeStore: "STRIKE_STORE",
+  reviewQueueStore: "REVIEW_QUEUE_STORE",
+  embeddingProvider: "EMBEDDING_PROVIDER",
+  appStateStore: "APP_STATE_STORE",
+  trajectoryStore: "TRAJECTORY_STORE",
+  budgetStore: "BUDGET_STORE",
+  proposalStore: "PROPOSAL_STORE",
+  effectLedger: "EFFECT_LEDGER",
+  approvalPolicyStore: "APPROVAL_POLICY_STORE",
+  guestUsageStore: "GUEST_USAGE_STORE",
+  rateLimiter: "RATE_LIMIT_STORE",
+};
+
+/**
+ * The registered modules' slots with their owners, in registration order. Refuses a module slot
+ * that reuses a core slot's name or setting (modules among themselves are checked when they are
+ * registered).
+ */
+function moduleSlots(): readonly Contributed<ModuleProviderSlot>[] {
+  composeWithModules(
+    "provider slot",
+    Object.keys(CORE_SLOT_SETTINGS),
+    (name) => name,
+    (m) => m.providers.map((s) => s.slot)
+  );
+  composeWithModules(
+    "provider selector setting",
+    Object.values(CORE_SLOT_SETTINGS),
+    (name) => name,
+    (m) => m.providers.map((s) => s.envVar)
+  );
+  return getModules().flatMap((m) =>
+    m.providers.map((value) => ({ moduleId: m.id, value }))
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Read selections from env
 // ---------------------------------------------------------------------------
 
-function getProviderSelections(): ProviderSelections {
+function getCoreSelections(): CoreProviderSelections {
   return {
     auth: (getAuthProviderSetting() as AuthProviderType) ?? "mock",
     cache: (getCacheProviderSetting() as CacheProviderType | undefined) ?? "memory",
     ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
     realtime: (process.env.REALTIME_PROVIDER as RealtimeProviderType) ?? "mock",
-    translation: (process.env.TRANSLATION_PROVIDER as TranslationProviderType) ?? "mock",
-    tts: (process.env.TTS_PROVIDER as TTSProviderType) ?? "mock",
-    stt: (process.env.STT_PROVIDER as STTProviderType) ?? "mock",
-    songId: (process.env.SONG_ID_PROVIDER as SongIdProviderType) ?? "mock",
-    audioConverter: (process.env.AUDIO_CONVERTER as AudioConverterType) ?? "mock",
     moderationStore: (process.env.MODERATION_STORE as ModerationStoreType) ?? "memory",
     strikeStore: (process.env.STRIKE_STORE as StrikeStoreType) ?? "memory",
     reviewQueueStore:
       (process.env.REVIEW_QUEUE_STORE as ReviewQueueStoreType) ?? "memory",
-    socialStore: (process.env.SOCIAL_STORE as SocialStoreType) ?? "memory",
     embeddingProvider:
       (process.env.EMBEDDING_PROVIDER as EmbeddingProviderType) ?? "mock",
     appStateStore: (process.env.APP_STATE_STORE as AppStateStoreType) ?? "memory",
@@ -199,6 +232,20 @@ function getProviderSelections(): ProviderSelections {
     guestUsageStore: (process.env.GUEST_USAGE_STORE as GuestUsageStoreType) ?? "memory",
     rateLimiter: (getRateLimitStoreSetting() as RateLimiterStoreType) ?? "memory",
   };
+}
+
+/** A module slot's selection: its setting, or its default when unset (as the core's slots). */
+function moduleSelection(slot: ModuleProviderSlot): string {
+  return process.env[slot.envVar] ?? slot.defaultValue;
+}
+
+/** The core's selections, then each registered module slot's under its slot name. */
+function getProviderSelections(): ProviderSelections {
+  const selections: Record<string, string> = { ...getCoreSelections() };
+  for (const { value: slot } of moduleSlots()) {
+    selections[slot.slot] = moduleSelection(slot);
+  }
+  return selections as ProviderSelections;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,83 +321,6 @@ function initRealtimeProvider(type: RealtimeProviderType): void {
         "REALTIME_PROVIDER=supabase but SUPABASE_URL missing — falling back to mock"
       );
     }
-    return;
-  }
-}
-
-function initTTSProvider(type: TTSProviderType): void {
-  if (type === "google") {
-    const apiKey =
-      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
-    if (!apiKey) {
-      logger.warn("TTS_PROVIDER=google but GOOGLE_API_KEY missing — TTS will fail");
-    }
-    return;
-  }
-}
-
-function initSTTProvider(type: STTProviderType): void {
-  if (type === "google") {
-    const apiKey =
-      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
-    if (!apiKey) {
-      logger.warn("STT_PROVIDER=google but GOOGLE_API_KEY missing — STT will fail");
-    }
-    return;
-  }
-}
-
-function initTranslationProvider(type: TranslationProviderType): void {
-  if (type === "google") {
-    const apiKey =
-      process.env.GOOGLE_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
-    if (!apiKey) {
-      logger.warn(
-        "TRANSLATION_PROVIDER=google but GOOGLE_API_KEY missing — translations will fail"
-      );
-    }
-    return;
-  }
-}
-
-function initSongIdProvider(type: SongIdProviderType): void {
-  if (type === "acrcloud") {
-    // TASK-042: single source of truth — do not read ACRCLOUD_* directly here.
-    const { host, accessKey: key, accessSecret: secret } = getAcrCloudConfig();
-
-    // TASK-041: construct and STORE the provider so the health probe (and anything
-    // else) uses the live instance rather than building its own.
-    if (host && key && secret) {
-      setSongIdProvider(new ACRCloudIdentifier());
-    } else {
-      setSongIdProvider(new MockSongIdentifier());
-    }
-
-    if (!host || !key || !secret) {
-      logger.warn(
-        "SONG_ID_PROVIDER=acrcloud but ACRCLOUD_HOST, ACRCLOUD_ACCESS_KEY, or ACRCLOUD_ACCESS_SECRET missing — song ID will fail"
-      );
-    }
-    return;
-  }
-
-  setSongIdProvider(new MockSongIdentifier());
-}
-
-function initAudioConverter(type: AudioConverterType): void {
-  if (type === "ffmpeg-service") {
-    const url = process.env.AUDIO_CONVERTER_URL ?? "";
-    const key = process.env.AUDIO_CONVERTER_KEY ?? "";
-
-    if (!url || !key) {
-      logger.warn(
-        "AUDIO_CONVERTER=ffmpeg-service but AUDIO_CONVERTER_URL or AUDIO_CONVERTER_KEY missing — conversion will fail"
-      );
-    }
-    return;
-  }
-
-  if (type === "passthrough") {
     return;
   }
 }
@@ -542,19 +512,6 @@ function initEffectLedger(type: EffectLedgerType): void {
   requireDurableStoreInProduction("EFFECT_LEDGER", "the effect ledger");
 }
 
-function initSocialStore(type: SocialStoreType): void {
-  if (isDurableStore(type)) {
-    // Fail closed (TASK-107): a silent memory fallback shared one membership across users and
-    // lost it on restart.
-    requireDatabase("SOCIAL_STORE", type, "an in-memory social store");
-    setSocialStore(new PostgresSocialStore());
-    return;
-  }
-
-  requireDurableStoreInProduction("SOCIAL_STORE", "groups and memberships");
-  setSocialStore(new InMemorySocialStore());
-}
-
 /**
  * ADR-053 D2/D7: where tenants and their domains are kept. Every request reads it (host →
  * tenant, tenant → state), so reads are cached per instance (CachedTenantDirectory, 30 s): a
@@ -587,6 +544,33 @@ function initEmbeddingProvider(type: EmbeddingProviderType): void {
   setEmbeddingProvider(createMockEmbeddingProvider());
 }
 
+/**
+ * A registered module's slot (ADR-054 D4), held to the core's rules: a durable selection without
+ * a database is refused (requireDatabase), any other selection of a durable slot is refused in
+ * production (requireDurableStoreInProduction), and only then does the module install its
+ * provider. A selection outside the slot's declared values is logged and passed on as given —
+ * the core's slots treat an unrecognised value the same way (as their non-durable default).
+ */
+function initModuleSlot(slot: ModuleProviderSlot, selection: string): void {
+  if (!slot.values.includes(selection)) {
+    logger.warn(
+      `${slot.envVar}="${selection}" is not one of ${slot.values.join(", ")} — passed to the slot as given`,
+      { route: "platform/providers/registry" }
+    );
+  }
+  if (slot.durable) {
+    if (slot.durable.selections.includes(selection)) {
+      requireDatabase(slot.envVar, selection, slot.durable.fallback);
+    } else {
+      requireDurableStoreInProduction(slot.envVar, slot.durable.noun);
+    }
+  }
+  slot.init(selection, {
+    env: process.env,
+    warn: (message) => logger.warn(message),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Central init
 // ---------------------------------------------------------------------------
@@ -609,19 +593,39 @@ export function initProviders(): ProviderSelections {
   // ADR-050 D1/D2: in production, refuse to boot on a test-double auth provider or a missing,
   // mis-shaped or duplicated setting — before any slot initializes. No-op outside production.
   assertEnvironmentContract();
+  // ADR-054 D4: a registered module that reuses a core name (a prompt, goal, rule, feature,
+  // agent, slot …) is refused here, at boot, rather than by the first request that reads it.
+  assertModuleContributions();
 
+  const core = getCoreSelections();
+  initCoreSlots(core);
+  for (const { value: slot } of moduleSlots()) {
+    initModuleSlot(slot, moduleSelection(slot));
+  }
+
+  // ADR-036 step 4 / ADR-039: register platform agents (the core's and the registered modules')
+  // and the adaptive reference on the boot path (makes real the invariant jest.setup mirrors).
+  // Registration needs no store, so it runs after the provider slots are live. Every registrar
+  // is idempotent.
+  registerPlatformAgents();
+  registerAdaptiveReference();
+  registerModuleContentTypes();
+  registerRagReference();
+
+  writeInitialized(true);
   const selections = getProviderSelections();
+  logger.info("Platform providers initialized", { ...selections });
 
+  return selections;
+}
+
+/** The core's slots, in dependency order (the cache before anything that caches, …). */
+function initCoreSlots(selections: CoreProviderSelections): void {
   initAuthProvider(selections.auth);
   initCacheProvider(selections.cache);
   initAIProvider(selections.ai);
   initErrorReporter(selections.errorReporter);
   initRealtimeProvider(selections.realtime);
-  initTranslationProvider(selections.translation);
-  initTTSProvider(selections.tts);
-  initSTTProvider(selections.stt);
-  initSongIdProvider(selections.songId);
-  initAudioConverter(selections.audioConverter);
   initModerationStore(selections.moderationStore);
   initStrikeStore(selections.strikeStore);
   initReviewQueueStore(selections.reviewQueueStore);
@@ -633,46 +637,8 @@ export function initProviders(): ProviderSelections {
   initGuestUsageStore(selections.guestUsageStore);
   initRateLimiter(selections.rateLimiter);
   initEffectLedger(selections.effectLedger);
-  initSocialStore(selections.socialStore);
   initTenantDirectory(getTenantDirectoryStoreSetting());
   initEmbeddingProvider(selections.embeddingProvider);
-
-  // ADR-036 step 4 / ADR-039: register platform agents and the adaptive reference on the
-  // boot path (makes real the invariant jest.setup mirrors). Registration needs no store,
-  // so it runs after the provider slots are live. Both registrars are idempotent.
-  registerPlatformAgents();
-  registerAdaptiveReference();
-  registerSocialContentTypes();
-  registerRagReference();
-
-  writeInitialized(true);
-  logger.info("Platform providers initialized", {
-    auth: selections.auth,
-    cache: selections.cache,
-    ai: selections.ai,
-    errorReporter: selections.errorReporter,
-    realtime: selections.realtime,
-    translation: selections.translation,
-    tts: selections.tts,
-    stt: selections.stt,
-    songId: selections.songId,
-    audioConverter: selections.audioConverter,
-    moderationStore: selections.moderationStore,
-    strikeStore: selections.strikeStore,
-    reviewQueueStore: selections.reviewQueueStore,
-    appStateStore: selections.appStateStore,
-    trajectoryStore: selections.trajectoryStore,
-    budgetStore: selections.budgetStore,
-    proposalStore: selections.proposalStore,
-    approvalPolicyStore: selections.approvalPolicyStore,
-    guestUsageStore: selections.guestUsageStore,
-    rateLimiter: selections.rateLimiter,
-    effectLedger: selections.effectLedger,
-    socialStore: selections.socialStore,
-    embeddingProvider: selections.embeddingProvider,
-  });
-
-  return selections;
 }
 
 /**
@@ -692,17 +658,18 @@ export function resetProviders(): void {
   // clearing — a module-scope binding vanished with the module. The registry outlives module
   // re-import by design, so a reset that does not clear leaves the previous run's providers
   // registered and the next test inherits them.
-  for (const key of PROVIDER_SINGLETON_KEYS) {
+  for (const key of providerSingletonKeys()) {
     resetSingleton(key);
   }
 }
 
 /**
- * Every singleton this registry writes to. Listed explicitly rather than derived: a slot
- * missing from here is a slot resetProviders() silently fails to clear, and an explicit list
- * can be checked against the registry's own selections by a test.
+ * Every singleton the core's slots write. Listed explicitly rather than derived: a slot missing
+ * from here is a slot resetProviders() silently fails to clear, and an explicit list can be
+ * checked against the registry's own selections by a test. A module's slots declare their own
+ * (ModuleProviderSlot.singletonKeys); providerSingletonKeys() is the whole set.
  */
-export const PROVIDER_SINGLETON_KEYS: readonly string[] = [
+export const CORE_PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.auth.provider",
   "platform.cache.provider",
   "platform.cache.aiCache",
@@ -713,8 +680,6 @@ export const PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.moderation.sentinel",
   "platform.moderation.strikeStore",
   "platform.moderation.reviewQueueStore",
-  "platform.social.store",
-  "platform.voice.songIdProvider",
   "platform.agents.trajectoryStore",
   "platform.agents.budgetTracker",
   "platform.agents.proposalStore",
@@ -727,3 +692,16 @@ export const PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.rag.userContextStore",
   "platform.tenancy.directory",
 ];
+
+/** Every singleton resetProviders() clears: the core's, then each registered module slot's. */
+export function providerSingletonKeys(): readonly string[] {
+  const moduleKeys = moduleSlots().flatMap(({ value }) => value.singletonKeys);
+  const all = [...CORE_PROVIDER_SINGLETON_KEYS, ...moduleKeys];
+  const shared = moduleKeys.filter((k) => CORE_PROVIDER_SINGLETON_KEYS.includes(k));
+  if (shared.length > 0) {
+    throw new Error(
+      `Module provider slots declare core singleton keys: ${shared.join(", ")} (ADR-054)`
+    );
+  }
+  return all;
+}

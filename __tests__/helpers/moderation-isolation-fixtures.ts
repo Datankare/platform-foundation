@@ -1,6 +1,7 @@
 /**
  * __tests__/helpers/moderation-isolation-fixtures.ts — tenant isolation fixtures for the
- * moderation and social stores (ADR-053 D8)
+ * moderation stores (ADR-053 D8); the social store's are the social module's
+ * (./social-isolation-fixtures.ts, ADR-054)
  *
  * One fixture set per store interface, run by runTenantIsolationContract against both the
  * in-memory store (memory tenants) and the Postgres store (database tenants). Records that must
@@ -19,7 +20,6 @@ import type {
   StrikeStore,
 } from "@/platform/moderation/types";
 import type { ReviewQueueStore } from "@/platform/moderation/review-types";
-import type { SocialStore } from "@/platform/social/types";
 
 /** A tenant for in-memory stores: a fresh random tenant id, no database. */
 export async function memoryTenant(): Promise<IsolationTenant> {
@@ -31,12 +31,13 @@ export async function memoryTenant(): Promise<IsolationTenant> {
 export const memoryUser = async (): Promise<string> =>
   "00000000-0000-4000-8000-00000000150a";
 
-function remember(map: Map<string, string[]>, key: string, id: string): void {
+/** Record an id a key was written with (shared with the modules' store fixtures). */
+export function remember(map: Map<string, string[]>, key: string, id: string): void {
   map.set(key, [...(map.get(key) ?? []), id]);
 }
 
 /** At least one id, so the store is always asked (an unknown one when none is known yet). */
-const orUnknown = (ids: Iterable<string>): string[] => {
+export const orUnknown = (ids: Iterable<string>): string[] => {
   const list = [...ids];
   return list.length > 0 ? list : [randomUUID()];
 };
@@ -156,37 +157,6 @@ export function reviewQueueIsolation(userFor: () => Promise<string>) {
           claimedAt: new Date().toISOString(),
         });
       }
-    },
-  };
-}
-
-export function socialIsolation(userFor: () => Promise<string>) {
-  const ids = new Map<string, string[]>();
-  return {
-    write: async (s: SocialStore, key: string) => {
-      const res = await s.createGroup({
-        name: key,
-        description: "isolation",
-        ownerId: await userFor(),
-      });
-      if (!res.success || !res.group) throw new Error(res.error ?? "group not created");
-      remember(ids, key, res.group.id);
-    },
-    read: async (s: SocialStore, key: string) => {
-      for (const id of orUnknown(ids.get(key) ?? [])) {
-        const hit = await s.getGroupById(id);
-        if (hit && hit.status === "active") return hit;
-      }
-      return null;
-    },
-    update: async (s: SocialStore, key: string) => {
-      for (const id of orUnknown(ids.get(key) ?? []))
-        await s.updateGroupStatus(id, "suspended");
-    },
-    // A group is never deleted; archiving takes it out of use.
-    remove: async (s: SocialStore, key: string) => {
-      for (const id of orUnknown(ids.get(key) ?? []))
-        await s.updateGroupStatus(id, "archived");
     },
   };
 }

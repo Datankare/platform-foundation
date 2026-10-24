@@ -25,17 +25,21 @@ jest.mock("@/platform/action-pipeline", () => ({
 
 import { runContentTypeContract } from "./contract/content-type-contract";
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
+import { CURATOR_CONTENT_TYPE } from "@/platform/social/content/curator-content";
 import {
-  registerSocialContentTypes,
-  CURATOR_CONTENT_TYPE,
-} from "@/platform/social/content/curator-content";
-import { listContentTypes } from "@/platform/content/registry";
+  hasContentType,
+  listContentTypes,
+  registerContentType,
+} from "@/platform/content/registry";
 
 // Register the reference content type + its host agent so the kit's runs resolve the host.
 // Idempotent; runs before any test in this file.
 beforeAll(() => {
   registerPlatformAgents();
-  registerSocialContentTypes();
+  // This file's own copy, built against the mocks above (jest.setup's registered modules are an
+  // isolated copy — ADR-054 note there).
+  if (!hasContentType(CURATOR_CONTENT_TYPE.name))
+    registerContentType(CURATOR_CONTENT_TYPE);
 });
 
 const SPECS = [

@@ -2,7 +2,9 @@
  * prompts/index.ts — Prompt registry with version resolution
  *
  * ADR-015: Prompts are first-class artifacts with version tracking.
- * All prompts are registered here — no inline prompt strings in routes.
+ * The core's prompts are registered here; a module's prompts are declared in its definition
+ * (ADR-054 D4 — e.g. the social agents' prompts, platform/social/module.ts) and added when the
+ * app registers it. No inline prompt strings in routes.
  *
  * Usage:
  *   import { getPromptConfig } from "@/prompts";
@@ -10,73 +12,64 @@
  *   // → { name, version, tier, maxTokens }
  */
 
-import { ModelTier } from "@/platform/ai/types";
+import { composeValues } from "@/platform/modules/compose";
+import type { PromptConfig } from "./types";
 import { SAFETY_CLASSIFY_V1 } from "./safety/classify-v1";
 import { ADMIN_COMMAND_BAR_V1 } from "./admin/command-bar-v1";
 import { CONFIG_MANAGER_V1 } from "./admin/config-manager-v1";
 import { CLASSIFY_AUDIO_V1 } from "./input/classify-audio-v1";
 import { RESOLVE_INTENT_V1 } from "./input/resolve-intent-v1";
-import { ANALYST_V1 } from "./social/analyst-v1";
-import { CONCIERGE_V1 } from "./social/concierge-v1";
-import { CURATOR_V1 } from "./social/curator-v1";
-import { GATEKEEPER_V1 } from "./social/gatekeeper-v1";
-import { MATCHMAKER_V1 } from "./social/matchmaker-v1";
 import { PACING_V1 } from "./adaptive/pacing-v1";
 import { STREAM_ASSISTANT_V1 } from "./assistant/stream-v1";
 
-// ---------------------------------------------------------------------------
-// Registry types
-// ---------------------------------------------------------------------------
-
-export interface PromptConfig {
-  name: string;
-  version: number;
-  tier: ModelTier;
-  maxTokens: number;
-  temperature?: number;
-}
+export type { PromptConfig } from "./types";
 
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
 /**
- * Prompt catalog — maps prompt names to their latest config.
- * When a new version is added (e.g., classify-v2), update the
- * entry here to point to the new version.
+ * The core's prompt catalog — each prompt's latest config. When a new version is added (e.g.,
+ * classify-v2), point its entry here at the new version.
  */
-const PROMPT_REGISTRY: Record<string, PromptConfig> = {
-  "safety-classify": SAFETY_CLASSIFY_V1,
-  "admin-command-bar": ADMIN_COMMAND_BAR_V1,
-  "config-manager": CONFIG_MANAGER_V1,
-  "classify-audio": CLASSIFY_AUDIO_V1,
-  "resolve-intent": RESOLVE_INTENT_V1,
-  analyst: ANALYST_V1,
-  concierge: CONCIERGE_V1,
-  curator: CURATOR_V1,
-  gatekeeper: GATEKEEPER_V1,
-  matchmaker: MATCHMAKER_V1,
-  "adaptive-pacing": PACING_V1,
-  "stream-assistant": STREAM_ASSISTANT_V1,
-};
+const CORE_PROMPTS: readonly PromptConfig[] = [
+  SAFETY_CLASSIFY_V1,
+  ADMIN_COMMAND_BAR_V1,
+  CONFIG_MANAGER_V1,
+  CLASSIFY_AUDIO_V1,
+  RESOLVE_INTENT_V1,
+  PACING_V1,
+  STREAM_ASSISTANT_V1,
+];
+
+/** The core's prompts then the registered modules', each name once (refused otherwise). */
+function registeredPrompts(): readonly PromptConfig[] {
+  return composeValues(
+    "prompt",
+    CORE_PROMPTS,
+    (p) => p.name,
+    (m) => m.prompts
+  );
+}
 
 /**
  * Get the current config for a named prompt.
  * Throws if the prompt name is not registered.
  */
 export function getPromptConfig(name: string): PromptConfig {
-  const config = PROMPT_REGISTRY[name];
+  const prompts = registeredPrompts();
+  const config = prompts.find((p) => p.name === name);
   if (!config) {
     throw new Error(
-      `Unknown prompt: "${name}". Registered prompts: ${Object.keys(PROMPT_REGISTRY).join(", ")}`
+      `Unknown prompt: "${name}". Registered prompts: ${prompts.map((p) => p.name).join(", ")}`
     );
   }
   return config;
 }
 
-/** List all registered prompt names */
+/** List all registered prompt names: the core's, then each registered module's. */
 export function listPrompts(): string[] {
-  return Object.keys(PROMPT_REGISTRY);
+  return registeredPrompts().map((p) => p.name);
 }
 
 // Re-export prompt builders for convenience

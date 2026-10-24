@@ -16,16 +16,7 @@
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 import type { ScreeningContext } from "./types";
 import { loadSeverityReduction } from "./config";
-
-const VALID_CONTENT_TYPES = new Set([
-  "translation",
-  "generation",
-  "transcription",
-  "extraction",
-  "profile",
-  "social",
-  "ai-output",
-]);
+import { isModerationContentType } from "./content-types";
 
 // ---------------------------------------------------------------------------
 // Severity ordering
@@ -86,7 +77,7 @@ export interface ContextEvaluation {
 export async function evaluateContext(
   context: ScreeningContext
 ): Promise<ContextEvaluation> {
-  if (!VALID_CONTENT_TYPES.has(context.contentType)) {
+  if (!isModerationContentType(context.contentType)) {
     return {
       severityReduction: 0,
       attributeToUser: true,

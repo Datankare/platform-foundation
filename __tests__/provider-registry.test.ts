@@ -395,7 +395,6 @@ describe(AUTH_COMPAT, () => {
       "APP_STATE_STORE",
       "TRAJECTORY_STORE",
       "BUDGET_STORE",
-      "SOCIAL_STORE",
       "GUEST_USAGE_STORE",
     ];
     it.each(
@@ -427,49 +426,9 @@ describe(AUTH_COMPAT, () => {
     jest.resetModules();
   });
 
-  describe("social store (TASK-107)", () => {
-    const boot = async (): Promise<() => void> => {
-      const { initProviders, resetProviders } =
-        await import("@/platform/providers/registry");
-      resetProviders();
-      return () => initProviders();
-    };
-
-    it("refuses supabase without credentials instead of falling back to memory", async () => {
-      setNodeEnv("test");
-      for (const v of [
-        "APP_STATE_STORE",
-        "TRAJECTORY_STORE",
-        "BUDGET_STORE",
-        "GUEST_USAGE_STORE",
-      ]) {
-        delete process.env[v];
-      }
-      process.env.SOCIAL_STORE = "supabase";
-      delete process.env.RATE_LIMIT_STORE;
-      noDatabase();
-      expect(await boot()).toThrow(/SOCIAL_STORE=supabase but DATABASE_URL is not set/);
-    });
-
-    it("refuses the memory store in production", async () => {
-      setNodeEnv("production");
-      realAuth();
-      for (const v of [
-        "APP_STATE_STORE",
-        "TRAJECTORY_STORE",
-        "BUDGET_STORE",
-        "GUEST_USAGE_STORE",
-        ...SAFETY_STORES,
-      ]) {
-        process.env[v] = "supabase";
-      }
-      database();
-      process.env.RATE_LIMIT_STORE = "supabase";
-      delete process.env.SOCIAL_STORE;
-      delete process.env.E2E_IN_MEMORY_STORES;
-      expect(await boot()).toThrow(/SOCIAL_STORE/);
-    });
-  });
+  // The social store (TASK-107) is the social module's durable slot: its refusals are tested
+  // with the module (__tests__/modules/social.module.test.ts) and the generic module-slot rules
+  // in __tests__/provider-registry-modules.test.ts (ADR-054 D4).
 
   describe("guest usage store (ADR-050 D4)", () => {
     const boot = async (): Promise<() => void> => {

@@ -16,11 +16,15 @@
  * All readers of these settings go through the resolvers below, so the value the contract
  * checks is the value the platform uses (TASK-103: two readers of one variable can disagree).
  *
- * Leaf module — no imports — so lib/ and platform/ readers can use it without an import cycle.
+ * Imports only the module registry (itself a leaf over the singleton carrier), so lib/ and
+ * platform/ readers can use it without an import cycle. A registered module's durable provider
+ * slots are checked like the core's (ADR-054 D4): their selectors require DATABASE_URL.
  * Error messages name settings, never values: some of them are secrets.
  *
  * @module platform/providers
  */
+
+import { getModules } from "@/platform/modules/registry";
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
@@ -239,14 +243,14 @@ export const TEST_DOUBLE_AUTH_PROVIDERS: ReadonlySet<string> = new Set(["mock"])
 export const SUPABASE_SELECTORS: readonly string[] = ["REALTIME_PROVIDER"];
 
 /**
- * Selections that make DATABASE_URL required (ADR-053 D4): every durable store is on Postgres,
- * selected with "postgres" (or "supabase", the same store on a Supabase project).
+ * The core's selections that make DATABASE_URL required (ADR-053 D4): every durable store is on
+ * Postgres, selected with "postgres" (or "supabase", the same store on a Supabase project).
+ * A registered module's durable slots are added by databaseSelectors().
  */
 export const DATABASE_SELECTORS: readonly string[] = [
   "MODERATION_STORE",
   "STRIKE_STORE",
   "REVIEW_QUEUE_STORE",
-  "SOCIAL_STORE",
   "APP_STATE_STORE",
   "TRAJECTORY_STORE",
   "BUDGET_STORE",
@@ -257,6 +261,31 @@ export const DATABASE_SELECTORS: readonly string[] = [
   "RATE_LIMIT_STORE",
   "TENANT_DIRECTORY_STORE",
 ];
+
+/** A selector and the selections of it that are a durable store. */
+interface DurableSelector {
+  readonly name: string;
+  readonly durable: readonly string[];
+}
+
+const CORE_DURABLE_SELECTIONS: readonly string[] = ["postgres", "supabase"];
+
+/** The core's durable selectors, then each registered module's durable provider slots. */
+function durableSelectors(): readonly DurableSelector[] {
+  return [
+    ...DATABASE_SELECTORS.map((name) => ({ name, durable: CORE_DURABLE_SELECTIONS })),
+    ...getModules().flatMap((m) =>
+      m.providers.flatMap((slot) =>
+        slot.durable ? [{ name: slot.envVar, durable: slot.durable.selections }] : []
+      )
+    ),
+  ];
+}
+
+/** Every selector that requires DATABASE_URL: the core's, then the registered modules'. */
+export function databaseSelectors(): readonly string[] {
+  return durableSelectors().map((s) => s.name);
+}
 
 /** Test-harness switches that must never reach a deployment. */
 export const HARNESS_ONLY_SETTINGS: readonly string[] = [
@@ -682,13 +711,13 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
       'DATABASE_SSL=disable is for local and CI runs only (DEPLOYMENT_HOST "local" or "ci")'
     );
   }
-  const durable = DATABASE_SELECTORS.filter((n) => {
-    const v = raw(env, n);
-    return v === "postgres" || v === "supabase";
+  const durable = durableSelectors().filter((s) => {
+    const v = raw(env, s.name);
+    return v !== undefined && s.durable.includes(v);
   });
   if (durable.length > 0 && db.url === undefined) {
     violations.push(
-      `DATABASE_URL is required (${durable.map((n) => `${n}=${raw(env, n)}`).join(", ")}) but not set`
+      `DATABASE_URL is required (${durable.map((s) => `${s.name}=${raw(env, s.name)}`).join(", ")}) but not set`
     );
   }
   // Operator paths — platform defaults, tenant lifecycle — run on the owner connection.

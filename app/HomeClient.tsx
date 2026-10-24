@@ -1,7 +1,8 @@
 /**
  * app/HomeClient.tsx — Protected home page
  *
- * Shows the current user identity and a sign-out button above the main app.
+ * Shows the current user identity and a sign-out button above the app's home — the consumer
+ * seam platform/modules/app-home.tsx, so this core page imports no module's UI (ADR-054).
  * Redirects to /auth if not authenticated (middleware handles this,
  * but this is a fallback for client-side navigation).
  */
@@ -11,7 +12,7 @@
 import { useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
-import SpikeApp from "@/components/SpikeApp";
+import AppHome from "@/platform/modules/app-home";
 
 export default function HomeClient() {
   const router = useRouter();
@@ -76,8 +77,8 @@ export default function HomeClient() {
         </button>
       </div>
 
-      {/* Main app */}
-      <SpikeApp />
+      {/* The app's home (consumer seam) */}
+      <AppHome />
     </div>
   );
 }

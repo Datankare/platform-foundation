@@ -15,7 +15,7 @@
  *   P7  — Provider abstraction: swappable via AUDIO_CONVERTER env var
  *   P11 — Graceful degradation: works offline, no external dependency
  *
- * @module platform/voice
+ * @module platform/voice/audio-convert
  */
 
 import type {

@@ -7,6 +7,11 @@
 
 import { evaluateContext, reduceSeverity } from "@/platform/moderation/context";
 import type { ScreeningContext } from "@/platform/moderation/types";
+import { CONTENT_KINDS_FIXTURE, withModules } from "./helpers/modules";
+
+// The content kinds screened here are declared by a fixture module (ADR-054 D4): the core
+// screens what the registered modules declare.
+withModules([CONTENT_KINDS_FIXTURE]);
 
 // Mock platform config
 jest.mock("@/platform/auth/platform-config", () => ({

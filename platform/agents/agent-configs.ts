@@ -1,8 +1,9 @@
 /**
  * platform/agents/agent-configs.ts — Platform agent configurations
  *
- * Registers all platform agents with the agent registry.
- * Called during provider initialization.
+ * The core's agents, and their registration with the registered modules' agents (ADR-054 D4 —
+ * a module's agents are declared in its definition, e.g. the five social agents in
+ * platform/social/module.ts). Called during provider initialization.
  *
  * P2:  Agents are configured, not coded
  * P12: Each agent has explicit budget constraints
@@ -13,18 +14,19 @@
 
 import type { AgentConfig, BudgetConfig } from "./types";
 import { registerAgent, hasAgent } from "./registry";
+import { composeValues } from "@/platform/modules/compose";
 
 // ── Budget presets ────────────────────────────────────────────────────
 
 /** Budget for agents that make LLM calls on every trigger */
-const HIGH_FREQUENCY_BUDGET: BudgetConfig = {
+export const HIGH_FREQUENCY_BUDGET: BudgetConfig = {
   maxCostPerTrajectory: 0.05,
   maxCostPerDay: 10.0,
   maxStepsPerTrajectory: 10,
 };
 
 /** Budget for agents that run periodically or on-demand */
-const SCHEDULED_BUDGET: BudgetConfig = {
+export const SCHEDULED_BUDGET: BudgetConfig = {
   maxCostPerTrajectory: 0.25,
   maxCostPerDay: 5.0,
   maxStepsPerTrajectory: 15,
@@ -33,62 +35,6 @@ const SCHEDULED_BUDGET: BudgetConfig = {
 // ── Agent definitions ─────────────────────────────────────────────────
 
 export const AGENT_CONFIGS: readonly AgentConfig[] = [
-  // ── Social agents ───────────────────────────────────────────────
-  {
-    id: "guardian-social",
-    name: "Guardian (Social)",
-    description:
-      "Screens all social content (group names, descriptions) for safety. Fail-closed.",
-    tools: [],
-    budgetConfig: HIGH_FREQUENCY_BUDGET,
-    effortTier: "low",
-  },
-  {
-    id: "matchmaker",
-    name: "Matchmaker",
-    description:
-      "Recommends groups based on user interests, activity, and language preferences.",
-    tools: [],
-    budgetConfig: SCHEDULED_BUDGET,
-    effortTier: "standard",
-  },
-  {
-    id: "gatekeeper",
-    name: "Gatekeeper",
-    description:
-      "Evaluates join requests against group criteria. Produces recommendations for admin review.",
-    tools: [],
-    budgetConfig: SCHEDULED_BUDGET,
-    effortTier: "standard",
-  },
-  {
-    id: "concierge",
-    name: "Concierge",
-    description:
-      "Onboards new group members with guided first-time actions via ActionItem[] contract.",
-    tools: [],
-    budgetConfig: SCHEDULED_BUDGET,
-    effortTier: "standard",
-  },
-  {
-    id: "analyst",
-    name: "Analyst",
-    description:
-      "Monitors group health, engagement metrics, and anomaly detection. Runs on schedule.",
-    tools: [],
-    budgetConfig: SCHEDULED_BUDGET,
-    effortTier: "standard",
-  },
-  {
-    id: "curator",
-    name: "Curator",
-    description:
-      "Creates personalized content digests and activity summaries for group members.",
-    tools: [],
-    budgetConfig: SCHEDULED_BUDGET,
-    effortTier: "standard",
-  },
-
   // ── Input agents ────────────────────────────────────────────────
   {
     id: "audio-classifier",
@@ -108,6 +54,19 @@ export const AGENT_CONFIGS: readonly AgentConfig[] = [
   },
 
   // ── Moderation agents ───────────────────────────────────────────
+  // Guardian screens every piece of content the platform handles, not only social content: it
+  // runs every screening under this id (platform/moderation/guardian.ts). The id predates the
+  // module split and is kept because trajectories, budgets and audit records carry it; the
+  // agent is the core's (ADR-054 — the social module's agents are its own five).
+  {
+    id: "guardian-social",
+    name: "Guardian (Social)",
+    description:
+      "Screens all social content (group names, descriptions) for safety. Fail-closed.",
+    tools: [],
+    budgetConfig: HIGH_FREQUENCY_BUDGET,
+    effortTier: "low",
+  },
   {
     id: "sentinel",
     name: "Sentinel",
@@ -156,12 +115,22 @@ export const AGENT_CONFIGS: readonly AgentConfig[] = [
 
 // ── Registration ──────────────────────────────────────────────────────
 
+/** The core's agents then each registered module's, each id once (refused otherwise). */
+export function listPlatformAgentConfigs(): readonly AgentConfig[] {
+  return composeValues(
+    "agent",
+    AGENT_CONFIGS,
+    (a) => a.id,
+    (m) => m.agents
+  );
+}
+
 /**
- * Register all platform agents.
+ * Register the core's agents and the registered modules' agents.
  * Safe to call multiple times — skips already-registered agents.
  */
 export function registerPlatformAgents(): void {
-  for (const config of AGENT_CONFIGS) {
+  for (const config of listPlatformAgentConfigs()) {
     if (!hasAgent(config.id)) {
       registerAgent(config);
     }

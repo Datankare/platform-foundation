@@ -31,7 +31,7 @@ export interface EvalCoverage {
 }
 
 export interface EvalSuite<Output> {
-  /** Registry name — must be in PROMPT_REGISTRY. */
+  /** Registry name — must be a registered prompt (listPrompts: the core's or a module's). */
   readonly prompt: string;
   /** Source file (relative to repo root) — the meta-test parses it to cross-check `coverage`. */
   readonly source: string;
@@ -39,4 +39,10 @@ export interface EvalSuite<Output> {
   readonly parse: (raw: string) => Output;
   readonly coverage: EvalCoverage;
   readonly cases: readonly EvalCase<Output>[];
+}
+
+/** Erase a suite's output type for heterogeneous storage; parse+assert stay internally
+ *  consistent, so the cast is safe. */
+export function defineSuite<O>(s: EvalSuite<O>): EvalSuite<unknown> {
+  return s as EvalSuite<unknown>;
 }

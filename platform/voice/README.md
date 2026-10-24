@@ -1,10 +1,25 @@
-# platform/voice — Voice & Audio Module
+# platform/voice — Voice, Song Identification and Audio Conversion
 
-Platform-level voice services: text-to-speech (TTS), speech-to-text (STT), voice pipeline orchestration, audio format conversion, and song identification.
+Three product modules share this directory until Sprint 7S moves them apart (ADR-054 D2). Each has
+its own public entry and definition, and its own files listed in `platform/modules/manifest.json`;
+the lint boundary allows each to import only the modules it declares.
+
+| Module          | Public entry       | Definition                | Depends on                 | Contents                                                      |
+| --------------- | ------------------ | ------------------------- | -------------------------- | ------------------------------------------------------------- |
+| `voice`         | `index.ts`         | `voice-module.ts`         | translation, audio-convert | TTS, STT, the voice pipeline, chunker, voices, their probes   |
+| `song-id`       | `song-id.ts`       | `song-id-module.ts`       | audio-convert              | Song identification providers, the active provider, its probe |
+| `audio-convert` | `audio-convert.ts` | `audio-convert-module.ts` | —                          | Canonical format, converters, readiness, probe                |
+
+Import a module through its entry: `@/platform/voice` (voice), `@/platform/voice/song-id`,
+`@/platform/voice/audio-convert`. `@/platform/voice` no longer re-exports song identification or
+audio conversion.
 
 ## Architecture
 
-All operations flow through provider interfaces registered in `platform/providers/registry.ts`. No direct API calls — swap providers via environment variables. All external HTTP calls use `fetchWithTimeout` from `@/lib/fetchWithTimeout`.
+All operations flow through provider interfaces whose slots the modules declare (registered by the
+app at boot — `platform/modules/app-modules.ts`; `platform/providers/registry.ts` installs them like
+its own). No direct API calls — swap providers via environment variables. All external HTTP calls
+use `fetchWithTimeout` from `@/lib/fetchWithTimeout`.
 
 ```
 Browser Audio (WebM/Opus)
@@ -32,14 +47,14 @@ This is a platform decision, not a provider decision. Benefits:
 
 See `audio-format-types.ts` for the `CANONICAL_FORMAT` constant and `AudioFormatConverter` interface.
 
-## Provider Registry Slots (10 total)
+## Provider Slots (declared by the modules)
 
-| Slot            | Env Var            | Options                             | Default |
-| --------------- | ------------------ | ----------------------------------- | ------- |
-| TTS             | `TTS_PROVIDER`     | google / mock                       | mock    |
-| STT             | `STT_PROVIDER`     | google / mock                       | mock    |
-| Song ID         | `SONG_ID_PROVIDER` | acrcloud / mock                     | mock    |
-| Audio Converter | `AUDIO_CONVERTER`  | ffmpeg-service / passthrough / mock | mock    |
+| Slot             | Module        | Env Var            | Options                             | Default |
+| ---------------- | ------------- | ------------------ | ----------------------------------- | ------- |
+| `tts`            | voice         | `TTS_PROVIDER`     | google / mock                       | mock    |
+| `stt`            | voice         | `STT_PROVIDER`     | google / mock                       | mock    |
+| `songId`         | song-id       | `SONG_ID_PROVIDER` | acrcloud / mock                     | mock    |
+| `audioConverter` | audio-convert | `AUDIO_CONVERTER`  | ffmpeg-service / passthrough / mock | mock    |
 
 ## Module Files
 
@@ -71,12 +86,26 @@ See `audio-format-types.ts` for the `CANONICAL_FORMAT` constant and `AudioFormat
 
 ### Orchestration
 
-| File              | Description                                                       |
-| ----------------- | ----------------------------------------------------------------- |
-| `pipeline.ts`     | VoicePipeline: STT → safety → translate → TTS (P15-P18 agentic)   |
-| `chunker.ts`      | TTS text chunking (5,000-byte Google limit)                       |
-| `voices.ts`       | Voice configs for 10 languages                                    |
-| `health-probe.ts` | Health checks for translation, TTS, STT, song ID, audio converter |
+| File              | Description                                                     |
+| ----------------- | --------------------------------------------------------------- |
+| `pipeline.ts`     | VoicePipeline: STT → safety → translate → TTS (P15-P18 agentic) |
+| `chunker.ts`      | TTS text chunking (5,000-byte Google limit)                     |
+| `voices.ts`       | Voice configs for 10 languages                                  |
+| `health-probe.ts` | Health checks for translation, TTS, STT (voice)                 |
+
+### Song identification (song-id)
+
+| File                  | Description                                                                |
+| --------------------- | -------------------------------------------------------------------------- |
+| `song-id-provider.ts` | The active provider (`getSongIdProvider` / `setSongIdProvider`)            |
+| `song-id-health.ts`   | `checkSongIdHealth`, `SongIdHealthProbeAdapter` (registered by the module) |
+
+### Audio conversion (audio-convert)
+
+| File                           | Description                                                               |
+| ------------------------------ | ------------------------------------------------------------------------- |
+| `audio-convert-health.ts`      | `checkAudioConverterHealth`                                               |
+| `audio-converter-readiness.ts` | `isAudioConverterReady` — what music identification and audio upload need |
 
 ## Song Identification
 
@@ -98,7 +127,7 @@ See `audio-format-types.ts` for the `CANONICAL_FORMAT` constant and `AudioFormat
 
 ### Rate Limiting (P13)
 
-`SONG_IDENTIFY` rule in `platform/rate-limit/types.ts`: 10 identifications per user per hour. The consumer's identification route enforces it with `enforceRateLimit(request, DEFAULT_RULES.SONG_IDENTIFY, { actorId })` (ADR-052).
+`SONG_IDENTIFY_RULE` (`identify-types.ts`, exported by `@/platform/voice/song-id`): 10 identifications per user per hour, registered by the song-id module (it was `DEFAULT_RULES.SONG_IDENTIFY` in the core until ADR-054). The consumer's identification route enforces it with `enforceRateLimit(request, SONG_IDENTIFY_RULE, { actorId })` (ADR-052).
 
 ### Cost Tracking (P5)
 
@@ -145,20 +174,21 @@ See `pipeline.ts` and ADR-019 for full architecture.
 
 ## Health Probes
 
-| Probe           | Function                      | Notes                      |
-| --------------- | ----------------------------- | -------------------------- |
-| Translation     | `checkTranslationHealth()`    | Translates known phrase    |
-| TTS             | `checkTTSHealth()`            | Synthesizes short phrase   |
-| STT             | `checkSTTHealth()`            | Sends silent audio clip    |
-| Song ID         | `checkSongIdHealth()`         | Sends minimal audio buffer |
-| Audio Converter | `checkAudioConverterHealth()` | Converts minimal WAV       |
+| Probe           | Function                      | Module        | Notes                      |
+| --------------- | ----------------------------- | ------------- | -------------------------- |
+| Translation     | `checkTranslationHealth()`    | voice         | Translates known phrase    |
+| TTS             | `checkTTSHealth()`            | voice         | Synthesizes short phrase   |
+| STT             | `checkSTTHealth()`            | voice         | Sends silent audio clip    |
+| Song ID         | `checkSongIdHealth()`         | song-id       | Sends minimal audio buffer |
+| Audio Converter | `checkAudioConverterHealth()` | audio-convert | Converts minimal WAV       |
 
-All probes distinguish connectivity errors (unhealthy) from validation errors (healthy — provider is reachable).
+All probes distinguish connectivity errors (unhealthy) from validation errors (healthy — provider is reachable) through the core's `probeResponsive` (`platform/observability/provider-health.ts`). The song-id module registers its probe for `/api/health` (`healthProbes` in its definition), cached for 15 minutes because each check is a billable identify call (audit X-13).
 
 ## ADRs
 
 - **ADR-019** — Voice Pipeline Architecture
 - **ADR-020** — Song Identification Architecture
+- **ADR-054** — The foundation core and optional product modules
 
 ## GenAI Principles
 

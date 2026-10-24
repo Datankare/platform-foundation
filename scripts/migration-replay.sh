@@ -8,8 +8,9 @@
 # share that number range but are not the platform's, so the baseline never contains them; they
 # are replayed after it like any newer migration (TASK-119).
 #
-# Uses the standard PG* environment (PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE) and
-# expects an EMPTY database. CI runs it against a pgvector Postgres service; locally:
+# Migrations are applied core first, then the selected product modules' (REPLAY_MODULES, default
+# all — ADR-054 D5). Uses the standard PG* environment (PGHOST, PGPORT, PGUSER, PGPASSWORD,
+# PGDATABASE) and expects an EMPTY database. CI runs it against a pgvector Postgres service; locally:
 #   PGDATABASE=replay scripts/migration-replay.sh
 set -euo pipefail
 
@@ -54,8 +55,13 @@ SQL
 step "baseline (covers 001–$through)"
 "${PSQL[@]}" --single-transaction -f "$BASELINE" >/dev/null
 
+# ADR-054 D5: the core's migrations, then each selected module's (REPLAY_MODULES, comma-separated;
+# default: every module in platform/modules/manifest.json), modules in dependency order — the order
+# scripts/module-manifest.cjs computes. A module's migrations are listed in its manifest entry.
+order=$(node "$ROOT/scripts/module-manifest.cjs" --replay-order "${REPLAY_MODULES:-}") || {
+  echo "✗ migration order (platform/modules/manifest.json)"; exit 1; }
 applied=0
-for f in $(ls "$ROOT/supabase/migrations" | grep -E '^[0-9]+_.*\.sql$' | sort); do
+for f in $order; do
   if ! grep -qF "('$f', 'verified'" "$BASELINE"; then
     step "migration $f"
     "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null

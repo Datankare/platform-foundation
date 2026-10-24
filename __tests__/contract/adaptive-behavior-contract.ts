@@ -30,7 +30,7 @@ import {
   type AdaptiveMemory,
   type AdaptiveEffectRequest,
 } from "@/platform/adaptive";
-import { EVAL_SUITES } from "@/prompts/evals";
+import { listEvalSuites } from "@/prompts/evals";
 
 export interface AdaptiveBehaviorContractSpec<TInput, TDecision> {
   /** The registered behavior under test. */
@@ -198,7 +198,7 @@ export function runAdaptiveBehaviorContract<TInput, TDecision>(
     });
 
     it("the behavior's prompt has an authored eval suite (ADR-038)", () => {
-      expect(EVAL_SUITES.map((s) => s.prompt)).toContain(behavior.name);
+      expect(listEvalSuites().map((s) => s.prompt)).toContain(behavior.name);
     });
   });
 }

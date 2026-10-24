@@ -16,6 +16,7 @@
 
 import { getConfig } from "@/platform/auth/platform-config";
 import type { ContentRatingLevel, ContentRatingThresholds, ContentType } from "./types";
+import { allowsSeverityReduction } from "./content-types";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 
 // ---------------------------------------------------------------------------
@@ -113,16 +114,15 @@ export async function loadContentRatingThresholds(
 
 /**
  * Load the severity reduction for a given content type.
- * Translation, transcription, and extraction get reduced severity
- * because the user is processing existing content, not generating harmful content.
+ * Kinds declared with severityReduction (extraction; translation and transcription from their
+ * modules — ./content-types.ts) get reduced severity because the user is processing existing
+ * content, not generating harmful content.
  *
  * Returns 0 (no reduction) if config is unavailable (fail-closed).
  */
 export async function loadSeverityReduction(contentType: ContentType): Promise<number> {
-  // Only certain content types get severity reduction
-  const reductionTypes: ContentType[] = ["translation", "transcription", "extraction"];
-
-  if (!reductionTypes.includes(contentType)) {
+  // Only kinds declared with a reduction; an undeclared kind never gets one.
+  if (!allowsSeverityReduction(contentType)) {
     return 0;
   }
 

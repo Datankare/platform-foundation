@@ -16,7 +16,10 @@ Two lanes over every registered prompt:
      this equals the union in `source`, so it cannot fall behind the contract),
    - `cases` — one tagged, passing case per enum member, plus `failclosed:*`, `boundary:*`, and
      `adversarial:*` cases. Fixtures are raw model strings; assertions run on the parsed output.
-2. Add it to `EVAL_SUITES` in `index.ts` and remove the prompt from `PENDING_EVAL`.
+2. A core prompt's suite: add it to `CORE_EVAL_SUITES` in `index.ts`. A module prompt's suite: add it
+   to the module's definition (`evals`, e.g. `platform/social/module.ts`) — the suite must be for
+   one of that module's prompts (ADR-054 D4). `listEvalSuites()` is both. Remove the prompt from
+   `PENDING_EVAL`.
 
 The meta-test fails the build if any registered prompt is neither covered nor pending, if
 `PENDING_EVAL` has stale entries, if declared enums don't match the source, if an enum member

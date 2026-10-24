@@ -29,7 +29,7 @@ import { registerContentType } from "@/platform/content/registry";
 import { routeContentEffect } from "@/platform/content/effect";
 import type { ContentEffectRequest } from "@/platform/content/effect";
 import type { ContentType } from "@/platform/content/types";
-import { EVAL_SUITES } from "@/prompts/evals";
+import { listEvalSuites } from "@/prompts/evals";
 
 export interface ContentTypeContractSpec<TInput, TContent> {
   /** The registered content type under test. */
@@ -214,7 +214,7 @@ export function runContentTypeContract<TInput, TContent>(
     });
 
     it("the content type's prompt has an authored eval suite (ADR-038)", () => {
-      expect(EVAL_SUITES.map((s) => s.prompt)).toContain(contentType.name);
+      expect(listEvalSuites().map((s) => s.prompt)).toContain(contentType.name);
     });
   });
 }

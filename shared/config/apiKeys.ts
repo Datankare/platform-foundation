@@ -9,3 +9,13 @@ export function getAnthropicApiKey(): string {
   if (!key) throw new Error("ANTHROPIC_API_KEY is not configured");
   return key;
 }
+
+/**
+ * The Google API key as the translation and voice provider slots check it at boot:
+ * GOOGLE_API_KEY, else NEXT_PUBLIC_GOOGLE_API_KEY, else "" (missing — the slot warns).
+ */
+export function getGoogleApiKeySetting(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): string {
+  return env.GOOGLE_API_KEY ?? env.NEXT_PUBLIC_GOOGLE_API_KEY ?? "";
+}

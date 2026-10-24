@@ -53,6 +53,10 @@ const EXPECTED_EXPORTS = [
   "mostRestrictive",
   "setModalityClassifiers",
   "resetModalityClassifiers",
+  // ADR-054 D4 — content kinds: the core's and the registered modules'
+  "CORE_MODERATION_CONTENT_TYPES",
+  "isModerationContentType",
+  "listModerationContentTypes",
 ].sort();
 
 describe("platform/moderation — public API surface", () => {

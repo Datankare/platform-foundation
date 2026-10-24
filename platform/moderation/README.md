@@ -36,15 +36,19 @@ Step 4: decide              (commitment) — final action with human-readable re
 
 ## Content Types
 
-| Type            | Behavior                                                               | User Strikes |
-| --------------- | ---------------------------------------------------------------------- | ------------ |
-| `translation`   | Severity reduced (configurable) — user is translating existing content | Yes          |
-| `generation`    | Standard — user is creating content                                    | Yes          |
-| `transcription` | Severity reduced — STT artifacts cause false positives                 | Yes          |
-| `extraction`    | Severity reduced — content is from uploaded document                   | Yes          |
-| `profile`       | Standard (future: stricter URL/impersonation patterns)                 | Yes          |
-| `social`        | Standard (future: conversation thread context)                         | Yes          |
-| `ai-output`     | Standard — but **no user strikes** on block (platform quality issue)   | No           |
+The core's kinds (`CORE_MODERATION_CONTENT_TYPES`, `content-types.ts`) and those a registered
+module declares (ADR-054 D4). A kind no one declares is screened as `generation` — no reduction,
+strikes attributed.
+
+| Type            | Declared by | Behavior                                                               | User Strikes |
+| --------------- | ----------- | ---------------------------------------------------------------------- | ------------ |
+| `generation`    | core        | Standard — user is creating content                                    | Yes          |
+| `extraction`    | core        | Severity reduced — content is from uploaded document                   | Yes          |
+| `profile`       | core        | Standard (future: stricter URL/impersonation patterns)                 | Yes          |
+| `ai-output`     | core        | Standard — but **no user strikes** on block (platform quality issue)   | No           |
+| `translation`   | translation | Severity reduced (configurable) — user is translating existing content | Yes          |
+| `transcription` | voice       | Severity reduced — STT artifacts cause false positives                 | Yes          |
+| `social`        | social      | Standard (future: conversation thread context)                         | Yes          |
 
 ## Configuration
 

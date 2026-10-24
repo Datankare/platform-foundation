@@ -95,6 +95,10 @@ const EXPECTED_EXPORTS = [
   "heldActionRefusal",
   "principalOf",
   "resumeApprovedAction",
+  // ADR-054 D4 — workflow goals: the core's and the registered modules'
+  "CORE_AGENT_GOALS",
+  "isAgentGoal",
+  "listAgentGoals",
 ].sort();
 
 describe("platform/agents — public API surface", () => {

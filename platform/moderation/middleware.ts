@@ -30,7 +30,7 @@
  *     direction: "input",
  *     requestId: "req-123",
  *     context: {
- *       contentType: "translation",
+ *       contentType: "generation",
  *       contentRatingLevel: 2,
  *       userId: "user-456",
  *       sourceLanguage: "ar",

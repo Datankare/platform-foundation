@@ -80,7 +80,7 @@ describe("adaptive-pacing reference — activation (ADR-036 step 4)", () => {
     expect(listAgents()).toContain("adaptive-pacing-host");
     // and the platform agents — the gap the jest.setup comment described, now real
     expect(listAgents()).toEqual(
-      expect.arrayContaining(["guardian-social", "gatekeeper", "conductor"])
+      expect.arrayContaining(["guardian-social", "sentinel", "conductor"])
     );
   });
 

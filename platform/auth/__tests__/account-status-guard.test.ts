@@ -156,7 +156,7 @@ describe("checkAccountStatus", () => {
   // ── Active users ────────────────────────────────────────────────────
 
   it("allows active user for any feature", async () => {
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(true);
     expect(result.accountStatus).toBe("active");
   });
@@ -170,7 +170,7 @@ describe("checkAccountStatus", () => {
 
   it("allows warned user for any feature", async () => {
     setupUserState({ account_status: "warned" });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(true);
     expect(result.accountStatus).toBe("warned");
   });
@@ -182,7 +182,7 @@ describe("checkAccountStatus", () => {
       account_status: "restricted",
       restricted_until: hoursFromNow(12),
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("restricted");
     expect(result.reason).toMatch(/restricted/i);
@@ -203,7 +203,7 @@ describe("checkAccountStatus", () => {
       account_status: "restricted",
       restricted_until: hoursAgo(1),
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(true);
     expect(result.reason).toMatch(/expired/i);
   });
@@ -213,7 +213,7 @@ describe("checkAccountStatus", () => {
       account_status: "restricted",
       restricted_until: null,
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
   });
 
@@ -224,7 +224,7 @@ describe("checkAccountStatus", () => {
       account_status: "suspended",
       suspended_until: hoursFromNow(24),
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("suspended");
     expect(result.reason).toMatch(/suspended/i);
@@ -235,7 +235,7 @@ describe("checkAccountStatus", () => {
       account_status: "suspended",
       suspended_until: hoursAgo(1),
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(true);
     expect(result.reason).toMatch(/expired/i);
   });
@@ -245,7 +245,7 @@ describe("checkAccountStatus", () => {
       account_status: "suspended",
       suspended_until: null,
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
   });
 
@@ -256,7 +256,7 @@ describe("checkAccountStatus", () => {
       account_status: "banned",
       banned_at: hoursAgo(48),
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("banned");
     expect(result.reason).toMatch(/permanently suspended/i);
@@ -268,7 +268,7 @@ describe("checkAccountStatus", () => {
     mockSupabase.from.mockReturnValue(
       createChainMock({ data: null, error: { message: "DB down" } })
     );
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("banned");
   });
@@ -296,7 +296,7 @@ describe("checkAccountStatus", () => {
   it("provisions a user with no row, then allows from the stored row", async () => {
     usersReads(null, ACTIVE_ROW);
     mockEnsureProvisioned.mockResolvedValue("created");
-    const result = await checkAccountStatus(VALID_USER_ID, "translate", {
+    const result = await checkAccountStatus(VALID_USER_ID, "generate", {
       email: "a@b.com",
       emailVerified: true,
     });
@@ -310,28 +310,28 @@ describe("checkAccountStatus", () => {
 
   it("does not provision a user who already has a row", async () => {
     usersReads(ACTIVE_ROW);
-    await checkAccountStatus(VALID_USER_ID, "translate");
+    await checkAccountStatus(VALID_USER_ID, "generate");
     expect(mockEnsureProvisioned).not.toHaveBeenCalled();
   });
 
   it("refuses as not provisioned — never as banned — when provisioning fails", async () => {
     usersReads(null);
     mockEnsureProvisioned.mockResolvedValue("failed");
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result).toMatchObject({ allowed: false, code: "account.not_provisioned" });
   });
 
   it("refuses as not provisioned when the row is still missing after provisioning", async () => {
     usersReads(null, null);
     mockEnsureProvisioned.mockResolvedValue("existing");
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result).toMatchObject({ allowed: false, code: "account.not_provisioned" });
   });
 
   it("allows when no database is configured (mock/CI)", async () => {
     usersReads(null);
     mockEnsureProvisioned.mockResolvedValue("skipped");
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result).toMatchObject({ allowed: true, accountStatus: "active" });
   });
 
@@ -339,7 +339,7 @@ describe("checkAccountStatus", () => {
     mockSupabase.from.mockReturnValue(
       createChainMock({ data: null, error: { message: "DB down" } })
     );
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
     expect(mockEnsureProvisioned).not.toHaveBeenCalled();
   });
@@ -348,7 +348,7 @@ describe("checkAccountStatus", () => {
     mockSupabase.from.mockImplementation(() => {
       throw new Error("Connection refused");
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("banned");
   });
@@ -358,14 +358,14 @@ describe("checkAccountStatus", () => {
     mockSupabase.from.mockImplementation(() => {
       throw new Error("no database");
     });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result).toMatchObject({ allowed: true, accountStatus: "active" });
     mockHasDatabase.mockReturnValue(true);
   });
 
   it("fails closed when account_status is unknown value", async () => {
     setupUserState({ account_status: "hacked" });
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("banned");
   });
@@ -376,21 +376,21 @@ describe("checkAccountStatus", () => {
       restricted_until: hoursFromNow(12),
     });
     mockGetConfig.mockRejectedValue(new Error("Config DB down"));
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(false);
   });
 
   // ── Input validation ────────────────────────────────────────────────
 
   it("rejects invalid userId format", async () => {
-    const result = await checkAccountStatus("not-a-uuid", "translate");
+    const result = await checkAccountStatus("not-a-uuid", "generate");
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/Invalid user ID/);
     expect(mockSupabase.from).not.toHaveBeenCalled();
   });
 
   it("rejects empty userId", async () => {
-    const result = await checkAccountStatus("", "translate");
+    const result = await checkAccountStatus("", "generate");
     expect(result.allowed).toBe(false);
     expect(result.reason).toMatch(/Invalid user ID/);
   });
@@ -416,7 +416,7 @@ describe("checkAccountStatus", () => {
     it("allows an active user a feature NOT on their block-list", async () => {
       setPerAccountRestrictions(["agent_delegate"]);
       setupUserState({ account_status: "active" });
-      const result = await checkAccountStatus(VALID_USER_ID, "translate");
+      const result = await checkAccountStatus(VALID_USER_ID, "generate");
       expect(result.allowed).toBe(true);
     });
 
@@ -426,7 +426,7 @@ describe("checkAccountStatus", () => {
       expect((await checkAccountStatus(VALID_USER_ID, "upload_file")).allowed).toBe(
         false
       );
-      expect((await checkAccountStatus(VALID_USER_ID, "translate")).allowed).toBe(true);
+      expect((await checkAccountStatus(VALID_USER_ID, "generate")).allowed).toBe(true);
     });
 
     it("takes precedence over the status path (blocked feature denies a restricted user at the per-account step)", async () => {
@@ -445,7 +445,7 @@ describe("checkAccountStatus", () => {
     it("fails CLOSED when the block-list cannot be read (DB error)", async () => {
       setPerAccountRestrictions([], { error: { message: "db down" } });
       setupUserState({ account_status: "active" });
-      const result = await checkAccountStatus(VALID_USER_ID, "translate");
+      const result = await checkAccountStatus(VALID_USER_ID, "generate");
       expect(result.allowed).toBe(false);
       expect(result.reason).toMatch(/could not be verified/i);
     });
@@ -475,14 +475,14 @@ describe("checkAccountStatus — known-feature fail-closed", () => {
   });
 
   it("denies a feature not in the registered fallback set", async () => {
-    setKnownFeaturesFallback(["translate", "tts"]);
+    setKnownFeaturesFallback(["generate", "tts"]);
     const result = await checkAccountStatus(VALID_USER_ID, "no_such_feature");
     expect(result.allowed).toBe(false);
   });
 
   it("allows a feature that is in the registered fallback set", async () => {
-    setKnownFeaturesFallback(["translate", "tts"]);
-    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    setKnownFeaturesFallback(["generate", "tts"]);
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result.allowed).toBe(true);
   });
 

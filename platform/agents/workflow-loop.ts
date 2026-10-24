@@ -43,6 +43,7 @@ import { getTrajectoryStore } from "./trajectory-store";
 import { getProposalStore } from "./proposal-store";
 import { approvalPolicy, principalOf } from "./gating";
 import { getApprovalPolicyStore } from "./approval-policy-store";
+import { isAgentGoal, listAgentGoals } from "./goals";
 
 // ── Definition ────────────────────────────────────────────────────────
 
@@ -106,8 +107,17 @@ function registry(): Map<string, WorkflowDefinition> {
   );
 }
 
-/** Register a workflow definition. Throws on a duplicate goal. */
+/**
+ * Register a workflow definition. Throws on a goal neither the core nor a registered module
+ * declares (ADR-054 D4), on a duplicate goal, and on a workflow with no steps.
+ */
 export function registerWorkflow(definition: WorkflowDefinition): void {
+  if (!isAgentGoal(definition.goal)) {
+    throw new Error(
+      `workflow goal ${definition.goal} is not declared by the core or a registered module ` +
+        `(declared: ${listAgentGoals().join(", ")})`
+    );
+  }
   if (definition.steps.length === 0) {
     throw new Error(`workflow ${definition.goal} declares no steps`);
   }

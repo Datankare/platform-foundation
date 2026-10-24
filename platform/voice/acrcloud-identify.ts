@@ -22,7 +22,7 @@
  *   P17 — IDENTIFY_INTENT in result
  *   P18 — trajectoryId/stepIndex passed through
  *
- * @module platform/voice
+ * @module platform/voice/song-id
  */
 
 import { createHmac } from "crypto";

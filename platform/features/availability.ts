@@ -5,6 +5,10 @@
  * it, and its route refuses with `feature.not_configured` instead of attempting and failing with
  * "please try again". Availability is computed from the same settings the providers read.
  *
+ * The core declares its own features here (SSO). A product feature — music identification,
+ * audio upload, speech input, Teams — is declared by its module (ADR-054 D4) and joins the list
+ * when the app registers the module; a feature of a module the app does not run is not offered.
+ *
  * `preview` marks a feature that is offered but not yet real (it shows sample data); the UI
  * labels it as a preview.
  *
@@ -13,48 +17,24 @@
  * @module platform/features
  */
 
-import { getAcrCloudConfig } from "@/platform/voice/acrcloud-identify";
 import {
   getAuthProviderSetting,
   getCognitoSettings,
   getSsoProviders,
+  type EnvSource,
   type SsoProviderId,
 } from "@/platform/providers/environment-contract";
+import { composeValues } from "@/platform/modules/compose";
+import type { FeatureRequirement, FeatureStatus } from "@/platform/modules/types";
 
-export type FeatureId =
-  | "music_identification"
-  | "audio_upload"
-  | "speech_input"
-  | "teams"
-  | "sso_google"
-  | "sso_apple"
-  | "sso_microsoft";
+export type { FeatureRequirement, FeatureStatus } from "@/platform/modules/types";
+export type { EnvSource } from "@/platform/providers/environment-contract";
 
-export interface FeatureStatus {
-  readonly available: boolean;
-  /** Offered, but showing sample data — label it (e.g. Teams until TASK-108). */
-  readonly preview?: boolean;
-}
+/** The core's own optional features. */
+export type CoreFeatureId = "sso_google" | "sso_apple" | "sso_microsoft";
 
-export type EnvSource = Readonly<Record<string, string | undefined>>;
-
-function set(env: EnvSource, name: string): boolean {
-  const v = env[name];
-  return typeof v === "string" && v.trim() !== "";
-}
-
-/** An audio converter that actually converts (ffmpeg-service with its URL and key). */
-function converterReady(env: EnvSource): boolean {
-  return (
-    env.AUDIO_CONVERTER === "ffmpeg-service" &&
-    set(env, "AUDIO_CONVERTER_URL") &&
-    set(env, "AUDIO_CONVERTER_KEY")
-  );
-}
-
-function googleSpeechReady(env: EnvSource): boolean {
-  return set(env, "GOOGLE_API_KEY") || set(env, "NEXT_PUBLIC_GOOGLE_API_KEY");
-}
+/** A feature id: the core's, or one a registered module declares. */
+export type FeatureId = CoreFeatureId | (string & {});
 
 /**
  * SSO through the Cognito hosted sign-in (TASK-101): Cognito auth with its pool and client, the
@@ -77,55 +57,43 @@ function ssoReady(env: EnvSource, provider: SsoProviderId): FeatureStatus {
 const SSO_NEEDS =
   "AUTH_PROVIDER=cognito with its pool and client ids, NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN, and the provider in SSO_PROVIDERS (enabled on the Cognito app client)";
 
-/** What each optional feature needs. */
-export const FEATURE_REQUIREMENTS: Readonly<
-  Record<
-    FeatureId,
-    { readonly needs: string; readonly check: (env: EnvSource) => FeatureStatus }
-  >
-> = {
-  music_identification: {
-    needs:
-      "SONG_ID_PROVIDER=acrcloud with ACRCLOUD_HOST / ACRCLOUD_ACCESS_KEY / ACRCLOUD_ACCESS_SECRET, and AUDIO_CONVERTER=ffmpeg-service with AUDIO_CONVERTER_URL / AUDIO_CONVERTER_KEY",
-    check: (env) => {
-      const acr = getAcrCloudConfig(env);
-      return {
-        available:
-          env.SONG_ID_PROVIDER === "acrcloud" &&
-          [acr.host, acr.accessKey, acr.accessSecret].every((v) => v.trim() !== "") &&
-          converterReady(env),
-      };
-    },
-  },
-  audio_upload: {
-    needs:
-      "a speech key (GOOGLE_API_KEY) and AUDIO_CONVERTER=ffmpeg-service with AUDIO_CONVERTER_URL / AUDIO_CONVERTER_KEY (uploaded files need converting)",
-    check: (env) => ({ available: googleSpeechReady(env) && converterReady(env) }),
-  },
-  speech_input: {
-    needs: "a speech key (GOOGLE_API_KEY)",
-    check: (env) => ({ available: googleSpeechReady(env) }),
-  },
-  teams: {
-    needs:
-      "nothing — sample data until TASK-108 defines participation (offered as a preview)",
-    check: () => ({ available: true, preview: true }),
-  },
-  sso_google: { needs: SSO_NEEDS, check: (env) => ssoReady(env, "google") },
-  sso_apple: { needs: SSO_NEEDS, check: (env) => ssoReady(env, "apple") },
-  sso_microsoft: { needs: SSO_NEEDS, check: (env) => ssoReady(env, "microsoft") },
-};
+/** What each of the core's optional features needs. */
+export const CORE_FEATURE_REQUIREMENTS: readonly FeatureRequirement[] = Object.freeze([
+  { id: "sso_google", needs: SSO_NEEDS, check: (env) => ssoReady(env, "google") },
+  { id: "sso_apple", needs: SSO_NEEDS, check: (env) => ssoReady(env, "apple") },
+  { id: "sso_microsoft", needs: SSO_NEEDS, check: (env) => ssoReady(env, "microsoft") },
+]);
 
+/** The core's features then each registered module's, each id once (refused otherwise). */
+export function listFeatureRequirements(): readonly FeatureRequirement[] {
+  return composeValues(
+    "feature",
+    CORE_FEATURE_REQUIREMENTS,
+    (f) => f.id,
+    (m) => m.features
+  );
+}
+
+/** What a feature needs, or undefined for a feature neither the core nor a module declares. */
+export function getFeatureRequirement(id: FeatureId): FeatureRequirement | undefined {
+  return listFeatureRequirements().find((f) => f.id === id);
+}
+
+/** Every registered feature's status, keyed by feature id — the body of GET /api/features. */
 export function featureAvailability(
   env: EnvSource = process.env
-): Record<FeatureId, FeatureStatus> {
-  const out = {} as Record<FeatureId, FeatureStatus>;
-  for (const id of Object.keys(FEATURE_REQUIREMENTS) as FeatureId[]) {
-    out[id] = FEATURE_REQUIREMENTS[id].check(env);
+): Record<string, FeatureStatus> {
+  const out: Record<string, FeatureStatus> = {};
+  for (const feature of listFeatureRequirements()) {
+    out[feature.id] = feature.check(env);
   }
   return out;
 }
 
+/**
+ * Whether a feature is offered. A feature no registered module declares is not (fail closed):
+ * its route refuses with feature.not_configured, as for a module whose settings are absent.
+ */
 export function isFeatureAvailable(id: FeatureId, env: EnvSource = process.env): boolean {
-  return FEATURE_REQUIREMENTS[id].check(env).available;
+  return getFeatureRequirement(id)?.check(env).available ?? false;
 }

@@ -40,6 +40,10 @@ import {
 } from "@/platform/action-pipeline";
 import type { AgentIdentity, ProposalRecord, Tool } from "@/platform/kernel";
 import { generateSecureId } from "../utils";
+import { withModules, WORKFLOW_GOALS_FIXTURE } from "@/__tests__/helpers/modules";
+
+// The goals these fixtures use are declared by a fixture module, not a product module (ADR-054).
+withModules([WORKFLOW_GOALS_FIXTURE]);
 
 const AGENT: AgentIdentity = {
   actorType: "agent",

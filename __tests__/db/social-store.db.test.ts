@@ -16,7 +16,7 @@ jest.mock("@/lib/logger", () => ({
 import { randomUUID } from "node:crypto";
 import { runSocialStoreContract } from "../contract/social-store-contract";
 import { runTenantIsolationContract } from "../contract/tenant-isolation-contract";
-import { socialIsolation } from "../helpers/moderation-isolation-fixtures";
+import { socialIsolation } from "../helpers/social-isolation-fixtures";
 import { clearFaults, faults } from "../helpers/data-faults";
 import { PostgresSocialStore, type CreateGroupInput } from "@/platform/social";
 import { DataUnavailableError, withTenantTx } from "@/platform/data";

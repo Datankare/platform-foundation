@@ -37,22 +37,20 @@ export type ContentRatingLevel = 1 | 2 | 3;
 /**
  * The kind of content being screened. Affects severity adjustments.
  *
- * translation   — user is translating existing content (higher tolerance)
+ * The core's kinds (./content-types.ts):
  * generation    — user is creating new content (standard)
- * transcription — user is transcribing speech (higher tolerance, STT artifacts)
  * extraction    — user uploaded a document (content is not theirs)
  * profile       — display name, bio (stricter for URLs/impersonation)
- * social        — chat messages, group posts (standard + context)
  * ai-output     — AI-generated response (no user strikes on block)
+ *
+ * A module adds the kinds its feature produces (ADR-054 D4) — translation: "translation" (user
+ * is translating existing content, higher tolerance); voice: "transcription" (speech, STT
+ * artifacts); social: "social" (chat messages, group posts). An undeclared kind is screened as
+ * generation. (`string & {}` keeps the core's names in editor completion.)
  */
-export type ContentType =
-  | "translation"
-  | "generation"
-  | "transcription"
-  | "extraction"
-  | "profile"
-  | "social"
-  | "ai-output";
+export type CoreContentType = "generation" | "extraction" | "profile" | "ai-output";
+
+export type ContentType = CoreContentType | (string & {});
 
 // ---------------------------------------------------------------------------
 // Screening direction — input vs output (ADR-017 §1)

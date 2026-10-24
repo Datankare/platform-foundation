@@ -20,8 +20,9 @@ import {
 import {
   CURATOR_CONTENT_TYPE,
   generateCuratorDigest,
-  registerSocialContentTypes,
 } from "@/platform/social/content/curator-content";
+import { registerModuleContentTypes } from "@/platform/modules/contributions";
+import { SOCIAL_MODULE } from "@/platform/social/module";
 import type { CuratorInput, DigestItem } from "@/prompts/social/curator-v1";
 
 const gen = generateContent as jest.Mock;
@@ -96,10 +97,11 @@ describe("Curator content type (ADR-037 step 4)", () => {
     );
   });
 
-  it("registerSocialContentTypes registers 'curator' and is idempotent", () => {
+  it("the social module declares 'curator', and boot registers it once (ADR-054 D4)", () => {
+    expect(SOCIAL_MODULE.contentTypes.map((c) => c.name)).toEqual(["curator"]);
     expect(hasContentType("curator")).toBe(false);
-    registerSocialContentTypes();
-    registerSocialContentTypes();
+    registerModuleContentTypes();
+    registerModuleContentTypes();
     expect(hasContentType("curator")).toBe(true);
     expect(listContentTypes().filter((n) => n === "curator")).toHaveLength(1);
   });

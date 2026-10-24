@@ -19,6 +19,7 @@ export type {
   RateLimitRule,
 } from "./types";
 export { DEFAULT_RULES } from "./types";
+export { listRateRules, getRateRule } from "./rules";
 
 // Token-aware extension (GenAI Principle P5: cost tracking, P10: no late discovery)
 export type {

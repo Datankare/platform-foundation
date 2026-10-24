@@ -11,7 +11,7 @@
  *     direction: "input",
  *     requestId: "abc123",
  *     context: {
- *       contentType: "translation",
+ *       contentType: "generation",
  *       contentRatingLevel: 2,
  *       userId: "user-456",
  *     },
@@ -26,6 +26,7 @@ export type {
   ClassifierOutput,
   ContentRatingLevel,
   ContentType,
+  CoreContentType,
   ScreeningDirection,
   ScreeningContext,
   UserModerationHistory,
@@ -37,6 +38,14 @@ export type {
   AuditQueryOptions,
   ModerationStore,
 } from "./types";
+
+// Kinds of content screened: the core's and the registered modules' (ADR-054 D4)
+export {
+  CORE_MODERATION_CONTENT_TYPES,
+  listModerationContentTypes,
+  isModerationContentType,
+} from "./content-types";
+export type { ModerationContentTypeDefinition } from "./content-types";
 
 // Middleware (primary API)
 export { screenContent } from "./middleware";

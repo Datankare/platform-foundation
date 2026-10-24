@@ -697,11 +697,12 @@ describe("the database connections (ADR-053 D4)", () => {
         valid({
           DATABASE_URL: undefined,
           DATABASE_OWNER_URL: undefined,
-          SOCIAL_STORE: "postgres",
+          MODERATION_STORE: "postgres",
         })
       )
     ).toEqual([
-      "DATABASE_URL is required (SOCIAL_STORE=postgres, APP_STATE_STORE=supabase, TRAJECTORY_STORE=supabase, BUDGET_STORE=supabase) but not set",
+      // A module's durable selectors follow the core's: __tests__/provider-registry-modules.test.ts.
+      "DATABASE_URL is required (MODERATION_STORE=postgres, APP_STATE_STORE=supabase, TRAJECTORY_STORE=supabase, BUDGET_STORE=supabase) but not set",
     ]);
   });
 

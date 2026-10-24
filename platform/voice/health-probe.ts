@@ -1,29 +1,28 @@
 /**
- * platform/voice/health-probe.ts — Health probes for voice + translation
+ * platform/voice/health-probe.ts — Health probes for the voice pipeline's providers
  *
- * Registers probes in HealthRegistry for:
- * - Translation provider (connectivity + latency)
+ * - Translation provider (connectivity + latency) — the pipeline's translate step
  * - TTS provider (connectivity + latency)
  * - STT provider (connectivity)
- * - Song identification provider (connectivity) — Sprint 4a
- * - Audio format converter (connectivity) — Sprint 4a
+ *
+ * The song identification and audio converter probes belong to their own modules
+ * (song-id-health.ts, audio-convert-health.ts — ADR-054 D2).
  *
  * @module platform/voice
  */
 
 import type { TTSProvider, STTProvider } from "./types";
 import type { TranslationProvider } from "@/platform/translation/types";
-import type { SongIdentificationProvider } from "./identify-types";
-import type { AudioFormatConverter } from "./audio-format-types";
+import {
+  errorMessage,
+  probeResponsive,
+  type ProviderHealthStatus,
+} from "@/platform/observability/provider-health";
 
 // ── Health Probe Results ────────────────────────────────────────────────
 
-export interface VoiceHealthStatus {
-  readonly provider: string;
-  readonly healthy: boolean;
-  readonly latencyMs: number;
-  readonly error?: string;
-}
+/** One voice provider probe's outcome (the core provider-probe shape). */
+export type VoiceHealthStatus = ProviderHealthStatus;
 
 /**
  * Check translation provider health by translating a known phrase.
@@ -44,7 +43,7 @@ export async function checkTranslationHealth(
       provider: provider.name,
       healthy: false,
       latencyMs: Date.now() - start,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     };
   }
 }
@@ -69,135 +68,25 @@ export async function checkTTSHealth(provider: TTSProvider): Promise<VoiceHealth
       provider: provider.name,
       healthy: false,
       latencyMs: Date.now() - start,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     };
   }
 }
 
 /**
  * Check STT provider health (lightweight — just verifies provider is responsive).
- * Sends a tiny silent audio clip.
+ * Sends a tiny silent audio clip; an error for silent audio still means the provider answered.
  */
 export async function checkSTTHealth(provider: STTProvider): Promise<VoiceHealthStatus> {
-  const start = Date.now();
-  try {
-    // Minimal valid base64 audio (silence)
-    const silentAudio = Buffer.from([0, 0, 0, 0]).toString("base64");
-    await provider.transcribe({
+  // Minimal valid base64 audio (silence)
+  const silentAudio = Buffer.from([0, 0, 0, 0]).toString("base64");
+  return probeResponsive(provider.name, () =>
+    provider.transcribe({
       audioBase64: silentAudio,
       encoding: "LINEAR16",
       sampleRateHertz: 8000,
       languageCode: "en-US",
       autoDetect: false,
-    });
-    return {
-      provider: provider.name,
-      healthy: true,
-      latencyMs: Date.now() - start,
-    };
-  } catch (err) {
-    // STT may return an error for silent audio — that's still "responsive"
-    const message = err instanceof Error ? err.message : String(err);
-    const isConnectivity = /ECONNREFUSED|ENOTFOUND|timed out|fetch failed/i.test(message);
-
-    return {
-      provider: provider.name,
-      healthy: !isConnectivity,
-      latencyMs: Date.now() - start,
-      error: isConnectivity ? message : undefined,
-    };
-  }
-}
-
-/**
- * Check song identification provider health.
- * Sends a minimal audio buffer — expects either a result or a non-connectivity error.
- */
-export async function checkSongIdHealth(
-  provider: SongIdentificationProvider
-): Promise<VoiceHealthStatus> {
-  const start = Date.now();
-  try {
-    // Minimal WAV-like buffer — provider may return no match (healthy)
-    // or throw a validation error (also healthy — means it's reachable)
-    const minimalAudio = Buffer.alloc(160_000, 0); // ~5s at 32kB/s
-    await provider.identify({
-      audioData: minimalAudio,
-      durationSeconds: 5,
-      requestId: "health-check",
-    });
-    return {
-      provider: provider.name,
-      healthy: true,
-      latencyMs: Date.now() - start,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isConnectivity = /ECONNREFUSED|ENOTFOUND|timed out|fetch failed/i.test(message);
-
-    return {
-      provider: provider.name,
-      healthy: !isConnectivity,
-      latencyMs: Date.now() - start,
-      error: isConnectivity ? message : undefined,
-    };
-  }
-}
-
-/**
- * Check audio format converter health.
- * Sends a minimal WAV buffer — expects passthrough or conversion success.
- */
-export async function checkAudioConverterHealth(
-  converter: AudioFormatConverter
-): Promise<VoiceHealthStatus> {
-  const start = Date.now();
-  try {
-    const minimalWav = Buffer.alloc(100, 0);
-    await converter.convert({
-      audioData: minimalWav,
-      sourceFormat: "wav",
-      requestId: "health-check",
-    });
-    return {
-      provider: converter.name,
-      healthy: true,
-      latencyMs: Date.now() - start,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isConnectivity = /ECONNREFUSED|ENOTFOUND|timed out|fetch failed/i.test(message);
-
-    return {
-      provider: converter.name,
-      healthy: !isConnectivity,
-      latencyMs: Date.now() - start,
-      error: isConnectivity ? message : undefined,
-    };
-  }
-}
-
-// ── HealthProbe Adapter (TASK-041) ──────────────────────────────────────────
-// Wraps checkSongIdHealth into HealthProbe interface for HealthRegistry.
-
-import type { HealthProbe, HealthCheckResult } from "@/platform/observability/types";
-
-export class SongIdHealthProbeAdapter implements HealthProbe {
-  readonly name = "song-identification";
-  private readonly provider: SongIdentificationProvider;
-
-  constructor(provider: SongIdentificationProvider) {
-    this.provider = provider;
-  }
-
-  async check(): Promise<HealthCheckResult> {
-    const result = await checkSongIdHealth(this.provider);
-    return {
-      name: this.name,
-      status: result.healthy ? "healthy" : "unhealthy",
-      latencyMs: result.latencyMs,
-      detail: result.error,
-      checkedAt: new Date().toISOString(),
-    };
-  }
+    })
+  );
 }

@@ -161,15 +161,28 @@ sync.
 - **The consumer seams — always excluded, always the consumer's own.** The platform ships these
   empty or as templates; each holds facts only the consumer knows:
 
-  | File                                                                        | What the consumer puts there                                                                                                 |
-  | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-  | `platform/errors/app-codes.ts`, `messages/app/**`, `docs/APP_API_ERRORS.md` | Its own error codes and messages (ADR-051 D1)                                                                                |
-  | `platform/route-policy/app-route-policy.ts`                                 | Its own route guards, public or exempt routes (TASK-136), and its functions that make paid calls (`paidCalls`)               |
-  | `platform/assurance/unwired-security.ts`                                    | The security controls it has not wired, each with the reason (v5.0.0; checked by `security-wiring`)                          |
-  | `docs/APP_ENV_REFERENCE.md`                                                 | Its own settings and per-environment provider choices                                                                        |
-  | `.gitleaksignore`                                                           | Its own secret-scan false positives. Each entry names a commit, so the platform's list can never match a consumer's history. |
-  | `coverage-baseline.json`, `screen-literal-baseline.json`                    | Its own ratchet baselines, measured on its own tree                                                                          |
+  | File                                                                                               | What the consumer puts there                                                                                                   |
+  | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+  | `platform/errors/app-codes.ts`, `messages/app/**`, `docs/APP_API_ERRORS.md`                        | Its own error codes and messages (ADR-051 D1)                                                                                  |
+  | `platform/route-policy/app-route-policy.ts`                                                        | Its own route guards, public or exempt routes (TASK-136), and its functions that make paid calls (`paidCalls`)                 |
+  | `platform/assurance/unwired-security.ts`                                                           | The security controls it has not wired, each with the reason (v5.0.0; checked by `security-wiring`)                            |
+  | `docs/APP_ENV_REFERENCE.md`                                                                        | Its own settings and per-environment provider choices                                                                          |
+  | `.gitleaksignore`                                                                                  | Its own secret-scan false positives. Each entry names a commit, so the platform's list can never match a consumer's history.   |
+  | `coverage-baseline.json`, `screen-literal-baseline.json`                                           | Its own ratchet baselines, measured on its own tree                                                                            |
+  | `platform/modules/app-modules.ts` (and its test, `platform/modules/__tests__/app-modules.test.ts`) | The product modules it runs with (ADR-054 D4) — none, some or all of social, voice, song-id, audio-convert, translation, games |
+  | `platform/modules/app-home.tsx`                                                                    | What its home page shows inside the signed-in shell (`app/HomeClient.tsx`)                                                     |
+  | `instrumentation.ts`                                                                               | Its boot: `registerModules(APP_MODULES)` before `initProviders()`, and the modules' health probes into `initObservability`     |
 
+- **Product modules (ADR-054).** The platform is a core plus optional modules; which files are
+  each module's is in `platform/modules/manifest.json` (code, prompts and evals, routes,
+  components, tests, kits, migrations). Until Sprint 7S adds the sync's `modules` selection, the
+  sync copies every module; an app that does not use one leaves it out of `app-modules.ts`, and
+  its slots, agents, prompts, features, goals and rules are then absent. The core's own tests pass
+  with no module registered — `npm run test:core` runs them that way (CI does too); a module's
+  tests, listed in the manifest, test the module as registered, so exclude them with a module you
+  do not use. To drop a module's files entirely, exclude its manifest paths and delete them on the
+  sync branch (the sync never deletes) — never a core file that imports it: the lint rule
+  guarantees there is none outside the two composition roots, which are yours.
 - **Exclude only what you own or deliberately do not take** (learning 115). An excluded file must
   exist in the consumer, or be a platform file the consumer chose not to take. A file the consumer
   owns that is identical to the platform's should be inherited instead: excluding it silently stops

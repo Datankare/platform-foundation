@@ -49,16 +49,21 @@ the current tenant in every key.
 
 ## Rules
 
-| Rule            | Limit        | Counted by |
-| --------------- | ------------ | ---------- |
-| `AUTH_LOGIN`    | 10 / 15 min  | address    |
-| `AUTH_ACCOUNT`  | 10 / hour    | address    |
-| `AUTH_GUEST`    | 20 / hour    | address    |
-| `AUTH_SESSION`  | 30 / minute  | address    |
-| `AI_PER_USER`   | 20 / minute  | actor      |
-| `ADMIN_OPS`     | 30 / minute  | address    |
-| `API_GLOBAL`    | 100 / minute | address    |
-| `SONG_IDENTIFY` | 10 / hour    | actor      |
+| Rule           | Limit        | Counted by |
+| -------------- | ------------ | ---------- |
+| `AUTH_LOGIN`   | 10 / 15 min  | address    |
+| `AUTH_ACCOUNT` | 10 / hour    | address    |
+| `AUTH_GUEST`   | 20 / hour    | address    |
+| `AUTH_SESSION` | 30 / minute  | address    |
+| `AI_PER_USER`  | 20 / minute  | actor      |
+| `ADMIN_OPS`    | 30 / minute  | address    |
+| `API_GLOBAL`   | 100 / minute | address    |
+
+These are the core's rules. A product module declares the rules its routes enforce in its
+definition (ADR-054 D4) — the song-id module's `SONG_IDENTIFY_RULE` (10 / hour per actor, exported by
+`@/platform/voice/song-id`), formerly `DEFAULT_RULES.SONG_IDENTIFY`. `listRateRules()` (`rules.ts`) is
+the whole inventory, core first, with each rule's owner; `getRateRule(id)` resolves an id against it
+and refuses an unknown one. Two rules may not share an id (one id is one set of counters).
 
 Which route uses which rule is recorded in ADR-052 D6. A custom rule is a `RateLimitRule`
 (`{ id, maxRequests, windowSeconds }`, window at most one day for the Postgres store).
@@ -67,7 +72,8 @@ Which route uses which rule is recorded in ADR-052 D6. A custom rule is a `RateL
 
 ```
 platform/rate-limit/
-├── types.ts             ← RateLimiter interface, rules, results
+├── types.ts             ← RateLimiter interface, the core's rules, results
+├── rules.ts             ← listRateRules / getRateRule — core and module rules
 ├── enforce.ts           ← enforceRateLimit — the one call routes make
 ├── client-ip.ts         ← spoof-resistant caller address
 ├── factory.ts           ← store factory and the shared instance

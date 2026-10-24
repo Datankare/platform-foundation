@@ -20,7 +20,9 @@
  *     DynamoDB ConditionExpression; in-memory check-and-set). No atomic
  *     conditional write ⇒ not a valid store.
  *  4. Register the slot in platform/providers/registry.ts (ProviderSelections,
- *     init fn, initProviders(), env var, memory fallback + warn).
+ *     init fn, initProviders(), env var, memory fallback + warn) — or, for a product
+ *     module's store, declare it in the module's definition (ModuleProviderSlot with
+ *     `durable`, ADR-054 D4), which the registry installs the same way.
  *  5. Add the conformance kit arm — MUST include concurrency tests (concurrent CAS:
  *     exactly one wins; reduceCommit associativity; conflict-result shape).
  *  6. Add the migration (persistent stores) — state table carrying the action that

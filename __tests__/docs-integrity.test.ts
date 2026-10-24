@@ -25,6 +25,7 @@ import {
   SUPABASE_SELECTORS,
   DATABASE_SELECTORS,
 } from "@/platform/providers/environment-contract";
+import { getModules } from "@/platform/modules";
 import { PLATFORM_VERSION } from "@/platform/version";
 
 const ROOT = process.cwd();
@@ -167,6 +168,8 @@ describe("docs integrity — environment variables", () => {
       ...ENVIRONMENT_CONTRACT.flatMap((d) => [d.name, ...d.aliases]),
       ...SUPABASE_SELECTORS,
       ...DATABASE_SELECTORS,
+      // The registered modules' provider selectors are read by name too (ADR-054 D4).
+      ...getModules().flatMap((m) => m.providers.map((slot) => slot.envVar)),
       ...HARNESS_ONLY_SETTINGS,
       "VERCEL",
     ];

@@ -3,7 +3,8 @@
  *
  * The prompt registry (listPrompts) is the single source of truth for what prompts exist, so
  * the eval harness (ADR-038) scopes to it. Every prompt source file — prompts/<domain>/<name>-v<N>.ts
- * — must therefore be registered in PROMPT_REGISTRY, and every registration must have a source
+ * — must therefore be registered (the core's prompts, or a registered module's — ADR-054 D4), and
+ * every registration must have a source
  * file. This is the registry-completeness half of the ADR-038 conformance kit; the eval-coverage
  * half (enum-exhaustive / fail-closed / boundary / adversarial fixtures) lands with the datasets.
  *
@@ -16,6 +17,17 @@
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { listPrompts } from "@/prompts";
+import { getModules } from "@/platform/modules";
+
+const mm = require("../scripts/module-manifest.cjs");
+const MANIFEST = mm.loadManifest();
+const REGISTERED = new Set(getModules().map((m) => m.id));
+
+/** A prompt file this app registers: the core's, or a registered module's (ADR-054 D4). */
+function inThisApp(file: string): boolean {
+  const owner: string | null = mm.zoneOf(MANIFEST, file.slice(ROOT.length + 1));
+  return owner === null || REGISTERED.has(owner);
+}
 
 const ROOT = process.cwd();
 const PROMPTS_DIR = join(ROOT, "prompts");
@@ -46,22 +58,28 @@ function declaredName(file: string): string | null {
 }
 
 describe("prompt registry integrity (ADR-038 D7)", () => {
-  const files = promptFiles(PROMPTS_DIR);
+  const allFiles = promptFiles(PROMPTS_DIR);
+  const files = allFiles.filter(inThisApp);
   const registered = new Set(listPrompts());
 
   it("self-test: finds every prompt source file and extracts its name", () => {
-    expect(files.length).toBeGreaterThanOrEqual(10);
-    const names = files.map(declaredName);
+    expect(allFiles.length).toBeGreaterThanOrEqual(10);
+    const names = allFiles.map(declaredName);
     expect(names).toContain("safety-classify");
     expect(names).toContain("gatekeeper");
     expect(names.every((n) => n !== null)).toBe(true);
+    // A module's prompt files are this app's only when the module is registered.
+    expect(inThisApp(join(ROOT, "prompts/safety/classify-v1.ts"))).toBe(true);
+    expect(inThisApp(join(ROOT, "prompts/social/curator-v1.ts"))).toBe(
+      REGISTERED.has("social")
+    );
   });
 
   it("self-test: an unregistered name is recognized as missing", () => {
     expect(registered.has("nonexistent-prompt")).toBe(false);
   });
 
-  it("every prompt source file is registered in PROMPT_REGISTRY", () => {
+  it("every prompt source file is registered (core or module prompt)", () => {
     const missing: string[] = [];
     for (const file of files) {
       const name = declaredName(file);

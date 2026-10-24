@@ -8,7 +8,7 @@
  *   P5  — estimatedCostUsd = 0
  *   P10 — Testable: deterministic, zero external dependencies
  *
- * @module platform/voice
+ * @module platform/voice/audio-convert
  */
 
 import type {

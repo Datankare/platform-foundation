@@ -24,5 +24,6 @@ export type {
   ErrorReporterType,
   ModerationStoreType,
   EmbeddingProviderType,
+  CoreProviderSelections,
   ProviderSelections,
 } from "./registry";

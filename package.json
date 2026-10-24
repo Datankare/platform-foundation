@@ -16,6 +16,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:core": "PF_TEST_MODULES=none jest -c jest.core.config.cjs",
     "typecheck": "tsc --noEmit",
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
     "test:e2e": "playwright test",
@@ -86,7 +87,9 @@
       "platform/effects/**/*.ts",
       "platform/errors/**/*.ts",
       "platform/features/**/*.ts",
-      "platform/social/content/**/*.ts"
+      "platform/social/content/**/*.ts",
+      "platform/modules/**/*.ts",
+      "!platform/modules/__tests__/**"
     ],
     "coverageReporters": [
       "text-summary",

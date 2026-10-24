@@ -20,7 +20,6 @@ import type { AIRequest } from "@/platform/ai/types";
 import type { ContentType } from "@/platform/content/types";
 import type { ContentScope } from "@/platform/content/loop";
 import { generateContent } from "@/platform/content/loop";
-import { registerContentType, hasContentType } from "@/platform/content/registry";
 
 const DIGEST_ITEM_SCHEMA = {
   type: "object",
@@ -63,11 +62,4 @@ export async function generateCuratorDigest(
   }
   const result = await generateContent(CURATOR_CONTENT_TYPE, input, scope);
   return result.content;
-}
-
-/** Register the platform's reference social content types. Idempotent; called at boot. */
-export function registerSocialContentTypes(): void {
-  if (!hasContentType(CURATOR_CONTENT_TYPE.name)) {
-    registerContentType(CURATOR_CONTENT_TYPE);
-  }
 }

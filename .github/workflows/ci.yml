@@ -102,6 +102,14 @@ jobs:
         env:
           REQUIRE_DB_TESTS: "1"
 
+      # ADR-054 §4: the core's own tests, run as an app with no product module registered — what a
+      # consumer that opts into none inherits and must pass. Module tests and the app's own
+      # module-list tests are left out (jest.core.config.cjs, from platform/modules/manifest.json).
+      - name: Layer 1 — Core without modules (ADR-054)
+        run: npm run test:core
+        env:
+          REQUIRE_DB_TESTS: "1"
+
       - name: Layer 1b — Coverage ratchet (TASK-080)
         run: npm run coverage:ratchet
 

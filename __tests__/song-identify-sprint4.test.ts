@@ -13,10 +13,8 @@
 import { MockSongIdentifier } from "@/platform/voice/mock-identify";
 import { MockAudioConverter } from "@/platform/voice/mock-audio-converter";
 import { PassthroughConverter } from "@/platform/voice/passthrough-converter";
-import {
-  checkSongIdHealth,
-  checkAudioConverterHealth,
-} from "@/platform/voice/health-probe";
+import { checkSongIdHealth } from "@/platform/voice/song-id-health";
+import { checkAudioConverterHealth } from "@/platform/voice/audio-convert-health";
 import {
   CANONICAL_FORMAT,
   type SourceAudioFormat,
@@ -782,39 +780,6 @@ describe("Registry — Sprint 4a provider slots", () => {
     const { getActiveProviders } = await import("@/platform/providers/registry");
     expect(getActiveProviders().audioConverter).toBe("passthrough");
   });
-
-  it("exposes exactly the registered provider slots", async () => {
-    const { getActiveProviders } = await import("@/platform/providers/registry");
-    // An exact key set rather than a count. A length cannot distinguish an added slot
-    // from a renamed or removed one, and it fails without naming what changed. The
-    // previous assertion had already drifted: the test was named "has 13 provider slots
-    // total" while asserting 14, because slot #14 updated the number and not the name.
-    expect(Object.keys(getActiveProviders())).toEqual([
-      "auth",
-      "cache",
-      "ai",
-      "errorReporter",
-      "realtime",
-      "translation",
-      "tts",
-      "stt",
-      "songId",
-      "audioConverter",
-      "moderationStore",
-      "strikeStore",
-      "reviewQueueStore",
-      "socialStore",
-      "embeddingProvider",
-      "appStateStore",
-      "trajectoryStore",
-      "budgetStore",
-      "proposalStore",
-      "effectLedger",
-      "approvalPolicyStore",
-      "guestUsageStore",
-      "rateLimiter",
-    ]);
-  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -822,12 +787,21 @@ describe("Registry — Sprint 4a provider slots", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("Rate Limit — SONG_IDENTIFY rule (P13)", () => {
-  it("has SONG_IDENTIFY in DEFAULT_RULES", async () => {
-    const { DEFAULT_RULES } = await import("@/platform/rate-limit");
-    expect(DEFAULT_RULES.SONG_IDENTIFY).toBeDefined();
-    expect(DEFAULT_RULES.SONG_IDENTIFY.id).toBe("song:identify");
-    expect(DEFAULT_RULES.SONG_IDENTIFY.maxRequests).toBe(10);
-    expect(DEFAULT_RULES.SONG_IDENTIFY.windowSeconds).toBe(3600);
+  it("is the song-id module's rule, 10 per hour", async () => {
+    const { SONG_IDENTIFY_RULE } = await import("@/platform/voice/song-id");
+    expect(SONG_IDENTIFY_RULE).toEqual({
+      id: "song:identify",
+      maxRequests: IDENTIFY_RATE_LIMIT_PER_HOUR,
+      windowSeconds: 3600,
+    });
+    expect(SONG_IDENTIFY_RULE.maxRequests).toBe(10);
+  });
+
+  it("is registered by the song-id module, not the core (ADR-054 D4)", async () => {
+    const { DEFAULT_RULES, listRateRules } = await import("@/platform/rate-limit");
+    expect(Object.values(DEFAULT_RULES).map((r) => r.id)).not.toContain("song:identify");
+    const registered = listRateRules().find((r) => r.value.id === "song:identify");
+    expect(registered?.moduleId).toBe("song-id");
   });
 });
 

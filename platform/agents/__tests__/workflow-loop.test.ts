@@ -18,6 +18,10 @@ import {
 } from "../workflow-loop";
 import { InMemoryTrajectoryStore } from "../trajectory-store";
 import type { AgentIdentity, Tool } from "@/platform/kernel";
+import { withModules, WORKFLOW_GOALS_FIXTURE } from "@/__tests__/helpers/modules";
+
+// The goals these fixtures use are declared by a fixture module, not a product module (ADR-054).
+withModules([WORKFLOW_GOALS_FIXTURE]);
 
 const ACTOR: AgentIdentity = {
   actorType: "agent",
@@ -74,6 +78,13 @@ describe("workflow registry", () => {
   it("refuses a duplicate goal", () => {
     registerWorkflow(definition("translate"));
     expect(() => registerWorkflow(definition("translate"))).toThrow(/already registered/);
+  });
+
+  it("refuses a goal neither the core nor a registered module declares (ADR-054 D4)", () => {
+    expect(() => registerWorkflow(definition("summarise" as never))).toThrow(
+      /workflow goal summarise is not declared by the core or a registered module \(declared: analyze, translate, /
+    );
+    expect(listWorkflowGoals()).toEqual([]);
   });
 
   it("refuses a definition with no steps", () => {

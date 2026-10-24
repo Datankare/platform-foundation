@@ -26,6 +26,11 @@ import {
 } from "@/platform/agents/workflow-loop";
 import { approveHeldAction } from "@/platform/agents/gating";
 import type { AgentIdentity, AgentResponse, Tool } from "@/platform/kernel";
+import {
+  restoreAppModules,
+  runWithModules,
+  WORKFLOW_GOALS_FIXTURE,
+} from "./helpers/modules";
 
 const store = new InMemoryTrajectoryStore();
 const proposals = new InMemoryProposalStore();
@@ -133,6 +138,11 @@ const TRANSCRIBE_PREMIUM: WorkflowDefinition = {
     },
   ],
 };
+
+// The goals these fixtures use are declared by a fixture module, not a product module (ADR-054);
+// registered here, before the workflows, because they are registered as this file loads.
+runWithModules([WORKFLOW_GOALS_FIXTURE]);
+afterAll(() => restoreAppModules());
 
 registerWorkflow(FULL_PIPELINE);
 registerWorkflow(TRANSLATE);

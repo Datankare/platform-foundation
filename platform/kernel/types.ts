@@ -663,16 +663,19 @@ export interface DispatchOptions {
  * NOT the provider layer's `intent` (IDENTIFY_INTENT, STEP_INTENT_MAP), which is
  * step-level and annotates what one internal step is doing. Two layers, two names,
  * deliberately: `goal` names what was asked, `intent` names what a step does. Neither
- * name is ever used for the other.
+ * name is ever used for the other. (`string & {}` keeps the core's names in editor completion
+ * while admitting the registered modules'.)
  */
-export type AgentGoal =
-  | "identify-song"
-  | "translate"
-  | "transcribe"
-  | "speak"
-  | "translate-and-speak"
-  | "full-pipeline"
-  | "analyze";
+export type AgentGoal = CoreAgentGoal | (string & {});
+
+/**
+ * The goals the core itself implements. Product goals ("translate", "identify-song", …) belong to
+ * the module that implements them and are declared in its definition (ADR-054 D4); AgentGoal is
+ * therefore open, and registerWorkflow refuses a goal that neither the core nor a registered
+ * module declares (platform/agents/goals.ts) — the closed set is checked at registration, where
+ * a typo fails once and loudly, instead of in the type.
+ */
+export type CoreAgentGoal = "analyze";
 
 /** An affordance that ends the workflow rather than naming a further goal (D3). */
 export type TerminalAction = "done" | "retry";

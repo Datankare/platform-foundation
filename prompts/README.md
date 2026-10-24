@@ -19,6 +19,15 @@ prompts/
   └── index.ts                 — Prompt registry with version resolution
 ```
 
+## Core prompts and module prompts (ADR-054)
+
+`index.ts` registers the core's prompts. A product module's prompts live in their own directory
+(`prompts/social/`, with suites in `prompts/evals/social/`) and are declared in the module's
+definition (`platform/social/module.ts`); they join the registry when the app registers the
+module, so `listPrompts()` and `getPromptConfig()` answer for the core's and the registered
+modules' prompts, refusing a module prompt that reuses a name. The core's index imports no module
+prompt (the lint boundary refuses it).
+
 ## Principles
 
 - Every prompt is versioned (`-v1`, `-v2`, etc.)

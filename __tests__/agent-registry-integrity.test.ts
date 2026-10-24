@@ -12,7 +12,7 @@
  */
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, sep } from "path";
-import { registerPlatformAgents } from "@/platform/agents/agent-configs";
+import { AGENT_CONFIGS, registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { listAgents } from "@/platform/agents/registry";
 
 const ROOT = process.cwd();
@@ -89,7 +89,8 @@ describe("agent registry integrity (ADR-039 D5)", () => {
         "conductor",
       ])
     );
-    expect(ids.length).toBeGreaterThanOrEqual(12);
+    // The core's agents at least; a registered module's join them (ADR-054 D4).
+    expect(ids.length).toBeGreaterThanOrEqual(AGENT_CONFIGS.length);
   });
 
   it("every registered agent id is documented in AGENT_ARCHITECTURE.md (roster completeness)", () => {

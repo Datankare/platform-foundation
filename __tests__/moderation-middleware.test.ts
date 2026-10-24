@@ -10,6 +10,11 @@ import type { AIResponse, Orchestrator, CircuitState } from "@/platform/ai";
 import { screenContent } from "@/platform/moderation/middleware";
 import { resetGuardian } from "@/platform/moderation/guardian";
 import { resetModerationStore } from "@/platform/moderation/store";
+import { CONTENT_KINDS_FIXTURE, withModules } from "./helpers/modules";
+
+// The content kinds screened here are declared by a fixture module (ADR-054 D4): the core
+// screens what the registered modules declare.
+withModules([CONTENT_KINDS_FIXTURE]);
 
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },

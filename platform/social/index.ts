@@ -1,6 +1,10 @@
 /**
  * Social Module — barrel exports and singleton.
  *
+ * The public entry of the social module (ADR-054 D2). Its definition — the store slot, the five
+ * social agents, their prompts and evals, the curator content type — is ./module.ts, which the
+ * app lists in platform/modules/app-modules.ts.
+ *
  * Usage:
  *   import { getSocialStore } from "@/platform/social";
  *   const store = getSocialStore();
@@ -49,36 +53,10 @@ export type {
   CuratorResult,
 } from "./agents";
 
-// ---------------------------------------------------------------------------
-// Store singleton
-// ---------------------------------------------------------------------------
-
-import type { SocialStore } from "./types";
-import { InMemorySocialStore } from "./memory-social-store";
-import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
-
-/** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
-const STORE_KEY = "platform.social.store";
-function readCurrentStore(): SocialStore {
-  return getSingleton<SocialStore>(STORE_KEY, () => new InMemorySocialStore());
-}
-function writeCurrentStore(next: SocialStore): void {
-  setSingleton<SocialStore>(STORE_KEY, next);
-}
-
-/** Get the current social store. */
-export function getSocialStore(): SocialStore {
-  return readCurrentStore();
-}
-
-/** Set the social store (for provider init or testing). */
-export function setSocialStore(store: SocialStore): SocialStore {
-  const previous = readCurrentStore();
-  writeCurrentStore(store);
-  return previous;
-}
-
-/** Reset to default InMemorySocialStore (testing only). */
-export function resetSocialStore(): void {
-  writeCurrentStore(new InMemorySocialStore());
-}
+// Store singleton (./store.ts — installed by the social module's SOCIAL_STORE slot)
+export {
+  SOCIAL_STORE_KEY,
+  getSocialStore,
+  setSocialStore,
+  resetSocialStore,
+} from "./store";

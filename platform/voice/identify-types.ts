@@ -20,15 +20,17 @@
  *   P9  — requestId for distributed tracing
  *   P10 — MockSongIdentifier for tests
  *   P11 — No match → IdentifyResult with match=null (not an error)
- *   P13 — Rate limiting: SONG_IDENTIFY rule in DEFAULT_RULES
+ *   P13 — Rate limiting: SONG_IDENTIFY_RULE, registered by the song-id module (ADR-054)
  *   P14 — Audit: who, when, result — never audio content
  *   P15 — actorType/actorId on every request
  *   P16 — IdentifyCache interface for fingerprint dedup
  *   P17 — IDENTIFY_INTENT constant: "inform"
  *   P18 — trajectoryId/stepIndex on request and result
  *
- * @module platform/voice
+ * @module platform/voice/song-id
  */
+
+import type { RateLimitRule } from "@/platform/rate-limit/types";
 
 // ── Intent Mapping (P17) ────────────────────────────────────────────────
 
@@ -160,3 +162,14 @@ export const MAX_CLIP_SECONDS = 15;
 
 /** Default rate limit: identifications per user per hour */
 export const IDENTIFY_RATE_LIMIT_PER_HOUR = 10;
+
+/**
+ * Song identification: IDENTIFY_RATE_LIMIT_PER_HOUR per user per hour. Was
+ * DEFAULT_RULES.SONG_IDENTIFY in the core; the song-id module registers it (ADR-054 D4), and a
+ * route enforces it directly: enforceRateLimit(request, SONG_IDENTIFY_RULE, { actorId }).
+ */
+export const SONG_IDENTIFY_RULE: RateLimitRule = {
+  id: "song:identify",
+  maxRequests: IDENTIFY_RATE_LIMIT_PER_HOUR,
+  windowSeconds: 3600,
+};

@@ -17,7 +17,7 @@
  *   P10 — MockAudioConverter for tests
  *   P12 — Metadata stripping during canonical conversion
  *
- * @module platform/voice
+ * @module platform/voice/audio-convert
  */
 
 // ── Canonical Format ────────────────────────────────────────────────────

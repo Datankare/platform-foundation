@@ -14,6 +14,10 @@ import {
   type WorkflowDefinition,
 } from "../workflow-loop";
 import type { Tool } from "@/platform/kernel";
+import { withModules, WORKFLOW_GOALS_FIXTURE } from "@/__tests__/helpers/modules";
+
+// The goals these fixtures use are declared by a fixture module, not a product module (ADR-054).
+withModules([WORKFLOW_GOALS_FIXTURE]);
 
 function stepTool(id: string): Tool {
   return {
