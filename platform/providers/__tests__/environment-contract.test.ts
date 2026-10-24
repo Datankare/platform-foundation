@@ -749,7 +749,12 @@ describe("the database connections (ADR-053 D4)", () => {
       'DATABASE_SSL=disable is for local and CI runs only (DEPLOYMENT_HOST "local" or "ci")',
     ]);
     expect(checkEnvironmentContract(valid({ DATABASE_SSL: "verify-full" }))).toEqual([]);
-    expect(checkEnvironmentContract(valid({ DATABASE_SSL: "require" }))).toEqual([]);
+  });
+
+  it("refuses encrypted-but-unverified TLS: there is no 'require' mode", () => {
+    expect(checkEnvironmentContract(valid({ DATABASE_SSL: "require" }))).toEqual([
+      expect.stringMatching(/^DATABASE_SSL has the wrong shape/),
+    ]);
   });
 
   it.each([

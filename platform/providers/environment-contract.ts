@@ -161,9 +161,11 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
   {
     name: "DATABASE_SSL",
     aliases: [],
-    shape: /^(verify-full|require|disable)$/,
+    // No "encrypted but unverified" mode: it is open to a man in the middle, and every supported
+    // host publishes its CA certificate (DATABASE_SSL_CA), so verification is always possible.
+    shape: /^(verify-full|disable)$/,
     shapeHint:
-      "verify-full (default: encrypted, server certificate checked), require (encrypted, not checked), disable (local and CI only)",
+      "verify-full (default: encrypted, server certificate checked — give DATABASE_SSL_CA for a provider CA not in the system store) or disable (local and CI only)",
   },
   {
     name: "DATABASE_SSL_CA",
@@ -389,7 +391,7 @@ export interface DatabaseSettings {
   readonly ownerUrl: string | undefined;
   readonly poolMax: number;
   readonly statementTimeoutMs: number;
-  readonly ssl: "verify-full" | "require" | "disable";
+  readonly ssl: "verify-full" | "disable";
   /** PEM with real newlines; undefined when not set (the system's CA store is used). */
   readonly sslCa: string | undefined;
 }
@@ -408,7 +410,7 @@ export function getDatabaseSettings(env: EnvSource = process.env): DatabaseSetti
       Number.isInteger(timeout) && timeout >= 100 && timeout <= 600_000
         ? timeout
         : 10_000,
-    ssl: ssl === "require" || ssl === "disable" ? ssl : "verify-full",
+    ssl: ssl === "disable" ? "disable" : "verify-full",
     sslCa: ca?.replace(/\\n/g, "\n"),
   };
 }

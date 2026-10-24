@@ -39,12 +39,12 @@ export function poolConfig(role: PoolRole): PoolConfig {
         : "DATABASE_OWNER_URL is not set — operator paths need the owner connection"
     );
   }
+  // Encrypted and verified, or (local and CI only, refused elsewhere by the contract) plaintext.
+  // Never encrypted-but-unverified: that is open to a man in the middle.
   const ssl =
     s.ssl === "disable"
       ? false
-      : s.ssl === "require"
-        ? { rejectUnauthorized: false }
-        : { rejectUnauthorized: true, ...(s.sslCa ? { ca: s.sslCa } : {}) };
+      : { rejectUnauthorized: true, ...(s.sslCa ? { ca: s.sslCa } : {}) };
   return {
     connectionString: url,
     ssl,
