@@ -29,6 +29,7 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 import { GET, deployedCommit } from "@/app/api/health/route";
+import { resetHealthCache } from "@/platform/observability/readiness";
 
 function stateWith(report: HealthReport) {
   mockCheck.mockResolvedValue(report);
@@ -51,6 +52,7 @@ function report(
 }
 
 beforeEach(() => {
+  resetHealthCache();
   mockState = null;
   mockCheck.mockReset();
   mockCaptureError.mockReset();
@@ -133,6 +135,7 @@ describe("GET /api/health — OWASP A05, detail suppression", () => {
     expect(body.checks[0]).toEqual({
       name: "supabase",
       status: "unhealthy",
+      required: true,
       checkedAt: "t",
     });
   });

@@ -203,6 +203,25 @@ export class PostgresSocialStore implements SocialStore {
     }
   }
 
+  async listActiveGroups(options: {
+    readonly after?: string;
+    readonly limit: number;
+  }): Promise<readonly Group[]> {
+    const limit = Math.min(Math.max(Math.floor(options.limit), 1), 200);
+    // Read for a job that must not mistake an outage for "no groups": failures propagate.
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<GroupRow>(
+        `select id, name, description, metadata, owner_id, status, created_at, updated_at
+           from groups
+          where status = 'active' and ($1::uuid is null or id > $1::uuid)
+          order by id
+          limit $2::int`,
+        [options.after ?? null, limit]
+      )
+    );
+    return rows.map(mapGroupRow);
+  }
+
   async updateGroupStatus(
     groupId: string,
     status: GroupStatus,

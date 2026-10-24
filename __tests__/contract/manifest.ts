@@ -39,6 +39,7 @@ import { runToolInvocationContract } from "./tool-invocation-contract";
 import { runAgenticWorkflowContract } from "./agentic-workflow-contract";
 import { runAgentResponseContract } from "./agent-response-contract";
 import { runApprovalPolicyStoreContract } from "./approval-policy-contract";
+import { runJobStoreContract } from "./job-store-contract";
 
 export type ContractKind = "registry" | "fabric";
 
@@ -77,6 +78,8 @@ export const CONFORMANCE_MANIFEST: Readonly<Record<string, ConformanceEntry>> = 
   guestUsageStore: { kind: "registry", kit: runGuestUsageStoreContract },
   // ADR-052: the shared rate limiter. Registry — RATE_LIMIT_STORE selects the store.
   rateLimiter: { kind: "registry", kit: runRateLimiterContract },
+  // ADR-056 D2: the job queue. Registry — JOB_STORE selects the store.
+  jobStore: { kind: "registry", kit: runJobStoreContract },
 
   // ── Observability fabric (not registry slots; folded in by ADR-027) ──
   // ADR-029 D9: tool execution is in-process — nothing to swap, so no registry slot.

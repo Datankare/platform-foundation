@@ -26,6 +26,12 @@ const PLATFORM_LIMITERS = ["enforceRateLimit", "adminGuard", "requireAdmin"];
 const PLATFORM_EXEMPT: Readonly<Record<string, string>> = {
   "app/api/health/route.ts":
     "Liveness must not depend on the limiter's own store; it reads no user data, and its one paid probe (song ID) runs at most once per 15 minutes per instance (CachedHealthProbe, audit X-13).",
+  "app/api/health/live/route.ts":
+    "Liveness asks nothing of any dependency — the limiter's store included — by definition (ADR-056 D4); it reads nothing.",
+  "app/api/health/ready/route.ts":
+    "Readiness must not depend on the limiter's own store (ADR-056 D4); it reads no user data, and its one paid probe (song ID) is cached per instance (audit X-13).",
+  "app/api/internal/jobs/tick/route.ts":
+    "The host's scheduler, not a user: the CRON_SECRET is checked first, in constant time, and each tick is bounded by its time budget; the limiter would need a tenant this caller does not have (ADR-056 D2).",
 };
 
 const ROUTES = apiRoutes();

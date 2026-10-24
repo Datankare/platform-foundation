@@ -208,6 +208,12 @@ export interface HealthCheckResult {
   readonly detail?: string;
   /** ISO timestamp of the check. */
   readonly checkedAt: string;
+  /**
+   * Set by HealthRegistry: whether the instance needs this dependency to serve (ADR-056 D4). An
+   * unhealthy required probe makes the report unhealthy (and the instance unready); an unhealthy
+   * optional one only degraded, so one dependency's blip cannot take every instance out at once.
+   */
+  readonly required?: boolean;
 }
 
 /** Aggregated health report across all dependencies. */
@@ -252,8 +258,16 @@ export interface ObservabilityConfig {
   enableTracing?: boolean;
   /** Sample rate for performance traces (0.0–1.0). Default: 1.0 in dev, 0.1 in production. */
   traceSampleRate?: number;
-  /** Registered health probes. */
+  /**
+   * Required health probes: an unhealthy one makes the report unhealthy (503) and the instance
+   * unready — the database and the selected shared cache (ADR-056 D4).
+   */
   healthProbes?: HealthProbe[];
+  /**
+   * Optional probes (realtime, the modules' providers): unhealthy reports degraded, never
+   * unhealthy, so the instance stays in rotation (ADR-056 D4).
+   */
+  degradedOnlyProbes?: HealthProbe[];
   /** Custom error reporter — overrides default Sentry implementation. */
   errorReporter?: ErrorReporter;
   /** Custom trace provider — overrides default implementation. */

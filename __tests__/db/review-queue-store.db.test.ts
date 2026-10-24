@@ -176,7 +176,7 @@ dbDescribe("PostgresReviewQueueStore", () => {
       expect(await store.getById(created!.id)).toBeUndefined();
       expect(await store.getByOriginalDecisionId("decision-1")).toBeUndefined();
       expect(await store.query()).toEqual([]);
-      expect(await store.releaseExpiredClaims(0)).toBe(0);
+      await expect(store.releaseExpiredClaims(0)).rejects.toThrow(DataUnavailableError);
       const stats = await store.getStats();
       expect(stats.pendingCount).toBe(0);
     });

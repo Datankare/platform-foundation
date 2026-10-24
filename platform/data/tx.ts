@@ -48,8 +48,16 @@ export const OWNER_PURPOSES = [
   "tenant-lifecycle",
   /** An operator reading or acting across tenants through an audited operator route. */
   "operator",
-  /** The job runner claiming due work, which it then runs inside each job's tenant (ADR-056). */
+  /**
+   * The job runner: scheduling, claiming and settling jobs, which it then runs inside each job's
+   * tenant (ADR-056 D2).
+   */
   "job-claim",
+  /**
+   * A platform job the runner runs on the platform's own schedule — cross-tenant housekeeping
+   * such as expiring stale approvals and pruning job history. Never a request (ADR-056 D3).
+   */
+  "platform-job",
 ] as const;
 export type OwnerPurpose = (typeof OWNER_PURPOSES)[number];
 

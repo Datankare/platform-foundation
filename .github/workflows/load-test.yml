@@ -1,10 +1,17 @@
 name: "Load Test (k6)"
 
+# TASK-143: the weekly run targeted http://localhost:3000 without starting a server, so it could
+# never pass. Now a run whose target is this runner — the schedule, or a manual run left at its
+# default — builds the container image (ADR-055 D1), runs it on the E2E harness (mock auth and AI,
+# in-memory stores: DEPLOYMENT_HOST=ci) and waits until /api/health/ready says ready before k6
+# starts. A manual run given a deployed address (https://…) tests that address directly and
+# starts nothing.
+
 on:
   workflow_dispatch:
     inputs:
       target_url:
-        description: "Base URL to test"
+        description: "Base URL to test (leave the default to build and start the app on the runner)"
         required: false
         default: "http://localhost:3000"
   schedule:
@@ -18,12 +25,64 @@ jobs:
   load-test:
     name: k6 Load Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      # The input reaches the shell as an environment variable, never as workflow text, and is
+      # checked whole — one line, one of two shapes — by scripts/load-test-target.sh.
+      - name: Decide the target
+        id: target
+        env:
+          INPUT_URL: ${{ github.event.inputs.target_url }}
+        run: |
+          set -euo pipefail
+          out="$(bash scripts/load-test-target.sh "${INPUT_URL:-http://localhost:3000}")"
+          printf '%s\n' "$out" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$out"
+
+      # The image is what a host runs (ADR-055 D1, TASK-143): the load test exercises it, not a
+      # separate local build.
+      - name: Build the image
+        if: steps.target.outputs.local == 'true'
+        run: |
+          set -euo pipefail
+          # By digest: resolved from Docker Hub, the same digest from the mirror if need be.
+          pulled="$(bash scripts/pull-base-image.sh)"
+          read -r base digest <<<"$pulled"
+          docker build --build-arg BASE_IMAGE="$base" --build-arg BASE_IMAGE_DIGEST="$digest" \
+            --build-arg GIT_COMMIT_SHA="$GITHUB_SHA" -t platform-foundation:load .
+
+      - name: Start the image on the E2E harness and wait until it is ready
+        if: steps.target.outputs.local == 'true'
+        env:
+          PORT: ${{ steps.target.outputs.port }}
+          TARGET: ${{ steps.target.outputs.url }}
+        run: |
+          set -euo pipefail
+          docker run -d --name app --network host --read-only \
+            --tmpfs /tmp --tmpfs /app/.next/cache:uid=10001,gid=10001,mode=0700 \
+            -e PORT -e DEPLOYMENT_HOST=ci -e E2E_IN_MEMORY_STORES=true -e E2E_TEST_DOUBLE_AUTH=true \
+            -e RATE_LIMIT_STORE=memory -e AI_PROVIDER=mock -e AUTH_PROVIDER=mock \
+            -e GUEST_TOKEN_SECRET="$(openssl rand -base64 32)" \
+            platform-foundation:load
+          # /api/health/ready answers 200 only once boot completed and the required
+          # dependencies answer (ADR-056 D4); before that it is 503 or refused.
+          for i in $(seq 1 90); do
+            if curl -sf -o /dev/null "$TARGET/api/health/ready"; then
+              echo "ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the app did not become ready in 90 s"
+          curl -s "$TARGET/api/health/ready" || true
+          docker logs app 2>&1 | tail -n 200
+          exit 1
 
       - name: Install k6
         run: |
@@ -36,7 +95,11 @@ jobs:
       - name: Run k6 smoke test
         run: k6 run k6/api-smoke.js
         env:
-          K6_BASE_URL: ${{ github.event.inputs.target_url || 'http://localhost:3000' }}
+          K6_BASE_URL: ${{ steps.target.outputs.url }}
+
+      - name: Server log
+        if: failure() && steps.target.outputs.local == 'true'
+        run: docker logs app 2>&1 | tail -n 200 || true
 
       - name: Upload k6 results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -45,3 +108,4 @@ jobs:
           name: k6-results
           path: k6-results/
           retention-days: 30
+          if-no-files-found: ignore

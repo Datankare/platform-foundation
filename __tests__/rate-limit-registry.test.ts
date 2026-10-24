@@ -25,6 +25,7 @@ const realAuth = (): void => {
   process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
   process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
+  process.env.CRON_SECRET = "c".repeat(64);
   process.env.CACHE_PROVIDER = "memory";
   process.env.TENANCY_MODE = "single";
   process.env.TENANT_ID = "00000000-0000-4000-8000-000000000001"; // TASK-139: a deployment declares its cache

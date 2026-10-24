@@ -165,6 +165,22 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     return filtered;
   }
 
+  async deleteFinishedBefore(cutoff: Date, limit: number): Promise<number> {
+    const records = this.parts.current();
+    const at = cutoff.getTime();
+    let deleted = 0;
+    for (const [id, r] of records) {
+      if (deleted >= limit) break;
+      const finished =
+        r.trajectory.status === "completed" || r.trajectory.status === "failed";
+      if (finished && new Date(r.trajectory.updatedAt).getTime() < at) {
+        records.delete(id);
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
   /** The current tenant's record count (test helper) */
   getRecordCount(): number {
     return this.parts.current().size;

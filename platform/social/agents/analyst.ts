@@ -2,7 +2,8 @@
  * platform/social/agents/analyst.ts — Group health analysis agent
  *
  * Analyzes group health metrics and detects anomalies.
- * Runs on schedule — not triggered by user actions.
+ * Not triggered by user actions: the social.analyst recurring job runs it over each tenant's
+ * groups (platform/social/jobs.ts).
  *
  * P2:  Multi-step: gather metrics → LLM analyze
  * P6:  Structured health report output
@@ -103,7 +104,13 @@ export function createAnalystWorkflow(
           action: "analyze-health",
           boundary: "cognition",
           input: { groupName: input.groupName },
-          output: { status: report.status, score: report.score },
+          // The whole report, so the trajectory is its durable record (ADR-056: scheduled runs).
+          output: {
+            status: report.status,
+            score: report.score,
+            insights: report.insights,
+            anomalies: report.anomalies,
+          },
           costUsd: cost,
           continueExecution: false,
         };

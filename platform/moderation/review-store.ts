@@ -569,8 +569,8 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
   }
 
   async releaseExpiredClaims(timeoutMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - timeoutMs).toISOString();
     try {
-      const cutoff = new Date(Date.now() - timeoutMs).toISOString();
       const { rowCount } = await withTenantTx((tx) =>
         tx.query(
           `update review_queue
@@ -580,8 +580,13 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
         )
       );
       return rowCount;
-    } catch {
-      return 0;
+    } catch (err) {
+      logger.error("Review store: releasing expired claims failed", {
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/moderation/review-store",
+      });
+      // A release that did not run is not "nothing to release": its job retries (ADR-056).
+      throw err;
     }
   }
 }

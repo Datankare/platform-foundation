@@ -40,3 +40,55 @@ The platform has been deployed only on Vercel. The decision of 2026-10-17 keeps 
 - A deployment sets `DEPLOYMENT_HOST` to name its host; safety does not depend on it, since the harness switches need `local` or `ci`. The E2E harness and local development set `ci` or `local` to use them (a consumer's own E2E configuration included).
 - `TRUSTED_PROXY_HOPS` is set per host (Vercel 1; a load balancer alone 1; a CDN in front of a load balancer 2).
 - A host is supported only when the smoke test passes on it in CI.
+
+## 5. Implementation (7R R6)
+
+Delivered on `develop` (2026-10-24), completing the 7R list in §3 (D2 in R2/7X, D4's recorded boot
+failures and the live/ready split in R5). D3, the Valkey provider (D4), D6 and the second host are
+7P.
+
+**The image (D1).** `Dockerfile`, three stages: `deps` (`npm ci --ignore-scripts` from the lockfile),
+`build` (`next build`; `next.config.ts` sets `output: "standalone"`, tracing rooted at the project),
+`runtime` (the standalone server, `.next/static`, `public/` and `scripts/jobs-worker.mjs` only — no
+npm install, no dev dependencies, no source). `ARG BASE_IMAGE` defaults to the official
+`node:24.22.1-trixie-slim`, pinned to a release; a production build pins the digest too
+(`docs/DEPLOY_CONTAINER.md` §6). The runtime runs as the numeric `10001:10001`; the app's files are
+root's and read-only to it; it writes only `/tmp` and `/app/.next/cache` (its one chowned
+directory), so it runs with a read-only root filesystem. `STOPSIGNAL SIGTERM`; `HEALTHCHECK` on
+`/api/health/live` with `node` (no curl in the image). `GIT_COMMIT_SHA` is a build argument baked
+last; no secret is a build argument or baked in, and `.dockerignore` keeps `.env*`, `.git`,
+`node_modules`, build output, tests and docs out of the context. The same image runs the job worker
+with its command overridden (`node scripts/jobs-worker.mjs`). Vercel keeps building natively.
+
+**The contract (D2, D5).** Declared: `GIT_COMMIT_SHA` (7–40 hex, read through the contract by
+`deployedCommit`), `NEXT_MANUAL_SIG_HANDLE` (`true` only — Next.js treats any value as set),
+`SHUTDOWN_DRAIN_SECONDS` (0–300, default 5) and `SHUTDOWN_TIMEOUT_SECONDS` (1–600, default 9, inside
+Docker's 10 s grace). `DEPLOYMENT_HOST=container` without `NEXT_MANUAL_SIG_HANDLE` is refused, and so
+is a bound that does not exceed the drain. The image sets `DEPLOYMENT_HOST=container`,
+`NEXT_MANUAL_SIG_HANDLE=true` and `NODE_ENV=production`. The version is `PLATFORM_VERSION`
+(`platform/version.ts`), reported with the commit by `/api/health/live` and `/api/health/ready`.
+
+**Graceful shutdown (D5).** `platform/observability/shutdown.ts`, installed first by
+`instrumentation.ts` (Node runtime, and only where `NEXT_MANUAL_SIG_HANDLE=true`, so it never races
+Next.js's own handler). On SIGTERM or SIGINT: readiness answers 503 with `draining: true` at once
+(liveness stays 200; a stop that begins while the probes run still wins), the drain period passes,
+then metrics are flushed (before the pools, which they are written through) with the error reporter,
+the cache is closed (`closeCache`, `CacheProvider.close`), the database pools are closed, and the
+process exits 0 — or 1 if a step failed (the next steps still run) or the bound passed first. A second
+signal joins the stop under way. `__tests__/shutdown.test.ts` covers the order, repeated signals, a
+failing step, the bound, readiness while draining and the platform's own steps. Consumer seam:
+Playform's own `instrumentation.ts` installs the handler the same way.
+
+**CI (D1).** `ci.yml`, job **Container image**: Postgres from apt and the migration replay (as the
+replay job), the image built from the commit (`scripts/pull-base-image.sh`: Docker Hub with retries,
+then Google's Docker Hub mirror — TASK-122), run read-only with tmpfs on its two writable paths,
+ready on `/api/health/ready`, checked to run as `10001:10001`, the deploy smoke test against it
+(the commit included; the translation step only when the repository has `ANTHROPIC_API_KEY`, since
+Guardian classifies with the real model — `SMOKE_SKIP_TRANSLATE=1` otherwise, never on a
+deployment), the worker run once from the same image, then SIGTERM twice: readiness 503 and
+liveness 200 while it drains, exit 0 inside the bound, pools closed. The weekly load test now runs
+the image too (TASK-143). The repository has no image scanner; none was added.
+
+**Deploy prerequisites.** None for Vercel. A container host sets the settings in
+`docs/DEPLOY_CONTAINER.md` §3, keeps `SHUTDOWN_TIMEOUT_SECONDS` inside its grace period, routes on
+`/api/health/ready` and restarts on `/api/health/live`.

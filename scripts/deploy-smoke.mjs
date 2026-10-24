@@ -6,16 +6,25 @@
  * the deployment's own configuration — is exercised. Each step prints one line; any failure
  * exits 1 after naming the step.
  *
- *   1. health    GET  /api/health      — 200, and (when SMOKE_EXPECTED_COMMIT is set) the deployed
- *                                        commit equals it; polls until it does, because the
- *                                        address may switch to the new build a little after the
- *                                        deploy reports success (D6: proves which code is live)
+ *   1. ready     GET  /api/health/ready — 200 and ready: boot completed, the database and the
+ *                                        selected cache answer (ADR-056 D4; "degraded" — an
+ *                                        optional dependency such as realtime down — still
+ *                                        passes, and is printed); and (when
+ *                                        SMOKE_EXPECTED_COMMIT is set) the deployed commit equals
+ *                                        it. Polls until both hold, because the address may
+ *                                        switch to the new build a little after the deploy
+ *                                        reports success (D6: proves which code is live)
+ *      live      GET  /api/health/live  — 200: the process answers (checked first)
  *   2. features  GET  /api/features    — 200, a feature list
  *   3. refused   POST translate path   — no credentials → 401 with a registered error code
  *                                        (the error contract, ADR-051, is live)
  *   4. guest     POST /api/auth/guest  — a signed guest token (ADR-050 D4)
  *   5. translate POST translate path   — as that guest, a real translation comes back (D5);
- *                                        uses one unit of a fresh guest's allowance
+ *                                        uses one unit of a fresh guest's allowance. Skipped,
+ *                                        and said so, with SMOKE_SKIP_TRANSLATE=1 — for a CI run
+ *                                        of the image that has no AI credentials (Guardian
+ *                                        classifies every input with the real model and fails
+ *                                        closed without it); never on a deployment
  *
  * Settings (environment):
  *   SMOKE_BASE_URL         required — https://… (http only for localhost)
@@ -26,6 +35,7 @@
  *                          translated text; default `text` (PF's /api/process). An app whose
  *                          translate route answers in its own shape names its field here.
  *   SMOKE_TIMEOUT_MS       optional — per request (default 30000)
+ *   SMOKE_SKIP_TRANSLATE   optional — "1": stop after the guest token (CI without AI credentials)
  *
  * Read by the consumer's deployment workflow (Playform: .github/workflows/deploy-smoke.yml).
  * No dependencies; Node 20+.
@@ -72,8 +82,13 @@ export function readSettings(env) {
   if (!/^[a-z_]\w*$/i.test(translationField)) {
     problems.push("SMOKE_TRANSLATION_FIELD must be a field name such as text");
   }
+  const skip = env.SMOKE_SKIP_TRANSLATE ?? "";
+  if (skip !== "" && skip !== "1") {
+    problems.push('SMOKE_SKIP_TRANSLATE must be "1" or unset');
+  }
   if (problems.length) throw new Error(problems.join("; "));
   return {
+    skipTranslate: skip === "1",
     base: url.origin,
     expected: expected || null,
     waitMs: wait * 1000,
@@ -128,26 +143,56 @@ const fail = (msg) => {
   throw new StepFailure(msg);
 };
 
+/** A readiness answer that lets traffic in: 200, ready, and ready or degraded. */
+export function isReady(res) {
+  return (
+    res?.status === 200 &&
+    res.json?.ready === true &&
+    (res.json?.status === "ready" || res.json?.status === "degraded")
+  );
+}
+
 export async function runSmoke(settings, log = console.log) {
-  // 1 — health, and the deployed commit
+  // 1 — liveness, then readiness and the deployed commit
   const deadline = Date.now() + settings.waitMs;
-  let health;
+  let live;
   for (;;) {
-    health = await call(settings, "GET", "/api/health").catch((e) => ({ error: e }));
-    const ok =
-      health.status === 200 && commitMatches(health.json?.commit, settings.expected);
+    live = await call(settings, "GET", "/api/health/live").catch((e) => ({ error: e }));
+    if (live.status === 200 || Date.now() >= deadline) break;
+    await sleep(10_000);
+  }
+  if (live.error) fail(`live: request failed (${live.error.message})`);
+  if (live.status !== 200) fail(`live: ${live.status}`);
+  log("✓ live 200");
+
+  let ready;
+  for (;;) {
+    ready = await call(settings, "GET", "/api/health/ready").catch((e) => ({ error: e }));
+    const ok = isReady(ready) && commitMatches(ready.json?.commit, settings.expected);
     if (ok || Date.now() >= deadline) break;
     await sleep(10_000);
   }
-  if (health.error) fail(`health: request failed (${health.error.message})`);
-  if (health.status !== 200) {
-    fail(`health: ${health.status} ${health.json?.status ?? ""}`.trim());
+  if (ready.error) fail(`ready: request failed (${ready.error.message})`);
+  if (!isReady(ready)) {
+    const why = [
+      ready.json?.status,
+      ready.json?.boot && `boot ${ready.json.boot}`,
+      ready.json?.draining === true && "draining",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const down = (ready.json?.checks ?? [])
+      .filter((c) => c?.status === "unhealthy")
+      .map((c) => c.name);
+    fail(
+      `ready: ${ready.status}${why ? ` (${why})` : ""}${down.length ? ` — unhealthy: ${down.join(", ")}` : ""}`
+    );
   }
-  const commit = health.json?.commit ?? null;
+  const commit = ready.json?.commit ?? null;
   if (!commitMatches(commit, settings.expected)) {
-    fail(`health: deployed commit ${commit ?? "unknown"} is not ${settings.expected}`);
+    fail(`ready: deployed commit ${commit ?? "unknown"} is not ${settings.expected}`);
   }
-  log(`✓ health 200 (${health.json?.status}), commit ${commit ?? "not reported"}`);
+  log(`✓ ready 200 (${ready.json?.status}), commit ${commit ?? "not reported"}`);
 
   // 2 — features
   const features = await call(settings, "GET", "/api/features");
@@ -177,6 +222,13 @@ export async function runSmoke(settings, log = console.log) {
   log("✓ guest token issued (signed)");
 
   // 5 — a real translation, as that guest (one retry on a transient 503/429)
+  if (settings.skipTranslate) {
+    log("– translate: skipped (SMOKE_SKIP_TRANSLATE=1 — no AI credentials in this run)");
+    log(
+      `✓ smoke passed (translate skipped): ${settings.base} @ ${commit ?? "unknown commit"}`
+    );
+    return;
+  }
   let tr = await call(settings, "POST", settings.translatePath, {
     token,
     body: { text: "Good morning" },

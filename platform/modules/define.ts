@@ -35,6 +35,8 @@ const FEATURE_ID = /^[a-z][a-z0-9_]*$/;
 const GOAL = /^[a-z][a-z0-9-]*$/;
 const RULE_ID = /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/;
 const MODERATION_TYPE = /^[a-z][a-z0-9-]*$/;
+/** As platform/jobs/registry.ts JOB_KIND (not imported: the registry imports the module layer). */
+const JOB_KIND = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
 /** A path under __tests__/ to a .ts/.tsx file, with no "." or ".." segment. */
 const KIT_PATH = /^__tests__\/(?:(?!\.\.?\/)[\w.-]+\/)*[\w-][\w.-]*\.tsx?$/;
 
@@ -175,6 +177,7 @@ function validateNamedLists(moduleId: string, mod: PlatformModule): void {
       MODERATION_TYPE,
     ],
     ["health probe", mod.healthProbes.map((h) => h.name), AGENT_ID],
+    ["job", mod.jobs.map((j) => j.kind), JOB_KIND],
     ["kit", mod.kits, KIT_PATH],
   ];
   for (const [kind, names, shape] of lists) requireDistinct(moduleId, kind, names, shape);
@@ -187,6 +190,17 @@ function validateNamedLists(moduleId: string, mod: PlatformModule): void {
         moduleId,
         `feature "${feature.id}" needs a check and a description of what it needs`
       );
+    }
+  }
+  for (const job of mod.jobs) {
+    if (!job.kind.startsWith(`${moduleId}.`)) {
+      throw new ModuleDefinitionError(
+        moduleId,
+        `job "${job.kind}" must be named under the module ("${moduleId}.…")`
+      );
+    }
+    if (typeof job.handler !== "function") {
+      throw new ModuleDefinitionError(moduleId, `job "${job.kind}" has no handler`);
     }
   }
   for (const probe of mod.healthProbes) {
@@ -246,6 +260,7 @@ export function definePlatformModule(input: PlatformModuleInput): PlatformModule
     accountStatusFeatures: [...(input.accountStatusFeatures ?? [])],
     moderationContentTypes: [...(input.moderationContentTypes ?? [])],
     healthProbes: [...(input.healthProbes ?? [])],
+    jobs: [...(input.jobs ?? [])],
     kits: [...(input.kits ?? [])],
   };
   validateNamedLists(id, mod);

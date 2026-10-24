@@ -93,13 +93,16 @@ required; in production boot refuses without them (ADR-050 D2).
 
 ### Runtime
 
-| Variable                | Required                    | Default | Notes                                                                                                                                                                                                                                                                           |
-| ----------------------- | --------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`              | No (set by tooling)         | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand.                                                                                                                                                                                    |
-| `DEPLOYMENT_HOST`       | No                          | —       | Names the host: `vercel`, `container`, `aws`, … (lower case). `local` and `ci` mark a run that is not a deployment, and only they let production accept the test-harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`); any other value, or none, refuses them (ADR-055 D2, TASK-140). |
-| `GIT_COMMIT_SHA`        | No (set by the image build) | —       | The commit a container image was built from (a build argument). `/api/health` reports it, else `VERCEL_GIT_COMMIT_SHA` (ADR-055 D2).                                                                                                                                            |
-| `VERCEL`                | No (set by the host)        | —       | Vercel sets `1` on every deployment. The platform no longer reads it to decide anything; `DEPLOYMENT_HOST` does (TASK-140).                                                                                                                                                     |
-| `VERCEL_GIT_COMMIT_SHA` | No (set by the host)        | —       | The commit a Vercel deployment was built from. `/api/health` reports its first 12 characters as `commit` so the deployed smoke test can prove which code is live (ADR-050 D6).                                                                                                  |
+| Variable                   | Required                                                 | Default | Notes                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------- | -------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                 | No (set by tooling)                                      | —       | `development` / `production` / `test`. Usually set by your host or test runner, not by hand.                                                                                                                                                                                                                                                                                                    |
+| `DEPLOYMENT_HOST`          | No                                                       | —       | Names the host: `vercel`, `container`, `aws`, … (lower case). `local` and `ci` mark a run that is not a deployment, and only they let production accept the test-harness switches (`E2E_*`, `ADMIN_DEV_BYPASS`); any other value, or none, refuses them (ADR-055 D2, TASK-140).                                                                                                                 |
+| `GIT_COMMIT_SHA`           | No (set by the image build)                              | —       | The commit a container image was built from (the `GIT_COMMIT_SHA` build argument, baked into the image). 7–40 hex characters; boot refuses anything else. `/api/health/live` and `/api/health/ready` report it as `commit`, else `VERCEL_GIT_COMMIT_SHA` (ADR-055 D2).                                                                                                                          |
+| `NEXT_MANUAL_SIG_HANDLE`   | Yes with `DEPLOYMENT_HOST=container` (the image sets it) | —       | `true`: the app, not Next.js, handles SIGTERM and SIGINT — readiness flips, the instance drains, telemetry is flushed and the cache and pools close before it exits (ADR-055 D5, `docs/DEPLOY_CONTAINER.md` §5). Unset, Next.js exits at once. Only `true` is accepted (Next.js treats any value, `false` included, as set).                                                                    |
+| `SHUTDOWN_DRAIN_SECONDS`   | No                                                       | `5`     | 0–300. How long a stopping instance keeps answering requests while `/api/health/ready` says not ready (`draining`), so the load balancer takes it out first. At least the load balancer's deregistration delay or readiness-probe window.                                                                                                                                                       |
+| `SHUTDOWN_TIMEOUT_SECONDS` | No                                                       | `9`     | 1–600, greater than the drain. The bound on the whole stop from the first signal: requests still running after the drain (a job tick included) are waited for until the bound less up to 2 s, then the pools close; past the bound the process exits 1. Keep it inside the host's grace period (Docker 10 s — `docker stop -t`, ECS `stopTimeout`, Kubernetes `terminationGracePeriodSeconds`). |
+| `VERCEL`                   | No (set by the host)                                     | —       | Vercel sets `1` on every deployment. The platform no longer reads it to decide anything; `DEPLOYMENT_HOST` does (TASK-140).                                                                                                                                                                                                                                                                     |
+| `VERCEL_GIT_COMMIT_SHA`    | No (set by the host)                                     | —       | The commit a Vercel deployment was built from. `/api/health` reports its first 12 characters as `commit` so the deployed smoke test can prove which code is live (ADR-050 D6).                                                                                                                                                                                                                  |
 
 ### Production environment contract (ADR-050 D1/D2)
 
@@ -113,8 +116,9 @@ deployment. The declared settings are `AUTH_PROVIDER`, `NEXT_PUBLIC_COGNITO_USER
 `TENANCY_MODE`, `TENANT_ID`, `DATABASE_URL`, `DATABASE_OWNER_URL`, `DATABASE_POOL_MAX`,
 `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_SSL`, `DATABASE_SSL_CA`, `TENANT_DIRECTORY_STORE`,
 `COGNITO_ADMIN_ACCESS_KEY_ID`, `COGNITO_ADMIN_SECRET_ACCESS_KEY`, `COGNITO_ADMIN_SESSION_TOKEN`,
-`CACHE_PROVIDER`, `DEPLOYMENT_HOST`, `TRUSTED_PROXY_HOPS` and `TENANT_HOST_HEADER`, each with the aliases listed in this
-reference.
+`CACHE_PROVIDER`, `DEPLOYMENT_HOST`, `GIT_COMMIT_SHA`, `NEXT_MANUAL_SIG_HANDLE`, `SHUTDOWN_DRAIN_SECONDS`,
+`SHUTDOWN_TIMEOUT_SECONDS`, `TRUSTED_PROXY_HOPS`, `TENANT_HOST_HEADER` and `CRON_SECRET`, each with the aliases
+listed in this reference.
 
 ---
 
@@ -272,11 +276,27 @@ the same Postgres store. Selecting either for any of these requires `DATABASE_UR
 | `APPROVAL_POLICY_STORE` | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — who approves held actions; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                                         |
 | `GUEST_USAGE_STORE`     | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — counts the guest translate allowance (ADR-050 D4); production refuses `memory`; `postgres` needs migration 037                                                                                         |
 | `RATE_LIMIT_STORE`      | Yes in production | `memory` | `postgres` (or `supabase`) `upstash` `memory` — where the shared rate-limit counters live (ADR-052); production refuses `memory`; `postgres` needs migration 039; `upstash` needs the two `UPSTASH_REDIS_REST_*` variables                   |
+| `JOB_STORE`             | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — background jobs and their schedules (ADR-056 D2); production refuses `memory`; `postgres` needs migration 050                                                                                          |
 | `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory stores under a production build; honoured only with `DEPLOYMENT_HOST=local` or `ci`; never set on a deployment)                                                                                 |
 
 Every store above is `postgres` in production: a production build refuses to start on an
 in-memory store (and `instrumentation.ts` lets that refusal stop the server — Sprint 7X). In-memory
 is correct for tests and local exploration.
+
+---
+
+## Background jobs (ADR-056 D2)
+
+| Variable                       | Required                  | Default | Values                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------ | ------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CRON_SECRET`                  | Yes, in every deployment  | —       | At least 32 random characters (`openssl rand -hex 32`). The bearer secret of `/api/internal/jobs/tick`: Vercel Cron sends `Authorization: Bearer $CRON_SECRET` (`vercel.json`, every five minutes — a Pro plan; Hobby allows once a day); the CLI worker sends the same. Unset, a deployment refuses to boot (every tick would be refused and no timed duty would run); a `local` or `ci` run may leave it unset, and its ticks are refused (503). Server-side secret. |
+| `JOBS_WORKER_URL`              | For `npm run jobs:worker` | —       | The app's origin the CLI worker ticks (`scripts/jobs-worker.mjs`): https, or http for localhost. For hosts without a scheduler (a container, Vercel Hobby).                                                                                                                                                                                                                                                                                                            |
+| `JOBS_WORKER_INTERVAL_SECONDS` | No                        | `60`    | `5`–`3600` — seconds between the worker's ticks (it ticks again at once while work remains).                                                                                                                                                                                                                                                                                                                                                                           |
+| `JOBS_WORKER_TIMEOUT_MS`       | No                        | `70000` | Per tick request, in milliseconds (a tick runs for at most 45 s).                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `JOBS_WORKER_ONCE`             | No                        | —       | `1` — one tick, then exit (0 when it succeeded) — for a host scheduler that runs the worker itself (EventBridge, Kubernetes CronJob).                                                                                                                                                                                                                                                                                                                                  |
+
+The job store is `JOB_STORE` ([Stores](#stores-persistence-backends)). What runs, how often, and
+how operators pause, replay or discard: [runbooks/jobs.md](runbooks/jobs.md).
 
 ---
 
@@ -344,17 +364,19 @@ as long as the maximum token lifetime.
 `ACRCLOUD_ACCESS_KEY` · `ACRCLOUD_ACCESS_SECRET` · `ACRCLOUD_HOST` · `ADMIN_DEV_BYPASS` ·
 `AI_PROVIDER` · `ANTHROPIC_API_KEY` · `APPROVAL_POLICY_STORE` · `APP_STATE_STORE` ·
 `AUDIO_CONVERTER` · `AUDIO_CONVERTER_KEY` · `AUDIO_CONVERTER_URL` · `AUTH_PROVIDER` · `BUDGET_STORE` ·
-`CACHE_PROVIDER` · `COGNITO_ADMIN_ACCESS_KEY_ID` · `COGNITO_ADMIN_SECRET_ACCESS_KEY` ·
+`CACHE_PROVIDER` · `CRON_SECRET` · `COGNITO_ADMIN_ACCESS_KEY_ID` · `COGNITO_ADMIN_SECRET_ACCESS_KEY` ·
 `COGNITO_ADMIN_SESSION_TOKEN` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` · `COGNITO_USER_POOL_ID` ·
 `DATABASE_OWNER_URL` · `DATABASE_POOL_MAX` · `DATABASE_SSL` · `DATABASE_SSL_CA` ·
 `DATABASE_STATEMENT_TIMEOUT_MS` · `DATABASE_URL` · `DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` · `DEPLOYMENT_HOST` ·
 `E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` ·
 `ERROR_REPORTER` · `GIT_COMMIT_SHA` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `GUEST_USAGE_STORE` ·
+`JOBS_WORKER_INTERVAL_SECONDS` · `JOBS_WORKER_ONCE` · `JOBS_WORKER_TIMEOUT_MS` · `JOBS_WORKER_URL` · `JOB_STORE` ·
 `LOG_LEVEL` · `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
 `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` · `NEXT_PUBLIC_COGNITO_REGION` ·
 `NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
-`NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` · `PROPOSAL_STORE` · `RATE_LIMIT_STORE` ·
-`REALTIME_PROVIDER` · `REVIEW_QUEUE_STORE` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` ·
+`NEXT_MANUAL_SIG_HANDLE` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` · `PROPOSAL_STORE` · `RATE_LIMIT_STORE` ·
+`REALTIME_PROVIDER` · `REVIEW_QUEUE_STORE` · `SENTRY_DSN` · `SHUTDOWN_DRAIN_SECONDS` ·
+`SHUTDOWN_TIMEOUT_SECONDS` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` ·
 `SSO_PROVIDERS` · `STRIKE_STORE` · `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TENANCY_MODE` ·
 `TENANT_DIRECTORY_STORE` · `TENANT_HOST_HEADER` · `TENANT_ID` · `TRAJECTORY_STORE` ·
 `TRANSLATION_PROVIDER` · `TRUSTED_PROXY_HOPS` · `TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` ·

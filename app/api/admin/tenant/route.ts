@@ -3,8 +3,11 @@
  *
  * GET → the tenant's name, state and addresses; today's spend against its daily agent budget;
  * and the settings its administrators may set for it (each with the platform default and
- * whether the tenant has its own value). Changing one goes through PUT /api/admin/config, which
- * in a shared deployment sets the tenant's own value.
+ * whether the tenant has its own value); and the tenant's recent background jobs, read-only
+ * (ADR-056 — operators act on jobs in the Jobs console; a tenant's administrators see their own
+ * tenant's, under its row-level security; null when the job history could not be read).
+ * Changing a setting goes through PUT /api/admin/config, which in a shared deployment sets the
+ * tenant's own value.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -14,6 +17,7 @@ import { withTenantTx } from "@/platform/data";
 import { currentTenant } from "@/platform/tenancy/context";
 import { listEnhancedConfig } from "@/platform/auth/platform-config";
 import { getBudgetTracker } from "@/platform/agents/budget-tracker";
+import { listTenantJobHistory } from "@/platform/jobs/operator";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
@@ -24,7 +28,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     // The tenant's own record, read in its own transaction: the directory's cache holds what
     // request resolution needs (its state), not its name — another tenant's name is never
     // readable here, and this tenant's is read fresh.
-    const [own, domains, budget, settings] = await Promise.all([
+    const [own, domains, budget, settings, jobs] = await Promise.all([
       withTenantTx((tx) =>
         tx.query<{ slug: string | null; name: string | null; status: string }>(
           "select slug, name, status from public.directory_tenant($1::uuid)",
@@ -38,6 +42,8 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       ),
       getBudgetTracker().getTenantStatus(),
       listEnhancedConfig(),
+      // The history is informative: a failed read shows as unavailable, never fails the page.
+      listTenantJobHistory(25).catch(() => null),
     ]);
     const tenant = own.rows[0];
     return NextResponse.json({
@@ -69,6 +75,17 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
           allowedValues: e.allowedValues,
           permissionTier: e.permissionTier,
         })),
+      jobs:
+        jobs?.map((j) => ({
+          id: j.id,
+          kind: j.kind,
+          status: j.status,
+          attempts: j.attempts,
+          maxAttempts: j.maxAttempts,
+          source: j.source,
+          lastError: j.lastError,
+          updatedAt: j.updatedAt,
+        })) ?? null,
     });
   } catch (error) {
     return internalError(error, { request, context: "Tenant settings read failed" });

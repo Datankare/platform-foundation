@@ -9,8 +9,8 @@
  *
  *   I1  no server error: no 500 at all — hostile input is answered with a 4xx, and a 500 means
  *       an unhandled case (release review) — and any other 5xx (503, 501) is coded JSON;
- *   I2  no privileged success: admin and moderation routes never answer 2xx to an anonymous,
- *       forged, guest or ordinary-user caller;
+ *   I2  no privileged success: admin, moderation, operator and internal (job tick) routes never
+ *       answer 2xx to an anonymous, forged, guest or ordinary-user caller;
  *   I3  no leakage: no stack frames, file paths, provider keys or the canary secret in any body;
  *   I4  every error is coded: a JSON error body carries a `code`;
  *   I5  no hang: every response within the timeout.
@@ -88,7 +88,13 @@ const ROUTES = walk(join(ROOT, "app", "api")).map((file) => {
 });
 
 /** Routes no caller below may succeed on. */
-const PRIVILEGED = [/^\/api\/admin(\/|$)/, /^\/api\/moderation\/(review|reap)(\/|$)/];
+const PRIVILEGED = [
+  /^\/api\/admin(\/|$)/,
+  /^\/api\/moderation\/(review|reap)(\/|$)/,
+  // Operators only (platform_operate), and the host's job tick (CRON_SECRET) — ADR-053, ADR-056.
+  /^\/api\/operator(\/|$)/,
+  /^\/api\/internal(\/|$)/,
+];
 /** Moderation routes an ordinary user may use on their own behalf (appeals of own decisions). */
 const USER_ALLOWED = [/^\/api\/moderation\/appeals$/];
 

@@ -29,6 +29,7 @@ const CORE_SLOTS = [
   "approvalPolicyStore",
   "guestUsageStore",
   "rateLimiter",
+  "jobStore",
 ];
 
 let appModules: readonly PlatformModule[];

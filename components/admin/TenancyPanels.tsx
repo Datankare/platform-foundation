@@ -17,6 +17,7 @@
 import React, { useCallback, useId, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { TenantJobsList, type JobRow } from "@/components/admin/JobsPanels";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.tenancy.${key}`, values);
@@ -105,6 +106,8 @@ interface TenantData {
     platformValue: unknown;
     overridden: boolean;
   }[];
+  /** The tenant's recent background jobs (read-only); null when they could not be read. */
+  jobs?: JobRow[] | null;
 }
 
 const STATES = new Set(["active", "suspended", "deleted"]);
@@ -291,6 +294,8 @@ export function TenantSettingsView({ data: initial }: { data: TenantData | undef
         </table>
         {status && <Status {...status} />}
       </section>
+
+      <TenantJobsList jobs={data.jobs} />
     </div>
   );
 }

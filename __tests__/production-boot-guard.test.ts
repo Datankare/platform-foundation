@@ -20,6 +20,7 @@
  */
 import { register } from "@/instrumentation";
 import { resetObservability, tryGetObservability } from "@/platform/observability";
+import { getBootState, resetBootState } from "@/platform/observability/boot";
 import { resetProviders } from "@/platform/providers";
 
 function setNodeEnv(v: string): void {
@@ -35,6 +36,7 @@ describe("production boot guard (TASK-089)", () => {
 
   beforeEach(() => {
     resetObservability();
+    resetBootState();
     resetProviders();
     process.env = { ...origEnv };
     // A real Next.js server boots register() with NEXT_RUNTIME=nodejs; jest does not set it.
@@ -60,6 +62,8 @@ describe("production boot guard (TASK-089)", () => {
 
     expect(() => register()).toThrow(/refusing to boot|Refusing to boot/);
     expect(tryGetObservability()).toBeFalsy();
+    // ADR-056 D4: readiness can say where boot stopped.
+    expect(getBootState()).toMatchObject({ phase: "failed", step: "providers" });
     expect(errSpy).toHaveBeenCalledWith(
       "[instrumentation] Failed to initialize:",
       expect.anything()
@@ -99,6 +103,7 @@ describe("production boot guard (TASK-089)", () => {
 
     expect(() => register()).not.toThrow();
     expect(tryGetObservability()).toBeTruthy();
+    expect(getBootState().phase).toBe("completed");
 
     logSpy.mockRestore();
   });

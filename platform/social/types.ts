@@ -145,6 +145,15 @@ export interface SocialStore {
   /** List groups a user belongs to (active memberships). */
   listGroupsForUser(userId: string): Promise<readonly Group[]>;
 
+  /**
+   * The current tenant's active groups, in id order, after `after` (a page cursor), at most
+   * `limit` (1–200). For the scheduled agents, which walk every group a page at a time.
+   */
+  listActiveGroups(options: {
+    readonly after?: string;
+    readonly limit: number;
+  }): Promise<readonly Group[]>;
+
   /** Update group status (active/archived/suspended). */
   updateGroupStatus(
     groupId: string,

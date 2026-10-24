@@ -87,7 +87,7 @@ jobs:
           GUEST_TOKEN_SECRET="$(openssl rand -base64 32)" ANTHROPIC_API_KEY="$canary" \
             nohup npx next start -p 3000 > server.log 2>&1 &
           for i in $(seq 1 60); do
-            curl -sf -o /dev/null http://127.0.0.1:3000/api/health && exit 0
+            curl -sf -o /dev/null http://127.0.0.1:3000/api/health/ready && exit 0
             sleep 1
           done
           echo "server did not start"; cat server.log; exit 1

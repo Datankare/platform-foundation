@@ -44,6 +44,12 @@ export interface Operator {
   readonly userId: string;
 }
 
+/** A platform process acting on its own schedule (a job), named in the audit record. */
+export interface SystemActor {
+  /** e.g. "job:tenancy.purge-due". */
+  readonly agent: string;
+}
+
 export type OperatorFailure =
   | "tenant.not_found"
   | "tenant.exists"
@@ -70,7 +76,7 @@ const fail = <T>(code: OperatorFailure, message: string): OperatorResult<T> => (
 
 /** Record, then act; an unwritable record stops the action (audit X-8). */
 async function recorded<T>(
-  operator: Operator,
+  actor: Operator | SystemActor,
   type: string,
   details: Record<string, unknown>,
   act: () => Promise<OperatorResult<T>>
@@ -78,7 +84,11 @@ async function recorded<T>(
   try {
     // audited() reads `success`/`error` to record the outcome; the caller gets the result alone.
     const out = await audited(
-      { action: "admin_action", actorId: operator.userId, details: { type, ...details } },
+      {
+        action: "admin_action",
+        ...("userId" in actor ? { actorId: actor.userId } : { agent: actor.agent }),
+        details: { type, ...details },
+      },
       async () => {
         const result = await act();
         return result.ok
@@ -644,9 +654,15 @@ function purgedAlready<T>(): OperatorResult<T> {
   );
 }
 
-/** Purge the data of every deleted tenant whose purge time has passed. */
+/**
+ * Purge the data of every deleted tenant whose purge time has passed — by an operator (the
+ * console's "purge due"), or by the tenancy.purge-due platform job on its schedule.
+ *
+ * @scheduled tenancy.purge-due
+ */
 export async function purgeDueTenants(
-  operator: Operator
+  actor: Operator | SystemActor,
+  options: { readonly signal?: AbortSignal } = {}
 ): Promise<OperatorResult<readonly { tenantId: string; rows: number }[]>> {
   const due = await withOwnerTx("tenant-lifecycle", (tx) =>
     tx.query<{ id: string }>(
@@ -657,7 +673,10 @@ export async function purgeDueTenants(
   );
   const done: { tenantId: string; rows: number }[] = [];
   for (const { id } of due.rows) {
-    const r = await recorded(operator, "tenant_purged", { tenantId: id }, async () => {
+    // Told to stop (the job's time is up, or the instance is stopping): between tenants, never
+    // inside one purge. The rest stay due; the caller sees fewer purged than were due.
+    if (options.signal?.aborted) break;
+    const r = await recorded(actor, "tenant_purged", { tenantId: id }, async () => {
       const { rows } = await withOwnerTx("tenant-lifecycle", (tx) =>
         tx.query<{ deleted: string }>(
           "select deleted from public.tenant_purge($1::uuid)",

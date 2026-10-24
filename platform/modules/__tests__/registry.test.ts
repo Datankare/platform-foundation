@@ -107,6 +107,60 @@ describe("registerModules", () => {
     expect(() => registerModules([changed])).toThrow(/already registered/);
   });
 
+  // Review finding 12: jobs were not in the fingerprint, so a module whose jobs changed was
+  // re-registered silently and the process kept running the first set's jobs.
+  describe("jobs are part of the declaration", () => {
+    const job = (kind: string, extra: Record<string, unknown> = {}) => ({
+      kind,
+      description: "d",
+      handler: async () => undefined,
+      ...extra,
+    });
+    const demo = (...jobs: ReturnType<typeof job>[]) =>
+      definePlatformModule({ id: "demo", jobs });
+
+    it("refuses a re-registration whose jobs changed kind", () => {
+      registerModules([demo(job("demo.one"))]);
+      expect(() => registerModules([demo(job("demo.two"))])).toThrow(
+        /already registered/
+      );
+      expect(getModules()[0].jobs.map((j) => j.kind)).toEqual(["demo.one"]);
+    });
+
+    it.each([
+      ["timeout", { timeoutMs: 9_000 }],
+      ["attempts", { maxAttempts: 2 }],
+      ["scope", { scope: "platform" }],
+      ["backoff", { backoff: { baseMs: 2_000, maxMs: 4_000 } }],
+      ["the suspended-tenant rule", { runsForSuspended: true }],
+      [
+        "schedule",
+        {
+          schedule: {
+            scope: "each-tenant",
+            defaultIntervalMinutes: 60,
+            minIntervalMinutes: 15,
+            maxIntervalMinutes: 1440,
+          },
+        },
+      ],
+    ])("refuses a re-registration whose job changed its %s", (_label, change) => {
+      registerModules([demo(job("demo.one"))]);
+      const changed = demo(job("demo.one", change));
+      expect(moduleFingerprint(changed)).not.toBe(
+        moduleFingerprint(demo(job("demo.one")))
+      );
+      expect(() => registerModules([changed])).toThrow(/already registered/);
+    });
+
+    it("accepts the same jobs again (a bundle's copy)", () => {
+      registerModules([demo(job("demo.one", { timeoutMs: 9_000 }))]);
+      expect(() =>
+        registerModules([demo(job("demo.one", { timeoutMs: 9_000 }))])
+      ).not.toThrow();
+    });
+  });
+
   it("anchors the set in the globalThis carrier (ADR-032)", () => {
     registerModules([a]);
     const carried = getSingleton<{ modules: readonly PlatformModule[] } | null>(

@@ -85,12 +85,12 @@ BEGIN
     'group_invites','review_queue','user_strikes','content_safety_audit','agent_budgets',
     'agent_trajectories','proposals','effect_ledger','app_sessions','document_embeddings',
     'rate_limit_events','applied_migrations','ai_metrics','tenants','tenant_domains',
-    'tenant_config_overrides','tenant_lifecycle_requests'
+    'tenant_config_overrides','tenant_lifecycle_requests','jobs','job_schedules'
   ]) AS t WHERE to_regclass('public.' || t) IS NULL;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing tables: %', missing; END IF;
   SELECT string_agg(f, ', ') INTO missing FROM unnest(ARRAY[
     'agent_budget_consume','guest_allowance_consume','rate_limit_hit','rate_limit_reset',
-    'app_current_tenant','directory_host','directory_tenant','tenant_own_domains'
+    'app_current_tenant','directory_host','directory_tenant','tenant_own_domains','job_claim'
   ]) AS f WHERE NOT EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public' AND p.proname = f);
@@ -292,7 +292,8 @@ BEGIN
     WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r','p')
       AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
       AND c.relname NOT IN ('permissions','roles','role_permissions','role_inheritance','entitlement_groups',
-        'entitlement_permissions','deletion_manifest','platform_config','applied_migrations','tenants');
+        'entitlement_permissions','deletion_manifest','platform_config','applied_migrations','tenants',
+        'job_schedules');
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tables with no tenant_id that are not platform-owned: %', missing; END IF;
   SELECT string_agg(c.relname, ', ') INTO missing FROM pg_class c
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped
@@ -320,13 +321,14 @@ BEGIN
   SELECT string_agg(c.relname, ', ') INTO missing FROM pg_class c
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped
     WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r','p')
-      AND c.relname NOT IN ('platform_config_history','config_pending_approvals') AND NOT a.attnotnull;
+      AND c.relname NOT IN ('platform_config_history','config_pending_approvals','jobs','job_schedule_outcomes') AND NOT a.attnotnull;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tenant tables where tenant_id may be null: %', missing; END IF;
-  -- Every tenant table's primary key starts with tenant_id (users: the identity's own id).
+  -- Every tenant table's primary key starts with tenant_id (users: the identity's own id; jobs and
+  -- job_schedule_outcomes: a generated id, since a platform row has no tenant — 050).
   SELECT string_agg(c.conrelid::regclass::text, ', ') INTO missing FROM pg_constraint c
     WHERE c.contype = 'p' AND c.connamespace = 'public'::regnamespace
       AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'tenant_id')
-      AND c.conrelid::regclass::text NOT IN ('users', 'tenant_domains', 'tenant_lifecycle_requests', 'platform_config_history', 'config_pending_approvals')
+      AND c.conrelid::regclass::text NOT IN ('users', 'tenant_domains', 'tenant_lifecycle_requests', 'platform_config_history', 'config_pending_approvals', 'jobs', 'job_schedule_outcomes')
       AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[1]) <> 'tenant_id';
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tenant tables whose primary key is not per tenant: %', missing; END IF;
   -- No policy other than the platform's own exists (the auth.uid()-era ones are gone).
@@ -349,8 +351,9 @@ BEGIN
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'constraints never validated: %', missing; END IF;
   -- Every unique key on a tenant-owned table includes tenant_id, except these (049 says why):
   -- users' id and identity subject (one identity, one tenant), keys led by a user id (itself of
-  -- one tenant), generated ids of config history and approvals (tenant_id null for platform
-  -- rows), and the directory's own tables (a host serves one tenant platform-wide).
+  -- one tenant), generated ids of config history, approvals, jobs and schedule outcomes
+  -- (tenant_id null for platform rows; 050), and the directory's own tables (a host serves one
+  -- tenant platform-wide).
   SELECT string_agg(i.indexrelid::regclass::text, ', ') INTO missing FROM pg_index i
     JOIN pg_class c ON c.oid = i.indrelid
     WHERE c.relnamespace = 'public'::regnamespace AND i.indisunique
@@ -361,7 +364,8 @@ BEGIN
                        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.k))
           NOT IN (('users', 'id'), ('users', 'cognito_sub'), ('user_devices', 'user_id,device_id'),
                   ('user_entitlements', 'user_id,entitlement_group_id'), ('platform_config_history', 'id'),
-                  ('config_pending_approvals', 'id'), ('tenant_domains', 'host'), ('tenant_lifecycle_requests', 'id'));
+                  ('config_pending_approvals', 'id'), ('tenant_domains', 'host'), ('tenant_lifecycle_requests', 'id'),
+                  ('jobs', 'id'), ('job_schedule_outcomes', 'id'));
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'unique keys on tenant tables that span tenants: %', missing; END IF;
   -- The request role cannot step outside row-level security.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_tenant' AND (rolbypassrls OR rolsuper OR rolcreaterole OR rolcreatedb)) THEN
@@ -581,6 +585,191 @@ ROLLBACK;
 DELETE FROM realtime.messages;
 SQL
 
+step "jobs: the claim is closed, exclusive, leased and per tenant (ADR-056 D2, TASK-137)"
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE missing text;
+BEGIN
+  -- The claim runs as its owner, with a fixed search path; no public, request or anonymous role
+  -- may call it (it reads every tenant's due work).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+     WHERE p.oid = 'public.job_claim(text,text[],integer,integer)'::regprocedure AND p.prosecdef
+       AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%')
+  ) THEN
+    RAISE EXCEPTION 'job_claim is not an owner-rights function with a fixed search_path';
+  END IF;
+  SELECT string_agg(r, ', ') INTO missing FROM unnest(ARRAY['public','anon','authenticated','app_tenant']) r
+   WHERE has_function_privilege(r, 'public.job_claim(text,text[],integer,integer)', 'EXECUTE');
+  IF missing IS NOT NULL THEN RAISE EXCEPTION 'job_claim is executable by: %', missing; END IF;
+  -- The request role reads its tenant's jobs; it inserts, changes and removes none (every enqueue
+  -- goes through platform/jobs on the owner connection, bound to the caller's tenant and the
+  -- kind's scope); the schedules and their outcomes are the owner's alone.
+  SELECT string_agg(x, ', ') INTO missing FROM (VALUES
+      ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('INSERT')) AS v (x)
+   WHERE has_table_privilege('app_tenant', 'public.jobs', x);
+  IF missing IS NOT NULL THEN RAISE EXCEPTION 'app_tenant may % jobs', missing; END IF;
+  IF has_any_column_privilege('app_tenant', 'public.jobs', 'INSERT') THEN
+    RAISE EXCEPTION 'app_tenant may insert some jobs columns';
+  END IF;
+  IF has_table_privilege('app_tenant', 'public.job_schedules', 'SELECT,INSERT,UPDATE,DELETE') THEN
+    RAISE EXCEPTION 'app_tenant can reach job_schedules';
+  END IF;
+  IF has_table_privilege('app_tenant', 'public.job_schedule_outcomes', 'SELECT,INSERT,UPDATE,DELETE') THEN
+    RAISE EXCEPTION 'app_tenant can reach job_schedule_outcomes';
+  END IF;
+  -- Bounded inputs.
+  BEGIN
+    PERFORM public.job_claim('w', ARRAY['replay.job'], 0, 60);
+    RAISE EXCEPTION 'job_claim accepted a zero limit';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE 'job_claim: invalid limit%' THEN RAISE; END IF;
+  END;
+END $$;
+
+INSERT INTO public.tenants (id, slug, name) VALUES
+  ('aaaaaaaa-0000-4000-8000-0000000000a1', 'replay-jobs-a', 'Replay jobs A'),
+  ('bbbbbbbb-0000-4000-8000-0000000000b1', 'replay-jobs-b', 'Replay jobs B');
+-- Forty due jobs across the two tenants and the platform, for the concurrent claim below.
+INSERT INTO public.jobs (tenant_id, kind, idempotency_key)
+  SELECT CASE i % 3 WHEN 0 THEN 'aaaaaaaa-0000-4000-8000-0000000000a1'::uuid
+                    WHEN 1 THEN 'bbbbbbbb-0000-4000-8000-0000000000b1'::uuid END,
+         'replay.job', 'k' || i
+    FROM generate_series(1, 40) i;
+SQL
+
+# Four workers claim at once, ten each: every job is taken exactly once (FOR UPDATE SKIP LOCKED).
+tmp=$(mktemp -d)
+for w in 1 2 3 4; do
+  "${PSQL[@]}" -At -c "SELECT id FROM public.job_claim('replay-w$w', ARRAY['replay.job'], 10, 60)" >"$tmp/$w" &
+done
+wait
+claimed=$(cat "$tmp"/* | sed '/^$/d' | wc -l)
+distinct=$(cat "$tmp"/* | sed '/^$/d' | sort -u | wc -l)
+rm -rf "$tmp"
+[ "$claimed" -eq 40 ] && [ "$distinct" -eq 40 ] \
+  || { echo "✗ concurrent job_claim: $claimed claims of $distinct distinct jobs (expected 40 of 40)"; exit 1; }
+
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE r record; n integer; tok uuid;
+BEGIN
+  -- Nothing is due while every lease holds.
+  SELECT count(*) INTO n FROM public.job_claim('replay-w5', ARRAY['replay.job'], 100, 60);
+  IF n <> 0 THEN RAISE EXCEPTION 'job_claim took % jobs that are leased', n; END IF;
+  -- A lapsed lease (the worker died) makes the job due again: a new attempt, a new token.
+  SELECT id, lease_token INTO r FROM public.jobs WHERE idempotency_key = 'k1';
+  UPDATE public.jobs SET locked_until = now() - interval '1 second' WHERE id = r.id;
+  SELECT lease_token INTO tok FROM public.job_claim('replay-w6', ARRAY['replay.job'], 100, 60) LIMIT 1;
+  IF tok IS NULL OR tok = r.lease_token THEN RAISE EXCEPTION 'a lapsed lease was not recovered with a new token'; END IF;
+  IF (SELECT attempts FROM public.jobs WHERE id = r.id) <> 2 THEN RAISE EXCEPTION 'the recovered job did not count an attempt'; END IF;
+  -- A lease that lapsed on the last attempt: dead, not run again.
+  UPDATE public.jobs SET max_attempts = 2, locked_until = now() - interval '1 second' WHERE id = r.id;
+  SELECT count(*) INTO n FROM public.job_claim('replay-w7', ARRAY['replay.job'], 100, 60);
+  IF n <> 0 OR (SELECT status FROM public.jobs WHERE id = r.id) <> 'dead' THEN
+    RAISE EXCEPTION 'a job whose last attempt lapsed was not dead-lettered';
+  END IF;
+  -- Only the kinds asked for; and a suspended tenant's jobs wait, parked — except a kind that
+  -- runs for suspended tenants (a legal obligation).
+  INSERT INTO public.jobs (tenant_id, kind, idempotency_key)
+    VALUES ('aaaaaaaa-0000-4000-8000-0000000000a1', 'replay.other', 'o1'),
+           ('bbbbbbbb-0000-4000-8000-0000000000b1', 'replay.other', 'o2');
+  INSERT INTO public.jobs (tenant_id, kind, idempotency_key, runs_for_suspended)
+    VALUES ('bbbbbbbb-0000-4000-8000-0000000000b1', 'replay.legal', 'l1', true);
+  UPDATE public.tenants SET status = 'suspended' WHERE id = 'bbbbbbbb-0000-4000-8000-0000000000b1';
+  IF (SELECT status FROM public.jobs WHERE idempotency_key = 'o2') <> 'parked' THEN
+    RAISE EXCEPTION 'a suspended tenant''s queued job was not parked';
+  END IF;
+  IF (SELECT status FROM public.jobs WHERE idempotency_key = 'l1') <> 'queued' THEN
+    RAISE EXCEPTION 'a job that runs for suspended tenants was parked';
+  END IF;
+  -- Enqueued while suspended: parked as it is written.
+  INSERT INTO public.jobs (tenant_id, kind, idempotency_key)
+    VALUES ('bbbbbbbb-0000-4000-8000-0000000000b1', 'replay.other', 'o3');
+  IF (SELECT status FROM public.jobs WHERE idempotency_key = 'o3') <> 'parked' THEN
+    RAISE EXCEPTION 'a job enqueued for a suspended tenant was not parked';
+  END IF;
+  SELECT count(*) INTO n FROM public.job_claim('replay-w8', ARRAY['replay.job'], 100, 60);
+  IF n <> 0 THEN RAISE EXCEPTION 'job_claim took a kind it was not asked for'; END IF;
+  SELECT count(*) INTO n FROM public.job_claim('replay-w8', ARRAY['replay.other'], 100, 60);
+  IF n <> 1 THEN RAISE EXCEPTION 'job_claim took % jobs (expected the active tenant''s one)', n; END IF;
+  SELECT count(*) INTO n FROM public.job_claim('replay-w8', ARRAY['replay.legal'], 100, 60);
+  IF n <> 1 THEN RAISE EXCEPTION 'job_claim took % legal-obligation jobs of a suspended tenant (expected 1)', n; END IF;
+  -- Resumed: its parked jobs are queued again.
+  UPDATE public.tenants SET status = 'active' WHERE id = 'bbbbbbbb-0000-4000-8000-0000000000b1';
+  IF (SELECT count(*) FROM public.jobs WHERE idempotency_key IN ('o2', 'o3') AND status = 'queued') <> 2 THEN
+    RAISE EXCEPTION 'a resumed tenant''s parked jobs were not queued again';
+  END IF;
+  -- A deleted tenant's jobs are all parked, legal obligations too.
+  UPDATE public.tenants SET status = 'deleted', purge_after = now() + interval '30 days'
+   WHERE id = 'bbbbbbbb-0000-4000-8000-0000000000b1';
+  IF EXISTS (SELECT 1 FROM public.jobs WHERE tenant_id = 'bbbbbbbb-0000-4000-8000-0000000000b1' AND status = 'queued') THEN
+    RAISE EXCEPTION 'a deleted tenant''s job stayed queued';
+  END IF;
+  UPDATE public.tenants SET status = 'active', purge_after = NULL
+   WHERE id = 'bbbbbbbb-0000-4000-8000-0000000000b1';
+  -- No job is due before it was written: a past run_at is clamped to now().
+  INSERT INTO public.jobs (tenant_id, kind, idempotency_key, run_at)
+    VALUES (NULL, 'replay.other', 'past', '1970-01-01');
+  IF (SELECT run_at FROM public.jobs WHERE idempotency_key = 'past') < now() THEN
+    RAISE EXCEPTION 'a backdated run_at was accepted';
+  END IF;
+  -- One key per tenant and kind: the same key in another tenant is another job; twice in one is refused.
+  BEGIN
+    INSERT INTO public.jobs (tenant_id, kind, idempotency_key)
+      VALUES ('aaaaaaaa-0000-4000-8000-0000000000a1', 'replay.other', 'o1');
+    RAISE EXCEPTION 'a duplicate idempotency key was accepted';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.jobs (tenant_id, kind, idempotency_key) VALUES (NULL, 'replay.job', 'k3');
+    INSERT INTO public.jobs (tenant_id, kind, idempotency_key) VALUES (NULL, 'replay.job', 'k3');
+    RAISE EXCEPTION 'a duplicate platform idempotency key was accepted (nulls must not be distinct)';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+END $$;
+
+-- The request role, as tenant A: its own jobs only, read only.
+BEGIN;
+SET LOCAL ROLE app_tenant;
+DO $$ BEGIN PERFORM set_config('app.tenant_id', 'aaaaaaaa-0000-4000-8000-0000000000a1', true); END $$;
+DO $$ DECLARE n integer; BEGIN
+  IF EXISTS (SELECT 1 FROM public.jobs WHERE tenant_id IS DISTINCT FROM 'aaaaaaaa-0000-4000-8000-0000000000a1') THEN
+    RAISE EXCEPTION 'tenant A sees another tenant''s or a platform job';
+  END IF;
+  IF (SELECT count(*) FROM public.jobs) = 0 THEN RAISE EXCEPTION 'tenant A cannot see its own jobs'; END IF;
+  BEGIN
+    INSERT INTO public.jobs (kind, idempotency_key, payload) VALUES ('replay.mine', 'm1', '{"a":1}');
+    RAISE EXCEPTION 'tenant A inserted a job';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.jobs (kind, idempotency_key, status) VALUES ('replay.mine', 'm2', 'succeeded');
+    RAISE EXCEPTION 'tenant A set a job''s status';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE public.jobs SET run_at = now();
+    RAISE EXCEPTION 'tenant A changed a job';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM public.job_claim('tenant', ARRAY['replay.job'], 1, 60);
+    RAISE EXCEPTION 'tenant A ran job_claim';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM 1 FROM public.job_schedules;
+    RAISE EXCEPTION 'tenant A read job_schedules';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+DELETE FROM public.jobs WHERE kind IN ('replay.job', 'replay.other', 'replay.mine', 'replay.legal');
+DELETE FROM public.tenants WHERE slug IN ('replay-jobs-a', 'replay-jobs-b');
+SQL
+
 step "tenancy: 049 applied again changes nothing (idempotent)"
 # What an operator may have changed since 049 ran, and what a later migration may have added:
 # re-running 049 must keep all of it — a platform history row (tenant_id null by design), a
@@ -641,6 +830,41 @@ DELETE FROM public.platform_config_history WHERE change_comment = 'replay: a pla
 UPDATE public.platform_config SET tenant_overridable = true WHERE key = 'signups_enabled';
 DROP TABLE public.replay_later;
 DROP POLICY replay_later_read ON public.users;
+SQL
+
+step "jobs: 050 and 051 applied again change nothing (idempotent)"
+# An operator's choice since (a schedule turned off, a stretched interval, a duty taken off the
+# dual-control list) and a schedule's state must survive a re-run, as must every later object.
+dual_before=$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'config.dual_control_keys'")
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+UPDATE public.platform_config SET value = 'false' WHERE key = 'jobs.jobs.prune.enabled';
+UPDATE public.platform_config SET value = value - 'jobs.tenancy.purge-due.enabled'
+ WHERE key = 'config.dual_control_keys';
+INSERT INTO public.job_schedules (kind, last_enqueued) VALUES ('replay.schedule', 3);
+SQL
+before=$(snapshot)
+for f in $order; do
+  case "$f" in 050_jobs.sql|051_social_scheduled_agents.sql) ;; *) continue ;; esac
+  "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null 2>&1 \
+    || { echo "✗ $f failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null; exit 1; }
+done
+after=$(snapshot)
+if [ "$before" != "$after" ]; then
+  echo "✗ applying 050 and 051 a second time changed the database:"
+  diff <(echo "$before") <(echo "$after") || true
+  exit 1
+fi
+[ "$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'jobs.jobs.prune.enabled'")" = "false" ] \
+  || { echo "✗ re-running 050 undid an operator's schedule choice"; exit 1; }
+# A third application: still removed (050 seeds dual control on its first application only).
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/050_jobs.sql" >/dev/null 2>&1 \
+  || { echo "✗ 050 failed when applied a third time"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT value @> '[\"jobs.tenancy.purge-due.enabled\"]' FROM public.platform_config WHERE key = 'config.dual_control_keys'")" = "f" ] \
+  || { echo "✗ re-running 050 put back a dual-control key an operator removed"; exit 1; }
+"${PSQL[@]}" -At <<SQL >/dev/null
+UPDATE public.platform_config SET value = 'true' WHERE key = 'jobs.jobs.prune.enabled';
+UPDATE public.platform_config SET value = '$dual_before'::jsonb WHERE key = 'config.dual_control_keys';
+DELETE FROM public.job_schedules WHERE kind = 'replay.schedule';
 SQL
 
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"

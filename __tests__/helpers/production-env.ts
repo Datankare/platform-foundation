@@ -28,6 +28,7 @@ export const CORE_DURABLE_STORES = [
   "APPROVAL_POLICY_STORE",
   "GUEST_USAGE_STORE",
   "RATE_LIMIT_STORE",
+  "JOB_STORE",
 ] as const;
 
 /** A production deployment with real auth and every core store durable. */
@@ -38,10 +39,12 @@ export function productionDeployment(): void {
     NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_AbC123",
     NEXT_PUBLIC_COGNITO_CLIENT_ID: "abc123def456",
     GUEST_TOKEN_SECRET: "g".repeat(64),
+    CRON_SECRET: "c".repeat(64),
     CACHE_PROVIDER: "memory",
     TENANCY_MODE: "single",
     TENANT_ID: "00000000-0000-4000-8000-000000000001",
     DEPLOYMENT_HOST: "container",
+    NEXT_MANUAL_SIG_HANDLE: "true",
     DATABASE_URL: "postgresql://app_tenant:pw@pooler.example.test:6543/app",
     DATABASE_OWNER_URL: "postgresql://owner:pw@db.example.test:5432/app",
   });

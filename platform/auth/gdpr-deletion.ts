@@ -8,7 +8,8 @@
  *
  * Two-phase approach:
  * 1. Soft delete — mark user as deleted_at, anonymize PII
- * 2. Hard purge — scheduled job removes all data after retention period
+ * 2. Hard purge — removes all data after the retention period (purgeDueErasures, run for every
+ *    active tenant by the gdpr.retention-purge job, platform/jobs/duties.ts)
  *
  * The user row is anonymized and removed in the request's tenant (platform/data, ADR-053 D4).
  *
@@ -167,9 +168,8 @@ export async function softDeleteUser(
 }
 
 /**
- * Phase 2: Hard purge a user's data.
- * Called by a scheduled job after the retention period.
- * Permanently removes all data across all modules.
+ * Phase 2: Hard purge a user's data. Permanently removes all data across all modules. Called for
+ * each account whose retention period has passed by purgeDueErasures.
  */
 export async function hardPurgeUser(
   userId: string
@@ -214,4 +214,73 @@ export async function hardPurgeUser(
   }
 
   return { success: errors.length === 0, errors };
+}
+
+/** What one retention run did. */
+export interface ErasureRunResult {
+  /** Accounts whose retention period had passed (at most the run's limit). */
+  readonly due: number;
+  readonly purged: number;
+  /** Erasures that could not complete; they stay due and are tried on the next run. */
+  readonly failed: number;
+  /** The run was told to stop (its signal) before every due account was handled. */
+  readonly stopped: boolean;
+}
+
+/**
+ * Erase every account of the current tenant whose retention period has passed (user_deletions
+ * purge_after), at most `limit` per run, oldest first. Each erasure is recorded before it runs
+ * (gdpr_purge_executed, by `agent`); one that cannot be recorded or does not complete is
+ * counted as failed and stays due. `signal` (the job's): checked between accounts — aborted, the
+ * run stops with `stopped` and the rest stay due.
+ *
+ * @scheduled gdpr.retention-purge
+ */
+export async function purgeDueErasures(
+  agent: string,
+  limit = 100,
+  signal?: AbortSignal
+): Promise<ErasureRunResult> {
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ user_id: string }>(
+      `select user_id from user_deletions
+        where purged_at is null and purge_after <= now()
+        order by purge_after, user_id
+        limit $1::int`,
+      [limit]
+    )
+  );
+  let purged = 0;
+  let failed = 0;
+  let stopped = false;
+  for (const { user_id: userId } of rows) {
+    // Told to stop (its job's time is up, or the instance is stopping): between accounts, never
+    // inside one — the rest stay due and the next part takes them.
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
+    try {
+      const result = await audited(
+        {
+          action: "gdpr_purge_executed",
+          agent,
+          targetId: userId,
+          details: { phase: "hard_purge", trigger: "retention_period_passed" },
+        },
+        async () => {
+          const r = await hardPurgeUser(userId);
+          return r.success
+            ? { success: true as const }
+            : { success: false as const, error: r.errors.join("; ") };
+        }
+      );
+      if (result.success) purged++;
+      else failed++;
+    } catch (err) {
+      if (!(err instanceof AuditWriteError)) throw err;
+      failed++;
+    }
+  }
+  return { due: rows.length, purged, failed, stopped };
 }

@@ -2,7 +2,8 @@
  * platform/social/module.ts — The social module (ADR-021, ADR-054 D2)
  *
  * Groups, memberships and invites; the five social agents with their prompts and evals; the
- * curator content type; the "social" moderation content type; the Teams feature; the social
+ * curator content type; the "social" moderation content type; the Teams feature; the analyst and
+ * curator as recurring jobs (./jobs.ts, migration 051); the social
  * store slot (SOCIAL_STORE, durable — refused as memory in production, TASK-107). Its files,
  * tests, kit and migration (015) are listed in platform/modules/manifest.json.
  *
@@ -23,6 +24,7 @@ import { GATEKEEPER_EVAL } from "@/prompts/evals/social/gatekeeper.eval";
 import { MATCHMAKER_EVAL } from "@/prompts/evals/social/matchmaker.eval";
 import { SOCIAL_AGENT_CONFIGS } from "./agent-configs";
 import { CURATOR_CONTENT_TYPE } from "./content/curator-content";
+import { SOCIAL_JOBS } from "./jobs";
 import { InMemorySocialStore } from "./memory-social-store";
 import { PostgresSocialStore } from "./postgres-social-store";
 import { SOCIAL_STORE_KEY, setSocialStore } from "./store";
@@ -69,5 +71,7 @@ export const SOCIAL_MODULE = definePlatformModule({
   ],
   // Chat messages and group posts: standard screening, with context.
   moderationContentTypes: [{ name: "social", severityReduction: false }],
+  // ADR-056 D3: the analyst and curator on their schedules (settings seeded by migration 051).
+  jobs: SOCIAL_JOBS,
   kits: ["__tests__/contract/social-store-contract.ts"],
 });

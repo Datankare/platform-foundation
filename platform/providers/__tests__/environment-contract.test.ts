@@ -13,6 +13,8 @@ import {
   getTenantHostHeader,
   getSsoProviders,
   getSupabaseUrl,
+  getGitCommitSha,
+  getShutdownSettings,
   allowsHarnessSwitches,
   resolveSetting,
   type EnvSource,
@@ -38,6 +40,7 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     SUPABASE_URL: "https://abcdefghijklmnop.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: JWT,
     GUEST_TOKEN_SECRET: GUEST_SECRET,
+    CRON_SECRET: "c".repeat(64),
     APP_STATE_STORE: "supabase",
     TRAJECTORY_STORE: "supabase",
     BUDGET_STORE: "supabase",
@@ -67,6 +70,49 @@ describe("environment contract — a valid deployment", () => {
   it("assert reads process.env by default", () => {
     // jest runs with NODE_ENV=test — a no-op, but exercises the default argument.
     expect(() => assertEnvironmentContract()).not.toThrow();
+  });
+});
+
+// Review finding 2: a deployment without CRON_SECRET booted and reported ready while its tick
+// refused every call, so no timed duty ever ran. It is now refused at boot on every host (Vercel
+// Cron and the container's worker call the same route); a local or CI run may leave it unset.
+describe("ADR-056 D2 — the job tick's secret", () => {
+  it.each(["vercel", "container", "aws"])(
+    "refuses a %s deployment without CRON_SECRET, naming what would not run",
+    (host) => {
+      const v = checkEnvironmentContract(
+        valid({ DEPLOYMENT_HOST: host, CRON_SECRET: undefined })
+      ).join("\n");
+      expect(v).toMatch(/CRON_SECRET is required/);
+      expect(v).toMatch(/no timed duty/);
+      expect(() =>
+        assertEnvironmentContract(
+          valid({ DEPLOYMENT_HOST: host, CRON_SECRET: undefined })
+        )
+      ).toThrow(EnvironmentContractError);
+    }
+  );
+
+  it("refuses a production context with no DEPLOYMENT_HOST and no CRON_SECRET", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({ DEPLOYMENT_HOST: undefined, CRON_SECRET: undefined })
+      ).join("\n")
+    ).toMatch(/CRON_SECRET is required/);
+  });
+
+  it("refuses a short secret by its shape", () => {
+    expect(checkEnvironmentContract(valid({ CRON_SECRET: "short" })).join("\n")).toMatch(
+      /CRON_SECRET has the wrong shape/
+    );
+  });
+
+  it.each(["local", "ci"])("lets a %s run leave it unset", (host) => {
+    expect(
+      checkEnvironmentContract(
+        valid({ DEPLOYMENT_HOST: host, CRON_SECRET: undefined })
+      ).filter((m) => m.startsWith("CRON_SECRET"))
+    ).toEqual([]);
   });
 });
 
@@ -164,8 +210,9 @@ describe("D1 — no test-double auth in production", () => {
     }
     expect(err).toBeInstanceOf(EnvironmentContractError);
     const e = err as EnvironmentContractError;
-    expect(e.violations.length).toBe(4);
+    expect(e.violations.length).toBe(5);
     expect(e.message).toMatch(/refusing to boot/);
+    expect(e.message).toMatch(/CRON_SECRET is required/);
     expect(e.message).toMatch(/SUPABASE_URL has the wrong shape/);
     expect(e.message).toMatch(/AUTH_PROVIDER/);
     expect(e.message).toMatch(/CACHE_PROVIDER is required/);
@@ -221,7 +268,11 @@ describe("the cache is chosen, never inferred (TASK-139)", () => {
     ).toEqual([]);
     expect(
       checkEnvironmentContract(
-        valid({ CACHE_PROVIDER: undefined, DEPLOYMENT_HOST: "container" })
+        valid({
+          CACHE_PROVIDER: undefined,
+          DEPLOYMENT_HOST: "container",
+          NEXT_MANUAL_SIG_HANDLE: "true",
+        })
       )
     ).toEqual([
       "CACHE_PROVIDER is required: upstash (shared), or memory (per instance, declared on purpose)",
@@ -357,6 +408,7 @@ describe("required settings", () => {
         NEXT_PUBLIC_COGNITO_USER_POOL_ID: "eu-west-1_X",
         NEXT_PUBLIC_COGNITO_CLIENT_ID: "c",
         GUEST_TOKEN_SECRET: GUEST_SECRET,
+        CRON_SECRET: "c".repeat(64),
         CACHE_PROVIDER: "memory",
         TENANCY_MODE: "single",
         TENANT_ID: "00000000-0000-4000-8000-000000000001",
@@ -793,5 +845,111 @@ describe("the database connections (ADR-053 D4)", () => {
         valid({ DATABASE_POOL_MAX: "1", DATABASE_STATEMENT_TIMEOUT_MS: "100" })
       )
     ).toEqual([]);
+  });
+});
+
+describe("ADR-055 — the container image's settings", () => {
+  const container = (extra: Record<string, string | undefined> = {}) =>
+    valid({ DEPLOYMENT_HOST: "container", NEXT_MANUAL_SIG_HANDLE: "true", ...extra });
+
+  it("a container deployment as the image runs it has no violations", () => {
+    expect(
+      checkEnvironmentContract(
+        container({
+          GIT_COMMIT_SHA: "e3c3fe4a1b2c3d4e5f60718293a4b5c6d7e8f901",
+          SHUTDOWN_DRAIN_SECONDS: "10",
+          SHUTDOWN_TIMEOUT_SECONDS: "25",
+        })
+      )
+    ).toEqual([]);
+  });
+
+  it("D5: a container must own its signals, or SIGTERM ends it before it drains", () => {
+    expect(
+      checkEnvironmentContract(container({ NEXT_MANUAL_SIG_HANDLE: undefined }))
+    ).toEqual([
+      "NEXT_MANUAL_SIG_HANDLE=true is required by DEPLOYMENT_HOST=container (graceful shutdown — the image sets it)",
+    ]);
+    // Another host (Vercel) keeps Next.js's own handling.
+    expect(checkEnvironmentContract(valid())).toEqual([]);
+  });
+
+  it.each(["false", "1", "TRUE"])(
+    "refuses NEXT_MANUAL_SIG_HANDLE=%p — Next.js treats any value as set",
+    (v) => {
+      expect(checkEnvironmentContract(container({ NEXT_MANUAL_SIG_HANDLE: v }))).toEqual([
+        expect.stringMatching(/^NEXT_MANUAL_SIG_HANDLE has the wrong shape/),
+      ]);
+    }
+  );
+
+  it.each(["main", "unknown", "abc12", "g".repeat(40), "a".repeat(41)])(
+    "D2: refuses GIT_COMMIT_SHA=%p — the commit is what the smoke test proves",
+    (v) => {
+      expect(checkEnvironmentContract(valid({ GIT_COMMIT_SHA: v }))).toEqual([
+        expect.stringMatching(/^GIT_COMMIT_SHA has the wrong shape/),
+      ]);
+    }
+  );
+
+  it("D2: reads the commit through the contract", () => {
+    expect(getGitCommitSha({ GIT_COMMIT_SHA: "abc1234" })).toBe("abc1234");
+    expect(getGitCommitSha({ GIT_COMMIT_SHA: "" })).toBeUndefined();
+  });
+
+  it.each([
+    ["SHUTDOWN_DRAIN_SECONDS", "-1"],
+    ["SHUTDOWN_DRAIN_SECONDS", "301"],
+    ["SHUTDOWN_DRAIN_SECONDS", "5s"],
+    ["SHUTDOWN_TIMEOUT_SECONDS", "0"],
+    ["SHUTDOWN_TIMEOUT_SECONDS", "601"],
+    ["SHUTDOWN_TIMEOUT_SECONDS", "1.5"],
+  ])("refuses %s=%p", (name, value) => {
+    expect(checkEnvironmentContract(container({ [name]: value }))).toEqual([
+      expect.stringMatching(new RegExp(`^${name} has the wrong shape`)),
+    ]);
+  });
+
+  it.each([
+    [{ SHUTDOWN_DRAIN_SECONDS: "9" }],
+    [{ SHUTDOWN_DRAIN_SECONDS: "30", SHUTDOWN_TIMEOUT_SECONDS: "30" }],
+    [{ SHUTDOWN_TIMEOUT_SECONDS: "5" }],
+  ])("refuses a bound that does not include the drain: %p", (extra) => {
+    expect(checkEnvironmentContract(container(extra))).toEqual([
+      "SHUTDOWN_TIMEOUT_SECONDS must be greater than SHUTDOWN_DRAIN_SECONDS (the bound includes the drain)",
+    ]);
+  });
+
+  it("accepts the shutdown settings at their bounds", () => {
+    expect(
+      checkEnvironmentContract(
+        container({ SHUTDOWN_DRAIN_SECONDS: "0", SHUTDOWN_TIMEOUT_SECONDS: "1" })
+      )
+    ).toEqual([]);
+    expect(
+      checkEnvironmentContract(
+        container({ SHUTDOWN_DRAIN_SECONDS: "300", SHUTDOWN_TIMEOUT_SECONDS: "600" })
+      )
+    ).toEqual([]);
+  });
+
+  it("D5: shutdown settings — defaults fit Docker's 10 s grace; malformed falls back; the bound always outlasts the drain", () => {
+    expect(getShutdownSettings({})).toEqual({ drainMs: 5_000, timeoutMs: 9_000 });
+    expect(
+      getShutdownSettings({
+        SHUTDOWN_DRAIN_SECONDS: "20",
+        SHUTDOWN_TIMEOUT_SECONDS: "28",
+      })
+    ).toEqual({ drainMs: 20_000, timeoutMs: 28_000 });
+    expect(
+      getShutdownSettings({
+        SHUTDOWN_DRAIN_SECONDS: "abc",
+        SHUTDOWN_TIMEOUT_SECONDS: "-3",
+      })
+    ).toEqual({ drainMs: 5_000, timeoutMs: 9_000 });
+    expect(getShutdownSettings({ SHUTDOWN_DRAIN_SECONDS: "30" })).toEqual({
+      drainMs: 30_000,
+      timeoutMs: 31_000,
+    });
   });
 });

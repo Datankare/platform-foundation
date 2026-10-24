@@ -2,7 +2,7 @@
  * platform/social/agents/curator.ts — Content digest agent
  *
  * Creates personalized content digests from group activity.
- * Runs on schedule and on-demand.
+ * Run by the social.curator recurring job (platform/social/jobs.ts), and on demand.
  *
  * P2:  Multi-step: gather activity → LLM curate
  * P6:  Structured digest output
@@ -96,7 +96,9 @@ export function createCuratorWorkflow(
           action: "curate-digest",
           boundary: "cognition",
           input: { activityCount: input.recentActivity.length },
-          output: { digestItemCount: digest.length },
+          // The digest itself, so the trajectory is its durable record (the scheduled run keeps
+          // nothing else until TASK-108 defines delivery).
+          output: { digestItemCount: digest.length, items: digest },
           costUsd: cost,
           continueExecution: false,
         };

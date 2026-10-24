@@ -26,7 +26,7 @@
  * @module platform/admin
  */
 
-import { withTenantTx } from "@/platform/data";
+import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import type { ErrorCode } from "@/platform/errors/registry";
 import { getConfigOrThrow } from "@/platform/auth/platform-config";
@@ -441,6 +441,23 @@ export async function countPendingApprovals(): Promise<number> {
   }
 }
 
+/**
+ * Mark every pending approval past its expiry as expired — each tenant's and the platform's own
+ * (a shared deployment's platform defaults, tenant_id null) — so no list keeps offering a
+ * decision that would be refused (TASK-036). Returns the count expired. A platform job: the
+ * owner connection, from the runner only, never a request.
+ *
+ * @scheduled config.expire-approvals
+ */
+export async function expireStaleApprovals(): Promise<number> {
+  const { rowCount } = await withOwnerTx("platform-job", (tx) =>
+    tx.query(
+      "update config_pending_approvals set status = 'expired' where status = 'pending' and expires_at < now()"
+    )
+  );
+  return rowCount;
+}
+
 // ---------------------------------------------------------------------------
 // Gotchas (L17)
 // ---------------------------------------------------------------------------
@@ -456,9 +473,9 @@ export async function countPendingApprovals(): Promise<number> {
 //    Both must be the same UUID format (from Cognito/auth). If one is null
 //    (system request), self-approval check is skipped.
 //
-// 3. Expired approvals are lazily detected — the status is updated to
-//    "expired" only when someone tries to review them. A cron job
-//    to expire stale approvals is a future enhancement (TASK-036).
+// 3. Expired approvals are detected when someone tries to review them, and
+//    swept by expireStaleApprovals (the config.expire-approvals job, TASK-036)
+//    so the pending list does not keep showing what can no longer be decided.
 //
 // 4. The approval workflow does NOT apply the config change on approval.
 //    The caller (config-handlers.ts) is responsible for calling

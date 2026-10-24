@@ -178,22 +178,29 @@ style: fix prettier formatting across all files
 ```
 platform-foundation/
 ├── app/                     ← Next.js App Router: screens, and API routes under app/api/
-│   ├── api/                 ← Route handlers, each wrapped in tenantRoute (ADR-053)
-│   └── admin/               ← Admin console (tenant settings, operators' tenants console)
+│   ├── api/                 ← Route handlers, each wrapped in tenantRoute (ADR-053); the job
+│   │                          tick is api/internal/jobs/tick, health api/health/{live,ready}
+│   └── admin/               ← Admin console (tenant settings, operators' tenants and Jobs consoles)
 ├── components/              ← React components (admin, auth, review dashboard, …)
 ├── hooks/                   ← React hooks
 ├── platform/                ← The foundation's modules, one folder each, with a README
 │   ├── data/                ← The only database access: withTenantTx / withPlatformTx / withOwnerTx
 │   ├── tenancy/             ← Tenant context, directory, operator service (ADR-053)
+│   ├── jobs/                ← Background jobs: queue, scheduler, the timed duties (ADR-056)
+│   ├── observability/       ← Errors, tracing, metrics, health and readiness, boot record, and
+│   │                          graceful shutdown (ADR-056 D4, ADR-055 D5)
 │   ├── auth/ admin/ moderation/ agents/ rate-limit/ errors/ providers/ …
 ├── lib/                     ← Small shared helpers (logger, fetchWithTimeout, sanitize, …)
 ├── shared/                  ← Types, config and UI utilities shared with consumers
 ├── messages/                ← Message catalog (errors.*, screens.*) — ADR-051
 ├── prompts/                 ← Versioned LLM prompts
 ├── supabase/migrations/     ← Numbered SQL migrations (applied in the SQL Editor)
-├── scripts/                 ← Migration replay, monkey run, checks
+├── scripts/                 ← Migration replay, monkey run, checks, deploy smoke, jobs worker,
+│                              the CI base-image pull
 ├── __tests__/               ← Tests; __tests__/db runs against the replayed Postgres
-├── docs/                    ← Architecture, operations, ADRs (docs/adr/), TASKS
+├── docs/                    ← Architecture, operations, ADRs (docs/adr/), runbooks, TASKS
+├── Dockerfile               ← The container image for any host but Vercel (ADR-055,
+│                              docs/DEPLOY_CONTAINER.md); .dockerignore keeps the context lean
 └── .env.example             ← Environment variable template
 ```
 

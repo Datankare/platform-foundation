@@ -5,7 +5,7 @@
  * NOT suitable for production multi-instance deployments
  * (each instance has its own cache — no shared state).
  *
- * Automatically selected when REDIS_URL is not configured.
+ * Selected by CACHE_PROVIDER=memory, declared on purpose (TASK-139); never inferred.
  *
  * @module platform/cache
  */
@@ -124,6 +124,11 @@ export class InMemoryCacheProvider implements CacheProvider {
       latencyMs: 0,
       provider: this.name,
     };
+  }
+
+  /** The instance is stopping: drop every entry (ADR-055 D5). */
+  async close(): Promise<void> {
+    this.store.clear();
   }
 
   /** Test helper: get raw store size (including expired entries) */

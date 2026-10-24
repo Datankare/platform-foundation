@@ -32,7 +32,7 @@ export type {
 export { InMemoryCacheProvider } from "./memory-cache";
 export { RedisCacheProvider } from "./redis-cache";
 export type { RedisCacheConfig } from "./redis-cache";
-export { createCacheHealthProbe } from "./health-probe";
+export { createCacheHealthProbe, createCacheReadinessProbe } from "./health-probe";
 
 // AI-specific cache (GenAI Principle P4: cached AI responses)
 export { AICache, buildAICacheKey, getAICache, resetAICache } from "./ai-cache";
@@ -92,6 +92,16 @@ export function getCache(): CacheProvider {
   const created = createCacheProvider();
   writeCacheInstance(created);
   return created;
+}
+
+/**
+ * Close the selected cache, if one was created, and forget it (ADR-055 D5 — the instance is
+ * stopping). A later getCache() would build a new one.
+ */
+export async function closeCache(): Promise<void> {
+  const existing = readCacheInstance();
+  writeCacheInstance(null);
+  await existing?.close?.();
 }
 
 /**

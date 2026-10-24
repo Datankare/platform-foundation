@@ -36,6 +36,7 @@ import { DefaultTraceProvider } from "./tracing";
 import { createErrorReporter } from "./error-reporting";
 import { createMetricsSink } from "./metrics-sink";
 import { HealthRegistry } from "./health";
+import { resetHealthCache } from "./health-memo";
 import { logger } from "@/lib/logger";
 import {
   getSingleton,
@@ -131,10 +132,11 @@ export function initObservability(config: ObservabilityConfig): void {
 
   // Health Registry — version-stamped
   const health = new HealthRegistry(config.version);
-  if (config.healthProbes) {
-    for (const probe of config.healthProbes) {
-      health.register(probe);
-    }
+  for (const probe of config.healthProbes ?? []) {
+    health.register(probe, { required: true });
+  }
+  for (const probe of config.degradedOnlyProbes ?? []) {
+    health.register(probe, { required: false });
   }
 
   writeState({ errors, tracer, metrics, health });
@@ -234,4 +236,5 @@ export function resetObservability(): void {
     }
   }
   writeState(null);
+  resetHealthCache();
 }

@@ -140,11 +140,15 @@
         "__tests__/db/social-store.db.test.ts",
         "__tests__/helpers/social-isolation-fixtures.ts",
         "__tests__/modules/social.module.test.ts",
+        "__tests__/social-jobs.test.ts",
         "__tests__/social-store.test.ts"
       ],
       "kits": ["__tests__/contract/social-store-contract.ts"],
       "kitManifest": "__tests__/contract/modules/social.ts",
-      "migrations": ["supabase/migrations/015_social_data_model.sql"]
+      "migrations": [
+        "supabase/migrations/015_social_data_model.sql",
+        "supabase/migrations/051_social_scheduled_agents.sql"
+      ]
     },
     "games": {
       "definition": "games/module.ts",

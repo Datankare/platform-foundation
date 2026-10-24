@@ -43,6 +43,7 @@ describe("definePlatformModule — a valid module", () => {
       accountStatusFeatures: [],
       moderationContentTypes: [],
       healthProbes: [],
+      jobs: [],
       kits: [],
     });
     const full = definePlatformModule(fullModule("full"));

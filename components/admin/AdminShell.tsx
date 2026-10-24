@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { renderMessage } from "@/platform/errors/messages";
 
 export type AdminSection =
   | "users"
@@ -17,7 +18,8 @@ export type AdminSection =
   | "approvals"
   | "dual-control"
   | "tenant"
-  | "tenants";
+  | "tenants"
+  | "jobs";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -125,6 +127,12 @@ const NAV_ITEMS: {
     section: "tenants",
     label: "Tenants (operators)",
     icon: "🌐",
+    permission: "platform_operate",
+  },
+  {
+    section: "jobs",
+    label: renderMessage("screens.jobs.nav"),
+    icon: "⏱️",
     permission: "platform_operate",
   },
 ];

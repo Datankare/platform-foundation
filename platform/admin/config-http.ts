@@ -15,6 +15,7 @@ import {
   describeFailure,
   resetGovernedConfig,
   writeGovernedConfig,
+  type GovernedConfigOutcome,
 } from "@/platform/admin/governed-config";
 import type { ConfigScope } from "@/platform/admin/types";
 import { logger, generateRequestId } from "@/lib/logger";
@@ -70,45 +71,7 @@ export async function configPutResponse(
       ...(scope ? { scope } : {}),
     });
 
-    switch (outcome.kind) {
-      case "not_found":
-        return apiError("admin.target_not_found", {
-          params: { target: "config" },
-          request,
-        });
-      case "refused":
-        return apiError("auth.permission_denied", {
-          params: { permission: outcome.permission },
-          request,
-        });
-      case "refused_scope":
-        return apiError("admin.config_scope_refused", {
-          params: { key: body.key },
-          request,
-        });
-      case "invalid":
-        return apiError("admin.config_invalid_value", {
-          params: { key: body.key },
-          request,
-        });
-      case "pending":
-        return NextResponse.json(
-          {
-            success: true,
-            pending: true,
-            key: body.key,
-            approval: outcome.result.approval ?? outcome.result.data ?? null,
-          },
-          { status: 202 }
-        );
-      case "applied":
-        return NextResponse.json({ success: true, key: body.key, value: body.value });
-      case "failed":
-        return internalError(describeFailure(outcome.result), {
-          request,
-          context: "Admin config write failed",
-        });
-    }
+    return governedOutcomeResponse(outcome, body.key, body.value, request);
   } catch (error) {
     logger.error("Config update failed", {
       requestId,
@@ -116,6 +79,57 @@ export async function configPutResponse(
       error: error instanceof Error ? error.message : "Unknown",
     });
     return apiError("internal.error", { request });
+  }
+}
+
+/**
+ * One governed change's outcome as the answer: 200 applied, 202 held or awaiting a second
+ * approver, else its coded refusal. Shared by the config page and the Jobs console's schedules.
+ */
+export function governedOutcomeResponse(
+  outcome: GovernedConfigOutcome,
+  key: string,
+  value: unknown,
+  request: NextRequest
+): Response {
+  switch (outcome.kind) {
+    case "not_found":
+      return apiError("admin.target_not_found", {
+        params: { target: "config" },
+        request,
+      });
+    case "refused":
+      return apiError("auth.permission_denied", {
+        params: { permission: outcome.permission },
+        request,
+      });
+    case "refused_scope":
+      return apiError("admin.config_scope_refused", {
+        params: { key },
+        request,
+      });
+    case "invalid":
+      return apiError("admin.config_invalid_value", {
+        params: { key },
+        request,
+      });
+    case "pending":
+      return NextResponse.json(
+        {
+          success: true,
+          pending: true,
+          key,
+          approval: outcome.result.approval ?? outcome.result.data ?? null,
+        },
+        { status: 202 }
+      );
+    case "applied":
+      return NextResponse.json({ success: true, key, value });
+    case "failed":
+      return internalError(describeFailure(outcome.result), {
+        request,
+        context: "Admin config write failed",
+      });
   }
 }
 

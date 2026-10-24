@@ -60,7 +60,7 @@ Cross-cutting fabric (ADR-014): distributed traces, metrics sink (in-memory + Po
 
 ### Data layer
 
-Supabase (PostgreSQL) with 50 migrations; the foundational set covers: identity and access (001–009), content safety (010–014), social data model (015), and agent runtime (016); 049 adds tenancy. Server code reaches Postgres only through `platform/data` (`withTenantTx`, `withPlatformTx`, `withOwnerTx(purpose)`), as the role `app_tenant` under forced row-level security on every tenant-owned table; the owner connection serves named operator purposes only, never a request path (ADR-053).
+Supabase (PostgreSQL) with 52 migrations; the foundational set covers: identity and access (001–009), content safety (010–014), social data model (015), and agent runtime (016); 049 adds tenancy; 050 the job queue and its schedules (ADR-056), 051 the social module's scheduled agents. Server code reaches Postgres only through `platform/data` (`withTenantTx`, `withPlatformTx`, `withOwnerTx(purpose)`), as the role `app_tenant` under forced row-level security on every tenant-owned table; the owner connection serves named operator purposes only, never a request path (ADR-053).
 
 ---
 

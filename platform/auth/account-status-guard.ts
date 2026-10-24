@@ -26,6 +26,7 @@
  */
 
 import { hasDatabase, withTenantTx } from "@/platform/data";
+import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getSingleton, setSingleton } from "@/platform/kernel";
 import { logger } from "@/lib/logger";
@@ -580,16 +581,108 @@ export async function checkAccountStatus(
 }
 
 // ---------------------------------------------------------------------------
+// Lapsed restrictions and suspensions
+// ---------------------------------------------------------------------------
+
+/** What one expiry run did. */
+export interface LapsedStatusRunResult {
+  /** Accounts whose restriction or suspension end date had passed (at most the run's limit). */
+  readonly lapsed: number;
+  /** Stepped down to warned. */
+  readonly expired: number;
+  /** Not changed: the record could not be written, or the account changed meanwhile. */
+  readonly skipped: number;
+  /** The run was told to stop (its signal) before every lapsed account was handled. */
+  readonly stopped: boolean;
+}
+
+/**
+ * Step every restricted or suspended account of the current tenant whose end date has passed
+ * down to "warned", at most `limit` per run. Warned, not active: the account keeps the record
+ * that a consequence was applied (the strike ladder reads strikes, not this status), and a
+ * warned account has every feature an expired restriction already allowed. Each change is
+ * recorded first (by `agent`); a change whose record cannot be written is skipped and retried
+ * on the next run. The update re-checks the status and date, so an account a moderator acted
+ * on meanwhile is left as they set it.
+ *
+ * @scheduled accounts.expire-restrictions
+ */
+export async function expireLapsedAccountStatuses(
+  agent: string,
+  limit = 500,
+  signal?: AbortSignal
+): Promise<LapsedStatusRunResult> {
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ id: string; account_status: string; until: Date }>(
+      `select id, account_status::text as account_status,
+              case when account_status = 'restricted' then restricted_until
+                   else suspended_until end as until
+         from users
+        where (account_status = 'restricted' and restricted_until < now())
+           or (account_status = 'suspended' and suspended_until < now())
+        order by id
+        limit $1::int`,
+      [limit]
+    )
+  );
+  let expired = 0;
+  let skipped = 0;
+  let stopped = false;
+  for (const row of rows) {
+    // Told to stop: between accounts; the rest are still lapsed and the next part takes them.
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
+    try {
+      const changed = await audited(
+        {
+          action: "admin_action",
+          agent,
+          targetId: row.id,
+          details: {
+            type: "account_status_lapsed",
+            from: row.account_status,
+            to: "warned",
+            until:
+              row.until instanceof Date ? row.until.toISOString() : String(row.until),
+          },
+        },
+        () =>
+          withTenantTx(async (tx) => {
+            const r = await tx.query(
+              `update users
+                  set account_status = 'warned', restricted_until = null, suspended_until = null,
+                      status_changed_by = $2, status_changed_at = now(), updated_at = now()
+                where id = $1::uuid
+                  and ((account_status = 'restricted' and restricted_until < now())
+                    or (account_status = 'suspended' and suspended_until < now()))`,
+              [row.id, agent]
+            );
+            return r.rowCount === 1;
+          })
+      );
+      if (changed) expired++;
+      else skipped++;
+    } catch (err) {
+      if (!(err instanceof AuditWriteError)) throw err;
+      skipped++;
+    }
+  }
+  return { lapsed: rows.length, expired, skipped, stopped };
+}
+
+// ---------------------------------------------------------------------------
 // Gotchas (L17)
 // ---------------------------------------------------------------------------
 //
 // 1. This gate checks account_status but does NOT update it. Auto-expiry
 //    detection (restricted/suspended past their until date) returns
-//    allowed=true but does not write the status change to the DB. A
-//    separate scheduled job or Sentinel check should clean up expired
-//    statuses. Until then, the gate is lenient (allows expired) but the
-//    DB row still says "restricted" — which is safe (better to allow
-//    than to block an innocent user whose restriction expired).
+//    allowed=true without writing; the stored status is stepped down to
+//    "warned" by expireLapsedAccountStatuses (the accounts.expire-restrictions
+//    job). Between the end date and that run the gate is lenient (allows
+//    expired) while the row still says "restricted" — which is safe (better
+//    to allow than to block an innocent user whose restriction expired).
 //
 // 2. Fail-closed to "banned" on DB error. This is stricter than
 //    coppa-gate (which fails to enforcement_active=true). The rationale:

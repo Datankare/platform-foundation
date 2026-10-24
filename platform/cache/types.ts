@@ -79,6 +79,13 @@ export interface CacheProvider {
 
   /** Health check — verify connectivity and measure latency. */
   health(): Promise<CacheHealthStatus>;
+
+  /**
+   * Release what the provider holds open (connections, memory) when the instance stops
+   * (ADR-055 D5). Optional: a provider with nothing open — Upstash's REST client opens a request
+   * per call — need not implement it.
+   */
+  close?(): Promise<void>;
 }
 
 /** Factory configuration for cache providers */

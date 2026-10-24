@@ -215,4 +215,18 @@ export class PostgresTrajectoryStore implements TrajectoryStore {
     );
     return rows.map(mapRow);
   }
+
+  async deleteFinishedBefore(cutoff: Date, limit: number): Promise<number> {
+    const { rowCount } = await withTenantTx((tx) =>
+      tx.query(
+        `delete from agent_trajectories
+          where id in (select id from agent_trajectories
+                        where status in ('completed', 'failed') and updated_at < $1::timestamptz
+                        order by updated_at
+                        limit $2::int)`,
+        [cutoff.toISOString(), limit]
+      )
+    );
+    return rowCount;
+  }
 }

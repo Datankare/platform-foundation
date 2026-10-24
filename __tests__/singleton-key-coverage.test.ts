@@ -60,6 +60,18 @@ const EXEMPT: Record<string, string> = {
     "The database connection pools (ADR-053 D4). Closed by closeDataPools(), which ends their connections; clearing the slot would leak them.",
   "platform.rag.kbRegistry":
     "knowledge-base registry (ADR-042); one registry Map per worker, globalThis-anchored.",
+  "platform.jobs.appRegistry":
+    "The app's own job kinds (ADR-056 D2). Registered at boot and cleared by resetJobRegistry(), not by initProviders() — it is not a provider slot.",
+  "platform.observability.boot":
+    "What instrumentation.ts recorded of this instance's boot (ADR-056 D4). Reset by resetBootState(); a provider reset is not a reboot.",
+  "platform.observability.shutdown":
+    "Whether this instance is stopping and whether its signal handlers are installed (ADR-055 D5). Reset by resetShutdownState(); a provider reset is not a restart.",
+  "platform.observability.inFlight":
+    "The count of requests and job handlers in flight (ADR-055 D5): the stop waits for it. Reset by resetInFlight(); a provider reset must not forget a request still running.",
+  "platform.observability.healthMemo":
+    "The health routes' shared probe run and each probe's last reported status (review finding 16). Reset with resetObservability(); not a provider slot.",
+  "platform.jobs.hung":
+    "Job handlers still running past their time, whose leases the runner keeps (ADR-056 D2). Drained by settleHungJobs(); forgetting one would let its job be retried beside it.",
   "platform.modules.registered":
     "The app's registered modules (ADR-054 D4). Registered before initProviders() and cleared by resetModuleRegistry(), never by resetProviders() — the module set outlives a provider reset.",
 };

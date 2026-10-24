@@ -15,7 +15,7 @@ document is catalogued in [The full catalog](#the-full-catalog) with a one-line 
   [AGENT_ARCHITECTURE](AGENT_ARCHITECTURE.md).
 - **Understanding the architecture** → [TAD](TAD.md) →
   [PLATFORM_ARCHITECTURE](PLATFORM_ARCHITECTURE.md) → [adr/](adr/).
-- **Operating it** → [ROTATION_RUNBOOK](ROTATION_RUNBOOK.md), [SECURITY_DEBT](SECURITY_DEBT.md).
+- **Operating it** → [DEPLOY_CONTAINER](DEPLOY_CONTAINER.md) (any host but Vercel), [ROTATION_RUNBOOK](ROTATION_RUNBOOK.md), [runbooks/jobs](runbooks/jobs.md) (background jobs), [SECURITY_DEBT](SECURITY_DEBT.md).
 - **What shipped** → [RELEASE_NOTES](RELEASE_NOTES.md), [GENAI_ROADMAP](GENAI_ROADMAP.md).
 
 ## Map
@@ -101,6 +101,7 @@ graph TD
 | [MIGRATION_v3_to_v4.md](MIGRATION_v3_to_v4.md)       | Upgrading from v3.x: required rate-limit store, route checks for verification and limits, stricter `/api/stream`.                                            |
 | [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md)       | Upgrading from v5.x (in progress, Sprint 7R): migrations 047–049, tenancy, direct Postgres, `CACHE_PROVIDER` required, UTC budget days, one age calculation. |
 | [TENANCY_OPERATIONS.md](TENANCY_OPERATIONS.md)       | Operating tenants (ADR-053): database roles and connections, single and shared deployments, Cognito tenant attribute, operator console, lifecycle.           |
+| [DEPLOY_CONTAINER.md](DEPLOY_CONTAINER.md)           | Deploying the container image (ADR-055): build, run, settings, the job worker, health, graceful shutdown, non-root, pinning the base image.                  |
 | [MIGRATION_v4_to_v5.md](MIGRATION_v4_to_v5.md)       | Upgrading from v4.x: durable stores required, fail-closed boot and audit, governed config only, new checks on your code.                                     |
 | [RELEASE_NOTES.md](RELEASE_NOTES.md)                 | What shipped, per release, newest first.                                                                                                                     |
 
@@ -120,6 +121,7 @@ graph TD
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | [AGENT_DELEGATION_GUIDE.md](AGENT_DELEGATION_GUIDE.md) | Build agents that act on a user's behalf (PKCE flow, token lifetime, failure reference). |
 | [ROTATION_RUNBOOK.md](ROTATION_RUNBOOK.md)             | Operational runbook for key/secret rotation.                                             |
+| [runbooks/jobs.md](runbooks/jobs.md)                   | Background jobs (ADR-056): dead letters, stuck jobs, pausing a schedule, nothing runs.   |
 
 ### Principles & Standards
 

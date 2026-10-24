@@ -27,7 +27,7 @@
  * memory is refused in production unless a local/CI harness opts out, ADR-048 D3, ADR-053 D4):
  *   MODERATION_STORE, STRIKE_STORE, REVIEW_QUEUE_STORE, APP_STATE_STORE,
  *   TRAJECTORY_STORE, BUDGET_STORE, PROPOSAL_STORE, EFFECT_LEDGER, APPROVAL_POLICY_STORE,
- *   GUEST_USAGE_STORE, RATE_LIMIT_STORE (also "upstash", ADR-052)
+ *   GUEST_USAGE_STORE, RATE_LIMIT_STORE (also "upstash", ADR-052), JOB_STORE (ADR-056)
  *   TENANT_DIRECTORY_STORE = "postgres" | "memory" (shared tenancy requires postgres, ADR-053 D7)
  *
  * Module slots (ADR-054 D4): a registered module declares its own slots — translation:
@@ -54,6 +54,8 @@ import {
   setReviewQueueStore,
 } from "@/platform/moderation/review-store";
 import { logger } from "@/lib/logger";
+import { PostgresJobStore } from "@/platform/jobs/postgres-store";
+import { setJobStore } from "@/platform/jobs/store";
 import {
   createRateLimiter,
   peekRateLimiter,
@@ -129,6 +131,7 @@ export type EffectLedgerType = "postgres" | "supabase" | "memory";
 export type ApprovalPolicyStoreType = "postgres" | "supabase" | "memory";
 export type GuestUsageStoreType = "postgres" | "supabase" | "memory";
 export type RateLimiterStoreType = "postgres" | "supabase" | "upstash" | "memory";
+export type JobStoreType = "postgres" | "supabase" | "memory";
 
 /** The core's slots. */
 export interface CoreProviderSelections {
@@ -149,6 +152,7 @@ export interface CoreProviderSelections {
   approvalPolicyStore: ApprovalPolicyStoreType;
   guestUsageStore: GuestUsageStoreType;
   rateLimiter: RateLimiterStoreType;
+  jobStore: JobStoreType;
 }
 
 /**
@@ -180,6 +184,7 @@ const CORE_SLOT_SETTINGS: Readonly<Record<keyof CoreProviderSelections, string>>
   approvalPolicyStore: "APPROVAL_POLICY_STORE",
   guestUsageStore: "GUEST_USAGE_STORE",
   rateLimiter: "RATE_LIMIT_STORE",
+  jobStore: "JOB_STORE",
 };
 
 /**
@@ -231,6 +236,7 @@ function getCoreSelections(): CoreProviderSelections {
       (process.env.APPROVAL_POLICY_STORE as ApprovalPolicyStoreType) ?? "memory",
     guestUsageStore: (process.env.GUEST_USAGE_STORE as GuestUsageStoreType) ?? "memory",
     rateLimiter: (getRateLimitStoreSetting() as RateLimiterStoreType) ?? "memory",
+    jobStore: (process.env.JOB_STORE as JobStoreType) ?? "memory",
   };
 }
 
@@ -446,6 +452,19 @@ function initBudgetStore(type: BudgetStoreType): void {
   requireDurableStoreInProduction("BUDGET_STORE", "budget accumulation");
 }
 
+function initJobStore(type: JobStoreType): void {
+  if (isDurableStore(type)) {
+    // Fail closed: an in-memory queue loses every pending job on restart and is per instance, so
+    // timed duties would run on whichever instance happened to tick, or not at all (ADR-056).
+    requireDatabase("JOB_STORE", type, "an in-memory job queue");
+    setJobStore(new PostgresJobStore());
+    return;
+  }
+
+  // type is "memory" (explicit or defaulted): refused in production.
+  requireDurableStoreInProduction("JOB_STORE", "background jobs and their schedules");
+}
+
 function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
   if (isDurableStore(type)) {
     // Fail closed: a per-instance policy lets an action held on one instance run on another.
@@ -637,6 +656,7 @@ function initCoreSlots(selections: CoreProviderSelections): void {
   initGuestUsageStore(selections.guestUsageStore);
   initRateLimiter(selections.rateLimiter);
   initEffectLedger(selections.effectLedger);
+  initJobStore(selections.jobStore);
   initTenantDirectory(getTenantDirectoryStoreSetting());
   initEmbeddingProvider(selections.embeddingProvider);
 }
@@ -691,6 +711,7 @@ export const CORE_PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.rag.embeddingProvider",
   "platform.rag.userContextStore",
   "platform.tenancy.directory",
+  "platform.jobs.store",
 ];
 
 /** Every singleton resetProviders() clears: the core's, then each registered module slot's. */

@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**69 codes** in 13 areas.
+**71 codes** in 14 areas.
 
 ## Account
 
@@ -98,6 +98,13 @@ Every error the API returns has this body (ADR-051 D3):
 | Code             | HTTP | Message (en)                                                                   | Params           | What the caller should do         |
 | ---------------- | ---- | ------------------------------------------------------------------------------ | ---------------- | --------------------------------- |
 | `internal.error` | 500  | Something went wrong. Try again; if it continues, quote reference {requestId}. | `requestId` (id) | Retry; report with the reference. |
+
+## Jobs
+
+| Code             | HTTP | Message (en)                                                                | Params | What the caller should do                                                                                                                                    |
+| ---------------- | ---- | --------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `jobs.not_dead`  | 409  | Only a dead-lettered job can be replayed or discarded, and this one is not. | —      | Refresh the Jobs page: only a dead-lettered job can be replayed or discarded, and this one is queued, running or finished (another operator may have acted). |
+| `jobs.not_found` | 404  | That job was not found.                                                     | —      | Refresh the Jobs page; the job or recurring job named does not exist, or was discarded.                                                                      |
 
 ## Moderation
 

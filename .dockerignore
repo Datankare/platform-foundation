@@ -1,0 +1,55 @@
+# The image build context (ADR-055 D1, docs/DEPLOY_CONTAINER.md). Only what `npm ci` and
+# `next build` need goes in: never version control, local installs, build output, secrets or tests.
+
+# Version control and editor state
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+
+# Dependencies and build output — the image installs and builds its own
+node_modules
+.next
+out
+build
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets: no environment file reaches the image (settings are given when it runs)
+.env*
+*.pem
+.vercel
+
+# Tests, test output and reports
+**/__tests__
+**/*.test.ts
+**/*.test.tsx
+e2e
+test-fixtures
+k6
+k6-results
+coverage
+coverage-baseline.json
+screen-literal-baseline.json
+playwright-report
+test-results
+blob-report
+jest.config.*
+jest.core.config.cjs
+jest.setup.ts
+playwright.config.ts
+*.log
+
+# Documentation and infrastructure code
+docs
+infra
+*.md
+!README.md
+LICENSE
+NOTICE
+
+# The image definition itself
+Dockerfile
+.dockerignore

@@ -24,7 +24,8 @@
     "sprint:check": "node scripts/sprint-check.mjs",
     "schema:check": "REQUIRE_DB_TESTS=1 jest __tests__/db/sql-schema-parity.db.test.ts",
     "coverage:ratchet": "node scripts/coverage-ratchet.mjs",
-    "overrides:audit": "node scripts/override-audit.mjs"
+    "overrides:audit": "node scripts/override-audit.mjs",
+    "jobs:worker": "node scripts/jobs-worker.mjs"
   },
   "dependencies": {
     "@sentry/nextjs": "^11.8.0",
@@ -89,7 +90,9 @@
       "platform/features/**/*.ts",
       "platform/social/content/**/*.ts",
       "platform/modules/**/*.ts",
-      "!platform/modules/__tests__/**"
+      "!platform/modules/__tests__/**",
+      "platform/jobs/**/*.ts",
+      "!platform/jobs/index.ts"
     ],
     "coverageReporters": [
       "text-summary",
@@ -104,6 +107,9 @@
         "branches": 76
       }
     },
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.next/"
+    ],
     "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.ts"
     ],

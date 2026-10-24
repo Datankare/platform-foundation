@@ -19,8 +19,6 @@
 export const UNWIRED_SECURITY: Readonly<Record<string, string>> = {
   "platform/auth/gdpr-deletion.ts#softDeleteUser":
     "No erasure route yet; erasure is an admin purge only. Audit X-15 (Wave 2).",
-  "platform/auth/gdpr-deletion.ts#hardPurgeUser":
-    "No erasure route yet. Audit X-15 (Wave 2).",
   "platform/auth/gdpr-deletion.ts#registerDeletionModule":
     "Extension point: each app registers a deletion module per table it owns; none is registered yet, which is why a purge deletes nothing (and now reports failed). Audit X-15 (Wave 2).",
   "platform/auth/data-export.ts#registerExportModule":

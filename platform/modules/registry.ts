@@ -73,6 +73,26 @@ export function moduleFingerprint(mod: PlatformModule): string {
     moderationContentTypes: mod.moderationContentTypes,
     healthProbes: mod.healthProbes.map((h) => h.name),
     kits: mod.kits,
+    // A job's declaration, as declared (the defaults are applied by platform/jobs/registry.ts):
+    // a changed kind, schedule, timeout, attempt count, backoff, scope or suspended-tenant rule
+    // is a different module, refused after boot like any other change.
+    jobs: mod.jobs.map((j) => [
+      j.kind,
+      j.schedule
+        ? [
+            j.schedule.scope,
+            j.schedule.defaultIntervalMinutes,
+            j.schedule.minIntervalMinutes,
+            j.schedule.maxIntervalMinutes,
+            j.schedule.tenantOptOutKey ?? null,
+          ]
+        : null,
+      j.timeoutMs ?? null,
+      j.maxAttempts ?? null,
+      j.backoff ? [j.backoff.baseMs, j.backoff.maxMs] : null,
+      j.scope ?? null,
+      j.runsForSuspended ?? null,
+    ]),
   });
 }
 

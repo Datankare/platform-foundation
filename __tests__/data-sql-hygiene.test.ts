@@ -35,6 +35,10 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "command-bar changes to the shared role and entitlement catalog, after mayChangePlatformCatalog (ADR-053 D5)",
   "app/api/admin/entitlements/route.ts":
     "turning a shared entitlement group on or off, after mayChangePlatformCatalog (ADR-053 D5)",
+  "platform/admin/config-approval.ts":
+    "the config.expire-approvals platform job: expiring stale approvals across tenants (TASK-036, ADR-056 D3)",
+  "platform/jobs/postgres-store.ts":
+    "the job runner: claiming, settling and scheduling every tenant's jobs; operators' cross-tenant job views (ADR-056 D2)",
 };
 
 /** .query(`…${…}…`  or  .query("…" + x  or  .query(x + "…" — SQL text built from values. */

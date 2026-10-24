@@ -96,6 +96,17 @@ export class InMemorySocialStore implements SocialStore {
     return this.groups.filter((g) => activeGroupIds.includes(g.id));
   }
 
+  async listActiveGroups(options: {
+    readonly after?: string;
+    readonly limit: number;
+  }): Promise<readonly Group[]> {
+    const limit = Math.min(Math.max(Math.floor(options.limit), 1), 200);
+    return this.groups
+      .filter((g) => g.status === "active" && (!options.after || g.id > options.after))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, limit);
+  }
+
   async updateGroupStatus(
     groupId: string,
     newStatus: GroupStatus,

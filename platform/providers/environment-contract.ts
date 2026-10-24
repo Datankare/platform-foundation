@@ -221,6 +221,34 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
       'a lower-case host name, e.g. vercel, container, aws; "local" or "ci" only for runs that are not deployments',
   },
   {
+    name: "GIT_COMMIT_SHA",
+    aliases: [],
+    shape: /^[0-9a-f]{7,40}$/i,
+    shapeHint:
+      "the commit the image was built from, 7–40 hex characters (the image's GIT_COMMIT_SHA build argument)",
+  },
+  {
+    name: "NEXT_MANUAL_SIG_HANDLE",
+    aliases: [],
+    shape: /^true$/,
+    shapeHint:
+      'true, or unset — Next.js treats any value as set, so "false" would still hand the signals to the app',
+  },
+  {
+    name: "SHUTDOWN_DRAIN_SECONDS",
+    aliases: [],
+    shape: /^(?:\d|[1-9]\d|[12]\d\d|300)$/,
+    shapeHint:
+      "whole seconds, 0–300, that a stopping instance stays up answering not ready (default 5)",
+  },
+  {
+    name: "SHUTDOWN_TIMEOUT_SECONDS",
+    aliases: [],
+    shape: /^(?:[1-9]|[1-9]\d|[1-5]\d\d|600)$/,
+    shapeHint:
+      "whole seconds, 1–600, that bound the whole stop, inside the host's grace period (default 9)",
+  },
+  {
     name: "TRUSTED_PROXY_HOPS",
     aliases: [],
     shape: /^[1-5]$/,
@@ -233,6 +261,13 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     shape: /^(x-forwarded-host|host)$/,
     shapeHint:
       "where a request's address is read in a shared deployment: x-forwarded-host (a proxy that sets it, e.g. Vercel) or host (a load balancer that does not, e.g. AWS ALB — X-Forwarded-Host is then ignored)",
+  },
+  {
+    name: "CRON_SECRET",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "at least 32 random characters (letters, digits, + / = . ~ _ -), e.g. openssl rand -hex 32 — the job tick's bearer secret (ADR-056 D2)",
   },
 ];
 
@@ -260,6 +295,7 @@ export const DATABASE_SELECTORS: readonly string[] = [
   "GUEST_USAGE_STORE",
   "RATE_LIMIT_STORE",
   "TENANT_DIRECTORY_STORE",
+  "JOB_STORE",
 ];
 
 /** A selector and the selections of it that are a durable store. */
@@ -350,6 +386,14 @@ export function getGuestTokenSecret(env: EnvSource = process.env): string | unde
   return resolveSetting("GUEST_TOKEN_SECRET", env);
 }
 
+/**
+ * ADR-056 D2: the secret the job tick is called with (Vercel Cron sends it as
+ * `Authorization: Bearer $CRON_SECRET`; the CLI worker does the same). Unset: the tick refuses.
+ */
+export function getCronSecret(env: EnvSource = process.env): string | undefined {
+  return resolveSetting("CRON_SECRET", env);
+}
+
 /** ADR-052: the rate-limit store selection (default "memory"; refused in production). */
 /** Single mode names its one tenant; in shared mode each request resolves its own. */
 export type TenancySettings =
@@ -395,6 +439,41 @@ export function getTrustedProxyHops(env: EnvSource = process.env): number {
   const v = resolveSetting("TRUSTED_PROXY_HOPS", env);
   const n = v === undefined ? 1 : Number(v);
   return Number.isInteger(n) && n >= 1 && n <= 5 ? n : 1;
+}
+
+/** How a stopping instance drains and how long the stop may take (ADR-055 D5). */
+export interface ShutdownSettings {
+  readonly drainMs: number;
+  readonly timeoutMs: number;
+}
+
+/** Defaults: 5 s of draining inside a 9 s bound — within Docker's default 10 s grace period. */
+export const DEFAULT_SHUTDOWN_DRAIN_SECONDS = 5;
+export const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 9;
+
+/**
+ * ADR-055 D5: the stop's drain period and bound. A malformed value (refused at boot in
+ * production) falls back to the default; a bound not past the drain is raised to drain + 1 s, so
+ * the drain always ends before the hard stop.
+ */
+export function getShutdownSettings(env: EnvSource = process.env): ShutdownSettings {
+  const drain =
+    wellShapedSeconds("SHUTDOWN_DRAIN_SECONDS", env) ?? DEFAULT_SHUTDOWN_DRAIN_SECONDS;
+  const timeout =
+    wellShapedSeconds("SHUTDOWN_TIMEOUT_SECONDS", env) ??
+    DEFAULT_SHUTDOWN_TIMEOUT_SECONDS;
+  return { drainMs: drain * 1000, timeoutMs: Math.max(timeout, drain + 1) * 1000 };
+}
+
+/** A declared whole-seconds setting when it is set and well shaped; undefined otherwise. */
+function wellShapedSeconds(name: string, env: EnvSource): number | undefined {
+  const v = resolveSetting(name, env);
+  return v !== undefined && declaration(name).shape.test(v) ? Number(v) : undefined;
+}
+
+/** ADR-055 D2: the commit a container image was built from, as set (unchecked), or undefined. */
+export function getGitCommitSha(env: EnvSource = process.env): string | undefined {
+  return resolveSetting("GIT_COMMIT_SHA", env);
 }
 
 /** Where a shared deployment reads the address a request was sent to (ADR-053 D2). */
@@ -759,6 +838,39 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
         violations.push(`${name} is required by CACHE_PROVIDER=upstash but not set`);
       }
     }
+  }
+
+  // ADR-055 D5: a container stops gracefully only when the app owns its signals — without
+  // NEXT_MANUAL_SIG_HANDLE the standalone server exits at once on SIGTERM, before readiness flips
+  // or buffered metrics are written. The image sets it; this catches an override.
+  if (
+    raw(env, "DEPLOYMENT_HOST") === "container" &&
+    raw(env, "NEXT_MANUAL_SIG_HANDLE") === undefined
+  ) {
+    violations.push(
+      "NEXT_MANUAL_SIG_HANDLE=true is required by DEPLOYMENT_HOST=container (graceful shutdown — the image sets it)"
+    );
+  }
+  const drainSeconds = wellShapedSeconds("SHUTDOWN_DRAIN_SECONDS", env);
+  const timeoutSeconds = wellShapedSeconds("SHUTDOWN_TIMEOUT_SECONDS", env);
+  if (
+    (drainSeconds !== undefined || timeoutSeconds !== undefined) &&
+    (timeoutSeconds ?? DEFAULT_SHUTDOWN_TIMEOUT_SECONDS) <=
+      (drainSeconds ?? DEFAULT_SHUTDOWN_DRAIN_SECONDS)
+  ) {
+    violations.push(
+      `SHUTDOWN_TIMEOUT_SECONDS must be greater than SHUTDOWN_DRAIN_SECONDS (the bound includes the drain)`
+    );
+  }
+
+  // ADR-056 D2: every timed duty runs only when the host's tick is admitted, and the tick is
+  // admitted only with CRON_SECRET — on every host (Vercel Cron and the container's worker call
+  // the same route). Without it a deployment would boot, report ready and run no duty at all, so
+  // a deployment must set it. A local or CI run (DEPLOYMENT_HOST local/ci) need not.
+  if (getCronSecret(env) === undefined && !harnessAllowed) {
+    violations.push(
+      "CRON_SECRET is required: the job tick (/api/internal/jobs/tick) refuses every call without it, so no timed duty — the escalation reaper, the GDPR purge, the tenant purge — would ever run (at least 32 random characters: openssl rand -hex 32)"
+    );
   }
 
   // ADR-052: the Upstash rate-limit store needs its credentials.

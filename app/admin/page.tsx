@@ -24,6 +24,8 @@ import {
   OperatorTenantsView,
   TenantSettingsView,
 } from "@/components/admin/TenancyPanels";
+import { OperatorJobsView } from "@/components/admin/JobsPanels";
+import { renderMessage } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 
 interface ActionPlan {
@@ -46,6 +48,7 @@ const PANEL_TITLES: Record<string, string> = {
   "password-policy": "Password Policy",
   tenant: "Tenant",
   tenants: "Tenants",
+  jobs: renderMessage("screens.jobs.title"),
 };
 
 const PANEL_HINTS: Record<string, string> = {
@@ -70,6 +73,7 @@ const ENDPOINTS: Record<string, string> = {
   "capability-mapping": "/api/admin/capability-mapping",
   tenant: "/api/admin/tenant",
   tenants: "/api/operator/tenants",
+  jobs: "/api/operator/jobs",
 };
 
 /** One read of a panel's data: undefined when the panel has none or the read failed. */
@@ -97,6 +101,7 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   "capability-mapping": CapabilityMappingDataView,
   tenant: TenantSettingsView,
   tenants: OperatorTenantsView,
+  jobs: OperatorJobsView,
 };
 
 export default function AdminPage() {

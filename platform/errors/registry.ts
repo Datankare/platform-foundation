@@ -225,6 +225,18 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "requestId", kind: "id" }],
     action: "Retry; report with the reference.",
   },
+  "jobs.not_dead": {
+    status: 409,
+    params: [],
+    action:
+      "Refresh the Jobs page: only a dead-lettered job can be replayed or discarded, and this one is queued, running or finished (another operator may have acted).",
+  },
+  "jobs.not_found": {
+    status: 404,
+    params: [],
+    action:
+      "Refresh the Jobs page; the job or recurring job named does not exist, or was discarded.",
+  },
   "moderation.appeal_not_found": {
     status: 404,
     params: [],

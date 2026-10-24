@@ -455,8 +455,10 @@ const SELF_REVIEW: ReviewResult = {
 // ---------------------------------------------------------------------------
 
 /**
- * Release claimed items that have exceeded the timeout.
- * Typically called by a cron job or admin action.
+ * Release claimed items that have exceeded the timeout, in the current tenant. Run for every
+ * active tenant by the moderation.release-claims job (platform/jobs/duties.ts).
+ *
+ * @scheduled moderation.release-claims
  */
 export async function releaseExpiredClaims(): Promise<number> {
   const timeoutHours = await loadClaimTimeoutHours();
@@ -762,6 +764,8 @@ export interface ReapResult {
   readonly slaHours: number;
   /** ISO cutoff: items created before this were overdue. */
   readonly cutoff: string;
+  /** The sweep was told to stop (its signal) before every overdue item was handled. */
+  readonly stopped: boolean;
 }
 
 /**
@@ -773,10 +777,15 @@ export interface ReapResult {
  *   - "escalate_higher": ratchet priority to "critical" and keep it queued; items
  *     already at "critical" are skipped (a one-way ratchet, so re-running is safe).
  * Each change is recorded first (agent "escalation-reaper"); an item whose record cannot be
- * written is left for the next sweep. `now` is injectable for deterministic tests.
+ * written is left for the next sweep. `now` is injectable for deterministic tests. `signal` (the
+ * job's) is checked between items: aborted, the sweep stops with `stopped`. Run for every
+ * active tenant by the moderation.escalation-reaper job (platform/jobs/duties.ts).
+ *
+ * @scheduled moderation.escalation-reaper
  */
 export async function reapOverdueEscalations(
-  now: Date = new Date()
+  now: Date = new Date(),
+  signal?: AbortSignal
 ): Promise<ReapResult> {
   const store = getReviewQueueStore();
   const slaHours = await loadEscalationSlaHours();
@@ -790,8 +799,15 @@ export async function reapOverdueEscalations(
 
   let blocked = 0;
   let escalatedHigher = 0;
+  let stopped = false;
 
   for (const item of overdue) {
+    // Told to stop (the job's time is up, or the instance is stopping): between items. The rest
+    // stay overdue, and the next sweep — or the job's next part — takes them.
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
     if (remedial === "escalate_higher") {
       if (item.priority === "critical") continue; // one-way ratchet -> idempotent
       const res = await reapAudited(
@@ -851,7 +867,7 @@ export async function reapOverdueEscalations(
     if (res.success) blocked++;
   }
 
-  return { scanned: overdue.length, blocked, escalatedHigher, slaHours, cutoff };
+  return { scanned: overdue.length, blocked, escalatedHigher, slaHours, cutoff, stopped };
 }
 
 /** The reaper's name in the audit log and on items it resolves. */

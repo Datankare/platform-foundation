@@ -21,19 +21,27 @@ import {
   resolveDeclared,
 } from "./helpers/route-policy";
 
-/** The platform's verifiers: token signature, guest signature, or admin permission. */
+/**
+ * The platform's verifiers: token signature, guest signature, admin permission — or, for the
+ * host's job tick only, the CRON_SECRET bearer (platform/jobs/tick-auth.ts, ADR-056 D2).
+ */
 const PLATFORM_VERIFIERS = [
   "requireActorWithStatus",
   "requireActor",
   "requireAuth",
   "adminGuard",
   "requireAdmin",
+  "requireJobTick",
 ];
 
 /** The platform's routes with no verifier, by design. Each needs a reason. */
 const PLATFORM_PUBLIC: Readonly<Record<string, string>> = {
   "app/api/health/route.ts":
-    "Liveness for monitors and the deploy smoke test; no user data.",
+    "The combined health report for existing monitors; names and statuses only, no user data.",
+  "app/api/health/live/route.ts":
+    "Liveness for orchestrators (ADR-056 D4): the process answers; no dependency, no user data.",
+  "app/api/health/ready/route.ts":
+    "Readiness for load balancers and the deploy smoke test (ADR-056 D4); names and statuses only.",
   "app/api/features/route.ts":
     "Which optional features exist; read by the sign-in screen.",
   "app/api/agent/capabilities/route.ts":

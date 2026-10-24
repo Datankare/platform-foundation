@@ -1,6 +1,7 @@
 /**
  * app/api/operator/purge/route.ts — purge every deleted tenant whose purge time has passed
- * (operators only, ADR-053 D7). The job runner (ADR-056) will call the same function.
+ * (operators only, ADR-053 D7). The tenancy.purge-due job (ADR-056 D3) runs the same function
+ * on its schedule; this is an operator's "purge now".
  *
  * POST → { result: [{ tenantId, rows }] }
  */

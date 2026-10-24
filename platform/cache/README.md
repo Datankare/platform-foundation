@@ -33,7 +33,7 @@ const health = await cache.health();
 
 ## Providers
 
-### InMemoryCacheProvider (default fallback)
+### InMemoryCacheProvider (`CACHE_PROVIDER=memory`)
 
 - Zero dependencies
 - Automatic TTL expiry
@@ -66,6 +66,11 @@ export class DynamoDBCacheProvider implements CacheProvider {
   // ... implement remaining interface methods
 }
 ```
+
+A provider that holds connections open (a Redis-protocol client, 7P) implements the optional
+`close()`: `closeCache()` calls it when the instance stops (ADR-055 D5), after the drain and before
+the database pools close. The in-memory provider drops its entries; the Upstash REST provider has
+nothing open and does not implement it.
 
 ## Architecture
 

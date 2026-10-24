@@ -12,7 +12,15 @@ const SCRIPT = join(process.cwd(), "scripts/deploy-smoke.mjs");
 
 interface Deployment {
   commit: string | null;
+  liveStatus: number;
   healthStatus: number;
+  readiness: {
+    status: string;
+    ready: boolean;
+    boot: string;
+    checks: unknown[];
+    draining?: boolean;
+  };
   anonymous: { status: number; body: unknown };
   guestToken: string | null;
   translations: unknown;
@@ -20,7 +28,14 @@ interface Deployment {
 
 const healthy = (): Deployment => ({
   commit: "e3c3fe4a1b2c",
+  liveStatus: 200,
   healthStatus: 200,
+  readiness: {
+    status: "ready",
+    ready: true,
+    boot: "completed",
+    checks: [{ name: "database", status: "healthy", required: true }],
+  },
   anonymous: {
     status: 401,
     body: { code: "auth.required", message: "Sign in to continue." },
@@ -39,8 +54,11 @@ function send(res: ServerResponse, status: number, body: unknown) {
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   const d = deployment;
-  if (req.method === "GET" && req.url === "/api/health") {
-    return send(res, d.healthStatus, { status: "healthy", commit: d.commit });
+  if (req.method === "GET" && req.url === "/api/health/live") {
+    return send(res, d.liveStatus, { status: "live", commit: d.commit });
+  }
+  if (req.method === "GET" && req.url === "/api/health/ready") {
+    return send(res, d.healthStatus, { ...d.readiness, commit: d.commit });
   }
   if (req.method === "GET" && req.url === "/api/features") {
     return send(res, 200, { features: { sso_google: { available: true } } });
@@ -98,7 +116,8 @@ describe("deploy smoke (TASK-102)", () => {
       SMOKE_BASE_URL: base,
       SMOKE_EXPECTED_COMMIT: "e3c3fe4a1b2c3d4e5f60718293a4b5c6d7e8f901",
     });
-    expect(r.out).toContain("✓ health 200 (healthy), commit e3c3fe4a1b2c");
+    expect(r.out).toContain("✓ live 200");
+    expect(r.out).toContain("✓ ready 200 (ready), commit e3c3fe4a1b2c");
     expect(r.out).toContain("✓ features: sso_google");
     expect(r.out).toContain("✓ anonymous request refused (auth.required)");
     expect(r.out).toContain("✓ translate: 1 translation(s)");
@@ -114,11 +133,63 @@ describe("deploy smoke (TASK-102)", () => {
     expect(r.out).toContain("deployed commit 1234567890ab is not e3c3fe4");
   });
 
-  it("fails when health is not 200 (e.g. a durable store refused to boot)", async () => {
+  it("fails when the instance is not ready, naming what is down (ADR-056 D4)", async () => {
     deployment.healthStatus = 503;
+    deployment.readiness = {
+      status: "unready",
+      ready: false,
+      boot: "completed",
+      checks: [{ name: "database", status: "unhealthy", required: true }],
+    };
     const r = await smoke({ SMOKE_BASE_URL: base });
     expect(r.code).toBe(1);
-    expect(r.out).toContain("✗ health: 503");
+    expect(r.out).toContain(
+      "✗ ready: 503 (unready, boot completed) — unhealthy: database"
+    );
+  });
+
+  it("fails when boot did not complete, even if the dependencies answer", async () => {
+    deployment.healthStatus = 503;
+    deployment.readiness = {
+      status: "unready",
+      ready: false,
+      boot: "failed",
+      checks: [],
+    };
+    const r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("✗ ready: 503 (unready, boot failed)");
+  });
+
+  it("passes a degraded instance (an optional dependency down) and says so", async () => {
+    deployment.readiness = {
+      status: "degraded",
+      ready: true,
+      boot: "completed",
+      checks: [{ name: "realtime", status: "unhealthy", required: false }],
+    };
+    const r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.out).toContain("✓ ready 200 (degraded)");
+    expect(r.code).toBe(0);
+  });
+
+  it("refuses a 200 that does not say ready (an old or broken readiness answer)", async () => {
+    deployment.readiness = {
+      status: "healthy",
+      ready: false,
+      boot: "completed",
+      checks: [],
+    };
+    const r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("✗ ready: 200");
+  });
+
+  it("fails when the process does not answer at all", async () => {
+    deployment.liveStatus = 502;
+    const r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("✗ live: 502");
   });
 
   it("fails when an anonymous request is let through or refused without a code", async () => {
@@ -158,6 +229,35 @@ describe("deploy smoke (TASK-102)", () => {
     expect(r.code).toBe(0);
   });
 
+  it("skips only the translation with SMOKE_SKIP_TRANSLATE=1, and says so (CI without AI credentials)", async () => {
+    deployment.translations = [];
+    const r = await smoke({ SMOKE_BASE_URL: base, SMOKE_SKIP_TRANSLATE: "1" });
+    expect(r.out).toContain("✓ guest token issued (signed)");
+    expect(r.out).toContain("– translate: skipped (SMOKE_SKIP_TRANSLATE=1");
+    expect(r.out).toContain("✓ smoke passed (translate skipped)");
+    expect(r.code).toBe(0);
+    expect(translateAuth).toBeUndefined();
+
+    // Everything before it still has to pass.
+    deployment.guestToken = null;
+    const failed = await smoke({ SMOKE_BASE_URL: base, SMOKE_SKIP_TRANSLATE: "1" });
+    expect(failed.code).toBe(1);
+  });
+
+  it("names a draining instance (stopping — ADR-055 D5)", async () => {
+    deployment.healthStatus = 503;
+    deployment.readiness = {
+      status: "unready",
+      ready: false,
+      boot: "completed",
+      checks: [],
+      draining: true,
+    };
+    const r = await smoke({ SMOKE_BASE_URL: base });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("✗ ready: 503 (unready, boot completed, draining)");
+  });
+
   it("refuses bad settings before calling anything (exit 2)", async () => {
     for (const env of [
       {},
@@ -166,6 +266,7 @@ describe("deploy smoke (TASK-102)", () => {
       { SMOKE_BASE_URL: base, SMOKE_EXPECTED_COMMIT: "main" },
       { SMOKE_BASE_URL: base, SMOKE_TRANSLATE_PATH: "process" },
       { SMOKE_BASE_URL: base, SMOKE_TRANSLATION_FIELD: "a.b" },
+      { SMOKE_BASE_URL: base, SMOKE_SKIP_TRANSLATE: "true" },
     ]) {
       const r = await smoke(env as Record<string, string>);
       expect({ env, code: r.code }).toEqual({ env, code: 2 });

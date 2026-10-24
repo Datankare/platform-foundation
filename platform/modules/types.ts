@@ -3,7 +3,8 @@
  *
  * A module is everything one product feature adds to the core: its provider slots, agents,
  * prompts and evals, content types, feature requirements, workflow goals, rate rules, the
- * consent, account-status and moderation vocabulary it names, and its health probes. The core
+ * consent, account-status and moderation vocabulary it names, its health probes and its
+ * background jobs. The core
  * never names any of these; it keeps one list per kind and the modules an app registers at boot
  * (platform/modules/registry.ts) add to it. Adding a product feature means adding a module, never
  * editing a core list (ADR-054 §4).
@@ -20,6 +21,7 @@
 
 import type { AgentConfig } from "@/platform/agents/types";
 import type { AnyContentType } from "@/platform/content/types";
+import type { JobDefinition } from "@/platform/jobs/types";
 import type { HealthProbe } from "@/platform/observability/types";
 import type { RateLimitRule } from "@/platform/rate-limit/types";
 import type { EnvSource } from "@/platform/providers/environment-contract";
@@ -144,6 +146,12 @@ export interface PlatformModuleInput {
   readonly moderationContentTypes?: readonly ModerationContentTypeDefinition[];
   readonly healthProbes?: readonly ModuleHealthProbe[];
   /**
+   * Background jobs this module runs (ADR-056): one-off kinds it enqueues and recurring ones
+   * with a schedule, whose governed settings its own migration seeds. Composed with the core's
+   * duties by platform/jobs/registry.ts.
+   */
+  readonly jobs?: readonly JobDefinition[];
+  /**
    * The module's conformance kits, by path. Metadata only: production code never imports a test,
    * so the kits are composed by the conformance-coverage test from manifest.json.
    */
@@ -166,6 +174,7 @@ export interface PlatformModule {
   readonly accountStatusFeatures: readonly string[];
   readonly moderationContentTypes: readonly ModerationContentTypeDefinition[];
   readonly healthProbes: readonly ModuleHealthProbe[];
+  readonly jobs: readonly JobDefinition[];
   readonly kits: readonly string[];
 }
 

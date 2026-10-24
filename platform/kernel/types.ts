@@ -898,6 +898,15 @@ export interface TrajectoryStore {
 
   /** Query trajectories with filters. */
   query(options: TrajectoryQuery): Promise<readonly TrajectoryRecord[]>;
+
+  /**
+   * Retention: delete up to `limit` of the current tenant's completed and failed trajectories
+   * last updated before `cutoff`. Running, paused and indeterminate ones are kept — a held
+   * action may still resume them. Returns the count deleted; throws when it could not run.
+   *
+   * @scheduled agents.trajectory-retention
+   */
+  deleteFinishedBefore(cutoff: Date, limit: number): Promise<number>;
 }
 
 // ═══════════════════════════════════════════════════════════════════

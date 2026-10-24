@@ -68,6 +68,30 @@ export function runSocialStoreContract(fx: SocialStoreContractFixtures): void {
     });
   });
 
+  describe("active groups, a page at a time", () => {
+    it("pages through active groups in id order, leaving out the others", async () => {
+      const made = [];
+      for (let i = 0; i < 3; i++) {
+        made.push((await store.createGroup({ ...groupInput, name: `Page ${i}` })).group!);
+      }
+      await store.updateGroupStatus(made[1].id, "archived");
+      const seen: string[] = [];
+      let after: string | undefined;
+      for (let page = 0; page < 1000; page++) {
+        const groups = await store.listActiveGroups({ after, limit: 1 });
+        if (groups.length === 0) break;
+        expect(groups).toHaveLength(1);
+        expect(groups[0].status).toBe("active");
+        seen.push(groups[0].id);
+        after = groups[0].id;
+      }
+      const expected = [made[0].id, made[2].id].sort();
+      expect(seen.filter((id) => expected.includes(id))).toEqual(expected);
+      expect(seen).not.toContain(made[1].id);
+      expect([...seen].sort()).toEqual(seen);
+    });
+  });
+
   describe("memberships", () => {
     it("adds, lists, and removes members", async () => {
       const res = await store.createGroup(groupInput);

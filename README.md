@@ -79,6 +79,8 @@ See [ASSURANCE.md](docs/ASSURANCE.md).
 - ✅ Input AND output screening — AI-generated content screened before reaching users
 - ✅ safe-regex2 validated blocklist patterns — pre-compiled, ReDoS-safe
 - ✅ Observability fabric — distributed tracing, metrics sink, health registry, error reporting
+- ✅ Liveness and readiness (`/api/health/live`, `/api/health/ready`): boot recorded, database and cache required, other dependencies degrade only (ADR-056 D4)
+- ✅ Durable background jobs (`platform/jobs`): a Postgres queue with leases, retries with backoff and dead letters, a scheduler, every timed duty a recurring job, a Jobs console for operators (ADR-056 D2/D3)
 - ✅ Realtime foundation — provider-abstracted WebSocket layer (Supabase first, swappable)
 - ✅ Agentic-native message schema — agent identity (P15), intent enforcement (P17), trajectories (P18), memory hints (P16)
 - ✅ AI cache — prompt-hash keying, TTL by use case, hit/miss metrics, cost savings tracking
@@ -139,7 +141,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 50 migrations (001–049), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 52 migrations (001–051), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Forced row-level security on every tenant-owned table; every server query runs through `platform/data` as `app_tenant`, which cannot bypass it (ADR-053)
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -208,7 +210,7 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 50 database migrations
+├── supabase/migrations/    ← 52 database migrations
 ├── docs/adr/               ← 56 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils

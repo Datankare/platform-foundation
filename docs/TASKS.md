@@ -234,12 +234,16 @@ results.
 | **Severity** | Low                                         |
 | **Phase**    | Phase 5, Sprint 2                           |
 | **Target**   | Phase 5, Sprint 6                           |
-| **Status**   | Open                                        |
+| **Status**   | Fixed on develop (Sprint 7R R5)             |
 | **Logged**   | 2026-04-24                                  |
 | **Source**   | Code: platform/admin/config-approval.ts:425 |
 
 **What:** Add mechanism to expire stale config change
 approvals that have not been acted on.
+
+**Fixed (Sprint 7R R5):** `expireStaleApprovals` (platform/admin/config-approval.ts) marks every
+pending approval past its expiry as expired — each tenant's and the platform's own — run hourly by
+the `config.expire-approvals` platform job (ADR-056 D3, migration 050).
 
 ---
 
@@ -2774,7 +2778,7 @@ guest-usage rename, the sync's `modules` selection, and Playform opting in.
 | **Severity** | High — portability off the current hosts is designed for but untested       |
 | **Phase**    | Phase 5                                                                     |
 | **Target**   | Phase 5, Sprint 7R (decision, container build), Sprint 7P (AWS environment) |
-| **Status**   | Open                                                                        |
+| **Status**   | Open — container image fixed on develop (Sprint 7R R6); AWS is Sprint 7P    |
 | **Logged**   | 2026-10-20                                                                  |
 
 **What:** only Vercel has been deployed to; `infra/` holds placeholders; the environment contract detects a
@@ -2793,6 +2797,20 @@ protocol. GCP and Azure follow with the same image.
 **Sprint 7R entry gate (2026-10-21):** ADR-055 (Proposed); host-neutral detection closes TASK-140 before any
 other host exists (R2); the image and its CI smoke run are R6.
 
+**Fixed on develop (Sprint 7R R6):** the 7R part (ADR-055 §5). `output: "standalone"`; a three-stage
+`Dockerfile` on Node 24 (`ARG BASE_IMAGE`, pinned release, digest pinning documented), running as
+`10001:10001` with a read-only root filesystem (writes `/tmp` and `/app/.next/cache` only),
+`STOPSIGNAL SIGTERM`, a liveness `HEALTHCHECK`, `GIT_COMMIT_SHA` baked from a build argument and no
+secret baked in; `.dockerignore`; the job worker from the same image. The contract declares
+`GIT_COMMIT_SHA`, `NEXT_MANUAL_SIG_HANDLE` (required with `DEPLOYMENT_HOST=container`),
+`SHUTDOWN_DRAIN_SECONDS` and `SHUTDOWN_TIMEOUT_SECONDS`. Graceful shutdown
+(`platform/observability/shutdown.ts`): readiness 503 `draining` first, the drain, metrics and error
+reporter flushed, the cache and the database pools closed, exit 0 — bounded, idempotent on a second
+signal. CI job **Container image** builds it, runs it against the replayed database, passes the
+deploy smoke test against it, runs the worker, checks the user and the stop. Guide:
+`docs/DEPLOY_CONTAINER.md`. **Remaining (7P):** OpenTofu for AWS, runtime browser settings, the
+Valkey provider, CI deploying to both hosts with the smoke test on both.
+
 ### TASK-129 — Operations baseline: recovery, alerting, objectives, background work
 
 | Field        | Detail                                                    |
@@ -2802,7 +2820,7 @@ other host exists (R2); the image and its CI smoke run are R6.
 | **Severity** | High — required for any mission-critical claim            |
 | **Phase**    | Phase 5                                                   |
 | **Target**   | Phase 5, Sprint 7R (decision), Sprint 7O (implementation) |
-| **Status**   | Open                                                      |
+| **Status**   | Open — background work fixed on develop (Sprint 7R R5)    |
 | **Logged**   | 2026-10-20                                                |
 
 **What:** no backup or restore design (recovery relies on the database plan's defaults), no RPO or RTO, no
@@ -2815,6 +2833,10 @@ and RTO targets, alerting and runbooks, and SLO monitoring across both hosts.
 **Sprint 7R entry gate (2026-10-21):** ADR-056 (Proposed) sets RPO ≤ 5 minutes and RTO ≤ 1 hour, the job queue
 and scheduler design, health, telemetry, objectives and runbooks. The queue and scheduler move into 7R (R5),
 because timed duties that exist today never run (TASK-141).
+
+**Sprint 7R R5:** the durable queue and scheduler are delivered (TASK-141, ADR-056 §5), with the first
+runbook (`docs/runbooks/jobs.md`), and health tells liveness from readiness (TASK-142). Recovery
+(point-in-time recovery and the restore drill), telemetry export, objectives and alerting remain 7O.
 
 ### TASK-130 — Security assurance: dynamic testing, compliance mapping, data residency
 
@@ -3078,12 +3100,14 @@ platform's and Playform's migration sets.
 | **Severity** | High — the escalation SLA (ADR-041) and retention rules are not enforced |
 | **Phase**    | Phase 5                                                                  |
 | **Target**   | Phase 5, Sprint 7R                                                       |
-| **Status**   | Open                                                                     |
+| **Status**   | Fixed on develop (Sprint 7R R5)                                          |
 | **Logged**   | 2026-10-21                                                               |
 
 **What:** The escalation-SLA reaper is a route nothing calls; `releaseExpiredClaims` and `expireStrikes` have no caller; the GDPR retention purge is manual; the analyst and curator agents have budgets but no schedule. There is no queue, outbox or dead-letter handling. Found by the Sprint 7R operations survey.
 
 **Plan:** `platform/jobs` (ADR-056 D2): a Postgres-backed queue and scheduler, host ticks from Vercel Cron and (7P) EventBridge, each timed duty a registered recurring job, and a CI check that a function documented as scheduled has a registered job (R5).
+
+**Fixed (Sprint 7R R5):** as planned (ADR-056 §5). Migration 050: `jobs` (per-tenant, forced row-level security; platform jobs owner-only; idempotent by tenant, kind and key), `job_schedules`, and `job_claim` (`FOR UPDATE SKIP LOCKED`, leases, owner rights, closed to every public and request role — checked by the replay). `platform/jobs`: a `JOB_STORE` slot (Postgres, in memory for tests), an extensible registry (core duties, modules' `jobs`, `registerJob`), `enqueueJob`, and `runDue` — runs each job in its tenant, retries with backoff and jitter, dead-letters after the last attempt with sanitized wording, recovers lapsed leases, never runs past its budget. The tick is `/api/internal/jobs/tick` (`CRON_SECRET`, constant-time; Vercel Cron every five minutes, or `npm run jobs:worker`). Every timed duty is a recurring job with governed, audited, dual-controlled settings: the escalation reaper, claim release, strike expiry, lapsed restrictions, the GDPR retention purge, trajectory retention, stale approvals (TASK-036), tenant purge, job-history pruning, and the social analyst and curator (migration 051, a tenant opt-out, governed budgets). The uncalled reaper route is removed. `__tests__/jobs-scheduled-coverage.test.ts` fails on a `@scheduled` function without a job, a job without a schedule or seeded settings, and an untagged "scheduled" comment. Operators run, pause, replay and discard in the Jobs console; tenant administrators see their own history.
 
 ### TASK-142 — Health does not check the database
 
@@ -3094,12 +3118,14 @@ platform's and Playform's migration sets.
 | **Severity** | Medium — a deployment with an unreachable database reports healthy |
 | **Phase**    | Phase 5                                                            |
 | **Target**   | Phase 5, Sprint 7R                                                 |
-| **Status**   | Open                                                               |
+| **Status**   | Fixed on develop (Sprint 7R R5)                                    |
 | **Logged**   | 2026-10-21                                                         |
 
 **What:** `/api/health` runs only the song-identification probe; the database, cache and realtime probes exist but are not registered, and there is no separate readiness check. Found by the Sprint 7R operations survey.
 
 **Plan:** Liveness and readiness split. Readiness requires boot to have completed and the database (and a selected shared cache) to answer; realtime and module probes report degraded without making the instance unready, so one dependency blip cannot take every instance out of rotation. Modules contribute their probes (ADR-054 D4, ADR-056 D4); the deploy smoke test checks readiness (R5).
+
+**Fixed (Sprint 7R R5):** `/api/health/live` (the process answers) and `/api/health/ready` (boot completed — `instrumentation.ts` records each step, so a failed boot is reported with its step — and the required probes answer: the database when configured, the selected cache). Realtime (`createRealtimeServiceProbe`) and the modules' probes are optional: they report degraded, still ready. `HealthRegistry` marks probes required or optional; probes are bounded and answers carry names and statuses only. `/api/health` keeps its shape, adding `required`, `ready` and `boot`. `scripts/deploy-smoke.mjs` checks liveness then readiness.
 
 ### TASK-143 — The scheduled load test can never pass
 
@@ -3110,12 +3136,14 @@ platform's and Playform's migration sets.
 | **Severity** | Low — a scheduled job that always fails hides real failures |
 | **Phase**    | Phase 5                                                     |
 | **Target**   | Phase 5, Sprint 7R                                          |
-| **Status**   | Open                                                        |
+| **Status**   | Fixed on develop (Sprint 7R R5)                             |
 | **Logged**   | 2026-10-21                                                  |
 
 **What:** `.github/workflows/load-test.yml` runs every Monday against `http://localhost:3000` without starting a server. Found by the Sprint 7R operations survey.
 
 **Plan:** Any run whose target is localhost — the schedule, and a manual run left at its default — starts the built app (or the container image, R6) first; a manual run against a deployed address targets it directly (R5).
+
+**Fixed (Sprint 7R R5):** a localhost target builds the app, starts it on the E2E harness (`DEPLOYMENT_HOST=ci`) and waits for `/api/health/ready` before k6; an `https://` target is tested directly; any other input is refused, and the input reaches the shell only as an environment variable. The container image replaces the local build in R6. **R6:** done — a localhost target builds the image and runs it on the harness (read-only, `--network host`).
 
 ### TASK-144 — An agent's budget day is the server's local day
 
@@ -3366,6 +3394,42 @@ settings test against Postgres.
 held tool on its approved proposal — the approved payload, the same operation, as the proposer; the pipeline
 consumes the approval, so it releases one change once). Under two-person approval the change then waits for
 that approval. A change that cannot be applied answers 503 and is logged.
+
+### TASK-156 — R4–R6 adversarial review: jobs, shutdown, health and the image
+
+| Field        | Detail                                                                           |
+| ------------ | -------------------------------------------------------------------------------- |
+| **ID**       | TASK-156                                                                         |
+| **Type**     | Security and correctness — background work, shutdown, health, CI supply chain    |
+| **Severity** | High — pools closed under requests; a deployment without CRON_SECRET ran no duty |
+| **Phase**    | Phase 5                                                                          |
+| **Target**   | Phase 5, Sprint 7R (before R4–R6 are released)                                   |
+| **Status**   | Fixed on develop (Sprint 7R, before release)                                     |
+| **Logged**   | 2026-10-24                                                                       |
+
+**What:** an adversarial review of the unreleased R4–R6 commits found sixteen defects, each proved by a test
+(now `__tests__/jobs-hostile.test.ts` and the module registry's tests, inverted to assert the fix).
+
+**Fixed (all sixteen; ADR-056 §6 has the detail):**
+
+| #   | Sev  | Finding                                                        | Fix                                                                                                                                                                                       | Proof                                                                              |
+| --- | ---- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 1   | High | pools closed under requests in flight; runDue claimed draining | every API route counted in flight (`tenantRoute`); the stop waits for them up to its deadline; the runner stops claiming, aborts the attempt, releases the rest; the worker stops at once | `shutdown.test.ts` (work in flight), `jobs-hostile.test.ts`, the container re-test |
+| 2   | High | production booted ready without `CRON_SECRET`, running no duty | the contract requires `CRON_SECRET` on every deployment host; a `job-schedules` probe reports stale schedules (degraded)                                                                  | `environment-contract.test.ts`, `jobs-schedule-probe.test.ts`                      |
+| 3   | Med  | a timed-out handler ran beside its own retry                   | duties check `ctx.signal` between items; a handler still running keeps its lease (extended, ≤ 15 min) and is settled when it settles                                                      | `jobs-hostile.test.ts`, `jobs-runner.test.ts`, `jobs-duties.test.ts`               |
+| 4   | Med  | enqueue bound to neither tenant nor scope                      | `enqueueJob`: current tenant only unless a minted `JobAuthority`; scope enforced; unknown kinds refused; `app_tenant` inserts no job (050)                                                | `jobs-hostile.test.ts`, `jobs.db.test.ts`, the replay                              |
+| 5   | Med  | `job_claim` scanned the table (423 ms at 300 000 rows)         | parked status for non-active tenants; `jobs_queued_idx (tenant_id, kind, run_at, id)`; lapsed and queued branches; batch claims — 2–7 ms at 900 000 rows                                  | `jobs.db.test.ts` (300 000 + 300 000 rows)                                         |
+| 6   | Med  | no fairness; backdated jobs accepted                           | the claim takes tenants round-robin; `run_at` clamped to now (queue and database)                                                                                                         | `job-store-contract.ts` (both stores), `jobs-hostile.test.ts`, `jobs.db.test.ts`   |
+| 7   | Med  | suspended tenants' GDPR erasures stopped                       | `runsForSuspended` per kind (the GDPR purge, trajectory retention): claimed and scheduled for suspended tenants; deleted tenants never                                                    | `jobs-hostile.test.ts`, `jobs.db.test.ts`, the replay                              |
+| 8   | Med  | the last tenant to finish overwrote the schedule's status      | `job_schedule_outcomes`, one row per tenant; the console shows the worst and "failing for N of M tenants"                                                                                 | `job-store-contract.ts`, `jobs.db.test.ts`, `jobs-panels.test.tsx`                 |
+| 9   | Low  | re-running 050 re-added removed dual-control keys              | seeded on 050's first application only                                                                                                                                                    | the replay (second and third application), `jobs.db.test.ts`                       |
+| 10  | Low  | `load-test.yml` target check bypassed with a newline           | `scripts/load-test-target.sh`: whole-value `[[ =~ ]]`, newline and CR refused                                                                                                             | `load-test-target.test.ts`                                                         |
+| 11  | Low  | the mirror fallback pulled an unpinned tag                     | `pull-base-image.sh` resolves the digest on Docker Hub, pulls that digest (mirror too), checks it; `ARG BASE_IMAGE_DIGEST` must match when pinned                                         | `pull-base-image.test.ts`                                                          |
+| 12  | Low  | module fingerprint omitted jobs                                | jobs (kind, schedule, timeout, attempts, backoff, scope, suspended rule) in the fingerprint                                                                                               | `platform/modules/__tests__/registry.test.ts`                                      |
+| 13  | Low  | a kind longer than a tick was never claimed                    | boot refuses it in a deployment, naming the kind (`checkJobsFitTick`)                                                                                                                     | `jobs-hostile.test.ts`                                                             |
+| 14  | Low  | "run now" enqueued tenant by tenant inside the request         | one `insert … select` fan-out; a second audit record carries the outcome                                                                                                                  | `jobs-operator-routes.test.ts`, `job-store-contract.ts`                            |
+| 15  | Low  | a shortened interval waited for the old slot                   | a slot is due at `least(next_run_at, last_run_at + interval now)` — in the claim of the slot itself, so however the change was approved                                                   | `job-store-contract.ts` (both stores)                                              |
+| 16  | Low  | health routes ran every probe and reported per request         | one shared run per 3 s (single flight); problems reported on change of state                                                                                                              | `health-readiness.test.ts`, `health-route.test.ts`                                 |
 
 ## Known Issue — TASK-020 numbering collision
 

@@ -8,6 +8,10 @@
  * @see ADR-014 Observability Architecture — health check enrichment
  */
 
+import type {
+  HealthCheckResult,
+  HealthProbe as ObservabilityHealthProbe,
+} from "@/platform/observability/types";
 import type { CacheProvider } from "./types";
 
 /**
@@ -51,6 +55,42 @@ export function createCacheHealthProbe(cache: CacheProvider): HealthProbe {
             provider: cache.name,
             error: error instanceof Error ? error.message : "Unknown error",
           },
+        };
+      }
+    },
+  };
+}
+
+/**
+ * The cache as a readiness probe (ADR-056 D4): the selected cache must answer for the instance
+ * to be ready. An Upstash cache is pinged; the in-memory cache is part of the process and always
+ * answers. `name` is "cache" whatever the provider (the provider is not exposed), and the check
+ * is bounded by the registry's timeout.
+ */
+export function createCacheReadinessProbe(
+  cache: CacheProvider
+): ObservabilityHealthProbe {
+  return {
+    name: "cache",
+    async check(): Promise<HealthCheckResult> {
+      const checkedAt = new Date().toISOString();
+      try {
+        const health = await cache.health();
+        return {
+          name: "cache",
+          status: health.connected ? "healthy" : "unhealthy",
+          latencyMs: health.latencyMs,
+          detail: health.connected
+            ? `${health.provider} answered`
+            : `${health.provider}: ${health.error ?? "not connected"}`,
+          checkedAt,
+        };
+      } catch (error) {
+        return {
+          name: "cache",
+          status: "unhealthy",
+          detail: error instanceof Error ? error.message : "Unknown error",
+          checkedAt,
         };
       }
     },

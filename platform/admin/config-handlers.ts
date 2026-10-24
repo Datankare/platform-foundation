@@ -1438,8 +1438,8 @@ export async function dispatchConfigTool(
 //    mutation are separate facts. The response includes both `approved: true`
 //    and `applied: false` with `applyError`. Recovery: fix the underlying
 //    issue (e.g., DB connectivity) and re-execute the apply manually.
-//    A cron job to detect "approved but not applied" states is a future
-//    enhancement.
+//    Nothing detects "approved but not applied" states automatically: the
+//    response says so (applied: false, applyError) and the reviewer acts.
 //
 // 6. The `Tool` import from agents/types uses JSON Schema for inputSchema
 //    and outputSchema. These are descriptive (for the LLM), not enforced

@@ -239,6 +239,9 @@ export interface ReviewQueueStore {
   /** Get queue statistics. */
   getStats(): Promise<ReviewQueueStats>;
 
-  /** Release claimed items that have exceeded the timeout. Returns count released. */
+  /**
+   * Release claimed items that have exceeded the timeout, in the current tenant. Returns the
+   * count released; throws when the release could not run, so its job retries (ADR-056).
+   */
   releaseExpiredClaims(timeoutMs: number): Promise<number>;
 }

@@ -330,7 +330,8 @@ export class PostgresStrikeStore implements StrikeStore {
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/strikes",
       });
-      return 0;
+      // A sweep that did not run is not "nothing expired": its job retries (ADR-056).
+      throw err;
     }
   }
 

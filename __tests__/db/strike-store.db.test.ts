@@ -185,13 +185,13 @@ dbDescribe("PostgresStrikeStore", () => {
       expect(flagged).toHaveLength(2);
     });
 
-    it("reports 0 when the sweep fails, and false when one expiry fails", async () => {
+    it("throws when the sweep fails (its job retries), and is false when one expiry fails", async () => {
       const res = await store.recordStrike(strike(user));
       faults.fail = (sql) =>
         /^update user_strikes/.test(sql)
           ? new DataUnavailableError("injected")
           : undefined;
-      expect(await store.expireStrikes()).toBe(0);
+      await expect(store.expireStrikes()).rejects.toThrow(DataUnavailableError);
       expect(await store.expireStrike(res.record!.id)).toBe(false);
       clearFaults();
       expect(await store.expireStrike("not-a-uuid")).toBe(false);
@@ -211,7 +211,7 @@ dbDescribe("PostgresStrikeStore", () => {
         });
         await expect(store.getActiveStrikes(user)).rejects.toThrow(/tenant/i);
         expect(await store.queryStrikes({ userId: user })).toEqual([]);
-        expect(await store.expireStrikes()).toBe(0);
+        await expect(store.expireStrikes()).rejects.toThrow(/tenant/i);
         expect(await store.expireStrike(randomUUID())).toBe(false);
       });
     });

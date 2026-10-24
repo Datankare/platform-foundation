@@ -38,24 +38,83 @@ export function register() {
     return;
   }
 
+  // ADR-056 D4: each step is recorded, so readiness (/api/health/ready) can say whether this
+  // instance finished starting — and which step did not.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const boot = require("@/platform/observability/boot");
+
   try {
+    // ADR-055 D5: in a container (NEXT_MANUAL_SIG_HANDLE=true, set by the image) SIGTERM and
+    // SIGINT are the app's: readiness flips to not ready, the instance drains, then telemetry is
+    // flushed and the cache and database pools are closed before it exits. Installed first, so
+    // an instance stopped while it is still booting stops the same way. Elsewhere Next.js keeps
+    // the signals and this installs nothing.
+    boot.recordBootStep("shutdown");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { installShutdownHandlers } = require("@/platform/observability/shutdown");
+    installShutdownHandlers();
+
     // ADR-054 D4: the app's modules are registered before the providers initialize, so their
     // provider slots, agents, prompts, rules and vocabulary are in place when the core composes
     // them. platform/modules/app-modules.ts is the app's own list (a consumer seam).
+    boot.recordBootStep("modules");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { registerModules, createModuleHealthProbes } = require("@/platform/modules");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { APP_MODULES } = require("@/platform/modules/app-modules");
     registerModules(APP_MODULES);
 
+    boot.recordBootStep("providers");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { initProviders } = require("@/platform/providers");
     initProviders();
 
-    // The modules' health probes (TASK-041: the song-ID probe), built now so each wraps the LIVE
-    // provider initProviders() installed — not a freshly constructed duplicate. A probe that
-    // makes a billable call is cached by its module (audit X-13).
-    const healthProbes: HealthProbe[] = createModuleHealthProbes();
+    // ADR-056 D2: every job kind — the core's duties, the modules', the app's — is composed and
+    // validated now, so a malformed or colliding declaration fails boot, not a tick; and in a
+    // deployment a kind whose attempt cannot fit in a tick (it would never be claimed) is refused
+    // by name.
+    boot.recordBootStep("jobs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { listJobDefinitions } = require("@/platform/jobs/registry");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { checkJobsFitTick } = require("@/platform/jobs/tick");
+    checkJobsFitTick(listJobDefinitions());
+
+    // ADR-056 D4: readiness needs the database (when this deployment has one) and the selected
+    // cache; realtime, the job schedules and the modules' probes (TASK-041: the song-ID probe)
+    // only degrade. The
+    // module probes are built now so each wraps the LIVE provider initProviders() installed —
+    // not a freshly constructed duplicate. A probe that makes a billable call is cached by its
+    // module (audit X-13).
+    boot.recordBootStep("health probes");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PostgresHealthProbe } = require("@/platform/observability/health");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { hasDatabase } = require("@/platform/data");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getCache, createCacheReadinessProbe } = require("@/platform/cache");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createRealtimeServiceProbe } = require("@/platform/realtime/service-probe");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getSupabaseUrl } = require("@/platform/providers/environment-contract");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createScheduleFreshnessProbe } = require("@/platform/jobs/schedule-probe");
+    const required: HealthProbe[] = [
+      ...(hasDatabase() ? [new PostgresHealthProbe()] : []),
+      createCacheReadinessProbe(getCache()),
+    ];
+    const degradedOnly: HealthProbe[] = [
+      createRealtimeServiceProbe(
+        process.env.REALTIME_PROVIDER ?? "mock",
+        getSupabaseUrl()
+      ),
+      ...createModuleHealthProbes(),
+      // ADR-056 D4/D6: a deployment whose ticks never arrive reports it (degraded), naming the
+      // duties that have stopped.
+      createScheduleFreshnessProbe(),
+    ];
+
+    boot.recordBootStep("observability");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { initObservability } = require("@/platform/observability");
 
@@ -68,18 +127,22 @@ export function register() {
       // standalone server, so it cannot identify a container build (ADR-055 D2).
       version: PLATFORM_VERSION,
       traceSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
-      healthProbes,
+      healthProbes: required,
+      degradedOnlyProbes: degradedOnly,
     });
+    boot.recordBootCompleted();
 
     console.log("[instrumentation] Observability initialized", {
       errorReporter: process.env.ERROR_REPORTER ?? "noop",
       hasSentryDsn: !!process.env.SENTRY_DSN,
     });
   } catch (err) {
+    boot.recordBootFailed();
     console.error("[instrumentation] Failed to initialize:", err);
     // Fail closed (audit X-21): in production a server whose providers did not initialize
     // must not start and serve on whatever defaults it has — Next.js aborts startup when
-    // register() throws. Outside production the error is logged and development continues.
+    // register() throws. Outside production the error is logged and development continues,
+    // and readiness reports the failed step (ADR-056 D4).
     if (process.env.NODE_ENV === "production") throw err;
   }
 }

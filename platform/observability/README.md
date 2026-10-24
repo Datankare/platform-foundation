@@ -96,6 +96,16 @@ Dependency health checking — aggregated into a single HealthReport.
 | `LLMProviderHealthProbe` | Anthropic API reachability + key validity | Yes      |
 | `HttpHealthProbe`        | Any HTTP endpoint                         | Yes      |
 
+### Graceful shutdown (ADR-055 D5)
+
+`shutdown.ts`. Where the app owns its signals (`NEXT_MANUAL_SIG_HANDLE=true`, set by the container
+image), `instrumentation.ts` calls `installShutdownHandlers()`. On SIGTERM or SIGINT the instance
+answers `/api/health/ready` with 503 (`draining: true`), waits `SHUTDOWN_DRAIN_SECONDS`, flushes
+the metrics sink and the error reporter, closes the cache and the database pools, and exits 0 (1
+if a step failed or `SHUTDOWN_TIMEOUT_SECONDS` passed first). A second signal joins the stop under
+way. `createShutdownHandler()` takes its steps, clock and exit, so an app can add its own steps or
+test the ordering. A consumer with its own `instrumentation.ts` installs the handler the same way.
+
 ## Swapping Implementations (Consumer Guide)
 
 ### Replace Sentry with Datadog
@@ -238,6 +248,10 @@ platform/observability/
 ├── tracing.ts         ← DefaultTraceProvider, ID generators
 ├── metrics-sink.ts    ← InMemoryMetricsSink, PostgresMetricsSink, factory
 ├── health.ts          ← HealthRegistry, PostgresHealthProbe, LLMProviderHealthProbe, HttpHealthProbe
+├── readiness.ts       ← Liveness vs readiness (boot, required probes, draining)
+├── boot.ts            ← What instrumentation recorded of this instance's boot
+├── shutdown.ts        ← Graceful shutdown: draining flag, ordered stop, signal handlers
+├── deployment.ts      ← The deployed commit (GIT_COMMIT_SHA, then VERCEL_GIT_COMMIT_SHA)
 ├── index.ts           ← Bootstrap (initObservability), access (getObservability), re-exports
 └── README.md          ← This file
 ```

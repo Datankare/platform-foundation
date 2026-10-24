@@ -167,3 +167,179 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: replay
+
+  # Layer 2b — The container image (ADR-055 D1/D5, TASK-128)
+  # Builds the image from this commit with the repository's Dockerfile, runs it read-only as its
+  # non-root user against Postgres built by the migration replay, waits until /api/health/ready
+  # says ready, runs the deploy smoke test against it, runs the job worker once from the same
+  # image, and stops it with SIGTERM: readiness must flip while liveness answers, and the process
+  # must exit 0 within its bound. Postgres comes from apt, not a Docker Hub image (TASK-122); the
+  # Node base image is pulled with retries and Google's Docker Hub mirror as a fallback.
+  container-image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE: platform-foundation:ci
+      PORT: "3000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Install Postgres 17 + pgvector (apt.postgresql.org)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
+          if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
+            sudo pg_createcluster 17 main --start >/dev/null
+          fi
+          sudo pg_ctlcluster 17 main status >/dev/null || sudo pg_ctlcluster 17 main start
+          port=$(pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main" { print $3 }')
+          [ -n "$port" ] || { pg_lsclusters; echo "no Postgres 17 cluster"; exit 1; }
+          echo "PGPORT=$port" >> "$GITHUB_ENV"
+          sudo -u postgres psql -X -q -p "$port" \
+            -c "ALTER USER postgres PASSWORD 'postgres'" -c "CREATE DATABASE replay"
+
+      - name: Database (migration replay) and the run's settings
+        run: |
+          set -euo pipefail
+          bash scripts/migration-replay.sh
+          pw="ci-$(openssl rand -hex 16)"
+          cron="$(openssl rand -hex 32)"
+          guest="$(openssl rand -base64 48 | tr -d '\n')"
+          # Throwaway values for this job's database and app. They are never printed: they go
+          # only into an env file (umask 077) passed to the containers with --env-file — not into
+          # $GITHUB_ENV, whose values each later step's log header shows.
+          psql -X -q -v ON_ERROR_STOP=1 -c "ALTER ROLE app_tenant LOGIN PASSWORD '$pw'"
+          # The image runs as a CI run (DEPLOYMENT_HOST=ci: plaintext to the local database and
+          # the mock sign-in are allowed), with every durable store on Postgres.
+          umask 077
+          {
+            echo "DEPLOYMENT_HOST=ci"
+            echo "PORT=$PORT"
+            echo "AUTH_PROVIDER=mock"
+            echo "E2E_TEST_DOUBLE_AUTH=true"
+            echo "AI_PROVIDER=mock"
+            echo "GUEST_TOKEN_SECRET=$guest"
+            echo "CRON_SECRET=$cron"
+            echo "CACHE_PROVIDER=memory"
+            echo "TENANCY_MODE=single"
+            echo "TENANT_ID=00000000-0000-4000-8000-000000000001"
+            echo "DATABASE_URL=postgresql://app_tenant:$pw@localhost:$PGPORT/replay"
+            echo "DATABASE_OWNER_URL=postgresql://postgres:postgres@localhost:$PGPORT/replay"
+            echo "DATABASE_SSL=disable"
+            for store in MODERATION_STORE STRIKE_STORE REVIEW_QUEUE_STORE APP_STATE_STORE \
+              TRAJECTORY_STORE BUDGET_STORE PROPOSAL_STORE EFFECT_LEDGER APPROVAL_POLICY_STORE \
+              GUEST_USAGE_STORE RATE_LIMIT_STORE JOB_STORE SOCIAL_STORE; do
+              echo "$store=postgres"
+            done
+            echo "SHUTDOWN_DRAIN_SECONDS=5"
+            echo "SHUTDOWN_TIMEOUT_SECONDS=20"
+          } > "$RUNNER_TEMP/container.env"
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: replay
+
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          # By digest: resolved from Docker Hub, the same digest from the mirror if need be.
+          pulled="$(bash scripts/pull-base-image.sh)"
+          read -r base digest <<<"$pulled"
+          docker build --build-arg BASE_IMAGE="$base" --build-arg BASE_IMAGE_DIGEST="$digest" \
+            --build-arg GIT_COMMIT_SHA="$GITHUB_SHA" -t "$IMAGE" .
+          docker image inspect "$IMAGE" --format 'size {{.Size}} bytes, user {{.Config.User}}'
+
+      - name: Run it (read-only, non-root) and wait until it is ready
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Guardian classifies every input with the real model: the translation step of the
+          # smoke test runs only when this repository has the key (never for a fork's PR).
+          [ -z "$ANTHROPIC_API_KEY" ] || echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> "$RUNNER_TEMP/container.env"
+          docker run -d --name app --network host --read-only \
+            --tmpfs /tmp --tmpfs /app/.next/cache:uid=10001,gid=10001,mode=0700 \
+            --env-file "$RUNNER_TEMP/container.env" "$IMAGE"
+          for i in $(seq 1 90); do
+            if curl -sf -o /dev/null "http://localhost:$PORT/api/health/ready"; then
+              echo "ready after ${i}s"
+              exit 0
+            fi
+            [ "$(docker inspect -f '{{.State.Running}}' app)" = "true" ] || break
+            sleep 1
+          done
+          echo "the image did not become ready"
+          curl -s "http://localhost:$PORT/api/health/ready" || true
+          docker logs app
+          exit 1
+
+      - name: Runs as its non-root user
+        run: |
+          set -euo pipefail
+          user="$(docker inspect -f '{{.Config.User}}' "$IMAGE")"
+          [ "$user" = "10001:10001" ] || { echo "image user is '$user', not 10001:10001"; exit 1; }
+          ids="$(docker exec app node -e 'process.stdout.write(`${process.getuid()}:${process.getgid()}`)')"
+          [ "$ids" = "10001:10001" ] || { echo "the server runs as $ids"; exit 1; }
+          echo "server process: uid:gid $ids"
+
+      - name: Deploy smoke test against the image
+        env:
+          SMOKE_BASE_URL: http://localhost:3000
+          SMOKE_EXPECTED_COMMIT: ${{ github.sha }}
+          SMOKE_WAIT_SECONDS: "60"
+          HAS_AI_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_AI_KEY" != "true" ]; then
+            echo "::notice::No ANTHROPIC_API_KEY in this run — the smoke test's translation step is skipped."
+            export SMOKE_SKIP_TRANSLATE=1
+          fi
+          node scripts/deploy-smoke.mjs
+
+      - name: The job worker runs from the same image
+        run: |
+          set -euo pipefail
+          docker run --rm --network host --read-only --no-healthcheck \
+            --env-file "$RUNNER_TEMP/container.env" \
+            -e JOBS_WORKER_URL="http://localhost:$PORT" -e JOBS_WORKER_ONCE=1 \
+            "$IMAGE" node scripts/jobs-worker.mjs
+
+      - name: Stops gracefully on SIGTERM
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          docker kill -s TERM app >/dev/null
+          sleep 1
+          ready=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/api/health/ready")
+          live=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/api/health/live")
+          echo "while draining: ready $ready, live $live"
+          [ "$ready" = "503" ] && [ "$live" = "200" ] || { docker logs app; exit 1; }
+          # A second signal joins the stop under way.
+          docker kill -s TERM app >/dev/null
+          code=$(timeout 30 docker wait app)
+          elapsed=$(( $(date +%s) - start ))
+          docker logs app 2>&1 | grep '^\[shutdown\]'
+          echo "exit $code after ${elapsed}s"
+          [ "$code" = "0" ] || exit 1
+          docker logs app 2>&1 | grep -q '^\[shutdown\] database pools: done' || exit 1
+          [ "$elapsed" -le 20 ] || { echo "the stop took longer than its bound"; exit 1; }
+
+      - name: Container log
+        if: failure()
+        run: docker logs app 2>&1 | tail -n 200 || true

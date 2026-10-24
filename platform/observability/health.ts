@@ -24,26 +24,33 @@ import { hasDatabase, withPlatformTx } from "@/platform/data";
 const DEFAULT_TIMEOUT_MS = 5000;
 
 export class HealthRegistry {
-  private readonly probes: HealthProbe[] = [];
+  private readonly probes: { probe: HealthProbe; required: boolean }[] = [];
   private readonly version: string;
 
   constructor(version: string) {
     this.version = version;
   }
 
-  /** Register a health probe. Duplicate names are rejected. */
-  register(probe: HealthProbe): void {
-    if (this.probes.some((p) => p.name === probe.name)) {
+  /**
+   * Register a health probe. Duplicate names are rejected. `required` (default true): an
+   * unhealthy result makes the whole report unhealthy; an optional probe's makes it degraded
+   * (ADR-056 D4).
+   */
+  register(probe: HealthProbe, options: { readonly required?: boolean } = {}): void {
+    if (this.probes.some((p) => p.probe.name === probe.name)) {
       logger.warn(`Health probe '${probe.name}' already registered — skipping duplicate`);
       return;
     }
-    this.probes.push(probe);
+    this.probes.push({ probe, required: options.required ?? true });
   }
 
   /** Run all probes and return an aggregated report. */
   async check(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<HealthReport> {
     const checks = await Promise.all(
-      this.probes.map((probe) => this.runProbe(probe, timeoutMs))
+      this.probes.map(async ({ probe, required }) => ({
+        ...(await this.runProbe(probe, timeoutMs)),
+        required,
+      }))
     );
 
     const status = this.worstStatus(checks);
@@ -58,7 +65,7 @@ export class HealthRegistry {
 
   /** Get registered probe names — for tests. */
   getProbeNames(): readonly string[] {
-    return this.probes.map((p) => p.name);
+    return this.probes.map((p) => p.probe.name);
   }
 
   private async runProbe(
@@ -96,8 +103,10 @@ export class HealthRegistry {
 
   private worstStatus(checks: HealthCheckResult[]): HealthStatus {
     if (checks.length === 0) return "healthy";
-    if (checks.some((c) => c.status === "unhealthy")) return "unhealthy";
-    if (checks.some((c) => c.status === "degraded")) return "degraded";
+    if (checks.some((c) => c.status === "unhealthy" && c.required !== false)) {
+      return "unhealthy";
+    }
+    if (checks.some((c) => c.status !== "healthy")) return "degraded";
     return "healthy";
   }
 }

@@ -224,6 +224,7 @@ const realAuth = (): void => {
   process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
   process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
+  process.env.CRON_SECRET = "c".repeat(64);
   // TASK-139: a deployment declares its cache.
   process.env.CACHE_PROVIDER = "memory";
   process.env.TENANCY_MODE = "single";
@@ -264,6 +265,7 @@ describe(AUTH_COMPAT, () => {
       process.env.GUEST_USAGE_STORE = "supabase";
       process.env.SOCIAL_STORE = "supabase";
       process.env.RATE_LIMIT_STORE = "supabase";
+      process.env.JOB_STORE = "supabase";
       delete process.env.E2E_IN_MEMORY_STORES;
       realAuth();
     };
@@ -304,6 +306,32 @@ describe(AUTH_COMPAT, () => {
       expect(await boot()).toThrow(/APP_STATE_STORE/);
     });
 
+    it("throws in production when JOB_STORE is memory (ADR-056: a per-instance queue loses jobs)", async () => {
+      setNodeEnv("production");
+      allDurable();
+      process.env.JOB_STORE = "memory";
+      expect(await boot()).toThrow(/JOB_STORE/);
+    });
+
+    it("throws when JOB_STORE is durable without a database (no fall back to memory)", async () => {
+      setNodeEnv("test");
+      allDurable();
+      noDatabase();
+      for (const v of SAFETY_STORES) delete process.env[v];
+      for (const v of [
+        "APP_STATE_STORE",
+        "TRAJECTORY_STORE",
+        "BUDGET_STORE",
+        "GUEST_USAGE_STORE",
+        "SOCIAL_STORE",
+        "RATE_LIMIT_STORE",
+      ]) {
+        delete process.env[v];
+      }
+      process.env.JOB_STORE = "postgres";
+      expect(await boot()).toThrow(/JOB_STORE=postgres but DATABASE_URL is not set/);
+    });
+
     it("does NOT throw outside production (tests/local keep in-memory)", async () => {
       setNodeEnv("test");
       delete process.env.APP_STATE_STORE;
@@ -312,6 +340,7 @@ describe(AUTH_COMPAT, () => {
       delete process.env.GUEST_USAGE_STORE;
       delete process.env.SOCIAL_STORE;
       delete process.env.RATE_LIMIT_STORE;
+      delete process.env.JOB_STORE;
       expect(await boot()).not.toThrow();
     });
 
@@ -323,6 +352,7 @@ describe(AUTH_COMPAT, () => {
       delete process.env.GUEST_USAGE_STORE;
       delete process.env.SOCIAL_STORE;
       delete process.env.RATE_LIMIT_STORE;
+      delete process.env.JOB_STORE;
       process.env.E2E_IN_MEMORY_STORES = "true";
       process.env.DEPLOYMENT_HOST = "ci";
       realAuth();
@@ -338,6 +368,7 @@ describe(AUTH_COMPAT, () => {
       delete process.env.GUEST_USAGE_STORE;
       delete process.env.SOCIAL_STORE;
       delete process.env.RATE_LIMIT_STORE;
+      delete process.env.JOB_STORE;
       process.env.E2E_IN_MEMORY_STORES = "true";
       process.env.DEPLOYMENT_HOST = "container";
       realAuth();
@@ -408,6 +439,7 @@ describe(AUTH_COMPAT, () => {
         setNodeEnv("test");
         for (const v of DURABLE_SELECTIONS) delete process.env[v];
         delete process.env.RATE_LIMIT_STORE;
+        delete process.env.JOB_STORE;
         noDatabase();
         process.env[store] = type;
         expect(await boot()).toThrow(
@@ -498,6 +530,7 @@ describe(AUTH_COMPAT, () => {
       process.env.GUEST_USAGE_STORE = "supabase";
       process.env.SOCIAL_STORE = "supabase";
       process.env.RATE_LIMIT_STORE = "supabase";
+      process.env.JOB_STORE = "supabase";
       delete process.env.NEXT_PUBLIC_SUPABASE_URL;
       delete process.env.E2E_IN_MEMORY_STORES;
     };

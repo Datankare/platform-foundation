@@ -56,6 +56,7 @@ describe("PF's app modules", () => {
       "approvalPolicyStore",
       "guestUsageStore",
       "rateLimiter",
+      "jobStore",
       "translation",
       "audioConverter",
       "tts",

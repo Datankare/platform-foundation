@@ -483,7 +483,12 @@ export interface StrikeStore {
   /** Get all strikes for a user (including expired). */
   queryStrikes(options: StrikeQueryOptions): Promise<readonly StrikeRecord[]>;
 
-  /** Mark expired strikes (time-based sweep). Returns count of newly expired strikes. */
+  /**
+   * Mark expired strikes (time-based sweep) in the current tenant. Returns the count of newly
+   * expired strikes; throws when the sweep could not run, so its job retries (ADR-056).
+   *
+   * @scheduled moderation.expire-strikes
+   */
   expireStrikes(): Promise<number>;
 
   /**

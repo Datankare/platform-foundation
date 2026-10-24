@@ -128,3 +128,12 @@ a fail-open window). D4 + the SLA + a fail-closed remedial default close it end 
 ## 5. Related
 
 ADR-024, ADR-016/017, ADR-039, `review-service.ts`, `review-store.ts`, `config` governance.
+
+## 6. Amendment (Sprint 7R R5, ADR-056)
+
+The scheduler this ADR left for "a separate later step" is ADR-056's job runner. The reaper runs as
+the recurring job `moderation.escalation-reaper`, every 15 minutes (5–60, governed
+`jobs.moderation.escalation-reaper.interval_minutes`) for every active tenant, each run inside that
+tenant; turning it off (`jobs.moderation.escalation-reaper.enabled`) needs a second operator (dual
+control). The route `POST /api/admin/moderation/reap-escalations` — which nothing called — is
+removed: an operator runs the reaper at once from the Jobs console ("Run now", audited).
