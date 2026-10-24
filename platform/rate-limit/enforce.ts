@@ -10,7 +10,17 @@
  *     abuse must not disappear silently when its store does (ADR-052 D4).
  *
  * The caller is identified by its verified actor id when the route has one (after
- * verification), otherwise by its network address.
+ * verification), otherwise by its network address — always within its tenant (ADR-053 D6), so
+ * one tenant's traffic never uses up another's allowance.
+ *
+ * Because every route runs this first, it is also where a request's tenant is first
+ * established, from the address it was sent to (platform/tenancy/request.ts). A request for no
+ * known tenant is refused here, before any other work — and before it is counted: the host is
+ * looked up in the directory's in-memory snapshot of every address, so the refusal costs no
+ * query, no limiter call and no state. It is deliberately not rate limited: counting it would
+ * need a counter per source address (a store write each, or per-instance memory that grows with
+ * every address an attacker uses) — more than the refusal itself costs, and the very per-request
+ * cost the snapshot removes. Everything addressed to a tenant is counted in that tenant.
  *
  * @module platform/rate-limit
  */
@@ -20,6 +30,7 @@ import { apiError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import { getRateLimiter } from "./factory";
 import { getClientIp } from "./client-ip";
+import { ensureRequestTenant } from "@/platform/tenancy/request";
 import type { RateLimitRule } from "./types";
 
 /** Who a limit is counted against. Omit (or pass {}) to count by network address. */
@@ -38,9 +49,10 @@ export async function enforceRateLimit(
   rule: RateLimitRule,
   subject: RateLimitSubject = {}
 ): Promise<NextResponse | null> {
-  const identifier = subject.actorId
-    ? `actor:${subject.actorId}`
-    : `ip:${getClientIp(request)}`;
+  const bound = await ensureRequestTenant(request);
+  if (bound.error) return bound.error;
+  const who = subject.actorId ? `actor:${subject.actorId}` : `ip:${getClientIp(request)}`;
+  const identifier = `t:${bound.tenant.tenantId}:${who}`;
   const route = request.nextUrl?.pathname;
 
   let result;

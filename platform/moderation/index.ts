@@ -94,7 +94,7 @@ export {
   setModerationStore,
   resetModerationStore,
   InMemoryModerationStore,
-  SupabaseModerationStore,
+  PostgresModerationStore,
 } from "./store";
 
 // Sprint 6: Human review queue + appeals
@@ -111,7 +111,7 @@ export type {
 
 export {
   InMemoryReviewQueueStore,
-  SupabaseReviewQueueStore,
+  PostgresReviewQueueStore,
   getReviewQueueStore,
   setReviewQueueStore,
   resetReviewQueueStore,

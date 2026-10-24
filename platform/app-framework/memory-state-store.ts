@@ -6,12 +6,15 @@
  * single-threaded, so the read-check-set in commit() and the read-modify-write in
  * reduceCommit() cannot interleave — no lock needed. Persistent stores must reproduce
  * this atomicity with a native conditional-write primitive (see state-store.ts checklist).
+ * Each tenant's sessions live in their own partition, as row-level security keeps them apart
+ * in PostgresActivityStateStore (ADR-053 D6).
  *
  * @module platform/app-framework
  */
 
 import type { ActivityStateStore, StateReducer } from "./state-store";
 import type { CommitResult, SessionMeta, VersionedState } from "./types";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 interface Entry<TState> {
   state: TState;
@@ -20,8 +23,18 @@ interface Entry<TState> {
 }
 
 export class InMemoryActivityStateStore<TState> implements ActivityStateStore<TState> {
-  private readonly store = new Map<string, Entry<TState>>();
-  private readonly meta = new Map<string, SessionMeta>();
+  private readonly stateParts = new TenantPartitionedMap<string, Entry<TState>>();
+  private readonly metaParts = new TenantPartitionedMap<string, SessionMeta>();
+
+  /** The current tenant's sessions. */
+  private get store(): Map<string, Entry<TState>> {
+    return this.stateParts.current();
+  }
+
+  /** The current tenant's session meta. */
+  private get meta(): Map<string, SessionMeta> {
+    return this.metaParts.current();
+  }
 
   async create(sessionId: string, initialState: TState): Promise<VersionedState<TState>> {
     if (this.store.has(sessionId)) {

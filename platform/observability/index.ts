@@ -15,7 +15,7 @@
  *     environment: process.env.NODE_ENV ?? "development",
  *     version: "1.1.1",
  *     healthProbes: [
- *       new SupabaseHealthProbe(supabaseUrl, supabaseKey),
+ *       new PostgresHealthProbe(),
  *       new LLMProviderHealthProbe(anthropicKey),
  *     ],
  *   });
@@ -37,7 +37,6 @@ import { createErrorReporter } from "./error-reporting";
 import { createMetricsSink } from "./metrics-sink";
 import { HealthRegistry } from "./health";
 import { logger } from "@/lib/logger";
-import { getSupabaseUrl } from "@/platform/providers/environment-contract";
 import {
   getSingleton,
   hasSingleton,
@@ -127,13 +126,8 @@ export function initObservability(config: ObservabilityConfig): void {
   // Trace Provider — custom or default
   const tracer = config.traceProvider ?? new DefaultTraceProvider();
 
-  // Metrics Sink — custom or default (Supabase/InMemory)
-  const metrics =
-    config.metricsSink ??
-    createMetricsSink({
-      supabaseUrl: getSupabaseUrl(),
-      supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-    });
+  // Metrics Sink — custom or default (Postgres when DATABASE_URL is set, else InMemory)
+  const metrics = config.metricsSink ?? createMetricsSink();
 
   // Health Registry — version-stamped
   const health = new HealthRegistry(config.version);
@@ -214,13 +208,13 @@ export {
 } from "./error-reporting";
 export {
   InMemoryMetricsSink,
-  SupabaseMetricsSink,
+  PostgresMetricsSink,
   createMetricsSink,
 } from "./metrics-sink";
 export {
   CachedHealthProbe,
   HealthRegistry,
-  SupabaseHealthProbe,
+  PostgresHealthProbe,
   LLMProviderHealthProbe,
   HttpHealthProbe,
 } from "./health";
@@ -233,7 +227,7 @@ export {
 export function resetObservability(): void {
   const current = readState();
   if (current) {
-    // Clean up any timers (e.g., SupabaseMetricsSink auto-flush interval)
+    // Clean up any timers (e.g., PostgresMetricsSink auto-flush interval)
     const sink = current.metrics as { destroy?: () => void };
     if (typeof sink.destroy === "function") {
       sink.destroy();

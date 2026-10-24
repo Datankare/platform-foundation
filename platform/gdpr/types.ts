@@ -2,8 +2,8 @@
  * GDPR Hard Purge — Complete data deletion pipeline.
  *
  * Orchestrates deletion of all user data across:
- * - Supabase database tables
- * - Supabase storage buckets
+ * - Database tables (the current tenant's rows)
+ * - Storage buckets
  * - Cache entries
  * - Rate limit entries
  * - Audit trail (anonymized, not deleted — regulatory requirement)
@@ -20,7 +20,7 @@ export type PurgeStatus = "pending" | "in-progress" | "completed" | "failed" | "
 
 /** Individual step result in the purge pipeline */
 export interface PurgeStepResult {
-  /** Handler name (e.g., "supabase:profiles", "cache:user-data") */
+  /** Handler name (e.g., "db:profiles", "cache:user-data") */
   handler: string;
   /** Whether this step succeeded */
   success: boolean;

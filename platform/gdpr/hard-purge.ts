@@ -42,7 +42,7 @@ function generatePurgeId(): string {
  *
  * Usage:
  *   const pipeline = new PurgePipeline();
- *   pipeline.register(new SupabaseProfilePurgeHandler(supabase));
+ *   pipeline.register(new AIMetricsPurgeHandler(deleteAiMetrics));
  *   pipeline.register(new CachePurgeHandler(cache));
  *   const result = await pipeline.execute({ userId, requestedBy, reason });
  */
@@ -73,7 +73,7 @@ export class PurgePipeline {
 
   /**
    * Set the audit callback for logging purge results.
-   * Typically writes to Supabase purge_log table.
+   * Typically writes to the purge_log table (per tenant).
    */
   onAudit(callback: (entry: PurgeAuditEntry) => Promise<void>): void {
     this.auditCallback = callback;

@@ -28,6 +28,8 @@ import { generateId } from "@/platform/agents/utils";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { getApproval } from "@/platform/admin/config-approval";
 import { requiredPermissionForKey } from "@/platform/admin/pending-approvals";
+import { tenantRoute } from "@/platform/tenancy/route";
+import { isOperator } from "@/platform/admin/config-scope";
 
 // ---------------------------------------------------------------------------
 // Permission routing
@@ -44,7 +46,7 @@ const READ_TOOLS = new Set([
 ]);
 
 /** Tools that require write access (standard or safety tier) */
-const WRITE_TOOLS = new Set(["update_config", "request_approval"]);
+const WRITE_TOOLS = new Set(["update_config", "reset_config", "request_approval"]);
 
 /** Tools that require safety-tier access (super_admin) */
 const APPROVAL_TOOLS = new Set(["approve_change", "reject_change"]);
@@ -86,7 +88,7 @@ interface ExecuteRequest {
 // Route handler
 // ---------------------------------------------------------------------------
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
 
   // Verified (and rate limited) before the body is read: every config tool needs at least
@@ -172,6 +174,9 @@ export async function POST(request: NextRequest) {
     if (WRITE_TOOLS.has(body.toolId) || APPROVAL_TOOLS.has(body.toolId)) {
       enrichedInput.actorId = actorId;
       enrichedInput.reviewerId = actorId;
+      // ADR-053 D5: operator standing comes from the verified admin, never the caller.
+      enrichedInput.actorIsOperator = isOperator(admin);
+      enrichedInput.reviewerIsOperator = isOperator(admin);
     }
 
     // P3/P15/P18: Create trajectory context for this request
@@ -224,4 +229,4 @@ export async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { request });
   }
-}
+});

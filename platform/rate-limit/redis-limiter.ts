@@ -7,10 +7,17 @@
  *
  * Works with Upstash REST API (fetch-based, serverless-compatible).
  *
+ * Counters are kept per tenant (ADR-053 D6): one Redis serves every tenant, so every key carries
+ * the current tenant's partition and the same identifier in two tenants is two counters even
+ * when a caller passes an identifier without its tenant. enforceRateLimit also puts the tenant
+ * in the identifier. Outside any tenant, keys fall in the "no tenant" partition
+ * (platform/tenancy/partition.ts).
+ *
  * @module platform/rate-limit
  */
 
 import type { RateLimiter, RateLimitResult, RateLimitRule } from "./types";
+import { memoryPartition } from "@/platform/tenancy/partition";
 import { generateId } from "@/platform/agents/utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
@@ -50,7 +57,7 @@ export class RedisRateLimiter implements RateLimiter {
   }
 
   private buildKey(identifier: string, rule: RateLimitRule): string {
-    return `${this.namespace}${rule.id}:${identifier}`;
+    return `${this.namespace}${memoryPartition()}:${rule.id}:${identifier}`;
   }
 
   private async pipeline<T = unknown>(commands: string[][]): Promise<RedisResponse<T>[]> {

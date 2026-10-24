@@ -23,6 +23,7 @@ import {
   ENVIRONMENT_CONTRACT,
   HARNESS_ONLY_SETTINGS,
   SUPABASE_SELECTORS,
+  DATABASE_SELECTORS,
 } from "@/platform/providers/environment-contract";
 import { PLATFORM_VERSION } from "@/platform/version";
 
@@ -165,6 +166,7 @@ describe("docs integrity — environment variables", () => {
     const declared = [
       ...ENVIRONMENT_CONTRACT.flatMap((d) => [d.name, ...d.aliases]),
       ...SUPABASE_SELECTORS,
+      ...DATABASE_SELECTORS,
       ...HARNESS_ONLY_SETTINGS,
       "VERCEL",
     ];

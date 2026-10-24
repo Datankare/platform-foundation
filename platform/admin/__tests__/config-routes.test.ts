@@ -30,6 +30,10 @@ jest.mock("@/platform/auth/platform-config", () => ({
   getPermissionTier: jest.fn(),
   getEnhancedConfig: jest.fn(),
 }));
+jest.mock("@/platform/admin/config-scope", () => {
+  const actual = jest.requireActual("@/platform/admin/config-scope");
+  return { ...actual, resolveConfigTarget: jest.fn(actual.resolveConfigTarget) };
+});
 jest.mock("@/platform/admin/config-handlers", () => ({
   dispatchConfigTool: jest.fn(),
   CONFIG_TOOLS: [],
@@ -47,11 +51,11 @@ jest.mock("@/prompts/admin/config-manager-v1", () => ({
   }),
 }));
 jest.mock("@/platform/auth/audit", () => ({ writeAuditLog: jest.fn() }));
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
 
 import { NextRequest } from "next/server";
 import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
 import { getEnhancedConfig, getPermissionTier } from "@/platform/auth/platform-config";
+import { resolveConfigTarget } from "@/platform/admin/config-scope";
 import { dispatchConfigTool } from "@/platform/admin/config-handlers";
 import { buildConfigManagerPrompt } from "@/prompts/admin/config-manager-v1";
 import * as executeRoute from "@/app/api/admin/config-ai/execute/route";
@@ -441,7 +445,120 @@ describe("/api/admin/config", () => {
     });
   });
 
-  it("has no DELETE: keys are removed only by migrations", () => {
-    expect((configRoute as Record<string, unknown>).DELETE).toBeUndefined();
+  describe("DELETE — back to the platform default, governed like PUT", () => {
+    const target = resolveConfigTarget as jest.Mock;
+    const del = (caller: CallerName, query: string) =>
+      configRoute.DELETE(
+        request(`/api/admin/config${query}`, caller, undefined, "DELETE")
+      );
+    const answer = (data: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      dispatch.mockResolvedValue({
+        toolId: "reset_config",
+        success: true,
+        data,
+        durationMs: 1,
+        ...extra,
+      });
+
+    it.each(["anonymous", "free", "moderator", "suspended_super_admin"] as const)(
+      "refuses %s",
+      async (caller) => {
+        const res = await del(caller, `?key=${STANDARD_KEY}`);
+        expect([401, 403]).toContain(res.status);
+        expect(dispatch).not.toHaveBeenCalled();
+      }
+    );
+
+    it("needs a key", async () => {
+      const res = await del("admin", "");
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("request.missing_fields");
+    });
+
+    it("answers an unknown key with 404, never creating or removing a key", async () => {
+      const res = await del("super_admin", "?key=made.up");
+      expect(res.status).toBe(404);
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it("holds the key to its tier: an admin cannot reset a safety key", async () => {
+      const res = await del("admin", `?key=${SAFETY_KEY}`);
+      expect(res.status).toBe(403);
+      expect((await res.json()).params.permission).toBe("config_manage_safety");
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a key that governs the platform to a non-operator, before dispatch", async () => {
+      target.mockReturnValueOnce({ ok: false, reason: "governs the platform" });
+      const res = await del("safety_approver", `?key=${SAFETY_KEY}`);
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe("admin.config_scope_refused");
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it("dispatches reset_config as the verified admin, through the governed runtime", async () => {
+      answer({ applied: true });
+      const res = await del("admin", `?key=${STANDARD_KEY}`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ success: true, key: STANDARD_KEY });
+      expect(dispatch).toHaveBeenCalledWith(
+        "reset_config",
+        expect.objectContaining({
+          key: STANDARD_KEY,
+          actorId: CALLERS.admin.userId,
+          actorIsOperator: false,
+          confirmed: true,
+        }),
+        undefined
+      );
+    });
+
+    it("an operator's reset carries operator standing from the verified admin", async () => {
+      answer({ applied: true });
+      await del("super_admin", `?key=${SAFETY_KEY}`);
+      expect(dispatch.mock.calls[0][1]).toMatchObject({
+        actorId: CALLERS.super_admin.userId,
+        actorIsOperator: true,
+      });
+    });
+
+    it("nothing to reset (a single deployment, or the default already): 200 unchanged", async () => {
+      answer({ applied: true, unchanged: true });
+      const res = await del("admin", `?key=${STANDARD_KEY}`);
+      expect(await res.json()).toEqual({
+        success: true,
+        key: STANDARD_KEY,
+        unchanged: true,
+      });
+    });
+
+    it.each([
+      ["held by dual control", { applied: false }, { held: true, success: false }],
+      ["awaiting a second approver", { applied: false, requiresApproval: true }, {}],
+    ])("answers 202 when %s", async (_label, data, extra) => {
+      answer(data, extra);
+      const res = await del("super_admin", `?key=${SAFETY_KEY}`);
+      expect(res.status).toBe(202);
+      expect((await res.json()).pending).toBe(true);
+    });
+
+    it("answers a failed reset with 500, naming nothing internal", async () => {
+      dispatch.mockResolvedValue({
+        toolId: "reset_config",
+        success: false,
+        data: null,
+        error: "db down",
+        durationMs: 1,
+      });
+      const res = await del("admin", `?key=${STANDARD_KEY}`);
+      expect(res.status).toBe(500);
+      expect(JSON.stringify(await res.json())).not.toContain("db down");
+    });
+
+    it("answers a thrown reset with 500", async () => {
+      dispatch.mockRejectedValue(new Error("connection refused"));
+      const res = await del("admin", `?key=${STANDARD_KEY}`);
+      expect(res.status).toBe(500);
+    });
   });
 });

@@ -5,13 +5,14 @@
  * Entitlements are additive grants on top of the primary role —
  * they never remove permissions, only add.
  *
- * All mutations go through the service client (bypasses RLS)
- * and are audit-logged.
+ * Assignments (user_entitlements) are the tenant's, read and written through platform/data in
+ * the request's tenant (ADR-053 D4); the group catalog (entitlement_groups) is platform-owned
+ * and only read here. Every mutation is audit-logged.
  *
  * Sprint 3, Task 3.3
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 
@@ -28,6 +29,16 @@ export interface EntitlementRevoke {
   revokedBy: string;
 }
 
+/** Run a write; its error message, or undefined when it succeeded. */
+async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
+  try {
+    await write();
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 /**
  * Grant an entitlement group to a user.
  * Idempotent — if the user already has the entitlement, updates expiry.
@@ -35,8 +46,6 @@ export interface EntitlementRevoke {
 export async function grantEntitlement(
   grant: EntitlementGrant
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseServiceClient();
-
   try {
     // Recorded before the grant takes effect; no record, no grant (Adversarial Validation, 6).
     return await audited(
@@ -50,23 +59,32 @@ export async function grantEntitlement(
         },
       },
       async () => {
-        const { error } = await supabase.from("user_entitlements").upsert(
-          {
-            user_id: grant.userId,
-            entitlement_group_id: grant.entitlementGroupId,
-            granted_by: grant.grantedBy,
-            expires_at: grant.expiresAt || null,
-            revoked_at: null,
-          },
-          { onConflict: "user_id,entitlement_group_id" }
+        const error = await failure(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              `insert into user_entitlements
+                 (user_id, entitlement_group_id, granted_by, expires_at, revoked_at)
+               values ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, null)
+               on conflict (user_id, entitlement_group_id) do update
+                 set granted_by = excluded.granted_by,
+                     expires_at = excluded.expires_at,
+                     revoked_at = null`,
+              [
+                grant.userId,
+                grant.entitlementGroupId,
+                grant.grantedBy,
+                grant.expiresAt || null,
+              ]
+            )
+          )
         );
 
         if (error) {
           logger.error("Failed to grant entitlement", {
-            error: error.message,
+            error,
             route: "platform/auth/entitlements",
           });
-          return { success: false, error: error.message };
+          return { success: false, error };
         }
 
         return { success: true };
@@ -91,8 +109,6 @@ export async function grantEntitlement(
 export async function revokeEntitlement(
   revoke: EntitlementRevoke
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseServiceClient();
-
   try {
     return await audited(
       {
@@ -104,22 +120,23 @@ export async function revokeEntitlement(
         },
       },
       async () => {
-        const { error } = await supabase
-          .from("user_entitlements")
-          .update({
-            revoked_at: new Date().toISOString(),
-            revoked_by: revoke.revokedBy,
-          })
-          .eq("user_id", revoke.userId)
-          .eq("entitlement_group_id", revoke.entitlementGroupId)
-          .is("revoked_at", null);
+        const error = await failure(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              `update user_entitlements set revoked_at = now(), revoked_by = $3::uuid
+                where user_id = $1::uuid and entitlement_group_id = $2::uuid
+                  and revoked_at is null`,
+              [revoke.userId, revoke.entitlementGroupId, revoke.revokedBy]
+            )
+          )
+        );
 
         if (error) {
           logger.error("Failed to revoke entitlement", {
-            error: error.message,
+            error,
             route: "platform/auth/entitlements",
           });
-          return { success: false, error: error.message };
+          return { success: false, error };
         }
 
         return { success: true };
@@ -138,39 +155,32 @@ export async function revokeEntitlement(
 }
 
 /**
- * Get all active entitlements for a user.
+ * Get all active entitlements for a user: grants that are not revoked and not expired, in
+ * groups that are active. An unreadable store reads as none.
  */
 export async function getUserEntitlements(
   userId: string
 ): Promise<{ entitlementGroupId: string; code: string; expiresAt: string | null }[]> {
-  const supabase = getSupabaseServiceClient();
+  let rows: { id: string; code: string; expires_at: Date | null }[];
+  try {
+    ({ rows } = await withTenantTx((tx) =>
+      tx.query<{ id: string; code: string; expires_at: Date | null }>(
+        `select g.id, g.code, e.expires_at
+           from user_entitlements e
+           join entitlement_groups g on g.id = e.entitlement_group_id
+          where e.user_id = $1::uuid and e.revoked_at is null
+            and (e.expires_at is null or e.expires_at > now())
+            and g.is_active`,
+        [userId]
+      )
+    ));
+  } catch {
+    return [];
+  }
 
-  const { data, error } = await supabase
-    .from("user_entitlements")
-    .select("entitlement_group_id, expires_at")
-    .eq("user_id", userId)
-    .is("revoked_at", null);
-
-  if (error || !data) return [];
-
-  const now = new Date().toISOString();
-  const activeIds = data
-    .filter((e: { expires_at: string | null }) => !e.expires_at || e.expires_at > now)
-    .map((e: { entitlement_group_id: string }) => e.entitlement_group_id);
-
-  if (activeIds.length === 0) return [];
-
-  const { data: groups } = await supabase
-    .from("entitlement_groups")
-    .select("id, code")
-    .in("id", activeIds)
-    .eq("is_active", true);
-
-  return (groups || []).map((g: { id: string; code: string }) => ({
+  return rows.map((g) => ({
     entitlementGroupId: g.id,
     code: g.code,
-    expiresAt:
-      data.find((e: { entitlement_group_id: string }) => e.entitlement_group_id === g.id)
-        ?.expires_at || null,
+    expiresAt: g.expires_at ? g.expires_at.toISOString() : null,
   }));
 }

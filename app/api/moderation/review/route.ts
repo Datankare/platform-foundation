@@ -27,6 +27,7 @@ import type {
 import type { ModerationResult } from "@/platform/moderation/types";
 import type { ExplanationChain } from "@/platform/rag/types";
 import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 const MODERATE_PERMISSION = "can_moderate";
 /** Most queue items one list request returns. */
@@ -95,7 +96,7 @@ function buildQueryOptions(params: URLSearchParams): ReviewQueryOptions {
   return options;
 }
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, MODERATE_PERMISSION);
   if (denied) return denied;
 
@@ -129,9 +130,9 @@ export async function GET(request: NextRequest) {
     });
     return apiError("internal.error", { request });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const denied = await adminGuard(request, MODERATE_PERMISSION);
   if (denied) return denied;
 
@@ -197,4 +198,4 @@ export async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-}
+});

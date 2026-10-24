@@ -19,9 +19,6 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 // Mocks needed for config-handlers import chain (triggered by buildToolDescriptions)
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(),
-}));
 
 jest.mock("@/platform/auth/audit", () => ({
   writeAuditLog: jest.fn(),
@@ -182,10 +179,10 @@ describe("buildConfigManagerPrompt", () => {
 });
 
 describe("buildToolDescriptions", () => {
-  it("returns 10 tool descriptions", () => {
+  it("returns 11 tool descriptions", () => {
     const tools = buildToolDescriptions();
 
-    expect(tools).toHaveLength(10);
+    expect(tools).toHaveLength(11);
   });
 
   it("each tool has name, description, and input_schema", () => {

@@ -3,120 +3,96 @@
  *
  * GET: List users (search, pagination)
  * PATCH: Update user role
+ *
+ * Users are the tenant's own data (ADR-053 D5): both run in the tenant's transaction, so a
+ * tenant's administrator lists and changes only that tenant's users. The roles are the shared
+ * catalog; assigning one to a user is a tenant change, under the role rules.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
-import { checkRoleAssignment } from "@/platform/auth/role-governance";
+import { checkRoleAssignment, type RoleRefusal } from "@/platform/auth/role-governance";
 import { findRole, findUser } from "@/platform/auth/role-lookup";
 import { auditedResponse } from "@/platform/auth/audit";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
 import { logger } from "@/lib/logger";
 import { likeTerm, pageParams } from "@/lib/pagination";
 import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+type UserRow = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  role_id: string;
+  created_at: Date;
+  deleted_at: Date | null;
+};
+type RoleRow = { id: string; name: string; display_name: string };
+
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_users");
   if (denied) return denied;
 
-  const supabase = getSupabaseServiceClient();
   const params = new URL(request.url).searchParams;
   const term = likeTerm(params.get("q"));
-  // A search reads the first offset+limit matches of each side: kept within the REST API's
-  // default row cap (1,000), so a deep page is exact rather than silently truncated.
   const { limit, offset } = pageParams(params, {
     maxLimit: 100,
     maxOffset: term ? 900 : 10_000,
   });
-  const COLUMNS = "id, email, display_name, role_id, created_at, deleted_at";
 
-  // Search is two bound filters merged here — never a filter string built from input
-  // (audit B-16: `q` was spliced into .or()). Each query returns the first offset+limit
-  // matches, so the merged, re-sorted page is exact.
-  type Row = {
-    id: string;
-    email: string | null;
-    display_name: string | null;
-    role_id: string;
-    created_at: string;
-    deleted_at: string | null;
-  };
-  let data: Row[] | null;
-  let error: { message: string } | null;
-  if (term) {
-    const page = (column: string) =>
-      supabase
-        .from("users")
-        .select(COLUMNS)
-        .ilike(column, `%${term}%`)
-        .order("created_at", { ascending: false })
-        .range(0, offset + limit - 1);
-    const [byEmail, byName] = await Promise.all([page("email"), page("display_name")]);
-    error = byEmail.error ?? byName.error;
-    const merged = new Map<string, Row>();
-    for (const row of [...(byEmail.data ?? []), ...(byName.data ?? [])] as Row[]) {
-      merged.set(row.id, row);
-    }
-    data = [...merged.values()]
-      .sort((a, b) =>
-        a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0
-      )
-      .slice(offset, offset + limit);
-  } else {
-    const res = await supabase
-      .from("users")
-      .select(COLUMNS)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1);
-    data = res.data as Row[] | null;
-    error = res.error;
-  }
-
-  if (error) {
+  // Search is a bound parameter matched as text — never filter syntax built from input
+  // (audit B-16: `q` was spliced into .or()). likeTerm strips the LIKE wildcards.
+  let users: UserRow[];
+  let roles: RoleRow[];
+  try {
+    ({ users, roles } = await withTenantTx(async (tx) => {
+      const page = term
+        ? await tx.query<UserRow>(
+            `select id, email, display_name, role_id, created_at, deleted_at from users
+              where email ilike '%' || $1 || '%' or display_name ilike '%' || $1 || '%'
+              order by created_at desc, id
+              limit $2 offset $3`,
+            [term, limit, offset]
+          )
+        : await tx.query<UserRow>(
+            `select id, email, display_name, role_id, created_at, deleted_at from users
+              order by created_at desc, id
+              limit $1 offset $2`,
+            [limit, offset]
+          );
+      const catalog = await tx.query<RoleRow>("select id, name, display_name from roles");
+      return { users: page.rows, roles: catalog.rows };
+    }));
+  } catch (error) {
     logger.error("Admin users list failed", {
-      error: error.message,
+      error: error instanceof Error ? error.message : String(error),
       route: "api/admin/users",
     });
     return internalError(error, { request, context: "Admin users query failed" });
   }
 
-  // Resolve role names
-  const { data: roles } = await supabase.from("roles").select("id, name, display_name");
+  const roleMap = new Map(roles.map((r) => [r.id, r.name]));
 
-  const roleMap = new Map(
-    (roles || []).map((r: { id: string; name: string }) => [r.id, r.name])
-  );
-
-  const users = (data || []).map(
-    (p: {
-      id: string;
-      email: string | null;
-      display_name: string | null;
-      role_id: string;
-      created_at: string;
-      deleted_at: string | null;
-    }) => ({
+  return NextResponse.json({
+    users: users.map((p) => ({
       id: p.id,
       email: p.email,
       displayName: p.display_name,
       roleName: roleMap.get(p.role_id) || "unknown",
-      createdAt: p.created_at,
+      createdAt: p.created_at.toISOString(),
       isDeleted: !!p.deleted_at,
-    })
-  );
-
-  return NextResponse.json({
-    users,
-    roles: (roles || []).map((r: { id: string; name: string; display_name: string }) => ({
+    })),
+    roles: roles.map((r) => ({
       id: r.id,
       name: r.name,
       displayName: r.display_name,
     })),
   });
-}
+});
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   const verified = await requireAdmin(request, "admin_manage_users");
   if (verified.error) return verified.error;
   const { admin } = verified;
@@ -133,8 +109,6 @@ export async function PATCH(request: NextRequest) {
     });
   }
 
-  const supabase = getSupabaseServiceClient();
-
   // TASK-145: the role rules apply before any change — no self-change, no protected role, no
   // granting or removing permissions the admin does not hold.
   // A lookup that cannot be answered stops the change (503) — an unread role would otherwise
@@ -143,9 +117,14 @@ export async function PATCH(request: NextRequest) {
   let newRole: Awaited<ReturnType<typeof findRole>>;
   let currentRole: Awaited<ReturnType<typeof findRole>> = null;
   try {
-    target = await findUser(supabase, userId);
-    newRole = await findRole(supabase, { id: roleId });
-    if (target?.roleId) currentRole = await findRole(supabase, { id: target.roleId });
+    ({ target, newRole, currentRole } = await withTenantTx(async (tx) => {
+      const user = await findUser(tx, userId);
+      return {
+        target: user,
+        newRole: await findRole(tx, { id: roleId }),
+        currentRole: user?.roleId ? await findRole(tx, { id: user.roleId }) : null,
+      };
+    }));
   } catch (err) {
     logger.error("Role change lookup failed", {
       route: "api/admin/users",
@@ -180,18 +159,49 @@ export async function PATCH(request: NextRequest) {
       },
     },
     async () => {
-      const { error } = await supabase
-        .from("users")
-        .update({ role_id: newRole.id })
-        .eq("id", target.id);
-      if (error) {
+      // The user is locked and the rules applied again to what the update changes.
+      let outcome: "changed" | "gone" | RoleRefusal;
+      try {
+        outcome = await withTenantTx(
+          async (tx): Promise<"changed" | "gone" | RoleRefusal> => {
+            const user = await findUser(tx, target.id, { forUpdate: true });
+            const current = user?.roleId ? await findRole(tx, { id: user.roleId }) : null;
+            const role = await findRole(tx, { id: newRole.id });
+            if (!user || !role || (user.roleId && !current)) return "gone";
+            const now = checkRoleAssignment(admin, user.id, role, current);
+            if (now) return now;
+            await tx.query("update users set role_id = $2::uuid where id = $1::uuid", [
+              user.id,
+              role.id,
+            ]);
+            return "changed";
+          }
+        );
+      } catch (error) {
         return {
           success: false,
-          error: error.message,
+          error: error instanceof Error ? error.message : String(error),
           response: internalError(error, {
             request,
             context: "Admin users query failed",
           }),
+        };
+      }
+      if (outcome === "gone") {
+        return {
+          success: false,
+          error: "the user or role changed before the update",
+          response: apiError("admin.target_not_found", {
+            params: { target: "user" },
+            request,
+          }),
+        };
+      }
+      if (outcome !== "changed") {
+        return {
+          success: false,
+          error: outcome.code,
+          response: apiError(outcome.code, { params: outcome.params, request }),
         };
       }
       if (target.cognitoSub) invalidatePermissions(target.cognitoSub);
@@ -199,4 +209,4 @@ export async function PATCH(request: NextRequest) {
     },
     () => apiError("service.unavailable", { params: { service: "audit" }, request })
   );
-}
+});

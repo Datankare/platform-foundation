@@ -43,7 +43,7 @@ describe("migration tracking (TASK-065)", () => {
 
   it.each(trackable)("%s records itself in applied_migrations", (file) => {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf-8");
-    expect(sql).toMatch(/insert\s+into\s+applied_migrations/i);
+    expect(sql).toMatch(/insert\s+into\s+(?:public\.)?applied_migrations/i);
     // The filename must appear, so a copy-pasted insert naming another migration fails.
     expect(sql).toContain(file);
   });

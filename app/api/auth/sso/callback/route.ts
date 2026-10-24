@@ -22,6 +22,8 @@ import {
   ssoRedirectUri,
 } from "@/platform/auth/sso";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
+import { sessionTenantRefusal } from "@/platform/tenancy/identity";
 
 function endAttempt(response: NextResponse): NextResponse {
   response.cookies.set(SSO_COOKIE, "", {
@@ -35,7 +37,7 @@ function endAttempt(response: NextResponse): NextResponse {
   return response;
 }
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_SESSION);
   if (limited) return limited;
@@ -99,6 +101,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ADR-053 D2: the identity is this tenant's, or becomes it, or gets no session here.
+  const refused = await sessionTenantRefusal(result, request);
+  if (refused) return endAttempt(refused);
+
   const identity = idTokenIdentity(result.idToken);
   const response = authResultResponse(
     {
@@ -122,4 +128,4 @@ export async function POST(request: NextRequest) {
     maxAge: result.expiresIn ?? 3600,
   });
   return endAttempt(response);
-}
+});

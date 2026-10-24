@@ -13,6 +13,7 @@ import {
   resetRateLimiter,
   DEFAULT_RULES,
 } from "../platform/rate-limit/index";
+import { RATE_LIMITER_NAMES } from "../platform/rate-limit/factory";
 import type { RateLimitRule } from "../platform/rate-limit/types";
 
 const TEST_RULE: RateLimitRule = {
@@ -300,10 +301,21 @@ describe("Rate limiter factory (ADR-052)", () => {
     expect(createRateLimiter().name).toBe("redis");
   });
 
-  it("builds the Supabase store from the Supabase settings", () => {
-    process.env.SUPABASE_URL = "https://abc.supabase.co";
-    process.env.SUPABASE_SERVICE_ROLE_KEY = "eyJa.b.c";
-    expect(createRateLimiter({ provider: "supabase" }).name).toBe("supabase");
+  it("builds the Postgres store for postgres and supabase when a database is configured", () => {
+    process.env.DATABASE_URL = "postgresql://u:p@localhost:5432/db";
+    expect(createRateLimiter({ provider: "postgres" }).name).toBe("postgres");
+    expect(createRateLimiter({ provider: "supabase" }).name).toBe("postgres");
+    process.env.RATE_LIMIT_STORE = "postgres";
+    expect(createRateLimiter().name).toBe("postgres");
+  });
+
+  it("names each store as its limiter reports itself", () => {
+    process.env.DATABASE_URL = "postgresql://u:p@localhost:5432/db";
+    process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+    for (const store of ["postgres", "supabase", "upstash", "memory"] as const) {
+      expect(createRateLimiter({ provider: store }).name).toBe(RATE_LIMITER_NAMES[store]);
+    }
   });
 
   it("refuses a shared store with missing credentials instead of falling back to memory", () => {
@@ -312,10 +324,12 @@ describe("Rate limiter factory (ADR-052)", () => {
     expect(() => createRateLimiter({ provider: "upstash" })).toThrow(
       /Refusing to fall back/
     );
-    delete process.env.SUPABASE_URL;
-    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    delete process.env.DATABASE_URL;
     expect(() => createRateLimiter({ provider: "supabase" })).toThrow(
-      /Refusing to fall back/
+      /RATE_LIMIT_STORE=supabase but DATABASE_URL is not set\. Refusing to fall back/
+    );
+    expect(() => createRateLimiter({ provider: "postgres" })).toThrow(
+      /RATE_LIMIT_STORE=postgres but DATABASE_URL is not set\. Refusing to fall back/
     );
   });
 

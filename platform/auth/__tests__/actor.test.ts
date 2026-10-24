@@ -1,6 +1,7 @@
 /**
  * ADR-050 D4 / TASK-099 — actors: opt-in guest routes, namespaced guest ids.
  */
+import { DEFAULT_TENANT_ID } from "@/platform/providers/environment-contract";
 import { NextRequest } from "next/server";
 import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
@@ -62,7 +63,12 @@ describe("requireActor", () => {
   it("a signed guest is a guest actor where the route opts in", async () => {
     const { token, guestId, expiresAt } = await mintGuestToken();
     const r = await requireActor(req(token), { allowGuests: true });
-    expect(r.actor).toEqual({ kind: "guest", id: guestId, expiresAt });
+    expect(r.actor).toEqual({
+      kind: "guest",
+      id: guestId,
+      tenantId: DEFAULT_TENANT_ID,
+      expiresAt,
+    });
   });
 
   it("a guest on a route that does not opt in gets 401 sign_in_required", async () => {

@@ -11,6 +11,7 @@
  */
 
 import React, { useEffect, useState } from "react";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 interface ConfigAiResult {
   success?: boolean;
@@ -28,7 +29,7 @@ async function callConfigAi(
   toolId: string,
   input: Record<string, unknown>
 ): Promise<ConfigAiResult> {
-  const res = await fetch("/api/admin/config-ai/execute", {
+  const res = await apiFetch("/api/admin/config-ai/execute", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ toolId, input }),
@@ -125,7 +126,7 @@ export function DualControlKeysPanel() {
         </p>
       ) : null}
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-400">Loading…</p>
       ) : (
         <ul className="space-y-2 mb-4">
           {keys.map((k) => (
@@ -146,7 +147,7 @@ export function DualControlKeysPanel() {
             </li>
           ))}
           {keys.length === 0 ? (
-            <li className="text-sm text-gray-500">No keys are dual-controlled.</li>
+            <li className="text-sm text-gray-400">No keys are dual-controlled.</li>
           ) : null}
         </ul>
       )}

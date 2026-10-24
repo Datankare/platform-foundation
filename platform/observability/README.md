@@ -12,7 +12,7 @@ behind an interface — swap implementations without changing application code.
 import {
   initObservability,
   getObservability,
-  SupabaseHealthProbe,
+  PostgresHealthProbe,
   LLMProviderHealthProbe,
 } from "@/platform/observability";
 
@@ -21,10 +21,7 @@ initObservability({
   sentryDsn: process.env.SENTRY_DSN, // optional — no-op when absent
   environment: process.env.NODE_ENV ?? "development",
   version: "1.1.1",
-  healthProbes: [
-    new SupabaseHealthProbe(supabaseUrl, supabaseKey),
-    new LLMProviderHealthProbe(anthropicKey),
-  ],
+  healthProbes: [new PostgresHealthProbe(), new LLMProviderHealthProbe(anthropicKey)],
 });
 
 // Use anywhere
@@ -43,13 +40,13 @@ const { tracer, errors, metrics, health } = getObservability();
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
 │         │                 │                  │           │
 │  ┌──────▼───────┐  ┌──────▼───────┐  ┌──────▼───────┐  │
-│  │    Sentry    │  │   Default    │  │  Supabase    │  │
+│  │    Sentry    │  │   Default    │  │  Postgres    │  │
 │  │  (default)   │  │  (default)   │  │  (default)   │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 │                                                          │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │             HealthRegistry                        │   │
-│  │  SupabaseProbe │ LLMProviderProbe │ HttpProbe    │   │
+│  │  PostgresProbe │ LLMProviderProbe │ HttpProbe    │   │
 │  └──────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -79,10 +76,15 @@ Trace context propagated via `x-trace-id`, `x-span-id`, `x-parent-span-id` heade
 
 Persists operational metrics (AI calls, external API calls, moderation scans).
 
-| Implementation        | When Used                                | Dependency          |
-| --------------------- | ---------------------------------------- | ------------------- |
-| `InMemoryMetricsSink` | Default when no Supabase config          | None                |
-| `SupabaseMetricsSink` | When `SUPABASE_URL` + `SUPABASE_KEY` set | Supabase (existing) |
+| Implementation        | When Used                | Dependency               |
+| --------------------- | ------------------------ | ------------------------ |
+| `InMemoryMetricsSink` | Default when no database | None                     |
+| `PostgresMetricsSink` | When `DATABASE_URL` set  | Postgres (platform/data) |
+
+Metrics are per tenant (ADR-053 D4): each event is written to `ai_metrics` in the tenant it was
+recorded in. An event recorded outside any tenant (a platform-level metric) is dropped by the
+Postgres sink, never thrown into the caller; drops are counted (`droppedWithoutTenant`) and logged
+on the first and every 100th.
 
 ### HealthProbe
 
@@ -90,7 +92,7 @@ Dependency health checking — aggregated into a single HealthReport.
 
 | Probe                    | Checks                                    | Built-in |
 | ------------------------ | ----------------------------------------- | -------- |
-| `SupabaseHealthProbe`    | Database availability                     | Yes      |
+| `PostgresHealthProbe`    | Database availability (`select 1`)        | Yes      |
 | `LLMProviderHealthProbe` | Anthropic API reachability + key validity | Yes      |
 | `HttpHealthProbe`        | Any HTTP endpoint                         | Yes      |
 
@@ -127,7 +129,7 @@ initObservability({
 });
 ```
 
-### Replace Supabase Metrics with Prometheus
+### Replace Postgres Metrics with Prometheus
 
 ```typescript
 import type {
@@ -234,8 +236,8 @@ platform/observability/
 ├── types.ts           ← All interfaces (ErrorReporter, TraceProvider, MetricsSink, HealthProbe)
 ├── error-reporting.ts ← NoopErrorReporter, SentryErrorReporter, factory
 ├── tracing.ts         ← DefaultTraceProvider, ID generators
-├── metrics-sink.ts    ← InMemoryMetricsSink, SupabaseMetricsSink, factory
-├── health.ts          ← HealthRegistry, SupabaseHealthProbe, LLMProviderHealthProbe, HttpHealthProbe
+├── metrics-sink.ts    ← InMemoryMetricsSink, PostgresMetricsSink, factory
+├── health.ts          ← HealthRegistry, PostgresHealthProbe, LLMProviderHealthProbe, HttpHealthProbe
 ├── index.ts           ← Bootstrap (initObservability), access (getObservability), re-exports
 └── README.md          ← This file
 ```

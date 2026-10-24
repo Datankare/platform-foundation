@@ -20,10 +20,11 @@ import {
 import type { ReviewDecision } from "@/platform/moderation/review-types";
 import type { ModerationAction } from "@/platform/moderation/types";
 import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 const MODERATE_PERMISSION = "can_moderate";
 
-export async function PATCH(
+export const PATCH = tenantRoute(async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -96,4 +97,4 @@ export async function PATCH(
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-}
+});

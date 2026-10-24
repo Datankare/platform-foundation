@@ -18,8 +18,9 @@ import { logger, generateRequestId } from "@/lib/logger";
 import { getActiveProviders } from "@/platform/providers/registry";
 import { listWorkflows, buildCapabilities } from "@/platform/agents";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
   if (limited) return limited;
@@ -37,4 +38,4 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({ requestId, ...capabilities });
-}
+});

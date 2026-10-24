@@ -7,7 +7,10 @@ import {
   assertEnvironmentContract,
   checkEnvironmentContract,
   getAuthProviderSetting,
+  getCognitoAdminCredentials,
   getCognitoSettings,
+  getTenancySettings,
+  getTenantHostHeader,
   getSsoProviders,
   getSupabaseUrl,
   allowsHarnessSwitches,
@@ -17,6 +20,10 @@ import {
 
 const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2ln";
 const GUEST_SECRET = "a".repeat(64);
+const REQUEST_DB =
+  "postgresql://app_tenant.abcdefghijklmnop:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
+const OWNER_DB =
+  "postgresql://postgres.abcdefghijklmnop:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
 
 /** A valid production deployment, as playform-dev is configured. */
 function valid(extra: Record<string, string | undefined> = {}): EnvSource {
@@ -35,6 +42,10 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     TRAJECTORY_STORE: "supabase",
     BUDGET_STORE: "supabase",
     CACHE_PROVIDER: "memory",
+    TENANCY_MODE: "single",
+    TENANT_ID: "00000000-0000-4000-8000-000000000001",
+    DATABASE_URL: REQUEST_DB,
+    DATABASE_OWNER_URL: OWNER_DB,
     ...extra,
   };
 }
@@ -153,11 +164,12 @@ describe("D1 — no test-double auth in production", () => {
     }
     expect(err).toBeInstanceOf(EnvironmentContractError);
     const e = err as EnvironmentContractError;
-    expect(e.violations.length).toBe(3);
+    expect(e.violations.length).toBe(4);
     expect(e.message).toMatch(/refusing to boot/);
     expect(e.message).toMatch(/SUPABASE_URL has the wrong shape/);
     expect(e.message).toMatch(/AUTH_PROVIDER/);
     expect(e.message).toMatch(/CACHE_PROVIDER is required/);
+    expect(e.message).toMatch(/TENANCY_MODE is required/);
   });
 });
 
@@ -315,14 +327,26 @@ describe("required settings", () => {
     ]);
   });
 
-  it("a supabase selection requires URL and key, naming the selection", () => {
+  it("Realtime on Supabase requires URL and key, naming the selection", () => {
     const v = checkEnvironmentContract(
-      valid({ SUPABASE_URL: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined })
+      valid({
+        REALTIME_PROVIDER: "supabase",
+        SUPABASE_URL: undefined,
+        SUPABASE_SERVICE_ROLE_KEY: undefined,
+      })
     );
     expect(v).toEqual([
-      "SUPABASE_URL is required (APP_STATE_STORE=supabase, TRAJECTORY_STORE=supabase, BUDGET_STORE=supabase) but not set",
-      "SUPABASE_SERVICE_ROLE_KEY is required (APP_STATE_STORE=supabase, TRAJECTORY_STORE=supabase, BUDGET_STORE=supabase) but not set",
+      "SUPABASE_URL is required (REALTIME_PROVIDER=supabase) but not set",
+      "SUPABASE_SERVICE_ROLE_KEY is required (REALTIME_PROVIDER=supabase) but not set",
     ]);
+  });
+
+  it("a store on Supabase no longer needs the Supabase REST settings (ADR-053 D4)", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({ SUPABASE_URL: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined })
+      )
+    ).toEqual([]);
   });
 
   it("no supabase selection, no supabase requirement", () => {
@@ -334,6 +358,8 @@ describe("required settings", () => {
         NEXT_PUBLIC_COGNITO_CLIENT_ID: "c",
         GUEST_TOKEN_SECRET: GUEST_SECRET,
         CACHE_PROVIDER: "memory",
+        TENANCY_MODE: "single",
+        TENANT_ID: "00000000-0000-4000-8000-000000000001",
       })
     ).toEqual([]);
   });
@@ -453,5 +479,313 @@ describe("SSO settings (TASK-101)", () => {
     expect(getSsoProviders({})).toEqual([]);
     expect(getSsoProviders({ SSO_PROVIDERS: "bad" })).toEqual([]);
     expect(getSsoProviders()).toEqual(expect.any(Array));
+  });
+});
+
+describe("tenancy is declared (ADR-053 D1)", () => {
+  const T = "00000000-0000-4000-8000-000000000001";
+  const A1 = "11111111-1111-4111-8111-111111111111";
+  it("a deployment must declare TENANCY_MODE", () => {
+    expect(
+      checkEnvironmentContract(valid({ TENANCY_MODE: undefined, TENANT_ID: undefined }))
+    ).toEqual(["TENANCY_MODE is required: single (with TENANT_ID) or shared"]);
+  });
+
+  it("single needs the tenant it serves", () => {
+    expect(checkEnvironmentContract(valid({ TENANT_ID: undefined }))).toEqual([
+      "TENANT_ID is required by TENANCY_MODE=single",
+    ]);
+  });
+
+  // Access key shapes from AWS's documentation examples — not real credentials.
+  const ADMIN = {
+    COGNITO_ADMIN_ACCESS_KEY_ID: "AKIAIOSFODNN7EXAMPLE",
+    COGNITO_ADMIN_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  };
+  const SHARED = {
+    TENANCY_MODE: "shared",
+    TENANT_ID: undefined,
+    TENANT_DIRECTORY_STORE: "postgres",
+    TENANT_HOST_HEADER: "x-forwarded-host",
+    ...ADMIN,
+  };
+
+  it("shared declares where the request's address is read — never inferred", () => {
+    expect(
+      checkEnvironmentContract(valid({ ...SHARED, TENANT_HOST_HEADER: undefined }))
+    ).toEqual([
+      expect.stringMatching(/^TENANT_HOST_HEADER is required by TENANCY_MODE=shared/),
+    ]);
+    // Even a local or CI run in shared mode states it: it decides which tenant a request is.
+    expect(
+      checkEnvironmentContract(
+        valid({ ...SHARED, TENANT_HOST_HEADER: undefined, DEPLOYMENT_HOST: "ci" })
+      )
+    ).toContainEqual(
+      expect.stringMatching(/^TENANT_HOST_HEADER is required by TENANCY_MODE=shared/)
+    );
+    expect(
+      checkEnvironmentContract(valid({ ...SHARED, TENANT_HOST_HEADER: "host" }))
+    ).toEqual([]);
+    for (const bad of [
+      "X-Forwarded-Host",
+      "forwarded",
+      "x-real-host",
+      "host,x-forwarded-host",
+    ]) {
+      expect(
+        checkEnvironmentContract(valid({ ...SHARED, TENANT_HOST_HEADER: bad }))
+      ).toEqual([expect.stringMatching(/^TENANT_HOST_HEADER has the wrong shape/)]);
+    }
+    // Single mode does not read it.
+    expect(checkEnvironmentContract(valid({ TENANT_HOST_HEADER: undefined }))).toEqual(
+      []
+    );
+  });
+
+  it("getTenantHostHeader reads only the two declared choices", () => {
+    expect(getTenantHostHeader({ TENANT_HOST_HEADER: "host" })).toBe("host");
+    expect(getTenantHostHeader({ TENANT_HOST_HEADER: "x-forwarded-host" })).toBe(
+      "x-forwarded-host"
+    );
+    expect(getTenantHostHeader({})).toBeUndefined();
+    expect(getTenantHostHeader({ TENANT_HOST_HEADER: "HOST" })).toBeUndefined();
+  });
+
+  it("shared refuses a fixed TENANT_ID — one source of tenancy", () => {
+    expect(checkEnvironmentContract(valid({ ...SHARED, TENANT_ID: T }))).toEqual([
+      "TENANT_ID is set but TENANCY_MODE=shared — a shared deployment resolves each request's tenant; unset TENANT_ID",
+    ]);
+    expect(checkEnvironmentContract(valid(SHARED))).toEqual([]);
+  });
+
+  it("shared with Cognito needs the credentials that assign tenants", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({
+          ...SHARED,
+          COGNITO_ADMIN_ACCESS_KEY_ID: undefined,
+          COGNITO_ADMIN_SECRET_ACCESS_KEY: undefined,
+        })
+      )
+    ).toEqual([
+      expect.stringMatching(
+        /^COGNITO_ADMIN_ACCESS_KEY_ID and .* are required by TENANCY_MODE=shared/
+      ),
+    ]);
+  });
+
+  it("shared keeps its tenants durably", () => {
+    expect(
+      checkEnvironmentContract(valid({ ...SHARED, TENANT_DIRECTORY_STORE: undefined }))
+    ).toEqual(["TENANT_DIRECTORY_STORE is required by TENANCY_MODE=shared: postgres"]);
+    expect(
+      checkEnvironmentContract(valid({ ...SHARED, TENANT_DIRECTORY_STORE: "redis" }))
+    ).toEqual([expect.stringMatching(/^TENANT_DIRECTORY_STORE has the wrong shape/)]);
+  });
+
+  it("admin credentials come as a pair", () => {
+    for (const missing of [
+      "COGNITO_ADMIN_ACCESS_KEY_ID",
+      "COGNITO_ADMIN_SECRET_ACCESS_KEY",
+    ]) {
+      expect(checkEnvironmentContract(valid({ ...ADMIN, [missing]: undefined }))).toEqual(
+        [
+          "COGNITO_ADMIN_ACCESS_KEY_ID and COGNITO_ADMIN_SECRET_ACCESS_KEY are set together or not at all",
+        ]
+      );
+    }
+  });
+
+  it("a session token goes with temporary credentials, and only with them", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({ ...ADMIN, COGNITO_ADMIN_SESSION_TOKEN: "FwoGZXIvYXdzEXAMPLE" })
+      )
+    ).toEqual([
+      expect.stringMatching(/^COGNITO_ADMIN_SESSION_TOKEN is set without temporary/),
+    ]);
+    expect(
+      checkEnvironmentContract(
+        valid({ ...ADMIN, COGNITO_ADMIN_ACCESS_KEY_ID: "ASIAIOSFODNN7EXAMPLE" })
+      )
+    ).toEqual([
+      expect.stringMatching(/^COGNITO_ADMIN_SESSION_TOKEN is required by temporary/),
+    ]);
+    expect(
+      checkEnvironmentContract(
+        valid({
+          ...ADMIN,
+          COGNITO_ADMIN_ACCESS_KEY_ID: "ASIAIOSFODNN7EXAMPLE",
+          COGNITO_ADMIN_SESSION_TOKEN: "FwoGZXIvYXdzEXAMPLE",
+        })
+      )
+    ).toEqual([]);
+  });
+
+  it.each([
+    ["COGNITO_ADMIN_ACCESS_KEY_ID", "akiaiosfodnn7example"],
+    ["COGNITO_ADMIN_ACCESS_KEY_ID", "XYZAIOSFODNN7EXAMPLE"],
+    ["COGNITO_ADMIN_SECRET_ACCESS_KEY", "too-short"],
+  ])("refuses a malformed %s", (name, value) => {
+    expect(checkEnvironmentContract(valid({ ...ADMIN, [name]: value }))).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`^${name} has the wrong shape`)),
+      ])
+    );
+  });
+
+  it("resolves the admin credentials only as a complete pair, never one half", () => {
+    expect(getCognitoAdminCredentials(ADMIN)).toEqual({
+      accessKeyId: ADMIN.COGNITO_ADMIN_ACCESS_KEY_ID,
+      secretAccessKey: ADMIN.COGNITO_ADMIN_SECRET_ACCESS_KEY,
+    });
+    expect(
+      getCognitoAdminCredentials({ COGNITO_ADMIN_ACCESS_KEY_ID: "AKIAIOSFODNN7EXAMPLE" })
+    ).toBeUndefined();
+    expect(getCognitoAdminCredentials({})).toBeUndefined();
+  });
+
+  it("names settings in violations, never their values (secrets)", () => {
+    const v = checkEnvironmentContract(
+      valid({ ...ADMIN, COGNITO_ADMIN_SECRET_ACCESS_KEY: "s3cr3t-value-that-is-wrong" })
+    ).join("\n");
+    expect(v).not.toContain("s3cr3t-value-that-is-wrong");
+  });
+
+  it.each([
+    ["an upper-case id", "0A1B2C3D-0000-4000-8000-000000000001"],
+    ["not a UUID", "default"],
+    ["a UUID with braces", `{${T}}`],
+    ["an empty-looking id", "00000000-0000-0000-0000-000000000000"],
+  ])("refuses %s as TENANT_ID", (_label, id) => {
+    expect(checkEnvironmentContract(valid({ TENANT_ID: id }))).toEqual([
+      expect.stringMatching(/^TENANT_ID has the wrong shape/),
+    ]);
+  });
+
+  it.each(["multi", "Single", "SHARED", ""])("refuses TENANCY_MODE %p", (mode) => {
+    const v = checkEnvironmentContract(valid({ TENANCY_MODE: mode }));
+    expect(v.length).toBeGreaterThan(0);
+  });
+
+  it("reads single as its one tenant and shared as none fixed", () => {
+    expect(getTenancySettings({ TENANCY_MODE: "single", TENANT_ID: A1 })).toEqual({
+      mode: "single",
+      tenantId: A1,
+    });
+    expect(getTenancySettings({})).toEqual({ mode: "single", tenantId: T });
+    expect(getTenancySettings({ TENANCY_MODE: "shared" })).toEqual({
+      mode: "shared",
+      tenantId: undefined,
+    });
+  });
+
+  it("a local or CI run may leave tenancy unset (single, the default tenant)", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({ TENANCY_MODE: undefined, TENANT_ID: undefined, DEPLOYMENT_HOST: "ci" })
+      )
+    ).toEqual([]);
+  });
+});
+
+describe("the database connections (ADR-053 D4)", () => {
+  it("a durable store requires DATABASE_URL, naming each selection", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({
+          DATABASE_URL: undefined,
+          DATABASE_OWNER_URL: undefined,
+          SOCIAL_STORE: "postgres",
+        })
+      )
+    ).toEqual([
+      "DATABASE_URL is required (SOCIAL_STORE=postgres, APP_STATE_STORE=supabase, TRAJECTORY_STORE=supabase, BUDGET_STORE=supabase) but not set",
+    ]);
+  });
+
+  it("a deployment needs the owner connection with the request one", () => {
+    expect(checkEnvironmentContract(valid({ DATABASE_OWNER_URL: undefined }))).toEqual([
+      "DATABASE_OWNER_URL is required with DATABASE_URL (operator paths: platform configuration and tenant lifecycle)",
+    ]);
+    expect(
+      checkEnvironmentContract(
+        valid({
+          DEPLOYMENT_HOST: "ci",
+          DATABASE_OWNER_URL: undefined,
+          DATABASE_SSL: "disable",
+        })
+      )
+    ).toEqual([]);
+  });
+
+  it("refuses the same user for both connections", () => {
+    expect(checkEnvironmentContract(valid({ DATABASE_OWNER_URL: REQUEST_DB }))).toEqual([
+      "DATABASE_URL and DATABASE_OWNER_URL use the same database user — the request connection must be the app_tenant role",
+    ]);
+  });
+
+  it.each(["sslmode=require", "ssl=true", "sslrootcert=/x", "SSLMODE=disable"])(
+    "refuses TLS options in a URL (%s)",
+    (opt) => {
+      expect(
+        checkEnvironmentContract(valid({ DATABASE_URL: `${REQUEST_DB}?${opt}` }))
+      ).toEqual([
+        "DATABASE_URL carries TLS options — set DATABASE_SSL (and DATABASE_SSL_CA) instead",
+      ]);
+      expect(
+        checkEnvironmentContract(
+          valid({ DATABASE_OWNER_URL: `${OWNER_DB}?application_name=x&${opt}` })
+        )
+      ).toEqual([
+        "DATABASE_OWNER_URL carries TLS options — set DATABASE_SSL (and DATABASE_SSL_CA) instead",
+      ]);
+    }
+  );
+
+  it("plaintext is for local and CI runs only", () => {
+    expect(checkEnvironmentContract(valid({ DATABASE_SSL: "disable" }))).toEqual([
+      'DATABASE_SSL=disable is for local and CI runs only (DEPLOYMENT_HOST "local" or "ci")',
+    ]);
+    expect(checkEnvironmentContract(valid({ DATABASE_SSL: "verify-full" }))).toEqual([]);
+    expect(checkEnvironmentContract(valid({ DATABASE_SSL: "require" }))).toEqual([]);
+  });
+
+  it.each([
+    ["DATABASE_URL", "mysql://u:p@h:1/d"],
+    ["DATABASE_URL", "postgresql://u@h:5432/d"],
+    ["DATABASE_URL", "postgresql://u:p@h:5432/"],
+    ["DATABASE_POOL_MAX", "0"],
+    ["DATABASE_POOL_MAX", "51"],
+    ["DATABASE_STATEMENT_TIMEOUT_MS", "99"],
+    ["DATABASE_STATEMENT_TIMEOUT_MS", "600001"],
+    ["DATABASE_SSL", "verify-ca"],
+    ["DATABASE_SSL_CA", "not a certificate"],
+  ])("refuses %s with the wrong shape, never echoing it", (name, value) => {
+    const v = checkEnvironmentContract(valid({ [name]: value }));
+    expect(v).toEqual([
+      expect.stringMatching(new RegExp(`^${name} has the wrong shape`)),
+    ]);
+    // Short numbers can occur in the hint itself (1–50); the rest must never be echoed.
+    if (value.length > 3) expect(v.join("\n")).not.toContain(value);
+  });
+
+  it("accepts the optional settings at their bounds", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({
+          DATABASE_POOL_MAX: "50",
+          DATABASE_STATEMENT_TIMEOUT_MS: "600000",
+          DATABASE_SSL_CA:
+            "-----BEGIN CERTIFICATE-----\\nMIIB\\n-----END CERTIFICATE-----\\n",
+        })
+      )
+    ).toEqual([]);
+    expect(
+      checkEnvironmentContract(
+        valid({ DATABASE_POOL_MAX: "1", DATABASE_STATEMENT_TIMEOUT_MS: "100" })
+      )
+    ).toEqual([]);
   });
 });

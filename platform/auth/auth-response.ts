@@ -11,9 +11,15 @@
  */
 
 import { NextResponse } from "next/server";
-import { errorFromResult, internalError, type CodedFailure } from "@/platform/errors";
+import {
+  apiError,
+  errorFromResult,
+  internalError,
+  type CodedFailure,
+} from "@/platform/errors";
 import { initAuth } from "./auth-init";
 import { getAuthProvider } from "./config";
+import { getGlobalPasswordPolicy, passwordRuleViolations } from "./password-policy";
 import type { AuthProvider } from "./provider";
 
 export interface ProviderResult extends CodedFailure {
@@ -63,4 +69,20 @@ export async function callAuthProvider<T>(
   } catch (err) {
     return { ok: false, response: internalError(err, options) };
   }
+}
+
+/**
+ * Every route that sets a password (sign-up, password reset, the new-password challenge) checks
+ * it against the policy its tenant's administrators set — read in the request's tenant — before
+ * the provider sees it. Null when it passes; otherwise `auth.password_policy` naming the rules
+ * it breaks.
+ */
+export async function passwordPolicyRefusal(
+  password: string,
+  request: { headers: Headers; nextUrl?: { pathname: string } }
+): Promise<NextResponse | null> {
+  const rules = passwordRuleViolations(password, await getGlobalPasswordPolicy());
+  return rules.length > 0
+    ? apiError("auth.password_policy", { params: { rules }, request })
+    : null;
 }

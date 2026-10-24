@@ -10,7 +10,11 @@
  * concurrently must not register.
  */
 
-import type { BudgetScope, BudgetStore } from "@/platform/agents/budget-tracker";
+import {
+  TENANT_TOTAL_AGENT,
+  type BudgetScope,
+  type BudgetStore,
+} from "@/platform/agents/budget-tracker";
 
 const PERIOD = "2026-07-29";
 
@@ -126,6 +130,36 @@ export function runBudgetStoreContract(fx: BudgetStoreContractFixtures): void {
       expect((await store.read(platform)).usedUsd).toBeCloseTo(0.03, 6);
       // A null scope_id must not collide with a scoped row.
       expect((await store.read(scope())).usedUsd).toBe(0);
+    });
+  });
+
+  describe("incrementWithTenant", () => {
+    const tenant = (period = PERIOD): BudgetScope => ({
+      agentId: TENANT_TOTAL_AGENT,
+      scopeType: "platform",
+      period,
+    });
+
+    it("adds to the agent's scope and the tenant's total, returning both", async () => {
+      const r = await store.incrementWithTenant(scope(), tenant(), 0.25, 1);
+      expect(r.agent.usedUsd).toBeCloseTo(0.25, 6);
+      expect(r.tenant.usedUsd).toBeCloseTo(0.25, 6);
+      await store.incrementWithTenant(scope({ agentId: "other" }), tenant(), 0.5, 1);
+      expect((await store.read(tenant())).usedUsd).toBeCloseTo(0.75, 6);
+      expect((await store.read(scope())).usedUsd).toBeCloseTo(0.25, 6);
+    });
+
+    it("keeps the tenant total equal to the agents' sum under concurrency", async () => {
+      await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          store.incrementWithTenant(scope({ agentId: `a${i % 4}` }), tenant(), 0.01, 1)
+        )
+      );
+      const t = await store.read(tenant());
+      expect(t.usedUsd).toBeCloseTo(0.2, 6);
+      expect(t.usedSteps).toBe(20);
+      for (let i = 0; i < 4; i++)
+        expect((await store.read(scope({ agentId: `a${i}` }))).usedSteps).toBe(5);
     });
   });
 

@@ -6,7 +6,7 @@
  *   const store = getSocialStore();
  *
  * Environment variables:
- *   SOCIAL_STORE = "supabase" | "memory" (default: "memory")
+ *   SOCIAL_STORE = "postgres" | "memory" (default: "memory"; "supabase" is read as "postgres")
  *
  * @module platform/social
  */
@@ -27,7 +27,7 @@ export type {
 } from "./types";
 
 export { InMemorySocialStore } from "./memory-social-store";
-export { SupabaseSocialStore } from "./supabase-social-store";
+export { PostgresSocialStore } from "./postgres-social-store";
 export { GroupService, GROUP_LIMITS } from "./group-service";
 export type { ScreenContentFn } from "./group-service";
 export { InviteService } from "./invite-service";

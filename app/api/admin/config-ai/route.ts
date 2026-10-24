@@ -36,6 +36,7 @@ import type { Step } from "@/platform/agents/types";
 import type { ConfigToolResult } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
 import { apiError, readJsonObject } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -78,7 +79,7 @@ interface ConfigAIResponse {
 // Route handler
 // ---------------------------------------------------------------------------
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
   const startTime = Date.now();
 
@@ -174,7 +175,7 @@ export async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { request });
   }
-}
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

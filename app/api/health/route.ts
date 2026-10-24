@@ -19,6 +19,7 @@
 import { NextResponse } from "next/server";
 import { logger, generateRequestId } from "@/lib/logger";
 import { tryGetObservability } from "@/platform/observability";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 /** Withheld-detail notice, so a caller knows detail exists and where it went. */
 const DETAIL_NOTICE =
@@ -36,7 +37,7 @@ export function deployedCommit(
   return sha && /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 12).toLowerCase() : null;
 }
 
-export async function GET() {
+export const GET = tenantRoute(async function GET() {
   const requestId = generateRequestId();
   const observability = tryGetObservability();
 
@@ -130,4 +131,4 @@ export async function GET() {
     },
     { status: httpStatus }
   );
-}
+});

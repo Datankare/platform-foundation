@@ -123,7 +123,7 @@ export default function ActionConfirmPanel({
       {/* Actions List */}
       {plan.actions.length > 0 && (
         <div className="mb-4">
-          <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">
+          <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">
             Proposed Actions
           </p>
           <div className="space-y-2">

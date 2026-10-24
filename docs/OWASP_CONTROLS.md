@@ -13,12 +13,12 @@ phase. No category may be left unaddressed.
 
 **Risk:** Users act outside their intended permissions.
 
-| Control                   | Implementation                                                   | Status                           |
-| ------------------------- | ---------------------------------------------------------------- | -------------------------------- |
-| Authentication middleware | Auth provider integration on all protected routes                | Template — implement per project |
-| Row-Level Security        | Database RLS policies enforce data isolation                     | Template — implement per project |
-| Server-side authorization | Tier/role checks in API routes, never client-only                | Template — implement per project |
-| Default deny              | Routes are protected by default; public routes explicitly marked | Template — implement per project |
+| Control                   | Implementation                                                                                             | Status                           |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Authentication middleware | Auth provider integration on all protected routes                                                          | Template — implement per project |
+| Row-Level Security        | Forced RLS on every tenant-owned table; requests connect as `app_tenant`, which cannot bypass it (ADR-053) | ✅ Active                        |
+| Server-side authorization | Tier/role checks in API routes, never client-only                                                          | Template — implement per project |
+| Default deny              | Routes are protected by default; public routes explicitly marked                                           | Template — implement per project |
 
 **Verification:** Auth integration tests, RLS policy tests, manual penetration testing.
 
@@ -43,13 +43,13 @@ phase. No category may be left unaddressed.
 
 **Risk:** Hostile data sent to an interpreter as part of a command or query.
 
-| Control                | Implementation                                               | Status                           |
-| ---------------------- | ------------------------------------------------------------ | -------------------------------- |
-| TypeScript strict mode | Eliminates entire classes of type-confusion injection        | ✅ Active                        |
-| Input validation       | All API routes validate input shape and size                 | ✅ Active                        |
-| Parameterized queries  | ORM/query builder with parameterized queries (when DB added) | Template — implement per project |
-| SAST                   | CodeQL scans for injection patterns                          | Implement per Sprint 2           |
-| LLM input sanitization | sanitizeForPrompt() on all LLM input surfaces                | ✅ Active                        |
+| Control                | Implementation                                                                                                             | Status                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| TypeScript strict mode | Eliminates entire classes of type-confusion injection                                                                      | ✅ Active              |
+| Input validation       | All API routes validate input shape and size                                                                               | ✅ Active              |
+| Parameterized queries  | `platform/data` `tx.query(sql, values)` — values only as `$n` parameters; `data-sql-hygiene` refuses SQL built from values | ✅ Active              |
+| SAST                   | CodeQL scans for injection patterns                                                                                        | Implement per Sprint 2 |
+| LLM input sanitization | sanitizeForPrompt() on all LLM input surfaces                                                                              | ✅ Active              |
 
 **Verification:** CodeQL SAST, unit tests for input validation, sanitization tests.
 

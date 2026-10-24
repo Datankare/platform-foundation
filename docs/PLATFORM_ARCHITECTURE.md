@@ -31,7 +31,7 @@ All user-facing operations flow through typed service interfaces. Users create g
 
 ### Social services
 
-Business logic for group lifecycle and invitation management. GroupService enforces validation (name length, description limits), content screening via Guardian hook, and ownership checks. InviteService enforces authorization (inviter must be a member, invitee must not be, only the invitee can accept/decline) and coordinates the accept-to-add-member flow. SocialStore is provider-aware (P7) — in-memory for tests, Supabase for production.
+Business logic for group lifecycle and invitation management. GroupService enforces validation (name length, description limits), content screening via Guardian hook, and ownership checks. InviteService enforces authorization (inviter must be a member, invitee must not be, only the invitee can accept/decline) and coordinates the accept-to-add-member flow. SocialStore is provider-aware (P7) — in-memory for tests, Postgres for production.
 
 ### Social agents
 
@@ -56,11 +56,11 @@ Existing services built in Phases 1–3: content moderation (multi-layer: blockl
 
 ### Observability
 
-Cross-cutting fabric (ADR-014): distributed traces, metrics sink (in-memory + Supabase), Sentry error reporting, moderation audit log, and health probes for every external dependency.
+Cross-cutting fabric (ADR-014): distributed traces, metrics sink (in-memory + Postgres), Sentry error reporting, moderation audit log, and health probes for every external dependency.
 
 ### Data layer
 
-Supabase (PostgreSQL) with 35 migrations; the foundational set covers: identity and access (001–009), content safety (010–014), social data model (015), and agent runtime (016). Row-level security on all tables. Service-role bypass for server-side agent operations.
+Supabase (PostgreSQL) with 50 migrations; the foundational set covers: identity and access (001–009), content safety (010–014), social data model (015), and agent runtime (016); 049 adds tenancy. Server code reaches Postgres only through `platform/data` (`withTenantTx`, `withPlatformTx`, `withOwnerTx(purpose)`), as the role `app_tenant` under forced row-level security on every tenant-owned table; the owner connection serves named operator purposes only, never a request path (ADR-053).
 
 ---
 

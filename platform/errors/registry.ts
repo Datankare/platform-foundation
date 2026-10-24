@@ -54,6 +54,18 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "key", kind: "id" }],
     action: "Show the setting's allowed type and range, and ask for a valid value.",
   },
+  "admin.config_scope_refused": {
+    status: 403,
+    params: [{ name: "key", kind: "id" }],
+    action:
+      "Explain that this setting governs the platform and only an operator can change it; do not retry.",
+  },
+  "admin.operator_only": {
+    status: 403,
+    params: [],
+    action:
+      "Explain that this changes what every tenant shares, so only a platform operator can do it; do not retry.",
+  },
   "admin.self_target": {
     status: 403,
     params: [],
@@ -170,6 +182,11 @@ export const PLATFORM_ERROR_CODES = {
     status: 401,
     params: [],
     action: "Show sign-in (guest on a users-only route).",
+  },
+  "auth.signups_closed": {
+    status: 403,
+    params: [],
+    action: "Explain that new accounts are not being accepted here; do not retry.",
   },
   "auth.sso_failed": {
     status: 401,
@@ -315,6 +332,68 @@ export const PLATFORM_ERROR_CODES = {
     status: 503,
     params: [{ name: "service", kind: "id" }],
     action: "Retry later.",
+  },
+  "tenant.conflict": {
+    status: 409,
+    params: [{ name: "reason", kind: "id" }],
+    action:
+      "Show the reason (the slug or address is taken, or the tenant is not in the state this needs); refresh and choose again.",
+  },
+  "tenant.not_shared": {
+    status: 409,
+    params: [],
+    action:
+      "Explain that this deployment serves one tenant, whose settings are on the Platform Config page; do not retry.",
+  },
+  "tenant.not_active": {
+    status: 409,
+    params: [],
+    action: "Explain that the tenant is deleted and awaiting purge; restore it first.",
+  },
+  "tenant.invalid": {
+    status: 400,
+    params: [],
+    action: "Show what the tenant form needs and ask again.",
+  },
+  "tenant.not_found": {
+    status: 404,
+    params: [],
+    action: "Refresh the tenant list; the tenant, request or user named does not exist.",
+  },
+  "tenant.own_tenant": {
+    status: 403,
+    params: [],
+    action:
+      "Explain that an operator cannot suspend or delete the tenant they operate from; do not retry.",
+  },
+  "tenant.self_approval": {
+    status: 403,
+    params: [],
+    action: "Another operator must approve this deletion; do not retry as the requester.",
+  },
+  "tenant.mismatch": {
+    status: 403,
+    params: [],
+    action:
+      "The credentials belong to another tenant than this address serves. Sign in on your own organisation's address; do not retry here.",
+  },
+  "tenant.missing": {
+    status: 403,
+    params: [],
+    action:
+      "The account is not assigned to a tenant. An operator must assign it; retrying cannot succeed.",
+  },
+  "tenant.suspended": {
+    status: 403,
+    params: [],
+    action:
+      "The tenant is suspended. Show the message; contact the operator. Retrying cannot succeed.",
+  },
+  "tenant.unknown_host": {
+    status: 404,
+    params: [],
+    action:
+      "The address is not set up for any tenant. Check the address; retrying cannot succeed.",
   },
 } as const satisfies Record<string, ErrorCodeSpec>;
 

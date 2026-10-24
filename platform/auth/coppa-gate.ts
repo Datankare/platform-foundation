@@ -16,6 +16,7 @@
  *     consent changes) for fast lookups
  *   - Blocked features list is in platform_config (coppa.blocked_features)
  *   - Master switch: coppa.enforcement_enabled (for development bypass)
+ *   - The user row is read in the request's tenant (platform/data, ADR-053 D4)
  *
  * GenAI Principles:
  *   P4  — Structural safety: gate runs before all processing
@@ -25,7 +26,7 @@
  * @module platform/auth
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { getConfig } from "@/platform/auth/platform-config";
 import { logger } from "@/lib/logger";
 import type { CoppaGateResult, ContentRatingLevel } from "@/platform/moderation/types";
@@ -101,21 +102,20 @@ async function loadUserCoppaState(userId: string): Promise<UserCoppaState> {
   };
 
   try {
-    const supabase = getSupabaseServiceClient();
-    const { data, error } = await (supabase
-      .from("users" as never)
-      .select("coppa_enforcement_active, content_rating_level, parental_consent_status")
-      .eq("id", userId)
-      .single() as unknown as Promise<{
-      data: {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{
         coppa_enforcement_active: boolean;
         content_rating_level: number;
         parental_consent_status: string;
-      } | null;
-      error: { message: string } | null;
-    }>);
+      }>(
+        `select coppa_enforcement_active, content_rating_level, parental_consent_status
+           from users where id = $1::uuid`,
+        [userId]
+      )
+    );
+    const data = rows[0];
 
-    if (error || !data) return failClosed;
+    if (!data) return failClosed;
 
     return {
       coppaEnforcementActive: data.coppa_enforcement_active,
@@ -243,23 +243,12 @@ export async function updateCoppaEnforcement(
   isEnforced: boolean
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = getSupabaseServiceClient();
-    const { error } = await (supabase
-      .from("users" as never)
-      .update({ coppa_enforcement_active: isEnforced } as never)
-      .eq("id", userId) as unknown as Promise<{
-      error: { message: string } | null;
-    }>);
-
-    if (error) {
-      logger.error("COPPA enforcement update failed", {
+    await withTenantTx((tx) =>
+      tx.query("update users set coppa_enforcement_active = $2 where id = $1::uuid", [
         userId,
         isEnforced,
-        error: error.message,
-        route: "platform/auth/coppa-gate",
-      });
-      return { success: false, error: error.message };
-    }
+      ])
+    );
 
     return { success: true };
   } catch (err) {
@@ -287,7 +276,7 @@ export async function updateCoppaEnforcement(
 //    the gate may allow or block incorrectly.
 //
 // 2. Fail-closed everywhere: unknown user = enforced. DB error = enforced.
-//    Config error = everything blocked. This means a Supabase outage will
+//    Config error = everything blocked. This means a database outage will
 //    block ALL under-13 users (and unknown users). This is the correct
 //    safety behavior per COPPA.
 //

@@ -17,16 +17,18 @@
  *   - Auto-expiry of suspended status (P11)
  *   - Logged decisions (P3)
  *
+ * The user row and per-account restrictions are read in the request's tenant (platform/data,
+ * ADR-053 D4).
+ *
  * GenAI Principles: P3, P4, P11, P13
  *
  * @module platform/auth
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { hasDatabase, withTenantTx } from "@/platform/data";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getSingleton, setSingleton } from "@/platform/kernel";
 import { logger } from "@/lib/logger";
-import { getSupabaseUrl } from "@/platform/providers/environment-contract";
 import type { AccountStatus } from "@/platform/moderation/types";
 import {
   ensureUserProvisioned,
@@ -185,22 +187,37 @@ async function loadSuspendedFeatures(): Promise<readonly string[]> {
 // User state loader
 // ---------------------------------------------------------------------------
 
-type AccountRowResult = Promise<{
-  data: {
-    account_status: string;
-    restricted_until: string | null;
-    suspended_until: string | null;
-    banned_at: string | null;
-  } | null;
-  error: { message: string } | null;
-}>;
+interface AccountRow {
+  account_status: string;
+  restricted_until: string | null;
+  suspended_until: string | null;
+  banned_at: string | null;
+}
 
-function readAccountRow(userId: string): AccountRowResult {
-  return getSupabaseServiceClient()
-    .from("users" as never)
-    .select("account_status, restricted_until, suspended_until, banned_at")
-    .eq("id", userId)
-    .maybeSingle() as unknown as AccountRowResult;
+const isoOrNull = (v: Date | null): string | null => (v ? v.toISOString() : null);
+
+/** The user's status row in the current tenant, or null. Throws when it cannot be read. */
+async function readAccountRow(userId: string): Promise<AccountRow | null> {
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{
+      account_status: string;
+      restricted_until: Date | null;
+      suspended_until: Date | null;
+      banned_at: Date | null;
+    }>(
+      `select account_status::text as account_status, restricted_until, suspended_until, banned_at
+         from users where id = $1::uuid`,
+      [userId]
+    )
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    account_status: row.account_status,
+    restricted_until: isoOrNull(row.restricted_until),
+    suspended_until: isoOrNull(row.suspended_until),
+    banned_at: isoOrNull(row.banned_at),
+  };
 }
 
 /**
@@ -220,15 +237,7 @@ async function loadAccountState(
   };
 
   try {
-    let { data, error } = await readAccountRow(userId);
-    if (error) {
-      logger.error("Account status guard: failed to read user state — failing closed", {
-        userId,
-        error: error.message,
-        route: "platform/auth/account-status-guard",
-      });
-      return failClosed;
-    }
+    let data = await readAccountRow(userId);
 
     // First use of a new account: create its row, then read what was stored (TASK-117).
     if (!data) {
@@ -243,8 +252,12 @@ async function loadAccountState(
         };
       }
       if (outcome === "failed") return { ...failClosed, notProvisioned: true };
-      ({ data, error } = await readAccountRow(userId));
-      if (error || !data) return { ...failClosed, notProvisioned: true };
+      try {
+        data = await readAccountRow(userId);
+      } catch {
+        data = null;
+      }
+      if (!data) return { ...failClosed, notProvisioned: true };
     }
 
     // B5: Validate status is a known value
@@ -259,10 +272,9 @@ async function loadAccountState(
       bannedAt: data.banned_at,
     };
   } catch (err) {
-    // Check if Supabase is configured. If not (mock/CI mode),
-    // there is no DB to query — degrade to active, not banned.
-    const supabaseUrl = getSupabaseUrl() ?? "";
-    if (!supabaseUrl) {
+    // No database configured (mock/CI mode): there is no DB to query — degrade to active,
+    // not banned.
+    if (!hasDatabase()) {
       return {
         accountStatus: "active" as AccountStatus,
         restrictedUntil: null,
@@ -334,7 +346,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 // Fail-closed (ADR-034): a DB error while reading the block-list DENIES the
 // request under evaluation — the block status is unknowable, and a security
 // control must hold under stress. Consistent with loadAccountState. As there, a
-// deployment with no Supabase configured (mock/CI) is NOT a DB error: it degrades
+// deployment with no database configured (mock/CI) is NOT a DB error: it degrades
 // to "no blocks", not a deny.
 
 /** Sentinel returned when the per-account block-list cannot be read (fail-closed). */
@@ -343,38 +355,23 @@ const RESTRICTION_LOAD_FAILED = Symbol("restriction_load_failed");
 /**
  * Load the set of features blocked for this specific user. Returns the feature
  * array on success (possibly empty), or RESTRICTION_LOAD_FAILED on a DB error so
- * the caller can fail closed. A deployment with no Supabase configured returns an
+ * the caller can fail closed. A deployment with no database configured returns an
  * empty set (mock/CI — no blocks), mirroring loadAccountState.
  */
 async function loadUserFeatureRestrictions(
   userId: string
 ): Promise<readonly string[] | typeof RESTRICTION_LOAD_FAILED> {
   try {
-    const supabase = getSupabaseServiceClient();
-    const { data, error } = await (supabase
-      .from("user_feature_restrictions" as never)
-      .select("feature")
-      .eq("user_id", userId) as unknown as Promise<{
-      data: { feature: string }[] | null;
-      error: { message: string } | null;
-    }>);
-
-    if (error) {
-      logger.error(
-        "Account status guard: failed to load per-account restrictions — failing closed",
-        {
-          userId,
-          error: error.message,
-          route: "platform/auth/account-status-guard",
-        }
-      );
-      return RESTRICTION_LOAD_FAILED;
-    }
-    return (data ?? []).map((row) => row.feature);
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ feature: string }>(
+        "select feature from user_feature_restrictions where user_id = $1::uuid",
+        [userId]
+      )
+    );
+    return rows.map((row) => row.feature);
   } catch (err) {
-    // No Supabase configured (mock/CI) is not a DB error — degrade to "no blocks".
-    const supabaseUrl = getSupabaseUrl() ?? "";
-    if (!supabaseUrl) return [];
+    // No database configured (mock/CI) is not a DB error — degrade to "no blocks".
+    if (!hasDatabase()) return [];
     logger.error(
       "Account status guard: per-account restriction load threw — failing closed",
       {

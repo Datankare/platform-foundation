@@ -8,11 +8,14 @@
  * Phase 2 Sprint 4: Enhanced with breached password list, strength
  * scoring, sequential/repetition detection, NIST SP 800-63B alignment.
  *
+ * Policies are the tenant's: password_policy rows are read and written in the request's tenant
+ * (platform/data, ADR-053 D4), so "global" means the tenant-wide row (no role, no user).
+ *
  * @module platform/auth
  * @see ROADMAP.md Phase 2 Sprint 4 — password enforcement
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 
 // ============================================================
@@ -155,7 +158,7 @@ const BREACHED_PASSWORDS = new Set([
 ]);
 
 // ============================================================
-// Supabase policy resolution (existing Phase 1 API)
+// Policy resolution (existing Phase 1 API)
 // ============================================================
 
 function toPolicy(row: Record<string, unknown>): PasswordPolicy {
@@ -180,35 +183,29 @@ export async function getEffectivePasswordPolicy(
   userId: string,
   roleId: string
 ): Promise<PasswordPolicy> {
-  const supabase = getSupabaseServiceClient();
-
-  // 1. Check for individual override
-  const { data: individual } = await supabase
-    .from("password_policy")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-
-  if (individual) return toPolicy(individual);
-
-  // 2. Check for role override
-  const { data: rolePolicy } = await supabase
-    .from("password_policy")
-    .select("*")
-    .eq("role_id", roleId)
-    .single();
-
-  if (rolePolicy) return toPolicy(rolePolicy);
-
-  // 3. Check for global default (both role_id and user_id are null)
-  const { data: global } = await supabase
-    .from("password_policy")
-    .select("*")
-    .is("role_id", null)
-    .is("user_id", null)
-    .single();
-
-  if (global) return toPolicy(global);
+  // 1–3 in one read: the individual row first, then the role's, then the global one. Ids are
+  // compared as text, so an id that is not a UUID matches nothing rather than failing the read.
+  // An unreadable store falls through to the built-in policy (the strict one), as no row does.
+  try {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query(
+        `select * from password_policy
+          where user_id::text = $1
+             or (role_id::text = $2 and user_id is null)
+             or (role_id is null and user_id is null)
+          order by case when user_id is not null then 0 when role_id is not null then 1 else 2 end
+          limit 1`,
+        [userId, roleId]
+      )
+    );
+    if (rows[0]) return toPolicy(rows[0]);
+  } catch (err) {
+    logger.error("Password policy unreadable, using the defaults", {
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/auth/password-policy",
+    });
+    return DEFAULT_POLICY;
+  }
 
   // 4. Hardcoded fallback
   logger.warn("No password policy found, using hardcoded default", {
@@ -290,25 +287,17 @@ function toRow(policy: PasswordPolicy): Record<string, unknown> {
 
 /** The global policy (no role, no user), or the defaults when none is stored. */
 export async function getGlobalPasswordPolicy(): Promise<PasswordPolicy> {
-  let data: Record<string, unknown> | null;
-  let error: { message: string } | null;
+  let data: Record<string, unknown> | undefined;
   try {
     // An unconfigured or unreachable store is the same case as an unreadable row: the defaults
     // (the strict built-in policy) apply — sign-up never fails open, and never answers a 500.
-    const supabase = getSupabaseServiceClient();
-    ({ data, error } = await supabase
-      .from("password_policy")
-      .select("*")
-      .is("role_id", null)
-      .is("user_id", null)
-      .maybeSingle());
+    const { rows } = await withTenantTx((tx) =>
+      tx.query("select * from password_policy where role_id is null and user_id is null")
+    );
+    data = rows[0];
   } catch (err) {
-    error = { message: err instanceof Error ? err.message : String(err) };
-    data = null;
-  }
-  if (error) {
     logger.error("Global password policy unreadable, using the defaults", {
-      error: error.message,
+      error: err instanceof Error ? err.message : String(err),
       route: "platform/auth/password-policy",
     });
     return DEFAULT_POLICY;
@@ -317,32 +306,45 @@ export async function getGlobalPasswordPolicy(): Promise<PasswordPolicy> {
 }
 
 /**
- * Store the global policy: update the global row, or create it when there is none. (The table
- * has no unique key the upsert could use; migration 042 adds one so two globals cannot exist.)
+ * Store the global policy: one upsert on the per-tenant scope key (tenant, role, user — nulls
+ * not distinct, migration 049), so two saves at once cannot create two globals. A failure is
+ * reported, never thrown.
  */
 export async function saveGlobalPasswordPolicy(
   policy: PasswordPolicy
 ): Promise<{ success: true } | { success: false; error: string }> {
-  let supabase: ReturnType<typeof getSupabaseServiceClient>;
+  const row = toRow(policy);
   try {
-    supabase = getSupabaseServiceClient();
+    await withTenantTx((tx) =>
+      tx.query(
+        `insert into password_policy
+           (role_id, user_id, min_length, rotation_days, require_uppercase, require_lowercase,
+            require_number, require_special, password_history_count)
+         values (null, null, $1, $2, $3, $4, $5, $6, $7)
+         on conflict (tenant_id, role_id, user_id) do update
+           set min_length = excluded.min_length,
+               rotation_days = excluded.rotation_days,
+               require_uppercase = excluded.require_uppercase,
+               require_lowercase = excluded.require_lowercase,
+               require_number = excluded.require_number,
+               require_special = excluded.require_special,
+               password_history_count = excluded.password_history_count,
+               updated_at = now()`,
+        [
+          row.min_length,
+          row.rotation_days,
+          row.require_uppercase,
+          row.require_lowercase,
+          row.require_number,
+          row.require_special,
+          row.password_history_count,
+        ]
+      )
+    );
+    return { success: true };
   } catch (err) {
-    // As the read: a client that cannot be created is a failed save, reported, never thrown.
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-  const { data: existing, error: readError } = await supabase
-    .from("password_policy")
-    .select("id")
-    .is("role_id", null)
-    .is("user_id", null)
-    .maybeSingle();
-  if (readError) return { success: false, error: readError.message };
-  const { error } = existing
-    ? await supabase.from("password_policy").update(toRow(policy)).eq("id", existing.id)
-    : await supabase
-        .from("password_policy")
-        .insert({ role_id: null, user_id: null, ...toRow(policy) });
-  return error ? { success: false, error: error.message } : { success: true };
 }
 
 // ============================================================

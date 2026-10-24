@@ -10,10 +10,11 @@ jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: jest.fn(async (_key: string, dflt: unknown) => dflt),
 }));
 // The real audit module, writing to an in-memory database: each reaper change is recorded first.
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
+jest.mock("@/platform/data", () =>
+  require("@/__tests__/helpers/fake-account-data").fakeAccountData(() => mockDb)
+);
 
 import { getConfig } from "@/platform/auth/platform-config";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { FakeDatabase } from "@/__tests__/helpers/fake-database";
 import { InMemoryReviewQueueStore, setReviewQueueStore } from "../review-store";
 import { submitForReview, reapOverdueEscalations } from "../review-service";
@@ -46,9 +47,9 @@ function makeModerationResult(
 
 let store: InMemoryReviewQueueStore;
 let db: FakeDatabase;
+let mockDb: FakeDatabase;
 beforeEach(() => {
-  db = new FakeDatabase({ audit_log: [] });
-  (getSupabaseServiceClient as jest.Mock).mockReturnValue(db.client());
+  db = mockDb = new FakeDatabase({ audit_log: [] });
   store = new InMemoryReviewQueueStore();
   setReviewQueueStore(store);
   mockGetConfig.mockImplementation(async (_key: string, dflt: unknown) => dflt);

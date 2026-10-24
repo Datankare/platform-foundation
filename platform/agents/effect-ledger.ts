@@ -9,6 +9,9 @@
  * neither confirmed nor denied, and guessing either way is a correctness violation with no
  * trace — at-most-once if the guess is failure, at-least-once if it is success.
  *
+ * The in-memory ledger keeps each tenant's entries in its own partition, as row-level
+ * security does for PostgresEffectLedger (ADR-053 D6).
+ *
  * @module platform/agents
  */
 
@@ -20,6 +23,7 @@ import type {
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 export type {
   BeginEffectArgs,
@@ -39,7 +43,12 @@ function keyOf(operationId: string, effectKey: string): string {
 }
 
 export class InMemoryEffectLedger implements EffectLedger {
-  private entries = new Map<string, EffectLedgerEntry>();
+  private readonly parts = new TenantPartitionedMap<string, EffectLedgerEntry>();
+
+  /** The current tenant's entries. */
+  private get entries(): Map<string, EffectLedgerEntry> {
+    return this.parts.current();
+  }
 
   async begin(args: BeginEffectArgs): Promise<EffectLedgerEntry> {
     const k = keyOf(args.operationId, args.effectKey);
@@ -104,8 +113,9 @@ export class InMemoryEffectLedger implements EffectLedger {
     return limit && limit > 0 ? out.slice(0, limit) : out;
   }
 
+  /** Forget every tenant's entries (tests). */
   clear(): void {
-    this.entries.clear();
+    this.parts.clearAll();
   }
 }
 

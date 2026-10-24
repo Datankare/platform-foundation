@@ -4,10 +4,14 @@
  * GenAI-native governance admin (ADR-035) over the F1 per-account block store (ADR-034). A
  * block bars one feature for one user, orthogonal to account status. Vocabulary-free: the
  * feature is an opaque string; the handler does not enumerate features.
+ *
+ * Restrictions are the tenant's own data (ADR-053 D5), written in the tenant's transaction: a
+ * block names a user of this tenant (the foreign key refuses any other), and an unblock removes
+ * only this tenant's row.
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { runAudited, type ActionResult } from "./shared";
+import { withTenantTx } from "@/platform/data";
+import { failedAsResult, runAudited, type ActionResult } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -43,7 +47,6 @@ export async function handleBlockUserFeature(
   if (userId === actorId) {
     return { success: false, error: "admin.self_target", code: "admin.self_target" };
   }
-  const supabase = getSupabaseServiceClient();
   return runAudited(
     {
       action: "admin_action",
@@ -57,19 +60,19 @@ export async function handleBlockUserFeature(
         reason: input.reason ?? null,
       },
     },
-    async () => {
-      const { error } = await supabase.from("user_feature_restrictions" as never).upsert(
-        {
-          user_id: userId,
-          feature,
-          reason: input.reason ?? null,
-          created_by: actorId,
-        } as never,
-        { onConflict: "user_id,feature" }
-      );
-      if (error) return { success: false, error: error.message };
-      return { success: true, result: `Blocked "${feature}" for user ${userId}` };
-    }
+    () =>
+      failedAsResult(async () => {
+        await withTenantTx((tx) =>
+          tx.query(
+            `insert into user_feature_restrictions (user_id, feature, reason, created_by)
+             values ($1::uuid, $2, $3, $4)
+             on conflict (tenant_id, user_id, feature)
+             do update set reason = excluded.reason, created_by = excluded.created_by`,
+            [userId, feature, input.reason ?? null, actorId]
+          )
+        );
+        return { success: true, result: `Blocked "${feature}" for user ${userId}` };
+      })
   );
 }
 
@@ -86,7 +89,6 @@ export async function handleUnblockUserFeature(
   if (userId === actorId) {
     return { success: false, error: "admin.self_target", code: "admin.self_target" };
   }
-  const supabase = getSupabaseServiceClient();
   return runAudited(
     {
       action: "admin_action",
@@ -99,14 +101,15 @@ export async function handleUnblockUserFeature(
         feature,
       },
     },
-    async () => {
-      const { error } = await supabase
-        .from("user_feature_restrictions" as never)
-        .delete()
-        .eq("user_id", userId)
-        .eq("feature", feature);
-      if (error) return { success: false, error: error.message };
-      return { success: true, result: `Unblocked "${feature}" for user ${userId}` };
-    }
+    () =>
+      failedAsResult(async () => {
+        await withTenantTx((tx) =>
+          tx.query(
+            "delete from user_feature_restrictions where user_id = $1::uuid and feature = $2",
+            [userId, feature]
+          )
+        );
+        return { success: true, result: `Unblocked "${feature}" for user ${userId}` };
+      })
   );
 }

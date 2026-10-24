@@ -65,23 +65,6 @@ const mockSubmitForReview = jest.fn().mockResolvedValue({
 jest.mock("@/platform/moderation/review-service", () => ({
   submitForReview: (...args: unknown[]) => mockSubmitForReview(...args),
 }));
-
-const mockSupabase = {
-  from: jest.fn().mockReturnValue({
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue({
-      data: { account_status: "active" },
-      error: null,
-    }),
-    update: jest.fn().mockReturnThis(),
-  }),
-};
-
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: () => mockSupabase,
-}));
-
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
 import type { AIResponse, Orchestrator, CircuitState } from "@/platform/ai";
 import { screenContent } from "@/platform/moderation/middleware";

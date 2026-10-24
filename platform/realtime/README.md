@@ -13,7 +13,8 @@ platform/realtime/
   ├── types.ts              — RealtimeProvider interface, agentic message schema, all contracts
   ├── supabase-realtime.ts  — Supabase Realtime implementation (first production provider)
   ├── mock-realtime.ts      — In-memory mock (tests + local dev)
-  ├── middleware.ts          — Auth validation, rate limiting, P17 intent enforcement
+  ├── connection-guard.ts   — Auth validation, rate limiting, P17 intent enforcement
+  ├── tenant-topic.ts       — Every channel inside the current tenant: topic `t:<tenant>:<name>` (ADR-053)
   ├── health-probe.ts       — Connection state + latency SLA monitoring
   └── index.ts              — Public API barrel exports
 ```
@@ -63,7 +64,7 @@ startStream("Tell me a story");
 ## Adding a New Provider
 
 1. Create `platform/realtime/{provider}-realtime.ts` implementing `RealtimeProvider`
-2. Map `RealtimeMessage` to provider's native format (preserve P15-P18 fields)
+2. Map `RealtimeMessage` to provider's native format (preserve P15-P18 fields); join each channel at `tenantTopic(name)` (`tenant-topic.ts`) so tenants never share a topic
 3. Register in `platform/providers/registry.ts`
 4. Set `REALTIME_PROVIDER={provider}`
 5. Add tests

@@ -32,20 +32,20 @@ export default function ExecutionResultsPanel({
           : "bg-amber-900/10 border-amber-800"
       }`}
     >
-      <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">
+      <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">
         Execution Results
       </p>
       <div className="bg-[#0a0f1e] rounded-lg overflow-hidden">
         <table className="w-full text-sm text-left border-collapse">
           <thead>
             <tr>
-              <th className="text-xs text-gray-500 uppercase py-2 px-3 border-b border-gray-800 w-8">
+              <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800 w-8">
                 Status
               </th>
-              <th className="text-xs text-gray-500 uppercase py-2 px-3 border-b border-gray-800 w-40">
+              <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800 w-40">
                 Action
               </th>
-              <th className="text-xs text-gray-500 uppercase py-2 px-3 border-b border-gray-800">
+              <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800">
                 Result
               </th>
             </tr>

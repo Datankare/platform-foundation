@@ -174,7 +174,7 @@ export interface ReviewQueueStats {
  *
  * Implementations:
  *   InMemoryReviewQueueStore — for tests and development (default)
- *   SupabaseReviewQueueStore — for production (reference)
+ *   PostgresReviewQueueStore — for production (platform/data, in the request's tenant)
  *
  * Any backend can implement this interface. The singleton pattern
  * (get/set/resetReviewQueueStore) allows swapping at runtime.
@@ -183,6 +183,31 @@ export interface ReviewQueueStats {
  * the primary function). Store failures on query return empty results
  * (P11 — query failures don't block the pipeline).
  */
+/** The fields an update may change. */
+export type ReviewQueueUpdate = Partial<
+  Pick<
+    ReviewQueueItem,
+    | "status"
+    | "resolvedBy"
+    | "resolvedAt"
+    | "decision"
+    | "reviewerNotes"
+    | "modifiedAction"
+    | "priority"
+    | "updatedAt"
+  >
+> & {
+  /** The claiming reviewer; null clears the claim. */
+  readonly claimedBy?: string | null;
+  readonly claimedAt?: string | null;
+};
+
+/** The state an item must still be in for an update to apply. */
+export interface ReviewUpdateExpectation {
+  readonly status?: ReviewStatus;
+  readonly claimedBy?: string;
+}
+
 export interface ReviewQueueStore {
   /** Submit a new review item. Returns the created item or error (L19). */
   submit(
@@ -195,24 +220,17 @@ export interface ReviewQueueStore {
   /** Get a review item by original decision ID (for appeal dedup). */
   getByOriginalDecisionId(decisionId: string): Promise<ReviewQueueItem | undefined>;
 
-  /** Update a review item (claim, resolve, unclaim). */
+  /**
+   * Update a review item (claim, resolve, unclaim). Fields left out are unchanged;
+   * `claimedBy: null` / `claimedAt: null` clear the claim. With `expected`, the update happens
+   * only if the item is still in that state (compare-and-set) — otherwise nothing changes and
+   * the result is `moderation.item_state_conflict` — so two reviewers cannot both claim, or both
+   * resolve, the same item.
+   */
   update(
     id: string,
-    fields: Partial<
-      Pick<
-        ReviewQueueItem,
-        | "status"
-        | "claimedBy"
-        | "claimedAt"
-        | "resolvedBy"
-        | "resolvedAt"
-        | "decision"
-        | "reviewerNotes"
-        | "modifiedAction"
-        | "priority"
-        | "updatedAt"
-      >
-    >
+    fields: ReviewQueueUpdate,
+    expected?: ReviewUpdateExpectation
   ): Promise<ReviewResult>;
 
   /** Query review items with filters. */

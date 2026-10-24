@@ -37,6 +37,17 @@ export interface SettingDeclaration {
 
 const REGION = "[a-z]{2}(?:-[a-z]+)+-\\d";
 
+/** The tenant every existing record belongs to (ADR-053, migration 049). */
+export const DEFAULT_TENANT_ID = "00000000-0000-4000-8000-000000000001";
+
+const TENANT_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** A tenant id is a lower-case UUID — anything else is refused before it reaches a key or a query. */
+export function isTenantId(value: unknown): value is string {
+  return typeof value === "string" && TENANT_UUID.test(value);
+}
+
 /** ADR-050 D2: the declared settings. Order is the order violations are reported in. */
 export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
   {
@@ -98,9 +109,96 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
   {
     name: "RATE_LIMIT_STORE",
     aliases: [],
-    shape: /^(supabase|upstash|memory)$/,
+    shape: /^(postgres|supabase|upstash|memory)$/,
     shapeHint:
-      "one of: supabase, upstash, memory (memory is refused in production — ADR-052)",
+      "one of: postgres (or supabase — the same store), upstash, memory (memory is refused in production — ADR-052)",
+  },
+  {
+    name: "TENANCY_MODE",
+    aliases: [],
+    shape: /^(single|shared)$/,
+    shapeHint:
+      "single (one tenant: TENANT_ID) or shared (tenant from the verified identity or host) — ADR-053 D1",
+  },
+  {
+    name: "TENANT_ID",
+    aliases: [],
+    shape: TENANT_UUID,
+    shapeHint:
+      "the tenant's id, a lower-case UUID (the default tenant: " +
+      DEFAULT_TENANT_ID +
+      ")",
+  },
+  {
+    name: "DATABASE_URL",
+    aliases: [],
+    shape:
+      /^postgres(?:ql)?:\/\/[^\s:@/]+:[^\s@]+@[^\s/:]+(?::\d{1,5})?\/[\w-]+(?:\?\S*)?$/,
+    shapeHint:
+      "postgresql://app_tenant…:<password>@<pooler host>:<port>/<database> — the request connection, through a transaction-mode pooler (ADR-053 D4)",
+  },
+  {
+    name: "DATABASE_OWNER_URL",
+    aliases: [],
+    shape:
+      /^postgres(?:ql)?:\/\/[^\s:@/]+:[^\s@]+@[^\s/:]+(?::\d{1,5})?\/[\w-]+(?:\?\S*)?$/,
+    shapeHint:
+      "postgresql://<owner>:<password>@<host>:<port>/<database> — operator paths only, never request paths (ADR-053 D4)",
+  },
+  {
+    name: "DATABASE_POOL_MAX",
+    aliases: [],
+    shape: /^(?:[1-9]|[1-4]\d|50)$/,
+    shapeHint:
+      "connections each instance may hold, 1–50 (serverless: 1–3; a container: up to the pooler's share)",
+  },
+  {
+    name: "DATABASE_STATEMENT_TIMEOUT_MS",
+    aliases: [],
+    shape: /^(?:[1-9]\d{2,4}|[1-5]\d{5}|600000)$/,
+    shapeHint: "milliseconds a statement (and an idle transaction) may take, 100–600000",
+  },
+  {
+    name: "DATABASE_SSL",
+    aliases: [],
+    shape: /^(verify-full|require|disable)$/,
+    shapeHint:
+      "verify-full (default: encrypted, server certificate checked), require (encrypted, not checked), disable (local and CI only)",
+  },
+  {
+    name: "DATABASE_SSL_CA",
+    aliases: [],
+    shape:
+      /^-----BEGIN CERTIFICATE-----(?:\\n|\n)[\s\S]+-----END CERTIFICATE-----(?:\\n|\n)?$/,
+    shapeHint:
+      "the database's CA certificate, PEM (newlines may be written as \\n) — for verify-full with a provider CA not in the system store",
+  },
+  {
+    name: "TENANT_DIRECTORY_STORE",
+    aliases: [],
+    shape: /^(postgres|memory)$/,
+    shapeHint:
+      "one of: postgres, memory — where tenants and their domains are kept (memory is refused in production — ADR-053)",
+  },
+  {
+    name: "COGNITO_ADMIN_ACCESS_KEY_ID",
+    aliases: [],
+    shape: /^(AKIA|ASIA)[A-Z0-9]{12,124}$/,
+    shapeHint:
+      "an AWS access key id (AKIA… or ASIA…) allowed only cognito-idp:AdminUpdateUserAttributes, AdminGetUser, DescribeUserPool, ListUserPoolClients, DescribeUserPoolClient and DescribeIdentityProvider on the pool",
+  },
+  {
+    name: "COGNITO_ADMIN_SECRET_ACCESS_KEY",
+    aliases: [],
+    shape: /^[a-z0-9/+=]{40}$/i,
+    shapeHint:
+      "the AWS secret access key that pairs with COGNITO_ADMIN_ACCESS_KEY_ID (40 characters)",
+  },
+  {
+    name: "COGNITO_ADMIN_SESSION_TOKEN",
+    aliases: [],
+    shape: /^[a-z0-9/+=]{16,4096}$/i,
+    shapeHint: "an AWS session token, only with temporary (ASIA…) credentials",
   },
   {
     name: "CACHE_PROVIDER",
@@ -123,13 +221,26 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     shapeHint:
       "how many proxies in front of the app append to X-Forwarded-For, 1–5 (Vercel: 1)",
   },
+  {
+    name: "TENANT_HOST_HEADER",
+    aliases: [],
+    shape: /^(x-forwarded-host|host)$/,
+    shapeHint:
+      "where a request's address is read in a shared deployment: x-forwarded-host (a proxy that sets it, e.g. Vercel) or host (a load balancer that does not, e.g. AWS ALB — X-Forwarded-Host is then ignored)",
+  },
 ];
 
 /** Auth providers that are test doubles (ADR-050 D1). */
 export const TEST_DOUBLE_AUTH_PROVIDERS: ReadonlySet<string> = new Set(["mock"]);
 
-/** Selections that make the Supabase settings required. */
-export const SUPABASE_SELECTORS: readonly string[] = [
+/** Selections that make the Supabase settings required: Realtime is the one Supabase service left. */
+export const SUPABASE_SELECTORS: readonly string[] = ["REALTIME_PROVIDER"];
+
+/**
+ * Selections that make DATABASE_URL required (ADR-053 D4): every durable store is on Postgres,
+ * selected with "postgres" (or "supabase", the same store on a Supabase project).
+ */
+export const DATABASE_SELECTORS: readonly string[] = [
   "MODERATION_STORE",
   "STRIKE_STORE",
   "REVIEW_QUEUE_STORE",
@@ -142,7 +253,7 @@ export const SUPABASE_SELECTORS: readonly string[] = [
   "APPROVAL_POLICY_STORE",
   "GUEST_USAGE_STORE",
   "RATE_LIMIT_STORE",
-  "REALTIME_PROVIDER",
+  "TENANT_DIRECTORY_STORE",
 ];
 
 /** Test-harness switches that must never reach a deployment. */
@@ -209,6 +320,25 @@ export function getGuestTokenSecret(env: EnvSource = process.env): string | unde
 }
 
 /** ADR-052: the rate-limit store selection (default "memory"; refused in production). */
+/** Single mode names its one tenant; in shared mode each request resolves its own. */
+export type TenancySettings =
+  | { readonly mode: "single"; readonly tenantId: string }
+  | { readonly mode: "shared"; readonly tenantId: undefined };
+
+/**
+ * The tenancy shape (ADR-053 D1). Unset outside production means single with the default tenant,
+ * so tests and local runs need nothing; a deployment declares it (the contract refuses otherwise).
+ */
+export function getTenancySettings(env: EnvSource = process.env): TenancySettings {
+  if (resolveSetting("TENANCY_MODE", env) === "shared") {
+    return { mode: "shared", tenantId: undefined };
+  }
+  return {
+    mode: "single",
+    tenantId: resolveSetting("TENANT_ID", env) ?? DEFAULT_TENANT_ID,
+  };
+}
+
 /**
  * The cache selection (TASK-139). Read here so the cache, the registry and the contract use one
  * value; undefined when unset (outside production that means the in-memory cache).
@@ -234,6 +364,82 @@ export function getTrustedProxyHops(env: EnvSource = process.env): number {
   const v = resolveSetting("TRUSTED_PROXY_HOPS", env);
   const n = v === undefined ? 1 : Number(v);
   return Number.isInteger(n) && n >= 1 && n <= 5 ? n : 1;
+}
+
+/** Where a shared deployment reads the address a request was sent to (ADR-053 D2). */
+export type TenantHostHeader = "x-forwarded-host" | "host";
+
+/**
+ * ADR-053 D2: the header that carries the request's address — chosen by the deployment, never
+ * inferred. `x-forwarded-host`: the entry our outermost proxy added (TRUSTED_PROXY_HOPS from the
+ * right), falling back to Host when absent; right behind a proxy that always sets it (Vercel).
+ * `host`: the Host header only, X-Forwarded-Host ignored; right behind a load balancer that
+ * forwards Host and does not set X-Forwarded-Host (AWS ALB), where that header is the caller's.
+ * Undefined when unset (single mode does not read it; shared mode refuses to run without it).
+ */
+export function getTenantHostHeader(
+  env: EnvSource = process.env
+): TenantHostHeader | undefined {
+  const v = resolveSetting("TENANT_HOST_HEADER", env);
+  return v === "x-forwarded-host" || v === "host" ? v : undefined;
+}
+
+export interface DatabaseSettings {
+  readonly url: string | undefined;
+  readonly ownerUrl: string | undefined;
+  readonly poolMax: number;
+  readonly statementTimeoutMs: number;
+  readonly ssl: "verify-full" | "require" | "disable";
+  /** PEM with real newlines; undefined when not set (the system's CA store is used). */
+  readonly sslCa: string | undefined;
+}
+
+/** ADR-053 D4: the direct Postgres connections and their limits. */
+export function getDatabaseSettings(env: EnvSource = process.env): DatabaseSettings {
+  const poolMax = Number(resolveSetting("DATABASE_POOL_MAX", env) ?? "3");
+  const timeout = Number(resolveSetting("DATABASE_STATEMENT_TIMEOUT_MS", env) ?? "10000");
+  const ssl = resolveSetting("DATABASE_SSL", env);
+  const ca = resolveSetting("DATABASE_SSL_CA", env);
+  return {
+    url: resolveSetting("DATABASE_URL", env),
+    ownerUrl: resolveSetting("DATABASE_OWNER_URL", env),
+    poolMax: Number.isInteger(poolMax) && poolMax >= 1 && poolMax <= 50 ? poolMax : 3,
+    statementTimeoutMs:
+      Number.isInteger(timeout) && timeout >= 100 && timeout <= 600_000
+        ? timeout
+        : 10_000,
+    ssl: ssl === "require" || ssl === "disable" ? ssl : "verify-full",
+    sslCa: ca?.replace(/\\n/g, "\n"),
+  };
+}
+
+/** Where the tenant directory is kept; undefined when unset (memory outside production). */
+export function getTenantDirectoryStoreSetting(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("TENANT_DIRECTORY_STORE", env);
+}
+
+export interface CognitoAdminCredentials {
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly sessionToken?: string;
+}
+
+/**
+ * ADR-053 D2: the credentials the platform uses to set a user's tenant in Cognito — the one
+ * administrative call it makes. Undefined when not configured (single mode never needs them).
+ */
+export function getCognitoAdminCredentials(
+  env: EnvSource = process.env
+): CognitoAdminCredentials | undefined {
+  const accessKeyId = resolveSetting("COGNITO_ADMIN_ACCESS_KEY_ID", env);
+  const secretAccessKey = resolveSetting("COGNITO_ADMIN_SECRET_ACCESS_KEY", env);
+  if (!accessKeyId || !secretAccessKey) return undefined;
+  const sessionToken = resolveSetting("COGNITO_ADMIN_SESSION_TOKEN", env);
+  return sessionToken
+    ? { accessKeyId, secretAccessKey, sessionToken }
+    : { accessKeyId, secretAccessKey };
 }
 
 export interface CognitoSettings {
@@ -390,6 +596,120 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
     }
   }
 
+  // ADR-053 D1: a deployment declares its tenancy. single needs the one tenant it serves; shared
+  // takes each request's tenant from its verified identity or host, so a fixed TENANT_ID there
+  // would be a second, contradicting source.
+  const tenancyMode = resolveSetting("TENANCY_MODE", env);
+  const tenantId = resolveSetting("TENANT_ID", env);
+  if (tenancyMode === undefined && !harnessAllowed) {
+    violations.push("TENANCY_MODE is required: single (with TENANT_ID) or shared");
+  }
+  if (tenancyMode === "single" && tenantId === undefined) {
+    violations.push("TENANT_ID is required by TENANCY_MODE=single");
+  }
+  if (tenancyMode === "shared" && tenantId !== undefined) {
+    violations.push(
+      "TENANT_ID is set but TENANCY_MODE=shared — a shared deployment resolves each request's tenant; unset TENANT_ID"
+    );
+  }
+  // Before sign-in the address decides the tenant, so where it is read is declared: a proxy
+  // that does not set X-Forwarded-Host passes on the caller's.
+  if (
+    tenancyMode === "shared" &&
+    resolveSetting("TENANT_HOST_HEADER", env) === undefined
+  ) {
+    violations.push(
+      "TENANT_HOST_HEADER is required by TENANCY_MODE=shared: x-forwarded-host (behind a proxy that sets it, e.g. Vercel) or host (behind one that does not, e.g. AWS ALB)"
+    );
+  }
+
+  // ADR-053 D2/D7: a shared deployment assigns each new user's tenant in Cognito (the attribute
+  // is read-only to users), so it needs the administrative credentials; and it keeps its
+  // tenants durably. Credentials come as a pair; a session token only with temporary ones.
+  const adminKey = resolveSetting("COGNITO_ADMIN_ACCESS_KEY_ID", env);
+  const adminSecret = resolveSetting("COGNITO_ADMIN_SECRET_ACCESS_KEY", env);
+  const adminToken = resolveSetting("COGNITO_ADMIN_SESSION_TOKEN", env);
+  if ((adminKey === undefined) !== (adminSecret === undefined)) {
+    violations.push(
+      "COGNITO_ADMIN_ACCESS_KEY_ID and COGNITO_ADMIN_SECRET_ACCESS_KEY are set together or not at all"
+    );
+  }
+  if (adminToken !== undefined && !adminKey?.startsWith("ASIA")) {
+    violations.push(
+      "COGNITO_ADMIN_SESSION_TOKEN is set without temporary credentials (COGNITO_ADMIN_ACCESS_KEY_ID ASIA…)"
+    );
+  }
+  if (adminKey?.startsWith("ASIA") && adminToken === undefined) {
+    violations.push(
+      "COGNITO_ADMIN_SESSION_TOKEN is required by temporary credentials (COGNITO_ADMIN_ACCESS_KEY_ID ASIA…)"
+    );
+  }
+  if (tenancyMode === "shared" && auth === "cognito" && adminKey === undefined) {
+    violations.push(
+      "COGNITO_ADMIN_ACCESS_KEY_ID and COGNITO_ADMIN_SECRET_ACCESS_KEY are required by TENANCY_MODE=shared with AUTH_PROVIDER=cognito (assigning tenants)"
+    );
+  }
+  // ADR-053 D4: the request connection and the owner connection are different roles, and the
+  // request one never bypasses row-level security. The contract cannot see roles, but it can
+  // refuse the same credentials for both, plaintext connections in a deployment, and a store
+  // that needs Postgres without it.
+  const db = getDatabaseSettings(env);
+  if (db.url !== undefined && db.ownerUrl !== undefined) {
+    const user = (u: string) => /^postgres(?:ql)?:\/\/([^:@/]+):/.exec(u)?.[1];
+    if (user(db.url) === user(db.ownerUrl)) {
+      violations.push(
+        "DATABASE_URL and DATABASE_OWNER_URL use the same database user — the request connection must be the app_tenant role"
+      );
+    }
+  }
+  for (const [name, url] of [
+    ["DATABASE_URL", db.url],
+    ["DATABASE_OWNER_URL", db.ownerUrl],
+  ] as const) {
+    if (
+      url !== undefined &&
+      /[?&](?:ssl|sslmode|sslcert|sslkey|sslrootcert)=/i.test(url)
+    ) {
+      violations.push(
+        `${name} carries TLS options — set DATABASE_SSL (and DATABASE_SSL_CA) instead`
+      );
+    }
+  }
+  if (resolveSetting("DATABASE_SSL", env) === "disable" && !harnessAllowed) {
+    violations.push(
+      'DATABASE_SSL=disable is for local and CI runs only (DEPLOYMENT_HOST "local" or "ci")'
+    );
+  }
+  const durable = DATABASE_SELECTORS.filter((n) => {
+    const v = raw(env, n);
+    return v === "postgres" || v === "supabase";
+  });
+  if (durable.length > 0 && db.url === undefined) {
+    violations.push(
+      `DATABASE_URL is required (${durable.map((n) => `${n}=${raw(env, n)}`).join(", ")}) but not set`
+    );
+  }
+  // Operator paths — platform defaults, tenant lifecycle — run on the owner connection.
+  if (db.url !== undefined && db.ownerUrl === undefined && !harnessAllowed) {
+    violations.push(
+      "DATABASE_OWNER_URL is required with DATABASE_URL (operator paths: platform configuration and tenant lifecycle)"
+    );
+  }
+
+  const directoryStore = getTenantDirectoryStoreSetting(env);
+  // An unknown value is already refused by its shape; only the two real choices are judged here.
+  if (tenancyMode === "shared" && !harnessAllowed) {
+    if (directoryStore === undefined) {
+      violations.push(
+        "TENANT_DIRECTORY_STORE is required by TENANCY_MODE=shared: postgres"
+      );
+    } else if (directoryStore === "memory") {
+      violations.push(
+        "TENANT_DIRECTORY_STORE=memory with TENANCY_MODE=shared — tenants would differ per instance; set postgres"
+      );
+    }
+  }
+
   // TASK-139: the cache is chosen, never inferred. Before, the cache used Redis when its URL
   // happened to be set and fell back to a per-instance memory cache otherwise, silently, in
   // production too. A deployment now declares it; memory is allowed when declared (the cache
@@ -420,6 +740,7 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
   }
 
   const selectors = SUPABASE_SELECTORS.filter((s) => raw(env, s) === "supabase");
+  // Realtime only: the data paths no longer use the REST API or the service-role key.
   if (selectors.length > 0) {
     const by = selectors.map((s) => `${s}=supabase`).join(", ");
     if (getSupabaseUrl(env) === undefined) {

@@ -6,16 +6,17 @@
 
 import { InMemoryRateLimiter } from "./memory-limiter";
 import { RedisRateLimiter } from "./redis-limiter";
-import { SupabaseRateLimiter } from "./supabase-limiter";
+import { PostgresRateLimiter } from "./postgres-limiter";
 import type { RateLimiter } from "./types";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
-import {
-  getRateLimitStoreSetting,
-  getSupabaseUrl,
-} from "@/platform/providers/environment-contract";
+import { getRateLimitStoreSetting } from "@/platform/providers/environment-contract";
+import { hasDatabase } from "@/platform/data";
 
-/** Where the shared counters live (ADR-052). */
-export type RateLimitStoreType = "supabase" | "upstash" | "memory";
+/**
+ * Where the shared counters live (ADR-052). "postgres" and "supabase" are the same store — the
+ * Postgres limiter reached through platform/data (ADR-053 D4).
+ */
+export type RateLimitStoreType = "postgres" | "supabase" | "upstash" | "memory";
 
 /** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
 const LIMITER_KEY = "platform.rateLimit.limiter";
@@ -29,8 +30,9 @@ function writeLimiterInstance(next: RateLimiter | null): void {
 /**
  * Create a rate limiter for a store (default: RATE_LIMIT_STORE, else "memory").
  *
- * A selected shared store with missing credentials throws: falling back to a per-instance
- * counter would silently stop the limit from holding across instances (ADR-052 D3).
+ * A selected shared store with missing credentials (or, for postgres/supabase, no database)
+ * throws: falling back to a per-instance counter would silently stop the limit from holding
+ * across instances (ADR-052 D3).
  */
 export function createRateLimiter(config?: {
   provider?: RateLimitStoreType;
@@ -43,16 +45,15 @@ export function createRateLimiter(config?: {
   const namespace = config?.namespace ?? "rl:";
 
   switch (provider) {
+    case "postgres":
     case "supabase": {
-      const url = getSupabaseUrl() ?? "";
-      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-      if (!url || !serviceKey) {
+      if (!hasDatabase()) {
         throw new Error(
-          "RATE_LIMIT_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
+          `RATE_LIMIT_STORE=${provider} but DATABASE_URL is not set. ` +
             "Refusing to fall back to a per-instance rate limiter."
         );
       }
-      return new SupabaseRateLimiter({ url, serviceKey, namespace });
+      return new PostgresRateLimiter({ namespace });
     }
     case "upstash": {
       const url = process.env.UPSTASH_REDIS_REST_URL ?? "";
@@ -69,7 +70,7 @@ export function createRateLimiter(config?: {
       return new InMemoryRateLimiter({ namespace, cleanupIntervalMs: 0 });
     default:
       throw new Error(
-        `RATE_LIMIT_STORE="${String(provider)}" is not a rate-limit store (supabase, upstash, memory).`
+        `RATE_LIMIT_STORE="${String(provider)}" is not a rate-limit store (postgres, supabase, upstash, memory).`
       );
   }
 }
@@ -93,7 +94,8 @@ export function peekRateLimiter(): RateLimiter | null {
 
 /** The `name` a limiter of each store reports. */
 export const RATE_LIMITER_NAMES: Readonly<Record<RateLimitStoreType, string>> = {
-  supabase: "supabase",
+  postgres: "postgres",
+  supabase: "postgres",
   upstash: "redis",
   memory: "memory",
 };

@@ -68,7 +68,7 @@ ActivitySession<TState, TAction>                 ← generic runtime object
 | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `ActivityStateStore<TState>`                                                        | The store contract (create / load / commit / reduceCommit / delete). |
 | `InMemoryActivityStateStore`                                                        | Reference impl; default for tests.                                   |
-| `SupabaseActivityStateStore`                                                        | Persistent impl (migration 018).                                     |
+| `PostgresActivityStateStore`                                                        | Persistent impl, Postgres through `platform/data` (`app_sessions`).  |
 | `getActivityStateStore()` / `setActivityStateStore()` / `resetActivityStateStore()` | Store singleton (registry sets it; consumers read it).               |
 
 **Action pipeline (pure)**

@@ -24,11 +24,11 @@ const EXPECTED_EXPORTS = [
   "InMemoryEffectLedger",
   "InMemoryProposalStore",
   "InMemoryTrajectoryStore",
+  "PostgresBudgetStore",
+  "PostgresEffectLedger",
+  "PostgresProposalStore",
+  "PostgresTrajectoryStore",
   "SchemaValidationError",
-  "SupabaseBudgetStore",
-  "SupabaseEffectLedger",
-  "SupabaseProposalStore",
-  "SupabaseTrajectoryStore",
   "UndeclaredExternalEffectError",
   "assertValidSchema",
   "executeAgent",
@@ -75,8 +75,8 @@ const EXPECTED_EXPORTS = [
   "InMemoryApprovalPolicyStore",
   "getApprovalPolicyStore",
   "resolveApprover",
-  // Sprint 3c A3 — durable store install + reset, Supabase impl
-  "SupabaseApprovalPolicyStore",
+  // Sprint 3c A3 — durable store install + reset, Postgres impl (ADR-053 D4)
+  "PostgresApprovalPolicyStore",
   "resetApprovalPolicyStore",
   "setApprovalPolicyStore",
   // ADR-030 AUX: workflow loop + capabilities (this commit)

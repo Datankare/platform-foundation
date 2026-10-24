@@ -10,8 +10,10 @@ import { logger } from "@/lib/logger";
 import { readJsonObject, requireTextFields } from "@/platform/errors";
 import { authResultResponse, callAuthProvider } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
+import { sessionTenantRefusal } from "@/platform/tenancy/identity";
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_LOGIN);
   if (limited) return limited;
@@ -38,6 +40,10 @@ export async function POST(request: NextRequest) {
     logger.warn("Sign in failed", { route: "api/auth/sign-in", error: result.error });
   }
 
+  // ADR-053 D2: the identity is this tenant's, or becomes it, or gets no session here.
+  const refused = await sessionTenantRefusal(result, request);
+  if (refused) return refused;
+
   const response = authResultResponse(result, { request, context: "Sign in failed" });
 
   // Set session indicator cookie for middleware route protection
@@ -52,4 +58,4 @@ export async function POST(request: NextRequest) {
   }
 
   return response;
-}
+});

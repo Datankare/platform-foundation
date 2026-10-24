@@ -42,7 +42,7 @@ import { getStrikeStore } from "./strikes";
 import { submitForReview } from "./review-service";
 import { loadStrikeThresholds } from "./config";
 import { getConfig } from "@/platform/auth/platform-config";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { audited, writeAuditLog } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
@@ -462,21 +462,17 @@ export class Sentinel {
 // User status operations
 // ---------------------------------------------------------------------------
 
-/** Load user's current account status from the DB */
+/** Load user's current account status from the DB (the request's tenant). */
 async function loadUserStatus(userId: string): Promise<AccountStatus> {
   try {
-    const supabase = getSupabaseServiceClient();
-    const { data, error } = await (supabase
-      .from("users" as never)
-      .select("account_status")
-      .eq("id", userId)
-      .single() as unknown as Promise<{
-      data: { account_status: string } | null;
-      error: { message: string } | null;
-    }>);
-
-    if (error || !data) return "active";
-    return parseAccountStatus(data.account_status);
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ account_status: string }>(
+        "select account_status from users where id = $1::uuid",
+        [userId]
+      )
+    );
+    if (!rows[0]) return "active";
+    return parseAccountStatus(rows[0].account_status);
   } catch {
     return "active";
   }
@@ -486,10 +482,10 @@ async function loadUserStatus(userId: string): Promise<AccountStatus> {
  * Update user's account status in the DB.
  *
  * SECURITY INVARIANT (S2): This function is intentionally NOT exported.
- * It writes directly to the users table via service_role, bypassing
- * all authorization checks. Only the Sentinel agent should call it,
- * and only as the result of a consequence evaluation. If this function
- * is ever exported, it MUST be wrapped with authorization checks.
+ * It writes the users table directly, with no authorization check of its own (row-level
+ * security confines it to the request's tenant, nothing more). Only the Sentinel agent should
+ * call it, and only as the result of a consequence evaluation. If this function is ever
+ * exported, it MUST be wrapped with authorization checks.
  */
 async function updateUserStatus(
   userId: string,
@@ -498,33 +494,34 @@ async function updateUserStatus(
   agentId: string
 ): Promise<void> {
   try {
-    const supabase = getSupabaseServiceClient();
-    const now = new Date().toISOString();
-    const updateData: Record<string, unknown> = {
-      account_status: newStatus,
-      status_changed_by: agentId,
-      status_changed_at: now,
-    };
+    // Configuration is read before the transaction: nothing but SQL runs inside one.
+    const suspendedUntil =
+      consequence === "suspend"
+        ? new Date(Date.now() + (await loadSuspensionDays()) * 24 * 60 * 60 * 1000)
+        : null;
+    const ban = consequence === "ban";
 
-    if (consequence === "suspend") {
-      const days = await loadSuspensionDays();
-      updateData.suspended_until = new Date(
-        Date.now() + days * 24 * 60 * 60 * 1000
-      ).toISOString();
-    }
-
-    if (consequence === "ban") {
-      updateData.banned_at = now;
-      updateData.ban_reason = "Automatic ban: strike threshold exceeded";
-    }
-
-    const { error } = await (supabase
-      .from("users" as never)
-      .update(updateData as never)
-      .eq("id", userId) as unknown as Promise<{
-      error: { message: string } | null;
-    }>);
-    if (error) throw new Error(error.message);
+    // A field this consequence does not set keeps its value.
+    await withTenantTx((tx) =>
+      tx.query(
+        `update users set
+            account_status = $2::account_status,
+            status_changed_by = $3,
+            status_changed_at = now(),
+            suspended_until = coalesce($4::timestamptz, suspended_until),
+            banned_at = case when $5::boolean then now() else banned_at end,
+            ban_reason = case when $5::boolean then $6 else ban_reason end
+          where id = $1::uuid`,
+        [
+          userId,
+          newStatus,
+          agentId,
+          suspendedUntil?.toISOString() ?? null,
+          ban,
+          "Automatic ban: strike threshold exceeded",
+        ]
+      )
+    );
   } catch (err) {
     logger.error("Sentinel: user status update failed", {
       userId,
@@ -604,8 +601,8 @@ export function resetSentinel(): void {
 // 5. SEVERITY_RANK is duplicated from guardian.ts. See strikes.ts Gotcha #5.
 //
 // 6. evaluateConsequence queries getStrikeSummary AFTER recordStrike.
-//    This works because Supabase is strongly consistent for service_role
-//    connections (read-after-write consistency). If the store is ever
+//    This works because both run against the same Postgres primary, where a
+//    committed write is visible to the next transaction (read-after-write). If the store is ever
 //    replaced with an eventually-consistent backend, the count could
 //    be stale by one — evaluating consequences based on the previous
 //    strike count. This would delay the consequence by one violation

@@ -117,4 +117,4 @@ export function singletonKeys(): readonly string[] {
 //    Map is process-wide and shared with anything else that imports this.
 //
 // 3. This does not make anything durable. It makes one process see one value. A restart
-//    still starts empty — durability is what the Supabase stores are for.
+//    still starts empty — durability is what the Postgres stores are for.

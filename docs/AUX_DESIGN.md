@@ -80,7 +80,7 @@ Agents operate on budgets. Every response includes cost so agents can make econo
 
 ### 5. Trajectory as first-class return
 
-Every workflow execution returns its trajectory (P18). Agents audit what happened, resume from failure points, and learn which workflows succeed. This is now backed by the durable Supabase trajectory store (TASK-075a), not an in-memory store that vanishes per request.
+Every workflow execution returns its trajectory (P18). Agents audit what happened, resume from failure points, and learn which workflows succeed. This is now backed by the durable Postgres trajectory store (TASK-075a; `PostgresTrajectoryStore`), not an in-memory store that vanishes per request.
 
 ---
 

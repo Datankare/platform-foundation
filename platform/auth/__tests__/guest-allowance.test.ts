@@ -4,7 +4,7 @@
 import {
   GUEST_ALLOWANCE_DEFAULT,
   MemoryGuestUsageStore,
-  SupabaseGuestUsageStore,
+  PostgresGuestUsageStore,
   enforceGuestAllowance,
   getGuestTranslateAllowance,
   getGuestUsageStore,
@@ -12,24 +12,24 @@ import {
 } from "@/platform/auth/guest-allowance";
 import { newGuestId } from "@/platform/auth/guest-token";
 import { getConfig } from "@/platform/auth/platform-config";
-import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { withTenantTx } from "@/platform/data";
+import { DEFAULT_TENANT_ID } from "@/platform/providers/environment-contract";
+import { runWithTenant } from "@/platform/tenancy/context";
 
 jest.mock("@/platform/auth/platform-config", () => ({ getConfig: jest.fn() }));
-jest.mock("@/lib/fetchWithTimeout", () => ({ fetchWithTimeout: jest.fn() }));
+// The Postgres store's SQL is proven against the database (__tests__/db/guest-usage.db.test.ts);
+// here only what a database cannot be made to return.
+jest.mock("@/platform/data", () => ({ withTenantTx: jest.fn() }));
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
 const mockGetConfig = getConfig as jest.MockedFunction<typeof getConfig>;
-const mockFetch = fetchWithTimeout as jest.MockedFunction<typeof fetchWithTimeout>;
-
-function res(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status });
-}
+const mockTx = withTenantTx as jest.MockedFunction<typeof withTenantTx>;
 
 beforeEach(() => {
   mockGetConfig.mockReset();
-  mockFetch.mockReset();
+  mockTx.mockReset();
   setGuestUsageStore(new MemoryGuestUsageStore());
 });
 
@@ -74,47 +74,48 @@ describe("MemoryGuestUsageStore", () => {
   });
 });
 
-describe("SupabaseGuestUsageStore", () => {
-  const store = new SupabaseGuestUsageStore("https://x.supabase.co/", "key");
-
-  it("consumes through the atomic RPC", async () => {
-    mockFetch.mockResolvedValueOnce(res(200, [{ allowed: true, used: 2 }]));
-    await expect(store.consume("guest_a", 5)).resolves.toEqual({
+describe("MemoryGuestUsageStore — tenants", () => {
+  it("keeps each tenant's counts apart, and reset clears only the current tenant's", async () => {
+    const store = new MemoryGuestUsageStore();
+    const id = newGuestId();
+    const a = {
+      tenantId: "00000000-0000-4000-8000-00000000000a",
+      mode: "shared" as const,
+    };
+    const b = {
+      tenantId: "00000000-0000-4000-8000-00000000000b",
+      mode: "shared" as const,
+    };
+    await runWithTenant(a, () => store.consume(id, 1));
+    await expect(runWithTenant(b, () => store.consume(id, 1))).resolves.toEqual({
       allowed: true,
-      used: 2,
+      used: 1,
     });
-    const [url, init] = mockFetch.mock.calls[0];
-    expect(url).toBe("https://x.supabase.co/rest/v1/rpc/guest_allowance_consume");
-    expect(JSON.parse(String(init?.body))).toEqual({ p_guest_id: "guest_a", p_limit: 5 });
-    expect(init).toMatchObject({ maxRetries: 0 });
+    await runWithTenant(b, () => store.reset());
+    await expect(runWithTenant(a, () => store.used(id))).resolves.toBe(1);
+    await expect(runWithTenant(b, () => store.used(id))).resolves.toBe(0);
+  });
+});
+
+describe("PostgresGuestUsageStore", () => {
+  it("throws when the consume function returns no row", async () => {
+    mockTx.mockResolvedValueOnce({ rows: [], rowCount: 0 } as never);
+    await expect(new PostgresGuestUsageStore().consume(newGuestId(), 5)).rejects.toThrow(
+      /no row/
+    );
   });
 
-  it("accepts a single-object payload and reports a refusal", async () => {
-    mockFetch.mockResolvedValueOnce(res(200, { allowed: false, used: 5 }));
-    await expect(store.consume("guest_a", 5)).resolves.toEqual({
-      allowed: false,
-      used: 5,
+  it("a store failure is a logged internal error, never an uncounted call", async () => {
+    mockGetConfig.mockResolvedValue(5 as never);
+    mockTx.mockRejectedValueOnce(new Error("connection refused"));
+    setGuestUsageStore(new PostgresGuestUsageStore());
+    const out = await enforceGuestAllowance({
+      kind: "guest",
+      id: newGuestId(),
+      tenantId: DEFAULT_TENANT_ID,
+      expiresAt: 0,
     });
-  });
-
-  it("throws on an HTTP error or an empty payload", async () => {
-    mockFetch.mockResolvedValueOnce(res(500, { message: "boom" }));
-    await expect(store.consume("guest_a", 5)).rejects.toThrow(/consume failed \(500\)/);
-    mockFetch.mockResolvedValueOnce(res(200, []));
-    await expect(store.consume("guest_a", 5)).rejects.toThrow(/no row/);
-  });
-
-  it("reads and resets", async () => {
-    mockFetch.mockResolvedValueOnce(res(200, [{ translations_used: 4 }]));
-    await expect(store.used("guest_a")).resolves.toBe(4);
-    mockFetch.mockResolvedValueOnce(res(200, []));
-    await expect(store.used("guest_b")).resolves.toBe(0);
-    mockFetch.mockResolvedValueOnce(res(503, "x"));
-    await expect(store.used("guest_c")).rejects.toThrow(/read failed/);
-    mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
-    await expect(store.reset()).resolves.toBeUndefined();
-    mockFetch.mockResolvedValueOnce(res(400, "x"));
-    await expect(store.reset()).rejects.toThrow(/reset failed/);
+    expect(out.error?.status).toBe(500);
   });
 });
 
@@ -123,6 +124,7 @@ describe("enforceGuestAllowance", () => {
     const out = await enforceGuestAllowance({
       kind: "user",
       id: "u1",
+      tenantId: DEFAULT_TENANT_ID,
       user: { sub: "u1" } as never,
     });
     expect(out).toEqual({ remaining: null });
@@ -130,13 +132,23 @@ describe("enforceGuestAllowance", () => {
   });
 
   it("refuses a guest actor whose id is not namespaced", async () => {
-    const out = await enforceGuestAllowance({ kind: "guest", id: "u1", expiresAt: 0 });
+    const out = await enforceGuestAllowance({
+      kind: "guest",
+      id: "u1",
+      tenantId: DEFAULT_TENANT_ID,
+      expiresAt: 0,
+    });
     expect(out.error?.status).toBe(401);
   });
 
   it("counts a guest and reports what remains", async () => {
     mockGetConfig.mockResolvedValue(2 as never);
-    const actor = { kind: "guest" as const, id: newGuestId(), expiresAt: 0 };
+    const actor = {
+      kind: "guest" as const,
+      id: newGuestId(),
+      tenantId: DEFAULT_TENANT_ID,
+      expiresAt: 0,
+    };
     await expect(enforceGuestAllowance(actor)).resolves.toEqual({ remaining: 1 });
     await expect(enforceGuestAllowance(actor)).resolves.toEqual({ remaining: 0 });
     const third = await enforceGuestAllowance(actor);

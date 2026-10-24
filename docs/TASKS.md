@@ -2407,7 +2407,7 @@ or remove the Supabase sink if metrics stay in Sentry/Langfuse.
 | **Severity** | Medium — row-level security is the only barrier for the API roles |
 | **Phase**    | Phase 5                                                           |
 | **Target**   | Phase 5, Sprint 7T (moved from Phase 6 by ADR-053 D6)             |
-| **Status**   | Open                                                              |
+| **Status**   | Resolved on develop (Sprint 7R R3, migration 049)                 |
 | **Logged**   | 2026-09-29                                                        |
 
 **What:** Supabase's "automatically expose new tables" grants `ALL` on every `public` table to
@@ -2418,6 +2418,13 @@ or wrong policy would be. The platform itself reaches the database only as `serv
 **Resolution:** revoke table privileges from `anon` and `authenticated` except where a browser
 client needs them (none today), in a migration applied to dev and production alike, then turn the
 option off on both projects. The replay job gains a check that no table grants `anon` anything.
+
+**Resolved (Sprint 7R R3):** migration `049_tenancy.sql` drops every policy for `anon` and
+`authenticated` and revokes their table, sequence and function privileges; nothing reads tables
+with the public key (Realtime uses private broadcast channels). The replay checks that the public
+key reaches no table. Remaining at deploy (docs/TENANCY_OPERATIONS.md): turn off "automatically
+expose new tables" on both projects, so a table created later is not exposed before its migration
+revokes it.
 
 ### TASK-115 — Legal review of Privacy Policy and Terms of Service
 
@@ -2682,7 +2689,7 @@ updated. The MIT terms are unchanged either way.
 | **Severity** | High — the most expensive change to make late; blocks monetisation       |
 | **Phase**    | Phase 5                                                                  |
 | **Target**   | Phase 5, Sprint 7R (decision and groundwork), Sprint 7T (implementation) |
-| **Status**   | Open                                                                     |
+| **Status**   | Implemented on develop (Sprint 7R R3); deployment and Playform with R7   |
 | **Logged**   | 2026-10-20                                                               |
 
 **What:** the platform has no tenant concept. No table carries a tenant or organisation; row-level security
@@ -2703,6 +2710,18 @@ a cross-tenant isolation conformance kit; Sprint 7T carries tenancy through ever
 **Sprint 7R entry gate (2026-10-21):** ADR-053 (Proposed). Server code reaches Postgres directly through one data
 layer and a transaction-mode pooler, under a role that cannot bypass row-level security (D4; the REST-API
 alternative is recorded in its §3).
+
+**Sprint 7R R3 (2026-10-23), on develop:** tenancy through every table, store, route and cache. Migration
+`049_tenancy.sql` (tenants and their addresses; `tenant_id` with forced row-level security on every
+tenant-owned table; composite foreign keys; per-tenant keys; layered configuration; tenant lifecycle records;
+the request role `app_tenant`); one data layer (`platform/data`) with tenant, platform and owner transactions;
+every store on Postgres; every route in a tenant scope (`tenantRoute`); the tenant from the verified identity
+(Cognito `custom:tenant_id`, set only by the platform) or, before sign-in, the address; per-tenant rate limits,
+agent budgets with a tenant cap, cache keys, Realtime topics, audit and metrics; an operator console and API
+(provision, addresses, suspend, two-operator deletion with a 30-day purge, restore, export, first
+administrator, readiness). CI replays the migrations and runs every store's isolation kit against real
+Postgres. Operating guide: [TENANCY_OPERATIONS.md](TENANCY_OPERATIONS.md); ADR-053 §6 records the amendments.
+**Remaining:** Playform's adoption and the deployment steps (R7).
 
 ### TASK-127 — Split the foundation from product modules
 
@@ -3125,12 +3144,20 @@ platform's and Playform's migration sets.
 | **Severity** | Medium — a database-only behaviour (a constraint, a grant, a type) can differ |
 | **Phase**    | Phase 5                                                                       |
 | **Target**   | Phase 5, Sprint 7X Wave 2                                                     |
-| **Status**   | Open                                                                          |
+| **Status**   | In progress (stores and data paths on real Postgres since Sprint 7R R3)       |
 | **Logged**   | 2026-10-22                                                                    |
 
 **What:** Adversarial Validation practice 5 asks that privileged and data-isolation paths run against real Postgres. Today the routes run against `FakeDatabase` (filters evaluated, unique constraints, failures injected, filter strings refused) and the SQL runs against real Postgres only in the migration replay. Uuid and enum column semantics — the cause of X-8 and E-15 — are exactly what an in-memory database does not reproduce. Recorded in [ASSURANCE.md](ASSURANCE.md) §3.
 
 **Plan:** The migration-replay database serves a route-level suite in CI: the role-change, config, moderation and audit paths run as each role against it, with the same hostile cases.
+
+**Progress (Sprint 7R R3):** CI now replays the migrations into Postgres and runs `__tests__/db` against it as
+the request role: every store (moderation, review queue, strikes, social, app state, trajectories, budgets,
+proposals, effect ledger, approval policy, guest usage, rate limits, embeddings), configuration and its
+approvals, the role and entitlement catalog, users, consent and deletion records, the tenant directory and
+lifecycle — each with the cross-tenant isolation kit — and every SQL statement in the sources is planned
+against the schema (`sql-schema-parity.db.test.ts`). Remaining for Wave 2: the route-level role matrix itself
+against that database.
 
 ### TASK-147 — Generated hostile input covers few suites; the monkey run is bounded by rate limits
 
@@ -3199,6 +3226,127 @@ declare ESLint up to 9 and install only by overriding their peer range.
 **Plan:** at each dependency batch, check the three plugins' declared ESLint range; move both
 repositories to ESLint 10 together the batch they declare it, and lift the Dependabot ignore.
 
+### TASK-150 — Two reviewers could act on one review item at once
+
+| Field        | Detail                                                               |
+| ------------ | -------------------------------------------------------------------- |
+| **ID**       | TASK-150                                                             |
+| **Type**     | Correctness — concurrency                                            |
+| **Severity** | Medium — a resolution could overwrite another reviewer's, unrecorded |
+| **Phase**    | Phase 5                                                              |
+| **Target**   | Phase 5, Sprint 7R R3                                                |
+| **Status**   | Fixed on develop (Sprint 7R R3)                                      |
+| **Logged**   | 2026-10-23                                                           |
+
+**What:** a claim, release or resolution of a review-queue item read the item, checked its state and wrote
+it back unconditionally, so two reviewers acting together both succeeded and the later write won. Releasing
+a claim left `claimed_by` set. Found converting the review store to SQL.
+
+**Fixed:** every update is compare-and-set on the state it was read in (`moderation.item_state_conflict`
+otherwise), in both the Postgres and in-memory stores; a release clears the claim. The review-queue
+conformance kit covers both races.
+
+### TASK-151 — A soft deletion always reported failure
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-151                                                                 |
+| **Type**     | Correctness — GDPR erasure                                               |
+| **Severity** | Medium — the erasure ran, but its record did not, and callers saw errors |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7R R3                                                    |
+| **Status**   | Fixed on develop (Sprint 7R R3)                                          |
+| **Logged**   | 2026-10-23                                                               |
+
+**What:** `softDeleteUser` recorded each erasure in a table no migration created, so every soft deletion
+returned `success: false`, and a deletion of a user who did not exist was not distinguished.
+
+**Fixed:** migration 049 creates `user_deletions` (per tenant, under row-level security); an erasure is
+recorded in it and succeeds; a missing user answers `users: no such user`; a hard purge marks the record
+purged.
+
+### TASK-152 — `signups_enabled` was declared but never enforced
+
+| Field        | Detail                                                                 |
+| ------------ | ---------------------------------------------------------------------- |
+| **ID**       | TASK-152                                                               |
+| **Type**     | Correctness — configuration                                            |
+| **Severity** | Medium — an administrator who closed sign-ups still received new users |
+| **Phase**    | Phase 5                                                                |
+| **Target**   | Phase 5, Sprint 7R R3                                                  |
+| **Status**   | Fixed on develop (Sprint 7R R3)                                        |
+| **Logged**   | 2026-10-23                                                             |
+
+**What:** the setting existed in `platform_config` and the admin console, but sign-up never read it.
+
+**Fixed:** sign-up, and the first sign-in of an identity with no tenant (including SSO), refuse with
+`auth.signups_closed` when the tenant's `signups_enabled` is false — read per tenant, so each tenant of a
+shared deployment decides for itself.
+
+### TASK-153 — The AI response cache keyed responses on a 32-bit hash
+
+| Field        | Detail                                                           |
+| ------------ | ---------------------------------------------------------------- |
+| **ID**       | TASK-153                                                         |
+| **Type**     | Correctness — caching                                            |
+| **Severity** | Medium — two different requests could share a key and one answer |
+| **Phase**    | Phase 5                                                          |
+| **Target**   | Phase 5, Sprint 7R R3                                            |
+| **Status**   | Fixed on develop (Sprint 7R R3)                                  |
+| **Logged**   | 2026-10-23                                                       |
+
+**What:** the cache key was a 32-bit string hash of the prompt, so collisions were likely at volume (and
+could be constructed): a request could be answered with another's cached response. Keys were also global.
+
+**Fixed:** the key is `ai:<tenant>:<SHA-256 of the canonical request>` — collision-resistant, and never
+shared between tenants.
+
+### TASK-154 — Screens called the API without the signed-in user's token
+
+| Field        | Detail                                                              |
+| ------------ | ------------------------------------------------------------------- |
+| **ID**       | TASK-154                                                            |
+| **Type**     | Correctness — authentication on the client                          |
+| **Severity** | High — the admin console and three screens could not work signed in |
+| **Phase**    | Phase 5                                                             |
+| **Target**   | Phase 5, Sprint 7R R3                                               |
+| **Status**   | Fixed on develop (Sprint 7R R3)                                     |
+| **Logged**   | 2026-10-24                                                          |
+
+**What:** the server authenticates every API call by its `Authorization: Bearer` header, but the admin
+console (every panel, the command bar, held actions, dual-control keys), the review dashboard, the appeal
+form and the main screen called `fetch` without it, so each authenticated call was refused with 401. Route
+tests called the handlers with a token and never saw it; found by driving the production build in a browser,
+signed in.
+
+**Fixed:** `apiFetch` (`platform/auth/api-fetch.ts`) attaches the session's token to calls to this origin only
+(never another site), unless the caller set its own header, and never an expired one. Every screen uses it;
+`__tests__/client-api-auth.test.ts` refuses a bare `fetch` in browser code outside a reviewed list (calls made
+before a session exists, or that set the header themselves).
+
+### TASK-155 — An approved dual-control config change was never applied
+
+| Field        | Detail                                                                          |
+| ------------ | ------------------------------------------------------------------------------- |
+| **ID**       | TASK-155                                                                        |
+| **Type**     | Correctness — governed configuration                                            |
+| **Severity** | High — a dual-controlled change approved by a second admin silently did nothing |
+| **Phase**    | Phase 5                                                                         |
+| **Target**   | Phase 5, Sprint 7R R3                                                           |
+| **Status**   | Fixed on develop (Sprint 7R R3)                                                 |
+| **Logged**   | 2026-10-24                                                                      |
+
+**What:** a change to a key in `config.dual_control_keys` is held at runtime (ADR-039 F2b-2) and approved
+through `POST /api/admin/approvals/[id]`. Approving recorded the decision, but nothing ran the held change
+again on its approval — the config page and the assistant are one-shot callers, and only a workflow loop
+resumes a held step. The admin saw "approved"; the setting never changed. Found by the operators' per-tenant
+settings test against Postgres.
+
+**Fixed:** the decision applies an approved held config change at once (`resumeApprovedConfigChange`: the
+held tool on its approved proposal — the approved payload, the same operation, as the proposer; the pipeline
+consumes the approval, so it releases one change once). Under two-person approval the change then waits for
+that approval. A change that cannot be applied answers 503 and is logged.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -3244,7 +3392,9 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: October 23, 2026 (Sprint 7R R2 — integrity fixes: role-model records, ai_metrics, chosen cache, UTC budget day and age; TASK-148, TASK-149)_
+_Last updated: October 23, 2026 (Sprint 7R R3 — tenancy: TASK-126 implemented, TASK-114 resolved, TASK-146 progress; TASK-150–155 found and fixed)_
+
+_Previously updated: October 23, 2026 (Sprint 7R R2 — integrity fixes: role-model records, ai_metrics, chosen cache, UTC budget day and age; TASK-148, TASK-149)_
 
 _Previously updated: October 22, 2026 (TASK-145 Wave 1 fixed; TASK-138 and TASK-140 fixed in Sprint 7X; TASK-146 and TASK-147 filed — the gaps ASSURANCE.md records)_
 _Last updated: August 13, 2026 (TASK-083 filed — the sync cannot distinguish an upstream deletion from a Playform-owned file)_

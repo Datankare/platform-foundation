@@ -1,7 +1,8 @@
 /**
  * platform/rag/memory-user-context-store.ts — In-memory user context store
  *
- * Default implementation for tests and development.
+ * Default implementation for tests and development. Each tenant's contexts live in their
+ * own partition, so a user id in one tenant never reaches another's context (ADR-053 D6).
  *
  * P7:  Provider-aware — mock/fallback.
  * P11: Always available.
@@ -11,11 +12,17 @@
  */
 
 import type { UserContextStore, UserAIContext, InteractionRecord } from "./types";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 const MAX_INTERACTIONS = 100;
 
 export class InMemoryUserContextStore implements UserContextStore {
-  private contexts: Map<string, UserAIContext> = new Map();
+  private readonly parts = new TenantPartitionedMap<string, UserAIContext>();
+
+  /** The current tenant's contexts. */
+  private get contexts(): Map<string, UserAIContext> {
+    return this.parts.current();
+  }
 
   async getContext(userId: string): Promise<UserAIContext | undefined> {
     return this.contexts.get(userId);

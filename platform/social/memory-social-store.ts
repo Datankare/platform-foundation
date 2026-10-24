@@ -2,7 +2,8 @@
  * platform/social/memory-social-store.ts — In-memory social store
  *
  * Default implementation for tests and development.
- * No external dependencies — everything in arrays.
+ * No external dependencies — everything in arrays, one set per tenant (ADR-053 D6), so a
+ * tenant sees only its own groups, memberships and invites.
  *
  * P7: Provider-aware — this is the mock/fallback provider.
  * P11: Always available — no network, no failure modes.
@@ -25,11 +26,39 @@ import type {
   CreateInviteInput,
 } from "./types";
 import type { AgentIdentity } from "@/platform/agents/types";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
+
+interface Tables {
+  groups: Group[];
+  memberships: Membership[];
+  invites: GroupInvite[];
+}
 
 export class InMemorySocialStore implements SocialStore {
-  private groups: Group[] = [];
-  private memberships: Membership[] = [];
-  private invites: GroupInvite[] = [];
+  private readonly parts = new TenantPartitionedMap<"tables", Tables>();
+
+  /** The current tenant's tables. */
+  private get t(): Tables {
+    const part = this.parts.current();
+    let tables = part.get("tables");
+    if (!tables) {
+      tables = { groups: [], memberships: [], invites: [] };
+      part.set("tables", tables);
+    }
+    return tables;
+  }
+
+  private get groups(): Group[] {
+    return this.t.groups;
+  }
+
+  private get memberships(): Membership[] {
+    return this.t.memberships;
+  }
+
+  private get invites(): GroupInvite[] {
+    return this.t.invites;
+  }
 
   // ── Groups ──────────────────────────────────────────────────────────
 
@@ -213,25 +242,23 @@ export class InMemorySocialStore implements SocialStore {
 
   // ── Test helpers ────────────────────────────────────────────────────
 
-  /** Get total count of groups (test helper) */
+  /** Get the current tenant's count of groups (test helper) */
   getGroupCount(): number {
     return this.groups.length;
   }
 
-  /** Get total count of memberships (test helper) */
+  /** Get the current tenant's count of memberships (test helper) */
   getMembershipCount(): number {
     return this.memberships.length;
   }
 
-  /** Get total count of invites (test helper) */
+  /** Get the current tenant's count of invites (test helper) */
   getInviteCount(): number {
     return this.invites.length;
   }
 
-  /** Clear all data (test helper) */
+  /** Clear every tenant's data (test helper) */
   clear(): void {
-    this.groups = [];
-    this.memberships = [];
-    this.invites = [];
+    this.parts.clearAll();
   }
 }

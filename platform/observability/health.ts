@@ -4,8 +4,8 @@
  * ADR-014: Know before users tell you something is broken.
  *
  * HealthRegistry aggregates multiple HealthProbe implementations
- * into a single HealthReport. Built-in probes for Supabase and
- * LLM provider availability.
+ * into a single HealthReport. Built-in probes for database (Postgres, through platform/data)
+ * and LLM provider availability.
  *
  * Consumers register probes for their specific dependencies:
  *   registry.register(new RedisHealthProbe(redisUrl));
@@ -15,6 +15,7 @@
 import type { HealthProbe, HealthCheckResult, HealthReport, HealthStatus } from "./types";
 import { logger } from "@/lib/logger";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { hasDatabase, withPlatformTx } from "@/platform/data";
 
 // ---------------------------------------------------------------------------
 // Health Registry — aggregates probes into a report
@@ -106,49 +107,41 @@ export class HealthRegistry {
 // ---------------------------------------------------------------------------
 
 /**
- * SupabaseHealthProbe — pings the Supabase REST API.
+ * PostgresHealthProbe — runs `select 1` on the database through platform/data.
  *
- * Checks that the Supabase instance is reachable and responding.
- * Does NOT verify table access or RLS policies — that's an integration test.
+ * Checks that the database is reachable and answering, as the request role in a platform
+ * transaction (no tenant needed, no table read). Does NOT verify table access or RLS
+ * policies — that's an integration test. Unhealthy when no database is configured, when the
+ * query fails, or when it does not answer within `timeoutMs`.
  */
-export class SupabaseHealthProbe implements HealthProbe {
-  readonly name = "supabase";
-  private readonly url: string;
-  private readonly key: string;
-
-  constructor(supabaseUrl: string, supabaseKey: string) {
-    this.url = supabaseUrl;
-    this.key = supabaseKey;
-  }
+export class PostgresHealthProbe implements HealthProbe {
+  readonly name = "database";
 
   async check(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<HealthCheckResult> {
-    /* istanbul ignore next -- requires live Supabase */
     const start = Date.now();
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetchWithTimeout(`${this.url}/rest/v1/`, {
-        timeoutMs: 10_000,
-        // Retry is the caller's: reduceCommit loops on version conflict and the effect
-        // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-        // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-        maxRetries: 0,
-        headers: {
-          apikey: this.key,
-          Authorization: `Bearer ${this.key}`,
-        },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timer);
-      const latencyMs = Date.now() - start;
-
+    if (!hasDatabase()) {
       return {
         name: this.name,
-        status: response.ok ? "healthy" : "degraded",
-        latencyMs,
-        detail: response.ok ? "OK" : `HTTP ${response.status}`,
+        status: "unhealthy",
+        latencyMs: 0,
+        detail: "No database configured (DATABASE_URL)",
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Database did not answer within ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      });
+      await Promise.race([withPlatformTx((tx) => tx.query("select 1")), timedOut]);
+      return {
+        name: this.name,
+        status: "healthy",
+        latencyMs: Date.now() - start,
+        detail: "OK",
         checkedAt: new Date().toISOString(),
       };
     } catch (err) {
@@ -159,6 +152,8 @@ export class SupabaseHealthProbe implements HealthProbe {
         detail: err instanceof Error ? err.message : String(err),
         checkedAt: new Date().toISOString(),
       };
+    } finally {
+      clearTimeout(timer);
     }
   }
 }

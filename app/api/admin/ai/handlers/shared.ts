@@ -1,7 +1,17 @@
 /**
- * app/api/admin/ai/handlers/shared.ts — shared handler types.
+ * app/api/admin/ai/handlers/shared.ts — shared handler types, and the platform-catalog
+ * transaction.
+ *
+ * The role, permission and entitlement catalog is shared by every tenant and read-only to the
+ * request role (ADR-053 D5). A command-bar change to it is allowed only when
+ * mayChangePlatformCatalog(admin) (platform/admin/config-scope.ts) — a single-tenant
+ * deployment's administrators, a shared deployment's operators — and then runs on the owner
+ * connection (catalogTx). Everything else the handlers touch is the tenant's own data
+ * (withTenantTx).
  */
 
+import { logger } from "@/lib/logger";
+import { withOwnerTx, type Tx } from "@/platform/data";
 import type { RoleRefusal } from "@/platform/auth/role-governance";
 import { audited, AuditWriteError, type AuditEntry } from "@/platform/auth/audit";
 import {
@@ -21,6 +31,46 @@ export type ActionResult = {
 /** An action refused by an authorization rule, carrying its coded error. */
 export function refusal(r: RoleRefusal): ActionResult {
   return { success: false, error: r.code, code: r.code, params: r.params };
+}
+
+/** A change to the shared catalog refused to an admin who may not make it (ADR-053 D5). */
+export function operatorOnly(): ActionResult {
+  return { success: false, error: "admin.operator_only", code: "admin.operator_only" };
+}
+
+/**
+ * Run `fn` in one owner transaction, for a catalog change the caller has already allowed
+ * (mayChangePlatformCatalog) — and for the reads that guard it, so they see what the change
+ * will see.
+ */
+export function catalogTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return withOwnerTx("operator", fn);
+}
+
+/**
+ * Run a write that reports its own outcome; a thrown database error becomes a failed result
+ * carrying its message, as a returned `{ error }` did before (the transaction rolled back).
+ */
+export async function failedAsResult(
+  write: () => Promise<ActionResult>
+): Promise<ActionResult> {
+  try {
+    return await write();
+  } catch (err) {
+    // The database's message (table, constraint, column) is logged, never shown; a unique
+    // violation is said in plain words, since it is the admin's to fix.
+    logger.error("Admin command write failed", {
+      error: err instanceof Error ? err.message : String(err),
+      route: "app/api/admin/ai/handlers",
+    });
+    if ((err as { code?: unknown } | null)?.code === "23505") {
+      return { success: false, error: "That already exists: choose another name." };
+    }
+    return {
+      success: false,
+      error: "The change could not be saved: the database is unavailable or refused it.",
+    };
+  }
 }
 
 /** A governed config write's outcome as a command-bar result (audit X-7). */
@@ -43,6 +93,13 @@ export function fromGovernedConfig(
         error: "auth.permission_denied",
         code: "auth.permission_denied",
         params: { permission: outcome.permission },
+      };
+    case "refused_scope":
+      return {
+        success: false,
+        error: outcome.reason,
+        code: "admin.config_scope_refused",
+        params: { key },
       };
     case "not_found":
       return {

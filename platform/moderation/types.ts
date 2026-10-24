@@ -269,7 +269,7 @@ export interface AuditQueryOptions {
  *
  * Implementations:
  *   InMemoryModerationStore — for tests (default)
- *   SupabaseModerationStore — for production
+ *   PostgresModerationStore — for production (platform/data, in the request's tenant)
  *
  * Store failures must never block the moderation pipeline (P11).
  */
@@ -464,7 +464,7 @@ export interface CoppaGateResult {
  *
  * Implementations:
  *   InMemoryStrikeStore — for tests (default)
- *   SupabaseStrikeStore — for production
+ *   PostgresStrikeStore — for production (platform/data, in the request's tenant)
  *
  * Unlike ModerationStore, strike writes are NOT fire-and-forget.
  * Strike recording IS the primary function (L19). Failures must

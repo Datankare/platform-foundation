@@ -12,13 +12,16 @@
  *
  * The planner is offered only the tools the verified admin may run, and reads a panel's data
  * only with that panel's page permission (TASK-145). The execute route checks every action again.
+ *
+ * Panel context is read in the tenant's transaction (ADR-053 D5): the user count is this
+ * tenant's; roles, permissions and entitlement groups are the shared catalog.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
 import { PANEL_CONTEXT_PERMISSIONS, toolPermission } from "./tool-permissions";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx, type Tx } from "@/platform/data";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getOrchestrator } from "@/platform/ai";
 import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
@@ -26,6 +29,7 @@ import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS, type AdminTool } from "./tool-schemas
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { enforceDailyPaidQuota } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 /** The longest command an admin may send to the planner. */
 const MAX_PROMPT_CHARS = 4000;
@@ -40,40 +44,55 @@ function getToolsForPanel(panel: string, admin: VerifiedAdmin): AdminTool[] {
   });
 }
 
+/** Rows of a context read; an unreadable table reads as none, as before (context is advisory). */
+async function contextRows<R extends Record<string, unknown>>(
+  read: (tx: Tx) => Promise<{ rows: R[] }>
+): Promise<R[]> {
+  try {
+    return (await withTenantTx(read)).rows;
+  } catch (err) {
+    logger.warn("Admin AI panel context unreadable", {
+      error: err instanceof Error ? err.message : String(err),
+      route: "api/admin/ai",
+    });
+    return [];
+  }
+}
+
 async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<string> {
   const permission = PANEL_CONTEXT_PERMISSIONS[panel];
   if (!permission || !holds(admin, permission)) return "";
-  const supabase = getSupabaseServiceClient();
 
   if (panel === "roles") {
-    const { data: roles } = await supabase
-      .from("roles")
-      .select("name, display_name")
-      .order("sort_order");
-    const { data: perms } = await supabase
-      .from("permissions")
-      .select("code, display_name, category")
-      .order("category");
-    return `Current roles: ${JSON.stringify(roles || [])}\nAvailable permissions: ${JSON.stringify(perms || [])}`;
+    const roles = await contextRows((tx) =>
+      tx.query("select name, display_name from roles order by sort_order")
+    );
+    const perms = await contextRows((tx) =>
+      tx.query("select code, display_name, category from permissions order by category")
+    );
+    return `Current roles: ${JSON.stringify(roles)}\nAvailable permissions: ${JSON.stringify(perms)}`;
   }
 
   if (panel === "users") {
-    const { data: roles } = await supabase.from("roles").select("name, display_name");
-    const { count } = await supabase
-      .from("users")
-      .select("id", { count: "exact", head: true })
-      .is("deleted_at", null);
-    return `Total active users: ${count || 0}\nRoles: ${JSON.stringify(roles || [])}`;
+    const roles = await contextRows((tx) =>
+      tx.query("select name, display_name from roles")
+    );
+    const [counted] = await contextRows((tx) =>
+      tx.query<{ n: number }>(
+        "select count(*)::int as n from users where deleted_at is null"
+      )
+    );
+    return `Total active users: ${counted?.n || 0}\nRoles: ${JSON.stringify(roles)}`;
   }
 
   if (panel === "entitlements") {
-    const { data: groups } = await supabase
-      .from("entitlement_groups")
-      .select("code, display_name, is_active");
-    const { data: perms } = await supabase
-      .from("permissions")
-      .select("code, display_name");
-    return `Current entitlement groups: ${JSON.stringify(groups || [])}\nAvailable permissions: ${JSON.stringify(perms || [])}`;
+    const groups = await contextRows((tx) =>
+      tx.query("select code, display_name, is_active from entitlement_groups")
+    );
+    const perms = await contextRows((tx) =>
+      tx.query("select code, display_name from permissions")
+    );
+    return `Current entitlement groups: ${JSON.stringify(groups)}\nAvailable permissions: ${JSON.stringify(perms)}`;
   }
 
   if (panel === "approvals") {
@@ -90,7 +109,7 @@ async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<
   return "";
 }
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const verified = await requireAdmin(request, "can_access_admin");
   if (verified.error) return verified.error;
   const { admin } = verified;
@@ -170,4 +189,4 @@ export async function POST(request: NextRequest) {
     });
     return apiError("service.unavailable", { params: { service: "ai" }, request });
   }
-}
+});

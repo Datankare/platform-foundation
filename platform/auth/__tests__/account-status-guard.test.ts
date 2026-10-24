@@ -26,27 +26,47 @@ jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: (...args: any[]) => mockGetConfig(...args),
 }));
 
+/** What a table read answers in this test: rows (an object is one row), or an error. */
 function createChainMock(resolvedValue: { data: any; error: any }) {
-  const chain: any = {
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    maybeSingle: jest.fn().mockResolvedValue(resolvedValue),
-    then: (resolve: any) => resolve(resolvedValue),
-  };
-  return chain;
+  return resolvedValue;
 }
 
 const mockSupabase = {
+  /** Per-table response, set by each test (the name is kept from the REST-client version). */
   from: jest.fn(),
 };
+
+const DATE_COLUMNS = ["restricted_until", "suspended_until", "banned_at"];
+
+/** A transaction that answers each query from mockSupabase.from(<table the SQL reads>). */
+const mockTx = {
+  query: jest.fn(async (text: string) => {
+    const table = /from user_feature_restrictions/.test(text)
+      ? "user_feature_restrictions"
+      : "users";
+    const { data, error } = mockSupabase.from(table);
+    if (error) throw new Error(error.message);
+    const rows = (data == null ? [] : Array.isArray(data) ? data : [data]).map(
+      (r: any) => {
+        const row = { ...r };
+        for (const c of DATE_COLUMNS)
+          if (typeof row[c] === "string") row[c] = new Date(row[c]);
+        return row;
+      }
+    );
+    return { rows, rowCount: rows.length };
+  }),
+};
+
+const mockHasDatabase = jest.fn(() => true);
+jest.mock("@/platform/data", () => ({
+  withTenantTx: (fn: (tx: unknown) => unknown) => fn(mockTx),
+  hasDatabase: () => mockHasDatabase(),
+}));
 
 const mockEnsureProvisioned = jest.fn();
 jest.mock("@/platform/auth/user-provisioning", () => ({
   ensureUserProvisioned: (...args: any[]) => mockEnsureProvisioned(...args),
-}));
-
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(() => mockSupabase),
 }));
 
 // ── Imports ─────────────────────────────────────────────────────────────
@@ -325,14 +345,22 @@ describe("checkAccountStatus", () => {
   });
 
   it("fails closed when DB throws exception", async () => {
-    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
     mockSupabase.from.mockImplementation(() => {
       throw new Error("Connection refused");
     });
     const result = await checkAccountStatus(VALID_USER_ID, "translate");
     expect(result.allowed).toBe(false);
     expect(result.accountStatus).toBe("banned");
-    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+  });
+
+  it("degrades to active with no blocks when no database is configured", async () => {
+    mockHasDatabase.mockReturnValue(false);
+    mockSupabase.from.mockImplementation(() => {
+      throw new Error("no database");
+    });
+    const result = await checkAccountStatus(VALID_USER_ID, "translate");
+    expect(result).toMatchObject({ allowed: true, accountStatus: "active" });
+    mockHasDatabase.mockReturnValue(true);
   });
 
   it("fails closed when account_status is unknown value", async () => {

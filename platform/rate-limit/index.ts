@@ -6,8 +6,8 @@
  *   const limited = await enforceRateLimit(request, DEFAULT_RULES.AI_PER_USER, { actorId });
  *   if (limited) return limited;
  *
- * The store behind the shared limiter is a provider slot (RATE_LIMIT_STORE: supabase, upstash,
- * memory), set by the provider registry; every store passes the same conformance kit.
+ * The store behind the shared limiter is a provider slot (RATE_LIMIT_STORE: postgres or
+ * supabase (the same Postgres store), upstash, memory), set by the provider registry; every store passes the same conformance kit.
  *
  * @module platform/rate-limit
  */
@@ -31,8 +31,8 @@ export { TOKEN_BUDGET_RULES } from "./token-aware";
 export { InMemoryRateLimiter } from "./memory-limiter";
 export { RedisRateLimiter } from "./redis-limiter";
 export type { RedisRateLimiterConfig } from "./redis-limiter";
-export { SupabaseRateLimiter } from "./supabase-limiter";
-export type { SupabaseRateLimiterConfig } from "./supabase-limiter";
+export { PostgresRateLimiter } from "./postgres-limiter";
+export type { PostgresRateLimiterConfig } from "./postgres-limiter";
 export { enforceRateLimit } from "./enforce";
 export {
   DAILY_PAID_QUOTA_KEY,

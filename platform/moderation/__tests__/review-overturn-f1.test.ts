@@ -8,7 +8,9 @@
  * status, whatever previous status the item claims; a moderator cannot claim or resolve a case
  * about their own account; the resolution is recorded before anything changes, and a failed
  * restoration leaves the item claimed. Runs against an in-memory database with the real audit
- * module (__tests__/helpers/fake-database.ts).
+ * module (__tests__/helpers/fake-database.ts); the account-status statements reach it through
+ * __tests__/helpers/fake-account-data.ts, and are proved against Postgres by
+ * __tests__/db/moderation-account-status.db.test.ts.
  *
  * Release review (Sprint 7X): an overturn lifts only the overturned decision's consequence. The
  * account is restored only when the latest recorded status change is this decision's and is in
@@ -28,9 +30,12 @@ jest.mock("@/platform/auth/platform-config", () => ({
     ),
 }));
 
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
+// The audit module's writes and the account-status SQL both land in the same in-memory
+// database, so their order is visible.
+jest.mock("@/platform/data", () =>
+  require("@/__tests__/helpers/fake-account-data").fakeAccountData(() => mockDb)
+);
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { FakeDatabase } from "@/__tests__/helpers/fake-database";
 import { submitForReview, claimItem, resolveItem } from "../review-service";
 import { InMemoryReviewQueueStore, setReviewQueueStore } from "../review-store";
@@ -40,6 +45,7 @@ import type { AccountStatus, ModerationResult } from "../types";
 const TARGET = "00000000-0000-4000-8000-0000000000f1";
 const REVIEWER = "00000000-0000-4000-8000-0000000000e1";
 let db: FakeDatabase;
+let mockDb: FakeDatabase;
 
 function makeModerationResult(
   overrides: Partial<ModerationResult> = {}
@@ -89,7 +95,7 @@ const change = (c: Change) => ({
 });
 
 function setup(current: AccountStatus, changes: Change[] = []) {
-  db = new FakeDatabase({
+  db = mockDb = new FakeDatabase({
     users: [
       {
         id: TARGET,
@@ -101,7 +107,6 @@ function setup(current: AccountStatus, changes: Change[] = []) {
     ],
     audit_log: changes.map(change),
   });
-  (getSupabaseServiceClient as jest.Mock).mockReturnValue(db.client());
 }
 
 /** The account was set to `current` by the decision under review ("traj-f1"), from `from`. */

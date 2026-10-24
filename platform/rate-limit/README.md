@@ -30,16 +30,22 @@ without a limit, unless the route is listed as exempt with its reason.
 
 | `RATE_LIMIT_STORE` | Store                                      | Use                                               |
 | ------------------ | ------------------------------------------ | ------------------------------------------------- |
-| `supabase`         | Postgres, `rate_limit_hit` (migration 039) | Default for deployments; no extra service         |
+| `postgres`         | Postgres, `rate_limit_hit` (migration 039) | Default for deployments; needs `DATABASE_URL`     |
+| `supabase`         | The same Postgres store                    | Kept so existing settings need no change          |
 | `upstash`          | Redis over REST (sorted sets)              | Needs `UPSTASH_REDIS_REST_URL` and `_TOKEN`       |
 | `memory`           | In-process                                 | Tests and local work only — refused in production |
 
 The provider registry installs the store at boot. A selected shared store with missing credentials
-throws rather than falling back to memory. A new store implements `RateLimiter` and must pass the
+(or, for `postgres`, no `DATABASE_URL`) throws rather than falling back to memory. A new store implements `RateLimiter` and must pass the
 conformance kit (`__tests__/contract/rate-limiter-contract.ts`).
 
 The caller's address is read from `X-Forwarded-For` at `TRUSTED_PROXY_HOPS` entries from the right
 (default 1), so a caller cannot choose its own bucket by sending the header.
+
+Counts are per tenant (ADR-053 D6). `enforceRateLimit` puts the tenant in every identifier, and
+each store keeps tenants apart on its own: the Postgres store's events are under row-level security
+(no tenant: the check throws, and the route answers 503), and the Redis and in-memory stores put
+the current tenant in every key.
 
 ## Rules
 
@@ -65,7 +71,7 @@ platform/rate-limit/
 ├── enforce.ts           ← enforceRateLimit — the one call routes make
 ├── client-ip.ts         ← spoof-resistant caller address
 ├── factory.ts           ← store factory and the shared instance
-├── supabase-limiter.ts  ← SupabaseRateLimiter (Postgres, exact sliding window)
+├── postgres-limiter.ts  ← PostgresRateLimiter (Postgres, exact sliding window)
 ├── redis-limiter.ts     ← RedisRateLimiter (Upstash, sorted sets)
 ├── memory-limiter.ts    ← InMemoryRateLimiter (tests, local)
 ├── token-aware.ts       ← token-budget extension

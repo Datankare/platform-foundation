@@ -26,17 +26,16 @@
  *   STT_PROVIDER          = "google" | "mock"     (default: "mock")
  *   SONG_ID_PROVIDER      = "acrcloud" | "mock"   (default: "mock")
  *   AUDIO_CONVERTER       = "ffmpeg-service" | "passthrough" | "mock" (default: "mock")
- *   MODERATION_STORE      = "supabase" | "memory" (default: "memory")
- *   SOCIAL_STORE           = "supabase" | "memory" (default: "memory"; required in production — TASK-107)
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
- *   TRAJECTORY_STORE       = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
- *   BUDGET_STORE           = "supabase" | "memory"  (default: "memory"; required in production — ADR-048 D3)
- *   GUEST_USAGE_STORE      = "supabase" | "memory"  (default: "memory"; required in production — ADR-050 D4)
- *   RATE_LIMIT_STORE       = "supabase" | "upstash" | "memory" (default: "memory"; refused in production — ADR-052)
- *   PROPOSAL_STORE         = "supabase" | "memory"  (default: "memory")
- *   EFFECT_LEDGER          = "supabase" | "memory"  (default: "memory")
  *
- * Settings shared by several slots (Supabase URL/key, Cognito ids) are read through the
+ * Durable stores — "postgres" (or "supabase", the same store) | "memory" (default: "memory";
+ * memory is refused in production unless a local/CI harness opts out, ADR-048 D3, ADR-053 D4):
+ *   MODERATION_STORE, STRIKE_STORE, REVIEW_QUEUE_STORE, SOCIAL_STORE, APP_STATE_STORE,
+ *   TRAJECTORY_STORE, BUDGET_STORE, PROPOSAL_STORE, EFFECT_LEDGER, APPROVAL_POLICY_STORE,
+ *   GUEST_USAGE_STORE, RATE_LIMIT_STORE (also "upstash", ADR-052)
+ *   TENANT_DIRECTORY_STORE = "postgres" | "memory" (shared tenancy requires postgres, ADR-053 D7)
+ *
+ * Settings shared by several slots (the database URLs, Cognito ids) are read through the
  * environment contract resolvers, and in production the whole contract is checked before any
  * slot initializes (ADR-050 D1/D2 — see ./environment-contract.ts).
  *
@@ -47,16 +46,16 @@ import { registerAuthProvider, hasAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { createCognitoAuthProvider } from "@/platform/auth/cognito-provider";
 import { resetCache } from "@/platform/cache";
-import { SupabaseModerationStore, setModerationStore } from "@/platform/moderation/store";
-import { SupabaseStrikeStore, setStrikeStore } from "@/platform/moderation/strikes";
+import { PostgresModerationStore, setModerationStore } from "@/platform/moderation/store";
+import { PostgresStrikeStore, setStrikeStore } from "@/platform/moderation/strikes";
 import {
-  SupabaseReviewQueueStore,
+  PostgresReviewQueueStore,
   setReviewQueueStore,
 } from "@/platform/moderation/review-store";
 import {
   setSocialStore,
   InMemorySocialStore,
-  SupabaseSocialStore,
+  PostgresSocialStore,
 } from "@/platform/social";
 import { logger } from "@/lib/logger";
 import {
@@ -73,22 +72,29 @@ import {
 } from "@/platform/voice";
 import { setEmbeddingProvider, createMockEmbeddingProvider } from "@/platform/rag";
 import { setTrajectoryStore } from "@/platform/agents/trajectory-store";
-import { SupabaseTrajectoryStore } from "@/platform/agents/supabase-trajectory-store";
+import { PostgresTrajectoryStore } from "@/platform/agents/postgres-trajectory-store";
 import { BudgetTracker, setBudgetTracker } from "@/platform/agents/budget-tracker";
-import { SupabaseBudgetStore } from "@/platform/agents/supabase-budget-store";
+import { PostgresBudgetStore } from "@/platform/agents/postgres-budget-store";
+import { hasDatabase } from "@/platform/data";
+import {
+  CachedTenantDirectory,
+  InMemoryTenantDirectory,
+  setTenantDirectory,
+} from "@/platform/tenancy/directory";
+import { PostgresTenantDirectory } from "@/platform/tenancy/postgres-directory";
 import { setProposalStore } from "@/platform/agents/proposal-store";
 import { setApprovalPolicyStore } from "@/platform/agents/approval-policy-store";
-import { SupabaseApprovalPolicyStore } from "@/platform/agents/supabase-approval-policy-store";
-import { SupabaseProposalStore } from "@/platform/agents/supabase-proposal-store";
+import { PostgresApprovalPolicyStore } from "@/platform/agents/postgres-approval-policy-store";
+import { PostgresProposalStore } from "@/platform/agents/postgres-proposal-store";
 import { setEffectLedger } from "@/platform/agents/effect-ledger";
-import { SupabaseEffectLedger } from "@/platform/agents/supabase-effect-ledger";
+import { PostgresEffectLedger } from "@/platform/agents/postgres-effect-ledger";
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
 import { registerSocialContentTypes } from "@/platform/social/content/curator-content";
 import { registerRagReference } from "@/platform/rag/bootstrap";
 import {
   setActivityStateStore,
-  SupabaseActivityStateStore,
+  PostgresActivityStateStore,
 } from "@/platform/app-framework";
 import { getSingleton, resetSingleton, setSingleton } from "@/platform/kernel/singleton";
 import {
@@ -99,9 +105,10 @@ import {
   getCognitoSettings,
   getSupabaseUrl,
   getRateLimitStoreSetting,
+  getTenantDirectoryStoreSetting,
 } from "@/platform/providers/environment-contract";
 import {
-  SupabaseGuestUsageStore,
+  PostgresGuestUsageStore,
   setGuestUsageStore,
 } from "@/platform/auth/guest-allowance";
 
@@ -119,19 +126,19 @@ export type TTSProviderType = "google" | "mock";
 export type STTProviderType = "google" | "mock";
 export type SongIdProviderType = "acrcloud" | "mock";
 export type AudioConverterType = "ffmpeg-service" | "passthrough" | "mock";
-export type ModerationStoreType = "supabase" | "memory";
-export type StrikeStoreType = "supabase" | "memory";
-export type ReviewQueueStoreType = "supabase" | "memory";
-export type SocialStoreType = "supabase" | "memory";
+export type ModerationStoreType = "postgres" | "supabase" | "memory";
+export type StrikeStoreType = "postgres" | "supabase" | "memory";
+export type ReviewQueueStoreType = "postgres" | "supabase" | "memory";
+export type SocialStoreType = "postgres" | "supabase" | "memory";
 export type EmbeddingProviderType = "openai" | "mock";
-export type AppStateStoreType = "supabase" | "memory";
-export type TrajectoryStoreType = "supabase" | "memory";
-export type BudgetStoreType = "supabase" | "memory";
-export type ProposalStoreType = "supabase" | "memory";
-export type EffectLedgerType = "supabase" | "memory";
-export type ApprovalPolicyStoreType = "supabase" | "memory";
-export type GuestUsageStoreType = "supabase" | "memory";
-export type RateLimiterStoreType = "supabase" | "upstash" | "memory";
+export type AppStateStoreType = "postgres" | "supabase" | "memory";
+export type TrajectoryStoreType = "postgres" | "supabase" | "memory";
+export type BudgetStoreType = "postgres" | "supabase" | "memory";
+export type ProposalStoreType = "postgres" | "supabase" | "memory";
+export type EffectLedgerType = "postgres" | "supabase" | "memory";
+export type ApprovalPolicyStoreType = "postgres" | "supabase" | "memory";
+export type GuestUsageStoreType = "postgres" | "supabase" | "memory";
+export type RateLimiterStoreType = "postgres" | "supabase" | "upstash" | "memory";
 
 export interface ProviderSelections {
   auth: AuthProviderType;
@@ -349,9 +356,9 @@ function initAudioConverter(type: AudioConverterType): void {
 }
 
 function initModerationStore(type: ModerationStoreType): void {
-  if (type === "supabase") {
-    const { url, key } = requireSupabaseFor("MODERATION_STORE", "moderation decisions");
-    setModerationStore(new SupabaseModerationStore(url, key));
+  if (isDurableStore(type)) {
+    requireDatabase("MODERATION_STORE", type, "in-memory moderation decisions");
+    setModerationStore(new PostgresModerationStore());
     return;
   }
   // The moderation audit trail is what appeals and overturns are judged from (audit X-21).
@@ -359,9 +366,9 @@ function initModerationStore(type: ModerationStoreType): void {
 }
 
 function initStrikeStore(type: StrikeStoreType): void {
-  if (type === "supabase") {
-    requireSupabaseFor("STRIKE_STORE", "strikes");
-    setStrikeStore(new SupabaseStrikeStore());
+  if (isDurableStore(type)) {
+    requireDatabase("STRIKE_STORE", type, "in-memory strikes");
+    setStrikeStore(new PostgresStrikeStore());
     return;
   }
   // Per-instance strikes never reach the ban threshold across instances (audit X-3).
@@ -369,49 +376,21 @@ function initStrikeStore(type: StrikeStoreType): void {
 }
 
 function initReviewQueueStore(type: ReviewQueueStoreType): void {
-  if (type === "supabase") {
-    const { url, key } = requireSupabaseFor(
-      "REVIEW_QUEUE_STORE",
-      "the human review queue"
-    );
-    setReviewQueueStore(new SupabaseReviewQueueStore(url, key));
+  if (isDurableStore(type)) {
+    requireDatabase("REVIEW_QUEUE_STORE", type, "an in-memory review queue");
+    setReviewQueueStore(new PostgresReviewQueueStore());
     return;
   }
   // A per-instance queue loses escalations, ban reviews and appeals (audit X-3).
   requireDurableStoreInProduction("REVIEW_QUEUE_STORE", "the human review queue");
 }
 
-/**
- * The Supabase credentials a durable slot needs, or a refusal to boot: a slot that asked for a
- * durable store never falls back to memory (audit X-21 — the moderation store did, silently).
- */
-function requireSupabaseFor(envVar: string, noun: string): { url: string; key: string } {
-  const url = getSupabaseUrl() ?? "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  if (!url || !key) {
-    throw new Error(
-      `${envVar}=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. ` +
-        `Refusing to fall back to in-memory ${noun}.`
-    );
-  }
-  return { url, key };
-}
-
 function initAppStateStore(type: AppStateStoreType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-    if (!url || !key) {
-      logger.warn(
-        "APP_STATE_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — falling back to memory"
-      );
-      // ADR-049 D1: the fallback leaves sessions in memory — not acceptable in production.
-      requireDurableStoreInProduction("APP_STATE_STORE", "activity sessions");
-      return;
-    }
-
-    setActivityStateStore(new SupabaseActivityStateStore(url, key));
+  if (isDurableStore(type)) {
+    // ADR-049 D1: activity sessions are user state; asking for a durable store and not getting
+    // one is a misconfiguration (it used to fall back to memory with a warning).
+    requireDatabase("APP_STATE_STORE", type, "in-memory activity sessions");
+    setActivityStateStore(new PostgresActivityStateStore());
     return;
   }
 
@@ -421,17 +400,35 @@ function initAppStateStore(type: AppStateStoreType): void {
 }
 
 /**
+ * ADR-053 D4: a durable store is the Postgres one, reached through platform/data. "postgres" and
+ * "supabase" both select it — on a Supabase project the store is the same Postgres store, so a
+ * deployment that already says "supabase" needs no change.
+ */
+export function isDurableStore(type: string | undefined): boolean {
+  return type === "postgres" || type === "supabase";
+}
+
+/** A durable store with no database is a misconfiguration, never a fall back to memory. */
+function requireDatabase(envVar: string, type: string, fallback: string): void {
+  if (!hasDatabase()) {
+    throw new Error(
+      `${envVar}=${type} but DATABASE_URL is not set. Refusing to fall back to ${fallback} (ADR-053 D4).`
+    );
+  }
+}
+
+/**
  * ADR-048 D3: the durable agent stores are required in production. Rather than flip the global
  * default (which breaks the in-memory test/local path), refuse to boot the runtime on an
- * in-memory budget/trajectory store in a production context — the same fail-closed stance the
- * Supabase path already takes on missing creds. Tests and local (NODE_ENV !== "production") keep
+ * in-memory budget/trajectory store in a production context — the same fail-closed stance a
+ * durable store takes without DATABASE_URL (requireDatabase). Tests and local (NODE_ENV !== "production") keep
  * the in-memory default.
  */
 function requireDurableStoreInProduction(envVar: string, noun: string): void {
   if (process.env.NODE_ENV !== "production") return;
 
   // A production BUILD run under an E2E harness (Playwright starts the app with `next start`,
-  // which forces NODE_ENV=production) is not a deployment: no Supabase is provisioned for the
+  // which forces NODE_ENV=production) is not a deployment: no database is provisioned for the
   // test, so it legitimately runs on in-memory stores. The harness opts out explicitly via
   // E2E_IN_MEMORY_STORES=true, honoured only where DEPLOYMENT_HOST marks the run as local or CI
   // (TASK-140) — a deployment, or a run that forgets the marker, still fails closed. The opt-out is
@@ -447,27 +444,16 @@ function requireDurableStoreInProduction(envVar: string, noun: string): void {
 
   throw new Error(
     `${envVar} is unset or "memory" in production. Refusing to boot on ` +
-      `in-memory ${noun} (ADR-048 D3, ADR-049 D1) — set ${envVar}=supabase with Supabase credentials.`
+      `in-memory ${noun} (ADR-048 D3, ADR-049 D1) — set ${envVar}=postgres with DATABASE_URL (ADR-053 D4).`
   );
 }
 
 function initTrajectoryStore(type: TrajectoryStoreType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-    // Fail closed (TASK-062). The other slots warn and degrade to memory; for
-    // trajectories that silently recreates the condition this slot exists to close —
-    // P18 durability asserted, in-memory storage in fact, and no signal. Asking for
-    // supabase and not getting it is a misconfiguration, not a degraded mode.
-    if (!url || !key) {
-      throw new Error(
-        "TRAJECTORY_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
-          "Refusing to fall back to in-memory trajectories."
-      );
-    }
-
-    setTrajectoryStore(new SupabaseTrajectoryStore(url, key));
+  if (isDurableStore(type)) {
+    // Fail closed (TASK-062): asking for a durable store and not getting it is a
+    // misconfiguration, not a degraded mode — P18 durability would be asserted, not true.
+    requireDatabase("TRAJECTORY_STORE", type, "in-memory trajectories");
+    setTrajectoryStore(new PostgresTrajectoryStore());
     return;
   }
 
@@ -476,22 +462,13 @@ function initTrajectoryStore(type: TrajectoryStoreType): void {
 }
 
 function initBudgetStore(type: BudgetStoreType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
+  if (isDurableStore(type)) {
     // Fail closed, as slot #15 does. Degrading to an in-process counter is precisely
     // the TASK-063 condition: maxCostPerDay never accumulates across instances, so the
     // cap is unenforced and nothing says so. An unbounded-spend exposure is not a
     // degraded mode.
-    if (!url || !key) {
-      throw new Error(
-        "BUDGET_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
-          "Refusing to fall back to in-process budget accumulation."
-      );
-    }
-
-    setBudgetTracker(new BudgetTracker(new SupabaseBudgetStore(url, key)));
+    requireDatabase("BUDGET_STORE", type, "in-process budget accumulation");
+    setBudgetTracker(new BudgetTracker(new PostgresBudgetStore()));
     return;
   }
 
@@ -500,22 +477,10 @@ function initBudgetStore(type: BudgetStoreType): void {
 }
 
 function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-    // Fail closed, as the other agent stores do. An in-memory approval policy means an
-    // admin's governance change is lost on restart and nothing says so — the policy silently
-    // reverts to the built-in human-review default. That is a governance regression, not a
-    // degraded mode.
-    if (!url || !key) {
-      throw new Error(
-        "APPROVAL_POLICY_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
-          "Refusing to fall back to an in-memory approval policy."
-      );
-    }
-
-    setApprovalPolicyStore(new SupabaseApprovalPolicyStore(url, key));
+  if (isDurableStore(type)) {
+    // Fail closed: a per-instance policy lets an action held on one instance run on another.
+    requireDatabase("APPROVAL_POLICY_STORE", type, "an in-memory approval policy");
+    setApprovalPolicyStore(new PostgresApprovalPolicyStore());
     return;
   }
 
@@ -524,20 +489,11 @@ function initApprovalPolicyStore(type: ApprovalPolicyStoreType): void {
 }
 
 function initGuestUsageStore(type: GuestUsageStoreType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
+  if (isDurableStore(type)) {
     // Fail closed. An in-memory guest counter resets on every instance and restart, so the
     // guest allowance (ADR-050 D4) would not bind — unbounded paid calls with nothing saying so.
-    if (!url || !key) {
-      throw new Error(
-        "GUEST_USAGE_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
-          "Refusing to fall back to an in-memory guest allowance."
-      );
-    }
-
-    setGuestUsageStore(new SupabaseGuestUsageStore(url, key));
+    requireDatabase("GUEST_USAGE_STORE", type, "an in-memory guest allowance");
+    setGuestUsageStore(new PostgresGuestUsageStore());
     return;
   }
 
@@ -560,20 +516,11 @@ function initRateLimiter(type: RateLimiterStoreType): void {
 }
 
 function initProposalStore(type: ProposalStoreType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-    // Fail closed, as slots #15 and #16 do. An in-memory proposal store means a held
-    // action disappears on restart — the approval never arrives and nothing says so.
-    if (!url || !key) {
-      throw new Error(
-        "PROPOSAL_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
-          "Refusing to fall back to in-memory proposals."
-      );
-    }
-
-    setProposalStore(new SupabaseProposalStore(url, key));
+  if (isDurableStore(type)) {
+    // Fail closed: an in-memory proposal store means a held action disappears on restart —
+    // the approval never arrives and nothing says so.
+    requireDatabase("PROPOSAL_STORE", type, "in-memory proposals");
+    setProposalStore(new PostgresProposalStore());
     return;
   }
 
@@ -582,21 +529,12 @@ function initProposalStore(type: ProposalStoreType): void {
 }
 
 function initEffectLedger(type: EffectLedgerType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
+  if (isDurableStore(type)) {
     // Fail closed. An in-memory effect ledger means a retry after restart finds no entry
     // and re-fires an external effect that may already have succeeded — the at-least-once
     // violation ADR-031 D7 exists to prevent.
-    if (!url || !key) {
-      throw new Error(
-        "EFFECT_LEDGER=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
-          "Refusing to fall back to an in-memory effect ledger."
-      );
-    }
-
-    setEffectLedger(new SupabaseEffectLedger(url, key));
+    requireDatabase("EFFECT_LEDGER", type, "an in-memory effect ledger");
+    setEffectLedger(new PostgresEffectLedger());
     return;
   }
 
@@ -605,25 +543,30 @@ function initEffectLedger(type: EffectLedgerType): void {
 }
 
 function initSocialStore(type: SocialStoreType): void {
-  if (type === "supabase") {
-    const url = getSupabaseUrl() ?? "";
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
+  if (isDurableStore(type)) {
     // Fail closed (TASK-107): a silent memory fallback shared one membership across users and
     // lost it on restart.
-    if (!url || !key) {
-      throw new Error(
-        "SOCIAL_STORE=supabase but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. " +
-          "Refusing to fall back to an in-memory social store."
-      );
-    }
-
-    setSocialStore(new SupabaseSocialStore(url, key));
+    requireDatabase("SOCIAL_STORE", type, "an in-memory social store");
+    setSocialStore(new PostgresSocialStore());
     return;
   }
 
   requireDurableStoreInProduction("SOCIAL_STORE", "groups and memberships");
   setSocialStore(new InMemorySocialStore());
+}
+
+/**
+ * ADR-053 D2/D7: where tenants and their domains are kept. Every request reads it (host →
+ * tenant, tenant → state), so reads are cached per instance (CachedTenantDirectory, 30 s): a
+ * suspension reaches every instance within that time.
+ */
+function initTenantDirectory(type: string | undefined): void {
+  if (type === "postgres") {
+    requireDatabase("TENANT_DIRECTORY_STORE", type, "an in-memory tenant directory");
+    setTenantDirectory(new CachedTenantDirectory(new PostgresTenantDirectory()));
+    return;
+  }
+  setTenantDirectory(new CachedTenantDirectory(new InMemoryTenantDirectory()));
 }
 
 function initEmbeddingProvider(type: EmbeddingProviderType): void {
@@ -691,6 +634,7 @@ export function initProviders(): ProviderSelections {
   initRateLimiter(selections.rateLimiter);
   initEffectLedger(selections.effectLedger);
   initSocialStore(selections.socialStore);
+  initTenantDirectory(getTenantDirectoryStoreSetting());
   initEmbeddingProvider(selections.embeddingProvider);
 
   // ADR-036 step 4 / ADR-039: register platform agents and the adaptive reference on the
@@ -781,4 +725,5 @@ export const PROVIDER_SINGLETON_KEYS: readonly string[] = [
   "platform.rag.embeddingStore",
   "platform.rag.embeddingProvider",
   "platform.rag.userContextStore",
+  "platform.tenancy.directory",
 ];

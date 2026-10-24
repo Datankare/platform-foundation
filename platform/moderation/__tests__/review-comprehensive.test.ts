@@ -45,17 +45,13 @@ const mockAccounts = () =>
     audit_log: [],
   });
 let mockDb = mockAccounts();
-const mockSupabase = {
-  from: jest.fn((table: string) => mockDb.client().from(table)),
-};
-
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(() => mockSupabase),
-}));
+jest.mock("@/platform/data", () =>
+  require("@/__tests__/helpers/fake-account-data").fakeAccountData(() => mockDb)
+);
 
 import {
   InMemoryReviewQueueStore,
-  SupabaseReviewQueueStore,
+  PostgresReviewQueueStore,
   getReviewQueueStore,
   setReviewQueueStore,
   resetReviewQueueStore,
@@ -200,10 +196,9 @@ describe("InMemoryReviewQueueStore — edge cases", () => {
   });
 });
 
-describe("SupabaseReviewQueueStore — constructor guard", () => {
-  it("creates instance in server environment", () => {
-    const store = new SupabaseReviewQueueStore("https://test.supabase.co", "test-key");
-    expect(store).toBeDefined();
+describe("PostgresReviewQueueStore — construction", () => {
+  it("takes no configuration: the connection is platform/data's", () => {
+    expect(new PostgresReviewQueueStore()).toBeDefined();
   });
 });
 
@@ -455,7 +450,7 @@ describe("moderation barrel — review API contract", () => {
 
   it("exports store implementations", () => {
     expect(InMemoryReviewQueueStore).toBeDefined();
-    expect(SupabaseReviewQueueStore).toBeDefined();
+    expect(PostgresReviewQueueStore).toBeDefined();
   });
 
   it("exports all service functions", () => {

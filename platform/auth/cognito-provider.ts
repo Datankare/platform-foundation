@@ -37,7 +37,13 @@ import type {
 } from "@/platform/auth/types";
 import { logger } from "@/lib/logger";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
-import { getCognitoSettings } from "@/platform/providers/environment-contract";
+import {
+  getCognitoAdminCredentials,
+  getCognitoSettings,
+  isTenantId,
+} from "@/platform/providers/environment-contract";
+import { signAwsJsonPost, type AwsCredentials } from "@/platform/auth/aws-sigv4";
+import type { TenantAttributeReadiness } from "@/platform/auth/provider";
 import type { ErrorCode } from "@/platform/errors/registry";
 
 /** ADR-051: Cognito exception types → platform error codes. Anything else is internal. */
@@ -69,6 +75,8 @@ export interface CognitoConfig {
   region: string;
   userPoolId: string;
   clientId: string;
+  /** Administrative credentials (ADR-053 D2), for assigning tenants; undefined when not set. */
+  adminCredentials?: AwsCredentials;
   /** Hosted sign-in host name (NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN); required for SSO. */
   hostedUiDomain?: string;
   timeoutMs?: number;
@@ -78,6 +86,7 @@ export function getCognitoConfigFromEnv(): CognitoConfig {
   // ADR-050 D2: the contract resolver is the one reader (no AWS_REGION — that is the host's
   // function region, not the pool's).
   const { region, userPoolId, clientId, hostedUiDomain } = getCognitoSettings();
+  const adminCredentials = getCognitoAdminCredentials();
 
   if (!userPoolId || !clientId) {
     logger.warn("Cognito config incomplete", {
@@ -86,7 +95,13 @@ export function getCognitoConfigFromEnv(): CognitoConfig {
     });
   }
 
-  return { region, userPoolId, clientId, hostedUiDomain };
+  return {
+    region,
+    userPoolId,
+    clientId,
+    hostedUiDomain,
+    ...(adminCredentials ? { adminCredentials } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -112,9 +127,27 @@ export class CognitoError extends Error {
 async function callCognito(
   config: CognitoConfig,
   action: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  /** Signs the call (SigV4) — for the administrative actions only. */
+  credentials?: AwsCredentials
 ): Promise<Record<string, unknown>> {
-  const endpoint = `https://cognito-idp.${config.region}.amazonaws.com/`;
+  const host = `cognito-idp.${config.region}.amazonaws.com`;
+  const endpoint = `https://${host}/`;
+  const requestBody = JSON.stringify(payload);
+  const baseHeaders = {
+    "Content-Type": "application/x-amz-json-1.1",
+    "X-Amz-Target": `AWSCognitoIdentityProviderService.${action}`,
+  };
+  const headers = credentials
+    ? await signAwsJsonPost({
+        service: "cognito-idp",
+        region: config.region,
+        host,
+        headers: baseHeaders,
+        body: requestBody,
+        credentials,
+      })
+    : baseHeaders;
   const timeout = config.timeoutMs ?? 10000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -127,11 +160,8 @@ async function callCognito(
       // double-apply a committed write (ADR-028 D5, ADR-031 D7).
       maxRetries: 0,
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-amz-json-1.1",
-        "X-Amz-Target": `AWSCognitoIdentityProviderService.${action}`,
-      },
-      body: JSON.stringify(payload),
+      headers,
+      body: requestBody,
       signal: controller.signal,
     });
 
@@ -197,6 +227,18 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** The Cognito attribute holding a user's tenant (ADR-053 D2). Read-only for every app client. */
+export const TENANT_ATTRIBUTE = "custom:tenant_id";
+
+function tenantAttribute(attrs: Array<{ Name: string; Value: string }> | undefined): {
+  tenantId?: string;
+} {
+  const value = attrs?.find((a) => a.Name === TENANT_ATTRIBUTE)?.Value;
+  // Passed on as given, even malformed: the resolver refuses it, rather than this treating a
+  // corrupt attribute as "no tenant" (which single mode would accept).
+  return typeof value === "string" && value.length > 0 ? { tenantId: value } : {};
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +358,8 @@ export class CognitoAuthProvider implements AuthProvider {
         ...(typeof decoded?.origin_jti === "string" && decoded.origin_jti
           ? { sessionId: decoded.origin_jti }
           : {}),
+        // ADR-053 D2: read in the same GetUser call that verifies the token, so it is current.
+        ...tenantAttribute(attrs),
       };
     } catch {
       return null;
@@ -728,6 +772,206 @@ export class CognitoAuthProvider implements AuthProvider {
       };
     } catch {
       return null;
+    }
+  }
+
+  // ── Tenancy (ADR-053 D2) ──
+
+  private requireAdmin(): AwsCredentials {
+    if (!this.config.adminCredentials) {
+      throw new CognitoError(
+        "Cognito administrative credentials are not configured (COGNITO_ADMIN_ACCESS_KEY_ID)",
+        "ConfigurationError",
+        0
+      );
+    }
+    return this.config.adminCredentials;
+  }
+
+  /**
+   * Set the user's tenant — the one administrative write the platform makes. Idempotent. The
+   * caller (sign-up in shared mode, or an operator moving a user) decides whether it may.
+   */
+  async assignTenant(
+    userId: AuthUserId,
+    tenantId: string
+  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }> {
+    if (!isTenantId(tenantId)) {
+      return {
+        success: false,
+        error: "Malformed tenant id",
+        errorCode: "request.invalid_body",
+      };
+    }
+    try {
+      await callCognito(
+        this.config,
+        "AdminUpdateUserAttributes",
+        {
+          UserPoolId: this.config.userPoolId,
+          Username: userId,
+          UserAttributes: [{ Name: TENANT_ATTRIBUTE, Value: tenantId }],
+        },
+        this.requireAdmin()
+      );
+      logger.info("User tenant assigned", { userId, tenantId });
+      return { success: true };
+    } catch (error) {
+      return this.codedFailure(error, "assignTenant");
+    }
+  }
+
+  /** The user's tenant as Cognito holds it, null when none; undefined when it cannot be read. */
+  async getUserTenant(userId: AuthUserId): Promise<string | null | undefined> {
+    try {
+      const result = await callCognito(
+        this.config,
+        "AdminGetUser",
+        { UserPoolId: this.config.userPoolId, Username: userId },
+        this.requireAdmin()
+      );
+      const attrs = result.UserAttributes as
+        Array<{ Name: string; Value: string }> | undefined;
+      return attrs?.find((a) => a.Name === TENANT_ATTRIBUTE)?.Value ?? null;
+    } catch (error) {
+      logger.warn("Could not read the user's tenant", {
+        userId,
+        cognitoType: error instanceof CognitoError ? error.cognitoType : "Unknown",
+      });
+      return undefined;
+    }
+  }
+
+  /**
+   * Whether the pool can hold tenants safely: the attribute exists, the app client can read it,
+   * and — the property isolation rests on — no app client of the pool can write it, and no
+   * federated sign-in maps a claim into it (else a user could move themselves with
+   * UpdateUserAttributes, or a provider's claim would choose the tenant).
+   */
+  async checkTenantAttribute(): Promise<TenantAttributeReadiness> {
+    let credentials: AwsCredentials;
+    try {
+      credentials = this.requireAdmin();
+    } catch {
+      return {
+        state: "unknown",
+        reason: "administrative credentials are not configured",
+      };
+    }
+    try {
+      const pool = await callCognito(
+        this.config,
+        "DescribeUserPool",
+        { UserPoolId: this.config.userPoolId },
+        credentials
+      );
+      const schema = ((pool.UserPool as Record<string, unknown> | undefined)
+        ?.SchemaAttributes ?? []) as Array<{
+        Name?: string;
+        Mutable?: boolean;
+        AttributeDataType?: string;
+      }>;
+      const attr = schema.find((a) => a.Name === TENANT_ATTRIBUTE);
+      if (!attr) {
+        return {
+          state: "missing",
+          reason: `the pool has no ${TENANT_ATTRIBUTE} attribute`,
+        };
+      }
+      if (attr.AttributeDataType && attr.AttributeDataType !== "String") {
+        return {
+          state: "unsafe",
+          reason: `${TENANT_ATTRIBUTE} is not a String attribute`,
+        };
+      }
+      if (attr.Mutable === false) {
+        return {
+          state: "unsafe",
+          reason: `${TENANT_ATTRIBUTE} is immutable — the platform could never assign it after sign-up`,
+        };
+      }
+      // Every app client of the pool, not only this one: a user can obtain a token from any
+      // client of the pool, and one that may write the attribute lets them choose their tenant.
+      const clientIds: string[] = [];
+      let nextToken: string | undefined;
+      do {
+        const page = await callCognito(
+          this.config,
+          "ListUserPoolClients",
+          {
+            UserPoolId: this.config.userPoolId,
+            MaxResults: 60,
+            ...(nextToken ? { NextToken: nextToken } : {}),
+          },
+          credentials
+        );
+        for (const c of (page.UserPoolClients ?? []) as Array<{ ClientId?: string }>) {
+          if (c.ClientId) clientIds.push(c.ClientId);
+        }
+        nextToken = typeof page.NextToken === "string" ? page.NextToken : undefined;
+      } while (nextToken);
+      if (!clientIds.includes(this.config.clientId)) clientIds.push(this.config.clientId);
+
+      const providers = new Set<string>();
+      for (const clientId of clientIds) {
+        const client = await callCognito(
+          this.config,
+          "DescribeUserPoolClient",
+          { UserPoolId: this.config.userPoolId, ClientId: clientId },
+          credentials
+        );
+        const c = (client.UserPoolClient ?? {}) as {
+          ReadAttributes?: string[];
+          WriteAttributes?: string[];
+          SupportedIdentityProviders?: string[];
+        };
+        const which =
+          clientId === this.config.clientId ? "the app client" : `app client ${clientId}`;
+        // An absent WriteAttributes list means "every writable attribute" — custom ones included.
+        if (!c.WriteAttributes || c.WriteAttributes.includes(TENANT_ATTRIBUTE)) {
+          return {
+            state: "unsafe",
+            reason: `${which} can write ${TENANT_ATTRIBUTE}; remove it from the client's writable attributes`,
+          };
+        }
+        if (
+          clientId === this.config.clientId &&
+          c.ReadAttributes &&
+          !c.ReadAttributes.includes(TENANT_ATTRIBUTE)
+        ) {
+          return {
+            state: "unsafe",
+            reason: `the app client cannot read ${TENANT_ATTRIBUTE}; add it to the client's readable attributes`,
+          };
+        }
+        for (const name of c.SupportedIdentityProviders ?? []) {
+          if (name !== "COGNITO") providers.add(name);
+        }
+      }
+      // A federated sign-in (Google, Apple, …) writes mapped attributes at every sign-in; one
+      // mapping into the tenant attribute would let that provider's claims choose the tenant.
+      for (const name of providers) {
+        const idp = await callCognito(
+          this.config,
+          "DescribeIdentityProvider",
+          { UserPoolId: this.config.userPoolId, ProviderName: name },
+          credentials
+        );
+        const mapping = ((idp.IdentityProvider as Record<string, unknown> | undefined)
+          ?.AttributeMapping ?? {}) as Record<string, string>;
+        if (Object.prototype.hasOwnProperty.call(mapping, TENANT_ATTRIBUTE)) {
+          return {
+            state: "unsafe",
+            reason: `the ${name} sign-in maps a claim into ${TENANT_ATTRIBUTE}; remove that attribute mapping`,
+          };
+        }
+      }
+      return { state: "ready" };
+    } catch (error) {
+      return {
+        state: "unknown",
+        reason: `the pool could not be described (${error instanceof CognitoError ? error.cognitoType : "error"})`,
+      };
     }
   }
 

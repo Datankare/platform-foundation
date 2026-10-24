@@ -14,6 +14,11 @@ import type { RateLimiter, RateLimitRule } from "@/platform/rate-limit";
 export interface RateLimiterContractFixtures {
   /** Fresh, empty limiter per test. */
   makeLimiter: () => RateLimiter | Promise<RateLimiter>;
+  /**
+   * The store keeps time by the database clock (the Postgres store), which fake timers cannot
+   * move: the ageing-out test then uses a one-second window and waits it out.
+   */
+  databaseClock?: boolean;
 }
 
 const RULE: RateLimitRule = { id: "kit:rule", maxRequests: 3, windowSeconds: 60 };
@@ -74,13 +79,29 @@ export function runRateLimiterContract(fx: RateLimiterContractFixtures): void {
     expect(admitted).toBeLessThanOrEqual(3);
   });
 
-  it("requests age out of the window", async () => {
-    jest.useFakeTimers({ now: new Date("2026-10-20T12:00:00Z") });
-    for (let i = 0; i < 3; i++) await limiter.check("ip:a", RULE);
-    await expect(limiter.check("ip:a", RULE)).resolves.toMatchObject({ allowed: false });
-    jest.setSystemTime(new Date("2026-10-20T12:01:01Z"));
-    await expect(limiter.check("ip:a", RULE)).resolves.toMatchObject({ allowed: true });
-  });
+  if (fx.databaseClock) {
+    it("requests age out of the window (database clock)", async () => {
+      const short: RateLimitRule = { id: "kit:short", maxRequests: 3, windowSeconds: 1 };
+      for (let i = 0; i < 3; i++) await limiter.check("ip:a", short);
+      await expect(limiter.check("ip:a", short)).resolves.toMatchObject({
+        allowed: false,
+      });
+      await new Promise((r) => setTimeout(r, 1100));
+      await expect(limiter.check("ip:a", short)).resolves.toMatchObject({
+        allowed: true,
+      });
+    });
+  } else {
+    it("requests age out of the window", async () => {
+      jest.useFakeTimers({ now: new Date("2026-10-20T12:00:00Z") });
+      for (let i = 0; i < 3; i++) await limiter.check("ip:a", RULE);
+      await expect(limiter.check("ip:a", RULE)).resolves.toMatchObject({
+        allowed: false,
+      });
+      jest.setSystemTime(new Date("2026-10-20T12:01:01Z"));
+      await expect(limiter.check("ip:a", RULE)).resolves.toMatchObject({ allowed: true });
+    });
+  }
 
   it("reset forgets a caller for that rule", async () => {
     for (let i = 0; i < 3; i++) await limiter.check("ip:a", RULE);

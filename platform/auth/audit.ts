@@ -5,8 +5,9 @@
  * role changes, permission grants/revokes, entitlement changes,
  * profile updates, admin actions, login events.
  *
- * Uses the service client (bypasses RLS) — audit writes are system operations.
- * The audit_log table has no UPDATE or DELETE policies — append-only by design.
+ * Records are written and read through platform/data in the request's tenant (ADR-053 D4):
+ * tenant_id is filled by the column default and row-level security keeps each tenant's records
+ * apart. The application never updates or deletes an audit row — append-only by design.
  *
  * A security-relevant action is recorded BEFORE it takes effect and does not run when the record
  * cannot be written (audited(), recordAudit()). Until Sprint 7X every write was fire-and-forget:
@@ -16,7 +17,7 @@
  * Sprint 3, Task 3.6 · Sprint 7X (fail closed)
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx, type Tx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -103,18 +104,22 @@ export async function recordAudit(entry: AuditEntry): Promise<void> {
   }
   let failure: string | undefined;
   try {
-    const supabase = getSupabaseServiceClient();
-    const { error } = await supabase.from("audit_log").insert({
-      action: entry.action,
-      actor_id: entry.actorId || null,
-      target_id: entry.targetId || null,
-      details: entry.agent
-        ? { ...entry.details, agent: entry.agent }
-        : entry.details || {},
-      ip_address: entry.ipAddress || null,
-      user_agent: entry.userAgent || null,
-    });
-    if (error) failure = error.message;
+    await withTenantTx((tx) =>
+      tx.query(
+        `insert into audit_log (action, actor_id, target_id, details, ip_address, user_agent)
+         values ($1::audit_action, $2::uuid, $3::uuid, $4::jsonb, $5::inet, $6)`,
+        [
+          entry.action,
+          entry.actorId || null,
+          entry.targetId || null,
+          JSON.stringify(
+            entry.agent ? { ...entry.details, agent: entry.agent } : entry.details || {}
+          ),
+          entry.ipAddress || null,
+          entry.userAgent || null,
+        ]
+      )
+    );
   } catch (err) {
     failure = err instanceof Error ? err.message : "Unknown error";
   }
@@ -182,94 +187,68 @@ export async function writeAuditLog(entry: AuditEntry): Promise<void> {
   }
 }
 
+/** An audit row as stored; timestamps as ISO strings (the JSON form of the row). */
+export type AuditRow = Record<string, unknown> & {
+  id: string;
+  action: string;
+  actor_id: string | null;
+  target_id: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+};
+
 /**
- * Audit rows where `userId` is the actor or the target, newest first, at most `limit` — two
- * bound-filter queries merged, never a filter string (release review, Sprint 7X).
+ * Audit rows of the current tenant where `userId` is the actor or the target, newest first, at
+ * most `limit`, inside the caller's transaction. `userId` must be a UUID (callers check).
  */
-export async function auditRowsForUser<Row extends { created_at?: string; id?: string }>(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
+export async function auditRowsForUser(
+  tx: Tx,
   userId: string,
-  columns: string,
   limit: number
-): Promise<{ data: Row[] | null; error: { message: string } | null }> {
-  const side = (column: "actor_id" | "target_id") =>
-    supabase
-      .from("audit_log")
-      .select(columns.includes("id,") || columns === "*" ? columns : `id, ${columns}`)
-      .eq(column, userId)
-      .order("created_at", { ascending: false })
-      .limit(limit) as unknown as Promise<{
-      data: Row[] | null;
-      error: { message: string } | null;
-    }>;
-  const [asActor, asTarget] = await Promise.all([side("actor_id"), side("target_id")]);
-  const error = asActor.error ?? asTarget.error;
-  if (error) return { data: null, error };
-  const merged = new Map<string, Row>();
-  for (const row of [...(asActor.data ?? []), ...(asTarget.data ?? [])]) {
-    merged.set(String(row.id ?? `${row.created_at}:${merged.size}`), row);
-  }
-  const data = [...merged.values()]
-    .sort((a, b) =>
-      String(a.created_at) < String(b.created_at)
-        ? 1
-        : String(a.created_at) > String(b.created_at)
-          ? -1
-          : 0
-    )
-    .slice(0, limit);
-  return { data, error: null };
+): Promise<AuditRow[]> {
+  const { rows } = await tx.query<{ r: AuditRow }>(
+    `select to_jsonb(a) as r from audit_log a
+      where a.actor_id = $1::uuid or a.target_id = $1::uuid
+      order by a.created_at desc, a.id
+      limit $2`,
+    [userId, limit]
+  );
+  return rows.map((row) => row.r);
 }
 
 /**
- * Read audit log entries for a specific user.
- * Returns entries where the user is either actor or target.
- * Admin only — RLS enforces this at the database level.
+ * Read audit log entries for a specific user, in the current tenant.
+ * Returns entries where the user is either actor or target; an unreadable log reads as none.
+ * Admin only — the routes that call this check the permission.
  */
 export async function getAuditLogForUser(
   userId: string,
   limit: number = 50
 ): Promise<AuditEntry[]> {
-  const supabase = getSupabaseServiceClient();
-
-  // The id is checked, never spliced into a filter string as-is: a crafted value could widen
-  // the filter to other users' records (TASK-145 pattern).
+  // A non-UUID is refused before it reaches the query.
   if (!UUID.test(userId)) return [];
   const bounded = Math.max(1, Math.min(Math.trunc(limit) || 50, 500));
-  const { data, error } = await auditRowsForUser<{
-    action: string;
-    actor_id: string | null;
-    target_id: string | null;
-    details: Record<string, unknown>;
-    ip_address: string | null;
-    user_agent: string | null;
-    created_at: string;
-  }>(
-    supabase,
-    userId,
-    "action, actor_id, target_id, details, ip_address, user_agent, created_at",
-    bounded
-  );
+  let rows: AuditRow[];
+  try {
+    rows = await withTenantTx((tx) => auditRowsForUser(tx, userId, bounded));
+  } catch (err) {
+    logger.error("Audit log unreadable", {
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/auth/audit",
+    });
+    return [];
+  }
 
-  if (error || !data) return [];
-
-  return data.map(
-    (row: {
-      action: string;
-      actor_id: string | null;
-      target_id: string | null;
-      details: Record<string, unknown>;
-      ip_address: string | null;
-      user_agent: string | null;
-    }) => ({
-      action: row.action as AuditAction,
-      actorId: row.actor_id || undefined,
-      targetId: row.target_id || undefined,
-      details: row.details,
-      ipAddress: row.ip_address || undefined,
-      userAgent: row.user_agent || undefined,
-    })
-  );
+  return rows.map((row) => ({
+    action: row.action as AuditAction,
+    actorId: row.actor_id || undefined,
+    targetId: row.target_id || undefined,
+    details: row.details,
+    ipAddress: row.ip_address || undefined,
+    userAgent: row.user_agent || undefined,
+  }));
 }
 
 /**

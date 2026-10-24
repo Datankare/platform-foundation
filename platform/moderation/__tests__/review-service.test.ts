@@ -46,13 +46,9 @@ const mockAccounts = () =>
     audit_log: [],
   });
 let mockDb = mockAccounts();
-const mockSupabase = {
-  from: jest.fn((table: string) => mockDb.client().from(table)),
-};
-
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(() => mockSupabase),
-}));
+jest.mock("@/platform/data", () =>
+  require("@/__tests__/helpers/fake-account-data").fakeAccountData(() => mockDb)
+);
 
 import {
   submitForReview,
@@ -412,7 +408,9 @@ describe("resolveItem", () => {
 
     expect(result.success).toBe(true);
     expect(result.item!.decision).toBe("overturn");
-    expect(mockSupabase.from).toHaveBeenCalledWith("users");
+    // The account was looked up; with no recorded status change by this decision it is left as is.
+    expect(mockDb.rows("users")[0].account_status).toBe("banned");
+    expect(mockDb.writes).not.toContainEqual(["update", "users", expect.anything()]);
   });
 
   it("resolves with modify — requires modifiedAction", async () => {

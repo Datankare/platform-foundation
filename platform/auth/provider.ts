@@ -17,6 +17,7 @@
  * - Testable: interface enables mock implementations for testing
  */
 
+import type { ErrorCode } from "@/platform/errors/registry";
 import type {
   AuthResult,
   AuthSession,
@@ -217,4 +218,31 @@ export interface AuthProvider {
    * Called as part of GDPR right-to-erasure — removes the user from the auth provider.
    */
   deleteUser(accessToken: AuthToken): Promise<{ success: boolean; error?: string }>;
+
+  // ── Tenancy (ADR-053 D2) — optional: single-tenant deployments never call these ──
+
+  /**
+   * Set the tenant the provider reports for a user (TokenPayload.tenantId). It must be a value
+   * the user cannot change themselves. Shared deployments require it.
+   */
+  assignTenant?(
+    userId: AuthUserId,
+    tenantId: string
+  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }>;
+
+  /** The user's tenant as the provider holds it: null for none, undefined when unreadable. */
+  getUserTenant?(userId: AuthUserId): Promise<string | null | undefined>;
+
+  /** Whether the provider holds tenants safely (shown to operators; checked at readiness). */
+  checkTenantAttribute?(): Promise<TenantAttributeReadiness>;
 }
+
+/**
+ * - `ready`   — the attribute exists, users can read but not write it;
+ * - `missing` — the provider has no such attribute yet;
+ * - `unsafe`  — it exists but users could change it, or the app could not read it;
+ * - `unknown` — it could not be checked (no credentials, or the provider did not answer).
+ */
+export type TenantAttributeReadiness =
+  | { readonly state: "ready" }
+  | { readonly state: "missing" | "unsafe" | "unknown"; readonly reason: string };

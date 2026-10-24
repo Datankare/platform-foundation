@@ -44,7 +44,7 @@ function DataTable({
         <tbody>{children}</tbody>
       </table>
       {isEmpty && (
-        <p className="text-center text-gray-500 py-8 text-sm">{emptyMessage}</p>
+        <p className="text-center text-gray-400 py-8 text-sm">{emptyMessage}</p>
       )}
     </div>
   );
@@ -101,7 +101,7 @@ export function RolesDataView({ data }: { data: any }) {
 
   if (roles.length === 0) {
     return (
-      <p className="text-gray-500 text-sm">
+      <p className="text-gray-400 text-sm">
         No roles found. Use the command bar to create one.
       </p>
     );
@@ -142,15 +142,15 @@ export function RolesDataView({ data }: { data: any }) {
                   <td className={tdClass}>
                     <span className="text-blue-400 cursor-pointer">
                       {r.permissionCount}{" "}
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-gray-400">
                         {isExpanded ? "▲" : "▼"}
                       </span>
                     </span>
                   </td>
-                  <td className={`${tdClass} text-xs text-gray-500`}>
+                  <td className={`${tdClass} text-xs text-gray-400`}>
                     {r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "—"}
                   </td>
-                  <td className={`${tdClass} text-xs text-gray-500`}>
+                  <td className={`${tdClass} text-xs text-gray-400`}>
                     {r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : "—"}
                   </td>
                 </tr>
@@ -158,7 +158,7 @@ export function RolesDataView({ data }: { data: any }) {
                   <tr>
                     <td colSpan={5} className="px-4 py-3 bg-[#0d1320]">
                       {r.description && (
-                        <p className="text-xs text-gray-500 mb-3">{r.description}</p>
+                        <p className="text-xs text-gray-400 mb-3">{r.description}</p>
                       )}
                       {r.permissions && r.permissions.length > 0 ? (
                         <div className="grid grid-cols-2 gap-2">
@@ -166,14 +166,14 @@ export function RolesDataView({ data }: { data: any }) {
                             <div key={p.code} className="flex items-center gap-2 text-xs">
                               <span className="text-green-400">✓</span>
                               <code className="text-gray-400">{p.code}</code>
-                              <span className="text-gray-600">{p.displayName}</span>
+                              <span className="text-gray-400">{p.displayName}</span>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-gray-600">No permissions assigned.</p>
+                        <p className="text-xs text-gray-400">No permissions assigned.</p>
                       )}
-                      <div className="mt-3 text-xs text-gray-600 flex gap-4">
+                      <div className="mt-3 text-xs text-gray-400 flex gap-4">
                         <span>
                           Created:{" "}
                           {r.createdAt ? new Date(r.createdAt).toLocaleString() : "—"}
@@ -280,7 +280,7 @@ export function AuditDataView({ data }: { data: any }) {
             <code className="text-xs">{e.action}</code>
           </td>
           <td className={`${tdClass} text-xs`}>{e.actorId?.slice(0, 8) || "—"}</td>
-          <td className={`${tdClass} text-xs text-gray-500 max-w-xs truncate`}>
+          <td className={`${tdClass} text-xs text-gray-400 max-w-xs truncate`}>
             {e.details}
           </td>
         </tr>
@@ -309,7 +309,7 @@ function ConfigRow({
 
 export function PasswordPolicyDataView({ data }: { data: any }) {
   const policy = data?.policy;
-  if (!policy) return <p className="text-gray-500 text-sm">Loading...</p>;
+  if (!policy) return <p className="text-gray-400 text-sm">Loading...</p>;
   return (
     <div className="bg-[#111827] rounded-xl border border-gray-800 p-5 max-w-lg">
       <div className="space-y-3 text-sm">
@@ -398,7 +398,7 @@ export function TrustedAgentsDataView({ data }: { data: any }) {
     <div>
       <h2 className="text-xl font-bold text-white mb-6">Trusted agents</h2>
       {pairs.length === 0 ? (
-        <p className="text-gray-500 text-sm">No agents registered.</p>
+        <p className="text-gray-400 text-sm">No agents registered.</p>
       ) : (
         <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
           <table className="w-full text-sm text-left border-collapse">
@@ -461,7 +461,7 @@ export function PerAccountRestrictionsDataView({ data }: { data: any }) {
     <div>
       <h2 className="text-xl font-bold text-white mb-6">Per-account feature control</h2>
       {rows.length === 0 ? (
-        <p className="text-gray-500 text-sm">No per-account blocks in effect.</p>
+        <p className="text-gray-400 text-sm">No per-account blocks in effect.</p>
       ) : (
         <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
           <table className="w-full text-sm text-left border-collapse">
@@ -517,7 +517,7 @@ export function ApprovalPolicyDataView({ data }: { data: any }) {
     <div>
       <h2 className="text-xl font-bold text-white mb-6">Approval policy</h2>
       {!policy ? (
-        <p className="text-gray-500 text-sm">No policy loaded.</p>
+        <p className="text-gray-400 text-sm">No policy loaded.</p>
       ) : (
         <>
           <p className="text-sm text-gray-400 mb-4">
@@ -525,7 +525,7 @@ export function ApprovalPolicyDataView({ data }: { data: any }) {
             <span className="text-gray-200">{policy.default}</span>
           </p>
           {rules.length === 0 ? (
-            <p className="text-gray-500 text-sm">
+            <p className="text-gray-400 text-sm">
               No rules — the default approver handles every action.
             </p>
           ) : (
@@ -573,12 +573,12 @@ export function CapabilitiesDataView({ data }: { data: any }) {
   return (
     <div>
       <h2 className="text-xl font-bold text-white mb-2">Capabilities</h2>
-      <p className="text-sm text-gray-500 mb-6">
+      <p className="text-sm text-gray-400 mb-6">
         Read-only. Capabilities are derived from the registered workflows, not
         administered here.
       </p>
       {goals.length === 0 ? (
-        <p className="text-gray-500 text-sm">No capabilities registered.</p>
+        <p className="text-gray-400 text-sm">No capabilities registered.</p>
       ) : (
         <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
           <table className="w-full text-sm text-left border-collapse">
@@ -639,7 +639,7 @@ export function CapabilityMappingDataView({ data }: { data: any }) {
     <div>
       <h2 className="text-xl font-bold text-white mb-6">Capability → feature mapping</h2>
       {pairs.length === 0 ? (
-        <p className="text-gray-500 text-sm">No mappings configured.</p>
+        <p className="text-gray-400 text-sm">No mappings configured.</p>
       ) : (
         <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
           <table className="w-full text-sm text-left border-collapse">

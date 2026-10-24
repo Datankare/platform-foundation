@@ -9,21 +9,38 @@ import type {
   CreateInviteInput,
 } from "@/platform/social/types";
 
-const groupInput: CreateGroupInput = {
-  name: "Contract Group",
-  description: "for conformance",
-  ownerId: "owner-1",
-};
-
 export interface SocialStoreContractFixtures {
   makeStore: () => SocialStore | Promise<SocialStore>;
+  /**
+   * The users the kit uses, read after each makeStore. A store whose groups must name real
+   * users (foreign keys) creates them there; default: fixed ids.
+   */
+  users?: () => {
+    readonly owner: string;
+    readonly member: string;
+    readonly invitee: string;
+  };
 }
+
+const DEFAULT_USERS = { owner: "owner-1", member: "member-1", invitee: "invitee-1" };
 
 export function runSocialStoreContract(fx: SocialStoreContractFixtures): void {
   let store: SocialStore;
+  let users: {
+    readonly owner: string;
+    readonly member: string;
+    readonly invitee: string;
+  };
+  let groupInput: CreateGroupInput;
 
   beforeEach(async () => {
     store = await fx.makeStore();
+    users = fx.users?.() ?? DEFAULT_USERS;
+    groupInput = {
+      name: "Contract Group",
+      description: "for conformance",
+      ownerId: users.owner,
+    };
   });
 
   describe("groups", () => {
@@ -55,14 +72,14 @@ export function runSocialStoreContract(fx: SocialStoreContractFixtures): void {
     it("adds, lists, and removes members", async () => {
       const res = await store.createGroup(groupInput);
       const group = res.group!;
-      const add = await store.addMember(group.id, "member-1", "member");
+      const add = await store.addMember(group.id, users.member, "member");
       expect(add.success).toBe(true);
       const members = await store.getMembers(group.id);
-      expect(members.some((m) => m.userId === "member-1")).toBe(true);
-      const remove = await store.removeMember(group.id, "member-1");
+      expect(members.some((m) => m.userId === users.member)).toBe(true);
+      const remove = await store.removeMember(group.id, users.member);
       expect(remove.success).toBe(true);
       const after = await store.getMembers(group.id);
-      expect(after.some((m) => m.userId === "member-1")).toBe(false);
+      expect(after.some((m) => m.userId === users.member)).toBe(false);
     });
   });
 
@@ -73,17 +90,17 @@ export function runSocialStoreContract(fx: SocialStoreContractFixtures): void {
       const inviteInput: CreateInviteInput = {
         groupId: group.id,
         inviterId: groupInput.ownerId,
-        inviteeId: "invitee-1",
+        inviteeId: users.invitee,
       };
       const created = await store.createInvite(inviteInput);
       expect(created.success).toBe(true);
       const invite = created.invite!;
-      const pending = await store.listPendingInvites("invitee-1");
+      const pending = await store.listPendingInvites(users.invitee);
       expect(pending.some((i) => i.id === invite.id)).toBe(true);
       const resolved = await store.resolveInvite(invite.id, "accepted");
       expect(resolved.success).toBe(true);
       expect(resolved.invite!.status).toBe("accepted");
-      const pendingAfter = await store.listPendingInvites("invitee-1");
+      const pendingAfter = await store.listPendingInvites(users.invitee);
       expect(pendingAfter.some((i) => i.id === invite.id)).toBe(false);
     });
   });

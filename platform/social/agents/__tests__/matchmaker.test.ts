@@ -23,6 +23,7 @@ function makeContext(overrides: Partial<WorkflowContext> = {}): WorkflowContext 
     stepCount: 0,
     totalCostUsd: 0,
     scopeKey: "user",
+    tenantId: undefined,
     ...overrides,
   };
 }

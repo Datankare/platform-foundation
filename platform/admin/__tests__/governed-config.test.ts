@@ -91,6 +91,7 @@ describe("writeGovernedConfig", () => {
         value: 5,
         changeComment: "c",
         actorId: standardAdmin.userId,
+        actorIsOperator: false,
         confirmed: true,
       },
       undefined

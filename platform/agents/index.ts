@@ -77,7 +77,7 @@ export {
   resetEffectLedger,
   idempotencyKeyFor,
 } from "./effect-ledger";
-export { SupabaseEffectLedger } from "./supabase-effect-ledger";
+export { PostgresEffectLedger } from "./postgres-effect-ledger";
 export { performExternalEffect } from "./external-effect";
 export type { ExternalEffectArgs, ExternalEffectOutcome } from "./external-effect";
 export type { ResumeAgentArgs } from "./runtime";
@@ -87,9 +87,9 @@ export {
   setProposalStore,
   resetProposalStore,
 } from "./proposal-store";
-export { SupabaseProposalStore } from "./supabase-proposal-store";
-export { SupabaseTrajectoryStore } from "./supabase-trajectory-store";
-export { SupabaseBudgetStore } from "./supabase-budget-store";
+export { PostgresProposalStore } from "./postgres-proposal-store";
+export { PostgresTrajectoryStore } from "./postgres-trajectory-store";
+export { PostgresBudgetStore } from "./postgres-budget-store";
 export { InMemoryBudgetStore, setBudgetTracker } from "./budget-tracker";
 export { UndeclaredExternalEffectError } from "./tool-invoker";
 export { invokeTool, DEFAULT_OUTPUT_RETRIES } from "./tool-invoker";
@@ -136,7 +136,7 @@ export {
   DEFAULT_APPROVAL_POLICY,
   approvalRulesProblem,
 } from "./approval-policy-store";
-export { SupabaseApprovalPolicyStore } from "./supabase-approval-policy-store";
+export { PostgresApprovalPolicyStore } from "./postgres-approval-policy-store";
 export type {
   ApprovalPolicy,
   ApprovalRule,

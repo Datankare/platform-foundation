@@ -37,6 +37,8 @@ const MOCK_SESSION_ID = "mock-session";
 const MOCK_GUEST_ID = "mock-guest-001";
 
 export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthProvider {
+  // ADR-053 D2: the tenant each user is assigned, as a provider attribute would hold it.
+  const tenants = new Map<string, string>();
   const base: AuthProvider = {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async signUp(email: string): Promise<AuthResult> {
@@ -92,6 +94,7 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
           exp: Math.floor(Date.now() / 1000) + 3600,
           // One sign-in session for the one mock token (TokenPayload.sessionId).
           sessionId: MOCK_SESSION_ID,
+          ...(tenants.has(MOCK_USER_ID) ? { tenantId: tenants.get(MOCK_USER_ID) } : {}),
         };
       }
       return null;
@@ -237,6 +240,19 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
         return { valid: true, guestId: MOCK_GUEST_ID };
       }
       return { valid: false };
+    },
+
+    async assignTenant(userId: string, tenantId: string) {
+      tenants.set(userId, tenantId);
+      return { success: true };
+    },
+
+    async getUserTenant(userId: string) {
+      return tenants.get(userId) ?? null;
+    },
+
+    async checkTenantAttribute() {
+      return { state: "ready" as const };
     },
 
     async listDevices(): Promise<DeviceInfo[]> {

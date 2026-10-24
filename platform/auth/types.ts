@@ -53,6 +53,12 @@ export interface TokenPayload {
    * be required to be decided through another (PF v5.1.0).
    */
   sessionId?: string;
+  /**
+   * The tenant the identity provider says this user belongs to (Cognito `custom:tenant_id`),
+   * when it says one (ADR-053 D2). Read-only to the user; set by the platform's provisioning.
+   * Not yet checked — platform/tenancy/resolve.ts decides whether it is acceptable.
+   */
+  tenantId?: string;
   /** Additional claims from the provider (groups, roles, etc.) */
   [key: string]: unknown;
 }

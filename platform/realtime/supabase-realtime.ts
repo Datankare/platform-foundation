@@ -27,6 +27,7 @@ import type {
 } from "./types";
 import { generateMessageId } from "./types";
 import { logger } from "@/lib/logger";
+import { tenantTopic } from "./tenant-topic";
 
 // ---------------------------------------------------------------------------
 // Supabase types (minimal — avoids tight coupling to @supabase/supabase-js)
@@ -36,7 +37,7 @@ import { logger } from "@/lib/logger";
 export interface SupabaseClient {
   channel(
     name: string,
-    opts?: { config?: { broadcast?: { self?: boolean } } }
+    opts?: { config?: { broadcast?: { self?: boolean }; private?: boolean } }
   ): SupabaseChannel;
   removeChannel(channel: SupabaseChannel): Promise<"ok" | "timed out" | "error">;
 }
@@ -256,21 +257,27 @@ export class SupabaseRealtimeProvider implements RealtimeProvider {
     };
   }
 
+  /**
+   * The channel `name` in the current tenant (tenant-topic.ts): its topic is `t:<tenant>:<name>`,
+   * and it is private — joined only by those the realtime policy lets read that tenant's topics.
+   */
   channel(name: string, options?: ChannelOptions): IRealtimeChannel {
-    if (!this.channels.has(name)) {
-      const supabaseChannel = this.client.channel(name, {
-        config: { broadcast: { self: true } },
+    const topic = tenantTopic(name);
+    if (!this.channels.has(topic)) {
+      const supabaseChannel = this.client.channel(topic, {
+        config: { broadcast: { self: true }, private: true },
       });
-      this.supabaseChannels.set(name, supabaseChannel);
+      this.supabaseChannels.set(topic, supabaseChannel);
       this.channels.set(
-        name,
+        topic,
         new SupabaseRealtimeChannel(name, supabaseChannel, options)
       );
     }
-    return this.channels.get(name)!;
+    return this.channels.get(topic)!;
   }
 
   async removeChannel(name: string): Promise<void> {
+    name = tenantTopic(name);
     const ch = this.channels.get(name);
     if (ch) {
       ch.unsubscribe();

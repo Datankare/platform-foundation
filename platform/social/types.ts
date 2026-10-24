@@ -128,7 +128,7 @@ export interface CreateInviteInput {
  *
  * Implementations:
  *   InMemorySocialStore — for tests and development (default)
- *   SupabaseSocialStore — for production
+ *   PostgresSocialStore — for production (platform/data, in the request's tenant)
  *
  * P7: Provider-aware — swap via SOCIAL_STORE env var.
  * P4: All writes accept optional AgentIdentity for audit.

@@ -20,7 +20,7 @@
  * @module platform/admin
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import type {
   ConfigHistoryRecord,
@@ -48,11 +48,19 @@ const MIN_SCREENINGS_FOR_COMPARISON = 10;
 // Metrics aggregation
 // ---------------------------------------------------------------------------
 
-/** DB row shape from the aggregation query */
+interface CountsRow {
+  total: number;
+  block: number;
+  warn: number;
+  allow: number;
+  escalate: number;
+}
 
 /**
- * Query content_safety_audit for action counts within a time window.
- * Optionally filtered by content_rating_level.
+ * Count content_safety_audit actions within a time window, optionally for one content rating
+ * level. Counted by Postgres (count … filter), so the counts are exact at any volume — the
+ * earlier client-side count read at most 10,000 rows and flagged larger windows as approximate.
+ * The current tenant's screenings only (row-level security).
  */
 async function queryAuditMetrics(
   since: string,
@@ -60,33 +68,20 @@ async function queryAuditMetrics(
   contentRatingLevel?: number
 ): Promise<ConfigImpactMetrics> {
   try {
-    const supabase = getSupabaseServiceClient();
-
-    // Use RPC or raw query for aggregation — Supabase JS doesn't have
-    // native GROUP BY, so we query all rows in the window and count locally.
-    let query = supabase
-      .from("content_safety_audit" as never)
-      .select("action_taken")
-      .gte("created_at", since)
-      .lt("created_at", before);
-
-    if (contentRatingLevel !== undefined) {
-      query = query.eq("content_rating_level", contentRatingLevel);
-    }
-
-    // Limit to prevent memory issues on large datasets
-    query = query.limit(10000);
-
-    const { data, error } = (await query) as {
-      data: Array<{ action_taken: string }> | null;
-      error: { message: string } | null;
-    };
-
-    if (error || !data) {
-      return emptyMetrics();
-    }
-
-    return aggregateMetrics(data);
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<CountsRow>(
+        `select count(*)::int as total,
+                count(*) filter (where action_taken = 'block')::int as block,
+                count(*) filter (where action_taken = 'warn')::int as warn,
+                count(*) filter (where action_taken = 'allow')::int as allow,
+                count(*) filter (where action_taken = 'escalate')::int as escalate
+           from content_safety_audit
+          where created_at >= $1::timestamptz and created_at < $2::timestamptz
+            and ($3::int is null or content_rating_level = $3)`,
+        [since, before, contentRatingLevel ?? null]
+      )
+    );
+    return metricsOf(rows[0]);
   } catch (err) {
     logger.error("Impact query failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -96,48 +91,21 @@ async function queryAuditMetrics(
   }
 }
 
-/** Row limit for audit queries — matches the .limit() in queryAuditMetrics */
-const AUDIT_QUERY_LIMIT = 10000;
-
-/** Aggregate action_taken rows into metrics */
-function aggregateMetrics(
-  rows: ReadonlyArray<{ action_taken: string }>
-): ConfigImpactMetrics {
-  const total = rows.length;
-  if (total === 0) return emptyMetrics();
-  const truncated = total >= AUDIT_QUERY_LIMIT;
-
-  let blockCount = 0;
-  let warnCount = 0;
-  let allowCount = 0;
-  let escalateCount = 0;
-
-  for (const row of rows) {
-    switch (row.action_taken) {
-      case "block":
-        blockCount++;
-        break;
-      case "warn":
-        warnCount++;
-        break;
-      case "allow":
-        allowCount++;
-        break;
-      case "escalate":
-        escalateCount++;
-        break;
-    }
-  }
-
+/** Metrics from the window's counts. */
+function metricsOf(counts: CountsRow | undefined): ConfigImpactMetrics {
+  const total = Number(counts?.total ?? 0);
+  if (!counts || total === 0) return emptyMetrics();
+  const blockCount = Number(counts.block);
+  const warnCount = Number(counts.warn);
   return {
     totalScreenings: total,
     blockCount,
     warnCount,
-    allowCount,
-    escalateCount,
-    blockRate: total > 0 ? blockCount / total : 0,
-    warnRate: total > 0 ? warnCount / total : 0,
-    truncated,
+    allowCount: Number(counts.allow),
+    escalateCount: Number(counts.escalate),
+    blockRate: blockCount / total,
+    warnRate: warnCount / total,
+    truncated: false,
   };
 }
 
@@ -222,10 +190,6 @@ function generateSummary(
     );
   }
 
-  if (before.truncated || after.truncated) {
-    parts.push("Note: Data was truncated due to high volume — metrics are approximate.");
-  }
-
   parts.push(
     `Period: ${before.totalScreenings} screenings before, ${after.totalScreenings} after.`
   );
@@ -292,9 +256,8 @@ export function isModerationConfig(configKey: string): boolean {
 // Gotchas (L17)
 // ---------------------------------------------------------------------------
 //
-// 1. Supabase JS doesn't support GROUP BY — we fetch rows and count
-//    locally. The 10,000 row limit prevents memory blowups but means
-//    very high-traffic periods may have undercounted metrics.
+// 1. Counts are aggregated in SQL (count … filter) and exact; `truncated` is
+//    always false for them.
 //
 // 2. The "before" window is capped at 7 days even if the "after"
 //    window is longer. This prevents comparing 1 day of data against

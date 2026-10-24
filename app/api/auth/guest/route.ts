@@ -16,8 +16,9 @@ import { mintGuestToken } from "@/platform/auth/guest-token";
 import { internalError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_GUEST);
   if (limited) return limited;
@@ -43,4 +44,4 @@ export async function POST(request: NextRequest) {
     maxAge: Math.max(0, expiresAt - Math.floor(Date.now() / 1000)),
   });
   return response;
-}
+});

@@ -41,11 +41,6 @@ jest.mock("@/platform/auth/config", () => ({
 }));
 jest.mock("@/platform/auth/auth-init", () => ({ initAuth: jest.fn() }));
 // No database, as in the monkey run: creating the client throws.
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: () => {
-    throw new Error("Missing Supabase environment variables");
-  },
-}));
 
 const ROUTES: [string, string[]][] = [
   ["sign-up", ["email", "password"]],

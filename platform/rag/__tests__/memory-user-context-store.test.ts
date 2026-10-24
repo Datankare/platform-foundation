@@ -6,6 +6,11 @@
 
 import { InMemoryUserContextStore } from "../memory-user-context-store";
 import type { InteractionRecord, UserAIContext } from "../types";
+import { runTenantIsolationContract } from "@/__tests__/contract/tenant-isolation-contract";
+import {
+  memoryTenant,
+  userContextIsolation,
+} from "@/__tests__/helpers/store-isolation-fixtures";
 
 function makeInteraction(id: string, input = "hello"): InteractionRecord {
   return {
@@ -118,5 +123,15 @@ describe("InMemoryUserContextStore", () => {
     it("no-ops for unknown user", async () => {
       await store.deleteContext("unknown");
     });
+  });
+});
+
+describe("InMemoryUserContextStore — tenants (ADR-053 D6)", () => {
+  runTenantIsolationContract({
+    name: "user AI context (memory)",
+    makeStore: () => new InMemoryUserContextStore(),
+    createTenant: memoryTenant,
+    ...userContextIsolation(),
+    failsClosedWithoutTenant: false,
   });
 });

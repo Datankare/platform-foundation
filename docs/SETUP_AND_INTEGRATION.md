@@ -68,21 +68,28 @@ always **select a provider, then supply its credentials** — see
 
 ### 4a. A database (Supabase)
 
+The stores reach the project's Postgres directly through `platform/data`, as the role
+`app_tenant` under row-level security — not through the Supabase REST API. After applying the
+migrations (4b), give `app_tenant` a password and take the two connection strings as
+[`TENANCY_OPERATIONS.md`](TENANCY_OPERATIONS.md) §1 describes:
+
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+DATABASE_URL=postgresql://app_tenant.<project-ref>:<password>@<pooler-host>:6543/postgres
+DATABASE_OWNER_URL=postgresql://postgres.<project-ref>:<db-password>@<pooler-host>:6543/postgres
+DATABASE_SSL=verify-full
+DATABASE_SSL_CA=<the project's CA certificate, one line with \n for each line break>
 ```
 
-Then point the stores you want to persist at Supabase (they default to in-memory):
+Then point the stores you want to persist at Postgres (they default to in-memory; `supabase` is
+still accepted and selects the same store):
 
 ```bash
-MODERATION_STORE=supabase
-TRAJECTORY_STORE=supabase
-PROPOSAL_STORE=supabase
-BUDGET_STORE=supabase
-EFFECT_LEDGER=supabase
-APPROVAL_POLICY_STORE=supabase
+MODERATION_STORE=postgres
+TRAJECTORY_STORE=postgres
+PROPOSAL_STORE=postgres
+BUDGET_STORE=postgres
+EFFECT_LEDGER=postgres
+APPROVAL_POLICY_STORE=postgres
 ```
 
 ### 4b. Apply migrations

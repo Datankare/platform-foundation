@@ -43,7 +43,7 @@ export { EMBEDDING_MODEL_REGISTRY } from "./embedding-types";
 export { createMockEmbeddingProvider } from "./mock-embedding-provider";
 export { chunkDocument } from "./chunker";
 export { InMemoryEmbeddingStore } from "./memory-embedding-store";
-export { SupabaseEmbeddingStore } from "./supabase-embedding-store";
+export { PostgresEmbeddingStore } from "./postgres-embedding-store";
 export { retrieve } from "./retriever";
 export type { RetrieveOptions } from "./retriever";
 export { ingestDocument } from "./ingest";

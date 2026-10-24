@@ -6,8 +6,6 @@
  * and the full generateImpactReport flow.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 // ── Mocks ───────────────────────────────────────────────────────────────
 
 // Gotcha #2: jest.mock needs generateRequestId
@@ -21,13 +19,24 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: jest.fn(() => "test-request-id"),
 }));
 
-const mockSupabase = {
-  from: jest.fn(),
-};
-
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(() => mockSupabase),
+// The data layer: each query returns what the test scripts (the SQL itself is proven against
+// Postgres in __tests__/db).
+const mockQuery = jest.fn();
+jest.mock("@/platform/data", () => ({
+  withTenantTx: (fn: (tx: unknown) => unknown) => fn({ query: mockQuery }),
 }));
+const rows = (r: unknown[]) => ({ rows: r, rowCount: r.length });
+/** One window's counts row; unset counts are 0. */
+const counts = (
+  c: Partial<Record<"total" | "block" | "warn" | "allow" | "escalate", number>>
+) => ({
+  total: 0,
+  block: 0,
+  warn: 0,
+  allow: 0,
+  escalate: 0,
+  ...c,
+});
 
 // ── Imports ─────────────────────────────────────────────────────────────
 
@@ -35,18 +44,6 @@ import { generateImpactReport, isModerationConfig } from "../config-impact";
 import type { ConfigHistoryRecord } from "../types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-function createChainMock(resolvedValue: { data: any; error: any }) {
-  const chain: any = {
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    gte: jest.fn().mockReturnThis(),
-    lt: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    then: (resolve: any) => resolve(resolvedValue),
-  };
-  return chain;
-}
 
 function makeHistoryRecord(
   overrides: Partial<ConfigHistoryRecord> = {}
@@ -60,6 +57,7 @@ function makeHistoryRecord(
     changeComment: "Tightening for teens",
     changeSource: "config_agent",
     createdAt: "2026-04-20T12:00:00Z",
+    scope: "platform",
     ...overrides,
   };
 }
@@ -68,6 +66,7 @@ function makeHistoryRecord(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockQuery.mockReset();
 });
 
 describe("isModerationConfig", () => {
@@ -84,39 +83,10 @@ describe("isModerationConfig", () => {
 
 describe("generateImpactReport", () => {
   it("returns report with before/after metrics", async () => {
-    const beforeData = [
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "block" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "block" },
-    ];
-    const afterData = [
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "allow" },
-      { action_taken: "block" },
-    ];
-
-    let callCount = 0;
-    mockSupabase.from.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) {
-        return createChainMock({ data: beforeData, error: null });
-      }
-      return createChainMock({ data: afterData, error: null });
-    });
+    // The window counts as Postgres returns them: 10 screenings, 2 blocks, then 10 and 1.
+    mockQuery
+      .mockResolvedValueOnce(rows([counts({ total: 10, block: 2, allow: 8 })]))
+      .mockResolvedValueOnce(rows([counts({ total: 10, block: 1, allow: 9 })]));
 
     const change = makeHistoryRecord();
     const report = await generateImpactReport(change, "2026-04-22T12:00:00Z");
@@ -132,8 +102,7 @@ describe("generateImpactReport", () => {
   });
 
   it("filters by content_rating_level for level-specific keys", async () => {
-    const chain = createChainMock({ data: [], error: null });
-    mockSupabase.from.mockReturnValue(chain);
+    mockQuery.mockResolvedValue(rows([]));
 
     const change = makeHistoryRecord({
       configKey: "moderation.level2.block_severity",
@@ -141,13 +110,12 @@ describe("generateImpactReport", () => {
 
     await generateImpactReport(change, "2026-04-22T12:00:00Z");
 
-    // Should have called eq with content_rating_level = 2
-    expect(chain.eq).toHaveBeenCalledWith("content_rating_level", 2);
+    // The level is the third parameter: content_rating_level = 2
+    expect(mockQuery.mock.calls[0][1][2]).toBe(2);
   });
 
   it("does not filter by level for global moderation keys", async () => {
-    const chain = createChainMock({ data: [], error: null });
-    mockSupabase.from.mockReturnValue(chain);
+    mockQuery.mockResolvedValue(rows([]));
 
     const change = makeHistoryRecord({
       configKey: "moderation.strike_warn_threshold",
@@ -155,20 +123,12 @@ describe("generateImpactReport", () => {
 
     await generateImpactReport(change, "2026-04-22T12:00:00Z");
 
-    // eq should NOT be called with content_rating_level
-    const eqCalls = chain.eq.mock.calls;
-    const hasRatingFilter = eqCalls.some(
-      (call: any[]) => call[0] === "content_rating_level"
-    );
-    expect(hasRatingFilter).toBe(false);
+    // No level: the level parameter is null, which the query reads as "any level"
+    expect(mockQuery.mock.calls.every((c) => c[1][2] === null)).toBe(true);
   });
 
   it("handles DB errors gracefully (P11)", async () => {
-    const chain = createChainMock({
-      data: null,
-      error: { message: "connection refused" },
-    });
-    mockSupabase.from.mockReturnValue(chain);
+    mockQuery.mockRejectedValue(new Error("connection refused"));
 
     const change = makeHistoryRecord();
     const report = await generateImpactReport(change, "2026-04-22T12:00:00Z");
@@ -178,28 +138,35 @@ describe("generateImpactReport", () => {
     expect(report.summary).toContain("Insufficient data");
   });
 
-  it("sets truncated flag when row limit is hit (F2)", async () => {
-    // Generate exactly 10000 rows to trigger truncation detection
-    const maxRows = Array.from({ length: 10000 }, () => ({
-      action_taken: "allow",
-    }));
+  it("counts exactly at any volume: never truncated, never approximate (F2)", async () => {
+    mockQuery.mockResolvedValue(
+      rows([
+        counts({ total: 2_000_000, block: 500_000, warn: 100_000, allow: 1_400_000 }),
+      ])
+    );
 
-    mockSupabase.from.mockReturnValue(createChainMock({ data: maxRows, error: null }));
+    const report = await generateImpactReport(
+      makeHistoryRecord(),
+      "2026-04-22T12:00:00Z"
+    );
 
-    const change = makeHistoryRecord();
-    const report = await generateImpactReport(change, "2026-04-22T12:00:00Z");
-
-    // Both before and after query the same mock, both get 10000 rows
-    expect(report.before.truncated).toBe(true);
-    expect(report.summary).toContain("approximate");
+    expect(report.before).toEqual({
+      totalScreenings: 2_000_000,
+      blockCount: 500_000,
+      warnCount: 100_000,
+      allowCount: 1_400_000,
+      escalateCount: 0,
+      blockRate: 0.25,
+      warnRate: 0.05,
+      truncated: false,
+    });
+    expect(report.summary).not.toContain("approximate");
+    // Aggregated by the database: no row cap is sent.
+    expect(mockQuery.mock.calls[0][1]).toHaveLength(3);
   });
 
   it("notes insufficient data when screenings below threshold", async () => {
-    const chain = createChainMock({
-      data: [{ action_taken: "allow" }],
-      error: null,
-    });
-    mockSupabase.from.mockReturnValue(chain);
+    mockQuery.mockResolvedValue(rows([counts({ total: 1, allow: 1 })]));
 
     const change = makeHistoryRecord();
     const report = await generateImpactReport(change, "2026-04-22T12:00:00Z");

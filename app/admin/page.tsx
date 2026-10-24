@@ -20,6 +20,11 @@ import {
   CapabilitiesDataView,
   CapabilityMappingDataView,
 } from "@/components/admin/AdminDataViews";
+import {
+  OperatorTenantsView,
+  TenantSettingsView,
+} from "@/components/admin/TenancyPanels";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 interface ActionPlan {
   message: string;
@@ -39,6 +44,8 @@ const PANEL_TITLES: Record<string, string> = {
   entitlements: "Entitlements",
   audit: "Audit Trail",
   "password-policy": "Password Policy",
+  tenant: "Tenant",
+  tenants: "Tenants",
 };
 
 const PANEL_HINTS: Record<string, string> = {
@@ -61,13 +68,15 @@ const ENDPOINTS: Record<string, string> = {
   "approval-policy": "/api/admin/approval-policy",
   capabilities: "/api/admin/capabilities",
   "capability-mapping": "/api/admin/capability-mapping",
+  tenant: "/api/admin/tenant",
+  tenants: "/api/operator/tenants",
 };
 
 /** One read of a panel's data: undefined when the panel has none or the read failed. */
 async function fetchPanelData(panel: AdminSection): Promise<unknown> {
   const endpoint = ENDPOINTS[panel];
   if (!endpoint) return undefined;
-  const res = await fetch(endpoint);
+  const res = await apiFetch(endpoint);
   return res.ok ? res.json() : undefined;
 }
 
@@ -86,6 +95,8 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   "approval-policy": ApprovalPolicyDataView,
   capabilities: CapabilitiesDataView,
   "capability-mapping": CapabilityMappingDataView,
+  tenant: TenantSettingsView,
+  tenants: OperatorTenantsView,
 };
 
 export default function AdminPage() {
@@ -127,7 +138,7 @@ export default function AdminPage() {
       );
       if (decision) {
         const id = String(decision.input.proposalId ?? "");
-        const res = await fetch(`/api/admin/approvals/${encodeURIComponent(id)}`, {
+        const res = await apiFetch(`/api/admin/approvals/${encodeURIComponent(id)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -148,7 +159,7 @@ export default function AdminPage() {
         await refreshData(activePanel);
         return;
       }
-      const res = await fetch("/api/admin/ai/execute", {
+      const res = await apiFetch("/api/admin/ai/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actions }),

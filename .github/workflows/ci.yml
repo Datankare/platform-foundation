@@ -54,8 +54,53 @@ jobs:
       - name: Layer 0e — Override audit (TASK-070)
         run: npm run overrides:audit
 
+      - name: Install Postgres 17 + pgvector (apt.postgresql.org)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
+          # The runner image turns off automatic cluster creation (create_main_cluster = false),
+          # so the package installs without one: create it when missing, start it if stopped.
+          if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
+            sudo pg_createcluster 17 main --start >/dev/null
+          fi
+          sudo pg_ctlcluster 17 main status >/dev/null || sudo pg_ctlcluster 17 main start
+          # The runner image may already have another cluster on 5432; use whatever 17 got.
+          port=$(pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main" { print $3 }')
+          [ -n "$port" ] || { pg_lsclusters; echo "no Postgres 17 cluster"; exit 1; }
+          echo "PGPORT=$port" >> "$GITHUB_ENV"
+          sudo -u postgres psql -X -q -p "$port" \
+            -c "ALTER USER postgres PASSWORD 'postgres'" -c "CREATE DATABASE replay"
+          echo "Postgres $(sudo -u postgres psql -X -At -p "$port" -c 'show server_version') on port $port"
+
+      # ADR-053 D8: the suites under __tests__/db (platform/data, every Postgres store, the
+      # tenant isolation kit) run against a database built by the migration replay, signed in as
+      # app_tenant (a throwaway password, this job only) and as the owner. REQUIRE_DB_TESTS makes a
+      # missing database a failure, so this layer can never pass by skipping them.
+      - name: Layer 1 — Database for the data-layer tests (migration replay)
+        run: |
+          set -euo pipefail
+          bash scripts/migration-replay.sh
+          pw="ci-$(openssl rand -hex 16)"
+          psql -X -q -v ON_ERROR_STOP=1 -c "ALTER ROLE app_tenant LOGIN PASSWORD '$pw'"
+          echo "::add-mask::$pw"
+          echo "TEST_DATABASE_URL=postgresql://app_tenant:$pw@localhost:$PGPORT/replay" >> "$GITHUB_ENV"
+          echo "TEST_DATABASE_OWNER_URL=postgresql://postgres:postgres@localhost:$PGPORT/replay" >> "$GITHUB_ENV"
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: replay
+
       - name: Layer 1 — Unit tests
         run: npm run test:coverage
+        env:
+          REQUIRE_DB_TESTS: "1"
 
       - name: Layer 1b — Coverage ratchet (TASK-080)
         run: npm run coverage:ratchet

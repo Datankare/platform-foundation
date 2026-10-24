@@ -71,7 +71,7 @@ export function AuditPanel({ entries, onSearch, onLoadMore, hasMore }: AuditPane
                   <code className="text-xs">{e.targetId?.slice(0, 8) || "—"}</code>
                 </td>
                 <td className={tdClass}>
-                  <span className="text-xs text-gray-500 max-w-xs truncate block">
+                  <span className="text-xs text-gray-400 max-w-xs truncate block">
                     {e.details}
                   </span>
                 </td>
@@ -80,7 +80,7 @@ export function AuditPanel({ entries, onSearch, onLoadMore, hasMore }: AuditPane
           </tbody>
         </table>
         {entries.length === 0 && (
-          <p className="text-center text-gray-500 py-8 text-sm">
+          <p className="text-center text-gray-400 py-8 text-sm">
             No audit entries found.
           </p>
         )}

@@ -36,10 +36,11 @@ import { screenStream } from "@/platform/ai/screened-stream";
 import { checkOutputSafety, checkSafety } from "@/lib/safety";
 import { buildStreamSystemPrompt } from "@/prompts";
 import { logger, generateRequestId } from "@/lib/logger";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 export const runtime = "nodejs";
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
   const start = Date.now();
 
@@ -159,4 +160,4 @@ export async function POST(request: NextRequest) {
       "X-Request-Id": requestId,
     },
   });
-}
+});

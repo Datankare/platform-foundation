@@ -83,7 +83,22 @@ export interface EnhancedConfigEntry {
   readonly allowedValues: readonly string[] | null;
   /** Permission tier: standard (admin) or safety (super_admin) */
   readonly permissionTier: PermissionTier;
+  /**
+   * ADR-053 D5: whether a tenant's own administrators may set this key for their tenant. Keys
+   * that govern the platform (dual control, safety thresholds, cost guards) are the operator's.
+   */
+  readonly tenantOverridable: boolean;
+  /** True when `value` is the current tenant's own value rather than the platform default. */
+  readonly overridden: boolean;
+  /** The platform default, whether or not the tenant overrides it. */
+  readonly platformValue: unknown;
 }
+
+/**
+ * ADR-053 D5: what a config change is to — the platform default every tenant inherits, or the
+ * current tenant's own value.
+ */
+export type ConfigScope = "platform" | "tenant";
 
 // ---------------------------------------------------------------------------
 // Config validation
@@ -148,6 +163,8 @@ export interface ConfigHistoryRecord {
   readonly changeComment: string;
   readonly changeSource: ConfigChangeSource;
   readonly createdAt: string;
+  /** What was changed: the platform default or the tenant's own value (ADR-053 D5). */
+  readonly scope: ConfigScope;
 }
 
 /** Options for querying config history */
@@ -184,7 +201,14 @@ export interface ConfigApprovalRecord {
   readonly reviewedAt: string | null;
   readonly expiresAt: string;
   readonly createdAt: string;
+  /** What the change is to: the platform default or the tenant's own value (ADR-053 D5). */
+  readonly scope: ConfigScope;
+  /** What approving it does: set the proposed value, or reset the tenant's own value. */
+  readonly action: ConfigApprovalAction;
 }
+
+/** set: apply proposedValue. reset: remove the tenant's own value (it follows the default). */
+export type ConfigApprovalAction = "set" | "reset";
 
 /** Options for querying pending approvals */
 export interface ConfigApprovalQueryOptions {
@@ -229,7 +253,10 @@ export interface ConfigImpactMetrics {
   readonly escalateCount: number;
   readonly blockRate: number;
   readonly warnRate: number;
-  /** True when query hit the row limit — metrics are approximate */
+  /**
+   * True when the metrics are approximate. The platform's counts are exact (aggregated in SQL),
+   * so it reports false; kept so a report built from sampled data can say so.
+   */
   readonly truncated: boolean;
 }
 
@@ -342,6 +369,7 @@ export const TOOL_BOUNDARIES: Record<string, StepBoundary> = {
   impact_report: "cognition",
   bulk_review: "cognition",
   update_config: "commitment",
+  reset_config: "commitment",
   request_approval: "commitment",
   approve_change: "commitment",
   reject_change: "commitment",
@@ -359,6 +387,7 @@ export const CONFIG_TOOL_IDS = {
   SEARCH_CONFIG: "search_config",
   GET_CONFIG: "get_config",
   UPDATE_CONFIG: "update_config",
+  RESET_CONFIG: "reset_config",
   GET_HISTORY: "get_history",
   COMPARE_TO_DEFAULTS: "compare_to_defaults",
   IMPACT_REPORT: "impact_report",
@@ -376,8 +405,8 @@ export type ConfigToolId = (typeof CONFIG_TOOL_IDS)[keyof typeof CONFIG_TOOL_IDS
 //
 // 1. EnhancedConfigEntry.value and defaultValue are `unknown` — the DB
 //    stores JSONB. Always validate with valueType before casting.
-//    A "number" config stores its value as a JSON number, but Supabase
-//    may return it as a string. Parse based on valueType.
+//    A "number" config stores its value as a JSON number; a value written
+//    as a JSON string ("5") stays a string. Parse based on valueType.
 //
 // 2. ConfigApprovalRecord.requestedBy and reviewedBy are UUID strings,
 //    not user objects. Join with users table if display name is needed.
@@ -396,4 +425,4 @@ export type ConfigToolId = (typeof CONFIG_TOOL_IDS)[keyof typeof CONFIG_TOOL_IDS
 //    at the service boundary.
 //
 // 7. allowedValues is a JSONB column storing a JSON array of strings.
-//    Parse with JSON.parse if it arrives as a string from Supabase.
+//    pg returns jsonb parsed; parse with JSON.parse only if a caller passes text.

@@ -98,8 +98,7 @@ export interface RetrievalQuery {
   readonly topK: number;
   /** Minimum similarity score (0–1) to include */
   readonly minScore: number;
-  /** Optional metadata filters */
-  /** Optional metadata filters (primitive values only — prevents SQL injection in Supabase store) */
+  /** Optional metadata filters: primitive values only, each bound as a parameter by the Postgres store */
   readonly filters?: Record<string, string | number | boolean>;
   /** ID of the user making the query (for context scoping) */
   readonly userId?: string;
@@ -223,7 +222,7 @@ export interface ExplanationStep {
 /**
  * EmbeddingStore — persistence for document embeddings.
  *
- * P7: Provider-aware — InMemory for tests, Supabase+pgvector for prod.
+ * P7: Provider-aware — InMemory for tests, Postgres + pgvector (PostgresEmbeddingStore) for production.
  */
 export interface EmbeddingStore {
   /** Isolation levels this store can structurally enforce (ADR-042 D4). */

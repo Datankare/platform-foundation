@@ -7,7 +7,12 @@
  * widen what the platform accepts.
  *
  * Format:  guest.<payload>.<signature>
- *   payload   = base64url(JSON { v: 1, sub, typ: "guest", iat, exp })   (seconds)
+ *   payload   = base64url(JSON { v: 2, sub, typ: "guest", tid, iat, exp })   (seconds)
+ *
+ * `tid` is the tenant the guest was minted for (ADR-053 D2): the request's tenant when the
+ * token was minted. Only version 2 is accepted. A version-1 token (before tenancy) names no
+ * tenant, so it could have been minted by any deployment that shares GUEST_TOKEN_SECRET; it is
+ * refused like any invalid token, and its holder simply gets a new guest session.
  *   signature = base64url(HMAC-SHA256(GUEST_TOKEN_SECRET, "guest.<payload>"))
  *
  * Guest ids are namespaced (`guest_` + 128 random bits) so they can never equal a user id.
@@ -24,8 +29,11 @@
 
 import {
   getGuestTokenSecret,
+  getTenancySettings,
   isProductionContext,
+  isTenantId,
 } from "@/platform/providers/environment-contract";
+import { peekTenant } from "@/platform/tenancy/context";
 
 export const GUEST_TOKEN_PREFIX = "guest.";
 export const GUEST_ID_PREFIX = "guest_";
@@ -45,12 +53,20 @@ export interface MintedGuestToken {
 }
 
 export type GuestTokenVerification =
-  { valid: true; guestId: string; expiresAt: number } | { valid: false };
+  | {
+      valid: true;
+      guestId: string;
+      expiresAt: number;
+      /** The tenant the token was minted for. */
+      tenantId: string;
+    }
+  | { valid: false };
 
 interface GuestPayload {
-  v: 1;
+  v: 2;
   sub: string;
   typ: "guest";
+  tid: string;
   iat: number;
   exp: number;
 }
@@ -132,19 +148,41 @@ export function isGuestId(id: string): boolean {
   return GUEST_ID_SHAPE.test(id);
 }
 
-/** Mint a signed guest token. `ttlSeconds` is clamped to [60, MAX_GUEST_TTL_SECONDS]. */
+/**
+ * The tenant a new guest token is for: the one asked for, else the request's, else (single
+ * mode) TENANT_ID. Shared mode without a request tenant throws — a guest is never minted for
+ * no tenant.
+ */
+function mintingTenant(tenantId: string | undefined): string {
+  const chosen = tenantId ?? peekTenant()?.tenantId;
+  if (chosen !== undefined) {
+    if (!isTenantId(chosen)) throw new Error("Malformed tenant id for a guest token");
+    return chosen;
+  }
+  const settings = getTenancySettings();
+  if (settings.mode === "single") return settings.tenantId;
+  throw new Error("No tenant for the guest token: mint it inside the request's tenant");
+}
+
+/**
+ * Mint a signed guest token for a tenant (default: the request's). `ttlSeconds` is clamped to
+ * [60, MAX_GUEST_TTL_SECONDS].
+ */
 export async function mintGuestToken(
-  ttlSeconds: number = DEFAULT_GUEST_TTL_SECONDS
+  ttlSeconds: number = DEFAULT_GUEST_TTL_SECONDS,
+  tenantId?: string
 ): Promise<MintedGuestToken> {
+  const tid = mintingTenant(tenantId);
   const ttl = Math.min(
     Math.max(Number.isFinite(ttlSeconds) ? Math.floor(ttlSeconds) : 0, 60),
     MAX_GUEST_TTL_SECONDS
   );
   const iat = nowSeconds();
   const payload: GuestPayload = {
-    v: 1,
+    v: 2,
     sub: newGuestId(),
     typ: "guest",
+    tid,
     iat,
     exp: iat + ttl,
   };
@@ -184,7 +222,8 @@ export async function verifyGuestToken(token: unknown): Promise<GuestTokenVerifi
     const p = JSON.parse(dec.decode(b64urlToBytes(payloadPart))) as Partial<GuestPayload>;
     const now = nowSeconds();
     if (
-      p.v !== 1 ||
+      p.v !== 2 ||
+      !isTenantId(p.tid) ||
       p.typ !== "guest" ||
       typeof p.sub !== "string" ||
       !isGuestId(p.sub) ||
@@ -196,7 +235,12 @@ export async function verifyGuestToken(token: unknown): Promise<GuestTokenVerifi
     ) {
       return { valid: false };
     }
-    return { valid: true, guestId: p.sub, expiresAt: p.exp };
+    return {
+      valid: true,
+      guestId: p.sub,
+      expiresAt: p.exp,
+      tenantId: p.tid,
+    };
   } catch {
     return { valid: false };
   }

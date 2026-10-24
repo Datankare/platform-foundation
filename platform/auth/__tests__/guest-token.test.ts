@@ -1,6 +1,7 @@
 /**
  * ADR-050 D4 / TASK-098 — signed guest tokens.
  */
+import { DEFAULT_TENANT_ID } from "@/platform/providers/environment-contract";
 import {
   DEFAULT_GUEST_TTL_SECONDS,
   MAX_GUEST_TTL_SECONDS,
@@ -47,6 +48,7 @@ describe("guest tokens (ADR-050 D4)", () => {
       valid: true,
       guestId: minted.guestId,
       expiresAt: minted.expiresAt,
+      tenantId: DEFAULT_TENANT_ID,
     });
   });
 
@@ -112,39 +114,70 @@ describe("guest tokens (ADR-050 D4)", () => {
     await expect(verifyGuestToken(token)).resolves.toEqual({ valid: false });
   });
 
-  it("rejects a correctly signed payload with the wrong claims", async () => {
-    // Sign an arbitrary body with the real key, to prove claim checks run after the MAC.
-    const secret = "s".repeat(64);
+  /** A token for `claims`, correctly signed under the test secret. */
+  async function signed(claims: unknown): Promise<string> {
     const key = await crypto.subtle.importKey(
       "raw",
-      new TextEncoder().encode(secret),
+      new TextEncoder().encode("s".repeat(64)),
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"]
     );
+    const body = "guest." + b64url(JSON.stringify(claims));
+    const mac = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body))
+    );
+    return `${body}.${b64url(String.fromCharCode(...mac))}`;
+  }
+
+  it("rejects a correctly signed payload with the wrong claims", async () => {
+    // Signed with the real key, to prove claim checks run after the MAC. Each case is a valid
+    // version-2 token but for one claim.
     const now = Math.floor(Date.now() / 1000);
+    const tid = DEFAULT_TENANT_ID;
     const cases = [
       { v: 2, sub: newGuestId(), typ: "guest", iat: now, exp: now + 60 },
-      { v: 1, sub: "user-123", typ: "guest", iat: now, exp: now + 60 },
-      { v: 1, sub: newGuestId(), typ: "user", iat: now, exp: now + 60 },
-      { v: 1, sub: newGuestId(), typ: "guest", iat: now + 3600, exp: now + 7200 },
+      { v: 2, sub: newGuestId(), typ: "guest", tid: "acme", iat: now, exp: now + 60 },
+      { v: 2, sub: "user-123", typ: "guest", tid, iat: now, exp: now + 60 },
+      { v: 2, sub: newGuestId(), typ: "user", tid, iat: now, exp: now + 60 },
+      { v: 2, sub: newGuestId(), typ: "guest", tid, iat: now + 3600, exp: now + 7200 },
       {
-        v: 1,
+        v: 2,
         sub: newGuestId(),
         typ: "guest",
+        tid,
         iat: now,
         exp: now + MAX_GUEST_TTL_SECONDS + 10,
       },
-      { v: 1, sub: newGuestId(), typ: "guest", iat: "x", exp: now + 60 },
+      { v: 2, sub: newGuestId(), typ: "guest", tid, iat: "x", exp: now + 60 },
+      { v: 3, sub: newGuestId(), typ: "guest", tid, iat: now, exp: now + 60 },
     ];
     for (const claims of cases) {
-      const body = "guest." + b64url(JSON.stringify(claims));
-      const mac = new Uint8Array(
-        await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body))
-      );
-      const sig = b64url(String.fromCharCode(...mac));
-      await expect(verifyGuestToken(`${body}.${sig}`)).resolves.toEqual({ valid: false });
+      await expect(verifyGuestToken(await signed(claims))).resolves.toEqual({
+        valid: false,
+      });
     }
+    // The control: the same shape, every claim right, verifies.
+    const sub = newGuestId();
+    await expect(
+      verifyGuestToken(
+        await signed({ v: 2, sub, typ: "guest", tid, iat: now, exp: now + 60 })
+      )
+    ).resolves.toEqual({ valid: true, guestId: sub, expiresAt: now + 60, tenantId: tid });
+  });
+
+  it("refuses a version-1 token (no tenant), even correctly signed and in single mode", async () => {
+    // Before tenancy a guest token named no tenant, so one minted by any deployment sharing
+    // GUEST_TOKEN_SECRET would be read as this deployment's tenant. Its holder gets a new
+    // guest session instead.
+    process.env.TENANCY_MODE = "single";
+    process.env.TENANT_ID = DEFAULT_TENANT_ID;
+    const now = Math.floor(Date.now() / 1000);
+    const v1 = { v: 1, sub: newGuestId(), typ: "guest", iat: now, exp: now + 3600 };
+    await expect(verifyGuestToken(await signed(v1))).resolves.toEqual({ valid: false });
+    await expect(
+      verifyGuestToken(await signed({ ...v1, tid: DEFAULT_TENANT_ID }))
+    ).resolves.toEqual({ valid: false });
   });
 
   it("outside production, an unset secret falls back to a per-process secret", async () => {

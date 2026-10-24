@@ -31,4 +31,16 @@ export interface AppRoutePolicy {
   readonly paidCalls?: readonly string[];
   /** The app's routes that make a paid call without the daily quota, by design (path → reason). */
   readonly paidQuotaExempt?: Readonly<Record<string, string>>;
+  /**
+   * Names of the app's functions that wrap a route handler in place of tenantRoute (ADR-053 D3).
+   * Each must call tenantRoute — `__tests__/api-route-tenant.test.ts`.
+   */
+  readonly routeScopes?: readonly string[];
+  /**
+   * The app's browser files that call the API with a bare fetch on purpose (path from the
+   * repository root → reason): a call made before a session exists, or one that sets its own
+   * Authorization header. Every other screen uses apiFetch — `__tests__/client-api-auth.test.ts`
+   * (TASK-154).
+   */
+  readonly directFetch?: Readonly<Record<string, string>>;
 }

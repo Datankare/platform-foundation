@@ -20,13 +20,14 @@ _Last reviewed: 2026-10-22._
 | Jest, Playwright, fast-check               | MIT / Apache-2.0 | Pass    |
 | jose, ajv, intl-messageformat, safe-regex2 | MIT              | Pass    |
 | PostgreSQL, pgvector                       | PostgreSQL       | Pass    |
+| node-postgres (`pg`)                       | MIT              | Pass    |
 | Sentry JavaScript SDK                      | MIT              | Pass    |
 
 ## Hosted services
 
 | Service           | Role                                        | Licence / model                                               | Status                               | Exit path                                                                  |
 | ----------------- | ------------------------------------------- | ------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------- |
-| Supabase (hosted) | Postgres, data API                          | Apache-2.0 software; hosted processor                         | Deliberate choice                    | Any Postgres 17 + pgvector (schema baseline and migrations are portable)   |
+| Supabase (hosted) | Postgres (direct, pooled), Realtime         | Apache-2.0 software; hosted processor                         | Deliberate choice                    | Any Postgres 17 + pgvector (schema baseline and migrations are portable)   |
 | Vercel            | Hosting                                     | Proprietary                                                   | Deliberate choice                    | Container image on a second host — planned, Sprint 7P (TASK-128)           |
 | Upstash Redis     | Cache, rate limiting                        | Proprietary service (REST protocol)                           | Deliberate choice — **flagged**      | Valkey (BSD-3) over the standard Redis protocol — planned, Sprint 7P       |
 | Sentry (hosted)   | Error monitoring                            | Server under the Functional Source License (source-available) | Deliberate choice — **flagged**      | Self-hosted alternative or the observability provider slot                 |

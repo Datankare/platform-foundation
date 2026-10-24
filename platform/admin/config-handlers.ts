@@ -10,6 +10,8 @@
  *   search_config      — find config entries by keyword, category, tier
  *   get_config         — get a single config entry with full metadata
  *   update_config      — validated update with reconfirmation data
+ *   reset_config       — the tenant's own value removed (back to the platform default), governed
+ *                        like an update: tier, two-person approval, dual control
  *   get_history        — change history for a key or all keys
  *   compare_to_defaults — show current vs default values
  *   impact_report      — moderation outcome changes after a config change
@@ -37,10 +39,17 @@ import {
   listEnhancedConfig,
   validateConfigValue,
   setConfigWithHistory,
+  clearTenantConfig,
   getConfigHistory,
   getConfigOrThrow,
 } from "@/platform/auth/platform-config";
 import {
+  approvedChangeTarget,
+  isSharedDeployment,
+  resolveConfigTarget,
+} from "./config-scope";
+import {
+  getApproval,
   isApprovalRequired,
   requestApproval as createApprovalRequest,
   approveAndApply,
@@ -54,6 +63,7 @@ import type {
   ConfigHistoryOptions,
   PermissionTier,
   EnhancedConfigEntry,
+  ConfigScope,
   ToolExecutionContext,
 } from "./types";
 import { TOOL_BOUNDARIES } from "./types";
@@ -160,6 +170,13 @@ export interface UpdateConfigInput {
   readonly changeComment: string;
   readonly actorId: string;
   /**
+   * ADR-053 D5: whether the actor is an operator — set by the route from the verified admin,
+   * never taken from the caller (the routes overwrite it, as they do actorId).
+   */
+  readonly actorIsOperator?: boolean;
+  /** What the change is to; absent means the deployment's default (config-scope.ts). */
+  readonly scope?: ConfigScope;
+  /**
    * P10: Must be true to apply the change. When false or absent,
    * returns a preview (changeRequest) without applying. The agent
    * presents the preview, admin confirms, agent calls again with
@@ -201,11 +218,21 @@ export async function handleUpdateConfig(
       };
     }
 
-    // 3. Check if two-person approval is needed
+    // 3. Where the change goes (ADR-053 D5): refused before anything is held or applied
+    const decision = resolveConfigTarget(
+      input.actorIsOperator === true,
+      entry,
+      input.scope
+    );
+    if (!decision.ok) {
+      return { applied: false, error: decision.reason };
+    }
+
+    // 4. Check if two-person approval is needed
     const needsApproval =
       entry.permissionTier === "safety" && (await isApprovalRequired());
 
-    // 4. Build the reconfirmation data (A8: pure function, independently testable)
+    // 5. Build the reconfirmation data (A8: pure function, independently testable)
     const changeRequest = buildChangeRequest(
       entry,
       input.value,
@@ -226,11 +253,13 @@ export async function handleUpdateConfig(
       // Create pending approval — don't apply
       const approvalResult = await createApprovalRequest({
         configKey: input.key,
-        currentValue: entry.value,
+        currentValue:
+          decision.target.scope === "platform" ? entry.platformValue : entry.value,
         proposedValue: input.value,
         requestedBy: input.actorId,
         changeComment: input.changeComment,
         impactSummary: changeRequest.impact,
+        scope: decision.target.scope,
       });
 
       return {
@@ -242,14 +271,15 @@ export async function handleUpdateConfig(
       };
     }
 
-    // 5. Apply the change directly (A5: pass loaded entry to skip re-load)
+    // 6. Apply the change directly (A5: pass loaded entry to skip re-load)
     const result = await setConfigWithHistory(
       input.key,
       input.value,
       input.actorId,
       input.changeComment,
       "config_agent",
-      entry
+      entry,
+      decision.target
     );
 
     return {
@@ -258,6 +288,79 @@ export async function handleUpdateConfig(
       validationErrors: result.validationErrors,
       changeRequest,
     };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tool: reset_config
+// ---------------------------------------------------------------------------
+
+export interface ResetConfigInput {
+  readonly key: string;
+  readonly changeComment: string;
+  readonly actorId: string;
+  /** Set by the route from the verified admin, never taken from the caller. */
+  readonly actorIsOperator?: boolean;
+  /** P10: must be true to apply; otherwise a preview. */
+  readonly confirmed?: boolean;
+}
+
+/**
+ * Remove the current tenant's own value for a key, so it follows the platform default again
+ * (ADR-053 D5). Governed as a change to the default value would be: the same scope rules, and
+ * for a safety-tier key with two-person approval a pending approval (action "reset") rather
+ * than the change. A single-tenant deployment has no tenant values; nothing changes.
+ */
+export async function handleResetConfig(
+  input: ResetConfigInput
+): Promise<ConfigToolResult> {
+  return executeToolCall("reset_config", async () => {
+    const entry = await getEnhancedConfig(input.key);
+    if (!entry) return { applied: false, error: `Config key "${input.key}" not found.` };
+    if (!isSharedDeployment() || !entry.overridden) {
+      return { applied: true, unchanged: true };
+    }
+    const operator = input.actorIsOperator === true;
+    const decision = resolveConfigTarget(operator, entry, "tenant");
+    if (!decision.ok) return { applied: false, error: decision.reason };
+
+    const needsApproval =
+      entry.permissionTier === "safety" && (await isApprovalRequired());
+    const changeRequest = buildChangeRequest(
+      entry,
+      entry.platformValue,
+      input.changeComment,
+      needsApproval
+    );
+    if (!input.confirmed) {
+      return { applied: false, pendingConfirmation: true, changeRequest };
+    }
+    if (needsApproval) {
+      const approvalResult = await createApprovalRequest({
+        configKey: input.key,
+        currentValue: entry.value,
+        proposedValue: entry.platformValue,
+        requestedBy: input.actorId,
+        changeComment: input.changeComment,
+        impactSummary: changeRequest.impact,
+        scope: "tenant",
+        action: "reset",
+      });
+      return {
+        applied: false,
+        requiresApproval: true,
+        approval: approvalResult.record,
+        approvalError: approvalResult.error,
+        changeRequest,
+      };
+    }
+    const result = await clearTenantConfig(
+      input.key,
+      input.actorId,
+      input.changeComment,
+      operator
+    );
+    return { applied: result.success, error: result.error, changeRequest };
   });
 }
 
@@ -519,6 +622,9 @@ export interface RequestApprovalInput {
   readonly proposedValue: unknown;
   readonly changeComment: string;
   readonly actorId: string;
+  /** Set by the route from the verified admin (ADR-053 D5). */
+  readonly actorIsOperator?: boolean;
+  readonly scope?: ConfigScope;
 }
 
 /**
@@ -543,13 +649,22 @@ export async function handleRequestApproval(
       };
     }
 
+    const decision = resolveConfigTarget(
+      input.actorIsOperator === true,
+      entry,
+      input.scope
+    );
+    if (!decision.ok) return { success: false, error: decision.reason };
+
     const result = await createApprovalRequest({
       configKey: input.configKey,
-      currentValue: entry.value,
+      currentValue:
+        decision.target.scope === "platform" ? entry.platformValue : entry.value,
       proposedValue: input.proposedValue,
       requestedBy: input.actorId,
       changeComment: input.changeComment,
       impactSummary: buildImpactDescription(entry, input.proposedValue),
+      scope: decision.target.scope,
     });
 
     return result;
@@ -564,6 +679,8 @@ export interface ApproveChangeInput {
   readonly approvalId: string;
   readonly reviewerId: string;
   readonly reviewComment: string;
+  /** Set by the route from the verified admin (ADR-053 D5). */
+  readonly reviewerIsOperator?: boolean;
 }
 
 /**
@@ -575,18 +692,45 @@ export async function handleApproveChange(
   return executeToolCall("approve_change", async () => {
     // Approved and applied as one outcome; a change that cannot be applied is reopened
     // (release review, Sprint 7X — it was left approved, unapplied, and reported as success).
+    // A change to a shared deployment's platform default is an operator's to approve; refused
+    // before the approval is recorded (ADR-053 D5).
+    const pending = await getApproval(input.approvalId);
+    if (pending) {
+      const decision = approvedChangeTarget(
+        input.reviewerIsOperator === true,
+        pending.scope
+      );
+      if (!decision.ok) return { success: false, error: decision.reason };
+    }
     const result = await approveAndApply(
       input.approvalId,
       input.reviewerId,
       input.reviewComment,
-      (record) =>
-        setConfigWithHistory(
+      (record) => {
+        const decision = approvedChangeTarget(
+          input.reviewerIsOperator === true,
+          record.scope
+        );
+        if (!decision.ok)
+          return Promise.resolve({ success: false, error: decision.reason });
+        if (record.action === "reset") {
+          return clearTenantConfig(
+            record.configKey,
+            input.reviewerId,
+            `Approved: ${record.changeComment}`,
+            decision.target.operator
+          );
+        }
+        return setConfigWithHistory(
           record.configKey,
           record.proposedValue,
           input.reviewerId,
           `Approved: ${record.changeComment}`,
-          "config_agent"
-        )
+          "config_agent",
+          undefined,
+          decision.target
+        );
+      }
     );
     if (!result.success) return result;
     return { approved: true, applied: true, approval: result.record };
@@ -722,6 +866,39 @@ export const CONFIG_TOOLS: readonly Tool[] = [
     execute: async (input: Record<string, unknown>) =>
       (await handleUpdateConfig(
         input as unknown as UpdateConfigInput
+      )) as unknown as Record<string, unknown>,
+  },
+  {
+    id: "reset_config",
+    name: "Reset Configuration to the Default",
+    description:
+      "Remove the current tenant's own value for a config key, so it follows the platform default again. Governed like an update: for safety-critical keys with two-person approval enabled, creates a pending approval.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "Config key to reset" },
+        changeComment: {
+          type: "string",
+          description: "Mandatory comment explaining why the value is reset",
+        },
+        actorId: { type: "string", description: "ID of the admin making the change" },
+      },
+      required: ["key", "changeComment"],
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        applied: { type: "boolean" },
+        unchanged: { type: "boolean" },
+        changeRequest: { type: "object" },
+        requiresApproval: { type: "boolean" },
+      },
+    },
+    effects: ["stateWrite"],
+    declaredRisk: "consequential",
+    execute: async (input: Record<string, unknown>) =>
+      (await handleResetConfig(
+        input as unknown as ResetConfigInput
       )) as unknown as Record<string, unknown>,
   },
   {
@@ -945,6 +1122,7 @@ export const CONFIG_TOOLS: readonly Tool[] = [
 const REQUIRED_FIELDS: Record<string, readonly string[]> = {
   get_config: ["key"],
   update_config: ["key", "value", "changeComment"],
+  reset_config: ["key", "changeComment"],
   impact_report: ["configKey"],
   request_approval: ["configKey", "proposedValue", "changeComment"],
   approve_change: ["approvalId", "reviewComment"],
@@ -990,6 +1168,57 @@ export async function isDualControlledKey(key: string): Promise<boolean> {
 const CONFIG_TOOL_BY_ID: ReadonlyMap<string, Tool> = new Map(
   CONFIG_TOOLS.map((tool) => [tool.id, tool])
 );
+
+/** The config tools a runtime (dual-control) hold can stand for. */
+const RESUMABLE_TOOLS: ReadonlySet<string> = new Set(["update_config", "reset_config"]);
+
+/**
+ * Apply a config change whose dual-control hold has just been approved (ADR-040): the held
+ * tool runs again on its approved proposal — exactly the approved payload, the same operation,
+ * as the proposer — and the pipeline consumes the approval, so it releases one change once.
+ * A hold that is not a config change is not this function's (its own caller resumes it).
+ */
+export async function resumeApprovedConfigChange(
+  proposalId: string
+): Promise<ConfigToolResult | null> {
+  const proposalStore = getProposalStore();
+  const proposal = await proposalStore.getById(proposalId);
+  if (!proposal || !RESUMABLE_TOOLS.has(proposal.label)) return null;
+  const tool = CONFIG_TOOL_BY_ID.get(proposal.label);
+  if (!tool) return null;
+  const start = Date.now();
+  const stepIndex = Number(/_(\d+)$/.exec(proposal.operationId)?.[1] ?? 0);
+  try {
+    const invoked = await invokeTool({
+      // The held form of the tool (dual control raised its risk), so the approval is what
+      // lets it through — never a lower-risk copy that would skip the gate.
+      tool: { ...tool, declaredRisk: "restricted" },
+      input: proposal.payload,
+      actor: proposal.actor,
+      sessionId: proposal.sessionId,
+      trajectoryId: proposal.trajectoryId,
+      stepIndex,
+      trajectoryStore: getTrajectoryStore(),
+      proposalStore,
+      approvedProposalId: proposal.proposalId,
+      operationId: proposal.operationId,
+    });
+    return invoked.output as unknown as ConfigToolResult;
+  } catch (err) {
+    return {
+      toolId: proposal.label,
+      success: false,
+      data: null,
+      error:
+        err instanceof PipelineRejectedError && err.reason === "approval-used"
+          ? "This approved change has already been applied."
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      durationMs: Date.now() - start,
+    };
+  }
+}
 
 export async function dispatchConfigTool(
   toolId: string,
@@ -1068,7 +1297,7 @@ export async function dispatchConfigTool(
   // be the step that turns it off.
   const targetKey = typeof input.key === "string" ? input.key : undefined;
   const isDualControl =
-    toolId === "update_config" &&
+    (toolId === "update_config" || toolId === "reset_config") &&
     (targetKey === undefined || (await isDualControlledKey(targetKey)));
   const effectiveTool: Tool = isDualControl
     ? { ...tool, declaredRisk: "restricted" }

@@ -105,7 +105,7 @@ See [ASSURANCE.md](docs/ASSURANCE.md).
 - ✅ COPPA consent gate — structural safety (P4), config-driven feature blocking
 - ✅ Human review queue + appeals (P10) — claim/resolve workflow, overturn side-effects, advisory AI reviewer-assist
 - ✅ Account-status guard ordered auth → status → COPPA → Guardian; auth enforced on all API routes
-- ✅ Social system — groups, memberships, invites (InMemory + Supabase stores) + 6 social agents
+- ✅ Social system — groups, memberships, invites (InMemory + Postgres stores) + 6 social agents
 - ✅ Agent runtime — AgentRegistry, ToolRegistry, TrajectoryStore, BudgetTracker, `executeAgent()` loop
 - ✅ Input module — InputConductor, classifier, intent resolver, AdaptiveInput component
 - ✅ Config-management agent — 10 tools, confirmation gate, two-person approval, impact correlation
@@ -139,9 +139,9 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 49 migrations (001–048), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 50 migrations (001–049), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
-- ✅ Row-Level Security policies throughout; service-role gating at the API layer
+- ✅ Forced row-level security on every tenant-owned table; every server query runs through `platform/data` as `app_tenant`, which cannot bypass it (ADR-053)
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
 
 ### Documentation
@@ -185,6 +185,7 @@ platform-foundation/
 ├── platform/ai/            ← LLM orchestration, streaming, provider + mock (Phase 2/4 ✅)
 ├── platform/auth/          ← Identity, permissions, RBAC, GDPR, COPPA, Cognito (Phase 1 ✅)
 ├── platform/cache/         ← Cache provider abstraction, Redis, AI cache (Phase 2 ✅)
+├── platform/data/          ← The one way server code reaches Postgres — tenant, platform, owner transactions (ADR-053)
 ├── platform/moderation/    ← Guardian, Sentinel, review + appeals, blocklist (Phase 2/4 ✅)
 ├── platform/observability/ ← Error tracking, tracing, metrics, health registry (Phase 2 ✅)
 ├── platform/providers/     ← Provider registry — 13 swappable slots (Phase 2–4 ✅)
@@ -195,6 +196,7 @@ platform-foundation/
 ├── platform/input/         ← Input conductor, classifier, intent (Phase 4 ✅)
 ├── platform/agents/        ← Agent runtime — registry, tools, trajectories, budgets (Phase 4 ✅)
 ├── platform/social/        ← Groups, memberships, invites + social agents (Phase 4 ✅)
+├── platform/tenancy/       ← Tenants, request scope (`tenantRoute`), directory, lifecycle (ADR-053)
 ├── platform/rag/           ← RAG — chunker, embeddings, retrieval, memory (Phase 4 ✅)
 ├── platform/admin/         ← Config-management agent (Phase 4 ✅)
 ├── platform/app-framework/   ← Application framework (Phase 5)
@@ -206,7 +208,7 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 49 database migrations
+├── supabase/migrations/    ← 50 database migrations
 ├── docs/adr/               ← 56 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils

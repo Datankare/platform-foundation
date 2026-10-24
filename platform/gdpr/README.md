@@ -5,18 +5,36 @@ Complete user data deletion pipeline for GDPR/CCPA compliance. Orchestrates dele
 ## Quick Start
 
 ```typescript
+import { withTenantTx } from "@/platform/data";
 import { PurgePipeline, CachePurgeHandler } from "@/platform/gdpr";
 
 const pipeline = new PurgePipeline();
 
 // Register handlers (consumers add their own)
-pipeline.register(mySupabaseProfileHandler);
-pipeline.register(mySupabaseContentHandler);
+pipeline.register(myProfileHandler);
+pipeline.register(myContentHandler);
 pipeline.register(new CachePurgeHandler(clearUserCache));
 
-// Set up audit logging
+// Set up audit logging — the record belongs to the current tenant (tenant_id is its column default)
 pipeline.onAudit(async (entry) => {
-  await supabase.from("purge_log").insert(entry);
+  await withTenantTx((tx) =>
+    tx.query(
+      `insert into purge_log (purge_id, user_id, requested_by, reason, status, steps_json,
+                              total_deleted, requested_at, completed_at)
+       values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
+      [
+        entry.purge_id,
+        entry.user_id,
+        entry.requested_by,
+        entry.reason,
+        entry.status,
+        entry.steps_json,
+        entry.total_deleted,
+        entry.requested_at,
+        entry.completed_at,
+      ]
+    )
+  );
 });
 
 // Execute
@@ -44,6 +62,7 @@ const result = await pipeline.execute({
 ## Writing Custom Purge Handlers
 
 ```typescript
+import { withTenantTx } from "@/platform/data";
 import type { PurgeHandler } from "@/platform/gdpr";
 
 class MyAppDataPurgeHandler implements PurgeHandler {
@@ -51,19 +70,26 @@ class MyAppDataPurgeHandler implements PurgeHandler {
   readonly priority = 50; // Lower = earlier execution
 
   async execute(userId: string, dryRun: boolean): Promise<number> {
-    if (dryRun) {
-      const { count } = await supabase
-        .from("user_data")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", userId);
-      return count ?? 0;
-    }
-
-    const { count } = await supabase.from("user_data").delete().eq("user_id", userId);
-    return count ?? 0;
+    // Row-level security confines both statements to the current tenant's rows.
+    return withTenantTx(async (tx) => {
+      if (dryRun) {
+        const { rows } = await tx.query<{ n: number }>(
+          "select count(*)::int as n from user_data where user_id = $1",
+          [userId]
+        );
+        return rows[0]?.n ?? 0;
+      }
+      const { rowCount } = await tx.query("delete from user_data where user_id = $1", [
+        userId,
+      ]);
+      return rowCount;
+    });
   }
 }
 ```
+
+Your own table needs `tenant_id`, forced row-level security and the `tenant_isolation` policy, as
+the platform's tables have (migration 049).
 
 ## Priority Guidelines
 
@@ -76,7 +102,7 @@ class MyAppDataPurgeHandler implements PurgeHandler {
 
 ## Database
 
-Migration `009_gdpr_purge_log.sql` creates the `purge_log` audit table. Only `super_admin` can read purge logs (RLS enforced).
+Migration `009_gdpr_purge_log.sql` creates the `purge_log` audit table; migration `049_tenancy.sql` gives it `tenant_id` under forced row-level security, so `app_tenant` reads and writes only the current tenant's purge records.
 
 ## Architecture
 
@@ -91,4 +117,4 @@ platform/gdpr/
 ## See Also
 
 - ROADMAP.md Phase 2 Sprint 4 — GDPR hard purge
-- `supabase/migrations/009_gdpr_purge_log.sql`
+- `supabase/migrations/009_gdpr_purge_log.sql`, `supabase/migrations/049_tenancy.sql`

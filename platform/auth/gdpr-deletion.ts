@@ -10,10 +10,17 @@
  * 1. Soft delete — mark user as deleted_at, anonymize PII
  * 2. Hard purge — scheduled job removes all data after retention period
  *
+ * The user row is anonymized and removed in the request's tenant (platform/data, ADR-053 D4).
+ *
+ * Each erasure is recorded in user_deletions (migration 049): when the account was anonymized,
+ * when it may be purged (30 days), which modules took part, and when it was purged. The record
+ * outlives the account. (It used to be written to deletion_manifest — the platform's registry of
+ * deletion modules, with no per-user columns — so it never was.)
+ *
  * Sprint 5, Tasks 5.1 + 5.2
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
@@ -28,6 +35,16 @@ export interface DeletionModule {
 }
 
 const registeredModules: DeletionModule[] = [];
+
+/** Run a write; its error message, or undefined when it succeeded. */
+async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
+  try {
+    await write();
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
 
 /**
  * Register a module's deletion handler.
@@ -65,8 +82,6 @@ export async function softDeleteUser(
   userId: string,
   requestedBy: string
 ): Promise<{ success: boolean; errors: string[] }> {
-  const supabase = getSupabaseServiceClient();
-
   try {
     // Recorded before anything is deleted; no record, no deletion (Adversarial Validation, 6).
     // A partial deletion reports failure, which audited() records as a follow-up.
@@ -83,24 +98,26 @@ export async function softDeleteUser(
       async () => {
         const errors: string[] = [];
 
-        // 1. Anonymize user record
-        const anonymized = {
-          email: null,
-          display_name: "[deleted]",
-          real_name: null,
-          avatar_url: null,
-          date_of_birth: null,
-          deleted_at: new Date().toISOString(),
-        };
-
-        const { error: userError } = await supabase
-          .from("users")
-          .update(anonymized)
-          .eq("id", userId)
-          .is("deleted_at", null);
+        // 1. Anonymize user record (again is fine: an already-deleted user stays deleted).
+        const userError = await failure(() =>
+          withTenantTx(async (tx) => {
+            await tx.query(
+              `update users
+                  set email = null, display_name = '[deleted]', real_name = null,
+                      avatar_url = null, date_of_birth = null, deleted_at = now()
+                where id = $1::uuid and deleted_at is null`,
+              [userId]
+            );
+            const found = await tx.query("select 1 from users where id = $1::uuid", [
+              userId,
+            ]);
+            if (found.rowCount === 0) throw new Error("no such user");
+          })
+        );
 
         if (userError) {
-          errors.push(`users: ${userError.message}`);
+          // Nothing to erase is not an erasure: stop before the modules and the record.
+          return { success: false, errors: [`users: ${userError}`] };
         }
 
         // 2. Run soft delete on all registered modules
@@ -111,30 +128,32 @@ export async function softDeleteUser(
           }
         }
 
-        // 3. Record in deletion manifest
-        const { error: manifestError } = await supabase.from("deletion_manifest").insert({
-          user_id: userId,
-          requested_by: requestedBy,
-          phase: "soft_delete",
-          status: errors.length === 0 ? "completed" : "partial",
-          module_results: JSON.stringify(
-            registeredModules.map((m) => ({
-              module: m.moduleName,
-              tables: m.tables,
-            }))
-          ),
-          errors: errors.length > 0 ? JSON.stringify(errors) : null,
-        });
-
-        if (manifestError) {
-          logger.error("Failed to write deletion manifest", {
+        // 3. Record the erasure. It is what the hard purge works from: without it the erasure
+        //    would never complete, so the deletion has not succeeded.
+        const recordError = await failure(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              `insert into user_deletions (user_id, requested_by, modules)
+               values ($1::uuid, $2, $3::jsonb)
+               on conflict (tenant_id, user_id) do update
+                 set requested_by = excluded.requested_by, modules = excluded.modules,
+                     soft_deleted_at = now(), purge_after = now() + interval '30 days',
+                     purged_at = null`,
+              [
+                userId,
+                requestedBy,
+                JSON.stringify(registeredModules.map((m) => m.moduleName)),
+              ]
+            )
+          )
+        );
+        if (recordError) {
+          logger.error("Failed to record the deletion", {
             userId,
-            error: manifestError.message,
+            error: recordError,
             route: "platform/auth/gdpr-deletion",
           });
-          // The manifest is what the hard purge works from: without it the erasure would
-          // never complete, so the deletion has not succeeded.
-          errors.push(`deletion manifest: ${manifestError.message}`);
+          errors.push(`deletion record: ${recordError}`);
         }
 
         return { success: errors.length === 0, errors };
@@ -155,7 +174,6 @@ export async function softDeleteUser(
 export async function hardPurgeUser(
   userId: string
 ): Promise<{ success: boolean; errors: string[] }> {
-  const supabase = getSupabaseServiceClient();
   const errors: string[] = [];
 
   // 1. Run hard purge on all registered modules
@@ -167,29 +185,32 @@ export async function hardPurgeUser(
   }
 
   // 2. Delete user record
-  const { error: userError } = await supabase.from("users").delete().eq("id", userId);
+  const userError = await failure(() =>
+    withTenantTx((tx) => tx.query("delete from users where id = $1::uuid", [userId]))
+  );
 
   if (userError) {
-    errors.push(`users: ${userError.message}`);
+    errors.push(`users: ${userError}`);
   }
 
-  // 3. Update deletion manifest
-  const { error: manifestError } = await supabase
-    .from("deletion_manifest")
-    .update({
-      phase: "hard_purge",
-      status: errors.length === 0 ? "completed" : "partial",
-      purged_at: new Date().toISOString(),
-      errors: errors.length > 0 ? JSON.stringify(errors) : null,
-    })
-    .eq("user_id", userId);
-
-  if (manifestError) {
-    logger.error("Failed to update deletion manifest", {
-      userId,
-      error: manifestError.message,
-      route: "platform/auth/gdpr-deletion",
-    });
+  // 3. Mark the erasure complete — only when everything was removed.
+  if (errors.length === 0) {
+    const recordError = await failure(() =>
+      withTenantTx((tx) =>
+        tx.query(
+          "update user_deletions set purged_at = now() where user_id = $1::uuid and purged_at is null",
+          [userId]
+        )
+      )
+    );
+    if (recordError) {
+      logger.error("Failed to mark the deletion purged", {
+        userId,
+        error: recordError,
+        route: "platform/auth/gdpr-deletion",
+      });
+      errors.push(`deletion record: ${recordError}`);
+    }
   }
 
   return { success: errors.length === 0, errors };

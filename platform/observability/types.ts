@@ -12,8 +12,8 @@
  * Default implementations:
  *   ErrorReporter  → SentryErrorReporter (no-op when SENTRY_DSN absent)
  *   TraceProvider  → DefaultTraceProvider (generates trace/span IDs, propagates headers)
- *   MetricsSink    → SupabaseMetricsSink (persists to ai_metrics table)
- *   HealthProbe    → built-in probes for Supabase, LLM provider
+ *   MetricsSink    → PostgresMetricsSink (persists to ai_metrics, per tenant)
+ *   HealthProbe    → built-in probes for the database, LLM provider
  */
 
 // ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ export interface MetricEvent {
 /**
  * MetricsSink — interface for persisting operational metrics.
  *
- * Default: SupabaseMetricsSink (writes to ai_metrics table).
+ * Default: PostgresMetricsSink (writes to the ai_metrics table, per tenant).
  * Consumers can swap to Prometheus, Datadog Metrics, InfluxDB, or custom.
  */
 export interface MetricsSink {
@@ -226,7 +226,7 @@ export interface HealthReport {
  * HealthProbe — interface for checking a single dependency's health.
  *
  * Consumers register probes for their specific dependencies.
- * PF provides default probes for Supabase and LLM provider.
+ * PF provides default probes for the database (Postgres) and LLM provider.
  */
 export interface HealthProbe {
   /** Dependency name — must be unique across all registered probes. */
@@ -258,6 +258,6 @@ export interface ObservabilityConfig {
   errorReporter?: ErrorReporter;
   /** Custom trace provider — overrides default implementation. */
   traceProvider?: TraceProvider;
-  /** Custom metrics sink — overrides default Supabase implementation. */
+  /** Custom metrics sink — overrides the default (Postgres / in-memory) implementation. */
   metricsSink?: MetricsSink;
 }

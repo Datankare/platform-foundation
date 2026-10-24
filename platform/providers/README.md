@@ -115,12 +115,27 @@ boot, naming every violation at once, when:
 - a declared setting is mis-shaped, set only under an alias, or set under two names that disagree (D2) —
   `AUTH_PROVIDER`, the Cognito ids, `SUPABASE_URL` (`https://<ref>.supabase.co`), and
   `SUPABASE_SERVICE_ROLE_KEY` (the legacy JWT), `GUEST_TOKEN_SECRET` (≥ 32 random bytes — required with a
-  real auth provider: guest tokens are signed, D4);
-- a required setting is missing (Cognito ids with `cognito`; Supabase URL + key when any slot selects `supabase`);
-- a harness switch (`E2E_*`, `ADMIN_DEV_BYPASS`) is set where `DEPLOYMENT_HOST` is not `local` or `ci` — the switches are accepted only on a positive non-deployment marker, so a deployment that forgets the setting still refuses them (TASK-140).
+  real auth provider: guest tokens are signed, D4), the `DATABASE_*` connection settings, `TENANCY_MODE`,
+  `TENANT_ID`, `TENANT_DIRECTORY_STORE`, `COGNITO_ADMIN_*`, `CACHE_PROVIDER`, `RATE_LIMIT_STORE`,
+  `DEPLOYMENT_HOST` and `TRUSTED_PROXY_HOPS`;
+- a required setting is missing:
+  - Cognito ids with `cognito`;
+  - `DATABASE_URL` when any durable store (`DATABASE_SELECTORS`: every `*_STORE`, `EFFECT_LEDGER`) selects
+    `postgres` or `supabase` — the same Postgres store, reached through `platform/data` as `app_tenant`
+    (ADR-053 D4) — and `DATABASE_OWNER_URL` with it;
+  - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` only with `REALTIME_PROVIDER=supabase` (`SUPABASE_SELECTORS`):
+    Realtime is the one Supabase service left; no data path uses the REST API or the service-role key;
+  - `TENANCY_MODE`: `single` needs `TENANT_ID`; `shared` needs `TENANT_DIRECTORY_STORE=postgres` and, with
+    `cognito`, `COGNITO_ADMIN_ACCESS_KEY_ID` + `COGNITO_ADMIN_SECRET_ACCESS_KEY`;
+  - `CACHE_PROVIDER`, and the two `UPSTASH_REDIS_REST_*` settings with `upstash` (cache or rate limit);
+- a database or tenancy setting contradicts another — `DATABASE_URL` and `DATABASE_OWNER_URL` with the same
+  user, TLS options in either URL (set `DATABASE_SSL` / `DATABASE_SSL_CA`), `DATABASE_SSL=disable` on a
+  deployment, or `TENANT_ID` with `TENANCY_MODE=shared`;
+- a harness switch (`E2E_*`, `ADMIN_DEV_BYPASS`) is set where `DEPLOYMENT_HOST` is not `local` or `ci` — the switches are accepted only on a positive non-deployment marker, so a deployment that forgets the setting still refuses them (TASK-140). A `local` or `ci` run may also leave `TENANCY_MODE`, `CACHE_PROVIDER` and `DATABASE_OWNER_URL` unset.
 
 Every reader of these settings goes through the contract's resolvers (`getSupabaseUrl()`,
-`getCognitoSettings()`, `getAuthProviderSetting()`), so what boot validates is what runs.
+`getCognitoSettings()`, `getAuthProviderSetting()`, `getDatabaseSettings()`, `getTenancySettings()`), so
+what boot validates is what runs.
 
 ## Consumer Inheritance
 

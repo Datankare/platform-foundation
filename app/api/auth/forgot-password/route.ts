@@ -6,8 +6,9 @@ import { NextRequest } from "next/server";
 import { readJsonObject, requireTextFields } from "@/platform/errors";
 import { authResultResponse, callAuthProvider } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_ACCOUNT);
   if (limited) return limited;
@@ -26,4 +27,4 @@ export async function POST(request: NextRequest) {
     request,
     context: "Forgot password failed",
   });
-}
+});

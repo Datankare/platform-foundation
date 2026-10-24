@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { Translation } from "@/types";
 import { canSubmitText, getCharState, canClearText } from "@/lib/inputValidation";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 const MAX_CHARS = 100;
 
@@ -112,7 +113,7 @@ export default function SpikeApp() {
     setTranslations([]);
 
     try {
-      const response = await fetch("/api/process", {
+      const response = await apiFetch("/api/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: text.trim() }),

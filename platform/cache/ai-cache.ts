@@ -24,7 +24,9 @@
  * @see ADR-017 GenAI Surface Map — P4 (cached responses)
  */
 
+import { createHash } from "node:crypto";
 import type { CacheProvider } from "./types";
+import { memoryPartition } from "@/platform/tenancy/partition";
 import type { AIRequest, AIResponse } from "@/platform/ai";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
@@ -33,48 +35,27 @@ import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 // ---------------------------------------------------------------------------
 
 /**
- * Build a deterministic cache key from an AI request.
+ * Build a deterministic cache key from an AI request, within the current tenant (ADR-053 D6).
  *
- * Key components: model tier + system prompt + messages + tools hash.
- * Same request always produces the same key regardless of ordering.
+ * Key components: tenant + model tier + system prompt + messages + parameters + tools, hashed
+ * with SHA-256 over an unambiguous encoding. A cache hit serves one request's response to
+ * another, so the key must not collide: it was a 32-bit FNV hash, where unrelated prompts share a
+ * key after a few tens of thousands of entries, and it named no tenant.
  */
 export function buildAICacheKey(request: AIRequest): string {
-  const parts = [
-    `tier:${request.tier}`,
-    `sys:${hashString(request.system ?? "")}`,
-    `msgs:${hashMessages(request.messages)}`,
-    `temp:${request.temperature ?? "default"}`,
-    `max:${request.maxTokens ?? "default"}`,
-  ];
-
-  if (request.tools && request.tools.length > 0) {
-    parts.push(`tools:${hashString(JSON.stringify(request.tools))}`);
-  }
-
-  return `ai:${hashString(parts.join("|"))}`;
-}
-
-/**
- * Simple string hash — deterministic, fast, not cryptographic.
- * FNV-1a 32-bit for cache key generation.
- */
-function hashString(str: string): string {
-  let hash = 0x811c9dc5; // FNV offset basis
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = (hash * 0x01000193) >>> 0; // FNV prime, unsigned
-  }
-  return hash.toString(36);
-}
-
-function hashMessages(messages: AIRequest["messages"]): string {
-  const normalized = messages
-    .map(
-      (m: { role: string; content: string | unknown }) =>
-        `${m.role}:${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}`
-    )
-    .join("|");
-  return hashString(normalized);
+  const material = JSON.stringify([
+    request.tier,
+    request.system ?? "",
+    request.messages.map((m: { role: string; content: string | unknown }) => [
+      m.role,
+      m.content,
+    ]),
+    request.temperature ?? null,
+    request.maxTokens ?? null,
+    request.tools && request.tools.length > 0 ? request.tools : null,
+  ]);
+  const digest = createHash("sha256").update(material).digest("base64url");
+  return `ai:${memoryPartition()}:${digest}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ import { invokeTool } from "@/platform/agents/tool-invoker";
 import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 import { getProposalStore } from "@/platform/agents/proposal-store";
 import { apiError, readJsonObject } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 type ActionResult = {
   success: boolean;
@@ -80,7 +81,7 @@ const toolHandlers: Record<AdminToolId, Handler> = {
 /** The most actions one confirmed plan may carry (audit B-19). */
 const MAX_ACTIONS = 20;
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const verified = await requireAdmin(request, "can_access_admin");
   if (verified.error) return verified.error;
   const { admin } = verified;
@@ -207,4 +208,4 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json({ results });
-}
+});

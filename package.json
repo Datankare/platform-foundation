@@ -21,7 +21,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "sprint:check": "node scripts/sprint-check.mjs",
-    "schema:check": "node scripts/schema-parity.mjs",
+    "schema:check": "REQUIRE_DB_TESTS=1 jest __tests__/db/sql-schema-parity.db.test.ts",
     "coverage:ratchet": "node scripts/coverage-ratchet.mjs",
     "overrides:audit": "node scripts/override-audit.mjs"
   },
@@ -32,6 +32,7 @@
     "intl-messageformat": "12.1.3",
     "jose": "^6.2.12",
     "next": "16.4.2",
+    "pg": "8.23.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "safe-regex2": "^5.1.2"
@@ -44,6 +45,7 @@
     "@testing-library/react": "^16.3.3",
     "@types/jest": "^29.5.14",
     "@types/node": "^24",
+    "@types/pg": "8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-jest": "^30.4.1",
@@ -108,7 +110,6 @@
       "components/SpikeAppWrapper.tsx",
       "jest.setup.ts",
       "platform/auth/index.ts",
-      "lib/supabase/index.ts",
       "app/admin/page.tsx",
       "components/admin/ActionConfirmPanel.tsx",
       "components/admin/AdminConfigPanels.tsx",

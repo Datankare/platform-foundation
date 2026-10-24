@@ -33,8 +33,8 @@ export class AIMetricsPurgeHandler implements PurgeHandler {
 
   /**
    * @param deleteFn — Function that deletes ai_metrics rows for a user.
-   *   Typically: async (userId) => supabase.from('ai_metrics').delete().eq('user_id', userId)
-   *   Injected to avoid direct Supabase dependency in the handler.
+   *   Typically a withTenantTx delete from ai_metrics for the user, returning its row count.
+   *   Injected so the handler has no data-layer dependency.
    */
   constructor(deleteFn: (userId: string) => Promise<number>) {
     this.deleteFn = deleteFn;

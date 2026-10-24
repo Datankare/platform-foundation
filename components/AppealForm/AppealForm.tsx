@@ -19,6 +19,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 type Variant = "light" | "dark";
 
@@ -75,7 +76,7 @@ export default function AppealForm({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/moderation/appeals", {
+      const res = await apiFetch("/api/moderation/appeals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ originalDecisionId, appealReason: reason.trim() }),

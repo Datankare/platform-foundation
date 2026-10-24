@@ -4,7 +4,8 @@
  * Reference implementation for tests and development. Isolation is structural: each
  * scope's vectors live in their own partition, and a search reads only its scope's
  * partition — cross-scope leakage is impossible by construction (ADR-042 D3), at any
- * declared isolation level.
+ * declared isolation level. Above the scope, each tenant has its own set of partitions, as
+ * row-level security keeps tenants apart in PostgresEmbeddingStore (ADR-053 D6).
  *
  * P7:  Provider-aware — mock/fallback provider.
  * P11: Always available — no network, no failure.
@@ -21,6 +22,7 @@ import type {
 } from "./types";
 import { scopeKey } from "./scope";
 import { logger } from "@/lib/logger";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 interface StoredEntry {
   readonly chunkId: string;
@@ -48,8 +50,13 @@ function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
 const ALL_LEVELS: readonly IsolationLevel[] = ["shared", "partition", "dedicated"];
 
 export class InMemoryEmbeddingStore implements EmbeddingStore {
-  /** scopeKey → that scope's entries. A search never reads another scope's map. */
-  private readonly partitions = new Map<string, StoredEntry[]>();
+  /** Per tenant: scopeKey → that scope's entries. A search never reads another scope's list. */
+  private readonly tenants = new TenantPartitionedMap<string, StoredEntry[]>();
+
+  /** The current tenant's scope partitions. */
+  private get partitions(): Map<string, StoredEntry[]> {
+    return this.tenants.current();
+  }
 
   supportedLevels(): readonly IsolationLevel[] {
     return ALL_LEVELS;

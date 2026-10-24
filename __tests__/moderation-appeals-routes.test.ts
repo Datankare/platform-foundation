@@ -49,19 +49,9 @@ jest.mock("@/platform/moderation/review-store", () => ({
   getReviewQueueStore: jest.fn(),
 }));
 
-const mockSingle = jest.fn();
-const mockSupabase = {
-  from: jest.fn(() => ({
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    is: jest.fn().mockReturnThis(),
-    single: mockSingle,
-  })),
-};
-
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(() => mockSupabase),
-}));
+// The appellant lookup reads through a fake platform/data (helpers/fake-data.ts); its SQL and
+// tenancy are proved in __tests__/db/admin-tenant-data.db.test.ts.
+jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
 
 import { NextRequest } from "next/server";
 import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
@@ -75,6 +65,7 @@ import {
 } from "@/platform/moderation/review-service";
 import { getReviewQueueStore } from "@/platform/moderation/review-store";
 import { POST } from "@/app/api/moderation/appeals/route";
+import { fakeData } from "./helpers/fake-data";
 import { PATCH } from "@/app/api/moderation/appeals/[id]/route";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -137,7 +128,11 @@ beforeEach(() => {
   (getModerationStore as jest.Mock).mockReturnValue({ queryAudits: mockQueryAudits });
   (getReviewQueueStore as jest.Mock).mockReturnValue({ getById: mockGetById });
   (getAuditLogForUser as jest.Mock).mockResolvedValue([]);
-  mockSingle.mockResolvedValue({ data: { id: "u-app" }, error: null });
+  fakeData().reset();
+  fakeData().answer = (sql) =>
+    sql.startsWith("select id from users where cognito_sub")
+      ? [{ id: "u-app" }]
+      : undefined;
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -203,13 +198,25 @@ describe("POST /api/moderation/appeals", () => {
   });
 
   it("returns 403 when the user account cannot be resolved", async () => {
-    mockSingle.mockResolvedValue({ data: null, error: { message: "not found" } });
+    fakeData().answer = () => [];
 
     const res = await POST(
       postReq({ originalDecisionId: "traj-1", appealReason: GOOD_REASON })
     );
 
     expect(res.status).toBe(403);
+    expect(submitAppeal).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the user lookup cannot be read", async () => {
+    fakeData().answer = () => {
+      throw new Error("down");
+    };
+    const res = await POST(
+      postReq({ originalDecisionId: "traj-1", appealReason: GOOD_REASON })
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("account.not_found");
     expect(submitAppeal).not.toHaveBeenCalled();
   });
 

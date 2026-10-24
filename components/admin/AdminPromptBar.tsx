@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 interface AdminPromptBarProps {
   panel: string;
@@ -39,7 +40,7 @@ export default function AdminPromptBar({
     setHistory((prev) => [prompt, ...prev.slice(0, 19)]);
 
     try {
-      const res = await fetch("/api/admin/ai", {
+      const res = await apiFetch("/api/admin/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: prompt.trim(), panel }),
@@ -122,7 +123,7 @@ export default function AdminPromptBar({
           Run
         </button>
       </div>
-      <p className="text-xs text-gray-600 mt-1.5 ml-1">
+      <p className="text-xs text-gray-400 mt-1.5 ml-1">
         Try: &quot;Create a moderator role with can_play and admin_view_audit&quot; or
         &quot;Show all roles&quot;
       </p>

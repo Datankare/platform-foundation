@@ -26,6 +26,7 @@ const mockSetConfigWithHistory = jest.fn();
 const mockGetConfigHistory = jest.fn();
 const mockGetPermissionTier = jest.fn();
 const mockGetConfig = jest.fn();
+const mockClearTenantConfig = jest.fn();
 
 jest.mock("@/platform/auth/platform-config", () => ({
   getEnhancedConfig: (...args: any[]) => mockGetEnhancedConfig(...args),
@@ -35,6 +36,7 @@ jest.mock("@/platform/auth/platform-config", () => ({
   getConfigHistory: (...args: any[]) => mockGetConfigHistory(...args),
   getPermissionTier: (...args: any[]) => mockGetPermissionTier(...args),
   getConfigOrThrow: (...args: any[]) => mockGetConfig(...args),
+  clearTenantConfig: (...args: any[]) => mockClearTenantConfig(...args),
 }));
 
 const mockIsApprovalRequired = jest.fn();
@@ -42,6 +44,7 @@ const mockRequestApproval = jest.fn();
 const mockApproveApprovalChange = jest.fn();
 const mockRejectApprovalChange = jest.fn();
 const mockListApprovals = jest.fn();
+const mockGetApproval = jest.fn().mockResolvedValue(null);
 
 jest.mock("../config-approval", () => ({
   isApprovalRequired: (...args: any[]) => mockIsApprovalRequired(...args),
@@ -62,6 +65,7 @@ jest.mock("../config-approval", () => ({
   },
   rejectChange: (...args: any[]) => mockRejectApprovalChange(...args),
   listApprovals: (...args: any[]) => mockListApprovals(...args),
+  getApproval: (...args: any[]) => mockGetApproval(...args),
 }));
 
 const mockGenerateImpactReport = jest.fn();
@@ -79,6 +83,7 @@ import {
   handleSearchConfig,
   handleGetConfig,
   handleUpdateConfig,
+  handleResetConfig,
   handleGetHistory,
   handleCompareToDefaults,
   handleImpactReport,
@@ -90,6 +95,7 @@ import {
   CONFIG_TOOLS,
 } from "../config-handlers";
 import { TOOL_BOUNDARIES } from "../types";
+import { runWithTenant } from "@/platform/tenancy/context";
 import type { EnhancedConfigEntry, ToolExecutionContext } from "../types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -107,6 +113,9 @@ function makeEntry(overrides: Partial<EnhancedConfigEntry> = {}): EnhancedConfig
     maxValue: 1000,
     allowedValues: null,
     permissionTier: "standard",
+    tenantOverridable: false,
+    overridden: false,
+    platformValue: 100,
     ...overrides,
   };
 }
@@ -241,7 +250,9 @@ describe("handleUpdateConfig", () => {
       "admin-1",
       "Increasing for load test",
       "config_agent",
-      expect.objectContaining({ key: "rate_limit_rpm" })
+      expect.objectContaining({ key: "rate_limit_rpm" }),
+      // ADR-053 D5: a single-tenant deployment changes the platform default.
+      { scope: "platform", operator: false }
     );
   });
 
@@ -505,6 +516,157 @@ describe("handleRequestApproval", () => {
 // ═══════════════════════════════════════════════════════════════════════
 // Tool: approve_change
 // ═══════════════════════════════════════════════════════════════════════
+
+describe("handleResetConfig — the tenant's own value removed, governed", () => {
+  const SHARED = Object.freeze({
+    tenantId: "11111111-1111-4111-8111-111111111111",
+    mode: "shared" as const,
+  });
+  const reset = (input: Partial<Parameters<typeof handleResetConfig>[0]> = {}) =>
+    runWithTenant(SHARED, () =>
+      handleResetConfig({
+        key: "rate_limit_rpm",
+        changeComment: "back to default",
+        actorId: "admin-1",
+        confirmed: true,
+        ...input,
+      })
+    );
+  const own = (o: Partial<EnhancedConfigEntry> = {}) =>
+    makeEntry({
+      overridden: true,
+      tenantOverridable: true,
+      value: 5,
+      platformValue: 100,
+      ...o,
+    });
+
+  it("an unknown key is not applied", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(null);
+    expect((await reset()).data).toMatchObject({ applied: false });
+    expect(mockClearTenantConfig).not.toHaveBeenCalled();
+  });
+
+  it("a single deployment, or a key without the tenant's own value: nothing to change", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(own());
+    const single = await handleResetConfig({
+      key: "rate_limit_rpm",
+      changeComment: "c",
+      actorId: "a",
+      confirmed: true,
+    });
+    expect(single.data).toEqual({ applied: true, unchanged: true });
+    mockGetEnhancedConfig.mockResolvedValue(own({ overridden: false }));
+    expect((await reset()).data).toEqual({ applied: true, unchanged: true });
+    expect(mockClearTenantConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-operator a key that governs the platform", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(own({ tenantOverridable: false }));
+    expect((await reset()).data).toMatchObject({ applied: false, error: /operator/ });
+    expect(mockClearTenantConfig).not.toHaveBeenCalled();
+  });
+
+  it("previews without applying unless confirmed (P10)", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(own());
+    mockIsApprovalRequired.mockResolvedValue(false);
+    const r = await reset({ confirmed: false });
+    expect(r.data).toMatchObject({ applied: false, pendingConfirmation: true });
+    expect((r.data as any).changeRequest.proposedValue).toBe(100);
+    expect(mockClearTenantConfig).not.toHaveBeenCalled();
+  });
+
+  it("applies a standard-tier reset", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(own());
+    mockIsApprovalRequired.mockResolvedValue(true);
+    mockClearTenantConfig.mockResolvedValue({ success: true });
+    expect((await reset()).data).toMatchObject({ applied: true });
+    expect(mockClearTenantConfig).toHaveBeenCalledWith(
+      "rate_limit_rpm",
+      "admin-1",
+      "back to default",
+      false
+    );
+  });
+
+  it("a safety-tier reset under two-person approval becomes a pending 'reset' approval", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(
+      own({ key: "moderation.strike_ban_threshold", permissionTier: "safety" })
+    );
+    mockIsApprovalRequired.mockResolvedValue(true);
+    mockRequestApproval.mockResolvedValue({ success: true, record: { id: "apr-9" } });
+    const r = await reset({
+      key: "moderation.strike_ban_threshold",
+      actorIsOperator: true,
+    });
+    expect(r.data).toMatchObject({ applied: false, requiresApproval: true });
+    expect(mockRequestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configKey: "moderation.strike_ban_threshold",
+        currentValue: 5,
+        proposedValue: 100,
+        scope: "tenant",
+        action: "reset",
+      })
+    );
+    expect(mockClearTenantConfig).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed clear", async () => {
+    mockGetEnhancedConfig.mockResolvedValue(own());
+    mockIsApprovalRequired.mockResolvedValue(false);
+    mockClearTenantConfig.mockResolvedValue({ success: false, error: "audit down" });
+    expect((await reset()).data).toMatchObject({ applied: false, error: "audit down" });
+  });
+
+  it("approving a 'reset' approval clears the tenant's value — never sets the proposed value", async () => {
+    mockApproveApprovalChange.mockResolvedValue({
+      success: true,
+      record: {
+        id: "apr-9",
+        configKey: "moderation.strike_ban_threshold",
+        proposedValue: 100,
+        changeComment: "back",
+        scope: "tenant",
+        action: "reset",
+      },
+    });
+    mockClearTenantConfig.mockResolvedValue({ success: true });
+    const r = await runWithTenant(SHARED, () =>
+      handleApproveChange({
+        approvalId: "apr-9",
+        reviewerId: "op-2",
+        reviewComment: "ok",
+        reviewerIsOperator: true,
+      })
+    );
+    expect(r.data).toMatchObject({ approved: true, applied: true });
+    expect(mockClearTenantConfig).toHaveBeenCalledWith(
+      "moderation.strike_ban_threshold",
+      "op-2",
+      "Approved: back",
+      true
+    );
+    expect(mockSetConfigWithHistory).not.toHaveBeenCalled();
+  });
+
+  it("is dual-controlled like an update: a listed key is held", async () => {
+    mockGetConfig.mockResolvedValue(["rate_limit_rpm"]);
+    mockGetEnhancedConfig.mockResolvedValue(own());
+    mockIsApprovalRequired.mockResolvedValue(false);
+    mockClearTenantConfig.mockResolvedValue({ success: true });
+    const r = await runWithTenant(SHARED, () =>
+      dispatchConfigTool("reset_config", {
+        key: "rate_limit_rpm",
+        changeComment: "c",
+        actorId: "admin-1",
+        confirmed: true,
+      })
+    );
+    expect(r.held).toBe(true);
+    expect(mockClearTenantConfig).not.toHaveBeenCalled();
+  });
+});
 
 describe("handleApproveChange", () => {
   it("approves and applies the change", async () => {
@@ -852,8 +1014,8 @@ describe("buildChangeRequest (A8: pure function)", () => {
 });
 
 describe("CONFIG_TOOLS", () => {
-  it("defines exactly 10 tools", () => {
-    expect(CONFIG_TOOLS).toHaveLength(10);
+  it("defines exactly 11 tools", () => {
+    expect(CONFIG_TOOLS).toHaveLength(11);
   });
 
   it("each tool has required fields", () => {

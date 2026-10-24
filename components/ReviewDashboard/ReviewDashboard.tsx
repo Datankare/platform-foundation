@@ -32,6 +32,7 @@ import type {
 } from "@/platform/moderation/review-types";
 import type { ModerationAction } from "@/platform/moderation/types";
 import type { ReviewRecommendation } from "@/platform/moderation/review-assist";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 // ── Theme ─────────────────────────────────────────────────────────────
 
@@ -132,7 +133,7 @@ interface QueueResult {
 async function fetchQueue(status: ReviewStatus | "all"): Promise<QueueResult> {
   try {
     const qs = status === "all" ? "" : `?status=${status}`;
-    const res = await fetch(`/api/moderation/review${qs}`, {
+    const res = await apiFetch(`/api/moderation/review${qs}`, {
       headers: { "Content-Type": "application/json" },
     });
     if (!res.ok) {
@@ -202,7 +203,7 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/moderation/review/${id}`, {
+      const res = await apiFetch(`/api/moderation/review/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -224,7 +225,7 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
   const getSuggestion = useCallback(async (id: string) => {
     setAssist((a) => ({ ...a, [id]: { loading: true } }));
     try {
-      const res = await fetch(`/api/moderation/review/${id}/assist`, {
+      const res = await apiFetch(`/api/moderation/review/${id}/assist`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });

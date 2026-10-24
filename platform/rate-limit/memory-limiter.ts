@@ -7,10 +7,17 @@
  * NOT suitable for multi-instance production (no shared state).
  * Use RedisRateLimiter for distributed rate limiting.
  *
+ * Counters are kept per tenant (ADR-053 D6): every key carries the current tenant's partition,
+ * as the Postgres store's rows are kept apart by row-level security, so the same identifier in
+ * two tenants is two counters even when a caller passes an identifier without its tenant.
+ * enforceRateLimit also puts the tenant in the identifier. Outside any tenant, keys fall in the
+ * "no tenant" partition (platform/tenancy/partition.ts).
+ *
  * @module platform/rate-limit
  */
 
 import type { RateLimiter, RateLimitResult, RateLimitRule } from "./types";
+import { memoryPartition } from "@/platform/tenancy/partition";
 
 interface WindowEntry {
   timestamps: number[];
@@ -41,7 +48,7 @@ export class InMemoryRateLimiter implements RateLimiter {
   }
 
   private buildKey(identifier: string, rule: RateLimitRule): string {
-    return `${this.namespace}${rule.id}:${identifier}`;
+    return `${this.namespace}${memoryPartition()}:${rule.id}:${identifier}`;
   }
 
   private getWindow(key: string): WindowEntry {

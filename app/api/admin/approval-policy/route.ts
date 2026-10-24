@@ -8,11 +8,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { getApprovalPolicyStore } from "@/platform/agents";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_approval_policy");
   if (denied) return denied;
 
   const policy = await getApprovalPolicyStore().load();
   return NextResponse.json({ policy });
-}
+});

@@ -9,6 +9,9 @@
  * - TTL: 60 seconds default (configurable)
  * - Invalidation: call invalidate(cognitoSub) after role/entitlement changes
  * - Bounded: max 10,000 entries (LRU eviction when full)
+ * - Keyed by tenant and subject (ADR-053 D3): a permission set resolved in one tenant is never
+ *   served in another. Outside any tenant the key uses the "no tenant" partition, which no
+ *   request reaches (resolution itself refuses work without a tenant).
  *
  * Sprint 3, Task 3.5
  *
@@ -23,8 +26,11 @@ import {
   resolvePermissions,
   type EffectivePermissions,
 } from "@/platform/auth/permissions";
+import { memoryPartition } from "@/platform/tenancy/partition";
 
 interface CacheEntry {
+  /** The subject, so invalidation can find every tenant's entry for it. */
+  sub: string;
   data: EffectivePermissions;
   expiresAt: number;
   lastAccessed: number;
@@ -35,6 +41,11 @@ const MAX_ENTRIES = 10_000;
 
 const cache = new Map<string, CacheEntry>();
 
+/** The cache key: the current tenant's partition and the subject (NUL never occurs in either). */
+function keyFor(cognitoSub: string): string {
+  return `${memoryPartition()}\u0000${cognitoSub}`;
+}
+
 /**
  * Get cached permissions for a user. Resolves from DB on cache miss.
  */
@@ -43,7 +54,8 @@ export async function getCachedPermissions(
   ttlMs: number = DEFAULT_TTL_MS
 ): Promise<EffectivePermissions | null> {
   const now = Date.now();
-  const cached = cache.get(cognitoSub);
+  const key = keyFor(cognitoSub);
+  const cached = cache.get(key);
 
   if (cached && cached.expiresAt > now) {
     cached.lastAccessed = now;
@@ -55,7 +67,8 @@ export async function getCachedPermissions(
 
   if (permissions) {
     evictIfFull();
-    cache.set(cognitoSub, {
+    cache.set(key, {
+      sub: cognitoSub,
       data: permissions,
       expiresAt: now + ttlMs,
       lastAccessed: now,
@@ -78,11 +91,13 @@ export async function hasCachedPermission(
 }
 
 /**
- * Invalidate cached permissions for a user.
- * Call after role changes, entitlement grants/revokes.
+ * Invalidate cached permissions for a user, in every tenant (over-invalidating is safe; serving
+ * a stale grant is not). Call after role changes, entitlement grants/revokes.
  */
 export function invalidatePermissions(cognitoSub: string): void {
-  cache.delete(cognitoSub);
+  for (const [key, entry] of cache) {
+    if (entry.sub === cognitoSub) cache.delete(key);
+  }
 }
 
 /**

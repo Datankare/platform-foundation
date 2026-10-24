@@ -62,7 +62,7 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 | Versioned config prompt         | ✅ Sprint 3a | `prompts/admin/config-manager-v1.ts` — permission-aware system prompt with reconfirmation flow                                           |
 | Sentinel agent                  | ✅ Sprint 3b | `platform/moderation/sentinel.ts` — strike recording, consequence ladder, 5-step trajectory                                              |
 | COPPA consent gate              | ✅ Sprint 3b | `platform/auth/coppa-gate.ts` — structural safety (P4), fail-closed, config-driven feature blocking                                      |
-| Strike persistence              | ✅ Sprint 3b | `platform/moderation/strikes.ts` — InMemory + Supabase stores, L19 compliant (not fire-and-forget)                                       |
+| Strike persistence              | ✅ Sprint 3b | `platform/moderation/strikes.ts` — InMemory + Postgres stores, L19 compliant (not fire-and-forget)                                       |
 | Sentinel middleware hook        | ✅ Sprint 3b | Guardian block → Sentinel fires async → strike recorded → consequence evaluated                                                          |
 | Agent identity rung 2           | ✅ Sprint 3c | `lib/agent-identity.ts` (consumer) — attested delegation: trusted-agent registry, RS256 token verify, rung-1 header retired (ADR-033)    |
 | Delegation consent + minting    | ✅ Sprint 3c | OAuth 2.1 / PKCE `/authorize` + `/token`, governed token TTL (per-agent ceiling + global cap), no refresh tokens (ADR-033)               |
@@ -70,8 +70,8 @@ The 18 principles that define what "GenAI-native" means for this platform are do
 | GenAI-native governance admin   | ✅ Sprint 3c | Registry / capabilities / approval / per-account administered via prompt → plan → confirm → execute; reusable, vocabulary-free (ADR-035) |
 | Error tracking (Sentry)         | ✅ Sprint 3  | `platform/observability/error-reporting.ts` — ErrorReporter interface, Sentry + NoOp implementations                                     |
 | Distributed tracing             | ✅ Sprint 3  | `platform/observability/tracing.ts` — TraceProvider interface, trace/span lifecycle, header propagation                                  |
-| Metrics persistence             | ✅ Sprint 3  | `platform/observability/metrics-sink.ts` — MetricsSink interface, InMemory + Supabase implementations                                    |
-| Health monitoring               | ✅ Sprint 3  | `platform/observability/health.ts` — HealthRegistry + probes for Supabase, LLM provider, generic HTTP                                    |
+| Metrics persistence             | ✅ Sprint 3  | `platform/observability/metrics-sink.ts` — MetricsSink interface, InMemory + Postgres implementations                                    |
+| Health monitoring               | ✅ Sprint 3  | `platform/observability/health.ts` — HealthRegistry + probes for Postgres, LLM provider, generic HTTP                                    |
 | AI metrics → MetricsSink        | ✅ Sprint 3  | AI instrumentation now delegates to MetricsSink for persistent storage alongside in-memory buffer                                        |
 | Logger trace context            | ✅ Sprint 3  | `lib/logger.ts` — traceId/spanId fields, withTrace() scoped logger, documented log entry schema                                          |
 | Streaming responses             | ✅ Sprint 5  | `provider.stream()` + `orchestrator.stream()`, TTFT instrumentation, circuit breaker, fallback to complete()                             |

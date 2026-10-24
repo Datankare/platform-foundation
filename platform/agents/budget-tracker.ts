@@ -1,8 +1,12 @@
 /**
  * platform/agents/budget-readTracker().ts — Agent budget enforcement
  *
- * Tracks and enforces per-agent per-scope cost budgets.
- * Prevents runaway costs by checking before each step.
+ * Tracks and enforces per-agent per-scope cost budgets, and above them each tenant's own daily
+ * cap on all its agents' spend together (ADR-053 D6: one tenant's agents cannot spend another's
+ * share, nor the platform's). Prevents runaway costs by checking before each step.
+ *
+ * Budgets are per tenant: the Postgres store under row-level security, the in-memory store by
+ * tenant partition.
  *
  * Scope of what this enforces: spend only. The period is a calendar day, matching
  * BudgetConfig.maxCostPerDay. The per-trajectory step limit is NOT enforced here — it
@@ -20,7 +24,8 @@
  */
 
 import type { BudgetConfig } from "./types";
-import { resolveDailyCostCap } from "./budget-config";
+import { resolveDailyCostCap, resolveTenantDailyCostCap } from "./budget-config";
+import { TenantPartitionedMap, memoryPartition } from "@/platform/tenancy/partition";
 import { DEFAULT_BUDGET_CONFIG } from "./types";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 
@@ -46,6 +51,8 @@ export interface BudgetUsage {
 
 /** Current budget status for an agent in a scope */
 export interface BudgetStatus {
+  /** The tenant whose budget this is ("-" outside any tenant: tests and local runs only). */
+  readonly tenantId: string;
   readonly agentId: string;
   readonly scopeType: "group" | "user" | "platform";
   readonly scopeId?: string;
@@ -84,6 +91,17 @@ export interface BudgetStore {
     deltaUsd: number,
     deltaSteps: number
   ): Promise<BudgetUsage>;
+  /**
+   * One step's spend, added to the agent's scope and to the tenant's total (`tenant`) as ONE
+   * atomic change: both or neither. Two separate increments let a failure between them count
+   * the agent's spend and not the tenant's — the tenant cap then under-counts, failing open.
+   */
+  incrementWithTenant(
+    scope: BudgetScope,
+    tenant: BudgetScope,
+    deltaUsd: number,
+    deltaSteps: number
+  ): Promise<{ readonly agent: BudgetUsage; readonly tenant: BudgetUsage }>;
   reset(): Promise<void>;
 }
 
@@ -93,7 +111,11 @@ function scopeKeyOf(scope: BudgetScope): string {
 
 /** In-process store. Atomic by construction — JavaScript does not interleave here. */
 export class InMemoryBudgetStore implements BudgetStore {
-  private usage = new Map<string, BudgetUsage>();
+  private readonly parts = new TenantPartitionedMap<string, BudgetUsage>();
+
+  private get usage(): Map<string, BudgetUsage> {
+    return this.parts.current();
+  }
 
   async read(scope: BudgetScope): Promise<BudgetUsage> {
     return this.usage.get(scopeKeyOf(scope)) ?? { usedUsd: 0, usedSteps: 0 };
@@ -104,6 +126,22 @@ export class InMemoryBudgetStore implements BudgetStore {
     deltaUsd: number,
     deltaSteps: number
   ): Promise<BudgetUsage> {
+    return this.add(scope, deltaUsd, deltaSteps);
+  }
+
+  async incrementWithTenant(
+    scope: BudgetScope,
+    tenant: BudgetScope,
+    deltaUsd: number,
+    deltaSteps: number
+  ): Promise<{ readonly agent: BudgetUsage; readonly tenant: BudgetUsage }> {
+    // Synchronous between the two: nothing else runs in between, and neither can fail.
+    const t = this.add(tenant, deltaUsd, deltaSteps);
+    const agent = this.add(scope, deltaUsd, deltaSteps);
+    return { agent, tenant: t };
+  }
+
+  private add(scope: BudgetScope, deltaUsd: number, deltaSteps: number): BudgetUsage {
     const key = scopeKeyOf(scope);
     const current = this.usage.get(key) ?? { usedUsd: 0, usedSteps: 0 };
     const next: BudgetUsage = {
@@ -114,10 +152,17 @@ export class InMemoryBudgetStore implements BudgetStore {
     return next;
   }
 
+  /** Forget the current tenant's budgets (as the Postgres store does). */
   async reset(): Promise<void> {
     this.usage.clear();
   }
 }
+
+/**
+ * The scope that accumulates every agent's spend in a tenant, against the tenant's daily cap.
+ * Not an agent id any agent can have (agent ids are "agent:…" or bare role names).
+ */
+export const TENANT_TOTAL_AGENT = "*tenant*";
 
 // ---------------------------------------------------------------------------
 // BudgetTracker
@@ -149,6 +194,34 @@ export class BudgetTracker {
     return { agentId, scopeType, scopeId, period: this.getCurrentPeriod() };
   }
 
+  private tenantScope(): BudgetScope {
+    return {
+      agentId: TENANT_TOTAL_AGENT,
+      scopeType: "platform",
+      period: this.getCurrentPeriod(),
+    };
+  }
+
+  /** The tenant's spend today across all its agents, against its daily cap. */
+  async getTenantStatus(): Promise<{
+    readonly tenantId: string;
+    readonly period: string;
+    readonly usedUsd: number;
+    readonly budgetUsd: number;
+    readonly exhausted: boolean;
+  }> {
+    const cap = await resolveTenantDailyCostCap();
+    const scope = this.tenantScope();
+    const usage = await this.store.read(scope);
+    return {
+      tenantId: memoryPartition(),
+      period: scope.period,
+      usedUsd: usage.usedUsd,
+      budgetUsd: cap,
+      exhausted: usage.usedUsd >= cap,
+    };
+  }
+
   private async toStatus(
     scope: BudgetScope,
     usage: BudgetUsage,
@@ -158,6 +231,7 @@ export class BudgetTracker {
     // Spend only. A step count accumulated per agent per period says nothing about
     // whether any one trajectory has run too long.
     return {
+      tenantId: memoryPartition(),
       agentId: scope.agentId,
       scopeType: scope.scopeType,
       scopeId: scope.scopeId,
@@ -194,13 +268,31 @@ export class BudgetTracker {
       };
     }
 
+    // ADR-053 D6: the tenant's cap on all its agents together, checked after the agent's own.
+    const tenantCap = await resolveTenantDailyCostCap();
+    const tenantUsage = await this.store.read(this.tenantScope());
+    if (tenantUsage.usedUsd >= tenantCap) {
+      return {
+        allowed: false,
+        reason: `Tenant daily budget exhausted: $${tenantUsage.usedUsd.toFixed(4)} / $${tenantCap.toFixed(4)}`,
+        status,
+      };
+    }
+
     // No step gate here. maxStepsPerTrajectory is enforced by runtime.ts inside the
     // execution loop, where stepCount is the count for THIS trajectory.
     return { allowed: true, status };
   }
 
   /**
-   * Consume budget after a step completes. Atomic at the store.
+   * Consume budget after a step completes: the agent's spend and the tenant's total move
+   * together, atomically (both or neither) at the store.
+   *
+   * What a cap can and cannot stop: a step's cost is known only after it ran, so checkBudget
+   * gates the NEXT step on the totals. Steps already running when a cap is reached (concurrent
+   * trajectories that each passed the check) still complete and are counted — the overshoot is
+   * bounded by the steps in flight, never lost or hidden. Preventing that would need each step's
+   * cost reserved in advance, which no BudgetConfig states.
    */
   async consume(
     agentId: string,
@@ -211,8 +303,13 @@ export class BudgetTracker {
   ): Promise<BudgetStatus> {
     const cfg = config ?? DEFAULT_BUDGET_CONFIG;
     const scope = this.scopeOf(agentId, scopeType, scopeId);
-    const usage = await this.store.increment(scope, costUsd, 1);
-    return this.toStatus(scope, usage, cfg);
+    const { agent } = await this.store.incrementWithTenant(
+      scope,
+      { ...this.tenantScope(), period: scope.period },
+      costUsd,
+      1
+    );
+    return this.toStatus(scope, agent, cfg);
   }
 
   /**

@@ -15,10 +15,11 @@ import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { reapOverdueEscalations } from "@/platform/moderation/review-service";
 import { apiError } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 const MODERATE_PERMISSION = "can_moderate";
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const denied = await adminGuard(request, MODERATE_PERMISSION);
   if (denied) return denied;
 
@@ -36,4 +37,4 @@ export async function POST(request: NextRequest) {
     );
     return apiError("internal.error", { params: { requestId }, request });
   }
-}
+});

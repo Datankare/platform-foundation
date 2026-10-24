@@ -12,6 +12,10 @@
  *   Fails closed: with no purge handlers registered nothing would be erased, so the route answers
  *   503 rather than reporting success (audit X-15).
  *   Returns: PurgeResult
+ *   Tenancy: the target must be a user of the request's tenant (ADR-053 D5) — a soft-deleted one
+ *   included, since erasing a deleted account is the common case — or the route answers 404
+ *   admin.target_not_found before any purge step runs, whatever each purge handler would scope
+ *   itself to. The protected-role check reads it in the same tenant transaction.
  *
  * @module app/api/admin/gdpr
  */
@@ -23,9 +27,10 @@ import { logger } from "@/lib/logger";
 import { PurgePipeline } from "@/platform/gdpr";
 import type { PurgeRequest } from "@/platform/gdpr";
 import { apiError, readJsonObject } from "@/platform/errors";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { findRole, findUser } from "@/platform/auth/role-lookup";
+import { withTenantTx } from "@/platform/data";
+import { findRole } from "@/platform/auth/role-lookup";
 import { PROTECTED_ROLES } from "@/platform/auth/role-governance";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -37,7 +42,7 @@ const VALID_REASONS = new Set([
   "legal-order",
 ]);
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   // Rate limited, verified, permission and account standing checked (requireAdmin).
   const verified = await requireAdmin(request, "admin_purge_user_data");
   if (verified.error) return verified.error;
@@ -73,15 +78,30 @@ export async function POST(request: NextRequest) {
   if (body.userId === admin.userId) {
     return apiError("admin.self_target", { request });
   }
+  // The target is looked up in this tenant only (ADR-053 D5), deleted accounts included.
+  let target: { readonly roleName: string | null } | null;
   try {
-    const supabase = getSupabaseServiceClient();
-    const target = await findUser(supabase, body.userId);
-    const role = target?.roleId ? await findRole(supabase, { id: target.roleId }) : null;
-    if (role && PROTECTED_ROLES.includes(role.name)) {
-      return apiError("auth.role_protected", { params: { role: role.name }, request });
-    }
+    target = await withTenantTx(async (tx) => {
+      const { rows } = await tx.query<{ role_id: string | null }>(
+        "select role_id from users where id = $1::uuid",
+        [body.userId]
+      );
+      if (!rows[0]) return null;
+      const role = rows[0].role_id ? await findRole(tx, { id: rows[0].role_id }) : null;
+      return { roleName: role?.name ?? null };
+    });
   } catch {
     return apiError("service.unavailable", { params: { service: "roles" }, request });
+  }
+  if (!target) {
+    // Not this tenant's user (or no user at all): nothing is purged, anywhere.
+    return apiError("admin.target_not_found", { params: { target: "user" }, request });
+  }
+  if (target.roleName && PROTECTED_ROLES.includes(target.roleName)) {
+    return apiError("auth.role_protected", {
+      params: { role: target.roleName },
+      request,
+    });
   }
 
   const purgeRequest: PurgeRequest = {
@@ -145,4 +165,4 @@ export async function POST(request: NextRequest) {
 
     return apiError("internal.error", { request });
   }
-}
+});

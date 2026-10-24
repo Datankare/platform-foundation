@@ -1,6 +1,6 @@
 # ADR-053: Tenancy — One Codebase, Shared or Dedicated Deployment
 
-Status: Proposed (Phase 5 Sprint 7R entry gate, 2026-10-21). Decision maker: Raman Sud.
+Status: Proposed (Phase 5 Sprint 7R entry gate, 2026-10-21); amended in implementation (§6). Decision maker: Raman Sud.
 Related: ADR-012 (auth), ADR-013 (roles), ADR-023/042 (RAG scope), ADR-048 (governed budgets), ADR-050 (environment contract), ADR-052 (rate limiting), ADR-055 (deploy anywhere), TASK-126, TASK-137, TASK-138, TASK-144.
 
 ---
@@ -23,17 +23,17 @@ The decision of 2026-10-17 requires both a shared multi-tenant deployment and a 
 
 **D2 — Tenant identity comes from verified identity, never the request body.**
 
-| Caller                                            | Tenant resolved from                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Signed-in user (shared)                           | The Cognito attribute `custom:tenant_id`, read in the same `GetUser` call that verifies the token. A user belongs to exactly one tenant. The attribute is read-only for every app client — set only by the provisioning API, never by the user (`UpdateUserAttributes`) — and a test checks the pool's client write permissions. On a tenant's own domain, a token for another tenant is refused. |
-| Signed-in user (single)                           | `TENANT_ID`; a token whose attribute names another tenant is refused.                                                                                                                                                                                                                                                                                                                             |
-| Guest                                             | The tenant the guest token was minted for (a signed `tid` claim).                                                                                                                                                                                                                                                                                                                                 |
-| Anonymous (sign-in, guest minting, public routes) | The request host, through the `tenant_domains` table (shared); `TENANT_ID` (single). An unknown host is refused. A forwarded host header is trusted only through `TRUSTED_PROXY_HOPS`, as for addresses (ADR-052 D5).                                                                                                                                                                             |
-| Agent                                             | The tenant of the principal it acts for; never set by the agent.                                                                                                                                                                                                                                                                                                                                  |
+| Caller                                            | Tenant resolved from                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Signed-in user (shared)                           | The Cognito attribute `custom:tenant_id`, read in the same `GetUser` call that verifies the token. A user belongs to exactly one tenant. The attribute is read-only for every app client — set only by the platform (`AdminUpdateUserAttributes`, §6 A1), never by the user (`UpdateUserAttributes`) — and the operator readiness check verifies the pool's client permissions and federated mappings. On a tenant's own domain, a token for another tenant is refused. |
+| Signed-in user (single)                           | `TENANT_ID`; a token whose attribute names another tenant is refused.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Guest                                             | The tenant the guest token was minted for (a signed `tid` claim).                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Anonymous (sign-in, guest minting, public routes) | The request host, through the `tenant_domains` table (shared); `TENANT_ID` (single). An unknown host is refused. A forwarded host header is trusted only through `TRUSTED_PROXY_HOPS`, as for addresses (ADR-052 D5).                                                                                                                                                                                                                                                   |
+| Agent                                             | The tenant of the principal it acts for; never set by the agent.                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 Shared deployments use one Cognito pool; a dedicated deployment has its own pool. A platform operator (`super_admin`) acts across tenants only through explicit, audited operator routes.
 
-**D3 — Tenant context travels with the request.** `TenantContext { tenantId, mode }` (kernel) is established once per request by the verifiers and held in request-scoped `AsyncLocalStorage`; `Actor`, `AgentIdentity`, `WorkflowContext`, budget scopes and trajectory records carry `tenantId` explicitly. The data layer, caches and limiters read the current tenant from context and **fail closed** — throw — when there is none. Background jobs (ADR-056) run each tenant's work inside its own context.
+**D3 — Tenant context travels with the request.** `TenantContext { tenantId, mode }` (kernel) is established once per request by the rate limiter (from the address) and the verifiers (from the identity), and held in request-scoped `AsyncLocalStorage` (§6 A2); `Actor`, `WorkflowContext` and budget statuses carry `tenantId` explicitly. The data layer, caches and limiters read the current tenant from context and **fail closed** — throw — when there is none. Background jobs (ADR-056) run each tenant's work inside its own context.
 
 **D4 — Row-level security is the enforcement, through direct Postgres.** Server code stops using Supabase's REST API with the service-role key and reaches Postgres directly, through one data layer (`platform/data`), on every host (decision of 2026-10-21; §3 records the alternative):
 
@@ -48,7 +48,7 @@ Shared deployments use one Cognito pool; a dedicated deployment has its own pool
 **D5 — Uniqueness, configuration, roles.**
 
 - Global uniques become per tenant: `users.cognito_sub`, the budget index, embedding scope, and any tenant-owned natural key.
-- The role and permission **catalog** stays platform-defined; **assignment** is per tenant. A new `tenant_admin` role administers one tenant. `is_admin()` is replaced by permission checks.
+- The role and permission **catalog** stays platform-defined; **assignment** is per tenant. The existing `admin` role administers one tenant; platform-wide powers need the new permission `platform_operate` (§6 A4). `is_admin()` is replaced by permission checks.
 - Configuration is layered: platform default, then tenant override. Keys that govern the platform itself (dual control, safety tier) can be overridden only by an operator.
 
 **D6 — Every key, limit, budget and record names its tenant.** Cache keys (the AI response cache, permissions, config), rate-limit buckets, budget scopes (with a per-tenant daily cap above the per-agent caps; the day is UTC), audit records, content-safety records and metric labels all include `tenantId`. Social groups remain groups within a tenant; they are not tenants. **Realtime** channels are joined with the public key, so a name prefix is not access control: tenant-bound channels use Supabase Realtime's private channels with authorization, and the REST endpoint's remaining grants to `anon` and `authenticated` are closed (TASK-114, brought into 7T).
@@ -80,3 +80,67 @@ Connection management at scale was weighed explicitly: it exists in both options
 - 7P provisions RDS with RDS Proxy; no REST service is run.
 - New settings join the environment contract: the pooled request connection (`DATABASE_URL`), the owner connection (`DATABASE_OWNER_URL`, operator paths only) and pool limits. `SUPABASE_SERVICE_ROLE_KEY` leaves request paths.
 - supabase-js stays for Realtime only.
+
+## 6. Amendments made in implementation (Sprint 7R/7T, October 2026)
+
+Each refines a decision above where building it showed the original wording to be incomplete or
+wrong; none weakens it.
+
+- **A1 — How a user's tenant is set (D2).** Sign-up at a tenant's address creates the account and
+  assigns it that tenant with `AdminUpdateUserAttributes`, signed with a dedicated IAM key
+  (`COGNITO_ADMIN_*`, required in shared mode). An identity with no tenant at its first sign-in
+  (federated sign-in, or a failed assignment) is assigned the tenant of the address the same way;
+  both only when the tenant accepts new accounts (`signups_enabled`, which was declared but never
+  enforced before). An identity of another tenant gets no session (`platform/tenancy/identity.ts`).
+- **A2 — The request scope (D3).** `AsyncLocalStorage.enterWith()` inside a helper the handler
+  awaits is invisible to the handler after the await, so every route handler is wrapped in
+  `tenantRoute()`, which opens an empty scope the limiter and verifiers fill once; a CI check
+  requires the wrapper on every exported handler. Agent identities and trajectory records gained
+  no tenant field: every store reads the one tenant from the scope, which a run cannot change.
+- **A3 — What else row-level security needed (D4).** Foreign keys between tenant-owned tables
+  include `tenant_id` (a foreign-key check is not filtered by row-level security, so a plain key
+  could point at another tenant's row); every tenant-owned table's primary key begins with
+  `tenant_id` (users excepted: an identity is one tenant's); columns that only attribute an action
+  reference no user (an operator acting in a tenant is not its user). `tenants` and
+  `tenant_domains` are not readable by `app_tenant`; requests ask two owner-rights functions for
+  one host or one tenant. A third transaction kind, `withPlatformTx`, runs as `app_tenant` with no
+  tenant, for the catalog and those functions. The owner connection serves three named purposes,
+  and a CI check lists every file that uses it.
+- **A4 — Administrators and operators (D5).** Rather than a new `tenant_admin` role duplicating
+  `admin`, `admin` acts within its tenant and `platform_operate` (granted to `super_admin`) marks
+  an operator. In a single-tenant deployment the tenant is the platform, so its administrators keep
+  every power they had (platform defaults, catalog), on the owner connection.
+- **A5 — Layered configuration (D5).** `platform_config` holds the defaults; a tenant's own values
+  are rows of `tenant_config_overrides`, writable by `app_tenant` only for keys marked
+  `tenant_overridable` (enforced by the policy as well as the code); operators may set any key for
+  a tenant. History and two-person approvals record their scope and belong to the tenant they
+  were made in.
+- **A6 — Budgets (D6).** The per-tenant cap is `agent.budget.tenant_max_cost_per_day`
+  (operator-set, default 100 USD), accumulated in a reserved budget scope beside the per-agent
+  ones.
+- **A7 — Realtime (D6).** Channels join the topic `t:<tenant>:<name>`, private; a policy on
+  `realtime.messages` (Supabase only) admits a browser only to topics of the `tenant_id` its token
+  carries. No browser client subscribes today; one that does needs a token with that claim.
+- **A8 — Lifecycle (D7).** Deletion needs a second operator within 7 days and purges after 30;
+  a deleted tenant can be restored (suspended) until then; export is newline-delimited JSON from
+  one snapshot; an operator cannot suspend or delete the tenant they act from. Operator requests
+  are kept in `tenant_lifecycle_requests`, a purged tenant's row remains as its record.
+- **A9 — The address before sign-in (D2).** Where a request's address is read is declared
+  (`TENANT_HOST_HEADER`: `x-forwarded-host` or `host`, required in shared mode): a proxy that does
+  not set `X-Forwarded-Host` (AWS ALB) passes on the caller's, and `next start` keeps it. Each
+  instance answers hosts from an in-memory snapshot of every address (refreshed every 30 s, the
+  last good one served for a bounded grace when a refresh fails, then fail closed), so an unknown
+  host costs no query and holds no memory; its refusal is not counted. Every route that ends in a
+  session (sign-in, SSO, the MFA and new-password challenges) checks the identity's tenant, and
+  every route that sets a password applies the tenant's policy.
+- **A10 — Operators set any tenant's settings (D5, D7).** `/api/operator/tenants/[id]/config`
+  (and its `approvals`) run the config page's own governed code in the target tenant's scope: any
+  key for that tenant, its history and audit in that tenant, and the two-person approvals and
+  dual-control holds it creates decided there by another operator. Removing a tenant's own value
+  is governed like setting one (`reset_config`, approvals record `action` `set` or `reset`). An
+  approved dual-control hold of a config change is applied on its approval (it was approved and
+  never applied); under two-person approval it then waits for that approval.
+- **A11 — Existing accounts keep their tenant (D2).** An identity with no tenant attribute whose
+  account already exists (a users row, from before the deployment was shared) is assigned the
+  tenant holding that account — at its own address, even with sign-ups closed — and refused at any
+  other; only an identity with no account anywhere joins the address's tenant.

@@ -20,7 +20,19 @@ function setNodeEnv(v: string): void {
 
 afterEach(() => {
   for (const v of SAFETY_STORES) delete process.env[v];
+  delete process.env.DATABASE_URL;
+  delete process.env.DATABASE_OWNER_URL;
 });
+
+/** ADR-053 D4: a durable store is reached through platform/data, which needs these. */
+function database(): void {
+  process.env.DATABASE_URL = "postgresql://app_tenant:pw@pooler.example.test:6543/app";
+  process.env.DATABASE_OWNER_URL = "postgresql://owner:pw@db.example.test:5432/app";
+}
+function noDatabase(): void {
+  delete process.env.DATABASE_URL;
+  delete process.env.DATABASE_OWNER_URL;
+}
 
 /** Moderation and agent stores that refuse memory in production (audit X-3, X-21). */
 const SAFETY_STORES = [
@@ -205,7 +217,26 @@ describe("Provider Registry", () => {
   });
 });
 
-describe("auth-init backward compat", () => {
+// ADR-050 D1: production refuses test-double auth, so every production boot below that is not
+// about auth runs on a real (contract-valid) auth configuration.
+const realAuth = (): void => {
+  process.env.AUTH_PROVIDER = "cognito";
+  process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
+  process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
+  process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
+  // TASK-139: a deployment declares its cache.
+  process.env.CACHE_PROVIDER = "memory";
+  process.env.TENANCY_MODE = "single";
+  process.env.TENANT_ID = "00000000-0000-4000-8000-000000000001";
+  delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+  delete process.env.E2E_TEST_DOUBLE_AUTH;
+};
+
+// "auth-init backward compat" is split over two blocks of the same name (test titles unchanged),
+// each resetting modules before every test as the single block did.
+const AUTH_COMPAT = "auth-init backward compat";
+
+describe(AUTH_COMPAT, () => {
   beforeEach(() => {
     jest.resetModules();
   });
@@ -221,20 +252,6 @@ describe("auth-init backward compat", () => {
   // -------------------------------------------------------------------------
   // ADR-048 D3 + ADR-049 D1: durable stores are required in production
   // -------------------------------------------------------------------------
-  // ADR-050 D1: production refuses test-double auth, so every production boot below that is not
-  // about auth runs on a real (contract-valid) auth configuration.
-  const SERVICE_ROLE_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2ln";
-  const realAuth = (): void => {
-    process.env.AUTH_PROVIDER = "cognito";
-    process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
-    process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
-    process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
-    // TASK-139: a deployment declares its cache.
-    process.env.CACHE_PROVIDER = "memory";
-    delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
-    delete process.env.E2E_TEST_DOUBLE_AUTH;
-  };
-
   describe("durable stores \u2014 production fail-closed (ADR-048 D3, ADR-049 D1)", () => {
     // Every guarded store durable, so each test can flip exactly one to memory and assert
     // that the named store (not whichever is initialized first) is what refuses to boot.
@@ -243,8 +260,7 @@ describe("auth-init backward compat", () => {
       process.env.APP_STATE_STORE = "supabase";
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";
-      process.env.SUPABASE_URL = "https://example.supabase.co";
-      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      database();
       process.env.GUEST_USAGE_STORE = "supabase";
       process.env.SOCIAL_STORE = "supabase";
       process.env.RATE_LIMIT_STORE = "supabase";
@@ -279,14 +295,12 @@ describe("auth-init backward compat", () => {
       expect(await boot()).toThrow(/BUDGET_STORE/);
     });
 
-    it("throws in production when APP_STATE_STORE=supabase but creds are missing (no silent fallback)", async () => {
+    it("throws in production when APP_STATE_STORE=supabase but DATABASE_URL is missing (no silent fallback)", async () => {
       setNodeEnv("production");
       allDurable();
       process.env.TRAJECTORY_STORE = "memory";
       process.env.BUDGET_STORE = "memory";
-      delete process.env.SUPABASE_URL;
-      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      noDatabase();
       expect(await boot()).toThrow(/APP_STATE_STORE/);
     });
 
@@ -342,22 +356,75 @@ describe("auth-init backward compat", () => {
     );
 
     it.each(["MODERATION_STORE", "STRIKE_STORE", "REVIEW_QUEUE_STORE"])(
-      "refuses %s=supabase without credentials instead of falling back to memory",
+      "refuses %s=supabase without a database instead of falling back to memory",
       async (store) => {
         setNodeEnv("test");
         process.env[store] = "supabase";
-        delete process.env.SUPABASE_URL;
-        delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-        delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-        expect(await boot()).toThrow(new RegExp(`${store}=supabase but SUPABASE_URL`));
+        noDatabase();
+        expect(await boot()).toThrow(
+          new RegExp(`${store}=supabase but DATABASE_URL is not set`)
+        );
       }
     );
 
-    it("does NOT throw in production when every guarded store is supabase with creds", async () => {
+    it("does NOT throw in production when every guarded store is durable with a database", async () => {
       setNodeEnv("production");
       allDurable();
       expect(await boot()).not.toThrow();
     });
+
+    it("refuses to boot in production with DATABASE_URL but no DATABASE_OWNER_URL", async () => {
+      setNodeEnv("production");
+      allDurable();
+      delete process.env.DATABASE_OWNER_URL;
+      expect(await boot()).toThrow(/DATABASE_OWNER_URL is required/);
+    });
+
+    it("refuses to boot in production with durable stores and no DATABASE_URL", async () => {
+      setNodeEnv("production");
+      allDurable();
+      noDatabase();
+      expect(await boot()).toThrow(
+        /DATABASE_URL is required \(.*MODERATION_STORE=supabase/
+      );
+    });
+
+    // ADR-053 D4: every durable selection needs the database — "postgres" and "supabase" alike.
+    const DURABLE_SELECTIONS = [
+      ...SAFETY_STORES,
+      "APP_STATE_STORE",
+      "TRAJECTORY_STORE",
+      "BUDGET_STORE",
+      "SOCIAL_STORE",
+      "GUEST_USAGE_STORE",
+    ];
+    it.each(
+      DURABLE_SELECTIONS.flatMap((store) => [
+        [store, "postgres"],
+        [store, "supabase"],
+      ])
+    )(
+      "refuses %s=%s with no DATABASE_URL, with the database message",
+      async (store, type) => {
+        setNodeEnv("test");
+        for (const v of DURABLE_SELECTIONS) delete process.env[v];
+        delete process.env.RATE_LIMIT_STORE;
+        noDatabase();
+        process.env[store] = type;
+        expect(await boot()).toThrow(
+          new RegExp(
+            `${store}=${type} but DATABASE_URL is not set. Refusing to fall back`
+          )
+        );
+        delete process.env[store];
+      }
+    );
+  });
+});
+
+describe(AUTH_COMPAT, () => {
+  beforeEach(() => {
+    jest.resetModules();
   });
 
   describe("social store (TASK-107)", () => {
@@ -380,10 +447,8 @@ describe("auth-init backward compat", () => {
       }
       process.env.SOCIAL_STORE = "supabase";
       delete process.env.RATE_LIMIT_STORE;
-      delete process.env.SUPABASE_URL;
-      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-      expect(await boot()).toThrow(/SOCIAL_STORE=supabase but SUPABASE_URL/);
+      noDatabase();
+      expect(await boot()).toThrow(/SOCIAL_STORE=supabase but DATABASE_URL is not set/);
     });
 
     it("refuses the memory store in production", async () => {
@@ -398,8 +463,7 @@ describe("auth-init backward compat", () => {
       ]) {
         process.env[v] = "supabase";
       }
-      process.env.SUPABASE_URL = "https://example.supabase.co";
-      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      database();
       process.env.RATE_LIMIT_STORE = "supabase";
       delete process.env.SOCIAL_STORE;
       delete process.env.E2E_IN_MEMORY_STORES;
@@ -422,8 +486,7 @@ describe("auth-init backward compat", () => {
       process.env.APP_STATE_STORE = "supabase";
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";
-      process.env.SUPABASE_URL = "https://example.supabase.co";
-      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      database();
       process.env.SOCIAL_STORE = "supabase";
       delete process.env.GUEST_USAGE_STORE;
       delete process.env.E2E_IN_MEMORY_STORES;
@@ -436,26 +499,28 @@ describe("auth-init backward compat", () => {
         delete process.env[v];
       process.env.GUEST_USAGE_STORE = "supabase";
       process.env.SOCIAL_STORE = "supabase";
-      delete process.env.SUPABASE_URL;
-      delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-      expect(await boot()).toThrow(/GUEST_USAGE_STORE=supabase but SUPABASE_URL/);
+      noDatabase();
+      expect(await boot()).toThrow(
+        /GUEST_USAGE_STORE=supabase but DATABASE_URL is not set/
+      );
     });
 
-    it("selects the Supabase store with credentials", async () => {
-      setNodeEnv("test");
-      process.env.GUEST_USAGE_STORE = "supabase";
-      process.env.SOCIAL_STORE = "supabase";
-      process.env.SUPABASE_URL = "https://example.supabase.co";
-      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
-      const { initProviders, resetProviders } =
-        await import("@/platform/providers/registry");
-      resetProviders();
-      expect(initProviders().guestUsageStore).toBe("supabase");
-      const { getGuestUsageStore, SupabaseGuestUsageStore } =
-        await import("@/platform/auth/guest-allowance");
-      expect(getGuestUsageStore()).toBeInstanceOf(SupabaseGuestUsageStore);
-    });
+    it.each(["postgres", "supabase"])(
+      "GUEST_USAGE_STORE=%s selects the Postgres store when a database is set",
+      async (type) => {
+        setNodeEnv("test");
+        process.env.GUEST_USAGE_STORE = type;
+        process.env.SOCIAL_STORE = "supabase";
+        database();
+        const { initProviders, resetProviders } =
+          await import("@/platform/providers/registry");
+        resetProviders();
+        expect(initProviders().guestUsageStore).toBe(type);
+        const { getGuestUsageStore, PostgresGuestUsageStore } =
+          await import("@/platform/auth/guest-allowance");
+        expect(getGuestUsageStore()).toBeInstanceOf(PostgresGuestUsageStore);
+      }
+    );
   });
 
   describe("environment contract at boot (ADR-050 D1/D2)", () => {
@@ -470,8 +535,7 @@ describe("auth-init backward compat", () => {
       process.env.APP_STATE_STORE = "supabase";
       process.env.TRAJECTORY_STORE = "supabase";
       process.env.BUDGET_STORE = "supabase";
-      process.env.SUPABASE_URL = "https://example.supabase.co";
-      process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+      database();
       process.env.GUEST_USAGE_STORE = "supabase";
       process.env.SOCIAL_STORE = "supabase";
       process.env.RATE_LIMIT_STORE = "supabase";
@@ -503,6 +567,7 @@ describe("auth-init backward compat", () => {
       setNodeEnv("production");
       durable();
       realAuth();
+      process.env.SUPABASE_URL = "https://example.supabase.co";
       process.env.NEXT_PUBLIC_SUPABASE_URL = "https://other.supabase.co";
       expect(await boot()).toThrow(
         /SUPABASE_URL and NEXT_PUBLIC_SUPABASE_URL .*disagree/

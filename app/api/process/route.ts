@@ -13,8 +13,9 @@ import {
   enforceDailyPaidQuota,
   enforceRateLimit,
 } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
   const start = Date.now();
   logger.request("/api/process", "POST", requestId);
@@ -133,4 +134,4 @@ export async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-}
+});

@@ -12,7 +12,7 @@
 export * from "./types";
 export * from "./state-store";
 export { InMemoryActivityStateStore } from "./memory-state-store";
-export { SupabaseActivityStateStore } from "./supabase-state-store";
+export { PostgresActivityStateStore } from "./postgres-state-store";
 export * from "./actions";
 export * from "./turn";
 export {

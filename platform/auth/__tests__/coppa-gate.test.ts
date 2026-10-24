@@ -26,23 +26,27 @@ jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: (...args: any[]) => mockGetConfig(...args),
 }));
 
+/** What a users read or write answers in this test: rows (an object is one row), or an error. */
 function createChainMock(resolvedValue: { data: any; error: any }) {
-  const chain: any = {
-    select: jest.fn().mockReturnThis(),
-    update: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue(resolvedValue),
-    then: (resolve: any) => resolve(resolvedValue),
-  };
-  return chain;
+  return resolvedValue;
 }
 
 const mockSupabase = {
+  /** The response to the next query (the name is kept from the REST-client version). */
   from: jest.fn(),
 };
 
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(() => mockSupabase),
+/** The data layer: each query answers from mockSupabase.from("users"). */
+jest.mock("@/platform/data", () => ({
+  withTenantTx: (fn: (tx: unknown) => unknown) =>
+    fn({
+      query: async () => {
+        const { data, error } = mockSupabase.from("users");
+        if (error) throw new Error(error.message);
+        const rows = data == null ? [] : Array.isArray(data) ? data : [data];
+        return { rows, rowCount: rows.length };
+      },
+    }),
 }));
 
 // ── Imports ─────────────────────────────────────────────────────────────

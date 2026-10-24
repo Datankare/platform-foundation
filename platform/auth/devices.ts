@@ -3,12 +3,13 @@
  *
  * Tracks devices a user has signed in from. Integrates with
  * the AuthProvider's device management (Cognito tracks devices)
- * and stores device records in Supabase for the profile UI.
+ * and stores device records in user_devices, in the request's tenant (platform/data,
+ * ADR-053 D4), for the profile UI.
  *
  * Sprint 4, Task 4.4
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
@@ -22,6 +23,26 @@ export interface DeviceRecord {
   createdAt: string;
 }
 
+interface DeviceRow {
+  id: string;
+  user_id: string;
+  device_id: string;
+  device_name: string | null;
+  is_trusted: boolean;
+  last_used_at: Date;
+  created_at: Date;
+}
+
+/** Run a write; its error message, or undefined when it succeeded. */
+async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
+  try {
+    await write();
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 /**
  * Register a new device for a user (audited), or refresh a known device's last-used time.
  */
@@ -30,22 +51,29 @@ export async function registerDevice(
   deviceId: string,
   deviceName?: string
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseServiceClient();
-
   // A device already on file only has its last-used time refreshed: that is not a new
   // security event, so it is not audited (and sign-in does not depend on the audit log).
-  const { data: known } = await supabase
-    .from("user_devices")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("device_id", deviceId)
-    .maybeSingle();
+  // An unreadable lookup is treated as an unknown device: the audited path below decides.
+  let known: string | undefined;
+  try {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ id: string }>(
+        "select id from user_devices where user_id = $1::uuid and device_id = $2",
+        [userId, deviceId]
+      )
+    );
+    known = rows[0]?.id;
+  } catch {
+    known = undefined;
+  }
   if (known) {
-    const { error } = await supabase
-      .from("user_devices")
-      .update({ last_used_at: new Date().toISOString() })
-      .eq("id", known.id);
-    return error ? { success: false, error: error.message } : { success: true };
+    const id = known;
+    const error = await failure(() =>
+      withTenantTx((tx) =>
+        tx.query("update user_devices set last_used_at = now() where id = $1::uuid", [id])
+      )
+    );
+    return error ? { success: false, error } : { success: true };
   }
 
   try {
@@ -59,24 +87,26 @@ export async function registerDevice(
         details: { deviceId, deviceName },
       },
       async () => {
-        const { error } = await supabase.from("user_devices").upsert(
-          {
-            user_id: userId,
-            device_id: deviceId,
-            device_name: deviceName || null,
-            last_used_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id,device_id" }
+        const error = await failure(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              `insert into user_devices (user_id, device_id, device_name, last_used_at)
+               values ($1::uuid, $2, $3, now())
+               on conflict (user_id, device_id) do update
+                 set device_name = excluded.device_name, last_used_at = excluded.last_used_at`,
+              [userId, deviceId, deviceName || null]
+            )
+          )
         );
 
         if (error) {
           logger.error("Device registration failed", {
             userId,
             deviceId,
-            error: error.message,
+            error,
             route: "platform/auth/devices",
           });
-          return { success: false, error: error.message };
+          return { success: false, error };
         }
 
         return { success: true };
@@ -93,24 +123,28 @@ export async function registerDevice(
  * List all devices for a user.
  */
 export async function listUserDevices(userId: string): Promise<DeviceRecord[]> {
-  const supabase = getSupabaseServiceClient();
+  let rows: DeviceRow[];
+  try {
+    ({ rows } = await withTenantTx((tx) =>
+      tx.query<DeviceRow>(
+        `select id, user_id, device_id, device_name, is_trusted, last_used_at, created_at
+           from user_devices where user_id = $1::uuid
+          order by last_used_at desc`,
+        [userId]
+      )
+    ));
+  } catch {
+    return [];
+  }
 
-  const { data, error } = await supabase
-    .from("user_devices")
-    .select("*")
-    .eq("user_id", userId)
-    .order("last_used_at", { ascending: false });
-
-  if (error || !data) return [];
-
-  return data.map((row: Record<string, unknown>) => ({
-    id: row.id as string,
-    userId: row.user_id as string,
-    deviceId: row.device_id as string,
-    deviceName: row.device_name as string | null,
-    isTrusted: (row.is_trusted as boolean) || false,
-    lastUsedAt: row.last_used_at as string,
-    createdAt: row.created_at as string,
+  return rows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    deviceId: row.device_id,
+    deviceName: row.device_name,
+    isTrusted: row.is_trusted || false,
+    lastUsedAt: row.last_used_at.toISOString(),
+    createdAt: row.created_at.toISOString(),
   }));
 }
 
@@ -121,8 +155,6 @@ export async function removeDevice(
   userId: string,
   deviceId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseServiceClient();
-
   try {
     return await audited(
       {
@@ -132,20 +164,23 @@ export async function removeDevice(
         details: { deviceId },
       },
       async () => {
-        const { error } = await supabase
-          .from("user_devices")
-          .delete()
-          .eq("user_id", userId)
-          .eq("device_id", deviceId);
+        const error = await failure(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              "delete from user_devices where user_id = $1::uuid and device_id = $2",
+              [userId, deviceId]
+            )
+          )
+        );
 
         if (error) {
           logger.error("Device removal failed", {
             userId,
             deviceId,
-            error: error.message,
+            error,
             route: "platform/auth/devices",
           });
-          return { success: false, error: error.message };
+          return { success: false, error };
         }
 
         return { success: true };

@@ -25,7 +25,9 @@ const realAuth = (): void => {
   process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
   process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
-  process.env.CACHE_PROVIDER = "memory"; // TASK-139: a deployment declares its cache
+  process.env.CACHE_PROVIDER = "memory";
+  process.env.TENANCY_MODE = "single";
+  process.env.TENANT_ID = "00000000-0000-4000-8000-000000000001"; // TASK-139: a deployment declares its cache
   delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
   delete process.env.E2E_TEST_DOUBLE_AUTH;
 };
@@ -59,6 +61,8 @@ describe("rate limiter (ADR-052)", () => {
     }
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+    process.env.DATABASE_URL = "postgresql://u:p@db.example:5432/app"; // ADR-053 D4
+    process.env.DATABASE_OWNER_URL = "postgresql://o:p@db.example:5432/app";
     delete process.env.NEXT_PUBLIC_SUPABASE_URL;
     delete process.env.E2E_IN_MEMORY_STORES;
   };
@@ -71,7 +75,7 @@ describe("rate limiter (ADR-052)", () => {
     expect(await boot()).toThrow(/RATE_LIMIT_STORE/);
   });
 
-  it("refuses the Supabase store without credentials instead of falling back to memory", async () => {
+  it("refuses the Postgres store without a database instead of falling back to memory", async () => {
     setNodeEnv("test");
     for (const v of [
       "APP_STATE_STORE",
@@ -83,10 +87,10 @@ describe("rate limiter (ADR-052)", () => {
       delete process.env[v];
     }
     process.env.RATE_LIMIT_STORE = "supabase";
-    delete process.env.SUPABASE_URL;
-    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-    expect(await boot()).toThrow(/RATE_LIMIT_STORE=supabase but SUPABASE_URL/);
+    delete process.env.DATABASE_URL;
+    expect(await boot()).toThrow(/RATE_LIMIT_STORE=supabase but DATABASE_URL is not set/);
+    process.env.RATE_LIMIT_STORE = "postgres";
+    expect(await boot()).toThrow(/RATE_LIMIT_STORE=postgres but DATABASE_URL is not set/);
   });
 
   it("refuses RATE_LIMIT_STORE=upstash without its credentials at the contract (production)", async () => {
@@ -101,18 +105,22 @@ describe("rate limiter (ADR-052)", () => {
     );
   });
 
-  it("installs the Supabase limiter as the shared limiter", async () => {
-    setNodeEnv("test");
-    process.env.RATE_LIMIT_STORE = "supabase";
-    process.env.SUPABASE_URL = "https://example.supabase.co";
-    process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
-    const { initProviders, resetProviders } =
-      await import("@/platform/providers/registry");
-    resetProviders();
-    expect(initProviders().rateLimiter).toBe("supabase");
-    const { getRateLimiter } = await import("@/platform/rate-limit");
-    expect(getRateLimiter().name).toBe("supabase");
-  });
+  it.each(["postgres", "supabase"])(
+    "installs the Postgres limiter as the shared limiter (RATE_LIMIT_STORE=%s)",
+    async (store) => {
+      setNodeEnv("test");
+      process.env.RATE_LIMIT_STORE = store;
+      process.env.DATABASE_URL = "postgresql://u:p@localhost:5432/db";
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      expect(initProviders().rateLimiter).toBe(store);
+      const { getRateLimiter, PostgresRateLimiter } =
+        await import("@/platform/rate-limit");
+      expect(getRateLimiter()).toBeInstanceOf(PostgresRateLimiter);
+      expect(getRateLimiter().name).toBe("postgres");
+    }
+  );
 });
 
 // A module, not a script: keeps these helpers out of the global type scope.

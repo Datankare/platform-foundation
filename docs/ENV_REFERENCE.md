@@ -18,9 +18,9 @@ mock. This is what makes local development and CI frictionless, and it is why th
 lean heavily on "optional — defaults to mock."
 
 > Security note, up front: variables prefixed `NEXT_PUBLIC_` are exposed to the browser by
-> Next.js and must contain only non-secret values (public URLs, pool IDs, anon keys protected
-> by row-level security). Everything else is server-side only. Never put a service-role key, an
-> API secret, or a private signing key behind a `NEXT_PUBLIC_` name, and never commit a filled
+> Next.js and must contain only non-secret values (public URLs, pool IDs). Everything else is
+> server-side only. Never put a database URL, a service-role key, an API secret, or a private
+> signing key behind a `NEXT_PUBLIC_` name, and never commit a filled
 > `.env.local`.
 
 ---
@@ -34,10 +34,9 @@ default.
 To do anything real you will typically set, at minimum:
 
 ```bash
-# A real database (most features that persist need this)
-SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key   # server-side only
+# A real database (most features that persist need this) — then set each *_STORE=postgres
+DATABASE_URL=postgresql://app_tenant:<password>@<pooler-host>:<port>/<database>   # server-side only
+DATABASE_OWNER_URL=postgresql://<owner>:<password>@<host>:<port>/<database>       # server-side only
 
 # A real LLM (safety, moderation, agents, admin AI all use it)
 AI_PROVIDER=anthropic
@@ -65,16 +64,25 @@ credentials**.
 
 ## Core infrastructure
 
-### Database — Supabase
+### Database
 
-| Variable                        | Required                             | Default | Notes                                                                                                                                                                                    |
-| ------------------------------- | ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_URL`                  | When using any Supabase-backed store | —       | Project URL — the single source (ADR-050 D2). Shape `https://<ref>.supabase.co`: no path, no trailing slash.                                                                             |
-| `NEXT_PUBLIC_SUPABASE_URL`      | No (alias)                           | —       | Alias of `SUPABASE_URL`, read only when it is unset. In production it must not be set alone or disagree.                                                                                 |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | When using any Supabase-backed store | —       | Anon key. Browser-safe; row-level security enforces isolation.                                                                                                                           |
-| `SUPABASE_SERVICE_ROLE_KEY`     | When using any Supabase-backed store | —       | **Server-side only.** Bypasses RLS; used for admin ops, migrations, background jobs. Never expose to the browser. Must be the legacy service_role JWT (`eyJ…`), not an `sb_secret_` key. |
+The database is Postgres, reached directly through `platform/data`: see
+[Database connections](#database-connections-adr-053-d4) (`DATABASE_URL`, `DATABASE_OWNER_URL`,
+`DATABASE_SSL`, …). Selecting any store `postgres` (or `supabase`, the same store) makes
+`DATABASE_URL` required, and `DATABASE_OWNER_URL` with it; in production boot refuses without them.
 
-Selecting any `*_STORE=supabase` (below) makes `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+### Supabase (Realtime only)
+
+No data path uses the Supabase REST API or the service-role key. These settings serve
+`REALTIME_PROVIDER=supabase` only.
+
+| Variable                    | Required                          | Default | Notes                                                                                                                     |
+| --------------------------- | --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_URL`              | With `REALTIME_PROVIDER=supabase` | —       | Project URL — the single source (ADR-050 D2). Shape `https://<ref>.supabase.co`: no path, no trailing slash.              |
+| `NEXT_PUBLIC_SUPABASE_URL`  | No (alias)                        | —       | Alias of `SUPABASE_URL`, read only when it is unset. In production it must not be set alone or disagree.                  |
+| `SUPABASE_SERVICE_ROLE_KEY` | With `REALTIME_PROVIDER=supabase` | —       | **Server-side only.** Never expose to the browser. Must be the legacy service_role JWT (`eyJ…`), not an `sb_secret_` key. |
+
+Selecting `REALTIME_PROVIDER=supabase` makes `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
 required; in production boot refuses without them (ADR-050 D2).
 
 ### Logging
@@ -101,8 +109,12 @@ before any provider initializes and refuses to start, naming every violation: te
 or set under two disagreeing names, a missing required setting, or a harness switch on a hosted
 deployment. The declared settings are `AUTH_PROVIDER`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`,
 `NEXT_PUBLIC_COGNITO_CLIENT_ID`, `NEXT_PUBLIC_COGNITO_REGION`, `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN`,
-`SSO_PROVIDERS`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `GUEST_TOKEN_SECRET`, each with the
-aliases listed in this reference.
+`SSO_PROVIDERS`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GUEST_TOKEN_SECRET`, `RATE_LIMIT_STORE`,
+`TENANCY_MODE`, `TENANT_ID`, `DATABASE_URL`, `DATABASE_OWNER_URL`, `DATABASE_POOL_MAX`,
+`DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_SSL`, `DATABASE_SSL_CA`, `TENANT_DIRECTORY_STORE`,
+`COGNITO_ADMIN_ACCESS_KEY_ID`, `COGNITO_ADMIN_SECRET_ACCESS_KEY`, `COGNITO_ADMIN_SESSION_TOKEN`,
+`CACHE_PROVIDER`, `DEPLOYMENT_HOST`, `TRUSTED_PROXY_HOPS` and `TENANT_HOST_HEADER`, each with the aliases listed in this
+reference.
 
 ---
 
@@ -142,6 +154,42 @@ URL on the app client for every address the app is served from.
 | -------------------------------------- | ---------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` | With `SSO_PROVIDERS` and `cognito` | —       | Hosted sign-in host name only — no `https://`, no path — e.g. `<prefix>.auth.us-east-1.amazoncognito.com`.               |
 | `SSO_PROVIDERS`                        | No                                 | none    | Comma-separated, no spaces: `google`, `apple`, `microsoft`. Only those listed are offered. Apple and Microsoft: Phase 6. |
+
+---
+
+## Tenancy (ADR-053)
+
+A tenant is the unit of isolation: its users, data, configuration, limits, budgets, audit and
+metrics. A deployment declares how many tenants it serves.
+
+| Variable                          | Required                                          | Default                                                          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TENANCY_MODE`                    | Yes in production                                 | `single` outside production                                      | `single` — one tenant (`TENANT_ID`), a dedicated deployment; `shared` — each request's tenant comes from the verified identity, or for anonymous requests from the address (`tenant_domains`).                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `TENANT_ID`                       | With `TENANCY_MODE=single`; refused with `shared` | the default tenant                                               | The one tenant a single deployment serves, a lower-case UUID. Existing data belongs to the default tenant `00000000-0000-4000-8000-000000000001`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `TENANT_DIRECTORY_STORE`          | With `TENANCY_MODE=shared`                        | `memory` outside production                                      | Where tenants and their domains are kept: `postgres`. `memory` is refused in production.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `TENANT_HOST_HEADER`              | With `TENANCY_MODE=shared`                        | — (unset, a shared deployment answers `503 service.unavailable`) | Where a request's address — which decides the tenant before sign-in — is read; chosen, never inferred. `x-forwarded-host`: the entry the outermost proxy added (`TRUSTED_PROXY_HOPS` from the right), else `Host` — for a proxy that always sets it (**Vercel**). `host`: the `Host` header only, `X-Forwarded-Host` ignored — for a load balancer that forwards `Host` and does not set `X-Forwarded-Host` (**AWS ALB**, a container behind it), where that header is whatever the caller sent. `next start` fills `X-Forwarded-Host` from `Host` only when a request has none, so it never replaces a caller's. |
+| `COGNITO_ADMIN_ACCESS_KEY_ID`     | With `TENANCY_MODE=shared` and Cognito            | —                                                                | AWS access key the platform uses to set each user's tenant (`custom:tenant_id`, which users cannot change). Allow it only the Cognito actions named in the contract, on this pool. Secret.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `COGNITO_ADMIN_SECRET_ACCESS_KEY` | With `COGNITO_ADMIN_ACCESS_KEY_ID`                | —                                                                | The secret key that pairs with it. Secret.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `COGNITO_ADMIN_SESSION_TOKEN`     | With temporary (`ASIA…`) credentials only         | —                                                                | The session token of temporary credentials. Secret.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+
+### Database connections (ADR-053 D4)
+
+Every durable store reaches Postgres directly through `platform/data` — the request connection
+as `app_tenant` (cannot bypass row-level security), the owner connection only on operator paths.
+Setting them up: [TENANCY_OPERATIONS.md](TENANCY_OPERATIONS.md) §1.
+
+| Variable                        | Required                                     | Default       | Description                                                                                                                        |
+| ------------------------------- | -------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                  | With any store on `postgres`/`supabase`      | —             | The request connection: a transaction pooler URL signing in as `app_tenant`. Secret.                                               |
+| `DATABASE_OWNER_URL`            | With `DATABASE_URL`, in a deployment         | —             | The owner connection, for platform defaults and tenant lifecycle only. Must not be the same user as `DATABASE_URL`. Secret.        |
+| `DATABASE_SSL`                  | No                                           | `verify-full` | `verify-full` (certificate checked), `require` (encrypted only), `disable` (local and CI only). Never put TLS options in the URLs. |
+| `DATABASE_SSL_CA`               | With `verify-full` when the CA is not public | —             | The database's CA certificate, PEM; line breaks may be written `\n`.                                                               |
+| `DATABASE_POOL_MAX`             | No                                           | `3`           | Connections per instance, 1–50. Serverless: 1–3; the pooler multiplexes.                                                           |
+| `DATABASE_STATEMENT_TIMEOUT_MS` | No                                           | `10000`       | Longest a statement — or an idle transaction — may take, 100–600000.                                                               |
+
+A shared deployment's Cognito pool needs a mutable String attribute `tenant_id`; the app client
+must be able to read `custom:tenant_id` and must not be able to write it, and no federated sign-in
+may map a claim into it. The operator console's tenancy check reports each of these.
 
 ---
 
@@ -188,7 +236,7 @@ and audio conversion, which have their own).
 | `TRUSTED_PROXY_HOPS`       | No                            | `1`                         | `1`–`5` — proxies in front of the app that append to `X-Forwarded-For`; the client address is that many entries from the right (ADR-052). Vercel, or one load balancer: `1`.        |
 
 Selecting `CACHE_PROVIDER=upstash` or `RATE_LIMIT_STORE=upstash` requires the two `UPSTASH_REDIS_REST_*` variables. Selecting
-`REALTIME_PROVIDER=supabase` reuses the Supabase connection variables above.
+`REALTIME_PROVIDER=supabase` requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (above).
 
 ---
 
@@ -203,26 +251,28 @@ Selecting `CACHE_PROVIDER=upstash` or `RATE_LIMIT_STORE=upstash` requires the tw
 
 ## Stores (persistence backends)
 
-Each store selects between an in-memory implementation (default, ephemeral) and Supabase
-(durable). Selecting `supabase` for any of these requires the three Supabase variables above.
+Each store selects between an in-memory implementation (default, ephemeral) and Postgres
+(durable, through `platform/data`). `postgres` is the name; `supabase` is still accepted and selects
+the same Postgres store. Selecting either for any of these requires `DATABASE_URL` and
+`DATABASE_OWNER_URL` ([Database connections](#database-connections-adr-053-d4)).
 
-| Variable                | Required          | Default  | Values                                                                                                                                                                                                     |
-| ----------------------- | ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MODERATION_STORE`      | Yes in production | `memory` | `supabase` `memory` — moderation decisions (the record appeals are judged from); production refuses `memory`; `supabase` without credentials is an error (Sprint 7X)                                       |
-| `STRIKE_STORE`          | Yes in production | `memory` | `supabase` `memory` — strikes toward the ban ladder; production refuses `memory`; `supabase` without credentials is an error (Sprint 7X, audit X-3)                                                        |
-| `REVIEW_QUEUE_STORE`    | Yes in production | `memory` | `supabase` `memory` — the human review queue (escalations, ban reviews, appeals); production refuses `memory` (Sprint 7X, audit X-3)                                                                       |
-| `SOCIAL_STORE`          | Yes in production | `memory` | `supabase` `memory` — groups and memberships; production refuses `memory`, and `supabase` without credentials is an error (TASK-107)                                                                       |
-| `APP_STATE_STORE`       | Yes in production | `memory` | `supabase` `memory` — activity sessions; production refuses `memory` (ADR-049 D1)                                                                                                                          |
-| `TRAJECTORY_STORE`      | Yes in production | `memory` | `supabase` `memory` — agent trajectories; production refuses `memory` (ADR-048 D3)                                                                                                                         |
-| `BUDGET_STORE`          | Yes in production | `memory` | `supabase` `memory` — agent budget accumulation; production refuses `memory` (ADR-048 D3)                                                                                                                  |
-| `PROPOSAL_STORE`        | Yes in production | `memory` | `supabase` `memory` — held actions awaiting approval; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                  |
-| `EFFECT_LEDGER`         | Yes in production | `memory` | `supabase` `memory` — at-most-once external effects; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                   |
-| `APPROVAL_POLICY_STORE` | Yes in production | `memory` | `supabase` `memory` — who approves held actions; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                       |
-| `GUEST_USAGE_STORE`     | Yes in production | `memory` | `supabase` `memory` — counts the guest translate allowance (ADR-050 D4); production refuses `memory`; `supabase` needs migration 037                                                                       |
-| `RATE_LIMIT_STORE`      | Yes in production | `memory` | `supabase` `upstash` `memory` — where the shared rate-limit counters live (ADR-052); production refuses `memory`; `supabase` needs migration 039; `upstash` needs the two `UPSTASH_REDIS_REST_*` variables |
-| `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory stores under a production build; honoured only with `DEPLOYMENT_HOST=local` or `ci`; never set on a deployment)                                               |
+| Variable                | Required          | Default  | Values                                                                                                                                                                                                                     |
+| ----------------------- | ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MODERATION_STORE`      | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — moderation decisions (the record appeals are judged from); production refuses `memory`; `postgres` without `DATABASE_URL` is an error (Sprint 7X)                                    |
+| `STRIKE_STORE`          | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — strikes toward the ban ladder; production refuses `memory`; `postgres` without `DATABASE_URL` is an error (Sprint 7X, audit X-3)                                                     |
+| `REVIEW_QUEUE_STORE`    | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — the human review queue (escalations, ban reviews, appeals); production refuses `memory` (Sprint 7X, audit X-3)                                                                       |
+| `SOCIAL_STORE`          | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — groups and memberships; production refuses `memory`, and `postgres` without `DATABASE_URL` is an error (TASK-107)                                                                    |
+| `APP_STATE_STORE`       | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — activity sessions; production refuses `memory` (ADR-049 D1)                                                                                                                          |
+| `TRAJECTORY_STORE`      | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — agent trajectories; production refuses `memory` (ADR-048 D3)                                                                                                                         |
+| `BUDGET_STORE`          | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — agent budget accumulation; production refuses `memory` (ADR-048 D3)                                                                                                                  |
+| `PROPOSAL_STORE`        | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — held actions awaiting approval; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                  |
+| `EFFECT_LEDGER`         | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — at-most-once external effects; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                   |
+| `APPROVAL_POLICY_STORE` | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — who approves held actions; production refuses `memory` (Sprint 7X, audit X-21)                                                                                                       |
+| `GUEST_USAGE_STORE`     | Yes in production | `memory` | `postgres` (or `supabase`) `memory` — counts the guest translate allowance (ADR-050 D4); production refuses `memory`; `postgres` needs migration 037                                                                       |
+| `RATE_LIMIT_STORE`      | Yes in production | `memory` | `postgres` (or `supabase`) `upstash` `memory` — where the shared rate-limit counters live (ADR-052); production refuses `memory`; `postgres` needs migration 039; `upstash` needs the two `UPSTASH_REDIS_REST_*` variables |
+| `E2E_IN_MEMORY_STORES`  | No                |          | `true` (E2E harness only — permits in-memory stores under a production build; honoured only with `DEPLOYMENT_HOST=local` or `ci`; never set on a deployment)                                                               |
 
-Every store above is `supabase` in production: a production build refuses to start on an
+Every store above is `postgres` in production: a production build refuses to start on an
 in-memory store (and `instrumentation.ts` lets that refusal stop the server — Sprint 7X). In-memory
 is correct for tests and local exploration.
 
@@ -292,16 +342,19 @@ as long as the maximum token lifetime.
 `ACRCLOUD_ACCESS_KEY` · `ACRCLOUD_ACCESS_SECRET` · `ACRCLOUD_HOST` · `ADMIN_DEV_BYPASS` ·
 `AI_PROVIDER` · `ANTHROPIC_API_KEY` · `APPROVAL_POLICY_STORE` · `APP_STATE_STORE` ·
 `AUDIO_CONVERTER` · `AUDIO_CONVERTER_KEY` · `AUDIO_CONVERTER_URL` · `AUTH_PROVIDER` · `BUDGET_STORE` ·
-`CACHE_PROVIDER` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` · `COGNITO_USER_POOL_ID` ·
-`DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` · `DEPLOYMENT_HOST` ·
+`CACHE_PROVIDER` · `COGNITO_ADMIN_ACCESS_KEY_ID` · `COGNITO_ADMIN_SECRET_ACCESS_KEY` ·
+`COGNITO_ADMIN_SESSION_TOKEN` · `COGNITO_CLIENT_ID` · `COGNITO_REGION` · `COGNITO_USER_POOL_ID` ·
+`DATABASE_OWNER_URL` · `DATABASE_POOL_MAX` · `DATABASE_SSL` · `DATABASE_SSL_CA` ·
+`DATABASE_STATEMENT_TIMEOUT_MS` · `DATABASE_URL` · `DELEGATION_JWT_PRIVATE_KEY` · `DELEGATION_JWT_PUBLIC_KEY` · `DEPLOYMENT_HOST` ·
 `E2E_IN_MEMORY_STORES` · `E2E_TEST_DOUBLE_AUTH` · `EFFECT_LEDGER` · `EMBEDDING_PROVIDER` ·
 `ERROR_REPORTER` · `GIT_COMMIT_SHA` · `GOOGLE_API_KEY` · `GUEST_TOKEN_SECRET` · `GUEST_USAGE_STORE` ·
 `LOG_LEVEL` · `MODERATION_STORE` · `NEXT_PUBLIC_AUTH_PROVIDER` · `NEXT_PUBLIC_COGNITO_CLIENT_ID` ·
 `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN` · `NEXT_PUBLIC_COGNITO_REGION` ·
-`NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` · `NEXT_PUBLIC_SUPABASE_ANON_KEY` ·
+`NEXT_PUBLIC_COGNITO_USER_POOL_ID` · `NEXT_PUBLIC_GOOGLE_API_KEY` ·
 `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` · `PROPOSAL_STORE` · `RATE_LIMIT_STORE` ·
 `REALTIME_PROVIDER` · `REVIEW_QUEUE_STORE` · `SENTRY_DSN` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` ·
-`SSO_PROVIDERS` · `STRIKE_STORE` · `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TRAJECTORY_STORE` ·
+`SSO_PROVIDERS` · `STRIKE_STORE` · `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TENANCY_MODE` ·
+`TENANT_DIRECTORY_STORE` · `TENANT_HOST_HEADER` · `TENANT_ID` · `TRAJECTORY_STORE` ·
 `TRANSLATION_PROVIDER` · `TRUSTED_PROXY_HOPS` · `TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` ·
 `UPSTASH_REDIS_REST_URL` · `VERCEL` · `VERCEL_GIT_COMMIT_SHA`
 

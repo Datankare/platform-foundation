@@ -16,6 +16,7 @@
  * @module platform/agents
  */
 
+import { peekTenant } from "@/platform/tenancy/context";
 import type { AgentIdentity, Step, StepBoundary } from "./types";
 import type { TrajectoryStore } from "./trajectory-store";
 import { getTrajectoryStore } from "./trajectory-store";
@@ -59,6 +60,17 @@ export interface WorkflowContext {
   readonly totalCostUsd: number;
   /** Scope key for this run */
   readonly scopeKey: string;
+  /**
+   * The tenant the run belongs to (ADR-053 D3) — the tenant of the request or job that started
+   * it; undefined only outside any tenant (tests, local runs on in-memory stores). Every store
+   * the run touches reads the same tenant from the context, so a run cannot cross tenants.
+   */
+  readonly tenantId: string | undefined;
+}
+
+/** The run's tenant, for its steps to see. */
+function runTenant(): string | undefined {
+  return peekTenant()?.tenantId;
 }
 
 /**
@@ -134,6 +146,7 @@ export async function executeAgent(
   }
 
   const scopeKey = scopeId ?? scopeType;
+  const tenantId = runTenant();
 
   // ── Create trajectory ───────────────────────────────────────────
   const record = await trajectoryStore.create(
@@ -189,6 +202,7 @@ export async function executeAgent(
         stepCount,
         totalCostUsd,
         scopeKey,
+        tenantId,
       };
 
       const startMs = Date.now();
@@ -359,6 +373,7 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
   const scopeType = record.scopeType;
   const scopeId = record.scopeId ?? undefined;
   const scopeKey = scopeId ?? scopeType;
+  const tenantId = runTenant();
 
   await trajectoryStore.updateStatus(args.trajectoryId, "running");
 
@@ -389,6 +404,7 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
         stepCount,
         totalCostUsd,
         scopeKey,
+        tenantId,
       };
 
       const startMs = Date.now();

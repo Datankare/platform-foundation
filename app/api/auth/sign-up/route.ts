@@ -1,18 +1,28 @@
 /**
  * app/api/auth/sign-up/route.ts — Sign up endpoint
+ *
+ * Refused when the tenant does not accept new accounts (signups_enabled). In a shared
+ * deployment the new account is assigned the tenant of the address it signed up at (ADR-053
+ * D2); if that assignment fails, the account is assigned at its first sign-in instead.
  */
 
 import { NextRequest } from "next/server";
-import {
-  getGlobalPasswordPolicy,
-  passwordRuleViolations,
-} from "@/platform/auth/password-policy";
 import { logger } from "@/lib/logger";
 import { apiError, readJsonObject, requireTextFields } from "@/platform/errors";
-import { authResultResponse, callAuthProvider } from "@/platform/auth/auth-response";
+import {
+  authResultResponse,
+  callAuthProvider,
+  passwordPolicyRefusal,
+} from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
+import {
+  assignCurrentTenant,
+  sessionTenantRefusal,
+  signupsOpen,
+} from "@/platform/tenancy/identity";
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_ACCOUNT);
   if (limited) return limited;
@@ -25,15 +35,11 @@ export async function POST(request: NextRequest) {
   const invalid = requireTextFields(body, ["email", "password"], request);
   if (invalid) return invalid;
 
-  // The global policy the admins set (Sprint 7X; it was hard-coded here and never read).
-  const failedRules = passwordRuleViolations(
-    body.password,
-    await getGlobalPasswordPolicy()
-  );
+  if (!(await signupsOpen())) return apiError("auth.signups_closed", { request });
 
-  if (failedRules.length > 0) {
-    return apiError("auth.password_policy", { params: { rules: failedRules }, request });
-  }
+  // The tenant's policy, set by its administrators (Sprint 7X; it was hard-coded here).
+  const weak = await passwordPolicyRefusal(body.password, request);
+  if (weak) return weak;
 
   const called = await callAuthProvider(
     (auth) => auth.signUp(body.email, body.password),
@@ -48,7 +54,11 @@ export async function POST(request: NextRequest) {
   if (result.success) {
     // No email in the log: logs are not a store of personal data (ring 6).
     logger.info("User registered", { route: "api/auth/sign-up" });
+    if (result.userId) await assignCurrentTenant(result.userId);
   }
+  // A provider that signs the new account straight in returns a session: checked like sign-in's.
+  const refused = await sessionTenantRefusal(result, request);
+  if (refused) return refused;
 
   return authResultResponse(result, { request, context: "Sign up failed" });
-}
+});

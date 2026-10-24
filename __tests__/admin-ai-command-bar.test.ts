@@ -18,7 +18,9 @@ jest.mock("@/platform/auth/account-status-guard", () =>
 jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
+// Panel context reads go to a fake platform/data (helpers/fake-data.ts); its SQL and tenancy are
+// proved in __tests__/db/admin-tenant-data.db.test.ts.
+jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req-1",
@@ -40,7 +42,7 @@ jest.mock("@/platform/agents/proposal-store", () => ({
 
 import { NextRequest } from "next/server";
 import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { fakeData } from "./helpers/fake-data";
 import { getOrchestrator } from "@/platform/ai";
 import { invokeTool } from "@/platform/agents/tool-invoker";
 
@@ -48,23 +50,8 @@ import { POST as planPOST } from "@/app/api/admin/ai/route";
 import { POST as executePOST } from "@/app/api/admin/ai/execute/route";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS } from "@/app/api/admin/ai/tool-schemas";
 
-const mockSupabase = getSupabaseServiceClient as jest.Mock;
 const mockOrchestrator = getOrchestrator as jest.Mock;
 const mockInvokeTool = invokeTool as jest.Mock;
-
-function makeSupabase(tableResults: Record<string, Record<string, unknown>>) {
-  const from = jest.fn((table: string) => {
-    const result = tableResults[table] ?? { data: [], error: null };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const builder: Record<string, any> = {};
-    for (const m of ["select", "eq", "is", "order", "limit"]) {
-      builder[m] = jest.fn(() => builder);
-    }
-    builder.then = (resolve: (v: unknown) => void) => resolve(result);
-    return builder;
-  });
-  return { from };
-}
 
 function jsonReq(
   body: unknown,
@@ -81,7 +68,7 @@ function jsonReq(
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockSupabase.mockReturnValue(makeSupabase({}));
+  fakeData().reset();
 });
 
 describe("ai plan route", () => {
@@ -105,10 +92,16 @@ describe("ai plan route", () => {
   });
 
   it("builds context for the users panel", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ users: { count: 5 }, roles: { data: [] } })
-    );
+    fakeData().answer = (sql) => (sql.includes("count(*)") ? [{ n: 5 }] : []);
     const res = await planPOST(jsonReq({ prompt: "x", panel: "users" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("plans without context when the context cannot be read", async () => {
+    fakeData().answer = () => {
+      throw new Error("down");
+    };
+    const res = await planPOST(jsonReq({ prompt: "x", panel: "roles" }));
     expect(res.status).toBe(200);
   });
 

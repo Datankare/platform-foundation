@@ -5,10 +5,11 @@
  * before signing in. Routes that serve guests call {@link enforceGuestAllowance} after cheap
  * validation and before any paid call; a user actor is never limited here.
  *
- * Usage is counted in a GuestUsageStore. The Supabase store consumes atomically in the
- * database (guest_allowance_consume, migration 037), so concurrent requests cannot overshoot.
- * The memory store is for tests and local work; production refuses it (ADR-048 D3 pattern,
- * see the provider registry).
+ * Usage is counted in a GuestUsageStore, per tenant (ADR-053). The Postgres store consumes
+ * atomically in the database (guest_allowance_consume, migration 037; it runs as the caller,
+ * under row-level security, in the request's tenant), so concurrent requests cannot overshoot.
+ * The memory store keeps each tenant's counts apart the same way; it is for tests and local
+ * work, and production refuses it (ADR-048 D3 pattern, see the provider registry).
  *
  * @module platform/auth
  */
@@ -18,9 +19,10 @@ import { getConfig } from "@/platform/auth/platform-config";
 import { isGuestId } from "@/platform/auth/guest-token";
 import type { Actor } from "@/platform/auth/middleware";
 import { apiError, internalError } from "@/platform/errors";
-import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { withTenantTx } from "@/platform/data";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 export const GUEST_ALLOWANCE_KEY = "guest.translate_allowance";
 export const GUEST_ALLOWANCE_MIN = 1;
@@ -61,23 +63,25 @@ export interface GuestUsageStore {
 }
 
 export class MemoryGuestUsageStore implements GuestUsageStore {
-  private readonly counts = new Map<string, number>();
+  private readonly counts = new TenantPartitionedMap<string, number>();
 
   async consume(guestId: string, limit: number): Promise<GuestConsumeResult> {
     // Synchronous read-modify-write: no await between check and set, so concurrent calls on
     // one process cannot both take the last unit.
-    const current = this.counts.get(guestId) ?? 0;
+    const counts = this.counts.current();
+    const current = counts.get(guestId) ?? 0;
     if (current >= limit) return { allowed: false, used: current };
-    this.counts.set(guestId, current + 1);
+    counts.set(guestId, current + 1);
     return { allowed: true, used: current + 1 };
   }
 
   async used(guestId: string): Promise<number> {
-    return this.counts.get(guestId) ?? 0;
+    return this.counts.current().get(guestId) ?? 0;
   }
 
+  /** Forget the current tenant's counts. */
   async reset(): Promise<void> {
-    this.counts.clear();
+    this.counts.current().clear();
   }
 }
 
@@ -86,42 +90,16 @@ interface ConsumeRow {
   used: number;
 }
 
-export class SupabaseGuestUsageStore implements GuestUsageStore {
-  private readonly url: string;
-  private readonly key: string;
-
-  constructor(url: string, serviceKey: string) {
-    this.url = url.replace(/\/+$/, "");
-    this.key = serviceKey;
-  }
-
-  private headers(): Record<string, string> {
-    return {
-      "Content-Type": "application/json",
-      apikey: this.key,
-      Authorization: `Bearer ${this.key}`,
-    };
-  }
-
+/** GuestUsageStore on Postgres through platform/data, in the request's tenant. */
+export class PostgresGuestUsageStore implements GuestUsageStore {
   async consume(guestId: string, limit: number): Promise<GuestConsumeResult> {
-    const res = await fetchWithTimeout(
-      `${this.url}/rest/v1/rpc/guest_allowance_consume`,
-      {
-        timeoutMs: 10_000,
-        // Never retried underneath: a retried consume could count one request twice.
-        maxRetries: 0,
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({ p_guest_id: guestId, p_limit: limit }),
-      }
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<ConsumeRow>("select allowed, used from guest_allowance_consume($1, $2)", [
+        guestId,
+        limit,
+      ])
     );
-    if (!res.ok) {
-      throw new Error(
-        `guest allowance consume failed (${res.status}): ${await res.text()}`
-      );
-    }
-    const payload = (await res.json()) as ConsumeRow[] | ConsumeRow;
-    const row = Array.isArray(payload) ? payload[0] : payload;
+    const row = rows[0];
     if (!row || typeof row.allowed !== "boolean") {
       throw new Error("guest allowance consume returned no row");
     }
@@ -129,29 +107,18 @@ export class SupabaseGuestUsageStore implements GuestUsageStore {
   }
 
   async used(guestId: string): Promise<number> {
-    const res = await fetchWithTimeout(
-      `${this.url}/rest/v1/guest_usage?guest_id=eq.${encodeURIComponent(guestId)}&select=translations_used`,
-      { timeoutMs: 10_000, maxRetries: 1, method: "GET", headers: this.headers() }
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ translations_used: number }>(
+        "select translations_used from guest_usage where guest_id = $1",
+        [guestId]
+      )
     );
-    if (!res.ok) {
-      throw new Error(`guest allowance read failed (${res.status}): ${await res.text()}`);
-    }
-    const rows = (await res.json()) as Array<{ translations_used: number }>;
     return rows[0]?.translations_used ?? 0;
   }
 
+  /** Forget this tenant's counts (tests and operator resets). Never another tenant's. */
   async reset(): Promise<void> {
-    // translations_used is NOT NULL, so this matches every row; PostgREST refuses an
-    // unfiltered DELETE, a guard worth keeping.
-    const res = await fetchWithTimeout(
-      `${this.url}/rest/v1/guest_usage?translations_used=gte.0`,
-      { timeoutMs: 10_000, maxRetries: 0, method: "DELETE", headers: this.headers() }
-    );
-    if (!res.ok) {
-      throw new Error(
-        `guest allowance reset failed (${res.status}): ${await res.text()}`
-      );
-    }
+    await withTenantTx((tx) => tx.query("delete from guest_usage"));
   }
 }
 

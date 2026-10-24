@@ -4,8 +4,18 @@
  * The remaining ai command-bar handlers: agents, approval, config, entitlements,
  * mapping, restrictions, search. Success, validation, not-found, and store/db error
  * branches for each.
+ *
+ * platform/data is a fake here (helpers/fake-data.ts): the real audit module records through it,
+ * and a test injects database failures. The SQL of the entitlement, restriction and search
+ * handlers — and their tenancy — is proved against Postgres in
+ * __tests__/db/admin-catalog.db.test.ts and __tests__/db/admin-tenant-data.db.test.ts.
  */
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
+jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
+jest.mock("@/platform/auth/password-policy", () => ({
+  ...jest.requireActual("@/platform/auth/password-policy"),
+  getGlobalPasswordPolicy: jest.fn(),
+  saveGlobalPasswordPolicy: jest.fn(),
+}));
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: jest.fn(),
 }));
@@ -18,11 +28,15 @@ jest.mock("@/platform/agents", () => ({
   getApprovalPolicyStore: jest.fn(),
 }));
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { getConfig } from "@/platform/auth/platform-config";
 import { writeGovernedConfig } from "@/platform/admin/governed-config";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
-import { FakeDatabase } from "./helpers/fake-database";
+import { fakeData } from "./helpers/fake-data";
+import {
+  DEFAULT_POLICY,
+  getGlobalPasswordPolicy,
+  saveGlobalPasswordPolicy,
+} from "@/platform/auth/password-policy";
 import { getApprovalPolicyStore } from "@/platform/agents";
 
 import {
@@ -41,7 +55,6 @@ import {
 } from "@/app/api/admin/ai/handlers/restrictions";
 import { handleSearch } from "@/app/api/admin/ai/handlers/search";
 
-const mockSupabase = getSupabaseServiceClient as jest.Mock;
 const mockGetConfig = getConfig as jest.Mock;
 const mockWrite = writeGovernedConfig as jest.Mock;
 
@@ -58,39 +71,13 @@ const failed = (error: string) => ({
 });
 const mockPolicyStore = getApprovalPolicyStore as jest.Mock;
 
-function makeSupabase(tableResults: Record<string, Record<string, unknown>>) {
-  const from = jest.fn((table: string) => {
-    const result = tableResults[table] ?? { data: null, error: null };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const builder: Record<string, any> = {};
-    const methods = [
-      "select",
-      "eq",
-      "or",
-      "is",
-      "order",
-      "update",
-      "insert",
-      "upsert",
-      "delete",
-      "single",
-      "in",
-      "limit",
-    ];
-    for (const m of methods) {
-      builder[m] = jest.fn(() => builder);
-    }
-    builder.then = (resolve: (v: unknown) => void) => resolve(result);
-    return builder;
-  });
-  return { from };
-}
-
 beforeEach(() => {
   jest.clearAllMocks();
   mockWrite.mockResolvedValue({ kind: "applied", result: {} });
   // Audit records go to a database that accepts them unless a test says otherwise.
-  mockSupabase.mockReturnValue(makeSupabase({}));
+  fakeData().reset();
+  (getGlobalPasswordPolicy as jest.Mock).mockResolvedValue({ ...DEFAULT_POLICY });
+  (saveGlobalPasswordPolicy as jest.Mock).mockResolvedValue({ success: true });
 });
 
 describe("agents handlers", () => {
@@ -206,41 +193,46 @@ describe("approval handler", () => {
 });
 
 describe("config handlers (password policy)", () => {
-  const withPolicy = (rows: Record<string, unknown>[]) => {
-    const db = new FakeDatabase({ password_policy: rows });
-    mockSupabase.mockReturnValue(db.client());
-    return db;
-  };
+  const ACTOR = "00000000-0000-4000-8000-00000000a001";
+  const saved = () => (saveGlobalPasswordPolicy as jest.Mock).mock.calls;
 
-  it("creates the global policy when none exists, changing only the fields sent", async () => {
-    const db = withPolicy([]);
-    const res = await handleUpdatePasswordPolicy(
-      { min_length: 14 },
-      "00000000-0000-4000-8000-00000000a001"
-    );
+  it("records, then saves the policy, changing only the fields sent", async () => {
+    const res = await handleUpdatePasswordPolicy({ min_length: 14 }, ACTOR);
     expect(res.success).toBe(true);
-    expect(db.rows("password_policy")).toHaveLength(1);
-    expect(db.rows("password_policy")[0]).toMatchObject({
-      role_id: null,
-      user_id: null,
-      min_length: 14,
-      rotation_days: 90,
+    expect(saved()).toEqual([[{ ...DEFAULT_POLICY, minLength: 14 }]]);
+    expect(fakeData().audit[0]).toMatchObject({
+      actor_id: ACTOR,
+      details: expect.objectContaining({ type: "update_password_policy" }),
     });
   });
 
-  it("updates the one global row rather than adding another", async () => {
-    const db = withPolicy([
-      { id: "g", role_id: null, user_id: null, min_length: 12, rotation_days: 90 },
-      { id: "r", role_id: "role-1", user_id: null, min_length: 20, rotation_days: 30 },
+  it("starts from the stored policy", async () => {
+    (getGlobalPasswordPolicy as jest.Mock).mockResolvedValue({
+      ...DEFAULT_POLICY,
+      minLength: 20,
+    });
+    await handleUpdatePasswordPolicy({ rotation_days: 0 }, ACTOR);
+    expect(saved()[0][0]).toMatchObject({ minLength: 20, rotationDays: 0 });
+  });
+
+  it("surfaces a save failure, recording it as failed", async () => {
+    (saveGlobalPasswordPolicy as jest.Mock).mockResolvedValue({
+      success: false,
+      error: "down",
+    });
+    const res = await handleUpdatePasswordPolicy({ min_length: 14 }, ACTOR);
+    expect(res).toMatchObject({ success: false, error: "down" });
+    expect(fakeData().audit.map((r) => r.details.outcome)).toEqual([
+      "attempted",
+      "failed",
     ]);
-    const res = await handleUpdatePasswordPolicy(
-      { rotation_days: 0 },
-      "00000000-0000-4000-8000-00000000a001"
-    );
-    expect(res.success).toBe(true);
-    expect(db.rows("password_policy")).toHaveLength(2);
-    expect(db.rows("password_policy").find((r) => r.id === "g")?.rotation_days).toBe(0);
-    expect(db.rows("password_policy").find((r) => r.id === "r")?.min_length).toBe(20);
+  });
+
+  it("does not save when the audit log is unavailable", async () => {
+    fakeData().failAudit = true;
+    const res = await handleUpdatePasswordPolicy({ min_length: 14 }, ACTOR);
+    expect(res).toMatchObject({ success: false, code: "service.unavailable" });
+    expect(saved()).toEqual([]);
   });
 
   it.each([
@@ -252,42 +244,31 @@ describe("config handlers (password policy)", () => {
     [{ require_special: "no" }, "requireSpecial"],
     [{ min_lenght: 16 }, "min_lenght"],
   ])("refuses %p and writes nothing", async (input, field) => {
-    const db = withPolicy([]);
-    const res = await handleUpdatePasswordPolicy(
-      input,
-      "00000000-0000-4000-8000-00000000a001"
-    );
+    const res = await handleUpdatePasswordPolicy(input, ACTOR);
     expect(res).toMatchObject({ success: false, code: "request.invalid_value" });
     expect(res.params?.field).toBe(field);
-    expect(db.rows("password_policy")).toHaveLength(0);
+    expect(saved()).toEqual([]);
+    expect(fakeData().audit).toEqual([]);
   });
 });
 
 describe("entitlements handler", () => {
-  it("creates a group with permissions", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({
-        entitlement_groups: { data: { id: "g1" }, error: null },
-        permissions: { data: [{ id: "00000000-0000-4000-8000-00000000b001" }] },
-        entitlement_permissions: { data: null },
-      })
-    );
-    const res = await handleCreateEntitlementGroup(
-      { code: "pro", display_name: "Pro", permissions: ["can_x"] },
-      admin
-    );
-    expect(res.success).toBe(true);
-  });
-
+  // In a request with no tenant scope the deployment is not shared: the admin may change the
+  // catalog (the shared-deployment rule is proved in __tests__/db/admin-catalog.db.test.ts).
   it("surfaces an insert error", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ entitlement_groups: { data: null, error: { message: "dup" } } })
-    );
+    fakeData().answer = (sql) => {
+      if (sql.startsWith("insert into entitlement_groups")) throw new Error("dup");
+      return undefined;
+    };
     const res = await handleCreateEntitlementGroup(
       { code: "pro", display_name: "Pro" },
       admin
     );
-    expect(res.success).toBe(false);
+    expect(res).toMatchObject({
+      success: false,
+      error: "The change could not be saved: the database is unavailable or refused it.",
+    });
+    expect(JSON.stringify(res)).not.toContain("dup");
   });
 });
 
@@ -354,74 +335,64 @@ describe("mapping handler", () => {
 });
 
 describe("restrictions handlers", () => {
-  it("blocks a feature for a user", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ user_feature_restrictions: { error: null } })
-    );
-    const res = await handleBlockUserFeature(
-      { user_id: "00000000-0000-4000-8000-00000000b001", feature: "chat" },
-      "00000000-0000-4000-8000-00000000a001"
-    );
-    expect(res.success).toBe(true);
-  });
+  const USER = "00000000-0000-4000-8000-00000000b001";
+  const ACTOR = "00000000-0000-4000-8000-00000000a001";
 
   it("rejects a block with missing fields", async () => {
-    const res = await handleBlockUserFeature(
-      { user_id: "00000000-0000-4000-8000-00000000b001" },
-      "00000000-0000-4000-8000-00000000a001"
-    );
+    const res = await handleBlockUserFeature({ user_id: USER }, ACTOR);
     expect(res.success).toBe(false);
+    expect(fakeData().statements).toEqual([]);
   });
 
-  it("surfaces a block error", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ user_feature_restrictions: { error: { message: "no" } } })
-    );
-    const res = await handleBlockUserFeature(
-      { user_id: "00000000-0000-4000-8000-00000000b001", feature: "chat" },
-      "00000000-0000-4000-8000-00000000a001"
-    );
-    expect(res.success).toBe(false);
+  it("surfaces a block error, recording it as failed", async () => {
+    fakeData().answer = () => {
+      throw new Error("no");
+    };
+    const res = await handleBlockUserFeature({ user_id: USER, feature: "chat" }, ACTOR);
+    expect(res).toMatchObject({
+      success: false,
+      error: "The change could not be saved: the database is unavailable or refused it.",
+    });
+    expect(fakeData().audit.map((r) => r.details.outcome)).toEqual([
+      "attempted",
+      "failed",
+    ]);
   });
 
-  it("unblocks a feature", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ user_feature_restrictions: { error: null } })
-    );
-    const res = await handleUnblockUserFeature(
-      { user_id: "00000000-0000-4000-8000-00000000b001", feature: "chat" },
-      "00000000-0000-4000-8000-00000000a001"
-    );
-    expect(res.success).toBe(true);
+  it("surfaces an unblock error", async () => {
+    fakeData().answer = () => {
+      throw new Error("no");
+    };
+    const res = await handleUnblockUserFeature({ user_id: USER, feature: "chat" }, ACTOR);
+    expect(res).toMatchObject({
+      success: false,
+      error: "The change could not be saved: the database is unavailable or refused it.",
+    });
   });
 
   it("rejects an unblock with missing fields", async () => {
-    const res = await handleUnblockUserFeature(
-      { feature: "chat" },
-      "00000000-0000-4000-8000-00000000a001"
-    );
+    const res = await handleUnblockUserFeature({ feature: "chat" }, ACTOR);
     expect(res.success).toBe(false);
   });
 });
 
 describe("search handler", () => {
-  it("returns rows for a table", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({
-        users: { data: [{ id: "00000000-0000-4000-8000-00000000b001" }], error: null },
-      })
-    );
+  it("returns the rows read", async () => {
+    fakeData().answer = () => [{ r: { id: "00000000-0000-4000-8000-00000000b001" } }];
     const res = await handleSearch({ table: "users" }, admin);
     expect(res.success).toBe(true);
     expect(res.result).toMatch(/00000000-0000-4000-8000-00000000b001/);
+    expect(fakeData().statements[0].sql).toBe(
+      "select to_jsonb(t) as r from users t limit 20"
+    );
   });
 
   it("surfaces a query error", async () => {
-    mockSupabase.mockReturnValue(
-      makeSupabase({ users: { data: null, error: { message: "bad" } } })
-    );
+    fakeData().answer = () => {
+      throw new Error("bad");
+    };
     const res = await handleSearch({ table: "users" }, admin);
-    expect(res.success).toBe(false);
+    expect(res).toMatchObject({ success: false, error: "bad" });
   });
 });
 
@@ -429,7 +400,7 @@ describe("hostile cases", () => {
   it("search refuses a table outside the allowlist", async () => {
     const res = await handleSearch({ table: "user_feature_restrictions" }, admin);
     expect(res).toMatchObject({ success: false, code: "request.invalid_value" });
-    expect(mockSupabase).not.toHaveBeenCalled();
+    expect(fakeData().statements).toEqual([]);
   });
 
   it("search refuses an allowlisted table whose permission the admin lacks", async () => {
@@ -439,7 +410,7 @@ describe("hostile cases", () => {
       code: "auth.permission_denied",
       params: { permission: "admin_view_audit" },
     });
-    expect(mockSupabase).not.toHaveBeenCalled();
+    expect(fakeData().statements).toEqual([]);
   });
 
   it.each(["__proto__", "constructor", "toString", "users; drop table users"])(
@@ -447,7 +418,7 @@ describe("hostile cases", () => {
     async (table) => {
       const res = await handleSearch({ table }, admin);
       expect(res.success).toBe(false);
-      expect(mockSupabase).not.toHaveBeenCalled();
+      expect(fakeData().statements).toEqual([]);
     }
   );
 
@@ -457,7 +428,7 @@ describe("hostile cases", () => {
       admin
     );
     expect(res).toMatchObject({ success: false, code: "auth.grant_exceeds_own" });
-    expect(mockSupabase).not.toHaveBeenCalled();
+    expect(fakeData().statements).toEqual([]);
   });
 
   it("an agent-registry change refused by the governed write is not reported as done", async () => {

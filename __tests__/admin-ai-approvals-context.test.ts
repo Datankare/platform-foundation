@@ -15,7 +15,7 @@ jest.mock("@/platform/auth/account-status-guard", () =>
 jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
+jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req-1",
@@ -46,8 +46,7 @@ jest.mock("@/platform/admin/pending-approvals", () => ({
 import { NextRequest } from "next/server";
 import { authAs, type CallerName } from "@/__tests__/helpers/test-identities";
 import { getOrchestrator } from "@/platform/ai";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { FakeDatabase } from "./helpers/fake-database";
+import { fakeData } from "./helpers/fake-data";
 import { buildAdminSystemPrompt } from "@/prompts";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 import { POST } from "@/app/api/admin/ai/route";
@@ -64,12 +63,11 @@ function plan(body: unknown, caller: CallerName = "safety_approver") {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  (getSupabaseServiceClient as jest.Mock).mockReturnValue(
-    new FakeDatabase({
-      roles: [{ name: "free", display_name: "Free" }],
-      users: [],
-    }).client()
-  );
+  fakeData().reset();
+  fakeData().answer = (sql) =>
+    sql.startsWith("select name, display_name from roles")
+      ? [{ name: "free", display_name: "Free" }]
+      : undefined;
 });
 
 it("provides pending holds as context for the approvals panel", async () => {

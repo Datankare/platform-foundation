@@ -13,8 +13,9 @@ import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 import { apiError } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "can_access_admin");
   if (denied) return denied;
 
@@ -28,4 +29,4 @@ export async function GET(request: NextRequest) {
     );
     return apiError("internal.error", { params: { requestId }, request });
   }
-}
+});

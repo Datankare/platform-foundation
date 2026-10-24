@@ -1,5 +1,5 @@
 /**
- * platform/realtime/middleware.ts — Realtime connection middleware
+ * platform/realtime/connection-guard.ts — Realtime connection guard
  *
  * Auth validation and rate limiting for realtime connections.
  * Applied before channel subscription and stream creation.

@@ -4,25 +4,22 @@
 
 import { handleSetApprovalPolicy } from "@/app/api/admin/ai/handlers/approval";
 
-import { FakeDatabase } from "./helpers/fake-database";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { fakeData } from "./helpers/fake-data";
 
 const setRules = jest.fn();
 jest.mock("@/platform/agents", () => ({
   ...jest.requireActual("@/platform/agents"),
   getApprovalPolicyStore: () => ({ setRules }),
 }));
-// The real audit module writes to an in-memory database (helpers/fake-database.ts).
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
-let db: FakeDatabase;
+// The real audit module writes through a fake platform/data (helpers/fake-data.ts).
+jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
 
 const ACTOR = "00000000-0000-4000-8000-00000000a001";
 
 beforeEach(() => {
   setRules.mockReset();
   setRules.mockResolvedValue({ version: 2, default: "user", rules: [] });
-  db = new FakeDatabase({ audit_log: [] });
-  (getSupabaseServiceClient as jest.Mock).mockReturnValue(db.client());
+  fakeData().reset();
 });
 
 describe("handleSetApprovalPolicy", () => {
@@ -44,7 +41,7 @@ describe("handleSetApprovalPolicy", () => {
       { maxRisk: "ordinary", effects: ["externalCall"], requiredApprover: "agent" },
     ]);
     expect(setRules.mock.calls[0][1]).toBe(ACTOR);
-    expect(db.rows("audit_log")).toHaveLength(1);
+    expect(fakeData().audit).toHaveLength(1);
   });
 
   it("omits effects when empty", async () => {
@@ -105,11 +102,11 @@ describe("handleSetApprovalPolicy — refused policies", () => {
     const r = await handleSetApprovalPolicy({ rules: [rule] }, ACTOR);
     expect(r).toMatchObject({ success: false, code: "request.invalid_value" });
     expect(setRules).not.toHaveBeenCalled();
-    expect(db.rows("audit_log")).toHaveLength(0);
+    expect(fakeData().audit).toHaveLength(0);
   });
 
   it("does not change the policy when the audit log is unavailable", async () => {
-    db.failWrites("audit_log");
+    fakeData().failAudit = true;
     const r = await handleSetApprovalPolicy(
       { rules: [{ max_risk: "ordinary", required_approver: "user" }] },
       ACTOR

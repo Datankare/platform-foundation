@@ -189,10 +189,33 @@ export function resolveDeclared(
   return { accepted: [...accepted], problems };
 }
 
-/** Exported route handlers in a source file (GET, POST, …). */
+const METHOD = "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS";
+
+/** Exported route handlers in a source file (GET, POST, …), declared either way. */
 export function handlerCount(src: string): number {
   return [
-    ...src.matchAll(/export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b/g),
+    ...src.matchAll(
+      new RegExp(
+        `export\\s+(?:(?:async\\s+)?function\\s+(?:${METHOD})\\b|const\\s+(?:${METHOD})\\s*(?::[^=]+)?=)`,
+        "g"
+      )
+    ),
+  ].length;
+}
+
+/**
+ * Exported handlers that run in their own tenant scope: `export const POST = <scope>(…)` where
+ * <scope> is tenantRoute or an accepted app wrapper (ADR-053 D3).
+ */
+export function scopedHandlerCount(src: string, scopes: readonly string[]): number {
+  const names = scopes.map((n) => n.replace(/[^\w$]/g, "")).join("|");
+  return [
+    ...src.matchAll(
+      new RegExp(
+        `export\\s+const\\s+(?:${METHOD})\\s*(?::[^=]+)?=\\s*(?:${names})\\s*\\(`,
+        "g"
+      )
+    ),
   ].length;
 }
 

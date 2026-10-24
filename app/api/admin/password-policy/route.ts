@@ -15,14 +15,15 @@ import {
   saveGlobalPasswordPolicy,
 } from "@/platform/auth/password-policy";
 import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_config");
   if (denied) return denied;
   return NextResponse.json({ policy: await getGlobalPasswordPolicy() });
-}
+});
 
-export async function PUT(request: NextRequest) {
+export const PUT = tenantRoute(async function PUT(request: NextRequest) {
   const verified = await requireAdmin(request, "admin_manage_config");
   if (verified.error) return verified.error;
   const { admin } = verified;
@@ -72,4 +73,4 @@ export async function PUT(request: NextRequest) {
     },
     () => apiError("service.unavailable", { params: { service: "audit" }, request })
   );
-}
+});

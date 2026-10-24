@@ -2,7 +2,7 @@
  * platform/observability/mock-health-probe.ts — Deterministic mock health probe
  *
  * Reference HealthProbe for tests and the conformance kit (ADR-027). Returns a
- * configurable status with zero network. The built-in probes (Supabase, LLM,
+ * configurable status with zero network. The built-in probes (database, LLM,
  * HTTP) are all network-bound, so this provides the offline reference the
  * HealthProbe contract runs against. Mirrors createMockAIProvider.
  *

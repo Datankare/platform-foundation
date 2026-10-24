@@ -177,26 +177,23 @@ style: fix prettier formatting across all files
 
 ```
 platform-foundation/
-├── app/                     ← Next.js App Router
-│   ├── api/                 ← API routes (serverless functions)
-│   │   ├── health/          ← GET /api/health
-│   │   └── process/         ← POST /api/process
-│   ├── layout.tsx           ← Root layout
-│   └── page.tsx             ← Home page
-├── components/              ← React components
-│   └── SpikeApp.tsx         ← Main UI component
-├── lib/                     ← Pure business logic (testable, no JSX)
-│   ├── safety.ts            ← Claude API content moderation
-│   ├── translate.ts         ← Google Translate integration
-│   ├── tts.ts               ← Google Cloud TTS integration
-│   └── inputValidation.ts   ← Input validation logic
-├── types/                   ← Shared TypeScript types
-├── __tests__/               ← Unit and component tests
-├── docs/                    ← Architecture docs
-│   ├── adr/                 ← Architecture Decision Records
-│   ├── TAD.md               ← Technical Architecture Document
-│   └── SECURITY_DEBT.md     ← Known deferred security items
-├── prompts/                 ← Versioned LLM prompts (coming Phase 3)
+├── app/                     ← Next.js App Router: screens, and API routes under app/api/
+│   ├── api/                 ← Route handlers, each wrapped in tenantRoute (ADR-053)
+│   └── admin/               ← Admin console (tenant settings, operators' tenants console)
+├── components/              ← React components (admin, auth, review dashboard, …)
+├── hooks/                   ← React hooks
+├── platform/                ← The foundation's modules, one folder each, with a README
+│   ├── data/                ← The only database access: withTenantTx / withPlatformTx / withOwnerTx
+│   ├── tenancy/             ← Tenant context, directory, operator service (ADR-053)
+│   ├── auth/ admin/ moderation/ agents/ rate-limit/ errors/ providers/ …
+├── lib/                     ← Small shared helpers (logger, fetchWithTimeout, sanitize, …)
+├── shared/                  ← Types, config and UI utilities shared with consumers
+├── messages/                ← Message catalog (errors.*, screens.*) — ADR-051
+├── prompts/                 ← Versioned LLM prompts
+├── supabase/migrations/     ← Numbered SQL migrations (applied in the SQL Editor)
+├── scripts/                 ← Migration replay, monkey run, checks
+├── __tests__/               ← Tests; __tests__/db runs against the replayed Postgres
+├── docs/                    ← Architecture, operations, ADRs (docs/adr/), TASKS
 └── .env.example             ← Environment variable template
 ```
 

@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**55 codes** in 12 areas.
+**69 codes** in 13 areas.
 
 ## Account
 
@@ -32,11 +32,13 @@ Every error the API returns has this body (ADR-051 D3):
 
 ## Admin
 
-| Code                         | HTTP | Message (en)                                     | Params        | What the caller should do                                             |
-| ---------------------------- | ---- | ------------------------------------------------ | ------------- | --------------------------------------------------------------------- |
-| `admin.config_invalid_value` | 422  | That value is not allowed for {key}.             | `key` (id)    | Show the setting's allowed type and range, and ask for a valid value. |
-| `admin.self_target`          | 403  | You cannot take this action on your own account. | —             | Another administrator must take this action on your account.          |
-| `admin.target_not_found`     | 404  | No {target} matches that request.                | `target` (id) | Refresh the list and pick an existing item.                           |
+| Code                         | HTTP | Message (en)                                                            | Params        | What the caller should do                                                                                |
+| ---------------------------- | ---- | ----------------------------------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------- |
+| `admin.config_invalid_value` | 422  | That value is not allowed for {key}.                                    | `key` (id)    | Show the setting's allowed type and range, and ask for a valid value.                                    |
+| `admin.config_scope_refused` | 403  | {key} governs the platform, so only an operator can change it.          | `key` (id)    | Explain that this setting governs the platform and only an operator can change it; do not retry.         |
+| `admin.operator_only`        | 403  | Only a platform operator can change this: it is shared by every tenant. | —             | Explain that this changes what every tenant shares, so only a platform operator can do it; do not retry. |
+| `admin.self_target`          | 403  | You cannot take this action on your own account.                        | —             | Another administrator must take this action on your account.                                             |
+| `admin.target_not_found`     | 404  | No {target} matches that request.                                       | `target` (id) | Refresh the list and pick an existing item.                                                              |
 
 ## Approvals
 
@@ -68,6 +70,7 @@ Every error the API returns has this body (ADR-051 D3):
 | `auth.role_protected`      | 403  | The {role} role can only be changed directly in the database.                       | `role` (id)                            | Explain; no API path.                                                                                                                                      |
 | `auth.role_self_change`    | 403  | You cannot change your own role.                                                    | —                                      | Ask another administrator.                                                                                                                                 |
 | `auth.sign_in_required`    | 401  | Sign in to use this feature.                                                        | —                                      | Show sign-in (guest on a users-only route).                                                                                                                |
+| `auth.signups_closed`      | 403  | New accounts are not being accepted here right now.                                 | —                                      | Explain that new accounts are not being accepted here; do not retry.                                                                                       |
 | `auth.sso_failed`          | 401  | Single sign-on did not complete. Try another sign-in method.                        | `provider` (id, optional)              | Offer another sign-in method.                                                                                                                              |
 | `auth.token_invalid`       | 401  | Your session has expired. Sign in again.                                            | —                                      | Refresh the token, else show sign-in.                                                                                                                      |
 | `auth.too_many_attempts`   | 429  | Too many attempts. Try again later.                                                 | `retryAfterSeconds` (number, optional) | Back off.                                                                                                                                                  |
@@ -136,3 +139,19 @@ Every error the API returns has this body (ADR-051 D3):
 | Code                  | HTTP | Message (en)                                              | Params         | What the caller should do |
 | --------------------- | ---- | --------------------------------------------------------- | -------------- | ------------------------- |
 | `service.unavailable` | 503  | This service is unavailable right now. Try again shortly. | `service` (id) | Retry later.              |
+
+## Tenant
+
+| Code                   | HTTP | Message (en)                                                                              | Params        | What the caller should do                                                                                                         |
+| ---------------------- | ---- | ----------------------------------------------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `tenant.conflict`      | 409  | That could not be done: {reason}.                                                         | `reason` (id) | Show the reason (the slug or address is taken, or the tenant is not in the state this needs); refresh and choose again.           |
+| `tenant.invalid`       | 400  | Some of the tenant details are not valid.                                                 | —             | Show what the tenant form needs and ask again.                                                                                    |
+| `tenant.mismatch`      | 403  | This account belongs to a different organisation. Sign in on your organisation's address. | —             | The credentials belong to another tenant than this address serves. Sign in on your own organisation's address; do not retry here. |
+| `tenant.missing`       | 403  | Your account is not assigned to an organisation yet. Contact your administrator.          | —             | The account is not assigned to a tenant. An operator must assign it; retrying cannot succeed.                                     |
+| `tenant.not_active`    | 409  | That tenant is deleted and awaiting purge. Restore it first.                              | —             | Explain that the tenant is deleted and awaiting purge; restore it first.                                                          |
+| `tenant.not_found`     | 404  | That tenant, request or user was not found.                                               | —             | Refresh the tenant list; the tenant, request or user named does not exist.                                                        |
+| `tenant.not_shared`    | 409  | This deployment serves one tenant: change its settings on the Platform Config page.       | —             | Explain that this deployment serves one tenant, whose settings are on the Platform Config page; do not retry.                     |
+| `tenant.own_tenant`    | 403  | You cannot suspend or delete the organisation you are operating from.                     | —             | Explain that an operator cannot suspend or delete the tenant they operate from; do not retry.                                     |
+| `tenant.self_approval` | 403  | Another operator must approve a deletion you requested.                                   | —             | Another operator must approve this deletion; do not retry as the requester.                                                       |
+| `tenant.suspended`     | 403  | Access for this organisation is suspended. Contact your administrator.                    | —             | The tenant is suspended. Show the message; contact the operator. Retrying cannot succeed.                                         |
+| `tenant.unknown_host`  | 404  | This address is not set up. Check the address and try again.                              | —             | The address is not set up for any tenant. Check the address; retrying cannot succeed.                                             |

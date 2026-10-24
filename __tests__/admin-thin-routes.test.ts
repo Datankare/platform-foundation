@@ -1,8 +1,9 @@
 /**
  * __tests__/admin-thin-routes.test.ts — coverage remediation (ADR-040 "B").
  *
- * The five thin read-only governance GET routes: each is adminGuard-gated and returns a
- * JSON view. The guard is real (helpers/test-identities.ts): authorized as super_admin, refused
+ * The thin read-only governance GET routes: each is adminGuard-gated and returns a JSON view.
+ * (GET /api/admin/per-account reads the database: tested against Postgres in
+ * __tests__/db/admin-tenant-data.db.test.ts.) The guard is real (helpers/test-identities.ts): authorized as super_admin, refused
  * as a moderator, plus the shape-coercion and error branches.
  */
 jest.mock("@/platform/auth/middleware", () =>
@@ -26,31 +27,22 @@ jest.mock("@/platform/agents", () => ({
 jest.mock("@/platform/providers/registry", () => ({
   getActiveProviders: jest.fn(() => ({})),
 }));
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
 
 import { NextRequest } from "next/server";
 import { authAs, type CallerName } from "@/__tests__/helpers/test-identities";
 import { getConfig } from "@/platform/auth/platform-config";
 import { getApprovalPolicyStore } from "@/platform/agents";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 import { GET as agentRegistryGET } from "@/app/api/admin/agent-registry/route";
 import { GET as approvalPolicyGET } from "@/app/api/admin/approval-policy/route";
 import { GET as capabilitiesGET } from "@/app/api/admin/capabilities/route";
 import { GET as capabilityMappingGET } from "@/app/api/admin/capability-mapping/route";
-import { GET as perAccountGET } from "@/app/api/admin/per-account/route";
 
 const mockConfig = getConfig as jest.Mock;
 const mockPolicyStore = getApprovalPolicyStore as jest.Mock;
-const mockSupabase = getSupabaseServiceClient as jest.Mock;
 
 function req(path: string, caller: CallerName = "super_admin"): NextRequest {
   return new NextRequest(`http://localhost${path}`, { headers: authAs(caller) });
-}
-
-function supa(result: { data: unknown; error: { message: string } | null }) {
-  const limit = () => Promise.resolve(result);
-  return { from: () => ({ select: () => ({ order: () => ({ limit }) }) }) };
 }
 
 beforeEach(() => {
@@ -120,28 +112,5 @@ describe("GET /api/admin/capability-mapping", () => {
       (await capabilityMappingGET(req("/api/admin/capability-mapping", "moderator")))
         .status
     ).toBe(403);
-  });
-});
-
-describe("GET /api/admin/per-account", () => {
-  it("returns restriction rows when authorized", async () => {
-    mockSupabase.mockReturnValue(supa({ data: [{ user_id: "u1" }], error: null }));
-    const res = await perAccountGET(req("/api/admin/per-account"));
-    expect(res.status).toBe(200);
-    expect((await res.json()).restrictions).toHaveLength(1);
-  });
-  it("returns 500 on a query error", async () => {
-    mockSupabase.mockReturnValue(supa({ data: null, error: { message: "boom" } }));
-    expect((await perAccountGET(req("/api/admin/per-account"))).status).toBe(500);
-  });
-  it("defaults null data to an empty list", async () => {
-    mockSupabase.mockReturnValue(supa({ data: null, error: null }));
-    const res = await perAccountGET(req("/api/admin/per-account"));
-    expect((await res.json()).restrictions).toEqual([]);
-  });
-  it("refuses a moderator, who lacks the page's permission", async () => {
-    expect((await perAccountGET(req("/api/admin/per-account", "moderator"))).status).toBe(
-      403
-    );
   });
 });

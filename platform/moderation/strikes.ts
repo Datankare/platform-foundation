@@ -4,19 +4,20 @@
  * Records and queries user strikes for the account consequences system.
  * The Sentinel agent calls recordStrike() after a Guardian block decision.
  *
- * P7: Provider-aware — swap via singleton (InMemory for tests, Supabase for prod).
+ * P7: Provider-aware — swap via singleton (InMemory for tests, Postgres for prod).
+ * ADR-053 D4: Postgres through platform/data, in the request's tenant.
  * L19: Strike writes are NOT fire-and-forget. Recording a strike IS the
  *      primary function — the caller must know if it failed.
  *
  * Implementations:
- *   InMemoryStrikeStore — for tests and development (default)
- *   SupabaseStrikeStore — for production
+ *   InMemoryStrikeStore — for tests and development (default); one partition per tenant
+ *   PostgresStrikeStore — for production
  *
  * @module platform/moderation
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { logger } from "@/lib/logger";
+import { withTenantTx } from "@/platform/data";
 import type {
   StrikeStore,
   StrikeRecord,
@@ -25,6 +26,7 @@ import type {
 } from "./types";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 // ---------------------------------------------------------------------------
 // Severity ordering (for highestSeverity in summary)
@@ -68,8 +70,19 @@ function buildSummary(strikes: readonly StrikeRecord[]): StrikeSummary {
 // ---------------------------------------------------------------------------
 
 export class InMemoryStrikeStore implements StrikeStore {
-  private records: StrikeRecord[] = [];
+  /** One list per tenant (ADR-053 D6), so a tenant sees only its own strikes. */
+  private readonly parts = new TenantPartitionedMap<"records", StrikeRecord[]>();
   private idCounter = 0;
+
+  private get records(): StrikeRecord[] {
+    const part = this.parts.current();
+    let list = part.get("records");
+    if (!list) {
+      list = [];
+      part.set("records", list);
+    }
+    return list;
+  }
 
   async recordStrike(
     strike: Omit<StrikeRecord, "id" | "createdAt">
@@ -147,23 +160,23 @@ export class InMemoryStrikeStore implements StrikeStore {
     return true;
   }
 
-  /** Test helper */
+  /** Test helper: the current tenant's strike count. */
   getRecordCount(): number {
     return this.records.length;
   }
 
-  /** Test helper */
+  /** Test helper: forget every tenant's strikes. */
   clear(): void {
-    this.records = [];
+    this.parts.clearAll();
     this.idCounter = 0;
   }
 }
 
 // ---------------------------------------------------------------------------
-// SupabaseStrikeStore
+// PostgresStrikeStore
 // ---------------------------------------------------------------------------
 
-/** DB row shape for user_strikes */
+/** One user_strikes row as pg returns it (timestamptz → Date). */
 interface StrikeRow {
   id: string;
   user_id: string;
@@ -174,10 +187,12 @@ interface StrikeRow {
   trajectory_id: string;
   agent_id: string;
   reason: string;
-  expires_at: string | null;
+  expires_at: Date | null;
   expired: boolean;
-  created_at: string;
+  created_at: Date;
 }
+
+const iso = (d: Date | string): string => (d instanceof Date ? d.toISOString() : d);
 
 function mapRowToStrike(row: StrikeRow): StrikeRecord {
   return {
@@ -190,95 +205,84 @@ function mapRowToStrike(row: StrikeRow): StrikeRecord {
     trajectoryId: row.trajectory_id,
     agentId: row.agent_id,
     reason: row.reason,
-    expiresAt: row.expires_at,
+    expiresAt: row.expires_at === null ? null : iso(row.expires_at),
     expired: row.expired,
-    createdAt: row.created_at,
+    createdAt: iso(row.created_at),
   };
 }
 
-export class SupabaseStrikeStore implements StrikeStore {
+/**
+ * Strikes in user_strikes, in the request's tenant: row-level security keeps each tenant's
+ * strikes apart, and the (tenant_id, user_id) foreign key means a strike can only name a user
+ * of the same tenant.
+ */
+export class PostgresStrikeStore implements StrikeStore {
   async recordStrike(
     strike: Omit<StrikeRecord, "id" | "createdAt">
   ): Promise<{ success: boolean; record?: StrikeRecord; error?: string }> {
     try {
-      const supabase = getSupabaseServiceClient();
-      const { data, error } = await (supabase
-        .from("user_strikes" as never)
-        .insert({
-          user_id: strike.userId,
-          category: strike.category,
-          severity: strike.severity,
-          moderation_audit_id: strike.moderationAuditId,
-          guardian_decision_id: strike.guardianDecisionId,
-          trajectory_id: strike.trajectoryId,
-          agent_id: strike.agentId,
-          reason: strike.reason,
-          expires_at: strike.expiresAt,
-          expired: false,
-        } as never)
-        .select(
-          "id, user_id, category, severity, moderation_audit_id, guardian_decision_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<StrikeRow>(
+          `insert into user_strikes (user_id, category, severity, moderation_audit_id,
+             guardian_decision_id, trajectory_id, agent_id, reason, expires_at, expired)
+           values ($1::uuid, $2, $3, $4::uuid, $5, $6, $7, $8, $9::timestamptz, false)
+           returning id, user_id, category, severity, moderation_audit_id, guardian_decision_id,
+             trajectory_id, agent_id, reason, expires_at, expired, created_at`,
+          [
+            strike.userId,
+            strike.category,
+            strike.severity,
+            strike.moderationAuditId,
+            strike.guardianDecisionId,
+            strike.trajectoryId,
+            strike.agentId,
+            strike.reason,
+            strike.expiresAt,
+          ]
         )
-        .single() as unknown as Promise<{
-        data: StrikeRow | null;
-        error: { message: string } | null;
-      }>);
-
-      if (error || !data) {
-        logger.error("Strike recording failed", {
-          userId: strike.userId,
-          category: strike.category,
-          error: error?.message ?? "No data returned",
-          route: "platform/moderation/strikes",
-        });
-        return { success: false, error: error?.message ?? "Failed to record strike" };
-      }
-
-      return { success: true, record: mapRowToStrike(data) };
+      );
+      return { success: true, record: mapRowToStrike(rows[0]) };
     } catch (err) {
-      logger.error("Strike recording error", {
+      logger.error("Strike recording failed", {
         userId: strike.userId,
+        category: strike.category,
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/strikes",
       });
       return {
         success: false,
-        error: err instanceof Error ? err.message : "Unknown error",
+        error: err instanceof Error ? err.message : "Failed to record strike",
       };
     }
   }
 
   async getActiveStrikes(userId: string): Promise<readonly StrikeRecord[]> {
     try {
-      const supabase = getSupabaseServiceClient();
-      const { data, error } = await (supabase
-        .from("user_strikes" as never)
-        .select(
-          "id, user_id, category, severity, moderation_audit_id, guardian_decision_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
+      // A strike past its expiry no longer counts even before the sweep marks it expired.
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<StrikeRow>(
+          `select id, user_id, category, severity, moderation_audit_id, guardian_decision_id,
+                  trajectory_id, agent_id, reason, expires_at, expired, created_at
+             from user_strikes
+            where user_id = $1::uuid and expired = false
+              and (expires_at is null or expires_at > now())
+            order by created_at desc, id desc`,
+          [userId]
         )
-        .eq("user_id", userId)
-        .eq("expired", false)
-        .order("created_at", { ascending: false }) as unknown as Promise<{
-        data: StrikeRow[] | null;
-        error: { message: string } | null;
-      }>);
-
+      );
+      return rows.map(mapRowToStrike);
+    } catch (err) {
       // Fail closed: an unreadable strike history is not "no strikes" — that would let every
       // block during an outage pass without consequence (Sprint 7X). Callers surface the error.
-      if (error) throw new Error(`strike history unreadable: ${error.message}`);
-
-      // Filter out time-expired but not yet marked
-      const now = new Date();
-      return (data ?? [])
-        .filter((r) => r.expires_at === null || new Date(r.expires_at) > now)
-        .map(mapRowToStrike);
-    } catch (err) {
       logger.error("Strike history could not be read", {
         userId,
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/strikes",
       });
-      throw err;
+      throw new Error(
+        `strike history unreadable: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
+      );
     }
   }
 
@@ -289,32 +293,25 @@ export class SupabaseStrikeStore implements StrikeStore {
 
   async queryStrikes(options: StrikeQueryOptions): Promise<readonly StrikeRecord[]> {
     try {
-      const supabase = getSupabaseServiceClient();
-      let query = supabase
-        .from("user_strikes" as never)
-        .select(
-          "id, user_id, category, severity, moderation_audit_id, guardian_decision_id, trajectory_id, agent_id, reason, expires_at, expired, created_at"
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<StrikeRow>(
+          `select id, user_id, category, severity, moderation_audit_id, guardian_decision_id,
+                  trajectory_id, agent_id, reason, expires_at, expired, created_at
+             from user_strikes
+            where user_id = $1::uuid
+              and ($2::boolean is not true or expired = false)
+              and ($3::text is null or category = $3::text)
+            order by created_at desc, id desc
+            limit $4::integer`,
+          [
+            options.userId,
+            options.activeOnly ?? false,
+            options.category || null,
+            options.limit ?? 50,
+          ]
         )
-        .eq("user_id", options.userId)
-        .order("created_at", { ascending: false });
-
-      if (options.activeOnly) {
-        query = query.eq("expired", false);
-      }
-      if (options.category) {
-        query = query.eq("category", options.category);
-      }
-
-      const limit = options.limit ?? 50;
-      query = query.limit(limit);
-
-      const { data, error } = (await query) as {
-        data: StrikeRow[] | null;
-        error: { message: string } | null;
-      };
-
-      if (error || !data) return [];
-      return data.map(mapRowToStrike);
+      );
+      return rows.map(mapRowToStrike);
     } catch {
       return [];
     }
@@ -322,58 +319,36 @@ export class SupabaseStrikeStore implements StrikeStore {
 
   async expireStrikes(): Promise<number> {
     try {
-      const supabase = getSupabaseServiceClient();
-      const now = new Date().toISOString();
-
-      const { data, error } = await (supabase
-        .from("user_strikes" as never)
-        .update({ expired: true } as never)
-        .eq("expired", false)
-        .lt("expires_at", now)
-        .select("id") as unknown as Promise<{
-        data: Array<{ id: string }> | null;
-        error: { message: string } | null;
-      }>);
-
-      if (error) {
-        logger.error("Strike expiry failed", {
-          error: error.message,
-          route: "platform/moderation/strikes",
-        });
-        return 0;
-      }
-
-      return data?.length ?? 0;
-    } catch {
+      const { rowCount } = await withTenantTx((tx) =>
+        tx.query(
+          "update user_strikes set expired = true where expired = false and expires_at < now()"
+        )
+      );
+      return rowCount;
+    } catch (err) {
+      logger.error("Strike expiry failed", {
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/moderation/strikes",
+      });
       return 0;
     }
   }
 
   async expireStrike(strikeId: string): Promise<boolean> {
     try {
-      const supabase = getSupabaseServiceClient();
-
-      const { data, error } = await (supabase
-        .from("user_strikes" as never)
-        .update({ expired: true } as never)
-        .eq("id", strikeId)
-        .eq("expired", false)
-        .select("id") as unknown as Promise<{
-        data: Array<{ id: string }> | null;
-        error: { message: string } | null;
-      }>);
-
-      if (error) {
-        logger.error("Single strike expiry failed", {
-          strikeId,
-          error: error.message,
-          route: "platform/moderation/strikes",
-        });
-        return false;
-      }
-
-      return (data?.length ?? 0) > 0;
-    } catch {
+      const { rowCount } = await withTenantTx((tx) =>
+        tx.query(
+          "update user_strikes set expired = true where id = $1::uuid and expired = false",
+          [strikeId]
+        )
+      );
+      return rowCount > 0;
+    } catch (err) {
+      logger.error("Single strike expiry failed", {
+        strikeId,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/moderation/strikes",
+      });
       return false;
     }
   }
@@ -413,9 +388,9 @@ export function resetStrikeStore(): void {
 // 1. StrikeRecord fields are readonly. InMemoryStrikeStore works around this
 //    by creating new objects via spread when marking expired.
 //
-// 2. SupabaseStrikeStore.getActiveStrikes filters time-expired strikes in
-//    memory (not just by the `expired` flag) because the cron job that sets
-//    expired=true may not have run yet. This is intentional double-checking.
+// 2. getActiveStrikes excludes time-expired strikes (expires_at <= now), not just
+//    those flagged `expired`, because the job that sets expired=true may not have
+//    run yet. This is intentional double-checking.
 //
 // 3. Unlike ModerationStore, recordStrike returns {success, error} per L19.
 //    The Sentinel must check this result and surface failures.

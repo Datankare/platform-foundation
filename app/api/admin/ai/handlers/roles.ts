@@ -3,9 +3,16 @@
  *
  * Each handler applies the role rules (platform/auth/role-governance.ts) first, then records the
  * change and makes it (runAudited): a change whose audit record cannot be written is not made.
+ *
+ * Roles and their permissions are the platform catalog, shared by every tenant (ADR-053 D5):
+ * creating, deleting, duplicating a role and changing its permissions is allowed only when
+ * mayChangePlatformCatalog(admin), and runs on the owner connection (catalogTx). Assigning a
+ * role to a user is the tenant's own data, in the tenant's transaction. Each change re-reads
+ * what its rules were checked against inside the transaction that writes it — locked — and
+ * checks them again, so a concurrent change cannot slip between the check and the write.
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx, type Tx } from "@/platform/data";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
 import {
   checkPermissionGrant,
@@ -13,20 +20,46 @@ import {
   checkRoleEditable,
   type VerifiedAdmin,
 } from "@/platform/auth/role-governance";
-import { findRole, findUser } from "@/platform/auth/role-lookup";
-import { refusal, runAudited, type ActionResult } from "./shared";
+import {
+  findRole,
+  findUser,
+  type RoleWithPermissions,
+  type UserRef,
+} from "@/platform/auth/role-lookup";
+import { mayChangePlatformCatalog } from "@/platform/admin/config-scope";
+import {
+  catalogTx,
+  failedAsResult,
+  operatorOnly,
+  refusal,
+  runAudited,
+  type ActionResult,
+} from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+/** The entries of a list input as strings; anything that is not a list is no entries. */
+function codes(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+/** The users holding a role, in every tenant (the owner sees them all): a role in use stays. */
+async function holdersOf(tx: Tx, roleId: string): Promise<number> {
+  const { rows } = await tx.query<{ n: number }>(
+    "select count(*)::int as n from users where role_id = $1::uuid",
+    [roleId]
+  );
+  return rows[0]?.n ?? 0;
+}
 
 export async function handleCreateRole(
   input: Record<string, any>,
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
-  const supabase = getSupabaseServiceClient();
   const { name, display_name, description, permissions } = input;
-  const refused =
-    checkRoleEditable(String(name)) ??
-    checkPermissionGrant(admin, Array.isArray(permissions) ? permissions : []);
+  if (!mayChangePlatformCatalog(admin)) return operatorOnly();
+  const granted = codes(permissions);
+  const refused = checkRoleEditable(String(name)) ?? checkPermissionGrant(admin, granted);
   if (refused) return refusal(refused);
 
   return runAudited(
@@ -35,68 +68,65 @@ export async function handleCreateRole(
       actorId: admin.userId,
       details: { type: "create_role", prompt_action: true, name, permissions },
     },
-    async () => {
-      const { data: role, error } = await supabase
-        .from("roles")
-        .insert({
-          name,
-          display_name,
-          description: description || "",
-          is_default: false,
-          sort_order: 99,
+    () =>
+      failedAsResult(() =>
+        // The role and its permissions in one transaction: never a role without them.
+        catalogTx(async (tx) => {
+          const { rows } = await tx.query<{ id: string }>(
+            `insert into roles (name, display_name, description, is_default, sort_order)
+             values ($1, $2, $3, false, 99)
+             returning id`,
+            [name ?? null, display_name ?? null, description || ""]
+          );
+          if (granted.length > 0) {
+            await tx.query(
+              `insert into role_permissions (role_id, permission_id)
+               select $1::uuid, p.id from permissions p where p.code = any($2::text[])`,
+              [rows[0].id, granted]
+            );
+          }
+          return {
+            success: true,
+            result: `Role "${display_name}" created with ${permissions?.length || 0} permissions`,
+          };
         })
-        .select("id")
-        .single();
-
-      if (error) return { success: false, error: error.message };
-
-      if (permissions?.length > 0 && role) {
-        const { data: perms } = await supabase
-          .from("permissions")
-          .select("id, code")
-          .in("code", permissions);
-
-        if (perms && perms.length > 0) {
-          const rolePerms = perms.map((p: { id: string }) => ({
-            role_id: role.id,
-            permission_id: p.id,
-          }));
-          await supabase.from("role_permissions").insert(rolePerms);
-        }
-      }
-
-      return {
-        success: true,
-        result: `Role "${display_name}" created with ${permissions?.length || 0} permissions`,
-      };
-    }
+      )
   );
+}
+
+/** Why a role cannot be deleted, or null: its rules, then whether anyone still holds it. */
+function deletionRefused(
+  admin: VerifiedAdmin,
+  role: RoleWithPermissions,
+  holders: number,
+  roleName: unknown
+): ActionResult | null {
+  const refused =
+    checkRoleEditable(role.name) ?? checkPermissionGrant(admin, role.permissions);
+  if (refused) return refusal(refused);
+  if (holders > 0) {
+    return {
+      success: false,
+      error: `Cannot delete "${roleName}" — ${holders} users assigned. Reassign first.`,
+    };
+  }
+  return null;
 }
 
 export async function handleDeleteRole(
   input: Record<string, any>,
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
-  const supabase = getSupabaseServiceClient();
   const { role_name } = input;
+  if (!mayChangePlatformCatalog(admin)) return operatorOnly();
 
-  const role = await findRole(supabase, { name: String(role_name) });
-  if (!role) return { success: false, error: `Role "${role_name}" not found` };
-  const refused =
-    checkRoleEditable(role.name) ?? checkPermissionGrant(admin, role.permissions);
-  if (refused) return refusal(refused);
-
-  const { count } = await supabase
-    .from("users")
-    .select("id", { count: "exact", head: true })
-    .eq("role_id", role.id);
-
-  if ((count || 0) > 0) {
-    return {
-      success: false,
-      error: `Cannot delete "${role_name}" — ${count} users assigned. Reassign first.`,
-    };
-  }
+  const found = await catalogTx(async (tx) => {
+    const role = await findRole(tx, { name: String(role_name) });
+    return role ? { role, holders: await holdersOf(tx, role.id) } : null;
+  });
+  if (!found) return { success: false, error: `Role "${role_name}" not found` };
+  const refused = deletionRefused(admin, found.role, found.holders, role_name);
+  if (refused) return refused;
 
   return runAudited(
     {
@@ -106,15 +136,28 @@ export async function handleDeleteRole(
         type: "delete_role",
         prompt_action: true,
         role_name,
-        permissions: role.permissions,
+        permissions: found.role.permissions,
       },
     },
-    async () => {
-      await supabase.from("role_permissions").delete().eq("role_id", role.id);
-      const { error } = await supabase.from("roles").delete().eq("id", role.id);
-      if (error) return { success: false, error: error.message };
-      return { success: true, result: `Role "${role_name}" deleted` };
-    }
+    () =>
+      failedAsResult(() =>
+        catalogTx(async (tx) => {
+          const role = await findRole(tx, { id: found.role.id }, { forUpdate: true });
+          if (!role) return { success: false, error: `Role "${role_name}" not found` };
+          const now = deletionRefused(
+            admin,
+            role,
+            await holdersOf(tx, role.id),
+            role_name
+          );
+          if (now) return now;
+          await tx.query("delete from role_permissions where role_id = $1::uuid", [
+            role.id,
+          ]);
+          await tx.query("delete from roles where id = $1::uuid", [role.id]);
+          return { success: true, result: `Role "${role_name}" deleted` };
+        })
+      )
   );
 }
 
@@ -122,21 +165,21 @@ export async function handleDuplicateRole(
   input: Record<string, any>,
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
-  const supabase = getSupabaseServiceClient();
   const { source_role, new_name, new_display_name } = input;
+  if (!mayChangePlatformCatalog(admin)) return operatorOnly();
 
-  const { data: source } = await supabase
-    .from("roles")
-    .select("id, description")
-    .eq("name", source_role)
-    .single();
-
-  if (!source) return { success: false, error: `Source role "${source_role}" not found` };
-  const sourceRole = await findRole(supabase, { name: String(source_role) });
-  const refused =
-    checkRoleEditable(String(new_name)) ??
-    checkPermissionGrant(admin, sourceRole?.permissions ?? []);
-  if (refused) return refusal(refused);
+  const check = (source: RoleWithPermissions) => {
+    const refused =
+      checkRoleEditable(String(new_name)) ??
+      checkPermissionGrant(admin, source.permissions);
+    return refused ? refusal(refused) : null;
+  };
+  const sourceRole = await catalogTx((tx) => findRole(tx, { name: String(source_role) }));
+  if (!sourceRole) {
+    return { success: false, error: `Source role "${source_role}" not found` };
+  }
+  const refused = check(sourceRole);
+  if (refused) return refused;
 
   return runAudited(
     {
@@ -144,39 +187,36 @@ export async function handleDuplicateRole(
       actorId: admin.userId,
       details: { type: "duplicate_role", prompt_action: true, source_role, new_name },
     },
-    async () => {
-      const { data: newRole, error } = await supabase
-        .from("roles")
-        .insert({
-          name: new_name,
-          display_name: new_display_name,
-          description: `Duplicated from ${source_role}. ${source.description || ""}`,
-          is_default: false,
-          sort_order: 99,
+    () =>
+      failedAsResult(() =>
+        catalogTx(async (tx) => {
+          // The source is locked, so the permissions copied are the ones just checked.
+          const source = await findRole(tx, { id: sourceRole.id }, { forUpdate: true });
+          if (!source) {
+            return { success: false, error: `Source role "${source_role}" not found` };
+          }
+          const now = check(source);
+          if (now) return now;
+          const { rows } = await tx.query<{ id: string }>(
+            `insert into roles (name, display_name, description, is_default, sort_order)
+             select $1, $2, 'Duplicated from ' || $3 || '. ' || coalesce(s.description, ''),
+                    false, 99
+               from roles s where s.id = $4::uuid
+             returning id`,
+            [new_name ?? null, new_display_name ?? null, String(source_role), source.id]
+          );
+          const copied = await tx.query(
+            `insert into role_permissions (role_id, permission_id)
+             select $1::uuid, rp.permission_id from role_permissions rp
+              where rp.role_id = $2::uuid`,
+            [rows[0].id, source.id]
+          );
+          return {
+            success: true,
+            result: `Role "${new_display_name}" created from "${source_role}" with ${copied.rowCount} permissions`,
+          };
         })
-        .select("id")
-        .single();
-
-      if (error) return { success: false, error: error.message };
-
-      const { data: sourcePerms } = await supabase
-        .from("role_permissions")
-        .select("permission_id")
-        .eq("role_id", source.id);
-
-      if (sourcePerms && sourcePerms.length > 0 && newRole) {
-        const newPerms = sourcePerms.map((p: { permission_id: string }) => ({
-          role_id: newRole.id,
-          permission_id: p.permission_id,
-        }));
-        await supabase.from("role_permissions").insert(newPerms);
-      }
-
-      return {
-        success: true,
-        result: `Role "${new_display_name}" created from "${source_role}" with ${sourcePerms?.length || 0} permissions`,
-      };
-    }
+      )
   );
 }
 
@@ -184,18 +224,21 @@ export async function handleAssignPermissions(
   input: Record<string, any>,
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
-  const supabase = getSupabaseServiceClient();
   const { role_name, add, remove } = input;
+  if (!mayChangePlatformCatalog(admin)) return operatorOnly();
+  const adding = codes(add);
+  const removing = codes(remove);
 
-  const role = await findRole(supabase, { name: String(role_name) });
-  if (!role) return { success: false, error: `Role "${role_name}" not found` };
-  const refused =
-    checkRoleEditable(role.name) ??
-    checkPermissionGrant(admin, [
-      ...(Array.isArray(add) ? add : []),
-      ...(Array.isArray(remove) ? remove : []),
-    ]);
-  if (refused) return refusal(refused);
+  const check = (role: RoleWithPermissions) => {
+    const refused =
+      checkRoleEditable(role.name) ??
+      checkPermissionGrant(admin, [...adding, ...removing]);
+    return refused ? refusal(refused) : null;
+  };
+  const found = await catalogTx((tx) => findRole(tx, { name: String(role_name) }));
+  if (!found) return { success: false, error: `Role "${role_name}" not found` };
+  const refused = check(found);
+  if (refused) return refused;
 
   return runAudited(
     {
@@ -209,97 +252,147 @@ export async function handleAssignPermissions(
         removed: remove,
       },
     },
-    async () => {
-      let addedCount = 0;
-      let removedCount = 0;
+    () =>
+      failedAsResult(() =>
+        // Additions and removals together: all of them or none.
+        catalogTx(async (tx) => {
+          const role = await findRole(tx, { id: found.id }, { forUpdate: true });
+          if (!role) return { success: false, error: `Role "${role_name}" not found` };
+          const now = check(role);
+          if (now) return now;
 
-      if (add?.length > 0) {
-        const { data: perms } = await supabase
-          .from("permissions")
-          .select("id")
-          .in("code", add);
-        for (const p of perms ?? []) {
-          await supabase
-            .from("role_permissions")
-            .upsert(
-              { role_id: role.id, permission_id: p.id },
-              { onConflict: "role_id,permission_id" }
+          let addedCount = 0;
+          let removedCount = 0;
+          if (adding.length > 0) {
+            // Counts each named permission that exists, as before: re-adding one is a no-op.
+            const { rows } = await tx.query<{ n: number }>(
+              `with p as (select id from permissions where code = any($2::text[])),
+                    added as (
+                      insert into role_permissions (role_id, permission_id)
+                      select $1::uuid, p.id from p
+                      on conflict (role_id, permission_id) do nothing
+                    )
+               select count(*)::int as n from p`,
+              [role.id, adding]
             );
-          addedCount++;
-        }
-      }
+            addedCount = rows[0]?.n ?? 0;
+          }
+          if (removing.length > 0) {
+            const { rows } = await tx.query<{ n: number }>(
+              `with p as (select id from permissions where code = any($2::text[])),
+                    removed as (
+                      delete from role_permissions
+                       where role_id = $1::uuid and permission_id in (select id from p)
+                    )
+               select count(*)::int as n from p`,
+              [role.id, removing]
+            );
+            removedCount = rows[0]?.n ?? 0;
+          }
 
-      if (remove?.length > 0) {
-        const { data: perms } = await supabase
-          .from("permissions")
-          .select("id")
-          .in("code", remove);
-        for (const p of perms ?? []) {
-          await supabase
-            .from("role_permissions")
-            .delete()
-            .eq("role_id", role.id)
-            .eq("permission_id", p.id);
-          removedCount++;
-        }
-      }
-
-      return {
-        success: true,
-        result: `Role "${role_name}": +${addedCount}, -${removedCount} permissions`,
-      };
-    }
+          return {
+            success: true,
+            result: `Role "${role_name}": +${addedCount}, -${removedCount} permissions`,
+          };
+        })
+      )
   );
+}
+
+type Assignment =
+  | { readonly ok: false; readonly result: ActionResult }
+  | {
+      readonly ok: true;
+      readonly target: UserRef;
+      readonly role: RoleWithPermissions;
+      readonly currentRole: RoleWithPermissions | null;
+    };
+
+/**
+ * The user, the role to assign and the user's current role, read in `tx` (the tenant's), with
+ * the role rules applied. A read error throws LookupUnavailableError: the change stops.
+ */
+async function resolveAssignment(
+  tx: Tx,
+  admin: VerifiedAdmin,
+  identifier: string,
+  roleName: string,
+  lock: boolean
+): Promise<Assignment> {
+  // Exact lookups on bound parameters — the identifier is never spliced into a filter, where a
+  // crafted value could widen the update to other users (TASK-145).
+  const target = await findUser(tx, identifier, { forUpdate: lock });
+  if (!target) {
+    return {
+      ok: false,
+      result: { success: false, error: `User "${identifier}" not found` },
+    };
+  }
+  const role = await findRole(tx, { name: roleName });
+  if (!role) {
+    return {
+      ok: false,
+      result: { success: false, error: `Role "${roleName}" not found` },
+    };
+  }
+  const currentRole = target.roleId ? await findRole(tx, { id: target.roleId }) : null;
+  // The protected-role rule cannot be applied to a role that cannot be found: no change.
+  if (target.roleId && !currentRole) {
+    return {
+      ok: false,
+      result: { success: false, error: "The user's current role was not found" },
+    };
+  }
+  const refused = checkRoleAssignment(admin, target.id, role, currentRole);
+  if (refused) return { ok: false, result: refusal(refused) };
+  return { ok: true, target, role, currentRole };
 }
 
 export async function handleChangeUserRole(
   input: Record<string, any>,
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
-  const supabase = getSupabaseServiceClient();
   const { user_identifier, new_role } = input;
+  const identifier = String(user_identifier ?? "");
+  const roleName = String(new_role ?? "");
 
-  // Exact lookups through bound filters — the identifier is never spliced into a filter string,
-  // where a crafted value could widen the update to other users (TASK-145).
-  const target = await findUser(supabase, String(user_identifier ?? ""));
-  if (!target) return { success: false, error: `User "${user_identifier}" not found` };
-  const role = await findRole(supabase, { name: String(new_role ?? "") });
-  if (!role) return { success: false, error: `Role "${new_role}" not found` };
-  const currentRole = target.roleId
-    ? await findRole(supabase, { id: target.roleId })
-    : null;
-  // The protected-role rule cannot be applied to a role that cannot be found: no change.
-  if (target.roleId && !currentRole) {
-    return { success: false, error: "The user's current role was not found" };
-  }
-  const refused = checkRoleAssignment(admin, target.id, role, currentRole);
-  if (refused) return refusal(refused);
+  // A user of this tenant only: another tenant's users are not visible here (ADR-053 D5).
+  const plan = await withTenantTx((tx) =>
+    resolveAssignment(tx, admin, identifier, roleName, false)
+  );
+  if (!plan.ok) return plan.result;
 
   return runAudited(
     {
       action: "role_changed",
       actorId: admin.userId,
-      targetId: target.id,
+      targetId: plan.target.id,
       details: {
         prompt_action: true,
-        oldRole: currentRole?.name ?? null,
-        newRole: role.name,
+        oldRole: plan.currentRole?.name ?? null,
+        newRole: plan.role.name,
       },
     },
     async () => {
-      const { error } = await supabase
-        .from("users")
-        .update({ role_id: role.id })
-        .eq("id", target.id);
-
-      if (error) return { success: false, error: error.message };
-
-      if (target.cognitoSub) invalidatePermissions(target.cognitoSub);
-
-      return {
-        success: true,
-        result: `User "${user_identifier}" assigned to "${role.name}"`,
-      };
+      const outcome = await failedAsResult(() =>
+        withTenantTx(async (tx) => {
+          // The user is locked and the rules checked again on what the update will change.
+          const now = await resolveAssignment(tx, admin, plan.target.id, roleName, true);
+          if (!now.ok) return now.result;
+          await tx.query("update users set role_id = $2::uuid where id = $1::uuid", [
+            now.target.id,
+            now.role.id,
+          ]);
+          return {
+            success: true,
+            result: `User "${user_identifier}" assigned to "${now.role.name}"`,
+          };
+        })
+      );
+      if (outcome.success && plan.target.cognitoSub) {
+        invalidatePermissions(plan.target.cognitoSub);
+      }
+      return outcome;
     }
   );
 }

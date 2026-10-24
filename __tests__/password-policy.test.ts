@@ -4,13 +4,11 @@
  * Tests validatePassword (Phase 1 API + Sprint 4 breach/pattern checks),
  * validatePasswordEnhanced (strength scoring), and isBreachedPassword.
  *
- * getEffectivePasswordPolicy is Supabase-dependent → integration tests.
+ * The policy store (getEffective/getGlobal/saveGlobal) is tested against the database in
+ * __tests__/db/auth-records.db.test.ts.
  */
 
 // Mock dependencies before imports
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(),
-}));
 jest.mock("@/lib/logger", () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
@@ -186,15 +184,11 @@ describe("isBreachedPassword", () => {
 
 // ── Global policy: read by sign-up, changed by admins (Sprint 7X) ────────────
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   applyPasswordPolicyChange,
   DEFAULT_POLICY,
-  getGlobalPasswordPolicy,
   PASSWORD_POLICY_LIMITS,
-  saveGlobalPasswordPolicy,
 } from "@/platform/auth/password-policy";
-import { FakeDatabase } from "./helpers/fake-database";
 
 describe("applyPasswordPolicyChange", () => {
   it("changes only the fields sent", () => {
@@ -230,85 +224,5 @@ describe("applyPasswordPolicyChange", () => {
       passwordHistoryCount: 24,
     });
     expect("policy" in out).toBe(true);
-  });
-});
-
-describe("getGlobalPasswordPolicy / saveGlobalPasswordPolicy", () => {
-  const use = (client: unknown) =>
-    (getSupabaseServiceClient as jest.Mock).mockReturnValue(client);
-
-  it("returns the defaults when none is stored", async () => {
-    use(new FakeDatabase({ password_policy: [] }).client());
-    await expect(getGlobalPasswordPolicy()).resolves.toEqual(DEFAULT_POLICY);
-  });
-
-  it("keeps a stored zero (no rotation, no history) rather than replacing it", async () => {
-    use(
-      new FakeDatabase({
-        password_policy: [
-          {
-            role_id: null,
-            user_id: null,
-            min_length: 10,
-            rotation_days: 0,
-            password_history_count: 0,
-            require_uppercase: false,
-            require_lowercase: true,
-            require_number: true,
-            require_special: false,
-          },
-        ],
-      }).client()
-    );
-    await expect(getGlobalPasswordPolicy()).resolves.toMatchObject({
-      minLength: 10,
-      rotationDays: 0,
-      passwordHistoryCount: 0,
-      requireUppercase: false,
-    });
-  });
-
-  it("falls back to the defaults when the policy cannot be read", async () => {
-    use({
-      from: () => ({
-        select: () => ({
-          is: () => ({
-            is: () => ({
-              maybeSingle: async () => ({ data: null, error: { message: "down" } }),
-            }),
-          }),
-        }),
-      }),
-    });
-    await expect(getGlobalPasswordPolicy()).resolves.toEqual(DEFAULT_POLICY);
-  });
-
-  it("falls back to the defaults, and a save reports failure, when no client can be created", async () => {
-    (getSupabaseServiceClient as jest.Mock).mockImplementation(() => {
-      throw new Error("Missing Supabase environment variables");
-    });
-    await expect(getGlobalPasswordPolicy()).resolves.toEqual(DEFAULT_POLICY);
-    await expect(saveGlobalPasswordPolicy(DEFAULT_POLICY)).resolves.toEqual({
-      success: false,
-      error: "Missing Supabase environment variables",
-    });
-  });
-
-  it("reports a read failure when saving, writing nothing", async () => {
-    use({
-      from: () => ({
-        select: () => ({
-          is: () => ({
-            is: () => ({
-              maybeSingle: async () => ({ data: null, error: { message: "down" } }),
-            }),
-          }),
-        }),
-      }),
-    });
-    await expect(saveGlobalPasswordPolicy(DEFAULT_POLICY)).resolves.toEqual({
-      success: false,
-      error: "down",
-    });
   });
 });

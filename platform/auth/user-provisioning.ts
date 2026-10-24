@@ -14,15 +14,17 @@
  * requests at once create one row — and it never changes an existing row (a banned user stays
  * banned).
  *
+ * The row is written in the request's tenant (platform/data, ADR-053 D4): users.tenant_id is
+ * filled by the column default and row-level security limits the read to that tenant.
+ *
  * GenAI Principles: P11 (fail-closed — a provisioning failure is reported, never treated as
  * allowed), P13 (governance — the default role is a seeded role, not code-defined permissions)
  *
  * @module platform/auth
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { hasDatabase, withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
-import { getSupabaseUrl } from "@/platform/providers/environment-contract";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 
 /** The role every new account starts with (seeded by the schema baseline). */
@@ -44,8 +46,6 @@ export interface ProvisioningProfile {
  */
 export type ProvisioningOutcome = "existing" | "created" | "skipped" | "failed";
 
-type Result<T> = Promise<{ data: T | null; error: { message: string } | null }>;
-
 function fail(userId: string, step: string, error: unknown): ProvisioningOutcome {
   logger.error("User provisioning failed", {
     userId,
@@ -60,35 +60,37 @@ export async function ensureUserProvisioned(
   userId: string,
   profile: ProvisioningProfile = {}
 ): Promise<ProvisioningOutcome> {
-  if (!getSupabaseUrl()) return "skipped";
+  if (!hasDatabase()) return "skipped";
   if (!UUID_PATTERN.test(userId))
     return fail(userId, "validate", "not a provider subject");
 
   try {
-    const supabase = getSupabaseServiceClient();
-
-    const existing = await (supabase
-      .from("users" as never)
-      .select("id")
-      .eq("id", userId)
-      .maybeSingle() as unknown as Result<{ id: string }>);
-    if (existing.error) return fail(userId, "read", existing.error.message);
-    if (existing.data) return "existing";
-
-    const role = await (supabase
-      .from("roles" as never)
-      .select("id")
-      .eq("name", DEFAULT_USER_ROLE)
-      .maybeSingle() as unknown as Result<{ id: string }>);
-    if (role.error) return fail(userId, "role", role.error.message);
-    if (!role.data)
-      return fail(userId, "role", `default role "${DEFAULT_USER_ROLE}" is missing`);
+    let roleId: string;
+    try {
+      const found = await withTenantTx(async (tx) => {
+        const existing = await tx.query("select id from users where id = $1::uuid", [
+          userId,
+        ]);
+        if (existing.rows.length > 0) return { existing: true as const };
+        // The role catalog is platform-owned and readable from any tenant.
+        const role = await tx.query<{ id: string }>(
+          "select id from roles where name = $1",
+          [DEFAULT_USER_ROLE]
+        );
+        return { existing: false as const, roleId: role.rows[0]?.id };
+      });
+      if (found.existing) return "existing";
+      if (!found.roleId)
+        return fail(userId, "role", `default role "${DEFAULT_USER_ROLE}" is missing`);
+      roleId = found.roleId;
+    } catch (err) {
+      return fail(userId, "read", err);
+    }
 
     const email = profile.email?.trim() ? profile.email.trim().toLowerCase() : null;
-    const roleId = role.data.id;
     // Recorded before the account is created; no record, no account (Adversarial Validation, 6).
     // Two concurrent first requests each record an attempt; only one creates the row.
-    let inserted: Awaited<Result<{ id: string }[]>>;
+    let inserted: { created: boolean; error?: string };
     try {
       inserted = await audited(
         {
@@ -97,29 +99,34 @@ export async function ensureUserProvisioned(
           targetId: userId,
           details: { role: DEFAULT_USER_ROLE, via: "first_authenticated_request" },
         },
-        () =>
-          supabase
-            .from("users" as never)
-            .upsert(
-              {
-                id: userId,
-                cognito_sub: userId,
-                email,
-                email_verified: profile.emailVerified === true,
-                role_id: roleId,
-              } as never,
-              { onConflict: "id", ignoreDuplicates: true }
-            )
-            .select("id") as unknown as Result<{ id: string }[]>
+        async () => {
+          try {
+            const { rows } = await withTenantTx((tx) =>
+              tx.query(
+                `insert into users (id, cognito_sub, email, email_verified, role_id)
+                 values ($1::uuid, $2, $3, $4, $5::uuid)
+                 on conflict (id) do nothing
+                 returning id`,
+                [userId, userId, email, profile.emailVerified === true, roleId]
+              )
+            );
+            return { created: rows.length > 0 };
+          } catch (err) {
+            return {
+              created: false,
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        }
       );
     } catch (err) {
       if (err instanceof AuditWriteError) return fail(userId, "audit", err);
       throw err;
     }
-    if (inserted.error) return fail(userId, "insert", inserted.error.message);
+    if (inserted.error !== undefined) return fail(userId, "insert", inserted.error);
 
-    // Empty result: another request created it between the read and the insert.
-    if (!inserted.data || inserted.data.length === 0) return "existing";
+    // Nothing inserted: another request created it between the read and the insert.
+    if (!inserted.created) return "existing";
 
     logger.info("User provisioned", {
       userId,

@@ -35,8 +35,8 @@ export interface RateLimitRule {
 
 /** Rate limiter configuration */
 export interface RateLimitConfig {
-  /** Where the shared counters live (ADR-052): "supabase" | "upstash" | "memory" */
-  provider: "supabase" | "upstash" | "memory";
+  /** Where the shared counters live (ADR-052): "postgres" (= "supabase") | "upstash" | "memory" */
+  provider: "postgres" | "supabase" | "upstash" | "memory";
   /** Key prefix for rate limit counters. Default: "rl:" */
   namespace?: string;
 }

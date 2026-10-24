@@ -28,6 +28,7 @@ import {
   ssoRedirectUri,
 } from "@/platform/auth/sso";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 function backToSignIn(request: NextRequest, code: ErrorCode): NextResponse {
   const url = new URL("/auth", request.nextUrl.origin);
@@ -37,7 +38,7 @@ function backToSignIn(request: NextRequest, code: ErrorCode): NextResponse {
   return response;
 }
 
-export async function GET(
+export const GET = tenantRoute(async function GET(
   request: NextRequest,
   context: { params: Promise<{ provider: string }> }
 ) {
@@ -86,4 +87,4 @@ export async function GET(
     maxAge: SSO_COOKIE_MAX_AGE_SECONDS,
   });
   return response;
-}
+});

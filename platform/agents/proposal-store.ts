@@ -3,7 +3,8 @@
  *
  * In-memory implementation and the singleton. The contract lives in platform/kernel because
  * the action pipeline creates and decides proposals and cannot import platform/agents
- * (ADR-029 D2).
+ * (ADR-029 D2). The in-memory store keeps each tenant's proposals in its own partition, as
+ * row-level security does for PostgresProposalStore (ADR-053 D6).
  *
  * @module platform/agents
  */
@@ -17,6 +18,7 @@ import type {
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 export type {
   CreateProposalArgs,
@@ -33,13 +35,15 @@ const ONE_LIVE: ReadonlySet<ProposalStatus> = new Set([
 ]);
 
 export class InMemoryProposalStore implements ProposalStore {
-  private records: ProposalRecord[] = [];
+  /** proposalId → record, per tenant. Insertion order is creation order. */
+  private readonly parts = new TenantPartitionedMap<string, ProposalRecord>();
 
   async create(args: CreateProposalArgs): Promise<ProposalRecord> {
-    // As the database's idx_proposals_one_live (migration 046): at most one proposal per
-    // operation that is open, approved or used.
+    const records = this.parts.current();
+    // As the database's idx_proposals_tenant_one_live (migrations 046, 049): at most one
+    // proposal per operation in a tenant that is open, approved or used.
     if (
-      this.records.some(
+      [...records.values()].some(
         (r) => r.operationId === args.operationId && ONE_LIVE.has(r.status)
       )
     ) {
@@ -63,12 +67,12 @@ export class InMemoryProposalStore implements ProposalStore {
       createdAt: now,
       updatedAt: now,
     };
-    this.records.push(record);
+    records.set(record.proposalId, record);
     return record;
   }
 
   async getById(proposalId: string): Promise<ProposalRecord | undefined> {
-    return this.records.find((r) => r.proposalId === proposalId);
+    return this.parts.current().get(proposalId);
   }
 
   async decide(
@@ -77,40 +81,42 @@ export class InMemoryProposalStore implements ProposalStore {
     decidedBy: string,
     note?: string
   ): Promise<ProposalRecord | undefined> {
-    const i = this.records.findIndex((r) => r.proposalId === proposalId);
-    if (i === -1) return undefined;
+    const records = this.parts.current();
+    const current = records.get(proposalId);
+    if (!current) return undefined;
     // Only from `proposed`. A second decision on the same proposal is a no-op returning
     // undefined, so a caller can distinguish "I decided this" from "someone already had"
     // (ADR-031 D4).
-    if (this.records[i].status !== "proposed") return undefined;
+    if (current.status !== "proposed") return undefined;
 
     const now = new Date().toISOString();
     const updated: ProposalRecord = {
-      ...this.records[i],
+      ...current,
       status,
       decidedBy,
       decidedAt: now,
       decisionNote: note,
       updatedAt: now,
     };
-    this.records[i] = updated;
+    records.set(proposalId, updated);
     return updated;
   }
 
   async consume(proposalId: string): Promise<ProposalRecord | undefined> {
-    const i = this.records.findIndex((r) => r.proposalId === proposalId);
-    if (i === -1 || this.records[i].status !== "approved") return undefined;
+    const records = this.parts.current();
+    const current = records.get(proposalId);
+    if (!current || current.status !== "approved") return undefined;
     const updated: ProposalRecord = {
-      ...this.records[i],
+      ...current,
       status: "executed",
       updatedAt: new Date().toISOString(),
     };
-    this.records[i] = updated;
+    records.set(proposalId, updated);
     return updated;
   }
 
   async query(options: ProposalQuery): Promise<readonly ProposalRecord[]> {
-    let out = [...this.records];
+    let out = [...this.parts.current().values()];
     if (options.operationId)
       out = out.filter((r) => r.operationId === options.operationId);
     if (options.trajectoryId)
@@ -121,8 +127,9 @@ export class InMemoryProposalStore implements ProposalStore {
     return out;
   }
 
+  /** Forget every tenant's proposals (tests). */
   clear(): void {
-    this.records = [];
+    this.parts.clearAll();
   }
 }
 

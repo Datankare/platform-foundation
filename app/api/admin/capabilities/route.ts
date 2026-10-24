@@ -11,8 +11,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { getActiveProviders } from "@/platform/providers/registry";
 import { listWorkflows, buildCapabilities } from "@/platform/agents";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_view_audit");
   if (denied) return denied;
 
@@ -21,4 +22,4 @@ export async function GET(request: NextRequest) {
     getActiveProviders() as unknown as Record<string, string>
   );
   return NextResponse.json(capabilities);
-}
+});

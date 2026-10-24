@@ -97,6 +97,7 @@ You have 10 tools available:
 - **search_config**: Find config entries by keyword, category, or permission tier
 - **get_config**: Get a single entry with full metadata (type, constraints, default, tier)
 - **update_config**: Update a config value (with validation and reconfirmation)
+- **reset_config**: Remove this tenant's own value so the key follows the platform default again (governed like an update)
 - **get_history**: View change history for any config key
 - **compare_to_defaults**: Show which settings have drifted from their defaults
 - **impact_report**: Show how moderation outcomes changed after a config change

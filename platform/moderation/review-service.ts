@@ -17,7 +17,7 @@
 
 import { logger } from "@/lib/logger";
 import { getConfig } from "@/platform/auth/platform-config";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx, type Tx } from "@/platform/data";
 import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { getStrikeStore } from "./strikes";
 import { getReviewQueueStore } from "./review-store";
@@ -266,11 +266,12 @@ export async function claimItem(
   }
   if (isSelfReview(item, reviewerId)) return SELF_REVIEW;
 
-  return store.update(itemId, {
-    status: "claimed",
-    claimedBy: reviewerId,
-    claimedAt: new Date().toISOString(),
-  });
+  // Claimed only if still pending: of two reviewers claiming at once, one wins.
+  return store.update(
+    itemId,
+    { status: "claimed", claimedBy: reviewerId, claimedAt: new Date().toISOString() },
+    { status: "pending" }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -311,11 +312,12 @@ export async function unclaimItem(
     };
   }
 
-  return store.update(itemId, {
-    status: "pending",
-    claimedBy: undefined,
-    claimedAt: undefined,
-  });
+  // The claim is cleared (null), and only while it is still this reviewer's.
+  return store.update(
+    itemId,
+    { status: "pending", claimedBy: null, claimedAt: null },
+    { status: "claimed", claimedBy: reviewerId }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -408,14 +410,20 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
           if (failure)
             return { success: false, error: failure, errorCode: "internal.error" };
         }
-        return store.update(input.itemId, {
-          status: "resolved",
-          resolvedBy: input.reviewerId,
-          resolvedAt: new Date().toISOString(),
-          decision: input.decision,
-          reviewerNotes: input.reviewerNotes,
-          modifiedAction: input.modifiedAction,
-        });
+        // Resolved only while still claimed by this reviewer: a release or another reviewer's
+        // decision in between is a conflict, never a second resolution.
+        return store.update(
+          input.itemId,
+          {
+            status: "resolved",
+            resolvedBy: input.reviewerId,
+            resolvedAt: new Date().toISOString(),
+            decision: input.decision,
+            reviewerNotes: input.reviewerNotes,
+            modifiedAction: input.modifiedAction,
+          },
+          { status: "claimed", claimedBy: input.reviewerId }
+        );
       }
     );
   } catch (err) {
@@ -561,25 +569,33 @@ interface StatusChangeRecord {
   readonly outcome?: unknown;
 }
 
+/** A restoration that could not be made; the message is the failure returned to the caller. */
+class RestoreFailure extends Error {}
+
+const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
 /**
  * The most recent status change applied to an account (Sentinel's `sentinel_status_change`
  * record), or null when there is none. A change whose recorded outcome is "failed" never
  * happened and is skipped. Throws when the records cannot be read (fail closed).
  */
-async function latestStatusChange(userId: string): Promise<StatusChangeRecord | null> {
-  const supabase = getSupabaseServiceClient();
-  const { data, error } = await (supabase
-    .from("audit_log" as never)
-    .select("details, created_at")
-    .eq("target_id", userId)
-    .eq("action", "admin_action")
-    .order("created_at", { ascending: false })
-    .limit(200) as unknown as Promise<{
-    data: { details: Record<string, unknown> | null }[] | null;
-    error: { message: string } | null;
-  }>);
-  if (error) throw new Error(`status history unreadable: ${error.message}`);
-  const changes = (data ?? [])
+async function latestStatusChange(
+  tx: Tx,
+  userId: string
+): Promise<StatusChangeRecord | null> {
+  let rows: { details: Record<string, unknown> | null }[];
+  try {
+    ({ rows } = await tx.query<{ details: Record<string, unknown> | null }>(
+      `select details from audit_log
+        where target_id = $1::uuid and action = 'admin_action'
+        order by created_at desc
+        limit 200`,
+      [userId]
+    ));
+  } catch (err) {
+    throw new Error(`status history unreadable: ${errorText(err)}`, { cause: err });
+  }
+  const changes = rows
     .map((row) => row.details ?? {})
     .filter((d) => d.type === "sentinel_status_change");
   // An attempt whose failure was recorded did not change the account.
@@ -606,94 +622,97 @@ async function latestStatusChange(userId: string): Promise<StatusChangeRecord | 
  * decision set the current status, or no record shows this decision changed the account, the
  * status is left as it is: overturning a warning must not lift a later ban. Returns a failure
  * message, or null.
+ *
+ * One transaction: the account row is locked (`for update`) while its history is read and the
+ * restoration written, so a status change made meanwhile cannot be overwritten.
  */
 async function restoreAccountStatus(
   item: ReviewQueueItem,
   reviewerId: string
 ): Promise<string | null> {
   const decisionId = item.originalDecisionId ?? item.moderationResult.trajectoryId;
-  const supabase = getSupabaseServiceClient();
 
   try {
-    const { data: current, error: readError } = await (supabase
-      .from("users" as never)
-      .select("account_status")
-      .eq("id", item.targetUserId)
-      .maybeSingle() as unknown as Promise<{
-      data: { account_status: AccountStatus } | null;
-      error: { message: string } | null;
-    }>);
-    if (readError) return `account status unreadable: ${readError.message}`;
-    if (!current) return "account not found";
+    return await withTenantTx(async (tx): Promise<string | null> => {
+      let current: { account_status: AccountStatus } | undefined;
+      try {
+        ({
+          rows: [current],
+        } = await tx.query<{ account_status: AccountStatus }>(
+          "select account_status from users where id = $1::uuid for update",
+          [item.targetUserId]
+        ));
+      } catch (err) {
+        throw new RestoreFailure(`account status unreadable: ${errorText(err)}`);
+      }
+      if (!current) return "account not found";
 
-    const change = await latestStatusChange(item.targetUserId);
-    const inForce =
-      change !== null &&
-      change.guardianDecisionId === decisionId &&
-      change.newStatus === current.account_status &&
-      typeof change.previousStatus === "string" &&
-      SEVERITY.includes(change.previousStatus as AccountStatus);
-    if (!inForce) {
-      logger.warn(
-        "Review: the overturned decision did not set the account's current status — left unchanged",
-        {
-          userId: item.targetUserId,
-          reviewerId,
-          reviewItemId: item.id,
-          current: current.account_status,
-          route: "platform/moderation/review-service",
-        }
+      const change = await latestStatusChange(tx, item.targetUserId);
+      const inForce =
+        change !== null &&
+        change.guardianDecisionId === decisionId &&
+        change.newStatus === current.account_status &&
+        typeof change.previousStatus === "string" &&
+        SEVERITY.includes(change.previousStatus as AccountStatus);
+      if (!inForce) {
+        logger.warn(
+          "Review: the overturned decision did not set the account's current status — left unchanged",
+          {
+            userId: item.targetUserId,
+            reviewerId,
+            reviewItemId: item.id,
+            current: current.account_status,
+            route: "platform/moderation/review-service",
+          }
+        );
+        return null;
+      }
+      const restoreTo = change.previousStatus as AccountStatus;
+
+      const now = SEVERITY.indexOf(current.account_status);
+      const to = SEVERITY.indexOf(restoreTo);
+      if (to < 0 || to >= now) {
+        logger.warn(
+          "Review: overturn would not lower the account's status — left unchanged",
+          {
+            userId: item.targetUserId,
+            reviewerId,
+            reviewItemId: item.id,
+            current: current.account_status,
+            recordedPrevious: restoreTo,
+            route: "platform/moderation/review-service",
+          }
+        );
+        return null;
+      }
+
+      // A ban is lifted; a suspension or restriction end date stays only when restoring into it.
+      await tx.query(
+        `update users set
+            account_status = $2::account_status,
+            banned_at = null,
+            ban_reason = null,
+            status_changed_by = $3,
+            status_changed_at = now(),
+            suspended_until = case when $2::text = 'suspended' then suspended_until end,
+            restricted_until = case when $2::text = 'restricted' then restricted_until end
+          where id = $1::uuid`,
+        [item.targetUserId, restoreTo, reviewerId]
       );
+
+      logger.info("Review: account status restored on overturn", {
+        userId: item.targetUserId,
+        reviewerId,
+        reviewItemId: item.id,
+        source: item.source,
+        restoredTo: restoreTo,
+        route: "platform/moderation/review-service",
+      });
       return null;
-    }
-    const restoreTo = change.previousStatus as AccountStatus;
-
-    const now = SEVERITY.indexOf(current.account_status);
-    const to = SEVERITY.indexOf(restoreTo);
-    if (to < 0 || to >= now) {
-      logger.warn(
-        "Review: overturn would not lower the account's status — left unchanged",
-        {
-          userId: item.targetUserId,
-          reviewerId,
-          reviewItemId: item.id,
-          current: current.account_status,
-          recordedPrevious: restoreTo,
-          route: "platform/moderation/review-service",
-        }
-      );
-      return null;
-    }
-
-    const updateData: Record<string, unknown> = {
-      account_status: restoreTo,
-      banned_at: null,
-      ban_reason: null,
-      status_changed_by: reviewerId,
-      status_changed_at: new Date().toISOString(),
-    };
-    if (restoreTo !== "suspended") updateData.suspended_until = null;
-    if (restoreTo !== "restricted") updateData.restricted_until = null;
-
-    const { error } = await (supabase
-      .from("users" as never)
-      .update(updateData as never)
-      .eq("id", item.targetUserId) as unknown as Promise<{
-      error: { message: string } | null;
-    }>);
-    if (error) return `account status restore failed: ${error.message}`;
-
-    logger.info("Review: account status restored on overturn", {
-      userId: item.targetUserId,
-      reviewerId,
-      reviewItemId: item.id,
-      source: item.source,
-      restoredTo: restoreTo,
-      route: "platform/moderation/review-service",
     });
-    return null;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof RestoreFailure) return err.message;
+    const message = errorText(err);
     logger.error("Review: account status restoration failed", {
       userId: item.targetUserId,
       reviewerId,
@@ -788,7 +807,13 @@ export async function reapOverdueEscalations(
             reapedAt: now.toISOString(),
           },
         },
-        () => store.update(item.id, { status: "pending", priority: "critical" })
+        // Only if no reviewer took it meanwhile.
+        () =>
+          store.update(
+            item.id,
+            { status: "pending", priority: "critical" },
+            { status: item.status }
+          )
       );
       if (res.success) escalatedHigher++;
       continue;
@@ -808,15 +833,20 @@ export async function reapOverdueEscalations(
           reapedAt: now.toISOString(),
         },
       },
+      // Only if no reviewer took it meanwhile: a claimed item is a human's to decide.
       () =>
-        store.update(item.id, {
-          status: "resolved",
-          decision: "modify",
-          modifiedAction: "block",
-          resolvedBy: REAPER,
-          resolvedAt: now.toISOString(),
-          reviewerNotes: `Auto-blocked: escalation exceeded the ${slaHours}h SLA without human review (ADR-041).`,
-        })
+        store.update(
+          item.id,
+          {
+            status: "resolved",
+            decision: "modify",
+            modifiedAction: "block",
+            resolvedBy: REAPER,
+            resolvedAt: now.toISOString(),
+            reviewerNotes: `Auto-blocked: escalation exceeded the ${slaHours}h SLA without human review (ADR-041).`,
+          },
+          { status: item.status }
+        )
     );
     if (res.success) blocked++;
   }

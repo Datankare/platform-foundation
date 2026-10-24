@@ -8,11 +8,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { getConfig } from "@/platform/auth/platform-config";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_config");
   if (denied) return denied;
 
   const pairs = await getConfig<[string, string[]][]>("agent.capability_features", []);
   return NextResponse.json({ mappings: Array.isArray(pairs) ? pairs : [] });
-}
+});

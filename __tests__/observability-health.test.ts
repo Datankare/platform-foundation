@@ -1,11 +1,24 @@
 /**
  * __tests__/observability-health.test.ts — Health check tests
  *
- * Tests: HealthRegistry aggregation, HttpHealthProbe, timeout handling,
+ * Tests: HealthRegistry aggregation, HttpHealthProbe, PostgresHealthProbe (platform/data mocked;
+ * the real query runs in __tests__/db/health-probe.db.test.ts), timeout handling,
  * worst-status logic, duplicate probe rejection.
  */
 
-import { HealthRegistry, HttpHealthProbe } from "@/platform/observability/health";
+import {
+  HealthRegistry,
+  HttpHealthProbe,
+  PostgresHealthProbe,
+} from "@/platform/observability/health";
+import { hasDatabase, withPlatformTx } from "@/platform/data";
+
+jest.mock("@/platform/data", () => ({
+  hasDatabase: jest.fn(),
+  withPlatformTx: jest.fn(),
+}));
+const mockHasDatabase = hasDatabase as jest.MockedFunction<typeof hasDatabase>;
+const mockWithPlatformTx = withPlatformTx as jest.MockedFunction<typeof withPlatformTx>;
 import type { HealthProbe, HealthCheckResult } from "@/platform/observability/types";
 
 // ---------------------------------------------------------------------------
@@ -231,5 +244,67 @@ describe("CachedHealthProbe (audit X-13)", () => {
 
   it("refuses a non-positive interval", () => {
     expect(() => new CachedHealthProbe({ name: "x", check: jest.fn() }, 0)).toThrow();
+  });
+});
+
+describe("PostgresHealthProbe", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    mockHasDatabase.mockReset();
+    mockWithPlatformTx.mockReset();
+  });
+
+  it("is healthy when select 1 answers, in a platform transaction", async () => {
+    mockHasDatabase.mockReturnValue(true);
+    const query = jest.fn(async () => ({ rows: [{ "?column?": 1 }], rowCount: 1 }));
+    mockWithPlatformTx.mockImplementation(async (fn) =>
+      fn({ query, tenantId: undefined } as never)
+    );
+    const r = await new PostgresHealthProbe().check();
+    expect(r).toMatchObject({ name: "database", status: "healthy", detail: "OK" });
+    expect(typeof r.latencyMs).toBe("number");
+    expect(typeof r.checkedAt).toBe("string");
+    expect(query).toHaveBeenCalledWith("select 1");
+  });
+
+  it("is unhealthy when no database is configured, without trying", async () => {
+    mockHasDatabase.mockReturnValue(false);
+    const r = await new PostgresHealthProbe().check();
+    expect(r).toMatchObject({ name: "database", status: "unhealthy" });
+    expect(r.detail).toMatch(/No database configured/);
+    expect(mockWithPlatformTx).not.toHaveBeenCalled();
+  });
+
+  it("is unhealthy when the query fails", async () => {
+    mockHasDatabase.mockReturnValue(true);
+    mockWithPlatformTx.mockRejectedValue(
+      new Error("No database connection could be had")
+    );
+    const r = await new PostgresHealthProbe().check();
+    expect(r).toMatchObject({
+      status: "unhealthy",
+      detail: "No database connection could be had",
+    });
+  });
+
+  it("reports a non-Error failure as text", async () => {
+    mockHasDatabase.mockReturnValue(true);
+    mockWithPlatformTx.mockRejectedValue("boom");
+    await expect(new PostgresHealthProbe().check()).resolves.toMatchObject({
+      status: "unhealthy",
+      detail: "boom",
+    });
+  });
+
+  it("is unhealthy when the database does not answer within the timeout", async () => {
+    jest.useFakeTimers();
+    mockHasDatabase.mockReturnValue(true);
+    mockWithPlatformTx.mockReturnValue(new Promise(() => {}));
+    const pending = new PostgresHealthProbe().check(250);
+    jest.advanceTimersByTime(250);
+    await expect(pending).resolves.toMatchObject({
+      status: "unhealthy",
+      detail: "Database did not answer within 250ms",
+    });
   });
 });

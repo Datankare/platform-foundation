@@ -2,8 +2,8 @@
  * platform/auth/profile.ts — User profile service
  *
  * CRUD operations for user profiles with per-field visibility controls.
- * Uses the service client for writes (audit logged) and user client
- * for reads (RLS enforced).
+ * Reads and writes the user row in the request's tenant (platform/data, ADR-053 D4); writes
+ * are audit logged.
  *
  * Privacy model (three tiers):
  * - private: only the user can see it (default)
@@ -15,7 +15,7 @@
  * Sprint 4, Tasks 4.1 + 4.2
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited, recordAudit } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
@@ -84,6 +84,24 @@ function toSnakeCase(update: ProfileUpdate): Record<string, unknown> {
   return result;
 }
 
+const iso = (v: unknown): string | null =>
+  v instanceof Date ? v.toISOString() : v == null ? null : String(v);
+
+/** The current tenant's live (not deleted) user row, or undefined. Throws when unreadable. */
+async function readUserRow(userId: string): Promise<Record<string, unknown> | undefined> {
+  const { rows } = await withTenantTx((tx) =>
+    tx.query(
+      `select id, email, display_name, avatar_url, real_name, language_preference, timezone,
+              profile_visibility, display_name_visibility, avatar_visibility,
+              language_visibility, timezone_visibility, email_opt_in,
+              push_notifications_enabled, mfa_enabled, email_verified, created_at, last_login_at
+         from users where id = $1::uuid and deleted_at is null`,
+      [userId]
+    )
+  );
+  return rows[0];
+}
+
 /** Map snake_case DB row to camelCase UserProfile */
 function toProfile(row: Record<string, unknown>): UserProfile {
   return {
@@ -104,8 +122,8 @@ function toProfile(row: Record<string, unknown>): UserProfile {
     pushNotificationsEnabled: (row.push_notifications_enabled as boolean) || false,
     mfaEnabled: (row.mfa_enabled as boolean) || false,
     emailVerified: (row.email_verified as boolean) || false,
-    createdAt: row.created_at as string,
-    lastLoginAt: row.last_login_at as string | null,
+    createdAt: iso(row.created_at) as string,
+    lastLoginAt: iso(row.last_login_at),
   };
 }
 
@@ -114,22 +132,17 @@ function toProfile(row: Record<string, unknown>): UserProfile {
  * Returns all fields regardless of visibility — it's their own data.
  */
 export async function getOwnProfile(userId: string): Promise<UserProfile | null> {
-  const supabase = getSupabaseServiceClient();
-
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("id", userId)
-    .is("deleted_at", null)
-    .single();
-
-  // PGRST116: .single() matched no row — the profile does not exist. Any other error is the
-  // store failing, which is not "not found": it is thrown, so a route can answer 503 rather
-  // than tell the user their profile is gone (Playform v0.8.0 release review).
-  if (error && (error as { code?: string }).code !== "PGRST116") {
-    throw new Error(`profile read failed: ${error.message}`);
+  // No row is "not found". A store failure is not: it is thrown, so a route can answer 503
+  // rather than tell the user their profile is gone (Playform v0.8.0 release review).
+  let data: Record<string, unknown> | undefined;
+  try {
+    data = await readUserRow(userId);
+  } catch (err) {
+    throw new Error(
+      `profile read failed: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
-  if (error || !data) {
+  if (!data) {
     logger.warn("Profile not found", {
       userId,
       route: "platform/auth/profile",
@@ -147,16 +160,13 @@ export async function getOwnProfile(userId: string): Promise<UserProfile | null>
 export async function getPublicProfile(
   userId: string
 ): Promise<Partial<UserProfile> | null> {
-  const supabase = getSupabaseServiceClient();
-
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("id", userId)
-    .is("deleted_at", null)
-    .single();
-
-  if (error || !data) return null;
+  let data: Record<string, unknown> | undefined;
+  try {
+    data = await readUserRow(userId);
+  } catch {
+    return null;
+  }
+  if (!data) return null;
 
   const full = toProfile(data);
   const visible: Partial<UserProfile> = { id: full.id };
@@ -194,8 +204,6 @@ export async function updateProfile(
     return { success: false, error: "No valid fields to update" };
   }
 
-  const supabase = getSupabaseServiceClient();
-
   try {
     // Recorded before the profile changes; no record, no change (Adversarial Validation, 6).
     return await audited(
@@ -206,19 +214,39 @@ export async function updateProfile(
         details: { fields: Object.keys(update) },
       },
       async () => {
-        const { error } = await supabase
-          .from("users")
-          .update(dbUpdate)
-          .eq("id", userId)
-          .is("deleted_at", null);
+        let error: string | undefined;
+        try {
+          // One fixed statement: a column changes only when its key is in the update.
+          await withTenantTx((tx) =>
+            tx.query(
+              `update users set
+                 display_name = case when $2::jsonb ? 'display_name' then $2::jsonb->>'display_name' else display_name end,
+                 avatar_url = case when $2::jsonb ? 'avatar_url' then $2::jsonb->>'avatar_url' else avatar_url end,
+                 real_name = case when $2::jsonb ? 'real_name' then $2::jsonb->>'real_name' else real_name end,
+                 language_preference = case when $2::jsonb ? 'language_preference' then $2::jsonb->>'language_preference' else language_preference end,
+                 timezone = case when $2::jsonb ? 'timezone' then $2::jsonb->>'timezone' else timezone end,
+                 profile_visibility = case when $2::jsonb ? 'profile_visibility' then ($2::jsonb->>'profile_visibility')::profile_visibility else profile_visibility end,
+                 display_name_visibility = case when $2::jsonb ? 'display_name_visibility' then ($2::jsonb->>'display_name_visibility')::profile_visibility else display_name_visibility end,
+                 avatar_visibility = case when $2::jsonb ? 'avatar_visibility' then ($2::jsonb->>'avatar_visibility')::profile_visibility else avatar_visibility end,
+                 language_visibility = case when $2::jsonb ? 'language_visibility' then ($2::jsonb->>'language_visibility')::profile_visibility else language_visibility end,
+                 timezone_visibility = case when $2::jsonb ? 'timezone_visibility' then ($2::jsonb->>'timezone_visibility')::profile_visibility else timezone_visibility end,
+                 email_opt_in = case when $2::jsonb ? 'email_opt_in' then ($2::jsonb->>'email_opt_in')::boolean else email_opt_in end,
+                 push_notifications_enabled = case when $2::jsonb ? 'push_notifications_enabled' then ($2::jsonb->>'push_notifications_enabled')::boolean else push_notifications_enabled end
+               where id = $1::uuid and deleted_at is null`,
+              [userId, JSON.stringify(dbUpdate)]
+            )
+          );
+        } catch (err) {
+          error = err instanceof Error ? err.message : String(err);
+        }
 
         if (error) {
           logger.error("Profile update failed", {
             userId,
-            error: error.message,
+            error,
             route: "platform/auth/profile",
           });
-          return { success: false, error: error.message };
+          return { success: false, error };
         }
 
         return { success: true };

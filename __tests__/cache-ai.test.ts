@@ -5,9 +5,6 @@
  * and GDPR purge integration.
  */
 
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(),
-}));
 jest.mock("@/lib/logger", () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
@@ -16,6 +13,7 @@ import { AICache, buildAICacheKey, resetAICache } from "../platform/cache/ai-cac
 import { InMemoryCacheProvider } from "../platform/cache/memory-cache";
 import type { AICacheMetricsCallback } from "../platform/cache/ai-cache";
 import type { AIRequest, AIResponse } from "@/platform/ai";
+import { runWithTenant } from "@/platform/tenancy/context";
 
 const makeRequest = (overrides?: Partial<AIRequest>): AIRequest => ({
   maxTokens: 1024,
@@ -293,5 +291,47 @@ describe("AI Purge Handlers", () => {
 
     await handler.execute("user-123", false);
     expect(purgeFn).toHaveBeenCalledWith("user-123");
+  });
+});
+
+describe("cache keys are per tenant and collision-resistant (ADR-053 D6)", () => {
+  const req = (content: string) =>
+    ({ tier: "fast", messages: [{ role: "user", content }] }) as unknown as Parameters<
+      typeof buildAICacheKey
+    >[0];
+  const A = "11111111-1111-4111-8111-111111111111";
+  const B = "22222222-2222-4222-8222-222222222222";
+
+  it("the same request in two tenants has two keys", () => {
+    const inA = runWithTenant({ tenantId: A, mode: "shared" }, () =>
+      buildAICacheKey(req("hi"))
+    );
+    const inB = runWithTenant({ tenantId: B, mode: "shared" }, () =>
+      buildAICacheKey(req("hi"))
+    );
+    expect(inA).not.toBe(inB);
+    expect(inA.startsWith(`ai:${A}:`)).toBe(true);
+  });
+
+  it("is deterministic and distinguishes 20,000 different prompts", () => {
+    expect(buildAICacheKey(req("x"))).toBe(buildAICacheKey(req("x")));
+    const keys = new Set<string>();
+    for (let i = 0; i < 20_000; i++) keys.add(buildAICacheKey(req(`prompt ${i}`)));
+    expect(keys.size).toBe(20_000);
+  });
+
+  it("cannot be confused by a message boundary inside content", () => {
+    const one = {
+      tier: "fast",
+      messages: [{ role: "user", content: "a|assistant:b" }],
+    } as unknown as Parameters<typeof buildAICacheKey>[0];
+    const two = {
+      tier: "fast",
+      messages: [
+        { role: "user", content: "a" },
+        { role: "assistant", content: "b" },
+      ],
+    } as unknown as Parameters<typeof buildAICacheKey>[0];
+    expect(buildAICacheKey(one)).not.toBe(buildAICacheKey(two));
   });
 });

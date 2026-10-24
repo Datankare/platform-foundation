@@ -2,14 +2,15 @@
  * platform/moderation/review-store.ts — Review queue persistence
  *
  * ADR-024: Human review queue and appeals.
- * P7: Provider-aware — swap via singleton (InMemory for tests, Supabase for prod).
+ * ADR-053 D4: Postgres through platform/data, in the request's tenant.
+ * P7: Provider-aware — swap via singleton (InMemory for tests, Postgres for prod).
  * L19: Submit writes are NOT fire-and-forget. Submitting a review item IS
  *      the primary function — the caller must know if it failed.
  * P11: Query failures return empty results — never block the pipeline.
  *
  * Implementations:
- *   InMemoryReviewQueueStore — for tests and development (default)
- *   SupabaseReviewQueueStore — for production (reference implementation)
+ *   InMemoryReviewQueueStore — for tests and development (default); one partition per tenant
+ *   PostgresReviewQueueStore — for production
  *
  * @module platform/moderation
  */
@@ -17,6 +18,8 @@
 import { logger } from "@/lib/logger";
 import type {
   ReviewQueueStore,
+  ReviewQueueUpdate,
+  ReviewUpdateExpectation,
   ReviewQueueItem,
   ReviewQueryOptions,
   ReviewQueueStats,
@@ -24,8 +27,9 @@ import type {
   ReviewPriority,
   ReviewResult,
 } from "./review-types";
-import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { withTenantTx } from "@/platform/data";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 // ---------------------------------------------------------------------------
 // Priority ordering (for queue sort)
@@ -97,8 +101,23 @@ function buildStats(items: readonly ReviewQueueItem[]): ReviewQueueStats {
 
 export class InMemoryReviewQueueStore implements ReviewQueueStore {
   private static readonly MAX_ITEMS = 10_000;
-  private items: ReviewQueueItem[] = [];
+  /** One list per tenant (ADR-053 D6), so a tenant sees only its own queue. */
+  private readonly parts = new TenantPartitionedMap<"items", ReviewQueueItem[]>();
   private idCounter = 0;
+
+  private get items(): ReviewQueueItem[] {
+    const part = this.parts.current();
+    let list = part.get("items");
+    if (!list) {
+      list = [];
+      part.set("items", list);
+    }
+    return list;
+  }
+
+  private set items(next: ReviewQueueItem[]) {
+    this.parts.current().set("items", next);
+  }
 
   async submit(
     item: Omit<ReviewQueueItem, "id" | "createdAt" | "updatedAt">
@@ -134,21 +153,8 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
 
   async update(
     id: string,
-    fields: Partial<
-      Pick<
-        ReviewQueueItem,
-        | "status"
-        | "claimedBy"
-        | "claimedAt"
-        | "resolvedBy"
-        | "resolvedAt"
-        | "decision"
-        | "reviewerNotes"
-        | "modifiedAction"
-        | "priority"
-        | "updatedAt"
-      >
-    >
+    fields: ReviewQueueUpdate,
+    expected?: ReviewUpdateExpectation
   ): Promise<ReviewResult> {
     const index = this.items.findIndex((i) => i.id === id);
     if (index === -1) {
@@ -158,9 +164,32 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
         errorCode: "moderation.review_item_not_found",
       };
     }
+    const current = this.items[index];
+    if (
+      (expected?.status !== undefined && current.status !== expected.status) ||
+      (expected?.claimedBy !== undefined && current.claimedBy !== expected.claimedBy)
+    ) {
+      return {
+        success: false,
+        error: `Item is ${current.status}${current.claimedBy ? ` (claimed by another reviewer)` : ""}`,
+        errorCode: "moderation.item_state_conflict",
+        errorParams: { status: current.status },
+      };
+    }
+    const { claimedBy, claimedAt, ...rest } = fields;
     const updated: ReviewQueueItem = {
-      ...this.items[index],
-      ...fields,
+      ...current,
+      ...rest,
+      ...(claimedBy === null
+        ? { claimedBy: undefined }
+        : claimedBy !== undefined
+          ? { claimedBy }
+          : {}),
+      ...(claimedAt === null
+        ? { claimedAt: undefined }
+        : claimedAt !== undefined
+          ? { claimedAt }
+          : {}),
       updatedAt: fields.updatedAt ?? new Date().toISOString(),
     };
     this.items[index] = updated;
@@ -229,23 +258,23 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
     return count;
   }
 
-  /** Test helper */
+  /** Test helper: the current tenant's item count. */
   getItemCount(): number {
     return this.items.length;
   }
 
-  /** Test helper */
+  /** Test helper: forget every tenant's items. */
   clear(): void {
-    this.items = [];
+    this.parts.clearAll();
     this.idCounter = 0;
   }
 }
 
 // ---------------------------------------------------------------------------
-// SupabaseReviewQueueStore
+// PostgresReviewQueueStore
 // ---------------------------------------------------------------------------
 
-/** DB row shape for review_queue */
+/** One review_queue row as pg returns it (timestamptz → Date, jsonb parsed). */
 interface ReviewQueueRow {
   id: string;
   source: string;
@@ -258,17 +287,19 @@ interface ReviewQueueRow {
   appeal_reason: string | null;
   original_decision_id: string | null;
   claimed_by: string | null;
-  claimed_at: string | null;
+  claimed_at: Date | null;
   resolved_by: string | null;
-  resolved_at: string | null;
+  resolved_at: Date | null;
   decision: string | null;
   reviewer_notes: string | null;
   modified_action: string | null;
   previous_account_status: string | null;
   related_strike_id: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at: Date;
+  updated_at: Date;
 }
+
+const iso = (d: Date | string): string => (d instanceof Date ? d.toISOString() : d);
 
 function mapRowToItem(row: ReviewQueueRow): ReviewQueueItem {
   return {
@@ -286,9 +317,9 @@ function mapRowToItem(row: ReviewQueueRow): ReviewQueueItem {
     appealReason: row.appeal_reason ?? undefined,
     originalDecisionId: row.original_decision_id ?? undefined,
     claimedBy: row.claimed_by ?? undefined,
-    claimedAt: row.claimed_at ?? undefined,
+    claimedAt: row.claimed_at ? iso(row.claimed_at) : undefined,
     resolvedBy: row.resolved_by ?? undefined,
-    resolvedAt: row.resolved_at ?? undefined,
+    resolvedAt: row.resolved_at ? iso(row.resolved_at) : undefined,
     decision: row.decision ? (row.decision as ReviewQueueItem["decision"]) : undefined,
     reviewerNotes: row.reviewer_notes ?? undefined,
     modifiedAction: row.modified_action
@@ -298,122 +329,84 @@ function mapRowToItem(row: ReviewQueueRow): ReviewQueueItem {
       ? (row.previous_account_status as ReviewQueueItem["previousAccountStatus"])
       : undefined,
     relatedStrikeId: row.related_strike_id ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
   };
 }
 
-function itemToRow(
-  item: Omit<ReviewQueueItem, "id" | "createdAt" | "updatedAt">
-): Record<string, unknown> {
-  return {
-    source: item.source,
-    priority: item.priority,
-    status: item.status,
-    moderation_result: item.moderationResult,
-    target_user_id: item.targetUserId,
-    request_id: item.requestId,
-    explanation_chain: item.explanationChain ?? null,
-    appeal_reason: item.appealReason ?? null,
-    original_decision_id: item.originalDecisionId ?? null,
-    claimed_by: item.claimedBy ?? null,
-    claimed_at: item.claimedAt ?? null,
-    resolved_by: item.resolvedBy ?? null,
-    resolved_at: item.resolvedAt ?? null,
-    decision: item.decision ?? null,
-    reviewer_notes: item.reviewerNotes ?? null,
-    modified_action: item.modifiedAction ?? null,
-    previous_account_status: item.previousAccountStatus ?? null,
-    related_strike_id: item.relatedStrikeId ?? null,
-  };
-}
-
-export class SupabaseReviewQueueStore implements ReviewQueueStore {
-  private readonly supabaseUrl: string;
-  private readonly supabaseKey: string;
-
-  constructor(supabaseUrl: string, supabaseKey: string) {
-    if (typeof window !== "undefined") {
-      throw new Error(
-        "SupabaseReviewQueueStore must not be instantiated client-side — service role key would leak"
-      );
-    }
-    this.supabaseUrl = supabaseUrl;
-    this.supabaseKey = supabaseKey;
-  }
-
-  private get headers(): Record<string, string> {
-    return {
-      "Content-Type": "application/json",
-      apikey: this.supabaseKey,
-      Authorization: `Bearer ${this.supabaseKey}`,
-    };
-  }
-
+/**
+ * The review queue in review_queue, in the request's tenant: row-level security keeps each
+ * tenant's queue apart, and the (tenant_id, target_user_id) foreign key means an item can only
+ * name a user of the same tenant. Submit failures are returned (L19); query failures return
+ * nothing (P11).
+ */
+export class PostgresReviewQueueStore implements ReviewQueueStore {
   async submit(
     item: Omit<ReviewQueueItem, "id" | "createdAt" | "updatedAt">
   ): Promise<ReviewResult> {
     try {
-      const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue`,
-        {
-          timeoutMs: 10_000,
-          // Retry is the caller's: reduceCommit loops on version conflict and the effect
-          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-          maxRetries: 0,
-          method: "POST",
-          headers: { ...this.headers, Prefer: "return=representation" },
-          body: JSON.stringify(itemToRow(item)),
-        }
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<ReviewQueueRow>(
+          `insert into review_queue (source, priority, status, moderation_result,
+             target_user_id, request_id, explanation_chain, appeal_reason, original_decision_id,
+             claimed_by, claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+             modified_action, previous_account_status, related_strike_id)
+           values ($1, $2, $3, $4::jsonb, $5::uuid, $6, $7::jsonb, $8, $9, $10,
+             $11::timestamptz, $12, $13::timestamptz, $14, $15, $16, $17, $18)
+           returning id, source, priority, status, moderation_result, target_user_id,
+             request_id, explanation_chain, appeal_reason, original_decision_id, claimed_by,
+             claimed_at, resolved_by, resolved_at, decision, reviewer_notes, modified_action,
+             previous_account_status, related_strike_id, created_at, updated_at`,
+          [
+            item.source,
+            item.priority,
+            item.status,
+            JSON.stringify(item.moderationResult),
+            item.targetUserId,
+            item.requestId,
+            item.explanationChain ? JSON.stringify(item.explanationChain) : null,
+            item.appealReason ?? null,
+            item.originalDecisionId ?? null,
+            item.claimedBy ?? null,
+            item.claimedAt ?? null,
+            item.resolvedBy ?? null,
+            item.resolvedAt ?? null,
+            item.decision ?? null,
+            item.reviewerNotes ?? null,
+            item.modifiedAction ?? null,
+            item.previousAccountStatus ?? null,
+            item.relatedStrikeId ?? null,
+          ]
+        )
       );
-
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "Unknown");
-        logger.error("Review store: submit failed", {
-          status: response.status,
-          error: errText,
-          route: "platform/moderation/review-store",
-        });
-        return {
-          success: false,
-          error: `Submit failed: ${response.status}`,
-          errorCode: "internal.error",
-        };
-      }
-
-      const rows = await response.json();
-      const row = Array.isArray(rows) ? rows[0] : rows;
-      return { success: true, item: mapRowToItem(row as ReviewQueueRow) };
+      return { success: true, item: mapRowToItem(rows[0]) };
     } catch (err) {
-      logger.error("Review store: submit error", {
+      logger.error("Review store: submit failed", {
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/review-store",
       });
       return {
         success: false,
-        error: err instanceof Error ? err.message : "Unknown error",
+        error: err instanceof Error ? `Submit failed: ${err.message}` : "Unknown error",
+        errorCode: "internal.error",
       };
     }
   }
 
   async getById(id: string): Promise<ReviewQueueItem | undefined> {
     try {
-      const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${encodeURIComponent(id)}`,
-        {
-          timeoutMs: 10_000,
-          // Retry is the caller's: reduceCommit loops on version conflict and the effect
-          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-          maxRetries: 0,
-          headers: this.headers,
-        }
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<ReviewQueueRow>(
+          `select id, source, priority, status, moderation_result, target_user_id, request_id,
+                  explanation_chain, appeal_reason, original_decision_id, claimed_by,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  modified_action, previous_account_status, related_strike_id, created_at,
+                  updated_at
+             from review_queue where id = $1::uuid`,
+          [id]
+        )
       );
-      if (!response.ok) return undefined;
-      const rows = await response.json();
-      if (!Array.isArray(rows) || rows.length === 0) return undefined;
-      return mapRowToItem(rows[0] as ReviewQueueRow);
+      return rows[0] ? mapRowToItem(rows[0]) : undefined;
     } catch {
       return undefined;
     }
@@ -423,133 +416,133 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
     decisionId: string
   ): Promise<ReviewQueueItem | undefined> {
     try {
-      const params = new URLSearchParams();
-      params.set("original_decision_id", `eq.${decisionId}`);
-      params.set("source", "eq.appeal");
-      params.set("status", "neq.resolved");
-      params.set("limit", "1");
-
-      const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?${params.toString()}`,
-        {
-          timeoutMs: 10_000,
-          // Retry is the caller's: reduceCommit loops on version conflict and the effect
-          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-          maxRetries: 0,
-          headers: this.headers,
-        }
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<ReviewQueueRow>(
+          `select id, source, priority, status, moderation_result, target_user_id, request_id,
+                  explanation_chain, appeal_reason, original_decision_id, claimed_by,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  modified_action, previous_account_status, related_strike_id, created_at,
+                  updated_at
+             from review_queue
+            where original_decision_id = $1 and source = 'appeal' and status <> 'resolved'
+            limit 1`,
+          [decisionId]
+        )
       );
-      if (!response.ok) return undefined;
-      const rows = await response.json();
-      if (!Array.isArray(rows) || rows.length === 0) return undefined;
-      return mapRowToItem(rows[0] as ReviewQueueRow);
+      return rows[0] ? mapRowToItem(rows[0]) : undefined;
     } catch {
       return undefined;
     }
   }
 
+  /**
+   * Set the given fields; a field left undefined keeps its value (it is never cleared — the
+   * same as the REST store this replaces, which dropped undefined fields from the patch).
+   */
   async update(
     id: string,
-    fields: Partial<
-      Pick<
-        ReviewQueueItem,
-        | "status"
-        | "claimedBy"
-        | "claimedAt"
-        | "resolvedBy"
-        | "resolvedAt"
-        | "decision"
-        | "reviewerNotes"
-        | "modifiedAction"
-        | "priority"
-        | "updatedAt"
-      >
-    >
+    fields: ReviewQueueUpdate,
+    expected?: ReviewUpdateExpectation
   ): Promise<ReviewResult> {
     try {
-      const dbFields: Record<string, unknown> = {
-        updated_at: fields.updatedAt ?? new Date().toISOString(),
-      };
-      if (fields.status !== undefined) dbFields.status = fields.status;
-      if (fields.claimedBy !== undefined) dbFields.claimed_by = fields.claimedBy;
-      if (fields.claimedAt !== undefined) dbFields.claimed_at = fields.claimedAt;
-      if (fields.resolvedBy !== undefined) dbFields.resolved_by = fields.resolvedBy;
-      if (fields.resolvedAt !== undefined) dbFields.resolved_at = fields.resolvedAt;
-      if (fields.decision !== undefined) dbFields.decision = fields.decision;
-      if (fields.reviewerNotes !== undefined)
-        dbFields.reviewer_notes = fields.reviewerNotes;
-      if (fields.modifiedAction !== undefined)
-        dbFields.modified_action = fields.modifiedAction;
-      if (fields.priority !== undefined) dbFields.priority = fields.priority;
-
-      const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?id=eq.${encodeURIComponent(id)}`,
-        {
-          timeoutMs: 10_000,
-          // Retry is the caller's: reduceCommit loops on version conflict and the effect
-          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-          maxRetries: 0,
-          method: "PATCH",
-          headers: { ...this.headers, Prefer: "return=representation" },
-          body: JSON.stringify(dbFields),
-        }
-      );
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: `Update failed: ${response.status}`,
-          errorCode: "internal.error",
-        };
-      }
-
-      const rows = await response.json();
-      const row = Array.isArray(rows) ? rows[0] : rows;
-      if (!row)
-        return { success: false, error: "No row returned", errorCode: "internal.error" };
-      return { success: true, item: mapRowToItem(row as ReviewQueueRow) };
+      return await withTenantTx(async (tx): Promise<ReviewResult> => {
+        const { rows } = await tx.query<ReviewQueueRow>(
+          `update review_queue set
+              updated_at = coalesce($2::timestamptz, now()),
+              status = coalesce($3, status),
+              claimed_by = case when $12::boolean then null else coalesce($4, claimed_by) end,
+              claimed_at = case when $13::boolean then null else coalesce($5::timestamptz, claimed_at) end,
+              resolved_by = coalesce($6, resolved_by),
+              resolved_at = coalesce($7::timestamptz, resolved_at),
+              decision = coalesce($8, decision),
+              reviewer_notes = coalesce($9, reviewer_notes),
+              modified_action = coalesce($10, modified_action),
+              priority = coalesce($11, priority)
+            where id = $1::uuid
+              and ($14::text is null or status = $14)
+              and ($15::text is null or claimed_by is not distinct from $15)
+            returning id, source, priority, status, moderation_result, target_user_id,
+              request_id, explanation_chain, appeal_reason, original_decision_id, claimed_by,
+              claimed_at, resolved_by, resolved_at, decision, reviewer_notes, modified_action,
+              previous_account_status, related_strike_id, created_at, updated_at`,
+          [
+            id,
+            fields.updatedAt ?? null,
+            fields.status ?? null,
+            fields.claimedBy ?? null,
+            fields.claimedAt ?? null,
+            fields.resolvedBy ?? null,
+            fields.resolvedAt ?? null,
+            fields.decision ?? null,
+            fields.reviewerNotes ?? null,
+            fields.modifiedAction ?? null,
+            fields.priority ?? null,
+            fields.claimedBy === null,
+            fields.claimedAt === null,
+            expected?.status ?? null,
+            expected?.claimedBy ?? null,
+          ]
+        );
+        if (rows[0]) return { success: true, item: mapRowToItem(rows[0]) };
+        // Nothing updated: the item does not exist, or is no longer in the expected state.
+        const now = await tx.query<{ status: string }>(
+          "select status from review_queue where id = $1::uuid",
+          [id]
+        );
+        return now.rows[0]
+          ? {
+              success: false,
+              error: `Item is ${now.rows[0].status}, not in the expected state`,
+              errorCode: "moderation.item_state_conflict",
+              errorParams: { status: now.rows[0].status },
+            }
+          : {
+              success: false,
+              error: `Review item not found: ${id}`,
+              errorCode: "moderation.review_item_not_found",
+            };
+      });
     } catch (err) {
       return {
         success: false,
-        error: err instanceof Error ? err.message : "Unknown error",
+        error: err instanceof Error ? `Update failed: ${err.message}` : "Unknown error",
+        errorCode: "internal.error",
       };
     }
   }
 
   async query(options?: ReviewQueryOptions): Promise<readonly ReviewQueueItem[]> {
     try {
-      const params = new URLSearchParams();
-      params.set("order", "created_at.asc");
-
-      if (options?.status) params.set("status", `eq.${options.status}`);
-      if (options?.source) params.set("source", `eq.${options.source}`);
-      if (options?.priority) params.set("priority", `eq.${options.priority}`);
-      if (options?.targetUserId)
-        params.set("target_user_id", `eq.${options.targetUserId}`);
-      if (options?.claimedBy) params.set("claimed_by", `eq.${options.claimedBy}`);
-      if (options?.since) params.set("created_at", `gte.${options.since}`);
-      if (options?.before) params.append("created_at", `lt.${options.before}`);
-      if (options?.limit && options.limit > 0) params.set("limit", String(options.limit));
-
-      const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?${params.toString()}`,
-        {
-          timeoutMs: 10_000,
-          // Retry is the caller's: reduceCommit loops on version conflict and the effect
-          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-          maxRetries: 0,
-          headers: this.headers,
-        }
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<ReviewQueueRow>(
+          `select id, source, priority, status, moderation_result, target_user_id, request_id,
+                  explanation_chain, appeal_reason, original_decision_id, claimed_by,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  modified_action, previous_account_status, related_strike_id, created_at,
+                  updated_at
+             from review_queue
+            where ($1::text is null or status = $1::text)
+              and ($2::text is null or source = $2::text)
+              and ($3::text is null or priority = $3::text)
+              and ($4::uuid is null or target_user_id = $4::uuid)
+              and ($5::text is null or claimed_by = $5::text)
+              and ($6::timestamptz is null or created_at >= $6::timestamptz)
+              and ($7::timestamptz is null or created_at < $7::timestamptz)
+            order by created_at asc
+            limit $8::integer`,
+          [
+            options?.status || null,
+            options?.source || null,
+            options?.priority || null,
+            options?.targetUserId || null,
+            options?.claimedBy || null,
+            options?.since || null,
+            options?.before || null,
+            options?.limit && options.limit > 0 ? options.limit : null,
+          ]
+        )
       );
-
-      if (!response.ok) return [];
-      const rows = await response.json();
-      return Array.isArray(rows)
-        ? rows.map((r) => mapRowToItem(r as ReviewQueueRow))
-        : [];
+      return rows.map(mapRowToItem);
     } catch {
       return [];
     }
@@ -557,25 +550,19 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
 
   async getStats(): Promise<ReviewQueueStats> {
     try {
-      const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?order=created_at.desc&limit=10000`,
-        {
-          timeoutMs: 10_000,
-          // Retry is the caller's: reduceCommit loops on version conflict and the effect
-          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-          maxRetries: 0,
-          headers: this.headers,
-        }
+      const { rows } = await withTenantTx((tx) =>
+        tx.query<ReviewQueueRow>(
+          `select id, source, priority, status, moderation_result, target_user_id, request_id,
+                  explanation_chain, appeal_reason, original_decision_id, claimed_by,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  modified_action, previous_account_status, related_strike_id, created_at,
+                  updated_at
+             from review_queue
+            order by created_at desc
+            limit 10000`
+        )
       );
-      if (!response.ok) {
-        return buildStats([]);
-      }
-      const rows = await response.json();
-      const items = Array.isArray(rows)
-        ? rows.map((r) => mapRowToItem(r as ReviewQueueRow))
-        : [];
-      return buildStats(items);
+      return buildStats(rows.map(mapRowToItem));
     } catch {
       return buildStats([]);
     }
@@ -584,28 +571,15 @@ export class SupabaseReviewQueueStore implements ReviewQueueStore {
   async releaseExpiredClaims(timeoutMs: number): Promise<number> {
     try {
       const cutoff = new Date(Date.now() - timeoutMs).toISOString();
-      const response = await fetchWithTimeout(
-        `${this.supabaseUrl}/rest/v1/review_queue?status=eq.claimed&claimed_at=lt.${encodeURIComponent(cutoff)}`,
-        {
-          timeoutMs: 10_000,
-          // Retry is the caller's: reduceCommit loops on version conflict and the effect
-          // ledger owns at-most-once. A transport retrying a PATCH underneath either can
-          // double-apply a committed write (ADR-028 D5, ADR-031 D7).
-          maxRetries: 0,
-          method: "PATCH",
-          headers: { ...this.headers, Prefer: "return=representation" },
-          body: JSON.stringify({
-            status: "pending",
-            claimed_by: null,
-            claimed_at: null,
-            updated_at: new Date().toISOString(),
-          }),
-        }
+      const { rowCount } = await withTenantTx((tx) =>
+        tx.query(
+          `update review_queue
+              set status = 'pending', claimed_by = null, claimed_at = null, updated_at = now()
+            where status = 'claimed' and claimed_at < $1::timestamptz`,
+          [cutoff]
+        )
       );
-
-      if (!response.ok) return 0;
-      const rows = await response.json();
-      return Array.isArray(rows) ? rows.length : 0;
+      return rowCount;
     } catch {
       return 0;
     }
@@ -651,11 +625,11 @@ export function resetReviewQueueStore(): void {
 //    fails TypeScript's overlap check (Gotcha-57).
 //
 // 2. previous_account_status (F1) is an additive column — InMemory store needs
-//    no change (it spreads the whole item on submit); only the Supabase row
-//    mapping (mapRowToItem / itemToRow) and migration 018 carry it. It is set at
+//    no change (it spreads the whole item on submit); only the Postgres row
+//    mapping (submit's insert / mapRowToItem) and migration 018 carry it. It is set at
 //    submit time and never mutated by update(), so it is intentionally absent
 //    from the update() field Pick.
 //
 // 3. query() uses created_at.asc at the DB layer; priority ordering is applied
-//    only by the InMemory store. Supabase consumers that need priority-first
-//    ordering should sort client-side or add an order=priority clause.
+//    only by the InMemory store. Postgres consumers that need priority-first
+//    ordering should sort client-side or add a priority ordering.

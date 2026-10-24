@@ -5,12 +5,13 @@ enforce whatever the moderation layer decides about the content within.
 
 ## Registry slot
 
-`socialStore` — `SocialStoreType` is `"supabase" | "memory"`.
+`socialStore` — `SocialStoreType` is `"postgres" | "supabase" | "memory"` (`"supabase"` is
+read as `"postgres"`).
 
-| Implementation        | Use                                                               |
-| --------------------- | ----------------------------------------------------------------- |
-| `InMemorySocialStore` | tests, and the default when nothing is configured                 |
-| `SupabaseSocialStore` | persistent; tables `groups`, `group_memberships`, `group_invites` |
+| Implementation        | Use                                                                         |
+| --------------------- | --------------------------------------------------------------------------- |
+| `InMemorySocialStore` | tests, and the default when nothing is configured; one partition per tenant |
+| `PostgresSocialStore` | persistent; tables `groups`, `group_memberships`, `group_invites`           |
 
 Selected by `SOCIAL_STORE`. Verified by `__tests__/contract/social-store-contract.ts`, which
 a consumer runs against their own implementation.
@@ -24,7 +25,7 @@ a consumer runs against their own implementation.
 | `invite-service.ts`        | Issue, accept and expire invitations                                 |
 | `guardian-adapter.ts`      | Routes group content through moderation                              |
 | `memory-social-store.ts`   | Reference implementation                                             |
-| `supabase-social-store.ts` | Persistent implementation, raw fetch against PostgREST               |
+| `postgres-social-store.ts` | Persistent implementation, Postgres through `platform/data`          |
 
 ## Replacing the store
 

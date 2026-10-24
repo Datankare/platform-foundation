@@ -10,10 +10,12 @@
  * - Restricted data collection for minors
  * - Content rating enforcement based on age
  *
+ * The user row is updated in the request's tenant (platform/data, ADR-053 D4).
+ *
  * Sprint 4, Tasks 4.5 + 4.6
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 
@@ -22,6 +24,16 @@ export type ParentalConsentStatus = "not_required" | "pending" | "granted" | "de
 export type { AgeVerificationResult } from "@/platform/auth/age";
 export { calculateAge, evaluateAge } from "@/platform/auth/age";
 import { evaluateAge, type AgeVerificationResult } from "@/platform/auth/age";
+
+/** Run a write; its error message, or undefined when it succeeded. */
+async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
+  try {
+    await write();
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
 
 /**
  * Record age verification for a user.
@@ -42,17 +54,7 @@ export async function recordAgeVerification(
     // Not a real, past calendar date: nothing is recorded, and nothing is read as an adult.
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-  const supabase = getSupabaseServiceClient();
-
-  const updateData: Record<string, unknown> = {
-    date_of_birth: dateOfBirth,
-    age_verified: true,
-    age_verified_at: new Date().toISOString(),
-    content_rating_level: evaluation.contentRatingLevel,
-    parental_consent_status: evaluation.requiresParentalConsent
-      ? "pending"
-      : "not_required",
-  };
+  const consentStatus = evaluation.requiresParentalConsent ? "pending" : "not_required";
 
   try {
     // Recorded before the age data takes effect; no record, no change (Adversarial Validation, 6).
@@ -72,18 +74,26 @@ export async function recordAgeVerification(
         result?: AgeVerificationResult;
         error?: string;
       }> => {
-        const { error } = await supabase
-          .from("users")
-          .update(updateData)
-          .eq("id", userId);
+        const error = await failure(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              `update users
+                  set date_of_birth = $2::date, age_verified = true, age_verified_at = now(),
+                      content_rating_level = $3,
+                      parental_consent_status = $4::parental_consent_status
+                where id = $1::uuid`,
+              [userId, dateOfBirth, evaluation.contentRatingLevel, consentStatus]
+            )
+          )
+        );
 
         if (error) {
           logger.error("Age verification failed", {
             userId,
-            error: error.message,
+            error,
             route: "platform/auth/coppa",
           });
-          return { success: false, error: error.message };
+          return { success: false, error };
         }
 
         return { success: true, result: evaluation };
@@ -104,13 +114,6 @@ export async function recordParentalConsent(
   status: "granted" | "denied",
   parentEmail?: string
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseServiceClient();
-
-  const updateData: Record<string, unknown> = {
-    parental_consent_status: status as string,
-    parental_consent_email: parentEmail || null,
-  };
-
   try {
     return await audited(
       {
@@ -120,19 +123,26 @@ export async function recordParentalConsent(
         details: { type: "parental_consent", consentStatus: status },
       },
       async () => {
-        const { error } = await supabase
-          .from("users")
-          .update(updateData)
-          .eq("id", userId);
+        const error = await failure(() =>
+          withTenantTx((tx) =>
+            tx.query(
+              `update users
+                  set parental_consent_status = $2::parental_consent_status,
+                      parental_consent_email = $3
+                where id = $1::uuid`,
+              [userId, status, parentEmail || null]
+            )
+          )
+        );
 
         if (error) {
           logger.error("Parental consent recording failed", {
             userId,
             consentStatus: status,
-            error: error.message,
+            error,
             route: "platform/auth/coppa",
           });
-          return { success: false, error: error.message };
+          return { success: false, error };
         }
 
         return { success: true };

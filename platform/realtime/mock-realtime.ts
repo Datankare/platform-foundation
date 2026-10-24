@@ -7,6 +7,7 @@
  * @module platform/realtime
  */
 
+import { memoryTopic } from "./tenant-topic";
 import type {
   RealtimeProvider,
   RealtimeChannel,
@@ -169,14 +170,17 @@ export class MockRealtimeProvider implements RealtimeProvider {
     };
   }
 
+  /** The channel `name` in the current tenant: tenants never share a channel (tenant-topic.ts). */
   channel(name: string, options?: ChannelOptions): RealtimeChannel {
-    if (!this.channels.has(name)) {
-      this.channels.set(name, new MockChannel(name, options));
+    const topic = memoryTopic(name);
+    if (!this.channels.has(topic)) {
+      this.channels.set(topic, new MockChannel(name, options));
     }
-    return this.channels.get(name)!;
+    return this.channels.get(topic)!;
   }
 
   async removeChannel(name: string): Promise<void> {
+    name = memoryTopic(name);
     const ch = this.channels.get(name);
     if (ch) {
       ch.unsubscribe();

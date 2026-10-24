@@ -29,7 +29,8 @@ jest.mock("@/platform/agents/gating", () => ({
   rejectHeldAction: jest.fn(),
   principalOf: jest.requireActual("@/platform/agents/gating").principalOf,
 }));
-jest.mock("@/lib/supabase/server", () => ({ getSupabaseServiceClient: jest.fn() }));
+// The real audit module writes through a fake platform/data (helpers/fake-data.ts).
+jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
 jest.mock("@/platform/admin/config-approval", () => {
   const approveChange = jest.fn();
   return {
@@ -64,7 +65,13 @@ jest.mock("@/platform/admin/pending-approvals", () => ({
   requiredPermissionForKey: jest.fn(async () => "config_manage_safety"),
   proposalConfigKey: jest.fn(() => undefined),
 }));
-jest.mock("@/platform/auth/platform-config", () => ({ setConfigWithHistory: jest.fn() }));
+jest.mock("@/platform/auth/platform-config", () => ({
+  setConfigWithHistory: jest.fn(),
+  clearTenantConfig: jest.fn(),
+}));
+jest.mock("@/platform/admin/config-handlers", () => ({
+  resumeApprovedConfigChange: jest.fn(),
+}));
 
 import { NextRequest } from "next/server";
 import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
@@ -76,8 +83,8 @@ import {
   rejectChange,
 } from "@/platform/admin/config-approval";
 import { setConfigWithHistory } from "@/platform/auth/platform-config";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { FakeDatabase } from "./helpers/fake-database";
+import { fakeData } from "./helpers/fake-data";
+import { resumeApprovedConfigChange } from "@/platform/admin/config-handlers";
 import { POST } from "@/app/api/admin/approvals/[id]/route";
 
 const mockStore = getProposalStore as jest.Mock;
@@ -121,16 +128,71 @@ function holdFor(principal: string | undefined) {
 const approveRuntime = (caller: CallerName = "safety_approver") =>
   POST(req({ decision: "approve", source: "runtime" }, caller), ctx("p1"));
 
-let db: FakeDatabase;
-
 beforeEach(() => {
   jest.clearAllMocks();
-  db = new FakeDatabase({ audit_log: [] });
-  (getSupabaseServiceClient as jest.Mock).mockReturnValue(db.client());
+  fakeData().reset();
   holdFor(CALLERS.super_admin.userId);
   mockApproveHeld.mockResolvedValue({ kind: "approved", proposal: {} });
   mockRejectHeld.mockResolvedValue({ status: "rejected" });
   mockApply.mockResolvedValue({ success: true });
+  (resumeApprovedConfigChange as jest.Mock).mockResolvedValue(null);
+});
+
+describe("an approved held config change is applied on its approval", () => {
+  const resume = resumeApprovedConfigChange as jest.Mock;
+  const tool = (data: Record<string, unknown>, success = true, error?: string) =>
+    resume.mockResolvedValue({
+      toolId: "update_config",
+      success,
+      data,
+      error,
+      durationMs: 1,
+    });
+
+  it("applies it, and says so", async () => {
+    tool({ applied: true });
+    const res = await approveRuntime();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ outcome: "approved", applied: true });
+    expect(resume).toHaveBeenCalledWith("p1");
+  });
+
+  it("a safety key under two-person approval goes on to wait for that approval", async () => {
+    tool({ applied: false, requiresApproval: true, approval: { id: "apr-2" } });
+    const res = await approveRuntime();
+    expect(await res.json()).toMatchObject({
+      applied: false,
+      pendingApproval: { id: "apr-2" },
+    });
+  });
+
+  it.each([
+    ["the tool failed", false, {}, "audit down"],
+    [
+      "the change was refused",
+      true,
+      { applied: false, error: "governs the platform" },
+      undefined,
+    ],
+  ])(
+    "answers 503, naming nothing internal, when %s",
+    async (_l, success, data, error) => {
+      tool(data, success, error);
+      const res = await approveRuntime();
+      expect(res.status).toBe(503);
+      const body = JSON.stringify(await res.json());
+      expect(body).not.toContain("audit down");
+      expect(body).not.toContain("governs the platform");
+    }
+  );
+
+  it("a hold that is not a config change is only approved (its own caller resumes it)", async () => {
+    resume.mockResolvedValue(null);
+    const res = await approveRuntime();
+    const body = await res.json();
+    expect(body.outcome).toBe("approved");
+    expect(body.applied).toBeUndefined();
+  });
 });
 
 describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
@@ -245,6 +307,7 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
           configKey: "moderation.strike_ban_threshold",
           proposedValue: 4,
           changeComment: "tighten",
+          scope: "platform",
         },
       });
     });
@@ -265,7 +328,10 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
         4,
         CALLERS.safety_approver.userId,
         "Approved: tighten",
-        "config_agent"
+        "config_agent",
+        undefined,
+        // Outside a shared deployment the recorded scope is applied as the approver.
+        { scope: "platform", operator: false }
       );
     });
 
@@ -283,7 +349,7 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
       mockApply.mockResolvedValue({ success: false, error: "db down" });
       const res = await decide("approve");
       expect(res.status).toBe(503);
-      expect(db.rows("audit_log").map((r) => r.details.outcome)).toEqual([
+      expect(fakeData().audit.map((r) => r.details.outcome)).toEqual([
         "attempted",
         "failed",
       ]);
@@ -329,7 +395,7 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
 describe("every decision is recorded first (release review, Sprint 7X)", () => {
   it("records the decider, the requester and the decision before it takes effect", async () => {
     await approveRuntime();
-    expect(db.rows("audit_log")[0]).toMatchObject({
+    expect(fakeData().audit[0]).toMatchObject({
       actor_id: CALLERS.safety_approver.userId,
       details: expect.objectContaining({
         type: "approval_decision",
@@ -341,7 +407,7 @@ describe("every decision is recorded first (release review, Sprint 7X)", () => {
   });
 
   it("decides nothing when the audit log is unavailable", async () => {
-    db.failWrites("audit_log");
+    fakeData().failAudit = true;
     const res = await approveRuntime();
     expect(res.status).toBe(503);
     expect(mockApproveHeld).not.toHaveBeenCalled();

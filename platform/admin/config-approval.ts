@@ -12,6 +12,11 @@
  *
  * Self-approval is blocked — the requester cannot approve their own change.
  *
+ * Approvals belong to the tenant they were requested in (row-level security, ADR-053 D4): a
+ * tenant's administrators see and decide only their own. Each records its scope — the platform
+ * default or the tenant's own value — which decides how the approved change is applied
+ * (config-scope.ts).
+ *
  * GenAI Principles:
  *   P10 — Human oversight: two humans must agree on safety-critical changes
  *   P3  — Total observability: every approval action logged
@@ -21,7 +26,7 @@
  * @module platform/admin
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import type { ErrorCode } from "@/platform/errors/registry";
 import { getConfigOrThrow } from "@/platform/auth/platform-config";
@@ -29,6 +34,8 @@ import type {
   ConfigApprovalRecord,
   ConfigApprovalStatus,
   ConfigApprovalQueryOptions,
+  ConfigApprovalAction,
+  ConfigScope,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -46,9 +53,15 @@ interface ApprovalRow {
   status: string;
   reviewed_by: string | null;
   review_comment: string | null;
-  reviewed_at: string | null;
-  expires_at: string;
-  created_at: string;
+  reviewed_at: Date | string | null;
+  expires_at: Date | string;
+  created_at: Date | string;
+  scope: string;
+  action: string;
+}
+
+function iso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
 }
 
 /** Map a DB row to a ConfigApprovalRecord */
@@ -64,9 +77,11 @@ function mapApprovalRow(row: ApprovalRow): ConfigApprovalRecord {
     status: parseApprovalStatus(row.status),
     reviewedBy: row.reviewed_by,
     reviewComment: row.review_comment,
-    reviewedAt: row.reviewed_at,
-    expiresAt: row.expires_at,
-    createdAt: row.created_at,
+    reviewedAt: row.reviewed_at === null ? null : iso(row.reviewed_at),
+    expiresAt: iso(row.expires_at),
+    createdAt: iso(row.created_at),
+    scope: row.scope === "tenant" ? "tenant" : "platform",
+    action: row.action === "reset" ? "reset" : "set",
   };
 }
 
@@ -108,10 +123,6 @@ export async function isApprovalRequired(): Promise<boolean> {
 // CRUD Operations
 // ---------------------------------------------------------------------------
 
-/** Column list for approval queries */
-const APPROVAL_COLUMNS =
-  "id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at";
-
 /**
  * Create a pending approval request.
  * Returns the created record or an error.
@@ -123,54 +134,53 @@ export async function requestApproval(params: {
   requestedBy: string;
   changeComment: string;
   impactSummary?: string;
+  /** What the change is to; default the platform default (single-tenant deployments). */
+  scope?: ConfigScope;
+  /** "reset": the tenant's own value is removed when approved (scope "tenant" only). */
+  action?: ConfigApprovalAction;
 }): Promise<{ success: boolean; record?: ConfigApprovalRecord; error?: string }> {
   try {
-    const supabase = getSupabaseServiceClient();
+    const outcome = await withTenantTx(async (tx) => {
+      // One open request per key and scope in a tenant: serialise concurrent requests for the
+      // same key so two cannot both see "none pending" and both insert. The lock is the
+      // tenant's own — another tenant changing the same key never waits on it.
+      const scope = params.scope ?? "platform";
+      await tx.query("select pg_advisory_xact_lock(hashtextextended($1, 49))", [
+        `config-approval:${tx.tenantId ?? "-"}:${scope}:${params.configKey}`,
+      ]);
+      const existing = await tx.query(
+        "select 1 from config_pending_approvals where config_key = $1 and scope = $2 and status = 'pending' limit 1",
+        [params.configKey, scope]
+      );
+      if (existing.rowCount > 0) return null;
+      const { rows } = await tx.query<ApprovalRow>(
+        `insert into config_pending_approvals
+           (config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, scope, action)
+         values ($1, $2::jsonb, $3::jsonb, $4::uuid, $5, $6, $7, $8)
+         returning id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action`,
+        [
+          params.configKey,
+          // jsonb columns take the value itself (release review, Sprint 7X: a stringified value
+          // was applied as text).
+          JSON.stringify(params.currentValue ?? null),
+          JSON.stringify(params.proposedValue ?? null),
+          params.requestedBy,
+          params.changeComment,
+          params.impactSummary ?? null,
+          scope,
+          params.action ?? "set",
+        ]
+      );
+      return rows[0] ?? null;
+    });
 
-    // Check for existing pending approval on the same key
-    const { data: existing } = await (supabase
-      .from("config_pending_approvals" as never)
-      .select("id")
-      .eq("config_key", params.configKey)
-      .eq("status", "pending")
-      .limit(1) as unknown as Promise<{
-      data: Array<{ id: string }> | null;
-      error: { message: string } | null;
-    }>);
-
-    if (existing && existing.length > 0) {
+    if (outcome === null) {
       return {
         success: false,
         error: `A pending approval already exists for "${params.configKey}". It must be resolved before requesting another change.`,
       };
     }
-
-    const { data, error } = await (supabase
-      .from("config_pending_approvals" as never)
-      .insert({
-        config_key: params.configKey,
-        // jsonb columns take the value itself: a JSON.stringify'd value is stored as a JSON
-        // string, and an approved number would be applied as "5" (release review, Sprint 7X).
-        current_value: params.currentValue ?? null,
-        proposed_value: params.proposedValue ?? null,
-        requested_by: params.requestedBy,
-        change_comment: params.changeComment,
-        impact_summary: params.impactSummary ?? null,
-      } as never)
-      .select(APPROVAL_COLUMNS)
-      .single() as unknown as Promise<{
-      data: ApprovalRow | null;
-      error: { message: string } | null;
-    }>);
-
-    if (error || !data) {
-      return {
-        success: false,
-        error: error?.message ?? "Failed to create approval request",
-      };
-    }
-
-    return { success: true, record: mapApprovalRow(data) };
+    return { success: true, record: mapApprovalRow(outcome) };
   } catch (err) {
     logger.error("Approval request failed", {
       configKey: params.configKey,
@@ -223,25 +233,21 @@ export async function approveAndApply(
   const applied = await apply(approved.record);
   if (applied.success) return approved;
 
-  const supabase = getSupabaseServiceClient();
-  const { error } = await (supabase
-    .from("config_pending_approvals" as never)
-    .update({
-      status: "pending",
-      reviewed_by: null,
-      review_comment: null,
-      reviewed_at: null,
-    } as never)
-    .eq("id", approvalId)
-    .eq("status", "approved") as unknown as Promise<{
-    error: { message: string } | null;
-  }>);
-  if (error) {
+  try {
+    await withTenantTx((tx) =>
+      tx.query(
+        `update config_pending_approvals
+            set status = 'pending', reviewed_by = null, review_comment = null, reviewed_at = null
+          where id = $1::uuid and status = 'approved'`,
+        [approvalId]
+      )
+    );
+  } catch (err) {
     logger.error(
       "Approved change could not be applied, and the approval could not be reopened",
       {
         approvalId,
-        error: error.message,
+        error: err instanceof Error ? err.message : String(err),
         route: "platform/admin/config-approval",
       }
     );
@@ -276,97 +282,73 @@ async function reviewChange(
   reviewComment: string,
   newStatus: "approved" | "rejected"
 ): Promise<ConfigApprovalResult> {
+  if (!UUID.test(approvalId)) {
+    return {
+      success: false,
+      error: `Approval "${approvalId}" not found.`,
+      errorCode: "approvals.hold_not_found",
+    };
+  }
   try {
-    const supabase = getSupabaseServiceClient();
-
-    // Fetch the pending approval
-    const { data: current } = await (supabase
-      .from("config_pending_approvals" as never)
-      .select(APPROVAL_COLUMNS)
-      .eq("id", approvalId)
-      .single() as unknown as Promise<{
-      data: ApprovalRow | null;
-      error: { message: string } | null;
-    }>);
-
-    if (!current) {
-      return {
-        success: false,
-        error: `Approval "${approvalId}" not found.`,
-        errorCode: "approvals.hold_not_found",
-      };
-    }
-
-    if (current.status !== "pending") {
-      return {
-        success: false,
-        error: `Approval is already ${current.status}. Only pending approvals can be reviewed.`,
-        errorCode: "approvals.decision_conflict",
-      };
-    }
-
-    // Check expiry
-    if (new Date(current.expires_at) < new Date()) {
-      // Mark as expired
-      await supabase
-        .from("config_pending_approvals" as never)
-        .update({ status: "expired" } as never)
-        .eq("id", approvalId);
-      return {
-        success: false,
-        error: "This approval has expired.",
-        errorCode: "approvals.expired",
-      };
-    }
-
-    // Block self-approval
-    if (newStatus === "approved" && current.requested_by === reviewerId) {
-      return {
-        success: false,
-        error:
-          "Self-approval is not permitted. A different super_admin must review this change.",
-        errorCode: "approvals.self_approval",
-      };
-    }
-
-    // A4: Conditional UPDATE — only updates if status is still 'pending'.
-    // Prevents TOCTOU race where two admins approve simultaneously.
-    // If another admin already changed the status between our SELECT
-    // and this UPDATE, the WHERE clause won't match and we'll get
-    // no rows back, which we detect as a conflict.
-    const { data: updated, error } = await (supabase
-      .from("config_pending_approvals" as never)
-      .update({
-        status: newStatus,
-        reviewed_by: reviewerId,
-        review_comment: reviewComment,
-        reviewed_at: new Date().toISOString(),
-      } as never)
-      .eq("id", approvalId)
-      .eq("status", "pending")
-      .select(APPROVAL_COLUMNS)
-      .single() as unknown as Promise<{
-      data: ApprovalRow | null;
-      error: { message: string } | null;
-    }>);
-
-    if (error || !updated) {
-      // If no rows updated, another reviewer got there first
-      if (!updated && !error) {
+    return await withTenantTx(async (tx): Promise<ConfigApprovalResult> => {
+      // Locked for the decision: two reviewers at once serialise here, and the second sees
+      // the first's outcome (A4).
+      const { rows } = await tx.query<ApprovalRow>(
+        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action
+           from config_pending_approvals where id = $1::uuid for update`,
+        [approvalId]
+      );
+      const current = rows[0];
+      if (!current) {
+        return {
+          success: false,
+          error: `Approval "${approvalId}" not found.`,
+          errorCode: "approvals.hold_not_found",
+        };
+      }
+      if (current.status !== "pending") {
+        return {
+          success: false,
+          error: `Approval is already ${current.status}. Only pending approvals can be reviewed.`,
+          errorCode: "approvals.decision_conflict",
+        };
+      }
+      if (new Date(current.expires_at) < new Date()) {
+        await tx.query(
+          "update config_pending_approvals set status = 'expired' where id = $1::uuid and status = 'pending'",
+          [approvalId]
+        );
+        return {
+          success: false,
+          error: "This approval has expired.",
+          errorCode: "approvals.expired",
+        };
+      }
+      if (newStatus === "approved" && current.requested_by === reviewerId) {
+        return {
+          success: false,
+          error:
+            "Self-approval is not permitted. A different super_admin must review this change.",
+          errorCode: "approvals.self_approval",
+        };
+      }
+      const updated = await tx.query<ApprovalRow>(
+        `update config_pending_approvals
+            set status = $2::config_approval_status, reviewed_by = $3::uuid,
+                review_comment = $4, reviewed_at = now()
+          where id = $1::uuid and status = 'pending'
+          returning id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action`,
+        [approvalId, newStatus, reviewerId, reviewComment]
+      );
+      if (!updated.rows[0]) {
         return {
           success: false,
           error: "This approval was already reviewed by another admin. Please refresh.",
           errorCode: "approvals.decision_conflict",
         };
       }
-      return {
-        success: false,
-        error: error?.message ?? "Failed to update approval",
-        errorCode: "internal.error",
-      };
-    }
-
-    return { success: true, record: mapApprovalRow(updated) };
+      return { success: true, record: mapApprovalRow(updated.rows[0]) };
+    });
   } catch (err) {
     logger.error("Approval review failed", {
       approvalId,
@@ -381,45 +363,38 @@ async function reviewChange(
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ---------------------------------------------------------------------------
 // Query Operations
 // ---------------------------------------------------------------------------
 
 /**
- * List approval records with optional filters.
+ * List the current tenant's approval records with optional filters.
  */
 export async function listApprovals(
   options?: ConfigApprovalQueryOptions
 ): Promise<ConfigApprovalRecord[]> {
+  const limit = Math.min(Math.max(Math.floor(options?.limit ?? 20), 1), 200);
   try {
-    const supabase = getSupabaseServiceClient();
-
-    let query = supabase
-      .from("config_pending_approvals" as never)
-      .select(APPROVAL_COLUMNS)
-      .order("created_at", { ascending: false });
-
-    if (options?.status) {
-      query = query.eq("status", options.status);
-    }
-    if (options?.configKey) {
-      query = query.eq("config_key", options.configKey);
-    }
-    if (options?.requestedBy) {
-      query = query.eq("requested_by", options.requestedBy);
-    }
-
-    const limit = options?.limit ?? 20;
-    query = query.limit(limit);
-
-    const { data, error } = (await query) as {
-      data: ApprovalRow[] | null;
-      error: { message: string } | null;
-    };
-
-    if (error || !data) return [];
-
-    return data.map(mapApprovalRow);
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<ApprovalRow>(
+        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action
+           from config_pending_approvals
+          where ($1::text is null or status = $1::config_approval_status)
+            and ($2::text is null or config_key = $2)
+            and ($3::uuid is null or requested_by = $3)
+          order by created_at desc
+          limit $4`,
+        [
+          options?.status ?? null,
+          options?.configKey ?? null,
+          options?.requestedBy ?? null,
+          limit,
+        ]
+      )
+    );
+    return rows.map(mapApprovalRow);
   } catch (err) {
     logger.error("Approval list query failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -430,49 +405,37 @@ export async function listApprovals(
 }
 
 /**
- * Get a single approval record by ID.
+ * Get a single approval record by ID (the current tenant's only).
  */
 export async function getApproval(
   approvalId: string
 ): Promise<ConfigApprovalRecord | null> {
+  if (!UUID.test(approvalId)) return null;
   try {
-    const supabase = getSupabaseServiceClient();
-
-    const { data, error } = await (supabase
-      .from("config_pending_approvals" as never)
-      .select(APPROVAL_COLUMNS)
-      .eq("id", approvalId)
-      .single() as unknown as Promise<{
-      data: ApprovalRow | null;
-      error: { message: string } | null;
-    }>);
-
-    if (error || !data) return null;
-
-    return mapApprovalRow(data);
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<ApprovalRow>(
+        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action
+           from config_pending_approvals where id = $1::uuid`,
+        [approvalId]
+      )
+    );
+    return rows[0] ? mapApprovalRow(rows[0]) : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Count pending approvals. Used for the admin dashboard badge.
+ * Count the current tenant's pending approvals. Used for the admin dashboard badge.
  */
 export async function countPendingApprovals(): Promise<number> {
   try {
-    const supabase = getSupabaseServiceClient();
-
-    const { data, error } = await (supabase
-      .from("config_pending_approvals" as never)
-      .select("id")
-      .eq("status", "pending") as unknown as Promise<{
-      data: Array<{ id: string }> | null;
-      error: { message: string } | null;
-    }>);
-
-    if (error || !data) return 0;
-
-    return data.length;
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ n: number }>(
+        "select count(*)::int as n from config_pending_approvals where status = 'pending'"
+      )
+    );
+    return rows[0]?.n ?? 0;
   } catch {
     return 0;
   }

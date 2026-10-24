@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/platform/auth/middleware";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { withTenantTx } from "@/platform/data";
 import { getModerationStore } from "@/platform/moderation/store";
 import { getAuditLogForUser } from "@/platform/auth/audit";
 import { submitAppeal } from "@/platform/moderation/review-service";
@@ -28,6 +28,7 @@ import type {
 } from "@/platform/moderation/types";
 import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "active",
@@ -37,18 +38,19 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "banned",
 ]);
 
-/** Resolve a Cognito sub to the app users.id (active users only). */
+/**
+ * Resolve a Cognito sub to the app users.id (active users only), in the request's tenant: an
+ * appeal is the tenant's own data (ADR-053 D5). An unreadable lookup resolves to no one.
+ */
 async function resolveUserId(sub: string): Promise<string | null> {
   try {
-    const supabase = getSupabaseServiceClient();
-    const { data, error } = await supabase
-      .from("users")
-      .select("id")
-      .eq("cognito_sub", sub)
-      .is("deleted_at", null)
-      .single();
-    if (error || !data) return null;
-    return (data as { id: string }).id;
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ id: string }>(
+        "select id from users where cognito_sub = $1 and deleted_at is null",
+        [sub]
+      )
+    );
+    return rows.length === 1 ? rows[0].id : null;
   } catch {
     return null;
   }
@@ -107,7 +109,7 @@ async function derivePreviousStatus(
   return undefined;
 }
 
-export async function POST(request: NextRequest) {
+export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
   if (limited) return limited;
@@ -189,4 +191,4 @@ export async function POST(request: NextRequest) {
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-}
+});

@@ -1,17 +1,20 @@
 /**
  * __tests__/observability-metrics-sink.test.ts — Metrics sink tests
  *
- * Tests: InMemoryMetricsSink (record, query, buffer bounds),
- * createMetricsSink factory. SupabaseMetricsSink tested via
- * integration tests (Phase 2 Sprint 6) since it requires live DB.
+ * Tests: InMemoryMetricsSink (record, query, buffer bounds, tenant partitions),
+ * createMetricsSink factory. PostgresMetricsSink is tested against the real
+ * database in __tests__/db/metrics-sink.db.test.ts.
  */
 
+import { randomUUID } from "node:crypto";
 import {
   InMemoryMetricsSink,
-  SupabaseMetricsSink,
+  PostgresMetricsSink,
   createMetricsSink,
 } from "@/platform/observability/metrics-sink";
 import type { MetricEvent } from "@/platform/observability/types";
+import { runWithTenant } from "@/platform/tenancy/context";
+import { runTenantIsolationContract } from "./contract/tenant-isolation-contract";
 
 function makeEvent(overrides: Partial<MetricEvent> = {}): MetricEvent {
   return {
@@ -129,30 +132,71 @@ describe("InMemoryMetricsSink", () => {
   });
 });
 
-describe("createMetricsSink", () => {
-  it("returns InMemoryMetricsSink when no Supabase config", () => {
-    const sink = createMetricsSink({});
-    expect(sink).toBeInstanceOf(InMemoryMetricsSink);
+describe("InMemoryMetricsSink — tenants (ADR-053 D6)", () => {
+  runTenantIsolationContract({
+    name: "metrics (memory)",
+    makeStore: () => new InMemoryMetricsSink(),
+    createTenant: async () => {
+      const ctx = Object.freeze({ tenantId: randomUUID(), mode: "shared" as const });
+      return { run: <T>(fn: () => T): T => runWithTenant(ctx, fn) };
+    },
+    write: async (sink, key) => {
+      sink.record(makeEvent({ name: key }));
+      await sink.flush();
+    },
+    read: async (sink, key) => {
+      const r = await sink.query({ name: key });
+      return r.length > 0 ? r : null;
+    },
+    failsClosedWithoutTenant: false,
   });
 
-  it("returns InMemoryMetricsSink when only URL (no key)", () => {
-    const sink = createMetricsSink({ supabaseUrl: "https://example.supabase.co" });
-    expect(sink).toBeInstanceOf(InMemoryMetricsSink);
-  });
-
-  it("returns InMemoryMetricsSink when only key (no URL)", () => {
-    const sink = createMetricsSink({ supabaseKey: "fake-key" });
-    expect(sink).toBeInstanceOf(InMemoryMetricsSink);
-  });
-
-  // SupabaseMetricsSink construction tested but not flushed (requires live DB)
-  it("returns SupabaseMetricsSink when both URL and key provided", () => {
-    const sink = createMetricsSink({
-      supabaseUrl: "https://example.supabase.co",
-      supabaseKey: "fake-key",
+  it("bounds each tenant's buffer separately; clear() empties every tenant", async () => {
+    const sink = new InMemoryMetricsSink(2);
+    const a = { tenantId: randomUUID(), mode: "shared" as const };
+    const b = { tenantId: randomUUID(), mode: "shared" as const };
+    runWithTenant(a, () => {
+      for (let i = 0; i < 3; i++) sink.record(makeEvent({ name: `a${i}` }));
     });
-    expect(sink).toBeInstanceOf(SupabaseMetricsSink);
-    // Clean up timer
-    (sink as { destroy?: () => void }).destroy?.();
+    runWithTenant(b, () => sink.record(makeEvent({ name: "b0" })));
+    expect(runWithTenant(a, () => sink.getAll().map((e) => e.name))).toEqual([
+      "a1",
+      "a2",
+    ]);
+    expect(runWithTenant(b, () => sink.getAll().map((e) => e.name))).toEqual(["b0"]);
+    expect(sink.getAll()).toEqual([]); // the "no tenant" partition
+    sink.clear();
+    expect(runWithTenant(a, () => sink.getAll())).toEqual([]);
+    expect(runWithTenant(b, () => sink.getAll())).toEqual([]);
+  });
+});
+
+describe("createMetricsSink", () => {
+  const saved = process.env.DATABASE_URL;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = saved;
+  });
+
+  it("returns InMemoryMetricsSink when no database is configured", () => {
+    delete process.env.DATABASE_URL;
+    expect(createMetricsSink()).toBeInstanceOf(InMemoryMetricsSink);
+    expect(createMetricsSink({})).toBeInstanceOf(InMemoryMetricsSink);
+  });
+
+  it("returns PostgresMetricsSink when DATABASE_URL is set", () => {
+    process.env.DATABASE_URL = "postgresql://u:p@localhost:5432/db";
+    const sink = createMetricsSink();
+    expect(sink).toBeInstanceOf(PostgresMetricsSink);
+    (sink as PostgresMetricsSink).destroy();
+  });
+
+  it("honours an explicit persistent flag", () => {
+    process.env.DATABASE_URL = "postgresql://u:p@localhost:5432/db";
+    expect(createMetricsSink({ persistent: false })).toBeInstanceOf(InMemoryMetricsSink);
+    delete process.env.DATABASE_URL;
+    const sink = createMetricsSink({ persistent: true });
+    expect(sink).toBeInstanceOf(PostgresMetricsSink);
+    (sink as PostgresMetricsSink).destroy();
   });
 });

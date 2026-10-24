@@ -9,13 +9,17 @@
  * default — a lookup hiccup never disables budget enforcement.
  *
  * getConfig is imported lazily so that pulling this module into the agent graph at boot does not
- * eagerly load the config/Supabase layer (which would bind real clients before test mocks apply).
+ * eagerly load the config and data layers (which would bind real pools before test mocks apply).
  *
  * @module platform/agents
  */
 
 export const BUDGET_COST_CAP_KEY = "agent.budget.max_cost_per_day";
 export const BUDGET_STEP_CAP_KEY = "agent.budget.max_steps_per_trajectory";
+/** ADR-053 D6: each tenant's daily cap on all its agents' spend together (operator-set). */
+export const TENANT_COST_CAP_KEY = "agent.budget.tenant_max_cost_per_day";
+/** Used when the setting cannot be read: the seeded default, so a lookup hiccup never lifts it. */
+export const DEFAULT_TENANT_DAILY_COST_CAP = 100;
 
 async function resolveCap(key: string, perAgentDefault: number): Promise<number> {
   try {
@@ -29,6 +33,22 @@ async function resolveCap(key: string, perAgentDefault: number): Promise<number>
       : perAgentDefault;
   } catch {
     return perAgentDefault;
+  }
+}
+
+/**
+ * The current tenant's daily cap across all its agents (its own value, else the platform default;
+ * operators set it). Unreadable or invalid: the seeded default, never unlimited.
+ */
+export async function resolveTenantDailyCostCap(): Promise<number> {
+  try {
+    const { getConfig } = await import("@/platform/auth/platform-config");
+    const v = Number(
+      await getConfig<number>(TENANT_COST_CAP_KEY, DEFAULT_TENANT_DAILY_COST_CAP)
+    );
+    return Number.isFinite(v) && v > 0 ? v : DEFAULT_TENANT_DAILY_COST_CAP;
+  } catch {
+    return DEFAULT_TENANT_DAILY_COST_CAP;
   }
 }
 

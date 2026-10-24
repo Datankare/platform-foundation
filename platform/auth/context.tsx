@@ -183,6 +183,15 @@ function readStoredSession(): StoredSession {
 }
 
 /**
+ * The access token of the stored session, for API calls made outside a component (apiFetch):
+ * null when there is none, or when it has expired or is corrupt — never a stale token.
+ */
+export function readAccessToken(): string | null {
+  const stored = readStoredSession();
+  return stored.kind === "session" ? stored.accessToken : null;
+}
+
+/**
  * The session as an external store (React's useSyncExternalStore): read from storage once, on
  * the client, then changed only by setSession and signOut. The server snapshot is "not read
  * yet", so the server render and the hydrating render agree (loading) and no state is set

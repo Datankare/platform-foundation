@@ -1,8 +1,9 @@
 /**
  * platform/agents/trajectory-store.ts — Trajectory persistence
  *
- * Interface + InMemory implementation for trajectory storage.
- * Supabase implementation wired when SOCIAL_STORE=supabase.
+ * Interface + InMemory implementation for trajectory storage. The durable implementation
+ * (PostgresTrajectoryStore) is wired when TRAJECTORY_STORE=postgres. The in-memory store keeps
+ * each tenant's trajectories in its own partition, as row-level security does (ADR-053 D6).
  *
  * P7:  Provider-aware — store interface with swappable implementations
  * P18: Durable trajectories — create, update, checkpoint, resume
@@ -31,6 +32,7 @@ import type {
 } from "@/platform/kernel/types";
 import { generateId } from "./utils";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 // ---------------------------------------------------------------------------
 // Query types
@@ -49,7 +51,8 @@ import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 // ---------------------------------------------------------------------------
 
 export class InMemoryTrajectoryStore implements TrajectoryStore {
-  private records: TrajectoryRecord[] = [];
+  /** trajectoryId → record, per tenant. Insertion order is creation order. */
+  private readonly parts = new TenantPartitionedMap<string, TrajectoryRecord>();
 
   async create(
     subject: TrajectorySubject,
@@ -75,17 +78,15 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       scopeId: scopeId ?? null,
       costSummary: { tokens: 0, apiCalls: 0, usd: 0 },
     };
-    this.records.push(record);
+    this.parts.current().set(trajectory.trajectoryId, record);
     return record;
   }
 
   async addStep(trajectoryId: string, step: Step): Promise<TrajectoryRecord | undefined> {
-    const index = this.records.findIndex(
-      (r) => r.trajectory.trajectoryId === trajectoryId
-    );
-    if (index === -1) return undefined;
+    const records = this.parts.current();
+    const current = records.get(trajectoryId);
+    if (!current) return undefined;
 
-    const current = this.records[index];
     const newSteps = [...current.trajectory.steps, step];
     const newTotalCost = current.trajectory.totalCost + step.cost;
     const newCost: TrajectoryCost = {
@@ -104,7 +105,7 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       },
       costSummary: newCost,
     };
-    this.records[index] = updated;
+    records.set(trajectoryId, updated);
     return updated;
   }
 
@@ -112,12 +113,10 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     trajectoryId: string,
     status: TrajectoryStatus
   ): Promise<TrajectoryRecord | undefined> {
-    const index = this.records.findIndex(
-      (r) => r.trajectory.trajectoryId === trajectoryId
-    );
-    if (index === -1) return undefined;
+    const records = this.parts.current();
+    const current = records.get(trajectoryId);
+    if (!current) return undefined;
 
-    const current = this.records[index];
     const updated: TrajectoryRecord = {
       ...current,
       trajectory: {
@@ -126,16 +125,16 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
         updatedAt: new Date().toISOString(),
       },
     };
-    this.records[index] = updated;
+    records.set(trajectoryId, updated);
     return updated;
   }
 
   async getById(trajectoryId: string): Promise<TrajectoryRecord | undefined> {
-    return this.records.find((r) => r.trajectory.trajectoryId === trajectoryId);
+    return this.parts.current().get(trajectoryId);
   }
 
   async query(options: TrajectoryQuery): Promise<readonly TrajectoryRecord[]> {
-    let filtered = [...this.records];
+    let filtered = [...this.parts.current().values()];
 
     if (options.agentId) {
       filtered = filtered.filter((r) => r.trajectory.agentId === options.agentId);
@@ -166,14 +165,14 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     return filtered;
   }
 
-  /** Get total count (test helper) */
+  /** The current tenant's record count (test helper) */
   getRecordCount(): number {
-    return this.records.length;
+    return this.parts.current().size;
   }
 
-  /** Clear all data (test helper) */
+  /** Clear every tenant's data (test helper) */
   clear(): void {
-    this.records = [];
+    this.parts.clearAll();
   }
 }
 

@@ -9,11 +9,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { getConfig } from "@/platform/auth/platform-config";
+import { tenantRoute } from "@/platform/tenancy/route";
 
-export async function GET(request: NextRequest) {
+export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_agents");
   if (denied) return denied;
 
   const agents = await getConfig<[string, unknown][]>("agent.trusted_agents", []);
   return NextResponse.json({ agents: Array.isArray(agents) ? agents : [] });
-}
+});

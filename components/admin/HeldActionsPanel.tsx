@@ -10,6 +10,7 @@
 
 import React, { useState } from "react";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
+import { apiFetch } from "@/platform/auth/api-fetch";
 
 const thClass =
   "text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800";
@@ -47,7 +48,7 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
     setBusyId(row.id);
     setErrors((e) => ({ ...e, [row.id]: "" }));
     try {
-      const res = await fetch(`/api/admin/approvals/${encodeURIComponent(row.id)}`, {
+      const res = await apiFetch(`/api/admin/approvals/${encodeURIComponent(row.id)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ decision, source: row.source }),
@@ -68,7 +69,7 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
   if (rows.length === 0) {
     return (
       <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
-        <p className="text-center text-gray-500 py-8 text-sm">
+        <p className="text-center text-gray-400 py-8 text-sm">
           No pending approvals. Held changes appear here for an independent reviewer.
         </p>
       </div>
@@ -105,7 +106,7 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
             <tr key={`${a.source}:${a.id}`}>
               <td className={tdClass}>
                 <code className="text-xs text-gray-200">{a.label}</code>
-                <span className="block text-xs text-gray-500">
+                <span className="block text-xs text-gray-400">
                   {sourceLabel(a.source)}
                 </span>
               </td>

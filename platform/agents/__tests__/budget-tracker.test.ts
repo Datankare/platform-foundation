@@ -166,14 +166,18 @@ describe("BudgetTracker", () => {
       expect(tracker.getCurrentPeriod()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 
-    it("is today, so maxCostPerDay is enforced over a day", () => {
+    it("is today in UTC, so maxCostPerDay is enforced over the same day on every host (TASK-144)", () => {
       const now = new Date();
       const expected = [
-        String(now.getFullYear()),
-        String(now.getMonth() + 1).padStart(2, "0"),
-        String(now.getDate()).padStart(2, "0"),
+        String(now.getUTCFullYear()),
+        String(now.getUTCMonth() + 1).padStart(2, "0"),
+        String(now.getUTCDate()).padStart(2, "0"),
       ].join("-");
-      expect(tracker.getCurrentPeriod()).toBe(expected);
+      expect(tracker.getCurrentPeriod(now)).toBe(expected);
+      // Late evening west of UTC is already tomorrow's period.
+      expect(tracker.getCurrentPeriod(new Date("2026-10-23T23:30:00-07:00"))).toBe(
+        "2026-10-24"
+      );
     });
   });
 

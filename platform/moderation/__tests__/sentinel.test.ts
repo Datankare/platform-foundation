@@ -32,11 +32,9 @@ const mockFresh = () =>
     audit_log: [],
   });
 let mockDb = mockFresh();
-const mockSupabase = { from: jest.fn((table: string) => mockDb.client().from(table)) };
-
-jest.mock("@/lib/supabase/server", () => ({
-  getSupabaseServiceClient: jest.fn(() => mockSupabase),
-}));
+jest.mock("@/platform/data", () =>
+  require("@/__tests__/helpers/fake-account-data").fakeAccountData(() => mockDb)
+);
 
 jest.mock("../config", () => ({
   loadStrikeThresholds: jest.fn().mockResolvedValue({

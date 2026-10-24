@@ -19,7 +19,7 @@ platform/moderation/
   ├── classifier.ts     — Layer 2: Structured LLM classifier
   ├── middleware.ts      — screenContent() — thin wrapper delegating to Guardian
   ├── audit.ts          — Dual-write audit trail (logger + ModerationStore)
-  ├── store.ts          — ModerationStore provider (InMemory + Supabase)
+  ├── store.ts          — ModerationStore provider (InMemory + Postgres)
   ├── types.ts          — All types: ScreeningContext, ContentType, ModerationResult
   └── index.ts          — Public API
 ```

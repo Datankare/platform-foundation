@@ -7,11 +7,15 @@
  * Returns a structured JSON object with data from all
  * registered export modules.
  *
+ * Everything is read in the request's tenant (platform/data, ADR-053 D4), in one transaction,
+ * so an export holds the user's rows in that tenant and nothing from another. Rows are returned
+ * in their JSON form (to_jsonb), as the REST API returned them before.
+ *
  * Sprint 5, Task 5.3
  */
 
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { AuditWriteError, auditRowsForUser, recordAudit } from "@/platform/auth/audit";
+import { withTenantTx, type Tx } from "@/platform/data";
 
 export interface ExportModule {
   moduleName: string;
@@ -50,59 +54,59 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Collect all of a user's data across all registered modules, without disclosing it. The id is
- * checked first: it is used in a filter string below, where a crafted value could widen the
- * read to other users' audit records (TASK-145 pattern).
+ * checked first (TASK-145 pattern): a non-UUID never reaches a query.
  */
 async function collectUserData(
   userId: string
 ): Promise<{ data: Record<string, unknown>; errors: string[] }> {
   if (!UUID.test(userId)) return { data: {}, errors: ["invalid user id"] };
-  const supabase = getSupabaseServiceClient();
   const errors: string[] = [];
   const exportData: Record<string, unknown> = {};
 
-  // 1. Core user data
-  const { data: user, error: userError } = await supabase
-    .from("users")
-    .select("*")
-    .eq("id", userId)
-    .is("deleted_at", null)
-    .single();
+  // 1–5 in one transaction. A failure stops it; what was read before the failure is kept and
+  // the failure is reported, as each failed read was before.
+  const rowsOf = async (tx: Tx, text: string): Promise<Record<string, unknown>[]> => {
+    const { rows } = await tx.query<{ r: Record<string, unknown> }>(text, [userId]);
+    return rows.map((row) => row.r);
+  };
+  exportData.consents = [];
+  exportData.devices = [];
+  exportData.entitlements = [];
+  exportData.auditLog = [];
+  try {
+    await withTenantTx(async (tx) => {
+      // 1. Core user data
+      const users = await rowsOf(
+        tx,
+        "select to_jsonb(u) as r from users u where u.id = $1::uuid and u.deleted_at is null"
+      );
+      if (users.length === 1) exportData.profile = users[0];
+      else errors.push("users: no live user row");
 
-  if (userError) {
-    errors.push(`users: ${userError.message}`);
-  } else {
-    exportData.profile = user;
+      // 2. Consent records
+      exportData.consents = await rowsOf(
+        tx,
+        "select to_jsonb(c) as r from consent_records c where c.user_id = $1::uuid"
+      );
+
+      // 3. Devices
+      exportData.devices = await rowsOf(
+        tx,
+        "select to_jsonb(d) as r from user_devices d where d.user_id = $1::uuid"
+      );
+
+      // 4. Entitlements
+      exportData.entitlements = await rowsOf(
+        tx,
+        "select to_jsonb(e) as r from user_entitlements e where e.user_id = $1::uuid"
+      );
+
+      // 5. Audit log (user as actor or target)
+      exportData.auditLog = await auditRowsForUser(tx, userId, 500);
+    });
+  } catch (err) {
+    errors.push(`store: ${err instanceof Error ? err.message : String(err)}`);
   }
-
-  // 2. Consent records
-  const { data: consents } = await supabase
-    .from("consent_records")
-    .select("*")
-    .eq("user_id", userId);
-
-  exportData.consents = consents || [];
-
-  // 3. Devices
-  const { data: devices } = await supabase
-    .from("user_devices")
-    .select("*")
-    .eq("user_id", userId);
-
-  exportData.devices = devices || [];
-
-  // 4. Entitlements
-  const { data: entitlements } = await supabase
-    .from("user_entitlements")
-    .select("*")
-    .eq("user_id", userId);
-
-  exportData.entitlements = entitlements || [];
-
-  // 5. Audit log (user as actor or target)
-  const { data: auditEntries } = await auditRowsForUser(supabase, userId, "*", 500);
-
-  exportData.auditLog = auditEntries || [];
 
   // 6. Registered module data
   for (const mod of registeredExportModules) {

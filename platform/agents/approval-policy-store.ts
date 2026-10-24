@@ -8,7 +8,7 @@
  *
  * A1 ships the CONTRACT + an in-memory implementation + the pure resolver. The policy is
  * behavior-preserving by default (default: "user", no rules → human approves everything),
- * so nothing changes until an admin adds a rule. A3 adds the durable (Supabase) store and
+ * so nothing changes until an admin adds a rule. A3 adds the durable (Postgres) store and
  * the versioned, audited setRules mutation; A2 is the conformance kit every implementation
  * must pass; A4 is the admin route that calls setRules. This file pre-empts none of them.
  *
@@ -20,6 +20,7 @@
 
 import type { AgentIdentity, EffectType, RiskLevel } from "@/platform/kernel";
 import { getSingleton, setSingleton } from "@/platform/kernel";
+import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
 /** The actor type an approval requires — the three legal AgentIdentity.actorType values. */
 export type ActorType = AgentIdentity["actorType"];
@@ -46,7 +47,7 @@ export interface ApprovalPolicy {
 }
 
 /**
- * The store contract. A1 provides InMemoryApprovalPolicyStore; A3 provides the Supabase
+ * The store contract. A1 provides InMemoryApprovalPolicyStore; A3 provides the Postgres
  * implementation; both must pass A2's conformance kit. `setRules` bumps the version and
  * records who decided — the durable store makes that atomic and audited (A3).
  */
@@ -146,16 +147,23 @@ export function approvalRulesProblem(rules: readonly ApprovalRule[]): string | n
   return null;
 }
 
-/** In-memory policy store. The A1 default implementation; swapped for Supabase in A3. */
+/**
+ * In-memory policy store. The A1 default implementation; PostgresApprovalPolicyStore is the
+ * durable one. Each tenant has its own policy, starting at `initial`, as row-level security
+ * gives each tenant its own policy history in Postgres (ADR-053 D6).
+ */
 export class InMemoryApprovalPolicyStore implements ApprovalPolicyStore {
-  private policy: ApprovalPolicy;
+  private readonly parts = new TenantPartitionedMap<"policy", ApprovalPolicy>();
 
-  constructor(initial: ApprovalPolicy = DEFAULT_APPROVAL_POLICY) {
-    this.policy = initial;
+  constructor(private readonly initial: ApprovalPolicy = DEFAULT_APPROVAL_POLICY) {}
+
+  /** Synchronous, so setRules reads and writes with no await between (no lost update). */
+  private currentPolicy(): ApprovalPolicy {
+    return this.parts.current().get("policy") ?? this.initial;
   }
 
   async load(): Promise<ApprovalPolicy> {
-    return this.policy;
+    return this.currentPolicy();
   }
 
   async setRules(
@@ -164,12 +172,14 @@ export class InMemoryApprovalPolicyStore implements ApprovalPolicyStore {
   ): Promise<ApprovalPolicy> {
     const problem = approvalRulesProblem(rules);
     if (problem) throw new Error(`approval-policy setRules refused: ${problem}`);
-    this.policy = {
-      version: this.policy.version + 1,
-      default: this.policy.default,
+    const current = this.currentPolicy();
+    const next: ApprovalPolicy = {
+      version: current.version + 1,
+      default: current.default,
       rules,
     };
-    return this.policy;
+    this.parts.current().set("policy", next);
+    return next;
   }
 }
 
@@ -186,7 +196,7 @@ export function getApprovalPolicyStore(): ApprovalPolicyStore {
 }
 
 /**
- * Install a policy store — the registry does this for the durable Supabase store; tests use it
+ * Install a policy store — the registry does this for the durable Postgres store; tests use it
  * to inject a fake. Returns the previous store so a caller can restore it. Mirrors
  * setProposalStore / setTrajectoryStore.
  */

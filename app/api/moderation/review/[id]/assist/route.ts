@@ -16,10 +16,11 @@ import { logger, generateRequestId } from "@/lib/logger";
 import { getReviewQueueStore } from "@/platform/moderation/review-store";
 import { generateReviewRecommendation } from "@/platform/moderation/review-assist";
 import { apiError } from "@/platform/errors";
+import { tenantRoute } from "@/platform/tenancy/route";
 
 const MODERATE_PERMISSION = "can_moderate";
 
-export async function POST(
+export const POST = tenantRoute(async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
@@ -54,4 +55,4 @@ export async function POST(
     });
     return apiError("internal.error", { params: { requestId }, request });
   }
-}
+});

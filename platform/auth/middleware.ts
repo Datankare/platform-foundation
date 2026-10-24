@@ -14,6 +14,11 @@
  * Sprint 3: requirePermission (real implementation replacing placeholder)
  *
  * ADR-012: Cognito JWT validated on every protected route.
+ *
+ * ADR-053 D2/D3: every verifier also establishes the request's tenant from the verified
+ * identity (platform/tenancy/request.ts) — a user's provider attribute, a guest token's `tid` —
+ * and refuses an identity whose tenant is not the request's. The tenant is returned with the
+ * identity and held in the request's tenant context for everything the route then does.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -27,16 +32,21 @@ import {
 } from "@/platform/auth/guest-token";
 import { logger, generateRequestId } from "@/lib/logger";
 import { apiError } from "@/platform/errors";
+import { bindIdentityTenant, ensureRequestTenant } from "@/platform/tenancy/request";
+import type { TenantContext } from "@/platform/tenancy/context";
 
 export interface AuthContext {
   user: TokenPayload;
   accessToken: string;
+  /** The request's tenant: the verified user's (ADR-053 D2). */
+  tenant: TenantContext;
   error?: never;
 }
 
 export interface AuthError {
   user?: never;
   accessToken?: never;
+  tenant?: never;
   error: NextResponse;
 }
 
@@ -86,7 +96,9 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
       };
     }
 
-    return { user: payload, accessToken };
+    const bound = await bindIdentityTenant(payload.tenantId, request);
+    if (bound.error) return { error: bound.error };
+    return { user: payload, accessToken, tenant: bound.tenant };
   } catch (err) {
     logger.error("Token verification failed", {
       requestId,
@@ -104,8 +116,18 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
 // ---------------------------------------------------------------------------
 
 export type Actor =
-  | { readonly kind: "user"; readonly id: string; readonly user: TokenPayload }
-  | { readonly kind: "guest"; readonly id: string; readonly expiresAt: number };
+  | {
+      readonly kind: "user";
+      readonly id: string;
+      readonly tenantId: string;
+      readonly user: TokenPayload;
+    }
+  | {
+      readonly kind: "guest";
+      readonly id: string;
+      readonly tenantId: string;
+      readonly expiresAt: number;
+    };
 
 export interface ActorContext {
   actor: Actor;
@@ -154,38 +176,62 @@ export async function requireActor(
         error: apiError("auth.guest_invalid", { request }),
       };
     }
+    const bound = await bindIdentityTenant(verified.tenantId, request);
+    if (bound.error) return { error: bound.error };
     return {
-      actor: { kind: "guest", id: verified.guestId, expiresAt: verified.expiresAt },
+      actor: {
+        kind: "guest",
+        id: verified.guestId,
+        tenantId: bound.tenant.tenantId,
+        expiresAt: verified.expiresAt,
+      },
     };
   }
 
   const auth = await requireAuth(request);
   if (auth.error) return { error: auth.error };
-  return { actor: { kind: "user", id: auth.user.sub, user: auth.user } };
+  return {
+    actor: {
+      kind: "user",
+      id: auth.user.sub,
+      tenantId: auth.tenant.tenantId,
+      user: auth.user,
+    },
+  };
 }
 
 /**
- * Optional authentication. Allows unauthenticated access.
+ * Optional authentication. Allows unauthenticated access. A token that does not verify, or
+ * whose tenant is not the request's, is treated as no token; the request then has the tenant
+ * of its address. `tenant` is null only when even that is refused (an address for no tenant,
+ * or the directory unreadable) — the route must then refuse too.
  */
-export async function optionalAuth(
-  request: NextRequest
-): Promise<{ user: TokenPayload | null; accessToken: string | null }> {
+export async function optionalAuth(request: NextRequest): Promise<{
+  user: TokenPayload | null;
+  accessToken: string | null;
+  tenant: TenantContext | null;
+}> {
+  const anonymous = async () => {
+    const bound = await ensureRequestTenant(request);
+    return { user: null, accessToken: null, tenant: bound.tenant ?? null };
+  };
   const authHeader = request.headers.get("authorization");
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return { user: null, accessToken: null };
-  }
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return anonymous();
 
   const accessToken = authHeader.slice(7);
 
   try {
     const auth = getAuthProvider();
     const payload = await auth.verifyToken(accessToken);
-    return { user: payload, accessToken: payload ? accessToken : null };
+    if (!payload || isGuestId(payload.sub)) return anonymous();
+    const bound = await bindIdentityTenant(payload.tenantId, request);
+    if (bound.error) return anonymous();
+    return { user: payload, accessToken, tenant: bound.tenant };
   } catch {
     /* justified */
-    // Token verification failed — return unauthenticated
-    return { user: null, accessToken: null };
+    // Token verification failed — the request is anonymous
+    return anonymous();
   }
 }
 
