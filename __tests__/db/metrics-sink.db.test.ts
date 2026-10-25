@@ -155,7 +155,13 @@ dbDescribe("PostgresMetricsSink", () => {
         sink.record(event("batch.a"));
       })
     );
-    for (let i = 0; i < 100 && (await rowsFor(b.id)).length < 49; i++) {
+    // The flush writes each tenant's metrics in that tenant's own transaction, one after the
+    // other: wait for both, not just the first to land (a loaded run showed B's rows before A's).
+    for (
+      let i = 0;
+      i < 250 && ((await rowsFor(b.id)).length < 49 || (await rowsFor(a.id)).length < 1);
+      i++
+    ) {
       await new Promise((r) => setTimeout(r, 20));
     }
     expect((await rowsFor(b.id)).length).toBe(49);

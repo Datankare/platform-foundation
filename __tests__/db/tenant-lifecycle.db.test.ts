@@ -429,12 +429,9 @@ dbDescribe("tenant lifecycle: one account, one outcome (ADR-053 D7)", () => {
       decideTenantDeletion(op2, (req as { value: { id: string } }).value.id, true, "ok")
     );
     expect(approved).toMatchObject({ ok: true });
-    await withOwnerTx("tenant-lifecycle", (tx) =>
-      tx.query(
-        "update tenants set purge_after = now() - interval '1 minute' where id = $1",
-        [t.id]
-      )
-    );
+    // Its purge_after stays in the future: these tests call tenant_purge themselves, and a due
+    // tenant would be purged first by another suite's run of the purge duty in parallel (the
+    // purge it then waits on would find nothing to delete and the race would not be tested).
     return { id: t.id, user };
   }
 

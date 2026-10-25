@@ -347,17 +347,18 @@ begin
 
   -- Then queued jobs, tenants in turn: each tenant's oldest due job, then each one's next. The
   -- tenants with queued work are found by skipping through jobs_queued_idx (one probe per
-  -- tenant), and each tenant's due jobs of each kind by a range scan of it limited to what is
+  -- tenant; each probe orders by that index's whole key, so no other index on tenant_id can
+  -- serve it — one that could would walk a tenant's parked or finished rows), and each tenant's due jobs of each kind by a range scan of it limited to what is
   -- left to take — whatever else is queued, the work is bounded by tenants x kinds x limit.
   return query
   with recursive queued_tenants (tid) as (
     (select j.tenant_id from public.jobs j
       where j.status = 'queued' and j.tenant_id is not null
-      order by j.tenant_id limit 1)
+      order by j.tenant_id, j.kind, j.run_at, j.id limit 1)
     union all
     select (select j.tenant_id from public.jobs j
              where j.status = 'queued' and j.tenant_id > q.tid
-             order by j.tenant_id limit 1)
+             order by j.tenant_id, j.kind, j.run_at, j.id limit 1)
       from queued_tenants q
      where q.tid is not null
   ),

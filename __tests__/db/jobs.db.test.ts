@@ -25,12 +25,12 @@
  *     (5, 6; the claim took 423 ms at 300 000 parked-able rows before);
  *   - the GDPR purge runs for a suspended tenant, and nothing else does (7);
  *   - one tenant's success never overwrites another's failure on the schedule (8);
- *   - re-applying 050 keeps a dual-control key an operator removed removed (9).
+ *   - re-applying 050 keeps a dual-control key an operator removed removed (9) — proved by the
+ *     migration replay, not here (see the note at the end of the hostile cases).
  */
 
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { Client } from "pg";
 import { runJobStoreContract } from "../contract/job-store-contract";
 import {
   connectTestDatabase,
@@ -65,6 +65,64 @@ const K = (name: string) => `dbtest.${name}${RUN}`;
 
 const owner = <R extends Record<string, unknown>>(sql: string, values: unknown[] = []) =>
   withOwnerTx("operator", (tx) => tx.query<R>(sql, values));
+
+/** A plan node as auto_explain's JSON prints it (the fields read here). */
+interface PlanNode {
+  "Relation Name"?: string;
+  "Actual Rows"?: number;
+  "Actual Loops"?: number;
+  "Rows Removed by Filter"?: number;
+  "Rows Removed by Index Recheck"?: number;
+  Plans?: PlanNode[];
+}
+
+/**
+ * How many rows of jobs one job_claim call reads — returned plus filtered out, over every
+ * statement inside it — measured from the executed plans (auto_explain, rolled back so nothing
+ * is claimed). A count of work, not a duration: the same on a loaded CI machine as on an idle
+ * one, so the bound cannot be missed by a slow run or met by a fast one.
+ */
+async function rowsOfJobsAClaimReads(kinds: string[], limit: number): Promise<number> {
+  const client = new Client({ connectionString: process.env.TEST_DATABASE_OWNER_URL });
+  const plans: PlanNode[] = [];
+  client.on("notice", (n) => {
+    const at = n.message?.indexOf("{") ?? -1;
+    if (at < 0) return;
+    const parsed = JSON.parse(n.message!.slice(at)) as { Plan?: PlanNode };
+    if (parsed.Plan) plans.push(parsed.Plan);
+  });
+  await client.connect();
+  try {
+    await client.query("begin");
+    await client.query("load 'auto_explain'");
+    for (const [k, v] of [
+      ["auto_explain.log_min_duration", "0"],
+      ["auto_explain.log_analyze", "on"],
+      ["auto_explain.log_nested_statements", "on"],
+      ["auto_explain.log_format", "json"],
+      ["auto_explain.log_level", "notice"],
+    ]) {
+      await client.query("select set_config($1, $2, true)", [k, v]);
+    }
+    await client.query("select 1 from public.job_claim('dbtest-plan', $1, $2, 60)", [
+      kinds,
+      limit,
+    ]);
+    await client.query("rollback");
+  } finally {
+    await client.end();
+  }
+  const read = (node: PlanNode): number =>
+    (node["Relation Name"] === "jobs"
+      ? ((node["Actual Rows"] ?? 0) +
+          (node["Rows Removed by Filter"] ?? 0) +
+          (node["Rows Removed by Index Recheck"] ?? 0)) *
+        (node["Actual Loops"] ?? 1)
+      : 0) + (node.Plans ?? []).reduce((sum, child) => sum + read(child), 0);
+  // The function's own statements are logged as nested plans; the outer select is one more.
+  expect(plans.length).toBeGreaterThan(1);
+  return plans.reduce((sum, plan) => sum + read(plan), 0);
+}
 
 dbDescribe("PostgresJobStore", () => {
   let previousTrajectories: TrajectoryStore;
@@ -587,32 +645,25 @@ dbDescribe("the job queue under the R4–R6 review's hostile cases", () => {
         [kind, s.id]
       );
       expect(parked.rows[0].n).toBe(300_000);
-      // Warm the claim's plan once (a pooled connection keeps it), then time the next claims.
-      await withOwnerTx("operator", (tx) =>
-        tx.query("select 1 from job_claim('dbtest-warm', array[$1], 1, 60)", [
-          "dbtest.none",
-        ])
-      );
-      const timings: number[] = [];
+      // Bounded: a claim of 10 reads a few dozen rows of jobs, whatever else is queued or
+      // parked — it was every one of a tenant's 300 000 rows when the tenant probe could be
+      // served by jobs_tenant_created_idx (CI run 40098437851), and 423 ms of scanning before
+      // parking. The bound is tenants × kinds × limit with room for the suites' own rows.
+      expect(await rowsOfJobsAClaimReads([kind], 10)).toBeLessThan(2_000);
       let firstBatch: (string | null)[] = [];
       for (let i = 0; i < 3; i++) {
-        const started = performance.now();
         const claimed = await store.claim({
           workerId: `dbtest-perf-${i}`,
           kinds: [kind],
           limit: 10,
           leaseMs: 60_000,
         });
-        timings.push(performance.now() - started);
         if (i === 0) firstBatch = claimed.map((j) => j.tenantId);
         expect(claimed).toHaveLength(10);
       }
       // Fair: B's one job, enqueued after A's 300 000, is in the first batch.
       expect(firstBatch).toContain(b.id);
       expect(firstBatch).not.toContain(s.id);
-      // Fast: a few milliseconds measured locally (2–8 ms at 900 000 rows; it was 423 ms at
-      // 300 000 before parking). The bound leaves room for a slow CI machine.
-      expect(Math.min(...timings)).toBeLessThan(100);
     } finally {
       await bulk("delete from jobs where kind = $1", [kind]);
     }
@@ -701,36 +752,11 @@ dbDescribe("the job queue under the R4–R6 review's hostile cases", () => {
       reported: 2,
       failing: 1,
     });
-  });
+    // runDue may wait for the claim lock while other database suites run jobs in parallel.
+  }, 60_000);
 
-  it("finding 9: re-applying 050 keeps a dual-control key an operator removed removed", async () => {
-    const key = "jobs.tenancy.purge-due.enabled";
-    const read = async () =>
-      (
-        await owner<{ value: string[] }>(
-          "select value from platform_config where key = 'config.dual_control_keys'"
-        )
-      ).rows[0].value;
-    const before = await read();
-    expect(before).toContain(key);
-    await owner(
-      "update platform_config set value = value - $1 where key = 'config.dual_control_keys'",
-      [key]
-    );
-    const migration = readFileSync(
-      join(process.cwd(), "supabase/migrations/050_jobs.sql"),
-      "utf8"
-    );
-    try {
-      for (let i = 0; i < 2; i++) {
-        await withOwnerTx("operator", (tx) => tx.query(migration));
-        expect(await read()).not.toContain(key);
-      }
-    } finally {
-      await owner(
-        "update platform_config set value = $1::jsonb where key = 'config.dual_control_keys'",
-        [JSON.stringify(before)]
-      );
-    }
-  });
+  // Finding 9 (re-applying 050 keeps a dual-control key an operator removed removed) is proved by
+  // the migration replay (scripts/migration-replay.sh, "A third application: still removed"), not
+  // here: re-running a migration's DDL while the other database suites run in parallel takes
+  // table locks that deadlock with them (CI run 40098437851).
 });
