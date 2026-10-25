@@ -666,6 +666,18 @@ dbDescribe("the job queue under the R4–R6 review's hostile cases", () => {
       expect(firstBatch).not.toContain(s.id);
     } finally {
       await bulk("delete from jobs where kind = $1", [kind]);
+      // Leave the table as the other tests expect it: without its 600 000 dead rows, and with
+      // statistics that no longer say one kind holds most of it (vacuum cannot run in a
+      // transaction, so on its own connection).
+      const maintenance = new Client({
+        connectionString: process.env.TEST_DATABASE_OWNER_URL,
+      });
+      await maintenance.connect();
+      try {
+        await maintenance.query("vacuum analyze jobs");
+      } finally {
+        await maintenance.end();
+      }
     }
   }, 120_000);
 

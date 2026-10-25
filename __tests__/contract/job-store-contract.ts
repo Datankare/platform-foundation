@@ -334,8 +334,20 @@ export function runJobStoreContract(fx: JobStoreContractFixtures): void {
     const jobs = await claim();
     await store.complete(jobs[0]);
     await store.bury(jobs[1], "dead");
-    expect(await store.prune(new Date(Date.now() - 3_600_000), 100)).toBe(0);
-    const removed = await store.prune(new Date(Date.now() + 60_000), 100);
+    // Prune is store-wide: on a shared database other suites' finished jobs are pruned too, so
+    // only this test's own jobs are asserted on.
+    await store.prune(new Date(Date.now() - 3_600_000), 100);
+    expect((await store.listJobs({ kind })).map((j) => j.status).sort()).toEqual([
+      "dead",
+      "succeeded",
+    ]);
+    // Older finished jobs go first; prune until a pass removes less than its limit.
+    let removed = 0;
+    for (let pass = 0; pass < 1_000; pass++) {
+      const n = await store.prune(new Date(Date.now() + 60_000), 100);
+      removed += n;
+      if (n < 100) break;
+    }
     expect(removed).toBeGreaterThanOrEqual(1);
     const left = await store.listJobs({ kind });
     expect(left.map((j) => j.status)).toEqual(["dead"]);

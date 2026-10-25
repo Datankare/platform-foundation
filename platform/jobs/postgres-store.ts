@@ -346,13 +346,28 @@ export class PostgresJobStore implements JobStore {
   async listSchedules(): Promise<ScheduleState[]> {
     const { rows } = await withOwnerTx("operator", (tx) =>
       tx.query<ScheduleRow>(
-        `select s.kind, s.next_run_at, s.last_run_at, s.last_enqueued,
+        // The job counts are one grouped pass over the open and dead jobs of the scheduled
+        // kinds, not three subqueries per schedule: with statistics gathered while one kind
+        // held most of the table, the planner chose a sequential scan for each of them, and the
+        // console (CI run 40146887706) ran past the statement timeout.
+        `with counts as (
+           select j.kind,
+                  count(*) filter (where j.status = 'queued') as queued,
+                  count(*) filter (where j.status = 'running') as running,
+                  count(*) filter (where j.status = 'dead') as dead
+             from jobs j
+            where j.status in ('queued', 'running', 'dead')
+              and j.kind in (select kind from job_schedules)
+            group by j.kind
+         )
+         select s.kind, s.next_run_at, s.last_run_at, s.last_enqueued,
                 o.worst as last_status, o.error as last_error, o.finished as last_finished_at,
                 coalesce(o.reported, 0)::int as reported, coalesce(o.failing, 0)::int as failing,
-                (select count(*) from jobs j where j.kind = s.kind and j.status = 'queued')::int as queued,
-                (select count(*) from jobs j where j.kind = s.kind and j.status = 'running')::int as running,
-                (select count(*) from jobs j where j.kind = s.kind and j.status = 'dead')::int as dead
+                coalesce(c.queued, 0)::int as queued,
+                coalesce(c.running, 0)::int as running,
+                coalesce(c.dead, 0)::int as dead
            from job_schedules s
+           left join counts c on c.kind = s.kind
            left join lateral (
              select count(*) as reported,
                     count(*) filter (where x.status <> 'succeeded') as failing,
