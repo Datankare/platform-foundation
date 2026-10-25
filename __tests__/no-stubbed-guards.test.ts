@@ -8,16 +8,33 @@
  * (helpers/test-identities.ts); this test keeps it that way.
  */
 
-import { readdirSync, readFileSync, statSync } from "fs";
-import { join, relative } from "path";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { dirname, join, relative } from "path";
+import { APP_ROUTE_POLICY } from "@/platform/route-policy/app-route-policy";
+import { definitionsOf } from "./helpers/route-policy";
 
 /** Modules that decide who may do what. Tests use them as they are. */
 /** Escape every regular-expression metacharacter (CodeQL js/incomplete-sanitization). */
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 
-const GUARDS = ["@/platform/auth/admin-guard", "@/platform/auth/role-governance"];
-
 const ROOT = process.cwd();
+
+/**
+ * The platform's guards, and every module that defines a verifier the app declares
+ * (app-route-policy.ts `verifiers`, e.g. a consumer's lib/route-guard.ts): a consumer's guard
+ * mocked to allow everything hid its route tests' authorization the same way (audit A-18).
+ */
+const APP_GUARDS = APP_ROUTE_POLICY.verifiers.flatMap((name) =>
+  definitionsOf(name).map((file) => `@/${file.replace(/\.tsx?$/, "")}`)
+);
+const GUARDS = [
+  ...new Set([
+    "@/platform/auth/admin-guard",
+    "@/platform/auth/role-governance",
+    "@/platform/auth/actor-guard",
+    ...APP_GUARDS,
+  ]),
+];
 
 function testFiles(dir: string): string[] {
   const out: string[] = [];
@@ -64,6 +81,21 @@ describe("no stubbed guards", () => {
       return ns !== undefined && new RegExp(`jest\\.spyOn\\(\\s*${ns}\\b`).test(src);
     });
     expect(offenders).toEqual([]);
+  });
+
+  it.each(GUARDS)("no manual mock (__mocks__) replaces %s", (guard) => {
+    // A __mocks__ file next to a guard replaces it in every test that calls jest.mock on it —
+    // and in Playform's case answered "allowed" for every caller (audit A-18).
+    const file = guard.replace(/^@\//, "");
+    const manual = ["ts", "tsx", "js"].map((ext) =>
+      join(ROOT, dirname(file), "__mocks__", `${file.split("/").pop()}.${ext}`)
+    );
+    expect(manual.filter((m) => existsSync(m)).map((m) => relative(ROOT, m))).toEqual([]);
+  });
+
+  it("covers the platform's actor guard and each declared app verifier's module", () => {
+    expect(GUARDS).toContain("@/platform/auth/actor-guard");
+    expect(GUARDS).toEqual(expect.arrayContaining(APP_GUARDS));
   });
 
   it("the check catches a relative-path mock and a spy", () => {

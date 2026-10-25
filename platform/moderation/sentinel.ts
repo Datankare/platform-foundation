@@ -27,6 +27,7 @@
  * @module platform/moderation
  */
 
+import { revokeTokenVerification } from "@/platform/auth/token-verification";
 import type { AgentIdentity } from "@/platform/agents/types";
 import { generateId } from "@/platform/agents/utils";
 import { executeAgent } from "@/platform/agents/runtime";
@@ -93,20 +94,30 @@ export function consequenceToStatus(
   action: ConsequenceAction,
   currentStatus: AccountStatus
 ): AccountStatus {
-  switch (action) {
-    case "ban":
-      return "banned";
-    case "suspend":
-      return "suspended";
-    case "warn":
-      // Only upgrade to warned if currently active
-      return currentStatus === "active" ? "warned" : currentStatus;
-    case "none":
-      return currentStatus;
-    default:
-      return currentStatus;
-  }
+  const proposed: AccountStatus =
+    action === "ban"
+      ? "banned"
+      : action === "suspend"
+        ? "suspended"
+        : action === "warn"
+          ? "warned"
+          : currentStatus;
+  // A consequence only ever raises the account's standing, never lowers it (audit D-19: a
+  // suspension threshold reached by a banned account set it back to suspended). Only a human
+  // review lowers it.
+  return STANDING_RANK[proposed] > STANDING_RANK[currentStatus]
+    ? proposed
+    : currentStatus;
 }
+
+/** Account standings from least to most restrictive. */
+const STANDING_RANK: Readonly<Record<AccountStatus, number>> = {
+  active: 0,
+  warned: 1,
+  restricted: 2,
+  suspended: 3,
+  banned: 4,
+};
 
 // ---------------------------------------------------------------------------
 // Sentinel agent
@@ -462,20 +473,21 @@ export class Sentinel {
 // User status operations
 // ---------------------------------------------------------------------------
 
-/** Load user's current account status from the DB (the request's tenant). */
+/**
+ * Load the user's current account status from the DB (the request's tenant). Throws when it
+ * cannot be read or there is no such account (audit D-19): before, either answered "active", and
+ * the consequence then written could lower a ban. A throw fails the step, and the run reports
+ * the consequence as not applied (the strike is already recorded).
+ */
 async function loadUserStatus(userId: string): Promise<AccountStatus> {
-  try {
-    const { rows } = await withTenantTx((tx) =>
-      tx.query<{ account_status: string }>(
-        "select account_status from users where id = $1::uuid",
-        [userId]
-      )
-    );
-    if (!rows[0]) return "active";
-    return parseAccountStatus(rows[0].account_status);
-  } catch {
-    return "active";
-  }
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ account_status: string }>(
+      "select account_status from users where id = $1::uuid",
+      [userId]
+    )
+  );
+  if (!rows[0]) throw new Error("Sentinel: no such account");
+  return parseAccountStatus(rows[0].account_status);
 }
 
 /**
@@ -522,6 +534,9 @@ async function updateUserStatus(
         ]
       )
     );
+    // A suspended or banned account's remembered token verifications go at once, everywhere
+    // (platform/auth/token-verification.ts; users.id is the token's subject).
+    await revokeTokenVerification(userId);
   } catch (err) {
     logger.error("Sentinel: user status update failed", {
       userId,
@@ -535,7 +550,7 @@ async function updateUserStatus(
   }
 }
 
-/** Parse account_status string with fallback */
+/** Parse account_status; an unknown value is refused (it is never read as "active"). */
 function parseAccountStatus(raw: string): AccountStatus {
   const valid: ReadonlySet<string> = new Set([
     "active",
@@ -544,7 +559,8 @@ function parseAccountStatus(raw: string): AccountStatus {
     "suspended",
     "banned",
   ]);
-  return valid.has(raw) ? (raw as AccountStatus) : "active";
+  if (!valid.has(raw)) throw new Error("Sentinel: unknown account status");
+  return raw as AccountStatus;
 }
 
 // ---------------------------------------------------------------------------
@@ -593,10 +609,9 @@ export function resetSentinel(): void {
 //    from config, (c) set restricted_until on users table, (d) middleware
 //    enforcement to check restricted_until before allowing writes.
 //
-// 4. loadUserStatus returns "active" on any error (fail-open for reads).
-//    This is the opposite of fail-closed for writes. Rationale: if we
-//    can't read the status, the strike was still recorded (L19) — the
-//    consequence evaluation will be retried next time.
+// 4. loadUserStatus throws on any error, a missing account or an unknown status (audit D-19).
+//    The strike is already recorded (L19); the consequence is reported as not applied and is
+//    evaluated again at the next strike. It never reads a failure as "active".
 //
 // 5. SEVERITY_RANK is duplicated from guardian.ts. See strikes.ts Gotcha #5.
 //

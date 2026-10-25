@@ -63,6 +63,11 @@ afterEach(() => {
 });
 
 describe("screenMultimodalInput", () => {
+  it("refuses image input when no classifier is configured (audit X-18)", async () => {
+    const r = await screenMultimodalInput(imageReq, "r");
+    expect(r.refused).toBe(true);
+    expect(r.reason).toMatch(/escalate/);
+  });
   it("permits allowed image input", async () => {
     setModalityClassifiers(classifiers({}));
     expect((await screenMultimodalInput(imageReq, "r")).refused).toBe(false);
@@ -108,6 +113,10 @@ describe("detectMultimodalInput (ADR-047 signal, not gate)", () => {
     expect((await detectMultimodalInput(imageReq)).syntheticBlocks).toBe(1);
   });
   it("reports zero when detection is clean", async () => {
+    setSyntheticDetector(async () => ({ synthetic: false, confidence: 0.1 }));
     expect((await detectMultimodalInput(imageReq)).syntheticBlocks).toBe(0);
+  });
+  it("counts a block as synthetic when no detector is configured (audit X-18)", async () => {
+    expect((await detectMultimodalInput(imageReq)).syntheticBlocks).toBe(1);
   });
 });

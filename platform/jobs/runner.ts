@@ -458,6 +458,10 @@ async function releaseAll(
 /**
  * Run due work for at most `budgetMs`. Returns what was done; throws only for an invalid budget
  * (a store failure while claiming ends the call and is logged).
+ *
+ * @external It runs registered job handlers, which may reach outside the database: an audited act
+ * that calls it passes `{ external: true }` (review 14 L-6; __tests__/audited-external-guard.test.ts
+ * reads this tag).
  */
 export async function runDue(options: RunDueOptions): Promise<RunDueReport> {
   const budget = options.budgetMs;

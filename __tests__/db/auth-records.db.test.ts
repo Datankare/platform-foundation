@@ -50,6 +50,7 @@ import {
 import { withTenantTx } from "@/platform/data";
 import { runWithoutTenant } from "@/platform/tenancy/context";
 import { runTenantIsolationContract } from "../contract/tenant-isolation-contract";
+import { catalogName, createCatalog, dropCatalog, newRun } from "../helpers/db-admin";
 import { dataSpy, resetDataSpy, uuid } from "../helpers/data-spy";
 import {
   DB_ENABLED,
@@ -321,13 +322,24 @@ dbDescribe(SUITE, () => {
 
 // ── Entitlement assignments ─────────────────────────────────────────────────────────────
 
+/** A verified admin holding `permissions` (the rules are applied to what they hold). */
+const asAdmin = (
+  userId: string,
+  permissions: string[] = ["admin_manage_entitlements"]
+) => ({
+  userId,
+  sub: `sub-${userId}`,
+  roleName: "admin",
+  permissions,
+});
+
 dbDescribe(`${SUITE} entitlements`, () => {
   it("lists no entitlements for a user with none", async () => {
     await expect(t.run(() => getUserEntitlements(user))).resolves.toEqual([]);
   });
 
   it("a grant of a group the catalog does not hold is refused, with a failed follow-up record", async () => {
-    const admin = await t.user("admin");
+    const admin = asAdmin(await t.user("admin"));
     const out = await t.run(() =>
       grantEntitlement({
         userId: user,
@@ -344,7 +356,7 @@ dbDescribe(`${SUITE} entitlements`, () => {
   });
 
   it("revokes by marking; a revoke that matches nothing succeeds, recorded first", async () => {
-    const admin = await t.user("admin");
+    const admin = asAdmin(await t.user("admin"));
     await expect(
       t.run(() =>
         revokeEntitlement({
@@ -366,7 +378,7 @@ dbDescribe(`${SUITE} entitlements`, () => {
   });
 
   it("changes nothing when the audit log is unavailable", async () => {
-    const admin = await t.user("admin");
+    const admin = asAdmin(await t.user("admin"));
     dataSpy().auditDown = true;
     await expect(
       t.run(() =>
@@ -388,6 +400,81 @@ dbDescribe(`${SUITE} entitlements`, () => {
   it("lists nothing when the store cannot be read", async () => {
     await runWithoutTenant(async () => {
       await expect(getUserEntitlements(user)).resolves.toEqual([]);
+    });
+  });
+
+  // ── Release review RR-17: the grant rules are the function's own ──
+
+  describe("the role rules", () => {
+    const RUN = newRun();
+    let groups: Record<string, string>;
+    beforeAll(async () => {
+      const cat = await createCatalog(RUN, {
+        permissions: ["perk"],
+        roles: {},
+        groups: {
+          plain: { permissions: ["perk"] },
+          mighty: { permissions: ["admin_manage_roles"] },
+        },
+      });
+      groups = cat.groups;
+    });
+    afterAll(dropCatalog);
+
+    it("grants a group whose permissions the admin holds", async () => {
+      const admin = asAdmin(await t.user("admin"), [catalogName(RUN, "perk")]);
+      await expect(
+        t.run(() =>
+          grantEntitlement({
+            userId: user,
+            entitlementGroupId: groups.plain,
+            grantedBy: admin,
+          })
+        )
+      ).resolves.toEqual({ success: true });
+      await expect(
+        t.run(() =>
+          revokeEntitlement({
+            userId: user,
+            entitlementGroupId: groups.plain,
+            revokedBy: admin,
+          })
+        )
+      ).resolves.toEqual({ success: true });
+    });
+
+    it("refuses a group carrying a permission the admin does not hold — granting or revoking", async () => {
+      const admin = asAdmin(await t.user("admin"), [catalogName(RUN, "perk")]);
+      const granted = await t.run(() =>
+        grantEntitlement({
+          userId: user,
+          entitlementGroupId: groups.mighty,
+          grantedBy: admin,
+        })
+      );
+      expect(granted).toMatchObject({ success: false, error: "auth.grant_exceeds_own" });
+      const revoked = await t.run(() =>
+        revokeEntitlement({
+          userId: user,
+          entitlementGroupId: groups.mighty,
+          revokedBy: admin,
+        })
+      );
+      expect(revoked).toMatchObject({ success: false, error: "auth.grant_exceeds_own" });
+      expect(await sql(t, "select id from user_entitlements")).toEqual([]);
+    });
+
+    it("refuses an admin changing their own entitlements", async () => {
+      const id = await t.user("self");
+      const admin = asAdmin(id, [catalogName(RUN, "perk")]);
+      const out = await t.run(() =>
+        grantEntitlement({
+          userId: id,
+          entitlementGroupId: groups.plain,
+          grantedBy: admin,
+        })
+      );
+      expect(out).toMatchObject({ success: false, error: "auth.role_self_change" });
     });
   });
 });
@@ -508,19 +595,21 @@ dbDescribe(`${SUITE} data export`, () => {
     expect(data._meta).toMatchObject({ userId: user, format: "JSON" });
   });
 
-  it("includes registered modules and reports their errors", async () => {
+  it("includes registered modules; a failing one withholds the whole export (RR-23)", async () => {
     registerExportModule({
       moduleName: "db-test-module",
       description: "x",
       collectData: async () => ({ data: { ok: true } }),
     });
+    const whole = await t.run(() => exportUserData(user));
+    expect(whole.data["db-test-module"]).toEqual({ ok: true });
     registerExportModule({
       moduleName: "db-test-failing",
       description: "x",
       collectData: async () => ({ data: {}, error: "nope" }),
     });
     const { data, errors } = await t.run(() => exportUserData(user));
-    expect(data["db-test-module"]).toEqual({ ok: true });
+    expect(data).toEqual({});
     expect(errors).toEqual(["db-test-failing: nope"]);
     registerExportModule({
       moduleName: "db-test-failing",
@@ -533,7 +622,7 @@ dbDescribe(`${SUITE} data export`, () => {
     await sql(t, "update users set deleted_at = now() where id = $1::uuid", [user]);
     const { data, errors } = await t.run(() => exportUserData(user));
     expect(errors).toContain("users: no live user row");
-    expect(data.profile).toBeUndefined();
+    expect(data).toEqual({});
   });
 
   it("returns no data when the export cannot be recorded; estimates without recording", async () => {
@@ -563,12 +652,12 @@ dbDescribe(`${SUITE} data export`, () => {
   it("never includes another tenant's rows, and reports an unreadable store", async () => {
     const other = await createTestTenant();
     const { data, errors } = await other.run(() => exportUserData(user));
-    expect(data.profile).toBeUndefined();
-    expect(data.consents).toEqual([]);
+    expect(data).toEqual({});
     expect(errors).toContain("users: no live user row");
     await runWithoutTenant(async () => {
       const out = await exportUserData(user);
-      expect(out.errors).toEqual(["audit unavailable"]);
+      expect(out.data).toEqual({});
+      expect(out.errors).toEqual([expect.stringMatching(/^store: No tenant context/)]);
     });
   });
 });
@@ -648,7 +737,7 @@ dbDescribe(`${SUITE} deletion`, () => {
 
   it("hard purge removes the user row (and its children) when every step succeeds", async () => {
     await t.run(() => registerDevice(user, "dev-1"));
-    await expect(t.run(() => hardPurgeUser(user))).resolves.toEqual({
+    await expect(t.run(() => hardPurgeUser(user))).resolves.toMatchObject({
       success: true,
       errors: [],
     });

@@ -19,3 +19,14 @@ export function fuzzRuns(): number {
 export function fuzzParams<T>(): FcParameters<T> {
   return { numRuns: fuzzRuns() };
 }
+
+/**
+ * fast-check parameters for one of `parts` tests that together run one property (review 14 M-1):
+ * each runs its share of fuzzRuns(), so the parts reach the same depth as one test would — in the
+ * fuzz job too — while no single test comes near its time bound.
+ */
+export function fuzzParamsPart<T>(parts: number): FcParameters<T> {
+  if (!Number.isInteger(parts) || parts < 1)
+    throw new RangeError("parts must be a positive integer");
+  return { numRuns: Math.ceil(fuzzRuns() / parts) };
+}

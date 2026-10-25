@@ -240,14 +240,25 @@ export async function executeAgent(
         break;
       }
 
-      // Hard step limit (safety net)
+      // Hard step limit (safety net). The workflow asked to continue, so it has NOT finished: a
+      // truncated run is never reported completed (audit C-9, D-13). A caller that trusted
+      // "completed" took whatever it had accumulated — Guardian a default allow before its
+      // decision step, Sentinel no consequence before its last step.
       if (stepCount >= stepCap) {
-        logger.warn("Agent hit step limit", {
+        logger.warn("Agent hit step limit before its workflow finished", {
           agentId,
           trajectoryId,
           maxSteps: stepCap,
         });
-        break;
+        await trajectoryStore.updateStatus(trajectoryId, "paused");
+        return {
+          success: false,
+          trajectoryId,
+          stepsCompleted: stepCount,
+          totalCostUsd,
+          finalStatus: "paused",
+          error: `step limit (${stepCap}) reached before the workflow finished`,
+        };
       }
     }
 
@@ -255,8 +266,7 @@ export async function executeAgent(
     // ADR-029 D10: an unresolved external effect makes the whole workflow
     // indeterminate. Reporting completed here would be an at-least-once violation
     // if the effect did fire, and the guess would leave no trace.
-    const unresolved = await effectLedger.listUnresolved();
-    const mine = unresolved.filter((e) => e.operationId === trajectoryId);
+    const mine = await unresolvedEffectsOf(effectLedger, trajectoryStore, trajectoryId);
     if (mine.length > 0) {
       await trajectoryStore.updateStatus(trajectoryId, "indeterminate");
       return {
@@ -434,14 +444,28 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
       totalCostUsd += outcome.costUsd;
 
       if (!outcome.continueExecution) break;
-      if (stepCount >= agentConfig.budgetConfig.maxStepsPerTrajectory) break;
+      // As executeAgent: a run cut short by the step cap has not finished (audit C-9).
+      if (stepCount >= agentConfig.budgetConfig.maxStepsPerTrajectory) {
+        await trajectoryStore.updateStatus(args.trajectoryId, "paused");
+        return {
+          success: false,
+          trajectoryId: args.trajectoryId,
+          stepsCompleted: stepCount,
+          totalCostUsd,
+          finalStatus: "paused",
+          error: `step limit (${agentConfig.budgetConfig.maxStepsPerTrajectory}) reached before the workflow finished`,
+        };
+      }
     }
 
     // ADR-029 D10, same guard as executeAgent. Resume runs after a crash or a pause,
     // which is exactly when an external effect was left in flight — so this path is the
     // likeliest to meet an unresolved one, not the least.
-    const unresolved = await effectLedger.listUnresolved();
-    const mine = unresolved.filter((e) => e.operationId === args.trajectoryId);
+    const mine = await unresolvedEffectsOf(
+      effectLedger,
+      trajectoryStore,
+      args.trajectoryId
+    );
     if (mine.length > 0) {
       await trajectoryStore.updateStatus(args.trajectoryId, "indeterminate");
       return {
@@ -473,4 +497,29 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
       error: err instanceof Error ? err.message : "Unknown error",
     };
   }
+}
+
+/**
+ * The unresolved external effects of one run (ADR-029 D10). An effect is the run's when it was
+ * recorded under the run's trajectory id, or under an operation one of its steps carries, or
+ * under a step operation of the trajectory (op_<trajectory>_<step>, the id the governed pipeline
+ * gives a step). Matching the trajectory id alone found none of the effects a governed tool
+ * records — their operation is the step's — so an unresolved one let the run report completed
+ * (audit C-18).
+ */
+async function unresolvedEffectsOf(
+  effectLedger: EffectLedger,
+  trajectoryStore: TrajectoryStore,
+  trajectoryId: string
+): Promise<readonly { operationId: string }[]> {
+  const record = await trajectoryStore.getById(trajectoryId);
+  const operations = new Set<string>([trajectoryId]);
+  for (const step of record?.trajectory.steps ?? []) {
+    if (step.operationId) operations.add(step.operationId);
+  }
+  const stepPrefix = `op_${trajectoryId}_`;
+  const unresolved = await effectLedger.listUnresolved();
+  return unresolved.filter(
+    (e) => operations.has(e.operationId) || e.operationId.startsWith(stepPrefix)
+  );
 }

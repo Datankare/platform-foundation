@@ -76,7 +76,14 @@ export function assertValidSchema(
   );
 }
 
-/** Non-throwing form, for callers deciding whether to retry. */
+/**
+ * Non-throwing form, for callers deciding whether to retry. A schema that does not compile
+ * validates nothing: false (TASK-147 — it threw).
+ */
 export function isValidSchema(schema: Record<string, unknown>, data: unknown): boolean {
-  return validatorFor(schema)(data) === true;
+  try {
+    return validatorFor(schema)(data) === true;
+  } catch {
+    return false;
+  }
 }

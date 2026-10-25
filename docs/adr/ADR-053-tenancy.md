@@ -1,6 +1,6 @@
 # ADR-053: Tenancy — One Codebase, Shared or Dedicated Deployment
 
-Status: Proposed (Phase 5 Sprint 7R entry gate, 2026-10-21); amended in implementation (§6). Decision maker: Raman Sud.
+Status: Accepted (2026-10-24, Sprint 7R close, platform-foundation v6.0.0). Proposed at the Sprint 7R entry gate (2026-10-21); amended in implementation (§6). Decision maker: Raman Sud.
 Related: ADR-012 (auth), ADR-013 (roles), ADR-023/042 (RAG scope), ADR-048 (governed budgets), ADR-050 (environment contract), ADR-052 (rate limiting), ADR-055 (deploy anywhere), TASK-126, TASK-137, TASK-138, TASK-144.
 
 ---
@@ -70,8 +70,11 @@ Connection management at scale was weighed explicitly: it exists in both options
 
 ## 4. Delivery
 
+Both lists below were delivered in Sprint 7R (R3, 2026-10-24): 7T was brought into 7R whole rather than run as its own sprint, so the Postgres stores pass the isolation kit in 7R, not 7T. Where the implementation differs from the decisions, §6 says how. Still ahead: RDS Proxy confirmed for `set_config()` (7P, D4).
+
 - **Sprint 7R (groundwork):** tenant context, `TENANCY_MODE`/`TENANT_ID` in the contract, the `tenants` and `tenant_domains` tables with one default tenant, `tenantId` on actors, guest tokens and agent identity, `adminGuard` returning the verified admin (TASK-138), UTC budget days (TASK-144), and the isolation kit running against the in-memory stores (the Postgres stores pass it in 7T).
 - **Sprint 7T (everywhere):** the `platform/data` layer and pooler settings; the 83 access paths (70 through the shared client in 32 files, 13 files calling the REST API) moved onto it; `tenant_id` and forced policies on every tenant-owned table; the `app_tenant` login role; platform-table and owner-rights-function rules; private realtime channels (TASK-114); the service-role key off request paths; layered config, per-tenant roles, keys, limits, budgets, audit and metrics; the lifecycle — each store passing the isolation kit on Postgres.
+- **Sprint 7R close (R7):** every data-layer transaction computes in UTC — `TimeZone` is set to UTC per transaction with the tenant (`platform/data/tx.ts`), so day arithmetic (`now() + interval '30 days'`, `date_trunc`, `current_date`) and the UTC budget day of D6 do not depend on a database or role time zone; a purge window was 30 days and an hour in a session set to America/New_York across a DST change (TASK-159).
 
 ## 5. Consequences
 

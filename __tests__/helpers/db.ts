@@ -26,6 +26,17 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !DB_ENABLED) {
   );
 }
 
+/**
+ * The bound on every test that uses the database (review 14 M-1): 30 s, not jest's default 5 s.
+ * DB suites share one database and run in parallel workers — under CI load (test:coverage,
+ * test:core, the TZ rerun) a statement waits on the others, and a test well inside its work could
+ * be failed by the clock. Set here, so every suite that imports this helper has it under any jest
+ * configuration — a consumer's own included — and by path in jest.setup.ts for every file under
+ * __tests__/db.
+ */
+export const DB_TEST_TIMEOUT_MS = 30_000;
+jest.setTimeout(DB_TEST_TIMEOUT_MS);
+
 /** describe() when a database is available, describe.skip() otherwise. */
 export const dbDescribe: jest.Describe = DB_ENABLED ? describe : describe.skip;
 

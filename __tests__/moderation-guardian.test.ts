@@ -25,9 +25,17 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "mock-req-id",
 }));
 
-// Mock platform config — return intended defaults (simulates DB available)
+// Mock platform config — return intended defaults (simulates DB available). A test may set the
+// governed step cap (audit D-13).
+const mockStepCap: { value?: number } = {};
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: jest.fn(async (key: string, defaultValue: unknown) => {
+    if (
+      key === "agent.budget.max_steps_per_trajectory" &&
+      mockStepCap.value !== undefined
+    ) {
+      return mockStepCap.value;
+    }
     const configMap: Record<string, unknown> = {
       "moderation.level1.block_severity": "medium",
       "moderation.level1.warn_severity": "low",
@@ -167,6 +175,29 @@ describe("Guardian — trajectory (P18)", () => {
 // ---------------------------------------------------------------------------
 // Blocklist short-circuit
 // ---------------------------------------------------------------------------
+
+describe("Guardian — a run cut short by the step cap (audit D-13, C-9)", () => {
+  afterEach(() => {
+    delete mockStepCap.value;
+  });
+
+  it.each([1, 2, 3])(
+    "never answers the default allow when the governed step cap is %d — it escalates",
+    async (cap) => {
+      registerPlatformAgents();
+      mockStepCap.value = cap;
+      mockClassifierUnsafe("critical", 0.99);
+      const result = await new Guardian().screen(
+        "something the classifier would block",
+        "input",
+        "req-cap",
+        makeContext()
+      );
+      expect(result.action).not.toBe("allow");
+      expect(result.action).toBe("escalate");
+    }
+  );
+});
 
 describe("Guardian — blocklist", () => {
   it("blocks critical blocklist hits without calling classifier", async () => {

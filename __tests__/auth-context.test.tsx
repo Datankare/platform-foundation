@@ -15,12 +15,11 @@ function AuthDisplay() {
       <span data-testid="authenticated">{auth.isAuthenticated.toString()}</span>
       <span data-testid="guest">{auth.isGuest.toString()}</span>
       <span data-testid="email">{auth.user?.email || "none"}</span>
-      <button onClick={auth.signOut}>Sign Out</button>
+      <button onClick={() => void auth.signOut()}>Sign Out</button>
       <button
         onClick={() =>
           auth.setSession({
             accessToken: "test-token",
-            refreshToken: "test-refresh",
             userId: "user-1",
             email: "test@example.com",
             emailVerified: true,
@@ -33,7 +32,6 @@ function AuthDisplay() {
         onClick={() =>
           auth.setSession({
             accessToken: "guest-token",
-            refreshToken: "",
             userId: "guest-1",
             email: "",
             emailVerified: false,
@@ -106,7 +104,8 @@ describe("AuthContextProvider", () => {
     expect(screen.getByTestId("email").textContent).toBe("test@example.com");
   });
 
-  it("setSession stores tokens in localStorage", () => {
+  it("setSession stores the access token only — never a refresh token (audit X-17)", () => {
+    mockStorage["pf_refresh_token"] = "left-by-an-earlier-version";
     render(
       <AuthContextProvider>
         <AuthDisplay />
@@ -118,7 +117,7 @@ describe("AuthContextProvider", () => {
     });
 
     expect(mockStorage["pf_access_token"]).toBe("test-token");
-    expect(mockStorage["pf_refresh_token"]).toBe("test-refresh");
+    expect(mockStorage["pf_refresh_token"]).toBeUndefined();
     expect(mockStorage["pf_user"]).toContain("test@example.com");
   });
 
@@ -137,7 +136,9 @@ describe("AuthContextProvider", () => {
     expect(screen.getByTestId("guest").textContent).toBe("true");
   });
 
-  it("signOut clears user state and localStorage", () => {
+  it("signOut revokes on the server, then clears user state and localStorage", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    global.fetch = fetchMock as unknown as typeof fetch;
     render(
       <AuthContextProvider>
         <AuthDisplay />
@@ -151,12 +152,38 @@ describe("AuthContextProvider", () => {
     expect(screen.getByTestId("authenticated").textContent).toBe("true");
 
     // Sign out
+    await act(async () => {
+      screen.getByText("Sign Out").click();
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/sign-out",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer test-token" },
+      })
+    );
+    expect(screen.getByTestId("authenticated").textContent).toBe("false");
+    expect(mockStorage["pf_access_token"]).toBeUndefined();
+    expect(mockStorage["pf_user"]).toBeUndefined();
+  });
+
+  it("signs out here even when the server cannot be reached", async () => {
+    global.fetch = jest
+      .fn()
+      .mockRejectedValue(new Error("offline")) as unknown as typeof fetch;
+    render(
+      <AuthContextProvider>
+        <AuthDisplay />
+      </AuthContextProvider>
+    );
     act(() => {
+      screen.getByText("Set Session").click();
+    });
+    await act(async () => {
       screen.getByText("Sign Out").click();
     });
     expect(screen.getByTestId("authenticated").textContent).toBe("false");
     expect(mockStorage["pf_access_token"]).toBeUndefined();
-    expect(mockStorage["pf_user"]).toBeUndefined();
   });
 
   it("restores session from localStorage on mount", () => {

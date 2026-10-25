@@ -42,7 +42,7 @@ export {
   enforceDailyPaidQuota,
 } from "./daily-quota";
 export type { RateLimitSubject } from "./enforce";
-export { getClientIp } from "./client-ip";
+export { addressBucket, getClientBucket, getClientIp } from "./client-ip";
 
 export {
   createRateLimiter,

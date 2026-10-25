@@ -30,6 +30,30 @@ export type {
 
 /** The platform's codes. A consuming app adds its own in app-codes.ts (ADR-051 D1). */
 export const PLATFORM_ERROR_CODES = {
+  "account.age_already_recorded": {
+    status: 409,
+    params: [],
+    action:
+      "The account's date of birth is already recorded and cannot be changed here; contact support to correct it.",
+  },
+  "account.age_unverified": {
+    status: 403,
+    params: [{ name: "feature", kind: "id" }],
+    action:
+      "Ask for the user's date of birth and send it once to POST /api/account/age, then retry.",
+  },
+  "account.consent_required": {
+    status: 403,
+    params: [{ name: "feature", kind: "id" }],
+    action:
+      "Explain that a parent or guardian must give consent before this feature can be used; do not retry.",
+  },
+  "account.export_too_large": {
+    status: 413,
+    params: [{ name: "limit", kind: "number" }],
+    action:
+      "Explain that the account holds more data than one export can carry and that nothing was cut off; contact support for the full copy.",
+  },
   "account.not_found": {
     status: 403,
     params: [],
@@ -59,6 +83,14 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "key", kind: "id" }],
     action:
       "Explain that this setting governs the platform and only an operator can change it; do not retry.",
+  },
+  // Review 11 M-2: the agent kill switch could not suspend the tenant's agents — the registry was
+  // unreadable or not well-formed, changed while it was written, or could not be written.
+  "admin.kill_switch_failed": {
+    status: 409,
+    params: [],
+    action:
+      "Retry; if it fails again, suspend each agent from the config page (agent.trusted_agents) — a suspension applies at once.",
   },
   "admin.operator_only": {
     status: 403,
@@ -92,6 +124,14 @@ export const PLATFORM_ERROR_CODES = {
     params: [],
     action: "Tell the requester to submit the change again.",
   },
+  // Review 11 H-1: an approved run did not end within its lease and its outcome is unknown; it is
+  // not runnable, and only a decision on its outcome clears it.
+  "approvals.indeterminate": {
+    status: 409,
+    params: [],
+    action:
+      "Verify whether the change took effect, then mark it executed (decision mark_executed) or approve it again (decision reapprove).",
+  },
   "approvals.hold_not_found": {
     status: 404,
     params: [],
@@ -102,10 +142,26 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "permission", kind: "id" }],
     action: "Route to a holder of it.",
   },
+  // Review 10 H2: the approved run failed before taking effect; the approval was kept (its claim
+  // released), so approving again retries it — "try again" is true.
+  "approvals.run_failed": {
+    status: 503,
+    params: [],
+    action: "Approve it again to retry, or reject it.",
+  },
   "approvals.self_approval": {
     status: 409,
     params: [],
     action: "Route to another approver.",
+  },
+  // Review 12 H2: the setting a held change would replace was changed since it was requested (a
+  // kill switch, a power reduction, another approved change); nothing was applied and the hold is
+  // withdrawn.
+  "approvals.stale": {
+    status: 409,
+    params: [],
+    action:
+      "Nothing was changed and the request is withdrawn. Tell the requester to submit the change again against the current value.",
   },
   "auth.account_exists": {
     status: 409,
@@ -132,10 +188,25 @@ export const PLATFORM_ERROR_CODES = {
     params: [],
     action: "Show the verification step.",
   },
+  "auth.default_role_limited": {
+    status: 403,
+    params: [
+      { name: "role", kind: "id" },
+      { name: "permission", kind: "id" },
+    ],
+    action:
+      "Explain that the role every new account gets cannot carry staff permissions; grant them through another role.",
+  },
   "auth.grant_exceeds_own": {
     status: 403,
     params: [{ name: "permission", kind: "id" }],
     action: "Ask an administrator who holds the permission.",
+  },
+  "auth.guest_refused": {
+    status: 403,
+    params: [],
+    action:
+      "Explain that this account's restriction also applies to guest use; offer the appeal route, not a guest session.",
   },
   "auth.guest_invalid": {
     status: 401,
@@ -146,6 +217,12 @@ export const PLATFORM_ERROR_CODES = {
     status: 401,
     params: [],
     action: "Let the user retry.",
+  },
+  "auth.mfa_required": {
+    status: 403,
+    params: [],
+    action:
+      "Ask the user to set up MFA (POST /api/auth/mfa/setup, then /verify) and sign in again with it; administrative access needs a second factor.",
   },
   "auth.password_policy": {
     status: 400,
@@ -306,6 +383,30 @@ export const PLATFORM_ERROR_CODES = {
     status: 400,
     params: [],
     action: "Fix the client request.",
+  },
+  "request.json_too_deep": {
+    status: 400,
+    params: [{ name: "max", kind: "number" }],
+    action: "Send the data with less nesting; nothing was stored.",
+  },
+  "request.json_too_large": {
+    status: 413,
+    params: [{ name: "max", kind: "number" }],
+    action: "Send less data in one record; nothing was stored.",
+  },
+  // Review 10 L10: one trajectory records at most so many steps and bytes; refused before the
+  // action runs, so nothing was done.
+  "request.trajectory_full": {
+    status: 409,
+    params: [{ name: "max", kind: "number" }],
+    action: "Start a new run; nothing was done.",
+  },
+  // Review 12 M2: a session's or run's trajectory chain holds at most
+  // agents.trajectory_max_segments segments (governed); refused before the action runs.
+  "request.trajectory_chain_full": {
+    status: 409,
+    params: [{ name: "max", kind: "number" }],
+    action: "Start a new session or run; nothing was done.",
   },
   "request.invalid_json": {
     status: 400,

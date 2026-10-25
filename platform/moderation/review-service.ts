@@ -29,6 +29,7 @@ import type {
   ReviewPriority,
   ReviewQueryOptions,
   ReviewResult,
+  ReviewUpdateExpectation,
 } from "./review-types";
 import type { AccountStatus, ModerationResult, ModerationAction } from "./types";
 import type { ExplanationChain } from "@/platform/rag/types";
@@ -384,9 +385,12 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
     };
   }
 
-  // Recorded before anything changes; with no record nothing changes (audit X-8). The account
-  // and strike are restored before the item is marked resolved, so a failed restoration leaves
-  // the item claimed and retryable rather than resolved with the user still banned.
+  // Recorded before anything changes; with no record nothing changes (audit X-8). The item is
+  // resolved first, and only while still claimed by this reviewer, so of a reviewer and the
+  // escalation reaper (or a reviewer who re-claimed a released item) exactly one decides (audit
+  // D-16: the account was restored before the guarded resolve, so a resolve that lost the race
+  // had already overturned). A restoration that then fails reopens the item, claimed by this
+  // reviewer and retryable, rather than leaving it resolved with the user still banned.
   try {
     return await audited(
       {
@@ -405,14 +409,9 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
         },
       },
       async (): Promise<ReviewResult> => {
-        if (input.decision === "overturn") {
-          const failure = await applyOverturnSideEffects(item, input.reviewerId);
-          if (failure)
-            return { success: false, error: failure, errorCode: "internal.error" };
-        }
         // Resolved only while still claimed by this reviewer: a release or another reviewer's
         // decision in between is a conflict, never a second resolution.
-        return store.update(
+        const resolved = await store.update(
           input.itemId,
           {
             status: "resolved",
@@ -424,6 +423,25 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
           },
           { status: "claimed", claimedBy: input.reviewerId }
         );
+        if (!resolved.success || input.decision !== "overturn") return resolved;
+        const failure = await applyOverturnSideEffects(item, input.reviewerId);
+        if (!failure) return resolved;
+        const reopened = await store.update(
+          input.itemId,
+          { status: "claimed", claimedBy: input.reviewerId },
+          { status: "resolved", claimedBy: input.reviewerId }
+        );
+        if (!reopened.success) {
+          logger.error(
+            "Review: overturn not applied and the item could not be reopened",
+            {
+              reviewItemId: input.itemId,
+              error: reopened.error,
+              route: "platform/moderation/review-service",
+            }
+          );
+        }
+        return { success: false, error: failure, errorCode: "internal.error" };
       }
     );
   } catch (err) {
@@ -437,6 +455,17 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
     }
     throw err;
   }
+}
+
+/**
+ * What the reaper expects of an item it changes: its status as read and, for a claimed item, the
+ * same claimer (audit D-16) — an item released and claimed again in between is the new
+ * reviewer's.
+ */
+function reapExpectation(item: ReviewQueueItem): ReviewUpdateExpectation {
+  return item.status === "claimed" && item.claimedBy
+    ? { status: item.status, claimedBy: item.claimedBy }
+    : { status: item.status };
 }
 
 /** A moderator never reviews a case about their own account (audit X-6). */
@@ -828,7 +857,7 @@ export async function reapOverdueEscalations(
           store.update(
             item.id,
             { status: "pending", priority: "critical" },
-            { status: item.status }
+            reapExpectation(item)
           )
       );
       if (res.success) escalatedHigher++;
@@ -861,7 +890,7 @@ export async function reapOverdueEscalations(
             resolvedAt: now.toISOString(),
             reviewerNotes: `Auto-blocked: escalation exceeded the ${slaHours}h SLA without human review (ADR-041).`,
           },
-          { status: item.status }
+          reapExpectation(item)
         )
     );
     if (res.success) blocked++;
@@ -876,10 +905,12 @@ const REAPER = "escalation-reaper";
 /** One reaper change under audited(); an unwritable record skips the item (next sweep retries). */
 async function reapAudited(
   entry: Parameters<typeof audited>[0],
-  act: () => Promise<ReviewResult>
+  act: () => Promise<ReviewResult>,
+  /** As audited()'s: `external` when the act reaches outside the database (review 14 L-6). */
+  options: { readonly external?: boolean } = {}
 ): Promise<ReviewResult> {
   try {
-    return await audited(entry, act);
+    return await audited(entry, act, options);
   } catch (err) {
     if (err instanceof AuditWriteError) {
       return {

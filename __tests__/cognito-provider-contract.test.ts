@@ -22,6 +22,7 @@ import {
   type CognitoConfig,
 } from "@/platform/auth/cognito-provider";
 import { mintGuestToken } from "@/platform/auth/guest-token";
+import { TEST_JWKS, signJwt } from "./helpers/test-jwt";
 
 const C = AUTH_CONTRACT;
 
@@ -32,17 +33,21 @@ const TEST_CONFIG: CognitoConfig = {
   // TASK-101: SSO needs the declared hosted sign-in domain.
   hostedUiDomain: "testpool.auth.us-east-1.amazoncognito.com",
   timeoutMs: 5000,
+  jwks: TEST_JWKS,
 };
 
+// Signed as the pool signs (review 8 M5: the provider checks the signature before GetUser).
 function fakeJwt(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${header}.${body}.fake-signature`;
+  return signJwt(payload);
 }
 
+// An access token issued to this app client by this pool (audit A-3).
 const VALID_ACCESS_TOKEN = fakeJwt({
   sub: "user-123",
   email: C.email,
+  token_use: "access",
+  client_id: TEST_CONFIG.clientId,
+  iss: `https://cognito-idp.${TEST_CONFIG.region}.amazonaws.com/${TEST_CONFIG.userPoolId}`,
   iat: 1000,
   exp: 9_999_999_999,
 });

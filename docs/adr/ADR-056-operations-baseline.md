@@ -1,6 +1,6 @@
 # ADR-056: Operations Baseline — Recovery, Background Work, Health, Alerting and Objectives
 
-Status: Proposed (Phase 5 Sprint 7R entry gate, 2026-10-21). Decision maker: Raman Sud.
+Status: Accepted (2026-10-24, Sprint 7R close, platform-foundation v6.0.0). Proposed at the Sprint 7R entry gate (2026-10-21); implementation in §5–§6. Decision maker: Raman Sud.
 Related: ADR-014 (observability), ADR-041 (escalation SLA), ADR-048 (governed budgets), ADR-053 (tenancy), ADR-055 (deploy anywhere), TASK-129, TASK-141, TASK-142, TASK-143. `platform/observability/**`, `platform/jobs/**`, `docs/runbooks/**`.
 
 ---
@@ -19,7 +19,7 @@ A mission-critical claim needs an operations layer the platform does not have. A
 
 **D1 — Recovery targets.** Production: **RPO ≤ 5 minutes** through point-in-time recovery (Supabase PITR; RDS automated backups on AWS); **RTO ≤ 1 hour** to a restored, serving deployment. A restore drill — restore to a new database, run the migration-replay checks and the smoke test against it — runs every quarter and after any change to the schema baseline, and its result is recorded.
 
-**D2 — Background work is durable and host-neutral.** A Postgres-backed job queue (`platform/jobs`): jobs are rows, claimed with `FOR UPDATE SKIP LOCKED` by a narrow claim function — the one cross-tenant step, running with owner rights and closed to `anon` and `authenticated` (TASK-137's replay check) — then each job runs inside its tenant's context through the data layer (ADR-053 D4), retried with backoff, idempotent by key, and moved to a dead-letter state after their last attempt, where an operator sees and replays them. A scheduler records recurring jobs and enqueues them when due. The host only provides a tick: Vercel Cron on Vercel, EventBridge Scheduler on AWS, each calling one signed internal route that runs due work for a bounded time. In 7R, before the data layer exists (7T), jobs reach Postgres through the claim function and the existing stores; they move onto `platform/data` with the rest in 7T.
+**D2 — Background work is durable and host-neutral.** A Postgres-backed job queue (`platform/jobs`): jobs are rows, claimed with `FOR UPDATE SKIP LOCKED` by a narrow claim function — the one cross-tenant step, running with owner rights and closed to `anon` and `authenticated` (TASK-137's replay check) — then each job runs inside its tenant's context through the data layer (ADR-053 D4), retried with backoff, idempotent by key, and moved to a dead-letter state after their last attempt, where an operator sees and replays them. A scheduler records recurring jobs and enqueues them when due. The host only provides a tick: Vercel Cron on Vercel, EventBridge Scheduler on AWS, each calling one signed internal route that runs due work for a bounded time. As built (7R R5): the data layer arrived first (7T was brought into 7R), so the job store runs on `platform/data` from the start — claiming, settling and scheduling on the owner connection through `job_claim`, a tenant's own views in its tenant transaction (§5).
 
 **D3 — Every timed duty is a registered job.** The escalation reaper, review-claim release, strike expiry, the GDPR retention purge and scheduled agents become recurring jobs; a CI check fails when a function documented as scheduled has no registered job.
 
@@ -33,7 +33,7 @@ A mission-critical claim needs an operations layer the platform does not have. A
 
 ## 3. Delivery
 
-- **Sprint 7R:** this decision; health probes registered and the readiness check (TASK-142); the scheduled load test fixed (TASK-143); the job queue and scheduler, with every timed duty registered (TASK-141) — timed duties that already exist must run, not wait for 7O.
+- **Sprint 7R — delivered (R5, 2026-10-24):** this decision; health probes registered and the readiness check (TASK-142); the scheduled load test fixed (TASK-143); the job queue and scheduler, with every timed duty registered (TASK-141) — timed duties that already exist must run, not wait for 7O.
 - **Sprint 7O:** point-in-time recovery confirmed on both hosts with a tested restore drill, the OpenTelemetry exporters, objectives and alerting live on both hosts, runbooks, per-environment keys (TASK-124), and dynamic testing and compliance mapping (TASK-130).
 
 ## 4. Consequences

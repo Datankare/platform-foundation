@@ -9,19 +9,59 @@
  * bound a guest's paid work with the governed allowance.
  *
  * Sets the page proxy's session indicator for the token's lifetime.
+ *
+ * Refused (auth.guest_refused) to a browser marked as a restricted account's, and to a request
+ * carrying the token of a signed-in user whose account is banned or suspended: a restricted user
+ * does not carry on as a guest (audit X-20, platform/auth/restricted-marker.ts).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { mintGuestToken } from "@/platform/auth/guest-token";
-import { internalError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { apiError, internalError } from "@/platform/errors";
+import { getAuthProvider } from "@/platform/auth/config";
+import { initAuth } from "@/platform/auth/auth-init";
+import { GUEST_TOKEN_PREFIX } from "@/platform/auth/guest-token";
+import { isInGoodStanding } from "@/platform/auth/account-status-guard";
+import { isMarkedRestricted, markRestricted } from "@/platform/auth/restricted-marker";
+
+/**
+ * Whether the request carries a signed-in user's token whose account may not continue as a
+ * guest. A token that does not verify is not a user's, and says nothing; a standing that cannot
+ * be read refuses (fail closed).
+ */
+async function restrictedUser(request: NextRequest): Promise<boolean> {
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Bearer ")) return false;
+  const token = header.slice(7);
+  if (!token || token.startsWith(GUEST_TOKEN_PREFIX)) return false;
+  try {
+    initAuth();
+    const user = await getAuthProvider().verifyToken(token);
+    if (!user) return false;
+    return !(await isInGoodStanding(user.sub));
+  } catch {
+    return true;
+  }
+}
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_GUEST);
   if (limited) return limited;
+
+  if (isMarkedRestricted(request)) {
+    logger.info("Guest session refused: the browser belongs to a restricted account");
+    return apiError("auth.guest_refused", { request });
+  }
+  if (await restrictedUser(request)) {
+    logger.info("Guest session refused: the caller's account is restricted");
+    const refused = apiError("auth.guest_refused", { request });
+    markRestricted(refused);
+    return refused;
+  }
 
   let minted: Awaited<ReturnType<typeof mintGuestToken>>;
   try {

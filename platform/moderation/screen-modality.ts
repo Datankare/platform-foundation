@@ -77,21 +77,28 @@ export function screenPermits(result: ModalityScreenResult): boolean {
 }
 
 /**
- * Default classifiers: conservative stubs until real vision/audio classifiers are injected.
- * hardRefuse is false by default (no false positives from a stub), and the axes allow —
- * real deployments inject real classifiers via setModalityClassifiers. The seam's guarantees
- * (hard-refuse-first, independent axes, fail-closed) do not depend on the stubs.
+ * Default classifiers: none is configured, so nothing is cleared (audit X-18). Before: allow-all
+ * stubs, so every image and audio item — including the CSAM hard refusal's — passed on a
+ * placeholder. Now every axis escalates (withholds) until an app sets real classifiers with
+ * setModalityClassifiers; the seam's guarantees (hard-refuse first, independent axes, fail
+ * closed) do not depend on them.
  */
-const allowAxis =
+const UNCONFIGURED = "no classifier configured";
+const unconfiguredAxis =
   (axis: ScreenAxis): AxisClassifier =>
-  async () => ({ axis, action: "allow" });
+  async () => ({ axis, action: "escalate", reasoning: UNCONFIGURED });
 
 const DEFAULT_CLASSIFIERS: ModalityClassifiers = {
   hardRefuse: async () => false,
-  nsfw: allowAxis("nsfw"),
-  realPerson: allowAxis("real-person"),
-  baseline: allowAxis("baseline"),
+  nsfw: unconfiguredAxis("nsfw"),
+  realPerson: unconfiguredAxis("real-person"),
+  baseline: unconfiguredAxis("baseline"),
 };
+
+/** Whether real classifiers have been set (false: every item is withheld). */
+export function modalityClassifiersConfigured(): boolean {
+  return classifiers !== DEFAULT_CLASSIFIERS;
+}
 
 let classifiers: ModalityClassifiers = DEFAULT_CLASSIFIERS;
 
@@ -127,12 +134,18 @@ export async function screenModality(
       classifiers.realPerson(content),
       classifiers.baseline(content),
     ]);
-    const action = mostRestrictive(axes.map((a) => a.action));
+    const known: readonly ModerationAction[] = ["allow", "warn", "escalate", "block"];
+    // A classifier that answers something other than an action has not cleared the item.
+    const action = mostRestrictive(
+      axes.map((a) => (known.includes(a?.action) ? a.action : "escalate"))
+    );
     return {
       action,
       axes,
       hardRefused: false,
-      reasoning: `axes: ${axes.map((a) => `${a.axis}=${a.action}`).join(", ")}`,
+      reasoning: modalityClassifiersConfigured()
+        ? `axes: ${axes.map((a) => `${a?.axis}=${a?.action}`).join(", ")}`
+        : `withheld: ${UNCONFIGURED}`,
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "screen error";

@@ -33,5 +33,9 @@ export function withFaults(): DataModule {
     ...actual,
     withTenantTx: ((fn: (tx: Tx) => Promise<unknown>) =>
       actual.withTenantTx((tx) => fn(wrap(tx)))) as DataModule["withTenantTx"],
+    withSeparateTenantTx: ((fn: (tx: Tx) => Promise<unknown>) =>
+      actual.withSeparateTenantTx((tx) =>
+        fn(wrap(tx))
+      )) as DataModule["withSeparateTenantTx"],
   };
 }

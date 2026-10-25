@@ -9,24 +9,72 @@
  * the request's tenant (ADR-053 D4); the group catalog (entitlement_groups) is platform-owned
  * and only read here. Every mutation is audit-logged.
  *
+ * Granting or revoking applies the role rules (platform/auth/role-governance.ts) itself, to the
+ * verified admin it is given (release review RR-17: it was exported with no rule, so any future
+ * caller could hand any group to anyone): no one changes their own entitlements, and no one
+ * grants — or takes away — a group carrying a permission they do not hold. The group's
+ * permissions are read in the transaction that writes the grant.
+ *
  * Sprint 3, Task 3.3
  */
 
 import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
+import {
+  checkPermissionGrant,
+  type RoleRefusal,
+  type VerifiedAdmin,
+} from "@/platform/auth/role-governance";
+import type { Tx } from "@/platform/data";
 
 export interface EntitlementGrant {
   userId: string;
   entitlementGroupId: string;
-  grantedBy: string;
+  /** The verified admin granting it; the rules are applied to them. */
+  grantedBy: VerifiedAdmin;
   expiresAt?: string;
 }
 
 export interface EntitlementRevoke {
   userId: string;
   entitlementGroupId: string;
-  revokedBy: string;
+  /** The verified admin revoking it; the rules are applied to them. */
+  revokedBy: VerifiedAdmin;
+}
+
+/** A grant or revoke refused by a rule, with its coded reason. */
+export class EntitlementRuleError extends Error {
+  constructor(readonly refusal: RoleRefusal) {
+    super(refusal.code);
+    this.name = "EntitlementRuleError";
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Apply the rules to `admin` changing `userId`'s membership of `groupId`, inside `tx`. */
+async function checkRules(
+  tx: Tx,
+  admin: VerifiedAdmin,
+  userId: string,
+  groupId: string
+): Promise<void> {
+  if (userId === admin.userId) {
+    throw new EntitlementRuleError({ code: "auth.role_self_change", params: {} });
+  }
+  if (!UUID_RE.test(groupId)) return; // no such group: the write itself refuses it
+  const { rows } = await tx.query<{ code: string }>(
+    `select p.code from entitlement_permissions ep
+       join permissions p on p.id = ep.permission_id
+      where ep.entitlement_group_id = $1::uuid`,
+    [groupId]
+  );
+  const refused = checkPermissionGrant(
+    admin,
+    rows.map((r) => r.code)
+  );
+  if (refused) throw new EntitlementRuleError(refused);
 }
 
 /** Run a write; its error message, or undefined when it succeeded. */
@@ -51,7 +99,7 @@ export async function grantEntitlement(
     return await audited(
       {
         action: "entitlement_granted",
-        actorId: grant.grantedBy,
+        actorId: grant.grantedBy.userId,
         targetId: grant.userId,
         details: {
           entitlementGroupId: grant.entitlementGroupId,
@@ -60,8 +108,9 @@ export async function grantEntitlement(
       },
       async () => {
         const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
+          withTenantTx(async (tx) => {
+            await checkRules(tx, grant.grantedBy, grant.userId, grant.entitlementGroupId);
+            await tx.query(
               `insert into user_entitlements
                  (user_id, entitlement_group_id, granted_by, expires_at, revoked_at)
                values ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, null)
@@ -72,11 +121,11 @@ export async function grantEntitlement(
               [
                 grant.userId,
                 grant.entitlementGroupId,
-                grant.grantedBy,
+                grant.grantedBy.userId,
                 grant.expiresAt || null,
               ]
-            )
-          )
+            );
+          })
         );
 
         if (error) {
@@ -113,7 +162,7 @@ export async function revokeEntitlement(
     return await audited(
       {
         action: "entitlement_revoked",
-        actorId: revoke.revokedBy,
+        actorId: revoke.revokedBy.userId,
         targetId: revoke.userId,
         details: {
           entitlementGroupId: revoke.entitlementGroupId,
@@ -121,14 +170,20 @@ export async function revokeEntitlement(
       },
       async () => {
         const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
+          withTenantTx(async (tx) => {
+            await checkRules(
+              tx,
+              revoke.revokedBy,
+              revoke.userId,
+              revoke.entitlementGroupId
+            );
+            await tx.query(
               `update user_entitlements set revoked_at = now(), revoked_by = $3::uuid
                 where user_id = $1::uuid and entitlement_group_id = $2::uuid
                   and revoked_at is null`,
-              [revoke.userId, revoke.entitlementGroupId, revoke.revokedBy]
-            )
-          )
+              [revoke.userId, revoke.entitlementGroupId, revoke.revokedBy.userId]
+            );
+          })
         );
 
         if (error) {

@@ -1,8 +1,10 @@
 /**
  * platform/auth/admin-guard.ts — Admin route guard
  *
- * requireAdmin verifies the caller, checks the route's permission and the caller's account
- * standing (a suspended or banned staff member has no powers), and returns the verified admin, so the route can attribute what it does (TASK-138) and apply the role rules
+ * requireAdmin verifies the caller, checks the route's permission, the caller's account standing
+ * (a suspended or banned staff member has no powers) and second factor (staff sign in with MFA
+ * while auth.staff_mfa_required is on, audit A-9), and returns the verified admin, so the route
+ * can attribute what it does (TASK-138) and apply the role rules
  * (platform/auth/role-governance.ts, TASK-145). adminGuard is the same check for routes that
  * only need a yes or no.
  *
@@ -20,6 +22,8 @@ import { isInGoodStanding } from "@/platform/auth/account-status-guard";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { apiError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
+import { getConfig } from "@/platform/auth/platform-config";
+import { withTenantTx } from "@/platform/data";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 
 export type { VerifiedAdmin } from "@/platform/auth/role-governance";
@@ -34,6 +38,21 @@ export const DEV_BYPASS_ADMIN: VerifiedAdmin = {
   roleName: "dev-bypass",
   permissions: ["*"],
 };
+
+/** The governed setting: staff must sign in with a second factor (audit A-9). */
+export const STAFF_MFA_KEY = "auth.staff_mfa_required";
+
+/**
+ * Whether staff must use MFA. On unless the setting says, as a boolean, that it is off: a
+ * missing, unreadable or malformed setting keeps it on (fail closed).
+ */
+export async function staffMfaRequired(): Promise<boolean> {
+  try {
+    return (await getConfig<unknown>(STAFF_MFA_KEY, true)) !== false;
+  } catch {
+    return true;
+  }
+}
 
 export type AdminResult =
   | { readonly admin: VerifiedAdmin; readonly error?: never }
@@ -60,7 +79,8 @@ export async function requireAdmin(
 
   if (DEV_BYPASS && !IS_PRODUCTION) return { admin: DEV_BYPASS_ADMIN };
 
-  const auth = await requireAuth(request);
+  // Privileged: when the identity provider cannot answer, it fails closed (no stale grace).
+  const auth = await requireAuth(request, { privileged: true });
   if (auth.error) return { error: auth.error };
 
   // The permission and standing lookups need the database. If it cannot be reached the answer
@@ -97,6 +117,17 @@ export async function requireAdmin(
     return { error: apiError("account.restricted", { request }) };
   }
 
+  // Administrative power needs more than a password (audit A-9): a staff member signs in with a
+  // second factor, or enrols first (POST /api/auth/mfa/setup). Only an explicit "yes" from the
+  // provider counts — one that cannot say is refused while the setting is on.
+  if (auth.user.mfaEnabled !== true && (await staffMfaRequired())) {
+    logger.warn("Admin access refused — no second factor", {
+      permissionCode: permission,
+      route: "platform/auth/admin-guard",
+    });
+    return { error: apiError("auth.mfa_required", { request }) };
+  }
+
   return {
     admin: {
       userId: effective.userId,
@@ -117,4 +148,42 @@ export async function adminGuard(
 ): Promise<NextResponse | null> {
   const result = await requireAdmin(request, permission);
   return result.error ?? null;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The admin `userId` is now, re-verified without a request: their current permissions and
+ * standing, in the current tenant. For running what they asked for after someone else approved
+ * it (a held command-bar action, audit X-10) — the request is theirs, so it runs with their
+ * authority as it stands now, not as it stood when they asked. Null when they no longer exist,
+ * are not in good standing, or cannot be resolved (fail closed).
+ */
+export async function verifiedAdminById(userId: string): Promise<VerifiedAdmin | null> {
+  if (!UUID.test(userId)) return null;
+  try {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ cognito_sub: string | null }>(
+        "select cognito_sub from users where id = $1::uuid and deleted_at is null",
+        [userId]
+      )
+    );
+    const sub = rows[0]?.cognito_sub;
+    if (!sub) return null;
+    const effective = await getCachedPermissions(sub);
+    if (!effective || effective.userId !== userId) return null;
+    if (!(await isInGoodStanding(effective.userId))) return null;
+    return {
+      userId: effective.userId,
+      sub,
+      roleName: effective.roleName,
+      permissions: effective.permissions,
+    };
+  } catch (err) {
+    logger.error("Could not re-verify the requesting admin", {
+      route: "platform/auth/admin-guard",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }

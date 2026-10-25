@@ -84,37 +84,66 @@ describe("parseClassifierResponse", () => {
     expect(result.safe).toBe(true);
   });
 
-  it("clamps confidence to 0–1 range", () => {
-    const over = parseClassifierResponse(
-      '{"safe": true, "categories": [], "confidence": 1.5, "severity": "low"}'
-    );
-    expect(over.confidence).toBe(1.0);
-
-    const under = parseClassifierResponse(
-      '{"safe": true, "categories": [], "confidence": -0.5, "severity": "low"}'
-    );
-    expect(under.confidence).toBe(0.0);
+  // Review 8 H-B: a field missing or invalid is not a judgement — the answer is unjudged (and
+  // never "safe"), so no threshold can clear it on a placeholder.
+  it("a confidence outside 0–1 is unjudged (no clamping into a judgement)", () => {
+    for (const c of ["1.5", "-0.5", '"0.9"', "null"]) {
+      const r = parseClassifierResponse(
+        `{"safe": true, "categories": [], "confidence": ${c}, "severity": "low"}`
+      );
+      expect([c, r.unjudged, r.safe]).toEqual([c, true, false]);
+    }
   });
 
-  it("filters invalid categories", () => {
+  it("an unknown category is unjudged (the known ones are kept for the record)", () => {
     const result = parseClassifierResponse(
       '{"safe": false, "categories": ["violence", "invalid_cat", "hate"], "confidence": 0.8, "severity": "high"}'
     );
     expect(result.categories).toEqual(["violence", "hate"]);
+    expect(result.unjudged).toBe(true);
   });
 
-  it("defaults severity to medium if invalid", () => {
-    const result = parseClassifierResponse(
-      '{"safe": false, "categories": ["hate"], "confidence": 0.8, "severity": "extreme"}'
-    );
-    expect(result.severity).toBe("medium");
+  it("a severity not exactly one of the four is unjudged (placeholder medium)", () => {
+    for (const sev of ['"extreme"', '"High"', '"severe"', "3", "null"]) {
+      const result = parseClassifierResponse(
+        `{"safe": false, "categories": ["hate"], "confidence": 0.8, "severity": ${sev}}`
+      );
+      expect([sev, result.severity, result.unjudged]).toEqual([sev, "medium", true]);
+    }
   });
 
-  it("defaults confidence to 0.5 if missing", () => {
-    const result = parseClassifierResponse(
-      '{"safe": true, "categories": [], "severity": "low"}'
-    );
-    expect(result.confidence).toBe(0.5);
+  it("a missing confidence or severity is unjudged, safe or not", () => {
+    for (const raw of [
+      '{"safe": true, "categories": [], "severity": "low"}',
+      '{"safe": false, "categories": ["hate"], "severity": "high"}',
+      '{"safe": false, "categories": ["hate"], "confidence": 0.9}',
+      '{"safe": false}',
+    ]) {
+      const r = parseClassifierResponse(raw);
+      expect([raw, r.unjudged, r.safe]).toEqual([raw, true, false]);
+    }
+  });
+
+  it("a self-contradicting 'safe' (categories, or severity above low) is unjudged", () => {
+    for (const raw of [
+      '{"safe": true, "categories": ["hate"], "confidence": 0.9, "severity": "low"}',
+      '{"safe": true, "categories": [], "confidence": 0.9, "severity": "high"}',
+    ])
+      expect(parseClassifierResponse(raw)).toMatchObject({ safe: false, unjudged: true });
+  });
+
+  it("a complete answer is a judgement", () => {
+    expect(
+      parseClassifierResponse(
+        '{"safe": false, "categories": ["hate"], "confidence": 0.9, "severity": "high", "reason": "r"}'
+      )
+    ).toEqual({
+      safe: false,
+      categories: ["hate"],
+      confidence: 0.9,
+      severity: "high",
+      reason: "r",
+    });
   });
 
   // Fail-closed behavior
@@ -138,18 +167,25 @@ describe("parseClassifierResponse", () => {
     expect(result.reason).toContain("Missing 'safe' field");
   });
 
-  it("handles null categories gracefully", () => {
+  it("null categories are unjudged", () => {
     const result = parseClassifierResponse(
       '{"safe": true, "categories": null, "confidence": 0.9, "severity": "low"}'
     );
     expect(result.categories).toEqual([]);
+    expect(result).toMatchObject({ safe: false, unjudged: true });
   });
 
-  it("handles non-string reason gracefully", () => {
+  it("a reason that is not text is unjudged", () => {
     const result = parseClassifierResponse(
       '{"safe": false, "categories": ["hate"], "confidence": 0.9, "severity": "high", "reason": 123}'
     );
-    expect(result.reason).toBeUndefined();
+    expect(result.unjudged).toBe(true);
+    expect(result.reason).toContain("reason is not text");
+  });
+
+  it("an answer that is not an object fails closed", () => {
+    for (const raw of ["[]", "true", "null", '"safe"'])
+      expect(parseClassifierResponse(raw)).toMatchObject({ safe: false, unjudged: true });
   });
 });
 

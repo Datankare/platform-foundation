@@ -13,7 +13,8 @@
  *
  * Contract pinned here:
  *  1. Stale guest_<id>_<ts> token -> purged, starts signed-out.
- *  2. Expired JWT (exp in the past) -> purged, starts signed-out.
+ *  2. Expired JWT (exp in the past) -> renewed from the server's refresh cookie
+ *     (POST /api/auth/refresh, audit A-14), else purged and signed out.
  *  3. Valid session -> hydrates AND re-issues the pf_has_session cookie.
  *  4. Undeterminable token -> hydrates (server remains the authority).
  */
@@ -82,8 +83,53 @@ describe("auth context hydration validity", () => {
     expect(document.cookie).not.toContain("pf_has_session=true");
   });
 
-  it("purges an expired JWT instead of hydrating it", async () => {
+  it("purges an expired JWT when the server cannot renew it", async () => {
     seed(makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) - 60 }), USER_JSON);
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ code: "auth.token_invalid" }),
+    }) as unknown as typeof fetch;
+
+    render(
+      <AuthContextProvider>
+        <Probe />
+      </AuthContextProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId("authed")).toHaveTextContent("false"));
+    expect(localStorage.getItem("pf_access_token")).toBeNull();
+  });
+
+  it("renews an expired user session from the refresh cookie (audit A-14)", async () => {
+    seed(makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) - 60 }), USER_JSON);
+    const fresh = makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) + 3600 });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, userId: "user-1", accessToken: fresh }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(
+      <AuthContextProvider>
+        <Probe />
+      </AuthContextProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId("authed")).toHaveTextContent("true"));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/refresh",
+      expect.objectContaining({ method: "POST", credentials: "same-origin" })
+    );
+    expect(localStorage.getItem("pf_access_token")).toBe(fresh);
+  });
+
+  it("refuses a renewed session for another user", async () => {
+    seed(makeJwt({ sub: "user-1", exp: Math.floor(Date.now() / 1000) - 60 }), USER_JSON);
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, userId: "someone-else", accessToken: "x.y.z" }),
+    }) as unknown as typeof fetch;
 
     render(
       <AuthContextProvider>

@@ -4,6 +4,7 @@
  */
 import { NextRequest } from "next/server";
 import { proxy } from "@/proxy";
+import { contentSecurityPolicy } from "@/platform/security/csp";
 
 function req(path: string, init: { auth?: boolean; cookie?: boolean } = {}) {
   const headers = new Headers();
@@ -49,5 +50,64 @@ describe("proxy", () => {
     expect(
       proxy(req("/profile", { cookie: true })).headers.get("x-middleware-next")
     ).toBe("1");
+  });
+});
+
+describe("Content Security Policy (audit G-10)", () => {
+  const policyOf = (res: Response) => res.headers.get("content-security-policy") ?? "";
+  const nonceOf = (policy: string) => /'nonce-([^']+)'/.exec(policy)?.[1];
+
+  it.each([
+    ["a page", "/", { cookie: "pf_has_session=true" }],
+    ["the sign-in page", "/auth", {}],
+    ["an API call", "/api/process", { authorization: "Bearer t" }],
+    ["a refused API call", "/api/process", {}],
+    ["a redirect to sign-in", "/admin", {}],
+  ])(
+    "sets a nonce policy on %s, allowing no inline or eval'd script",
+    (_l, path, headers) => {
+      const res = proxy(new NextRequest(`http://localhost${path}`, { headers }));
+      const policy = policyOf(res);
+      expect(policy).toMatch(
+        /script-src 'self' 'nonce-[A-Za-z0-9+/=]{20,}' 'strict-dynamic'/
+      );
+      const scriptSrc =
+        policy.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
+      expect(scriptSrc).not.toContain("'unsafe-inline'");
+      expect(policy).not.toContain("'unsafe-eval'");
+      for (const directive of [
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        "connect-src 'self'",
+      ]) {
+        expect(policy).toContain(directive);
+      }
+    }
+  );
+
+  it("gives every response its own nonce", () => {
+    const nonces = new Set(
+      Array.from({ length: 50 }, () =>
+        nonceOf(policyOf(proxy(new NextRequest("http://localhost/auth"))))
+      )
+    );
+    expect(nonces.size).toBe(50);
+  });
+
+  it("passes the nonce to the app on the request (Next.js puts it on its scripts)", () => {
+    const res = proxy(new NextRequest("http://localhost/auth"));
+    const nonce = nonceOf(policyOf(res));
+    // NextResponse.next({ request: { headers } }) carries overridden request headers in these.
+    expect(res.headers.get("x-middleware-request-x-nonce")).toBe(nonce);
+    expect(res.headers.get("x-middleware-request-content-security-policy")).toBe(
+      policyOf(res)
+    );
+  });
+
+  it("allows eval only in development", () => {
+    expect(contentSecurityPolicy("n", { development: true })).toContain("'unsafe-eval'");
+    expect(contentSecurityPolicy("n")).not.toContain("'unsafe-eval'");
   });
 });

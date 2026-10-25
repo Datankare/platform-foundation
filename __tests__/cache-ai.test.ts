@@ -335,3 +335,40 @@ describe("cache keys are per tenant and collision-resistant (ADR-053 D6)", () =>
     expect(buildAICacheKey(one)).not.toBe(buildAICacheKey(two));
   });
 });
+
+describe("AICache scope (audit G-12)", () => {
+  const req: AIRequest = {
+    tier: "fast",
+    maxTokens: 64,
+    messages: [{ role: "user", content: "what is on my calendar?" }],
+  };
+  const answer = (text: string): AIResponse => ({
+    content: [{ type: "text", text }],
+    model: "m",
+    usage: { inputTokens: 1, outputTokens: 1 },
+    stopReason: "end_turn",
+  });
+
+  it("never serves one user's scoped answer to another, or to an unscoped caller", async () => {
+    const cache = new InMemoryCacheProvider({
+      namespace: "scope:",
+      defaultTTLSeconds: 60,
+    });
+    const ai = new AICache({ cache });
+    await ai.set(req, answer("alice's meetings"), "assistant", "user-alice");
+    expect(await ai.get(req, "assistant", "user-bob")).toBeNull();
+    expect(await ai.get(req, "assistant")).toBeNull();
+    expect(await ai.get(req, "assistant", "user-alice")).toEqual(
+      answer("alice's meetings")
+    );
+  });
+
+  it("keys differ by scope and are stable; a scope cannot be forged by the prompt", () => {
+    expect(buildAICacheKey(req, "a")).toBe(buildAICacheKey(req, "a"));
+    expect(buildAICacheKey(req, "a")).not.toBe(buildAICacheKey(req, "b"));
+    expect(buildAICacheKey(req, "a")).not.toBe(buildAICacheKey(req));
+    // A scope that looks like a prompt part does not collide with an unscoped request.
+    const crafted: AIRequest = { ...req, system: "a" };
+    expect(buildAICacheKey(req, "a")).not.toBe(buildAICacheKey(crafted));
+  });
+});

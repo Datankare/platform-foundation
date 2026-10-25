@@ -102,6 +102,14 @@ export interface ActivityStateStore<TState> {
   /** Read the session's metadata, or null when absent. */
   loadMeta?(sessionId: string): Promise<SessionMeta | null>;
 
+  /**
+   * Throw the store's coded refusal when `state` could not be committed (too deep, too large to
+   * store: platform/errors/json-limits.ts). The pipeline asks before the action's effect runs, so
+   * a state the store would refuse never follows an effect that was already applied (review 10
+   * M5). Optional: a store with no limit accepts every state.
+   */
+  validate?(state: TState): void;
+
   /** Hard-purge all state for a session (GDPR / lifecycle, D2 checklist step 8). */
   delete(sessionId: string): Promise<void>;
 }

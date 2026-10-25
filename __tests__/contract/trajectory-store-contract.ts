@@ -10,6 +10,7 @@
 
 import type { Step } from "@/platform/agents/types";
 import type { TrajectoryStore } from "@/platform/agents/trajectory-store";
+import { TRAJECTORY_MAX_STEPS } from "@/platform/errors/json-limits";
 
 export interface TrajectoryStoreContractFixtures {
   /** Fresh, empty store per test. */
@@ -148,5 +149,58 @@ export function runTrajectoryStoreContract(fx: TrajectoryStoreContractFixtures):
       await store.create({ kind: "agent", id: "b" }, "t", "platform");
       expect(await store.query({})).toHaveLength(2);
     });
+  });
+
+  describe("chains (review 12 M1, M2)", () => {
+    it("a trajectory never continued is its own tail and its only segment", async () => {
+      const rec = await store.create({ kind: "agent", id: "a" }, "t", "platform");
+      const id = rec.trajectory.trajectoryId;
+      await store.addStep(id, makeStep(0));
+      expect((await store.chainTail(id))?.trajectory.trajectoryId).toBe(id);
+      expect((await store.chainSegment(id, 1))?.trajectory.trajectoryId).toBe(id);
+      expect(await store.chainSegment(id, 2)).toBeUndefined();
+      expect(await store.chainSegment(id, 0)).toBeUndefined();
+      expect(
+        await store.chainTail("00000000-0000-4000-8000-000000000000")
+      ).toBeUndefined();
+    });
+
+    it("a query can leave the steps out", async () => {
+      const rec = await store.create({ kind: "session", id: "ws" }, "t", "user");
+      await store.addStep(rec.trajectory.trajectoryId, makeStep(0));
+      const [found] = await store.query({ subjectId: "ws", withoutSteps: true });
+      expect(found.trajectory.trajectoryId).toBe(rec.trajectory.trajectoryId);
+      expect(found.trajectory.steps).toEqual([]);
+    });
+
+    it("every append goes to the chain's tail, through any segment's id", async () => {
+      const rec = await store.create({ kind: "agent", id: "chain" }, "t", "platform");
+      const first = rec.trajectory.trajectoryId;
+      for (let i = 0; i < TRAJECTORY_MAX_STEPS; i++) {
+        await store.addStep(first, makeStep(i));
+      }
+      await expect(
+        store.addStep(first, makeStep(TRAJECTORY_MAX_STEPS))
+      ).rejects.toMatchObject({
+        code: "request.trajectory_full",
+      });
+      const second = await store.addStep(first, makeStep(TRAJECTORY_MAX_STEPS), {
+        rollover: true,
+      });
+      expect(second?.trajectory.segment).toBe(2);
+      expect(second?.trajectory.stepOffset).toBe(TRAJECTORY_MAX_STEPS);
+      // Through the first segment's id, with or without rollover: the tail.
+      const third = await store.addStep(first, makeStep(TRAJECTORY_MAX_STEPS + 1));
+      expect(third?.trajectory.trajectoryId).toBe(second?.trajectory.trajectoryId);
+      const tail = await store.chainTail(first);
+      expect(tail?.trajectory.steps.map((s) => s.stepIndex)).toEqual([
+        TRAJECTORY_MAX_STEPS,
+        TRAJECTORY_MAX_STEPS + 1,
+      ]);
+      expect(
+        (await store.chainSegment(tail!.trajectory.trajectoryId, 1))?.trajectory
+          .trajectoryId
+      ).toBe(first);
+    }, 120_000);
   });
 }

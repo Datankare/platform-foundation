@@ -238,7 +238,7 @@ function loadRoleCatalog(root = path.resolve(__dirname, "..")) {
   const dir = path.join(root, "supabase/migrations");
   const files = fs
     .readdirSync(dir)
-    .filter((f) => /^\d+_.*\.sql$/.test(f))
+    .filter((f) => /^\d+[a-z]?_.*\.sql$/.test(f))
     .sort();
   for (const f of files) {
     if (baseline.includes(`('${f}', 'verified'`)) continue;

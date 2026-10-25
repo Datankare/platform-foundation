@@ -13,8 +13,12 @@
  */
 
 import { withTenantTx, type Tx } from "@/platform/data";
-import { invalidatePermissions } from "@/platform/auth/permissions-cache";
 import {
+  clearPermissionsCache,
+  invalidatePermissions,
+} from "@/platform/auth/permissions-cache";
+import {
+  checkDefaultRoleGrant,
   checkPermissionGrant,
   checkRoleAssignment,
   checkRoleEditable,
@@ -44,6 +48,18 @@ function codes(value: unknown): string[] {
 }
 
 /** The users holding a role, in every tenant (the owner sees them all): a role in use stays. */
+/**
+ * A role-catalog write (create, duplicate, delete, permissions added or removed): the catalog is
+ * the platform's, read by every tenant, so a change that succeeded clears every cached permission
+ * set, here and on every instance (review 7 M5 — before, removing a permission from a role or
+ * deleting a role others inherit from left cached grants standing for up to the cache's TTL).
+ */
+async function catalogWrite(write: () => Promise<ActionResult>): Promise<ActionResult> {
+  const result = await failedAsResult(write);
+  if (result.success) await clearPermissionsCache();
+  return result;
+}
+
 async function holdersOf(tx: Tx, roleId: string): Promise<number> {
   const { rows } = await tx.query<{ n: number }>(
     "select count(*)::int as n from users where role_id = $1::uuid",
@@ -69,7 +85,7 @@ export async function handleCreateRole(
       details: { type: "create_role", prompt_action: true, name, permissions },
     },
     () =>
-      failedAsResult(() =>
+      catalogWrite(() =>
         // The role and its permissions in one transaction: never a role without them.
         catalogTx(async (tx) => {
           const { rows } = await tx.query<{ id: string }>(
@@ -140,7 +156,7 @@ export async function handleDeleteRole(
       },
     },
     () =>
-      failedAsResult(() =>
+      catalogWrite(() =>
         catalogTx(async (tx) => {
           const role = await findRole(tx, { id: found.role.id }, { forUpdate: true });
           if (!role) return { success: false, error: `Role "${role_name}" not found` };
@@ -169,7 +185,9 @@ export async function handleDuplicateRole(
   if (!mayChangePlatformCatalog(admin)) return operatorOnly();
 
   const check = (source: RoleWithPermissions) => {
+    // A protected role is not copied: the copy would be its power without its protection.
     const refused =
+      checkRoleEditable(source.name) ??
       checkRoleEditable(String(new_name)) ??
       checkPermissionGrant(admin, source.permissions);
     return refused ? refusal(refused) : null;
@@ -188,7 +206,7 @@ export async function handleDuplicateRole(
       details: { type: "duplicate_role", prompt_action: true, source_role, new_name },
     },
     () =>
-      failedAsResult(() =>
+      catalogWrite(() =>
         catalogTx(async (tx) => {
           // The source is locked, so the permissions copied are the ones just checked.
           const source = await findRole(tx, { id: sourceRole.id }, { forUpdate: true });
@@ -232,6 +250,7 @@ export async function handleAssignPermissions(
   const check = (role: RoleWithPermissions) => {
     const refused =
       checkRoleEditable(role.name) ??
+      checkDefaultRoleGrant(role, adding) ??
       checkPermissionGrant(admin, [...adding, ...removing]);
     return refused ? refusal(refused) : null;
   };
@@ -253,7 +272,7 @@ export async function handleAssignPermissions(
       },
     },
     () =>
-      failedAsResult(() =>
+      catalogWrite(() =>
         // Additions and removals together: all of them or none.
         catalogTx(async (tx) => {
           const role = await findRole(tx, { id: found.id }, { forUpdate: true });
@@ -389,8 +408,10 @@ export async function handleChangeUserRole(
           };
         })
       );
-      if (outcome.success && plan.target.cognitoSub) {
-        invalidatePermissions(plan.target.cognitoSub);
+      // Also when the commit's outcome is unknown (review 14 L-2): the role may have changed,
+      // and an invalidation is harmless if it did not.
+      if ((outcome.success || outcome.indeterminate) && plan.target.cognitoSub) {
+        await invalidatePermissions(plan.target.cognitoSub);
       }
       return outcome;
     }

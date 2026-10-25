@@ -20,7 +20,8 @@ const ROOT = process.cwd();
 const BASELINE = readFileSync(join(ROOT, "supabase/baseline/000_baseline.sql"), "utf-8");
 const MIGRATIONS_DIR = join(ROOT, "supabase/migrations");
 const migrations = readdirSync(MIGRATIONS_DIR)
-  .filter((f) => /^\d+_.*\.sql$/.test(f))
+  // NNN_<name>.sql (the platform's) and NNN<letter>_<app>_<name>.sql (an app's, TASK-158).
+  .filter((f) => /^\d+[a-z]?_.*\.sql$/.test(f))
   .sort();
 
 // The statements only — the header names what was excluded, on purpose.

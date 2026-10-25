@@ -11,6 +11,12 @@
  * The memory store keeps each tenant's counts apart the same way; it is for tests and local
  * work, and production refuses it (ADR-048 D3 pattern, see the provider registry).
  *
+ * A guest token is free to mint (20 an hour from one address), so an allowance per token alone
+ * was 100 paid requests an hour per address, and a banned user could carry on as a stream of
+ * new guests (audit A-6, X-20). Guests' paid requests are also counted per address bucket
+ * (GUEST_PAID_PER_ADDRESS: 20 a day; an IPv6 client per /64), whichever token they carry; and
+ * the guest route refuses a new guest token to a browser whose account is restricted.
+ *
  * @module platform/auth
  */
 
@@ -23,6 +29,7 @@ import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { withTenantTx } from "@/platform/data";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
+import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
 export const GUEST_ALLOWANCE_KEY = "guest.translate_allowance";
 export const GUEST_ALLOWANCE_MIN = 1;
@@ -156,6 +163,25 @@ export async function enforceGuestAllowance(
   }
 
   const limit = await getGuestTranslateAllowance();
+  // Per address first, whatever token it carries: a request with no address to count is
+  // refused (fail closed — a paid call is never made uncounted).
+  if (!options.request) {
+    return { error: apiError("guest.allowance_exhausted", { params: { limit } }) };
+  }
+  const perAddress = await enforceRateLimit(
+    options.request,
+    DEFAULT_RULES.GUEST_PAID_PER_ADDRESS
+  );
+  if (perAddress) {
+    if (perAddress.status !== 429) return { error: perAddress };
+    logger.info("Guest paid requests from this address exhausted", { limit });
+    return {
+      error: apiError("guest.allowance_exhausted", {
+        params: { limit },
+        request: options.request,
+      }),
+    };
+  }
   try {
     const { allowed, used } = await getGuestUsageStore().consume(actor.id, limit);
     if (!allowed) {

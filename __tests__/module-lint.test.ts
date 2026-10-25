@@ -15,6 +15,11 @@
 import { execFileSync } from "child_process";
 import { join } from "path";
 
+// The module ids and dependencies come from the merged manifest (TASK-157), never a copy.
+const mm = require("../scripts/module-manifest.cjs");
+const MANIFEST = mm.loadManifest();
+const IDS: string[] = mm.moduleIds(MANIFEST);
+
 const RULE = "import/no-restricted-paths";
 const CORE = "platform/agents/__boundary_fixture__.ts";
 // An existing voice file: in the shared directory, a file belongs to the module that lists it.
@@ -150,7 +155,7 @@ describe("import/no-restricted-paths (ADR-054 D3)", () => {
     expect(Array.isArray(entry) && entry[0]).toBe(2);
     const zones = Array.isArray(entry) ? entry[1].zones : [];
     expect(zones.map((z) => /Module "([\w-]+)"/.exec(z.message)?.[1]).sort()).toEqual(
-      ["audio-convert", "games", "social", "song-id", "translation", "voice"].sort()
+      [...IDS].sort()
     );
   });
 
@@ -165,7 +170,7 @@ describe("import/no-restricted-paths (ADR-054 D3)", () => {
     const zones = Array.isArray(entry) ? entry[1].zones : [];
     expect(
       zones.map((z) => /Module "([\w-]+)" is outside/.exec(z.message)?.[1]).sort()
-    ).toEqual(["games", "social", "song-id"].sort());
+    ).toEqual(IDS.filter((id) => !mm.mayImport(MANIFEST, "voice", id)).sort());
   });
 
   it.each(CORE_BREACHES.map((f) => [f.name]))(

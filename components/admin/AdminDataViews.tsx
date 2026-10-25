@@ -6,6 +6,11 @@ import {
   ADMIN_HIGHLIGHT_MIN_SECONDS,
   ADMIN_HIGHLIGHT_MAX_SECONDS,
 } from "@/shared/config/limits";
+import { renderMessage } from "@/platform/errors/messages";
+import {
+  isPanelUnavailable,
+  PanelUnavailable,
+} from "@/components/admin/PanelUnavailable";
 
 const thClass =
   "text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800";
@@ -390,15 +395,38 @@ export function PlatformConfigDataView({
 
 // ── Agent governance (Sprint 3c U4/U6) ──────────────────────────────────
 
+/**
+ * Where a governance panel's data stands (review 14 L-1): not read yet; read and holding a list
+ * under `field`; or unavailable — answered 503 (the page's marker), or not a list at all. Only
+ * "ready" with no entries is an empty list.
+ */
+function panelState(data: unknown, field: string): "loading" | "unavailable" | "ready" {
+  if (data === undefined) return "loading";
+  if (isPanelUnavailable(data)) return "unavailable";
+  return Array.isArray((data as Record<string, unknown> | null)?.[field])
+    ? "ready"
+    : "unavailable";
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export function TrustedAgentsDataView({ data }: { data: any }) {
-  const pairs: [string, any][] = Array.isArray(data?.agents) ? data.agents : [];
+  // Review 14 L-1: not read yet, or not readable, is never shown as "no agents".
+  const state = panelState(data, "agents");
+  const pairs: [string, any][] = state === "ready" ? data.agents : [];
   return (
     <div>
       <h2 className="text-xl font-bold text-white mb-6">Trusted agents</h2>
-      {pairs.length === 0 ? (
-        <p className="text-gray-400 text-sm">No agents registered.</p>
+      {state === "loading" ? (
+        <p className="text-gray-400 text-sm">
+          {renderMessage("screens.admin_console.loading")}
+        </p>
+      ) : state === "unavailable" ? (
+        <PanelUnavailable panel="Trusted agents" />
+      ) : pairs.length === 0 ? (
+        <p className="text-gray-400 text-sm">
+          {renderMessage("screens.admin_console.no_agents")}
+        </p>
       ) : (
         <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
           <table className="w-full text-sm text-left border-collapse">
@@ -634,12 +662,22 @@ export function CapabilitiesDataView({ data }: { data: any }) {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export function CapabilityMappingDataView({ data }: { data: any }) {
-  const pairs: [string, string[]][] = Array.isArray(data?.mappings) ? data.mappings : [];
+  // Review 14 L-1: not read yet, or not readable, is never shown as "no mappings".
+  const state = panelState(data, "mappings");
+  const pairs: [string, string[]][] = state === "ready" ? data.mappings : [];
   return (
     <div>
       <h2 className="text-xl font-bold text-white mb-6">Capability → feature mapping</h2>
-      {pairs.length === 0 ? (
-        <p className="text-gray-400 text-sm">No mappings configured.</p>
+      {state === "loading" ? (
+        <p className="text-gray-400 text-sm">
+          {renderMessage("screens.admin_console.loading")}
+        </p>
+      ) : state === "unavailable" ? (
+        <PanelUnavailable panel="Capability → feature mapping" />
+      ) : pairs.length === 0 ? (
+        <p className="text-gray-400 text-sm">
+          {renderMessage("screens.admin_console.no_mappings")}
+        </p>
       ) : (
         <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
           <table className="w-full text-sm text-left border-collapse">

@@ -19,7 +19,7 @@ const MANIFEST = mm.loadManifest();
 const IDS: string[] = mm.moduleIds(MANIFEST);
 const DIR = join(process.cwd(), "supabase/migrations");
 const FILES = readdirSync(DIR)
-  .filter((f) => /^\d+_.*\.sql$/.test(f))
+  .filter((f) => mm.MIGRATION_FILE.test(f))
   .sort();
 
 /** Module migrations named before ADR-054 (kept: renaming an applied migration re-runs it). */
@@ -56,13 +56,17 @@ describe("module migrations (ADR-054 D5)", () => {
     expect(wrong).toEqual([]);
   });
 
-  it("a module's migrations follow NNN_<module>_<name>.sql (those before the convention excepted)", () => {
+  it("a module's migrations follow NNN_<module>_<name>.sql, an app's NNN<letter>_<app>_<module>_<name>.sql (those before the convention excepted)", () => {
     const misnamed: string[] = [];
     for (const id of IDS) {
       for (const path of MANIFEST.modules[id].migrations as string[]) {
         const file = path.split("/").pop() as string;
         if (BEFORE_THE_CONVENTION[file] === id) continue;
-        if (!new RegExp(`^\\d{3}_${id}_[a-z0-9_]+\\.sql$`).test(file))
+        const platformForm = new RegExp(`^\\d{3}_${id}_[a-z0-9_]+\\.sql$`);
+        const appForm = new RegExp(
+          `^\\d{3}[a-z]_${MANIFEST.app}_${id}_[a-z0-9_]+\\.sql$`
+        );
+        if (!platformForm.test(file) && !(MANIFEST.app && appForm.test(file)))
           misnamed.push(`${id}: ${file}`);
       }
     }

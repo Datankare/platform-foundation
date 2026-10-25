@@ -38,9 +38,9 @@ const effective = (permissions: string[]) => ({
   entitlementGroups: [],
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
-  clearPermissionsCache();
+  await clearPermissionsCache();
 });
 
 describe("permissions cache", () => {
@@ -78,11 +78,11 @@ describe("permissions cache", () => {
     resolve.mockResolvedValue(effective(["can_play"]));
     await getCachedPermissions("a");
     await getCachedPermissions("b");
-    invalidatePermissions("a");
+    await invalidatePermissions("a");
     await getCachedPermissions("a");
     await getCachedPermissions("b");
     expect(resolve).toHaveBeenCalledTimes(3);
-    clearPermissionsCache();
+    await clearPermissionsCache();
     expect(getCacheStats()).toMatchObject({ size: 0, maxSize: 10_000 });
   });
 

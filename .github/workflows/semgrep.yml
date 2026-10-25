@@ -28,7 +28,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Semgrep
-        run: pip install semgrep
+        # Pinned (audit H-12): an unpinned scanner changes its rules under the build without a
+        # commit. Raise it deliberately, with the findings of the new version triaged.
+        run: pip install semgrep==1.182.0
 
       - name: Run Semgrep
         run: semgrep scan --config p/owasp-top-ten --config p/typescript --error .

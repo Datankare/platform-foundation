@@ -13,9 +13,14 @@
  *   - only a live token (an expired or corrupt session attaches nothing).
  *
  * Without a session, or on the server, it is exactly `fetch(input, init)`.
+ *
+ * An access token lives an hour; when the API answers 401 to a call that carried one, the
+ * session is renewed once from the server's refresh cookie (refreshSession, audit A-14) and the
+ * call made again with the new token. A body that is a stream cannot be sent twice, so such a
+ * call is not retried.
  */
 
-import { readAccessToken } from "./context";
+import { readAccessToken, refreshSession } from "./context";
 
 const isRequest = (input: unknown): input is Request =>
   typeof Request !== "undefined" && input instanceof Request;
@@ -36,16 +41,47 @@ function isSameOrigin(input: RequestInfo | URL): boolean {
   }
 }
 
-export function apiFetch(
+function withToken(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  token: string
+): RequestInit {
+  const headers = new Headers(
+    init?.headers ?? (isRequest(input) ? input.headers : undefined)
+  );
+  headers.set("Authorization", `Bearer ${token}`);
+  return { ...init, headers };
+}
+
+/** Whether `init` can be sent again (a stream body is consumed by the first send). */
+function replayable(input: RequestInfo | URL, init?: RequestInit): boolean {
+  if (isRequest(input)) return false;
+  const body = init?.body;
+  return (
+    body === undefined ||
+    body === null ||
+    typeof body === "string" ||
+    body instanceof URLSearchParams ||
+    (typeof FormData !== "undefined" && body instanceof FormData) ||
+    (typeof Blob !== "undefined" && body instanceof Blob) ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body)
+  );
+}
+
+export async function apiFetch(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
   const token = isSameOrigin(input) ? readAccessToken() : null;
   if (!token) return fetch(input, init);
-  const headers = new Headers(
+  const own = new Headers(
     init?.headers ?? (isRequest(input) ? input.headers : undefined)
   );
-  if (headers.has("authorization")) return fetch(input, init);
-  headers.set("Authorization", `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+  if (own.has("authorization")) return fetch(input, init);
+  const response = await fetch(input, withToken(input, init, token));
+  if (response.status !== 401 || !replayable(input, init)) return response;
+  const renewed = await refreshSession();
+  if (!renewed || renewed === token) return response;
+  return fetch(input, withToken(input, init, renewed));
 }

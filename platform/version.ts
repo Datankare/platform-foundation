@@ -8,4 +8,4 @@
  * @module platform
  */
 
-export const PLATFORM_VERSION = "5.1.1";
+export const PLATFORM_VERSION = "6.0.0";

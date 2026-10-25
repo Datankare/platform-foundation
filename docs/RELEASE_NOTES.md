@@ -9,6 +9,359 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v6.0.0 — Tenancy, modules, jobs, the container, and the audit's Wave 2
+
+Date: 2026-10-24 (Sprint 7R close). **Breaking** — deploy with the ordered runbook in
+[MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1: migrations 046–052 in the SQL Editor, then the
+settings per environment (`CRON_SECRET` on every Preview and Production deployment, `JOB_STORE`,
+`DATABASE_*`, `TENANCY_MODE`/`TENANT_ID`, `CACHE_PROVIDER`, the confidential Cognito client,
+`PROVENANCE_SIGNING_KEY`). ADR-053, ADR-054, ADR-055 and ADR-056 are Accepted.
+
+### R2 — Integrity fixes
+
+- `adminGuard` returns the verified admin and every admin audit record names them (TASK-138).
+- `ai_metrics` exists (migration 048) for the metrics sink (TASK-113).
+- Agent budget days are UTC dates, and the COPPA age is computed the same way — never overstated,
+  whatever the host's zone (TASK-144).
+- The cache is chosen (`CACHE_PROVIDER`), never inferred; production refuses to boot without it,
+  and `upstash` without its credentials refuses instead of falling back to memory (TASK-139).
+- Host-neutral deployment: `DEPLOYMENT_HOST`, the commit from `GIT_COMMIT_SHA`, the version from
+  `platform/version.ts` (TASK-140).
+- Migration records tell the truth: 047 records `007_seed_separation.sql` as "absent" where its
+  effect never happened; migration parity lists "absent" records (TASK-148).
+
+### R3 — Tenancy (ADR-053; Sprint 7T brought in whole)
+
+- One codebase, `TENANCY_MODE=single` (one `TENANT_ID`) or `shared`; every API route runs in a
+  tenant scope (`tenantRoute`), failing closed.
+- Migration 049: tenants and domains, `tenant_id` with tenant-scoped keys and foreign keys, forced
+  row-level security for the `app_tenant` role on every tenant-owned table, layered configuration,
+  the public key closed (TASK-114).
+- `platform/data` — direct Postgres through a transaction pooler (`withTenantTx`, `withPlatformTx`,
+  `withOwnerTx`); every store and admin path on it; values only as parameters (a CI check).
+- Per-tenant cache keys, rate limits, budgets (with a tenant cap), audit, metrics and realtime
+  topics; shared-mode identity assignment (Cognito `custom:tenant_id`).
+- The operator console and lifecycle — provision, addresses, suspend, two-operator deletion,
+  restore, purge, export — and tenant settings for tenant administrators.
+- The isolation kit on every store, in memory and on Postgres in CI; review-queue state conflicts,
+  soft deletions, `signups_enabled`, the AI cache key, `apiFetch` and dual-control config fixed
+  (TASK-150–155).
+
+### R4 — The core and product modules (ADR-054)
+
+- `definePlatformModule` and extensible registries (providers, agents, prompts and evals, content
+  types, features, goals, rate rules, consent and moderation lists, health probes, kit manifests);
+  the app's modules listed in `platform/modules/app-modules.ts` and registered at boot.
+- The 22 boundary imports removed and `import/no-restricted-paths` on, drawn from the module
+  manifest; the core's tests pass with no module (`npm run test:core`); module migrations replay
+  after the core's, in dependency order.
+
+### R5 — Background work and health (ADR-056)
+
+- `platform/jobs`: a Postgres-backed queue and scheduler (migrations 050, 051) with retries,
+  idempotency, dead letters and fair claims; every timed duty a registered job, run by a signed
+  tick (`/api/internal/jobs/tick`, Vercel Cron or `scripts/jobs-worker.mjs`) — `CRON_SECRET` is
+  required on every deployment (TASK-141).
+- Live and ready health: readiness reports boot, the database and the selected cache; realtime and
+  modules degrade without taking an instance out (TASK-142). The scheduled load test runs (TASK-143).
+
+### R6 — The container (ADR-055)
+
+- Standalone output, a `Dockerfile` (non-root, read-only friendly, base image by digest), graceful
+  shutdown (readiness flips, requests drain, telemetry flushes, pools close), and a CI job that
+  builds the image, runs it and passes the deploy smoke test and the job worker against it
+  (TASK-128). The R4–R6 adversarial review's sixteen findings fixed before release (TASK-156).
+
+### R7 — The close: consumer seams, time zones, dependencies
+
+- **The app's own module manifest** (TASK-157): `platform/modules/app-manifest.json`, a consumer
+  seam the platform ships empty, merged with the platform's `manifest.json` for every reader. An
+  app adds its files to a platform module and declares its own modules (dependencies, migrations);
+  a path claimed twice, a platform module's dependencies redefined, an unknown dependency or a
+  cycle fails loudly, saying what to change. The tests derive module ids from the merge.
+- **App migrations never collide** (TASK-158): an app's are `NNN<letter>_<app>_<name>.sql`
+  (`052a_playform_…`), after the platform's `NNN` and before `NNN+1`; the platform's are listed in
+  `supabase/platform-migrations.json`. Replay, parity and `applied_migrations` take the form; the
+  replay and `migration-naming` refuse a bare-numbered app migration and name the file to rename
+  it to.
+- **UTC everywhere** (TASK-159): every data-layer transaction sets `TimeZone` to UTC, so day
+  arithmetic never depends on a database or role time zone; the suite passes under New York,
+  Kolkata and UTC, and CI runs it under New York with New York database sessions.
+- **A compliant sync to copy** (TASK-160): `docs/templates/sync-from-foundation.yml` and
+  `sync-config.json`; `workflow-hygiene` failures name the file, the line and what to write.
+- **Dependencies**: Next 16.4.3, `eslint-config-next` 16.4.3, `@sentry/nextjs` 11.9, Jest 30.5
+  (`babel-jest`, `jest-environment-jsdom`), `@types/jest` 30, `@testing-library/jest-dom` 7,
+  `intl-messageformat` 12.1.4, `@types/react` and `@types/react-dom` 19.3, ESLint 9.39.5; the
+  lockfile regenerated (npm 11). `npm audit`: 0 vulnerabilities. ESLint 10 still waits on Next's
+  React, accessibility and import plugins (TASK-149); TypeScript 7 waits on `ts-jest` (TypeScript
+  `<7`); `@types/node` stays on 24 with the runtime.
+
+### Sprint 7X Wave 2 — the October 2026 audit
+
+Every Wave 2 item of the [register](audits/2026-10-REGISTER.md#wave-2-sprint-7x-on-develop-for-v600),
+each with its test; migration 052.
+
+- **Two-person control on every path.** Runtime holds have authorities: an approver must hold the
+  permission the change needs; an approved hold runs once. Role, agent and approval-policy actions
+  — from the command bar or the role page — are held for a second admin.
+- **Sessions that can be revoked.** The refresh token lives only in an httpOnly cookie; sign-out
+  revokes it and every token of the sign-in; staff sign in with a second factor; a confidential
+  Cognito client; sign-in, sign-out and failures are audited; no answer reveals whether an account
+  exists.
+- **Erasure and export that cover everything.** One register of every table that holds a user's
+  data (`platform/auth/user-data.ts`), checked against the schema; `GET /api/account/export` and
+  `POST /api/account/delete`; the admin purge erases for real; a banned address keeps its ban.
+- **Age at sign-up**, recorded once, with the consent gate on every user route.
+- **Fail-closed multimodal safety and signed provenance**; screening consequences recorded before
+  the response; a classifier outage never floods the review queue; a ban is never lowered.
+- **Plumbing**: whole-exchange fetch timeouts that keep the caller's signal and never resend a
+  paid call; a per-request CSP nonce; invalidations that reach every instance; `AI_PROVIDER` that
+  takes effect; `LOG_LEVEL` `warn` by default.
+- **Checks that run in your repository too**: the route-level role matrix on Postgres, property
+  tests for every validator and route body, the monkey's paced sequence mode, workflow hygiene
+  (no interpolated inputs, pinned scanners, anchored sync excludes), an exact override audit with
+  your own register, and a guard that no route reaches the latent modules.
+
+### Review 7 — fixed before release
+
+An adversarial review of this release's candidate, and its adoption in Playform
+([register](audits/2026-10-REGISTER.md#found-by-review-7-of-the-unreleased-wave-2-and-close-out-2026-10-24-fixed-in-v600)):
+
+- **Nothing unjudged is cleared**: a classifier outage, or an unreadable answer, is withheld at
+  every content rating level.
+- **The app manifest takes nothing of the platform's**: no platform migration, nothing under
+  `platform/`, no file the platform ships (`platform/modules/platform-paths.json`).
+- **Exports and erasure**: every row, in pages, or a coded refusal (`account.export_too_large`);
+  no staff member's data and no other participant's; erasure reaches columns and JSON naming the
+  user; the coverage test classifies columns, and a consumer's tables by its own declarations
+  (`noUserData` in the app manifest).
+- **Power changes under dual control**: entitlement groups and capability mappings; the
+  permissions cache follows every role-catalog and account change; an approved hold that failed
+  can be rejected and lapses.
+- **Token verification remembered** in the shared cache (≤ 60 s, revoked at once everywhere,
+  single flight): no Cognito `GetUser` per request; a throttled Cognito fails privileged routes
+  closed (503), never a 401.
+- **Keys**: the erased-ban address hash is an HMAC (`ERASURE_HASH_KEY`); provenance credentials
+  name their key and verify across a rotation (`PROVENANCE_SIGNING_KEY_PREVIOUS`).
+- **Checks**: migration numbers bounded, 052 safe over an app's rows and keeping a retired
+  setting's history, workflow hygiene over every script form and installer, the role matrix over
+  operator routes with the database's permissions and valid bodies.
+
+### Review 8 — fixed before release
+
+A second adversarial review of the candidate
+([register](audits/2026-10-REGISTER.md#found-by-review-8-of-the-v600-candidate-2026-10-24-fixed-in-v600)),
+every finding fixed with its regression test:
+
+- **Token verification**: every access token's signature is checked locally against the pool's
+  keys (`jose`, RS256 only, JWKS kept and refreshed at most once per 30 s) before Cognito's
+  `GetUser` — forged tokens cost no quota; a request after a sign-out, role or MFA change never
+  takes a racing pre-revocation answer; a new user's tenant and a verified address are read at
+  the next request; account export and deletion and MFA routes fail closed.
+- **Nothing unjudged is cleared, or queued**: a classifier answer missing or mangling any field
+  is unjudged and withheld at every level; unjudged content is not queued for review, and is
+  counted for an alert (`moderation.screening_unjudged`).
+- **Erasure**: an address is replaced only as a whole value (never another account's near miss);
+  every uuid, string, array and JSON column is classified, and each claim is proved by a hostile
+  scan; others' cases, contexts, sessions and audit details lose the user's id; the export's
+  steps are the user's own. An operator step redacts addresses of accounts erased before this
+  release (`supabase/optional/redact_orphan_addresses.sql`).
+- **Governance**: every setting whose change is a change of power is under dual control (052);
+  lapsed hold withdrawals are audited; the erased-ban hash has a key id and rotation
+  (`ERASURE_HASH_KEY_PREVIOUS`), and legacy hashes are upgraded.
+- **Boundaries and checks**: the app manifest refuses glob characters and case or Unicode
+  variants of platform paths; workflows are parsed as YAML (flow steps, folded lines, aliases,
+  composite actions); the in-memory cache is bounded and swept, and refused in a deployment.
+
+### Review 14 — fixed before release
+
+The final verification review of the candidate
+([register](audits/2026-10-REGISTER.md#found-by-review-14-of-the-v600-candidate-2026-10-24-fixed-in-v600)),
+no Critical or High; every finding fixed with its regression test (TASK-169):
+
+- **A busy instance does not blame the cache**: a stamp read yields once at its 200 ms bound and
+  takes an answer that has arrived; a timeout during event-loop lag above 100 ms is counted as lag
+  (metric and alert `cache.stamp_read_lag`), never a cache failure, so a CPU-saturated instance no
+  longer opens the stamp breaker against a healthy cache. `cache.stamp_breaker_open` and
+  `cache.stamp_read_lag` are raised at most once per 5 minutes per instance, with a count.
+- **A lost commit keeps its invalidation**: when a commit's answer is lost with the connection, the
+  config and permission invalidations still publish (`onCommit(hook, { idempotent: true })`); the
+  error is `CommitOutcomeUnknownError`; `audited()` records `indeterminate`; config writes, resets
+  and command-bar role changes answer "may or may not have been applied" (`indeterminate`), not
+  "failed".
+- **Withdrawals leave nothing unreported, in no tenant**: an approval a concurrent reviewer held is
+  counted and alerted (`approvals.withdrawal_incomplete`, `remaining`); a platform-scope reduction
+  withdraws the platform-scope holds of every tenant holding one, audited in each.
+- **"Unavailable", never "empty"**: an admin panel whose read is answered 503 says "Unavailable —
+  could not read" (with a retry); the agent-registry and capability-mapping routes answer 503 for a
+  malformed stored value; the console reads its first panel at once.
+- **For app authors**: run the capability kit under your own names —
+  `runCapabilityFeaturesContract(fixtures, { names: { …, fallback: [...] } })`; tag a helper that
+  reaches outside the database (or runs hooks that may) with JSDoc `@external`, and pass
+  `{ external: true }` to `audited()` / `auditedResponse()` for an act that calls one — a CI check
+  reads the code; DB tests run under a 30 s bound (`__tests__/helpers/db.ts`).
+
+### Found adopting the candidate in Playform — fixed before release
+
+Two defects Playform carried as sync-excluded copies (TASK-168); consumers drop their copies:
+
+- **Concurrent first requests each get their account**: the account insert arbitrates every
+  unique key of the row (`on conflict do nothing`, no target), not only the id, so a first request
+  that loses to a concurrent one answers `existing` — never a unique violation on
+  `players_cognito_sub_key` and `account.not_provisioned`. A subject held by another account, or an
+  identity held in another tenant, answers `failed`, decided by a read in the same transaction.
+- **`migration-naming` is consumer-correct**: it reads the merged manifest, the app's
+  `migrationsBeforeTheConvention` included, so an app with grandfathered migrations inherits it
+  unchanged.
+
+### Review 13 — fixed before release
+
+A seventh adversarial review of the candidate
+([register](audits/2026-10-REGISTER.md#found-by-review-13-of-the-v600-candidate-2026-10-24-fixed-in-v600)),
+no Critical or High; every finding fixed with its regression test:
+
+- **An approved reset resets to what the approver saw**: it applies only while the platform
+  default it would inherit is the one recorded at request time (`approvals.stale` otherwise).
+- **A hanging shared cache never holds a request**: reading a stamped key's invalidation stamp —
+  the agent registry, the capability map, every permission check — waits at most 200 ms; after 5
+  failures in a row a circuit breaker stops asking for 30 s (alert `cache.stamp_breaker_open`),
+  then probes. Such reads go to the database, never to what is cached.
+- **For app authors — the capability contract, usable and fail closed**: run
+  `runCapabilityFeaturesContract` against your own decision through its seams (`serveMap`,
+  `serveUnreadable`, `holdFeatures`, `decide`) — no adapter to write. A malformed **or unreadable**
+  `agent.capability_features` allows nothing: there is no built-in fallback map. Read the two
+  governed agent keys with `readCapabilityFeatures` / `readTrustedAgents`, or decide with
+  `evaluateGovernedCapability` (`platform/agents/governed-agent-config.ts`) — never `getConfig`
+  with a default.
+- **Withdrawals are scoped and bounded**: a reduction withdraws only the holds of the scope it
+  reduced, found by key in the store and withdrawn 100 at a time, one audit record per batch
+  (`holdIds`); the kill switch re-run publishes the invalidation again (`republished`).
+- **The database keeps chains and lists true**: the chain guard locks a continuation's predecessor
+  (a concurrent update waits, then is refused); 052 seeds each dual-control key once, so a database
+  that ran an earlier 052 gets `agent.trajectory_max_segments` and an operator's removal stands.
+- **Truthful records**: a commit lost with its connection is recorded `indeterminate`, never
+  `rolled_back`; an external act (`audited(…, { external: true })`) is refused inside a transaction;
+  cache invalidations are published after the commit (`onCommit`). ABA on a compare-and-set is
+  documented as accepted (the base value is identical).
+
+### Review 12 — fixed before release
+
+A sixth adversarial review of the candidate
+([register](audits/2026-10-REGISTER.md#found-by-review-12-of-the-v600-candidate-2026-10-24-fixed-in-v600)),
+every finding fixed with its regression test:
+
+- **A kill switch cannot be undone by an older approval**: every held config change records the
+  value it replaces and is applied only onto it — if the setting changed since (a kill switch, a
+  power reduction, another approved change), nothing is applied, the request is withdrawn and the
+  approver is told `approvals.stale`. The kill switch and every one-admin reduction withdraw the
+  pending holds on their setting, each audited. A suspension reaches every instance at its next
+  read (the config cache is invalidated through the shared cache), and single-tenant deployments
+  have the kill switch too: `POST /api/admin/agents/suspend` for `config_manage_safety` holders.
+- **For app authors — capability mappings fail closed**: a capability absent from
+  `agent.capability_features` is not allowed. `evaluateCapabilityFeatures` (platform/agents) is
+  the evaluator and `__tests__/contract/capability-features-contract.ts` the kit to run against
+  your own. Removing or emptying a mapping is held for a second admin; adding a required feature is
+  applied at once.
+- **For app authors — long sessions stay in order and bounded**: a step always goes to the chain's
+  last segment (the database refuses a chain that is cyclic, forked or misnumbered); a chain holds
+  at most `agent.trajectory_max_segments` segments (default 20 × 1 000 steps), then
+  `request.trajectory_chain_full`; `loadSession` reads only the last segment, and
+  `trajectoryChainPages` pages a session's history one segment at a time.
+- **Truthful records**: an audited act whose transaction rolls back is recorded as rolled back;
+  the kill switch is recorded as attempted, then succeeded or failed; a one-admin reduction is
+  recorded before it is made (no record, no change); `toJSON` values are measured as what they
+  write; a tenant's compare-and-set is serialised with a platform-default write; marking an
+  undecided run executed needs someone other than its requester.
+
+### Review 11 — fixed before release
+
+A fifth adversarial review of the candidate
+([register](audits/2026-10-REGISTER.md#found-by-review-11-of-the-v600-candidate-2026-10-24-fixed-in-v600)),
+every finding fixed with its regression test:
+
+- **An approval runs once, even when its run is slow**: each claim carries a run token, and only
+  that run ends it. A run that outlives its 10-minute lease is never given back to `approved` on a
+  guess: the recovery job marks it **undecided** (`indeterminate` — not runnable, alerted, listed
+  first on the approvals page) unless its step was recorded (executed) or it was atomic (rolled
+  back with it). A person decides: **Took effect** (`mark_executed`) or **Did not — approve again**
+  (`reapprove`, a fresh independent approval). A completion that can no longer land is reported
+  as applied and audited as a conflict, never swallowed. A failure after a tool's own work is
+  "applied", never "approve again to retry"; an approved tool runs once (no output retry).
+- **For app authors — sessions no longer stop at 1 000 moves**: when a session's trajectory
+  reaches its cap (1 000 steps / 16 MiB), the next move starts a continuation trajectory linked to
+  it (`segment`, `previousTrajectoryId`, `stepOffset`), in the same transaction as the move.
+  Nothing to change in an app that uses `dispatch()`/`loadSession()`: the result's `trajectory`
+  is the continuation, and the next move goes there. To read a session's whole history use
+  `readTrajectoryChain(store, trajectoryId)` / `chainSteps(chain)` — a single trajectory row now
+  holds one segment. A long-running agent opts in with `invokeTool({ rolloverTrajectory: true })`
+  and continues on `outcome.trajectory`; every other path still gets `request.trajectory_full`.
+  Exports and erasure cover every segment.
+- **A kill switch**: suspending an agent, narrowing its scopes, lowering its token lifetime or
+  removing a capability mapping is applied at once by the one admin making it (with
+  `config_manage_safety`), audited and alerted — a mixed change that also widens anything is held
+  as before. Operators suspend every agent of a tenant with
+  `POST /api/operator/tenants/[id]/agents/suspend`. Runbook:
+  [runbooks/approvals-and-agents](runbooks/approvals-and-agents.md).
+- **Bounded and truthful**: the stored-JSON pre-check counts strings by their length (a shared
+  1 MB string no longer makes it write out 1.2 GB); erasure's last-resort redaction keeps the
+  document's content (as its text, the address replaced); the command bar's search skips only the
+  rows too large to show, names them, and shows the newest first.
+- **Smaller**: an atomic action's audit records survive its rollback; a retried policy write inside
+  a transaction uses a savepoint; 052 no longer re-creates the email-hash CHECK on every
+  application; a cold request waits at most 1 s in all for signing keys; a malformed
+  `VALKEY_URL` (a bad percent-escape, a user without a password) is refused at boot with
+  `config.valkey_url_invalid`.
+
+### Review 10 — fixed before release
+
+A fourth adversarial review of the candidate
+([register](audits/2026-10-REGISTER.md#found-by-review-10-of-the-v600-candidate-2026-10-24-fixed-in-v600)),
+every finding fixed with its regression test:
+
+- **One hold per change**: the command bar's agent and capability actions are config writes, held
+  only by their key (`agent.trusted_agents`, `agent.capability_features`) under the key's rules —
+  `config_manage_safety` to approve, never the requester, an operator for a shared deployment's
+  platform default. The review 9 approval capability is removed; a test keeps any action from
+  being both action-held and a config write. `admin.dual_control_actions` is always held.
+- **A failed run keeps its approval**: an approval is claimed for its run (`executing`) and
+  returned when the run fails before taking effect — "approve it again to retry" is now true; a
+  crashed run's claim is recovered after 10 minutes; tenant-transaction actions run claim, effect
+  and completion in one transaction.
+- **Truthful limits**: an oversized tool output is recorded as not kept rather than failing work
+  already done; a state too large is refused before the effect; a failure after it says
+  "applied, record not stored" and is audited; a trajectory holds at most 1 000 steps / 16 MiB;
+  the command bar's search result is cut at 256 KiB.
+- **Outages and transport**: a cold instance waits at most 1 s per request for signing keys;
+  `VALKEY_URL` options in the URL are refused (they overrode TLS).
+- **Erasure**: never a change of type, never a lost key; the email-hash scheme CHECK has no NULL
+  hole. Timing tests measure inside the database or assert work.
+
+### Review 9 — fixed before release
+
+A third adversarial review of the candidate
+([register](audits/2026-10-REGISTER.md#found-by-review-9-of-the-v600-candidate-2026-10-24-fixed-in-v600)),
+every finding fixed with its regression test:
+
+- **Dual control, truthfully**: a held change is its own result everywhere (`held: true`, never
+  success — command bar, config page, Jobs console). An approved `register_agent`,
+  `set_agent_scope` or `set_capability_mapping` applies exactly once: its write presents the
+  approval's capability, minted when the approval is used and bound to it, the key and the value;
+  a forged or reused one is refused, and a direct write of those keys is still held.
+- **Erasure cannot be blocked**: `jsonb_replace_text_value` no longer recurses and cannot fail on
+  any document (depth 10 000, a million elements in seconds); it replaces an address that is an
+  object key too. Stored caller JSON is bounded (64 levels, 1 MiB) with coded errors. The
+  erased-ban hash records its scheme, and only rows recorded as unkeyed are upgraded.
+- **Outages are not sign-outs**: a cold instance retries the signing keys on a short backoff;
+  unavailable keys fall through to the remembered verification and the stale grace; a suppressed
+  key refresh is 503, never 401; an outage answer after a revocation never stands in.
+- **A shared cache for containers**: `CACHE_PROVIDER=valkey` — Valkey or Redis over verified TLS
+  (`ioredis`, pinned), passing the cache conformance kit; `memory` stays refused, and the boot
+  error and the container guide say what to set.
+- **Checks**: a classifier's `"reason": null` is an absent reason; workflow hygiene resolves
+  aliases everywhere and matches `uses:` without case; app manifest paths are plain ASCII segments.
+
+---
+
 ## v5.1.1 — Dependencies, and no state set inside an effect
 
 Date: 2026-10-23

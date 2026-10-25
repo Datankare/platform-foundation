@@ -358,6 +358,22 @@ guard. Layered on top is **per-account feature restriction** (ADR-034): a specif
 blocked from a specific feature independent of their account status — a targeted, orthogonal
 control that denies at the user gate, fail-closed.
 
+**The contract every consumer's evaluation honours (review 12 H1):** a capability ABSENT from the
+map is NOT allowed — never "no features required, the gate passes"; a malformed map allows
+nothing; an explicit empty list is the only "no features required". The reference evaluator is
+`evaluateCapabilityFeatures` (`platform/agents/capability-features.ts`); a consumer with its own
+evaluator runs the kit `__tests__/contract/capability-features-contract.ts` against it. Removing
+or emptying a mapping is held for a second admin; only adding a required feature to an existing
+mapping is applied by one admin (ADR-040, review 12).
+
+**Fail closed when the map cannot be read (review 13 P):** a map that cannot be read allows
+nothing either — there is no built-in fallback map. Read `agent.capability_features` and
+`agent.trusted_agents` with `readCapabilityFeatures` / `readTrustedAgents`
+(`platform/agents/governed-agent-config.ts`, getConfigOrThrow semantics), or decide with
+`evaluateGovernedCapability`; never `getConfig` with a default. The kit runs a consumer's own
+decision in its own signature: give it `serveMap`, `serveUnreadable`, `holdFeatures` and `decide`
+(`consumerEvaluator` is the adapter it uses).
+
 ### The GenAI-native governance admin
 
 All of the above is administered through the platform's natural-language admin (ADR-035):

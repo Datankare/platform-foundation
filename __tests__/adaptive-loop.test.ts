@@ -118,4 +118,23 @@ describe("adaptive loop (ADR-036 D2/D3)", () => {
     expect(r.usedFallback).toBe(true);
     expect(r.fallbackReason).toBe("run-incomplete");
   });
+
+  it("charges the model call's cost to the run, not 0 (audit C-19)", async () => {
+    complete.mockResolvedValue({
+      ...textResponse('{"level":5}'),
+      usage: { inputTokens: 100_000, outputTokens: 50_000 },
+    });
+    const r = await run();
+    const { getTrajectoryStore } = jest.requireActual(
+      "@/platform/agents/trajectory-store"
+    );
+    const { estimateCost } = jest.requireActual("@/platform/ai/instrumentation");
+    const record = await getTrajectoryStore().getById(r.trajectoryId);
+    const charged = record.trajectory.steps.reduce(
+      (sum: number, step: { cost: number }) => sum + step.cost,
+      0
+    );
+    expect(charged).toBeGreaterThan(0);
+    expect(charged).toBeCloseTo(estimateCost("fast", 100_000, 50_000), 9);
+  });
 });

@@ -9,7 +9,7 @@
  * @module platform/auth
  */
 
-import type { AuthProvider } from "@/platform/auth/provider";
+import type { AuthProvider, SignUpProfile } from "@/platform/auth/provider";
 import type {
   AuthResult,
   AuthSession,
@@ -67,8 +67,12 @@ function notFromTheBrowser(method: string): {
 export function createBrowserAuthProvider(): AuthProvider {
   return {
     // ── Sign Up / Sign In ──
-    signUp: (email: string, password: string) =>
-      postAuth<AuthResult>("/api/auth/sign-up", { email, password }),
+    signUp: (email: string, password: string, profile?: SignUpProfile) =>
+      postAuth<AuthResult>("/api/auth/sign-up", {
+        email,
+        password,
+        ...(profile?.dateOfBirth ? { dateOfBirth: profile.dateOfBirth } : {}),
+      }),
 
     signIn: (email: string, password: string) =>
       postAuth<AuthResult>("/api/auth/sign-in", { email, password }),
@@ -117,10 +121,11 @@ export function createBrowserAuthProvider(): AuthProvider {
       _totpCode: string
     ): Promise<MfaVerifyResult> => notFromTheBrowser("verifyMfaSetup"),
 
-    respondToMfaChallenge: (mfaSession: string, totpCode: string) =>
+    respondToMfaChallenge: (mfaSession: string, totpCode: string, username: string) =>
       postAuth<AuthResult>("/api/auth/mfa-challenge", {
         session: mfaSession,
         code: totpCode,
+        username,
       }),
 
     respondToNewPasswordChallenge: (

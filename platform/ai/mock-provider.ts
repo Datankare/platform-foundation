@@ -8,7 +8,9 @@
  * Created under ADR-027 — the AIProvider slot previously had no reference impl
  * to run the conformance kit against.
  *
- * P6  — Resilient fallback for the AI slot.
+ * Not a fallback (audit H-15: this said "resilient fallback for the AI slot"): nothing falls
+ * back to it. It is installed only by AI_PROVIDER=mock, which the environment contract accepts in
+ * a local or CI run only — it would answer the safety classifier with an echo (G-13).
  * P7  — Provider-aware: interface + mock + real (Anthropic) implementations.
  *
  * @module platform/ai

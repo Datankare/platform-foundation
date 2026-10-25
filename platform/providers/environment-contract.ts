@@ -25,6 +25,7 @@
  */
 
 import { getModules } from "@/platform/modules/registry";
+import { parseValkeyUrl, ValkeyUrlError } from "@/platform/cache/valkey-url";
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
@@ -52,6 +53,13 @@ export function isTenantId(value: unknown): value is string {
   return typeof value === "string" && TENANT_UUID.test(value);
 }
 
+/**
+ * What a deployment sets for its shared cache (review 9 M5): said in full in every cache
+ * violation, so the boot error is the instruction.
+ */
+const SHARED_CACHE_CHOICES =
+  "set CACHE_PROVIDER=upstash with UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (Vercel, or any host), or CACHE_PROVIDER=valkey with VALKEY_URL=rediss://… (a container host's own Valkey or Redis); memory is for local and CI runs only (DEPLOYMENT_HOST=local or ci)";
+
 /** ADR-050 D2: the declared settings. Order is the order violations are reported in. */
 export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
   {
@@ -71,6 +79,13 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     aliases: ["COGNITO_CLIENT_ID"],
     shape: /^[\w+]{1,128}$/,
     shapeHint: "the app client id (letters and digits)",
+  },
+  {
+    name: "COGNITO_CLIENT_SECRET",
+    aliases: [],
+    shape: /^[a-z\d+/=]{32,128}$/i,
+    shapeHint:
+      "the app client's secret (a confidential client): direct calls to the pool without it are refused, so sign-up, sign-in and password reset go through the platform's routes (audit A-7)",
   },
   {
     name: "NEXT_PUBLIC_COGNITO_REGION",
@@ -209,9 +224,23 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
   {
     name: "CACHE_PROVIDER",
     aliases: [],
-    shape: /^(upstash|memory)$/,
+    shape: /^(upstash|valkey|memory)$/,
     shapeHint:
-      "one of: upstash, memory — required in production; memory keeps the cache per instance (TASK-139)",
+      "one of: upstash, valkey, memory — required in production; memory keeps the cache per instance and is for local and CI runs only (TASK-139, review 8 L3)",
+  },
+  {
+    name: "VALKEY_URL",
+    aliases: [],
+    shape: /^rediss?:\/\/\S+$/,
+    shapeHint:
+      "rediss://[user:password@]host:port of a Valkey or Redis server (TLS; redis:// only for a local or CI run) — a secret: paste it into the host's secret store",
+  },
+  {
+    name: "VALKEY_CA_CERT",
+    aliases: [],
+    shape: /-----BEGIN CERTIFICATE-----/,
+    shapeHint:
+      "a PEM bundle (-----BEGIN CERTIFICATE-----…) of the CA that signed the Valkey server's certificate — only for a private CA",
   },
   {
     name: "DEPLOYMENT_HOST",
@@ -268,6 +297,34 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     shape: /^[\w+/=.~-]{32,512}$/,
     shapeHint:
       "at least 32 random characters (letters, digits, + / = . ~ _ -), e.g. openssl rand -hex 32 — the job tick's bearer secret (ADR-056 D2)",
+  },
+  {
+    name: "ERASURE_HASH_KEY",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "at least 32 random characters, e.g. openssl rand -hex 32 — the key of the HMAC an erased banned account's address is kept as (audit A-11, review 7 L4); to rotate it, move the old value to ERASURE_HASH_KEY_PREVIOUS (review 8 L6)",
+  },
+  {
+    name: "ERASURE_HASH_KEY_PREVIOUS",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "the erasure-hash key before the current one (rotation, review 8 L6): bans it hashed still match, and each is rehashed under the current key when it matches; nothing new is hashed with it",
+  },
+  {
+    name: "PROVENANCE_SIGNING_KEY",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "at least 32 random characters, e.g. openssl rand -hex 32 — signs the provenance credential on generated images (ADR-047, audit X-18); without it credentials are unsigned and never verify",
+  },
+  {
+    name: "PROVENANCE_SIGNING_KEY_PREVIOUS",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "the provenance key before the current one (rotation, review 7 L6): credentials it signed still verify; nothing new is signed with it — remove it once those no longer matter",
   },
 ];
 
@@ -381,6 +438,18 @@ export function getAuthProviderSetting(env: EnvSource = process.env): string | u
   return resolveSetting("AUTH_PROVIDER", env);
 }
 
+/** The key of the address hash kept for an account erased while banned (review 7 L4). */
+export function getErasureHashKey(env: EnvSource = process.env): string | undefined {
+  return resolveSetting("ERASURE_HASH_KEY", env);
+}
+
+/** The erasure-hash key before the current one (rotation, review 8 L6); undefined when not set. */
+export function getPreviousErasureHashKey(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("ERASURE_HASH_KEY_PREVIOUS", env);
+}
+
 /** ADR-050 D4: the guest-token signing secret. */
 export function getGuestTokenSecret(env: EnvSource = process.env): string | undefined {
   return resolveSetting("GUEST_TOKEN_SECRET", env);
@@ -392,6 +461,20 @@ export function getGuestTokenSecret(env: EnvSource = process.env): string | unde
  */
 export function getCronSecret(env: EnvSource = process.env): string | undefined {
   return resolveSetting("CRON_SECRET", env);
+}
+
+/** The provenance key before the current one: verifies, never signs (review 7 L6). */
+export function getPreviousProvenanceSigningKey(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("PROVENANCE_SIGNING_KEY_PREVIOUS", env);
+}
+
+/** The key that signs provenance credentials (audit X-18); undefined when not set. */
+export function getProvenanceSigningKey(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("PROVENANCE_SIGNING_KEY", env);
 }
 
 /** ADR-052: the rate-limit store selection (default "memory"; refused in production). */
@@ -558,6 +641,8 @@ export interface CognitoSettings {
   clientId: string;
   /** Hosted sign-in host name (SSO); undefined when not configured. */
   hostedUiDomain?: string;
+  /** The app client's secret (a confidential client, audit A-7); undefined when not set. */
+  clientSecret?: string;
 }
 
 /**
@@ -572,7 +657,14 @@ export function getCognitoSettings(env: EnvSource = process.env): CognitoSetting
     poolRegion(userPoolId) ??
     "us-east-1";
   const hostedUiDomain = resolveSetting("NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN", env);
-  return { region, userPoolId, clientId, hostedUiDomain };
+  const clientSecret = resolveSetting("COGNITO_CLIENT_SECRET", env);
+  return {
+    region,
+    userPoolId,
+    clientId,
+    hostedUiDomain,
+    ...(clientSecret ? { clientSecret } : {}),
+  };
 }
 
 /** SSO identity providers this deployment declares (TASK-101, ADR-050 D3). */
@@ -667,12 +759,39 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
     }
   }
 
+  // Audit G-13: the mock AI provider echoes every prompt — the safety classifier's included, so
+  // every screening would fail closed — and is for local and CI runs only.
+  const ai = raw(env, "AI_PROVIDER");
+  if (ai !== undefined && ai !== "anthropic" && ai !== "mock") {
+    violations.push(`AI_PROVIDER has the wrong shape — expected anthropic or mock`);
+  }
+  if (ai === "mock" && !harnessAllowed) {
+    violations.push(
+      'AI_PROVIDER is "mock" — the mock provider is a test double (local and CI runs only); set AI_PROVIDER=anthropic'
+    );
+  }
+  // A server secret under a NEXT_PUBLIC_ name is inlined into any browser bundle that names it
+  // (audit G-13). The Google key is read as GOOGLE_API_KEY only.
+  if (raw(env, "NEXT_PUBLIC_GOOGLE_API_KEY") !== undefined) {
+    violations.push(
+      "NEXT_PUBLIC_GOOGLE_API_KEY is set — a NEXT_PUBLIC_ value is shipped to browsers; set GOOGLE_API_KEY (server-side) instead"
+    );
+  }
+
   // D4: guest tokens are signed by the platform (/api/auth/guest) under this secret. Required
   // with a real auth provider; a production-build test harness on the mock provider sets it
   // only if it exercises guests (without it, starting a guest session is refused).
   if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && getGuestTokenSecret(env) === undefined) {
     violations.push(
       `GUEST_TOKEN_SECRET is required by AUTH_PROVIDER=${auth} (signed guest tokens)`
+    );
+  }
+  // Review 7 L4: an erased banned account's address is kept as an HMAC under this key, so the
+  // ban follows the address without the address being recoverable by a dictionary of addresses
+  // (an unsalted SHA-256 was). Required with a real auth provider, as the guest secret is.
+  if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && getErasureHashKey(env) === undefined) {
+    violations.push(
+      `ERASURE_HASH_KEY is required by AUTH_PROVIDER=${auth} (the erased-ban address hash)`
     );
   }
 
@@ -687,6 +806,14 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
     if (!clientId) {
       violations.push(
         `NEXT_PUBLIC_COGNITO_CLIENT_ID is required by AUTH_PROVIDER=cognito`
+      );
+    }
+    // Audit A-7: a public app client lets anyone call the pool directly (sign-up, sign-in,
+    // password reset) around the platform's password policy, rate limits and audit. With a
+    // secret, every such call needs it, and only the server has it.
+    if (resolveSetting("COGNITO_CLIENT_SECRET", env) === undefined) {
+      violations.push(
+        "COGNITO_CLIENT_SECRET is required by AUTH_PROVIDER=cognito (a confidential app client)"
       );
     }
     if (
@@ -828,14 +955,54 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
   // it unset.
   const cache = getCacheProviderSetting(env);
   if (cache === undefined && !harnessAllowed) {
+    violations.push(`CACHE_PROVIDER is required — ${SHARED_CACHE_CHOICES}`);
+  }
+  // Review 8 L3: the cache is no longer only hits. Token revocation (sign-out, an account
+  // disabled or deleted, a role or MFA change) and permission invalidation are published through
+  // it to every instance; a per-instance cache publishes them to one, and the others serve a
+  // revoked token for up to auth.token_cache_seconds. Every deployment host can run more than one
+  // instance (Vercel always does; a container platform scales out), so a deployment must share
+  // its cache. Only a local or CI run (DEPLOYMENT_HOST local/ci) may use memory.
+  if (cache === "memory" && !harnessAllowed) {
     violations.push(
-      "CACHE_PROVIDER is required: upstash (shared), or memory (per instance, declared on purpose)"
+      `CACHE_PROVIDER=memory in a deployment — sign-outs, role and MFA changes would reach only the instance that made them. ${SHARED_CACHE_CHOICES}`
     );
   }
   if (cache === "upstash") {
     for (const name of ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"]) {
       if (raw(env, name) === undefined) {
-        violations.push(`${name} is required by CACHE_PROVIDER=upstash but not set`);
+        violations.push(
+          `${name} is required by CACHE_PROVIDER=upstash but not set — copy it from the Upstash database's REST API panel into the host's secret store (docs/MIGRATION_v5_to_v6.md, "The shared cache")`
+        );
+      }
+    }
+  }
+  // Review 9 M5: a container host's own Valkey or Redis, over TLS.
+  if (cache === "valkey") {
+    const url = raw(env, "VALKEY_URL");
+    if (url === undefined) {
+      violations.push(
+        "VALKEY_URL is required by CACHE_PROVIDER=valkey but not set — rediss://[user:password@]host:port of the Valkey or Redis server, in the host's secret store (docs/DEPLOY_CONTAINER.md §3)"
+      );
+    } else if (!url.startsWith("rediss://") && !harnessAllowed) {
+      violations.push(
+        "VALKEY_URL must use rediss:// (TLS, certificate verified) in a deployment — redis:// sends the cache, revocations included, in clear text; it is for local and CI runs only"
+      );
+    }
+    // Review 10 M6: the client read a URL's query parameters as options overriding TLS and the
+    // command timeout; the provider refuses them, and so does the contract, at start. Review 11
+    // L-6: every rule the provider applies is applied here — a malformed percent-escape, a user
+    // without a password — so a URL the provider would refuse never boots.
+    if (url !== undefined && /[?#]/.test(url)) {
+      violations.push(
+        "VALKEY_URL must not carry a query string or fragment — connection options (TLS, timeouts) are the platform's, never the URL's (rediss://[user:password@]host:port[/db])"
+      );
+    } else if (url !== undefined && (url.startsWith("rediss://") || harnessAllowed)) {
+      try {
+        parseValkeyUrl(url, harnessAllowed);
+      } catch (err) {
+        if (!(err instanceof ValkeyUrlError)) throw err;
+        violations.push(`${err.message} (${err.code})`);
       }
     }
   }

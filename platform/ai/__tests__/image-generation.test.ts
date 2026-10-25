@@ -19,6 +19,7 @@ import {
   resetProposalStore,
 } from "@/platform/agents";
 import {
+  emitProvenance,
   verifyProvenance,
   setSyntheticDetector,
   resetSyntheticDetector,
@@ -47,6 +48,13 @@ const req = (over: Partial<GenerationRequest> = {}): GenerationRequest => ({
   ...over,
 });
 const OPTS = { requestId: "r" };
+
+beforeAll(() => {
+  process.env.PROVENANCE_SIGNING_KEY = "image-generation-test-key-0123456789abcdef";
+});
+afterAll(() => {
+  delete process.env.PROVENANCE_SIGNING_KEY;
+});
 
 beforeEach(() => {
   resetEffectLedger();
@@ -138,6 +146,43 @@ describe("generateGoverned", () => {
     expect(r.tier).toBe("high");
   });
 
+  describe("reference images (audit X-18)", () => {
+    const REF = { mediaType: "image/png", data: "cmVm" };
+    it("holds a generation from a reference when no detector is configured", async () => {
+      const r = await generateGoverned(req({ referenceImages: [REF] }), gen, OPTS);
+      expect(r.status).toBe("held");
+      expect(r.image).toBeUndefined();
+    });
+    it("commits from a reference a configured detector clears", async () => {
+      setSyntheticDetector(async () => ({ synthetic: false, confidence: 0.2 }));
+      const r = await generateGoverned(req({ referenceImages: [REF] }), gen, OPTS);
+      expect(r.status).toBe("committed");
+    });
+    it("a detector that throws counts as synthetic", async () => {
+      setSyntheticDetector(async () => {
+        throw new Error("detector down");
+      });
+      const r = await generateGoverned(req({ referenceImages: [REF] }), gen, OPTS);
+      expect(r.status).toBe("held");
+    });
+    it.each([
+      ["a credential that verifies (this platform's own generation)", true],
+      ["a forged credential", false],
+    ])("treats a reference carrying %s as synthetic", async (_label, genuine) => {
+      setSyntheticDetector(async () => ({ synthetic: false, confidence: 0 }));
+      const own = emitProvenance(REF, { model: "m" });
+      const provenance = genuine ? own : { ...own, model: "someone-else" };
+      expect(verifyProvenance(provenance, REF)).toBe(genuine);
+      const r = await generateGoverned(
+        req({ referenceImages: [{ ...REF, provenance }] }),
+        gen,
+        OPTS
+      );
+      expect(r.status).toBe("held");
+      expect(r.tier).toBe("high");
+    });
+  });
+
   it("enqueues a held generation as a proposal given an approval context (ADR-040)", async () => {
     const ctx = {
       actor: { actorType: "agent" as const, actorId: "a", agentRole: "gen" },
@@ -153,5 +198,61 @@ describe("generateGoverned", () => {
     expect(r.proposalId).toBeDefined();
     const rec = await getProposalStore().getById(r.proposalId!);
     expect(rec?.label).toBe("image-generation");
+  });
+});
+
+describe("a held generation surfaces nothing until it is approved (audit C-15)", () => {
+  const ACTOR = { actorType: "agent" as const, actorId: "gen", agentRole: "gen" };
+  const ctx = { actor: ACTOR, sessionId: "s", trajectoryId: "t" };
+
+  it("returns no image while held, then commits the same draft once on approval", async () => {
+    let calls = 0;
+    const gen: ImageGenerator = async () => {
+      calls++;
+      return IMG;
+    };
+    const request = req({ requesterTrust: "user" });
+    const held = await generateGoverned(request, gen, { ...OPTS, approvalContext: ctx });
+    expect(held.status).toBe("held");
+    expect(held.image).toBeUndefined();
+    expect(held.proposalId).toEqual(expect.any(String));
+
+    // Not yet approved: still nothing.
+    const early = await generateGoverned(request, gen, {
+      ...OPTS,
+      approvedProposalId: held.proposalId,
+    });
+    expect(early.status).toBe("held");
+    expect(early.image).toBeUndefined();
+
+    await getProposalStore().decide(held.proposalId!, "approved", "approver");
+    const committed = await generateGoverned(request, gen, {
+      ...OPTS,
+      approvedProposalId: held.proposalId,
+    });
+    expect(committed).toMatchObject({ status: "committed", image: IMG });
+    expect(calls).toBe(1); // the stored draft, never a second generation
+
+    const again = await generateGoverned(request, gen, {
+      ...OPTS,
+      approvedProposalId: held.proposalId,
+    });
+    expect(again.status).toBe("held");
+    expect(again.image).toBeUndefined();
+  });
+
+  it("does not commit another request under the approval", async () => {
+    const gen: ImageGenerator = async () => IMG;
+    const held = await generateGoverned(req({ requesterTrust: "user" }), gen, {
+      ...OPTS,
+      approvalContext: ctx,
+    });
+    await getProposalStore().decide(held.proposalId!, "approved", "approver");
+    const other = await generateGoverned(req({ requesterTrust: "user" }), gen, {
+      ...OPTS,
+      approvedProposalId: held.proposalId,
+    });
+    expect(other.status).toBe("held");
+    expect(other.image).toBeUndefined();
   });
 });

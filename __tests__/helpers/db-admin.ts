@@ -44,6 +44,27 @@ export function mockTenantMiddleware(): any {
     }
     return verify(request);
   });
+  // requireActor as in production — a signed-in user is the actor, users.id its id (the
+  // platform provisions users.id = the token's subject; a test caller's is its userId). A guest
+  // token is refused unless the route allows guests.
+  const { apiError } = jest.requireActual("@/platform/errors");
+  base.requireActor = jest.fn(async (request: any, options: { allowGuests: boolean }) => {
+    const header: string = request?.headers?.get?.("authorization") ?? "";
+    if (header.startsWith("Bearer guest.") && !options?.allowGuests) {
+      return { error: apiError("auth.sign_in_required", { request }) };
+    }
+    const auth = await base.requireAuth(request);
+    if (auth.error) return { error: auth.error };
+    const identity = require("./test-identities").identityForSub(auth.user.sub);
+    return {
+      actor: {
+        kind: "user",
+        id: identity?.userId ?? auth.user.sub,
+        tenantId: request?.headers?.get?.(TENANT_HEADER) ?? "",
+        user: auth.user,
+      },
+    };
+  });
   return base;
 }
 

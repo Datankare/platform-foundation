@@ -16,6 +16,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { isJsonLimitError } from "./json-limits";
 import { logger } from "@/lib/logger";
 import {
   ERROR_CODES,
@@ -95,6 +96,11 @@ export function internalError(
     context?: string;
   } = {}
 ): NextResponse {
+  // A document refused at a write boundary is the caller's to fix: its own code, not a 500
+  // (review 9 H2 — request.json_too_deep / request.json_too_large).
+  if (isJsonLimitError(err)) {
+    return apiError(err.code, { params: { ...err.params }, request: options.request });
+  }
   const requestId = newRequestId();
   try {
     logger.error(options.context ?? "Internal error", {

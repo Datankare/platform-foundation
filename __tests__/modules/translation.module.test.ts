@@ -87,17 +87,21 @@ describe("translation module — provider slot", () => {
     );
   });
 
-  it.each(["GOOGLE_API_KEY", "NEXT_PUBLIC_GOOGLE_API_KEY"])(
-    "does not warn when google has %s",
-    async (key) => {
-      process.env.TRANSLATION_PROVIDER = "google";
-      process.env[key] = "k";
-      const { warn } = await boot();
-      expect(warn).not.toHaveBeenCalledWith(
-        expect.stringContaining("TRANSLATION_PROVIDER")
-      );
-    }
-  );
+  it("does not warn when google has GOOGLE_API_KEY", async () => {
+    process.env.TRANSLATION_PROVIDER = "google";
+    process.env.GOOGLE_API_KEY = "k";
+    const { warn } = await boot();
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("TRANSLATION_PROVIDER")
+    );
+  });
+
+  it("warns when the key is only under its NEXT_PUBLIC_ name (it is not read, G-13)", async () => {
+    process.env.TRANSLATION_PROVIDER = "google";
+    process.env.NEXT_PUBLIC_GOOGLE_API_KEY = "k";
+    const { warn } = await boot();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("GOOGLE_API_KEY missing"));
+  });
 
   it("logs a selection outside its values and passes it on", async () => {
     process.env.TRANSLATION_PROVIDER = "deepl";
@@ -154,7 +158,12 @@ describe("translation module — vocabulary", () => {
     const { consentFeatureFallback } = await import("@/platform/auth/coppa-gate");
     const { restrictedFeatureFallback } =
       await import("@/platform/auth/account-status-guard");
-    expect(consentFeatureFallback()).toEqual(["generate", "upload_file", "translate"]);
+    expect(consentFeatureFallback()).toEqual([
+      "generate",
+      "stream",
+      "upload_file",
+      "translate",
+    ]);
     expect(restrictedFeatureFallback()).toEqual([
       "generate",
       "upload_file",

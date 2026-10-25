@@ -26,6 +26,12 @@ export interface ClassifierOutput {
   confidence: number;
   severity: SafetySeverity;
   reason?: string;
+  /**
+   * True when the answer could not be read (a parse failure or missing field): the confidence and
+   * severity are placeholders, not a judgement, so no threshold may clear the text on them
+   * (review 7 H1 — at level 3 the placeholder 0.5/medium was below every threshold and allowed).
+   */
+  unjudged?: true;
 }
 
 /** Prompt configuration */
@@ -74,6 +80,14 @@ Rules:
 /**
  * Parse the classifier response into a structured ClassifierOutput.
  * Fails closed — any parse error returns unsafe with low confidence.
+ *
+ * Every field is required and checked (review 8 H-B): a missing or non-numeric confidence, one
+ * outside 0–1, a severity not exactly one of the four, categories that are not a list of known
+ * ones, a reason that is not text, or a "safe" verdict that contradicts itself (categories, or a
+ * severity above low) — any of them makes the answer unjudged. Before: a missing confidence
+ * became 0.5 and an unknown severity ("High", "severe") became "medium", unmarked, and at level 3
+ * those placeholders cleared an unsafe answer. Unjudged is never allowed (the Guardian withholds
+ * it at every level).
  */
 export function parseClassifierResponse(raw: string): ClassifierOutput {
   const cleaned = raw
@@ -83,36 +97,76 @@ export function parseClassifierResponse(raw: string): ClassifierOutput {
     .replace(/\n?```$/, "")
     .trim();
 
+  let result: Record<string, unknown>;
   try {
-    const result = JSON.parse(cleaned);
-
-    // Validate required fields — fail closed on missing data
-    if (typeof result.safe !== "boolean") {
-      return failClosedResult("Missing 'safe' field");
+    const parsed: unknown = JSON.parse(cleaned);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return failClosedResult("Classifier answer is not a JSON object");
     }
-
-    const categories: SafetyCategory[] = Array.isArray(result.categories)
-      ? result.categories.filter(isValidCategory)
-      : [];
-
-    const confidence =
-      typeof result.confidence === "number"
-        ? Math.max(0, Math.min(1, result.confidence))
-        : 0.5;
-
-    const severity = isValidSeverity(result.severity) ? result.severity : "medium";
-
-    return {
-      safe: result.safe,
-      categories,
-      confidence,
-      severity,
-      reason: typeof result.reason === "string" ? result.reason : undefined,
-    };
+    result = parsed as Record<string, unknown>;
   } catch {
     /* justified — fail closed on parse error */
     return failClosedResult("Failed to parse classifier response");
   }
+
+  // Validate required fields — fail closed on missing data
+  if (typeof result.safe !== "boolean") {
+    return failClosedResult("Missing 'safe' field");
+  }
+
+  const problems: string[] = [];
+  const categories: SafetyCategory[] = Array.isArray(result.categories)
+    ? result.categories.filter(isValidCategory)
+    : [];
+  if (!Array.isArray(result.categories)) problems.push("categories missing");
+  else if (categories.length !== result.categories.length)
+    problems.push("unknown category");
+
+  const confidenceValid =
+    typeof result.confidence === "number" &&
+    Number.isFinite(result.confidence) &&
+    result.confidence >= 0 &&
+    result.confidence <= 1;
+  if (!confidenceValid) problems.push("confidence missing or outside 0–1");
+  const confidence = confidenceValid ? (result.confidence as number) : 0.5;
+
+  const severityValid = isValidSeverity(result.severity);
+  if (!severityValid) problems.push("severity missing or unknown");
+  const severity: SafetySeverity = severityValid
+    ? (result.severity as SafetySeverity)
+    : "medium";
+
+  // `reason` is the one optional field: absent and null both mean "no reason given" (review 9
+  // M3 — a safe answer with "reason": null was marked unjudged). The required fields above stay
+  // strict: null is not a verdict, a list, a confidence or a severity.
+  if (
+    result.reason !== undefined &&
+    result.reason !== null &&
+    typeof result.reason !== "string"
+  )
+    problems.push("reason is not text");
+  if (result.safe && (categories.length > 0 || (severityValid && severity !== "low")))
+    problems.push("a safe verdict with categories or a severity above low");
+
+  const reason = typeof result.reason === "string" ? result.reason : undefined;
+  if (problems.length > 0) {
+    // Partly readable: not a judgement. Never "safe", and marked, so no threshold clears it.
+    return {
+      safe: false,
+      categories,
+      confidence,
+      severity,
+      reason: `Classifier answer not fully readable (${problems.join("; ")})`,
+      unjudged: true,
+    };
+  }
+  return {
+    safe: result.safe,
+    categories,
+    confidence,
+    severity,
+    reason,
+  };
 }
 
 function failClosedResult(reason: string): ClassifierOutput {
@@ -122,6 +176,7 @@ function failClosedResult(reason: string): ClassifierOutput {
     confidence: 0.5,
     severity: "medium",
     reason,
+    unjudged: true,
   };
 }
 

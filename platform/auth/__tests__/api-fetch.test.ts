@@ -130,3 +130,75 @@ describe("apiFetch", () => {
     expect(sentHeaders().get("authorization")).toMatch(/^Bearer /);
   });
 });
+
+describe("apiFetch — an expired access token is renewed once (audit A-14)", () => {
+  const respond = (status: number, body: unknown = {}) =>
+    ({ ok: status < 400, status, json: async () => body }) as unknown as Response;
+
+  it("on 401, renews from the refresh cookie and repeats the call with the new token", async () => {
+    signIn(jwt(600));
+    const fresh = jwt(3600);
+    fetchMock
+      .mockResolvedValueOnce(respond(401))
+      .mockResolvedValueOnce(respond(200, { userId: "u1", accessToken: fresh }))
+      .mockResolvedValueOnce(respond(200));
+    const res = await apiFetch("/api/admin/users", { method: "POST", body: "{}" });
+    expect(res.status).toBe(200);
+    expect((fetchMock.mock.calls[1] as unknown as [string])[0]).toBe("/api/auth/refresh");
+    expect(sentHeaders(2).get("authorization")).toBe(`Bearer ${fresh}`);
+    expect(localStorage.getItem("pf_access_token")).toBe(fresh);
+  });
+
+  it("returns the 401 and ends the session when the refresh is refused", async () => {
+    signIn(jwt(600));
+    fetchMock.mockResolvedValueOnce(respond(401)).mockResolvedValueOnce(respond(401));
+    const res = await apiFetch("/api/admin/users");
+    expect(res.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem("pf_access_token")).toBeNull();
+  });
+
+  it("does not retry a call whose body is a stream (it cannot be sent twice)", async () => {
+    signIn(jwt(600));
+    fetchMock.mockResolvedValueOnce(respond(401));
+    // Any body that is not one of the re-sendable kinds (a stream, in a browser).
+    const body = { getReader() {} } as unknown as BodyInit;
+    const res = await apiFetch("/api/process", { method: "POST", body });
+    expect(res.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never renews for a guest", async () => {
+    localStorage.setItem("pf_access_token", jwt(600));
+    localStorage.setItem(
+      "pf_user",
+      JSON.stringify({ userId: "g", email: "", emailVerified: false, isGuest: true })
+    );
+    fetchMock.mockResolvedValueOnce(respond(401));
+    await apiFetch("/api/process");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes one refresh for calls that fail at once", async () => {
+    signIn(jwt(600));
+    const fresh = jwt(3600);
+    fetchMock.mockImplementation((async (url: string) =>
+      url === "/api/auth/refresh"
+        ? respond(200, { userId: "u1", accessToken: fresh })
+        : respond(sentAuth(url) === fresh ? 200 : 401)) as never);
+    function sentAuth(_url: string): string | undefined {
+      const last = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] as unknown as [
+        string,
+        RequestInit,
+      ];
+      return new Headers(last[1]?.headers).get("authorization")?.slice(7);
+    }
+    await Promise.all([apiFetch("/api/a"), apiFetch("/api/b"), apiFetch("/api/c")]);
+    const refreshes = fetchMock.mock.calls.filter(
+      (c) => (c as unknown as [string])[0] === "/api/auth/refresh"
+    );
+    expect(refreshes).toHaveLength(1);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => ({ ok: true }) as Response);
+  });
+});

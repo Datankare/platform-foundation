@@ -42,6 +42,8 @@ import { invokeTool } from "./tool-invoker";
 import { getTrajectoryStore } from "./trajectory-store";
 import { getProposalStore } from "./proposal-store";
 import { approvalPolicy, principalOf } from "./gating";
+import { getBudgetTracker } from "./budget-tracker";
+import { logger } from "@/lib/logger";
 import { getApprovalPolicyStore } from "./approval-policy-store";
 import { isAgentGoal, listAgentGoals } from "./goals";
 
@@ -320,6 +322,22 @@ async function runSteps(
   // approval wherever it was recorded.
   const proposalStore = args.proposalStore ?? getProposalStore();
 
+  // Spend is cumulative over the whole trajectory (audit C-8): the ceiling bounds the workflow,
+  // not each step — ten steps of $0.90 under a $1 ceiling used to all run. Seeded from what the
+  // trajectory has already committed, so a choreographed hop counts the hops before it.
+  const before = await store.getById(trajectoryId);
+  let spentUSD = (before?.trajectory.steps ?? [])
+    .filter((s: Step) => s.boundary === "commitment")
+    .reduce((sum: number, s: Step) => sum + (Number(s.cost) || 0), 0);
+  // And the actor's governed budget (ADR-048: the daily cap per agent and scope) applies to a
+  // workflow as it does to every other agent run (executeAgent) — with no budgetMaxUSD a run
+  // was unbounded.
+  const principal = principalOf(args.actor);
+  const budgetScope = principal
+    ? { type: "user" as const, id: principal }
+    : { type: "platform" as const, id: undefined };
+  const tracker = getBudgetTracker();
+
   // Seeded from the trajectory, not from this call. A choreographed hop is a fresh process
   // invocation and knows nothing of the previous one, so a step whose input reads an
   // earlier step's output would see nothing and the two entry points would silently
@@ -346,6 +364,16 @@ async function runSteps(
       throw new ApprovalMismatchError(approved.proposalId, step.tool.id);
     }
 
+    // The governed budget, before anything is spent; unreadable is exhausted (fail closed).
+    const allowed = await tracker
+      .checkBudget(args.actor.actorId, budgetScope.type, budgetScope.id)
+      .then((r) => r.allowed)
+      .catch(() => false);
+    if (!allowed) {
+      await store.updateStatus(trajectoryId, "paused");
+      return { stop: "paused" };
+    }
+
     try {
       const result = await invokeTool({
         tool: step.tool,
@@ -355,13 +383,33 @@ async function runSteps(
         trajectoryId,
         stepIndex: i,
         cost: step.estimatedCostUSD,
-        budgetCeiling: args.budgetMaxUSD,
+        // What is left of the workflow's ceiling (negative left: refused).
+        budgetCeiling:
+          args.budgetMaxUSD === undefined ? undefined : args.budgetMaxUSD - spentUSD,
         trajectoryStore: store,
         proposalStore,
         approvedProposalId: approved?.proposalId,
         operationId: approved?.operationId,
       });
       outputs.push(result.output);
+      spentUSD += step.estimatedCostUSD;
+      await tracker
+        .consume(
+          args.actor.actorId,
+          budgetScope.type,
+          budgetScope.id,
+          step.estimatedCostUSD
+        )
+        .catch((err: unknown) => {
+          // The step ran; its spend could not be counted. Recorded loudly — the next step's
+          // check reads the store again.
+          logger.error("Workflow step spend could not be recorded against the budget", {
+            trajectoryId,
+            stepIndex: i,
+            error: err instanceof Error ? err.message : String(err),
+            route: "platform/agents/workflow-loop",
+          });
+        });
     } catch (err) {
       if (err instanceof PipelineRejectedError) {
         if (err.reason === "approval-used") {
@@ -408,7 +456,7 @@ async function runSteps(
   return { stop: "completed" };
 }
 
-/** Whether step `stepIndex` has already committed, or its approval was already used. */
+/** Whether step `stepIndex` has already committed, or its approval is in use or was used. */
 async function stepAlreadyRan(
   store: TrajectoryStore,
   proposalStore: ProposalStore,
@@ -417,10 +465,12 @@ async function stepAlreadyRan(
 ): Promise<boolean> {
   const record = await store.getById(trajectoryId);
   if (record && commitmentCount(record.trajectory.steps) > stepIndex) return true;
-  const used = await proposalStore.query({
-    operationId: stepOperationId(trajectoryId, stepIndex),
-    status: "executed",
-  });
+  // Running now (its approval claimed, review 10 H2) counts: never re-propose a step in flight.
+  const operationId = stepOperationId(trajectoryId, stepIndex);
+  const used = [
+    ...(await proposalStore.query({ operationId, status: "executed" })),
+    ...(await proposalStore.query({ operationId, status: "executing" })),
+  ];
   return used.some((p) => p.trajectoryId === trajectoryId);
 }
 
@@ -664,6 +714,12 @@ async function decideCapability(
     return { capability: cap, state: "denied" };
   }
   const ok = await args.checkCapability(cap, args.actor);
+  // An agent acting under a delegation acts only within the scope its user consented to
+  // (ADR-033, audit C-2): a capability outside that scope is denied, whatever the agent holds.
+  const delegated = args.actor.actorType === "agent" ? args.actor.delegation : undefined;
+  if (ok && delegated && !delegated.scope.includes(cap)) {
+    return { capability: cap, state: "denied" };
+  }
   return { capability: cap, state: ok ? "granted" : "denied" };
 }
 

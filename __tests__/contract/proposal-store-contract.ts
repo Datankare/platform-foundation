@@ -17,6 +17,11 @@ const actor: AgentIdentity = {
 
 export interface ProposalStoreContractFixtures {
   makeStore: () => ProposalStore | Promise<ProposalStore>;
+  /**
+   * Move a claimed proposal to `indeterminate` as the approval-expiry job would (review 11 H-1);
+   * the arms that need one are skipped without it.
+   */
+  markUndecided?: (store: ProposalStore, proposalId: string) => Promise<void>;
 }
 
 export function runProposalStoreContract(fx: ProposalStoreContractFixtures): void {
@@ -128,6 +133,46 @@ export function runProposalStoreContract(fx: ProposalStoreContractFixtures): voi
     });
   });
 
+  describeRunClaims(() => store, base, fx);
+
+  describe("withdraw (review 7 M7 — an approval never used can be withdrawn)", () => {
+    it("rejects an approved, unused proposal, keeping who had approved it", async () => {
+      const p = await store.create({ ...base });
+      await store.decide(p.proposalId, "approved", "alice");
+      const w = await store.withdraw(p.proposalId, "bob", "its run failed");
+      expect(w?.status).toBe("rejected");
+      expect(w?.decidedBy).toBe("bob");
+      expect(w?.decisionNote).toMatch(
+        /^Approved by alice at .+, never run; withdrawn: its run failed$/
+      );
+      // Rejected: it can be neither used nor withdrawn again.
+      expect(await store.consume(p.proposalId)).toBeUndefined();
+      expect(await store.withdraw(p.proposalId, "bob", "again")).toBeUndefined();
+    });
+
+    it("withdraws nothing that is not approved, or already used", async () => {
+      const open = await store.create({ ...base, operationId: `${base.operationId}-w1` });
+      expect(await store.withdraw(open.proposalId, "bob", "x")).toBeUndefined();
+      expect((await store.getById(open.proposalId))?.status).toBe("proposed");
+      const used = await store.create({ ...base, operationId: `${base.operationId}-w2` });
+      await store.decide(used.proposalId, "approved", "alice");
+      await store.consume(used.proposalId);
+      expect(await store.withdraw(used.proposalId, "bob", "x")).toBeUndefined();
+      expect((await store.getById(used.proposalId))?.status).toBe("executed");
+      expect(await store.withdraw("missing", "bob", "x")).toBeUndefined();
+    });
+
+    it("lets only one of a withdrawal and a use win", async () => {
+      const p = await store.create({ ...base, operationId: `${base.operationId}-w3` });
+      await store.decide(p.proposalId, "approved", "alice");
+      const [used, withdrawn] = await Promise.all([
+        store.consume(p.proposalId),
+        store.withdraw(p.proposalId, "bob", "x"),
+      ]);
+      expect([used, withdrawn].filter(Boolean)).toHaveLength(1);
+    });
+  });
+
   describe("decide", () => {
     it("approves a proposed proposal", async () => {
       const p = await store.create({ ...base });
@@ -223,6 +268,171 @@ export function runProposalStoreContract(fx: ProposalStoreContractFixtures): voi
       await store.create({ ...base });
       await store.create({ ...base, operationId: "op_2" });
       expect(await store.query({ limit: 1 })).toHaveLength(1);
+    });
+  });
+}
+
+/** The claim / complete / release arms (review 10 H2, review 11 H-1). */
+function describeRunClaims(
+  get: () => ProposalStore,
+  base: Parameters<ProposalStore["create"]>[0],
+  fx: ProposalStoreContractFixtures
+): void {
+  describe("claim / complete / release (review 10 H2 — a failed run keeps its approval; review 11 H-1 — by the claim's token)", () => {
+    const approved = async (op = "op_1") => {
+      const p = await get().create({ ...base, operationId: op });
+      await get().decide(p.proposalId, "approved", "alice");
+      return p.proposalId;
+    };
+    const claimed = async (id: string) => {
+      const c = await get().claim(id);
+      expect(c?.status).toBe("executing");
+      expect(c?.runToken).toEqual(expect.any(String));
+      return c!.runToken!;
+    };
+    const OTHER = "00000000-0000-4000-8000-000000000000";
+
+    it("claims an approved proposal for one run, with a token; a second claim, or a consume, wins nothing", async () => {
+      const id = await approved();
+      const token = await claimed(id);
+      expect((await get().getById(id))?.runToken).toBe(token);
+      expect(await get().claim(id)).toBeUndefined();
+      expect(await get().consume(id)).toBeUndefined();
+      expect(await get().withdraw(id, "bob", "x")).toBeUndefined();
+      expect(await get().decide(id, "rejected", "bob")).toBeUndefined();
+      expect((await get().getById(id))?.status).toBe("executing");
+    });
+
+    it("lets only one of concurrent claims win", async () => {
+      const id = await approved();
+      const results = await Promise.all([
+        get().claim(id),
+        get().claim(id),
+        get().claim(id),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+
+    it("a released run's approval stands, with why, and can be claimed again — with a new token", async () => {
+      const id = await approved();
+      const token = await claimed(id);
+      const back = await get().release(id, "db blip", token);
+      expect(back).toMatchObject({ status: "approved", lastRunError: "db blip" });
+      expect(back?.decidedBy).toBe("alice");
+      expect(await get().release(id, "again", token)).toBeUndefined();
+      const second = await claimed(id);
+      expect(second).not.toBe(token);
+      // The first run's token ends nothing of the second run's claim.
+      expect(await get().complete(id, token)).toBeUndefined();
+      expect(await get().release(id, "late", token)).toBeUndefined();
+      expect((await get().getById(id))?.status).toBe("executing");
+    });
+
+    it("a completed run used the approval: executed, and nothing moves it again", async () => {
+      const id = await approved();
+      const token = await claimed(id);
+      expect(await get().complete(id, OTHER)).toBeUndefined();
+      expect((await get().complete(id, token))?.status).toBe("executed");
+      // The same claim completing again is the same answer; another's is nothing.
+      expect((await get().complete(id, token))?.status).toBe("executed");
+      expect(await get().complete(id, OTHER)).toBeUndefined();
+      expect(await get().release(id, "late", token)).toBeUndefined();
+      expect(await get().claim(id)).toBeUndefined();
+      expect((await get().getById(id))?.status).toBe("executed");
+    });
+
+    it("of a release and a completion racing, exactly one wins", async () => {
+      const id = await approved();
+      const token = await claimed(id);
+      const [r, c] = await Promise.all([
+        get().release(id, "x", token),
+        get().complete(id, token),
+      ]);
+      expect([r, c].filter(Boolean)).toHaveLength(1);
+    });
+
+    it("moves nothing that is not in the state it moves from", async () => {
+      const p = await get().create({ ...base });
+      expect(await get().claim(p.proposalId)).toBeUndefined();
+      expect(await get().complete(p.proposalId, OTHER)).toBeUndefined();
+      expect(await get().release(p.proposalId, "x", OTHER)).toBeUndefined();
+      expect(
+        await get().resolveIndeterminate(p.proposalId, "executed", "bob", "x")
+      ).toBeUndefined();
+      expect(await get().claim("missing")).toBeUndefined();
+      expect((await get().getById(p.proposalId))?.status).toBe("proposed");
+    });
+
+    it("an operation in a run has its one live proposal: no second one", async () => {
+      const id = await approved();
+      await get().claim(id);
+      await expect(get().create({ ...base })).rejects.toThrow();
+    });
+
+    describe("an undecided run (review 11 H-1)", () => {
+      const undecided = async (op = "op_1") => {
+        const id = await approved(op);
+        const token = await claimed(id);
+        await fx.markUndecided!(get(), id);
+        expect((await get().getById(id))?.status).toBe("indeterminate");
+        return { id, token };
+      };
+      const maybe = fx.markUndecided ? it : it.skip;
+
+      maybe(
+        "is not runnable, not decidable, and keeps its operation's one live proposal",
+        async () => {
+          const { id } = await undecided();
+          expect(await get().claim(id)).toBeUndefined();
+          expect(await get().consume(id)).toBeUndefined();
+          expect(await get().withdraw(id, "bob", "x")).toBeUndefined();
+          expect(await get().decide(id, "rejected", "bob")).toBeUndefined();
+          await expect(get().create({ ...base })).rejects.toThrow();
+        }
+      );
+
+      maybe(
+        "its own run still completes it, by its token; another's does not",
+        async () => {
+          const { id, token } = await undecided();
+          expect(await get().complete(id, OTHER)).toBeUndefined();
+          expect((await get().complete(id, token))?.status).toBe("executed");
+          expect(
+            await get().resolveIndeterminate(id, "approved", "bob", "x")
+          ).toBeUndefined();
+        }
+      );
+
+      maybe("a person marks it executed: terminal, with who and why", async () => {
+        const { id, token } = await undecided();
+        const done = await get().resolveIndeterminate(id, "executed", "bob", "verified");
+        expect(done?.status).toBe("executed");
+        expect(done?.lastRunError).toContain("bob");
+        expect(await get().claim(id)).toBeUndefined();
+        // The run's own completion, should it end now, still lands on the same claim.
+        expect((await get().complete(id, token))?.status).toBe("executed");
+      });
+
+      maybe(
+        "a person approves it again: a fresh approval, and the old run's token ends nothing",
+        async () => {
+          const { id, token } = await undecided();
+          const again = await get().resolveIndeterminate(
+            id,
+            "approved",
+            "bob",
+            "not applied"
+          );
+          expect(again).toMatchObject({ status: "approved", decidedBy: "bob" });
+          expect(again?.runToken).toBeUndefined();
+          expect(await get().complete(id, token)).toBeUndefined();
+          expect(await get().release(id, "late", token)).toBeUndefined();
+          const next = await claimed(id);
+          expect(next).not.toBe(token);
+          expect(await get().complete(id, token)).toBeUndefined();
+          expect((await get().complete(id, next))?.status).toBe("executed");
+        }
+      );
     });
   });
 }

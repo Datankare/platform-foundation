@@ -10,6 +10,7 @@ jest.mock("@/platform/action-pipeline", () => {
 });
 import { executeActionPipeline, PipelineRejectedError } from "@/platform/action-pipeline";
 import { routeContentEffect } from "@/platform/content";
+import { InMemoryProposalStore } from "@/platform/agents/proposal-store";
 import type { ContentEffectRequest } from "@/platform/content";
 
 const pipe = executeActionPipeline as jest.Mock;
@@ -25,7 +26,12 @@ const req = (): ContentEffectRequest<Surfaced> => ({
   label: "content-surface-digest",
   cost: 0,
   stateStore: {} as never,
-  trajectoryStore: {} as never,
+  // The trajectory a held effect's proposal is recorded in (audit C-13).
+  trajectoryStore: {
+    addStep: async () => undefined,
+    updateStatus: async () => undefined,
+  } as never,
+  proposalStore: new InMemoryProposalStore(),
   trajectoryId: "t1",
   stepIndex: 0,
   expectedVersion: 2,

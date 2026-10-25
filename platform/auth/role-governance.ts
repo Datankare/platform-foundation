@@ -6,8 +6,11 @@
  * first — the admin pages and the AI command bar alike:
  *
  *   1. No one changes their own role.
- *   2. A protected role (super_admin) is assigned or changed only in the database.
+ *   2. A protected role (super_admin) is assigned or changed only in the database — nor copied:
+ *      a duplicate of it would be the same power without the protection (audit B-12).
  *   3. No one grants — or takes away — a permission they do not hold themselves.
+ *   4. The default role, which every new account gets, carries no staff permission: one grant
+ *      to it would make every future sign-up an administrator (audit B-12).
  *
  * Pure functions over a VerifiedAdmin, so each rule is tested without a database.
  *
@@ -50,6 +53,33 @@ export function checkPermissionGrant(
   return missing === undefined
     ? null
     : { code: "auth.grant_exceeds_own", params: { permission: missing } };
+}
+
+/**
+ * Staff permissions: entering the admin area, moderating, administering, governing config,
+ * operating the platform. Never on the default role (rule 4).
+ */
+export function isStaffPermission(code: string): boolean {
+  return (
+    /^(?:admin_|config_|platform_)/.test(code) ||
+    code === "can_access_admin" ||
+    code === "can_moderate"
+  );
+}
+
+/** Refuse a staff permission on the role every new account gets (rule 4). */
+export function checkDefaultRoleGrant(
+  role: { readonly name: string; readonly isDefault?: boolean },
+  adding: readonly string[]
+): RoleRefusal | null {
+  if (!role.isDefault) return null;
+  const staff = adding.find(isStaffPermission);
+  return staff === undefined
+    ? null
+    : {
+        code: "auth.default_role_limited",
+        params: { role: role.name, permission: staff },
+      };
 }
 
 /** Refuse any change to a protected role's definition (rule 2). */

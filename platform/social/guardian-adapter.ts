@@ -15,7 +15,7 @@
 import { getGuardian } from "@/platform/moderation/guardian";
 import { generateId } from "@/platform/agents/utils";
 import type { ScreenContentFn } from "./group-service";
-import type { ContentType } from "@/platform/moderation/types";
+import type { ContentRatingLevel, ContentType } from "@/platform/moderation/types";
 import { logger } from "@/lib/logger";
 
 /**
@@ -32,8 +32,14 @@ function toModerationContentType(
  *
  * Returns null if content is safe, or an error message if blocked.
  * Fail-closed: if screening throws, content is rejected (P4, P17).
+ *
+ * Group names and descriptions are shown to every member, whatever their age, so they are
+ * screened at the strictest rating (1) unless the caller knows every viewer's (audit D-18:
+ * they were screened at the adult rating, 3).
  */
-export function createGuardianScreenFn(): ScreenContentFn {
+export function createGuardianScreenFn(
+  ratingLevel: ContentRatingLevel = 1
+): ScreenContentFn {
   return async (
     text: string,
     contentType: "group-name" | "group-description"
@@ -43,7 +49,7 @@ export function createGuardianScreenFn(): ScreenContentFn {
       const requestId = `social-screen-${generateId()}`;
       const result = await guardian.screen(text, "input", requestId, {
         contentType: toModerationContentType(contentType),
-        contentRatingLevel: 3,
+        contentRatingLevel: ratingLevel,
       });
 
       if (result.action === "block") {

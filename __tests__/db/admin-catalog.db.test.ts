@@ -32,6 +32,21 @@ jest.mock("@/platform/auth/account-status-guard", () =>
 jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
+/**
+ * The entitlement toggle's direct-change cases have it off the dual-control list (an operator's
+ * governed choice) — for this suite only, through the route's reading of the list; the shared
+ * configuration row is never changed (suites run in parallel against one database).
+ */
+const mockDualControl = { off: true };
+jest.mock("@/app/api/admin/ai/command-bar", () => {
+  const actual = jest.requireActual("@/app/api/admin/ai/command-bar");
+  return {
+    ...actual,
+    isDualControlledAction: jest.fn(async (tool: string) =>
+      mockDualControl.off ? false : actual.isDualControlledAction(tool)
+    ),
+  };
+});
 
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -44,7 +59,11 @@ import {
   handleDeleteRole,
   handleDuplicateRole,
 } from "@/app/api/admin/ai/handlers/roles";
-import { handleCreateEntitlementGroup } from "@/app/api/admin/ai/handlers/entitlements";
+import {
+  handleCreateEntitlementGroup,
+  handleSetEntitlementGroupActive,
+} from "@/app/api/admin/ai/handlers/entitlements";
+import { DEFAULT_DUAL_CONTROL_ACTIONS } from "@/app/api/admin/ai/command-bar";
 import { GET as rolesGET } from "@/app/api/admin/roles/route";
 import { GET as entGET, PATCH as entPATCH } from "@/app/api/admin/entitlements/route";
 import {
@@ -325,6 +344,69 @@ dbDescribe(`${SUITE} handleDuplicateRole`, () => {
     expect(res).toMatchObject({ success: false, code: "auth.role_protected" });
   });
 });
+
+dbDescribe(
+  `${SUITE} protected power is not copied or given away (audit B-12, RR-15)`,
+  () => {
+    /** An operator who holds every permission there is (as super_admin does). */
+    const everything = async (): Promise<VerifiedAdmin> => ({
+      ...operator,
+      permissions: (await q<{ code: string }>("select code from permissions")).map(
+        (r) => r.code
+      ),
+    });
+
+    it("refuses to duplicate a protected role, even for an admin who holds all it holds", async () => {
+      const res = await shared(async () =>
+        handleDuplicateRole(
+          { source_role: "super_admin", new_name: name("root2"), new_display_name: "R" },
+          await everything()
+        )
+      );
+      expect(res).toMatchObject({ success: false, code: "auth.role_protected" });
+      expect(await roleNamed(name("root2"))).toBeUndefined();
+    });
+
+    it.each([
+      "can_access_admin",
+      "admin_manage_roles",
+      "config_manage_safety",
+      "can_moderate",
+    ])("refuses %s on the default role every new account gets", async (permission) => {
+      const freeId = await seededRoleId("free");
+      const before = await permsOf(freeId);
+      const res = await shared(async () =>
+        handleAssignPermissions(
+          { role_name: "free", add: [permission] },
+          await everything()
+        )
+      );
+      expect(res).toMatchObject({ success: false, code: "auth.default_role_limited" });
+      expect(await permsOf(freeId)).toEqual(before);
+    });
+
+    it("judges a role by the permissions it inherits, not only its own (RR-15)", async () => {
+      await shared(() =>
+        handleCreateRole(
+          { name: name("heir"), display_name: "Heir", permissions: [cat.codes.x] },
+          operator
+        )
+      );
+      const heir = (await roleNamed(name("heir"))).id;
+      // No API path creates inheritance; the database may hold it.
+      await q(
+        "insert into role_inheritance (role_id, inherits_from_id) values ($1::uuid, $2::uuid)",
+        [heir, cat.roles.power]
+      );
+      // The operator lacks `secret`, which the heir holds through inheritance.
+      const res = await shared(() =>
+        handleDeleteRole({ role_name: name("heir") }, operator)
+      );
+      expect(res).toMatchObject({ success: false, code: "auth.grant_exceeds_own" });
+      expect(await roleNamed(name("heir"))).toBeDefined();
+    });
+  }
+);
 
 dbDescribe(`${SUITE} handleAssignPermissions`, () => {
   it("adds and removes permissions together", async () => {
@@ -770,5 +852,90 @@ dbDescribe(`${SUITE} /api/admin/entitlements`, () => {
     );
     expect(res.status).toBe(503);
     expect(await isActive(cat.groups.basic)).toBe(false);
+  });
+
+  /**
+   * Review 7 M6: an entitlement group turned on or off is a change to who holds power — an active
+   * group grants its permissions to everyone holding it — and is held for a second admin like a
+   * role change, on the page and in the command bar.
+   */
+  describe("under dual control (review 7 M6)", () => {
+    beforeAll(() => {
+      mockDualControl.off = false;
+    });
+    afterAll(() => {
+      mockDualControl.off = true;
+    });
+    afterEach(async () => {
+      await q(
+        "update entitlement_groups set is_active = false where id = any($1::uuid[])",
+        [[cat.groups.basic, cat.groups.mighty]]
+      );
+    });
+
+    it("the entitlement actions are on the seeded list; the capability mapping is held by its key, not the list (review 10 H1)", async () => {
+      for (const tool of ["create_entitlement_group", "set_entitlement_group_active"])
+        expect(DEFAULT_DUAL_CONTROL_ACTIONS).toContain(tool);
+      expect(DEFAULT_DUAL_CONTROL_ACTIONS).not.toContain("set_capability_mapping");
+      const [row] = await q<{ value: string[]; default_value: string[] }>(
+        "select value, default_value from platform_config where key = 'admin.dual_control_actions'"
+      );
+      expect(row.default_value).toEqual([...DEFAULT_DUAL_CONTROL_ACTIONS]);
+    });
+
+    it("holds the toggle for a second admin, and changes nothing", async () => {
+      const before = (await auditOf(a)).length;
+      const res = await entPATCH(
+        req("PATCH", admin, { groupId: cat.groups.basic, isActive: true }, "single")
+      );
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        held: true,
+        proposalId: expect.any(String),
+      });
+      expect(await isActive(cat.groups.basic)).toBe(false);
+      expect(
+        (await auditOf(a))
+          .slice(before)
+          .filter((r) => r.details?.type === "entitlement_toggle")
+      ).toEqual([]);
+    });
+
+    it("the held action, once approved, turns the group on under the page's rules", async () => {
+      // The basic group grants can_play: the admin holds it, and so may grant it.
+      const player = {
+        ...tenantAdmin,
+        permissions: [...tenantAdmin.permissions, "can_play"],
+      };
+      const res = await single(() =>
+        handleSetEntitlementGroupActive(
+          { group_id: cat.groups.basic, is_active: true },
+          player
+        )
+      );
+      expect(res.success).toBe(true);
+      expect(await isActive(cat.groups.basic)).toBe(true);
+      // Not past the page's rules: a group granting a permission the admin lacks is refused.
+      const refused = await single(() =>
+        handleSetEntitlementGroupActive(
+          { group_id: cat.groups.mighty, is_active: true },
+          {
+            ...player,
+            permissions: player.permissions.filter((p) => p !== "admin_manage_roles"),
+          }
+        )
+      );
+      expect(refused).toMatchObject({ success: false, code: "auth.grant_exceeds_own" });
+      expect(await isActive(cat.groups.mighty)).toBe(false);
+      // And only by those who may change the catalog.
+      expect(
+        await shared(() =>
+          handleSetEntitlementGroupActive(
+            { group_id: cat.groups.basic, is_active: false },
+            player
+          )
+        )
+      ).toMatchObject({ success: false, code: "admin.operator_only" });
+    });
   });
 });

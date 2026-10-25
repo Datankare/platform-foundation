@@ -17,6 +17,10 @@
  *   - Blocked features list is in platform_config (coppa.blocked_features)
  *   - Master switch: coppa.enforcement_enabled (for development bypass)
  *   - The user row is read in the request's tenant (platform/data, ADR-053 D4)
+ *   - An account whose age was never verified is treated as a child without consent (audit
+ *     X-16): until the account's date of birth is recorded (at sign-up, or once through
+ *     POST /api/account/age), every consent-gated feature is refused. Called for every signed-in
+ *     user by requireActorWithStatus, after the account-status check, so no route can skip it.
  *
  * GenAI Principles:
  *   P4  — Structural safety: gate runs before all processing
@@ -26,7 +30,7 @@
  * @module platform/auth
  */
 
-import { withTenantTx } from "@/platform/data";
+import { hasDatabase, withTenantTx } from "@/platform/data";
 import { getConfig } from "@/platform/auth/platform-config";
 import { logger } from "@/lib/logger";
 import { unionWithModules } from "@/platform/modules/compose";
@@ -38,6 +42,8 @@ import type { CoppaGateResult, ContentRatingLevel } from "@/platform/moderation/
 
 /** User COPPA state loaded from the DB */
 interface UserCoppaState {
+  /** The account's age was recorded (users.age_verified). */
+  ageVerified: boolean;
   coppaEnforcementActive: boolean;
   contentRatingLevel: ContentRatingLevel;
   parentalConsentStatus: string;
@@ -70,6 +76,7 @@ async function isEnforcementEnabled(): Promise<boolean> {
 /** The core's content-generating features, refused to COPPA-enforced users without consent. */
 export const CORE_CONSENT_FEATURES: readonly string[] = Object.freeze([
   "generate",
+  "stream",
   "upload_file",
 ]);
 
@@ -108,7 +115,9 @@ async function loadBlockedFeatures(): Promise<readonly string[]> {
  * Fail-closed: if user not found or DB error, assume enforcement active (P11).
  */
 async function loadUserCoppaState(userId: string): Promise<UserCoppaState> {
+  // Unknown state: enforced, and reported as consent pending (blocked either way).
   const failClosed: UserCoppaState = {
+    ageVerified: true,
     coppaEnforcementActive: true,
     contentRatingLevel: 1,
     parentalConsentStatus: "pending",
@@ -117,11 +126,13 @@ async function loadUserCoppaState(userId: string): Promise<UserCoppaState> {
   try {
     const { rows } = await withTenantTx((tx) =>
       tx.query<{
+        age_verified: boolean;
         coppa_enforcement_active: boolean;
         content_rating_level: number;
         parental_consent_status: string;
       }>(
-        `select coppa_enforcement_active, content_rating_level, parental_consent_status
+        `select age_verified, coppa_enforcement_active, content_rating_level,
+                parental_consent_status::text as parental_consent_status
            from users where id = $1::uuid`,
         [userId]
       )
@@ -131,7 +142,9 @@ async function loadUserCoppaState(userId: string): Promise<UserCoppaState> {
     if (!data) return failClosed;
 
     return {
-      coppaEnforcementActive: data.coppa_enforcement_active,
+      ageVerified: data.age_verified === true,
+      // Unknown age is treated as a child without consent (fail closed, X-16).
+      coppaEnforcementActive: data.coppa_enforcement_active || data.age_verified !== true,
       contentRatingLevel: parseRatingLevel(data.content_rating_level),
       parentalConsentStatus: data.parental_consent_status,
     };
@@ -172,6 +185,17 @@ export async function checkCoppaGate(
   userId: string,
   feature: string
 ): Promise<CoppaGateResult> {
+  // No database (mock and CI runs): there is no age to read; as the account-status guard does.
+  if (!hasDatabase()) {
+    return {
+      allowed: true,
+      reason: "No database: nothing to enforce",
+      feature,
+      contentRatingLevel: 1,
+      consentStatus: "unknown",
+    };
+  }
+
   // S1: Validate userId format at boundary
   if (!userId || !UUID_PATTERN.test(userId)) {
     return {
@@ -230,6 +254,16 @@ export async function checkCoppaGate(
     route: "platform/auth/coppa-gate",
   });
 
+  if (!userState.ageVerified) {
+    return {
+      allowed: false,
+      reason: "Confirm your date of birth before using this feature.",
+      feature,
+      contentRatingLevel: userState.contentRatingLevel,
+      consentStatus: "unverified",
+      code: "account.age_unverified",
+    };
+  }
   return {
     allowed: false,
     reason:
@@ -238,6 +272,7 @@ export async function checkCoppaGate(
     feature,
     contentRatingLevel: userState.contentRatingLevel,
     consentStatus: userState.parentalConsentStatus,
+    code: "account.consent_required",
   };
 }
 

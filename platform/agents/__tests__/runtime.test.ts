@@ -213,9 +213,13 @@ describe("executeAgent", () => {
         budget
       );
 
-      expect(result.success).toBe(true);
+      // A run cut short is not completed (audit C-9): it stops, paused, and says why.
+      expect(result.success).toBe(false);
       expect(result.stepsCompleted).toBe(3);
-      expect(result.finalStatus).toBe("completed");
+      expect(result.finalStatus).toBe("paused");
+      expect(result.error).toMatch(/step limit/);
+      const record = await store.getById(result.trajectoryId);
+      expect(record?.trajectory.status).toBe("paused");
     });
   });
 

@@ -2,6 +2,8 @@
 
 > Production-grade Next.js application platform — GenAI-native, RAMPS, AAA, Continuous Confidence
 >
+> **v6.0.0** — tenancy (one codebase, single or shared; every table under forced row-level security for `app_tenant`; direct Postgres through `platform/data`), the core and optional product modules (an app's own module manifest merged with the platform's), durable background jobs and live/ready health, a container image proven in CI, the October 2026 audit's Wave 2, app migrations that never collide with the platform's, and UTC in every transaction. **Breaking** — deploy with the runbook in [MIGRATION_v5_to_v6](docs/MIGRATION_v5_to_v6.md) §1.
+>
 > **v5.1.1** — the platform's sign-in page works in a production build (the browser signs in through the server's routes instead of starting every server provider in the browser); Next's lint configuration 16 (flat config) with React's newer hook rules, so no component sets state inside an effect (stale responses dropped, state that follows a prop adjusted during render, the auth session read as an external store); React 19.3, Sentry 11, Prettier 3.9.10 and the rest of the open Dependabot updates; unused `@anthropic-ai/sdk`, `dotenv` and `@eslint/eslintrc` removed. No migration.
 >
 > **v5.1.0** — held actions decided and resumed only as approved: the durable proposal store keeps the whole proposing identity (migration 046), a resume runs exactly the approved tool and payload as the proposing agent, trajectories are scoped to their user, and the proposing agent or its session can never approve its own action — found by the Playform v0.8.0 release review ([register](docs/audits/2026-10-REGISTER.md)). Apply migration 046 before deploying.
@@ -141,7 +143,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 52 migrations (001–051), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 53 migrations (001–052), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Forced row-level security on every tenant-owned table; every server query runs through `platform/data` as `app_tenant`, which cannot bypass it (ADR-053)
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -210,7 +212,7 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 52 database migrations
+├── supabase/migrations/    ← 53 database migrations
 ├── docs/adr/               ← 56 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils
@@ -249,8 +251,8 @@ npm run build          # Clean build
 
 1. Click **"Use this template"** on GitHub
 2. Clone and follow Quick Start above
-3. Add `.github/sync-config.json` + sync workflow to inherit future updates
-4. Add your app-specific roles via a custom migration (see `CONTRIBUTING.md`)
+3. Add `.github/sync-config.json` + the sync workflow to inherit future updates — copy [`docs/templates/`](docs/templates/) (anchored excludes, inputs through `env:`), and add your own `platform/modules/app-manifest.json` ([SETUP_AND_INTEGRATION](docs/SETUP_AND_INTEGRATION.md) §6)
+4. Add your app-specific roles via a migration of your own, named `NNN<letter>_<app>_<name>.sql` (see `CONTRIBUTING.md`)
 5. If you reimplement a platform abstraction, wire it into the matching conformance kit in a repo-owned arm (see ADR-027)
 6. Update ADRs and TAD with your stack choices
 

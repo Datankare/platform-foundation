@@ -581,9 +581,26 @@ describe("runDue at its limits: misbehaving handlers, budgets, leases", () => {
       maxAttempts: 2,
       source: "enqueue",
     });
-    const started = Date.now();
-    const r = await runDue({ budgetMs: 4_000, kinds: [k], schedule: false, now });
-    expect(Date.now() - started).toBeLessThan(4_000);
+    // On the timers the runner waits with, not the wall clock (review 10 L11): it answers when
+    // the handler's 1 s runs out — not at the 4 s budget — while the handler still hangs.
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+    let r!: Awaited<ReturnType<typeof runDue>>;
+    try {
+      let answered = false;
+      const pending = runDue({ budgetMs: 4_000, kinds: [k], schedule: false, now }).then(
+        (v) => {
+          answered = true;
+          r = v;
+        }
+      );
+      await jest.advanceTimersByTimeAsync(900);
+      expect(answered).toBe(false);
+      await jest.advanceTimersByTimeAsync(1_100);
+      await pending;
+      expect(answered).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
     expect(r).toMatchObject({ claimed: 1, retried: 0, hung: 1 });
     expect(hungJobCount()).toBe(1);
     // Still running: still leased (extended), so nothing claims it again — though a retry

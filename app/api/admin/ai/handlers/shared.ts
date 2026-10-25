@@ -20,12 +20,26 @@ import {
 } from "@/platform/admin/governed-config";
 
 export type ActionResult = {
+  /** True only when the action took effect. A held action is never a success (review 9 H1). */
   success: boolean;
+  /**
+   * The action did not take effect yet: it is held for an approval (dual control, or a safety
+   * key's two-person approval). `result` says what is waiting; `proposalId` names the hold when
+   * it is a runtime hold.
+   */
+  held?: boolean;
+  proposalId?: string;
   result?: string;
   error?: string;
   /** The coded refusal, when an authorization rule refused the action (ADR-051). */
   code?: string;
   params?: Readonly<Record<string, string>>;
+  /**
+   * The write's commit was lost with its connection (review 14 L-2): it may or may not have taken
+   * effect. Never a success; audited `indeterminate`, not `failed`; what follows a write that may
+   * stand (an invalidation) runs all the same.
+   */
+  indeterminate?: boolean;
 };
 
 /** An action refused by an authorization rule, carrying its coded error. */
@@ -57,6 +71,21 @@ export async function failedAsResult(
   try {
     return await write();
   } catch (err) {
+    if ((err as { indeterminate?: unknown } | null)?.indeterminate === true) {
+      // The commit's answer was lost with its connection (review 14 L-2): it may have landed.
+      logger.error(
+        "Admin command write's commit was lost: whether it took effect is unknown",
+        {
+          route: "app/api/admin/ai/handlers",
+        }
+      );
+      return {
+        success: false,
+        indeterminate: true,
+        error:
+          "The database connection was lost while the change was being saved: it may or may not have been applied. Check before you retry.",
+      };
+    }
     // The database's message (table, constraint, column) is logged, never shown; a unique
     // violation is said in plain words, since it is the admin's to fix.
     logger.error("Admin command write failed", {
@@ -82,11 +111,19 @@ export function fromGovernedConfig(
   switch (outcome.kind) {
     case "applied":
       return { success: true, result: summary };
-    case "pending":
+    case "pending": {
+      // Held, not applied: a distinct result, never success (review 9 H1). It is the key's own
+      // hold — the one hold on this change (review 10 H1): an approver needs the key's tier
+      // permission, and the change applies when the hold is approved.
+      const proposalId = outcome.result.approval?.proposalId;
       return {
-        success: true,
-        result: `${summary} — held for approval before it takes effect`,
+        success: false,
+        held: true,
+        result: `${summary} — held for approval (${key} is under dual control) before it takes effect`,
+        error: "Held for approval; it has not taken effect",
+        ...(proposalId ? { proposalId } : {}),
       };
+    }
     case "refused":
       return {
         success: false,
@@ -126,10 +163,11 @@ export function fromGovernedConfig(
  */
 export async function runAudited(
   entry: AuditEntry,
-  act: () => Promise<ActionResult>
+  act: () => Promise<ActionResult>,
+  options: { readonly external?: boolean } = {}
 ): Promise<ActionResult> {
   try {
-    return await audited(entry, act);
+    return await audited(entry, act, options);
   } catch (err) {
     if (err instanceof AuditWriteError) {
       return {

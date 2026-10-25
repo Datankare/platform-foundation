@@ -7,6 +7,7 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { decideApproval } from "@/platform/admin/approval-decision";
+import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 export const POST = tenantRoute(async function POST(
@@ -16,5 +17,5 @@ export const POST = tenantRoute(async function POST(
   const verified = await requireAdmin(request, "can_access_admin");
   if (verified.error) return verified.error;
   const { id } = await context.params;
-  return decideApproval(request, verified.admin, id);
+  return decideApproval(request, verified.admin, id, [COMMAND_BAR_HOLDS]);
 });

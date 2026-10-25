@@ -19,6 +19,8 @@ export interface RoleWithPermissions {
   readonly id: string;
   readonly name: string;
   readonly permissions: readonly string[];
+  /** The role every new account starts with (roles.is_default). */
+  readonly isDefault?: boolean;
 }
 
 export interface UserRef {
@@ -59,13 +61,24 @@ async function read<R extends Record<string, unknown>>(
 }
 
 /** The permission codes a role holds. */
+/**
+ * A role's effective permissions: its own and those of the roles it inherits from — exactly the
+ * set resolvePermissions grants its holders (platform/auth/permissions.ts). The role rules judge
+ * a role by this set, so a role whose power comes through inheritance is not judged by its direct
+ * permissions alone (release review RR-15).
+ */
 async function permissionsOf(tx: Tx, roleId: string): Promise<string[]> {
   const rows = await read<{ code: string }>(
     tx,
     "role permissions",
-    `select p.code from role_permissions rp
-       join permissions p on p.id = rp.permission_id
-      where rp.role_id = $1::uuid
+    `select p.code from permissions p
+      where p.id in (
+        select rp.permission_id from role_permissions rp where rp.role_id = $1::uuid
+        union
+        select rp.permission_id from role_permissions rp
+          join role_inheritance ri on ri.inherits_from_id = rp.role_id
+         where ri.role_id = $1::uuid
+      )
       order by p.code`,
     [roleId]
   );
@@ -83,7 +96,7 @@ export async function findRole(
   by: { readonly id: string } | { readonly name: string },
   options: { readonly forUpdate?: boolean } = {}
 ): Promise<RoleWithPermissions | null> {
-  let rows: { id: string; name: string }[];
+  let rows: { id: string; name: string; is_default: boolean | null }[];
   if ("id" in by) {
     // An id that is not a UUID names no role (the column is uuid; the cast would fail).
     if (!UUID.test(by.id)) return null;
@@ -91,8 +104,8 @@ export async function findRole(
       tx,
       "role",
       options.forUpdate
-        ? "select id, name from roles where id = $1::uuid for update"
-        : "select id, name from roles where id = $1::uuid",
+        ? "select id, name, is_default from roles where id = $1::uuid for update"
+        : "select id, name, is_default from roles where id = $1::uuid",
       [by.id]
     );
   } else {
@@ -100,8 +113,8 @@ export async function findRole(
       tx,
       "role",
       options.forUpdate
-        ? "select id, name from roles where name = $1 for update"
-        : "select id, name from roles where name = $1",
+        ? "select id, name, is_default from roles where name = $1 for update"
+        : "select id, name, is_default from roles where name = $1",
       [by.name]
     );
   }
@@ -111,6 +124,7 @@ export async function findRole(
     id: role.id,
     name: role.name,
     permissions: await permissionsOf(tx, role.id),
+    isDefault: role.is_default === true,
   };
 }
 

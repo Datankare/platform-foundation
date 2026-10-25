@@ -56,6 +56,10 @@ const EXEMPT: Record<string, string> = {
     "Within-session adaptive memory (ADR-036 D5). Cleared by resetAdaptiveMemory(), not by initProviders() — it is not a provider slot.",
   "platform.content.registry":
     "The content-type registry (ADR-037). Cleared by resetContentTypes(), not by initProviders() — it is not a provider slot.",
+  "platform.cache.stampBreaker":
+    "The shared-cache stamp read breaker (review 13 M2): per-instance health state, not a provider. Cleared by resetStampBreaker() and before every test (jest.setup.ts).",
+  "platform.cache.loopDelay":
+    "The instance's event-loop delay histogram the stamp reader measures lag with (review 14 M-2): enabled once per instance and never cleared — a reset would leave the old histogram enabled behind it.",
   "platform.data.pools":
     "The database connection pools (ADR-053 D4). Closed by closeDataPools(), which ends their connections; clearing the slot would leak them.",
   "platform.rag.kbRegistry":

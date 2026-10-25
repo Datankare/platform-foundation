@@ -117,6 +117,95 @@ async function loadLengthLimit(limit: FieldLengthLimit): Promise<number> {
 // Validation helpers
 // ---------------------------------------------------------------------------
 
+const VISIBILITY = new Set(["private", "friends", "public"]);
+const VISIBILITY_FIELDS = new Set([
+  "profileVisibility",
+  "displayNameVisibility",
+  "avatarVisibility",
+  "languageVisibility",
+  "timezoneVisibility",
+]);
+const BOOLEAN_FIELDS = new Set(["emailOptIn", "pushNotificationsEnabled"]);
+const TEXT_FIELDS = new Set(["displayName", "realName", "avatarUrl"]);
+const KNOWN_FIELDS = new Set([
+  ...VISIBILITY_FIELDS,
+  ...BOOLEAN_FIELDS,
+  ...TEXT_FIELDS,
+  "languagePreference",
+  "timezone",
+]);
+/** Longest avatar address accepted. */
+export const MAX_AVATAR_URL_LENGTH = 2048;
+
+/**
+ * Why an avatar address is refused, or undefined when it is acceptable (audit D-11). Before: any
+ * value was stored and shown to every viewer — `javascript:` and `data:` addresses, plain http,
+ * addresses with credentials in them, and addresses of internal hosts. The image itself is the
+ * app's to screen when it is uploaded (screenModality withholds every image until classifiers are
+ * configured).
+ */
+export function avatarUrlRefusal(value: string): string | undefined {
+  if (value.length > MAX_AVATAR_URL_LENGTH) {
+    return `avatarUrl exceeds maximum length of ${MAX_AVATAR_URL_LENGTH} characters.`;
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "avatarUrl must be an https address.";
+  }
+  if (url.protocol !== "https:") return "avatarUrl must be an https address.";
+  if (url.username || url.password) return "avatarUrl must not contain credentials.";
+  const host = url.hostname.toLowerCase();
+  if (
+    !host.includes(".") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    host.endsWith(".localhost") ||
+    /^[\d.]+$/.test(host) ||
+    host.startsWith("[")
+  ) {
+    return "avatarUrl must name a public host.";
+  }
+  if (url.port && url.port !== "443") return "avatarUrl must use the standard port.";
+  return undefined;
+}
+
+/**
+ * Why a non-text profile field's value is refused, or undefined (audit D-11): a visibility is
+ * one of its three values, a flag is a boolean, a language and a time zone are short codes.
+ * Before: such values went to the database as given, and a wrong one failed there.
+ */
+function shapeRefusal(field: string, value: unknown): string | undefined {
+  if (!KNOWN_FIELDS.has(field)) return `${field} is not a profile field.`;
+  if (VISIBILITY_FIELDS.has(field)) {
+    return typeof value === "string" && VISIBILITY.has(value)
+      ? undefined
+      : `${field} must be private, friends or public.`;
+  }
+  if (BOOLEAN_FIELDS.has(field)) {
+    return typeof value === "boolean" ? undefined : `${field} must be true or false.`;
+  }
+  if (field === "languagePreference") {
+    return typeof value === "string" && /^[a-z]{2,3}(?:-[a-z\d]{2,8}){0,2}$/i.test(value)
+      ? undefined
+      : "languagePreference must be a language code.";
+  }
+  if (field === "timezone") {
+    return typeof value === "string" &&
+      /^[a-z][\w+-]*(?:\/[\w+-]+){0,2}$/i.test(value) &&
+      value.length <= 64
+      ? undefined
+      : "timezone must be a time zone name.";
+  }
+  if (TEXT_FIELDS.has(field)) {
+    if (value === null) return undefined;
+    if (typeof value !== "string") return `${field} must be text.`;
+    if (field === "avatarUrl" && value !== "") return avatarUrlRefusal(value);
+  }
+  return undefined;
+}
+
 /** Check if a field value exceeds its configured length limit */
 async function checkLengthLimit(
   field: string,
@@ -182,6 +271,12 @@ export async function screenProfileUpdate(
   for (const field of updateKeys) {
     const value = update[field as keyof ProfileUpdate];
 
+    const refusal = shapeRefusal(field, value);
+    if (refusal) {
+      blockedFields.push(field);
+      reasons[field] = refusal;
+      continue;
+    }
     if (!screenedFields.includes(field)) continue;
     // A screened field holds text, or null to clear it. Anything else (an array, an object, a
     // number) would be stored unscreened — refuse it rather than skip it (Playform v0.8.0

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { renderMessage } from "@/platform/errors/messages";
 
 export type AdminSection =
@@ -154,6 +154,16 @@ export default function AdminShell({
   const [activeSection, setActiveSection] = useState<AdminSection>(
     visibleItems[0]?.section || "users"
   );
+
+  // The section shown first is reported too (review 14 L-1): the page loads the data of the
+  // section it is told is open, and before this it was never told of the first one — which was
+  // then shown with no data read, as if empty.
+  const reported = useRef(false);
+  useEffect(() => {
+    if (reported.current) return;
+    reported.current = true;
+    onSectionChange?.(activeSection);
+  }, [activeSection, onSectionChange]);
 
   return (
     <div className="min-h-screen bg-[#0a0f1e] flex">

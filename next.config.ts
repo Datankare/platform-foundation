@@ -49,22 +49,9 @@ const nextConfig: NextConfig = {
             key: "Cross-Origin-Resource-Policy",
             value: "same-origin",
           },
-          {
-            // Content Security Policy — generic baseline
-            // Projects inheriting this template should tighten connect-src
-            // to only the external domains they actually use
-            key: "Content-Security-Policy",
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-              "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob:",
-              "media-src 'self' blob:",
-              "connect-src 'self' https://cognito-idp.us-east-1.amazonaws.com",
-              "font-src 'self'",
-              "frame-ancestors 'none'",
-            ].join("; "),
-          },
+          // The Content Security Policy is set per response by proxy.ts, with a fresh nonce
+          // (platform/security/csp.ts, audit G-10) — a fixed header here could only allow
+          // inline script.
         ],
       },
     ];

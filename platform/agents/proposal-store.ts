@@ -31,8 +31,23 @@ export type {
 const ONE_LIVE: ReadonlySet<ProposalStatus> = new Set([
   "proposed",
   "approved",
+  "executing",
+  "indeterminate",
   "executed",
 ]);
+
+/** Why a run that never ended within its lease is undecided (review 11 H-1). */
+export const INDETERMINATE_NOTE =
+  "run did not end within its lease; its outcome is unknown — verify, then mark it executed or approve it again";
+
+/** Why an atomic run that never ended was returned to approved (its effect rolled back with it). */
+export const ATOMIC_RECOVERED_NOTE =
+  "atomic run did not end within its lease; its transaction rolled back with its effect, approval kept";
+
+/** The note a withdrawn approval keeps: who had approved it and when, then why it was withdrawn. */
+export function withdrawalNote(approved: ProposalRecord, note: string): string {
+  return `Approved by ${approved.decidedBy ?? "unknown"} at ${approved.decidedAt ?? "unknown"}, never run; withdrawn: ${note}`;
+}
 
 export class InMemoryProposalStore implements ProposalStore {
   /** proposalId → record, per tenant. Insertion order is creation order. */
@@ -77,7 +92,10 @@ export class InMemoryProposalStore implements ProposalStore {
 
   async decide(
     proposalId: string,
-    status: Exclude<ProposalStatus, "proposed" | "executed">,
+    status: Exclude<
+      ProposalStatus,
+      "proposed" | "executed" | "executing" | "indeterminate"
+    >,
     decidedBy: string,
     note?: string
   ): Promise<ProposalRecord | undefined> {
@@ -115,6 +133,157 @@ export class InMemoryProposalStore implements ProposalStore {
     return updated;
   }
 
+  /**
+   * Move `proposalId` to `to`, only if it is in one of `from` and (when given) its claim's token
+   * is `token` (compare-and-set).
+   */
+  private transition(
+    proposalId: string,
+    from: readonly ProposalStatus[],
+    to: ProposalStatus,
+    change: Partial<ProposalRecord> = {},
+    token?: string
+  ): ProposalRecord | undefined {
+    const records = this.parts.current();
+    const current = records.get(proposalId);
+    if (!current || !from.includes(current.status)) return undefined;
+    if (token !== undefined && current.runToken !== token) return undefined;
+    const updated: ProposalRecord = {
+      ...current,
+      status: to,
+      ...change,
+      updatedAt: new Date().toISOString(),
+    };
+    records.set(proposalId, updated);
+    return updated;
+  }
+
+  async claim(
+    proposalId: string,
+    options: { readonly atomic?: boolean } = {}
+  ): Promise<ProposalRecord | undefined> {
+    return this.transition(proposalId, ["approved"], "executing", {
+      runToken: generateUuid(),
+      runAtomic: options.atomic === true,
+    });
+  }
+
+  async complete(
+    proposalId: string,
+    runToken: string
+  ): Promise<ProposalRecord | undefined> {
+    const current = this.parts.current().get(proposalId);
+    // Already executed by this very claim (the recovery found its step): done.
+    if (current?.status === "executed" && current.runToken === runToken) return current;
+    return this.transition(
+      proposalId,
+      ["executing", "indeterminate"],
+      "executed",
+      {},
+      runToken
+    );
+  }
+
+  async release(
+    proposalId: string,
+    note: string,
+    runToken: string
+  ): Promise<ProposalRecord | undefined> {
+    return this.transition(
+      proposalId,
+      ["executing", "indeterminate"],
+      "approved",
+      { lastRunError: note, runToken: undefined, runAtomic: undefined },
+      runToken
+    );
+  }
+
+  async resolveIndeterminate(
+    proposalId: string,
+    resolution: "executed" | "approved",
+    decidedBy: string,
+    note: string
+  ): Promise<ProposalRecord | undefined> {
+    const now = new Date().toISOString();
+    return this.transition(
+      proposalId,
+      ["indeterminate"],
+      resolution,
+      resolution === "approved"
+        ? {
+            decidedBy,
+            decidedAt: now,
+            decisionNote: note,
+            runToken: undefined,
+            runAtomic: undefined,
+          }
+        : { lastRunError: `marked executed by ${decidedBy}: ${note}` }
+    );
+  }
+
+  /**
+   * Take back every run claimed before `before` (ms since the epoch) that never ended — the
+   * in-memory form of the approval-expiry job's recovery (hold-expiry.ts), for tests: an atomic
+   * run's approval is approved again (its effect rolled back with it), any other is
+   * `indeterminate` (review 11 H-1: its effect may have happened).
+   */
+  recoverStaleRuns(before: number): readonly ProposalRecord[] {
+    const out: ProposalRecord[] = [];
+    for (const r of [...this.parts.current().values()]) {
+      if (r.status === "executing" && Date.parse(r.updatedAt) < before) {
+        const back = r.runAtomic
+          ? this.transition(r.proposalId, ["executing"], "approved", {
+              lastRunError: ATOMIC_RECOVERED_NOTE,
+              runToken: undefined,
+              runAtomic: undefined,
+            })
+          : this.transition(r.proposalId, ["executing"], "indeterminate", {
+              lastRunError: INDETERMINATE_NOTE,
+            });
+        if (back) out.push(back);
+      }
+    }
+    return out;
+  }
+
+  async withdraw(
+    proposalId: string,
+    decidedBy: string,
+    note: string
+  ): Promise<ProposalRecord | undefined> {
+    const records = this.parts.current();
+    const current = records.get(proposalId);
+    if (!current || current.status !== "approved") return undefined;
+    const now = new Date().toISOString();
+    const updated: ProposalRecord = {
+      ...current,
+      status: "rejected",
+      decidedBy,
+      decidedAt: now,
+      decisionNote: withdrawalNote(current, note),
+      updatedAt: now,
+    };
+    records.set(proposalId, updated);
+    return updated;
+  }
+
+  async supersede(
+    proposalIds: readonly string[],
+    decidedBy: string,
+    note: string
+  ): Promise<readonly string[]> {
+    const moved: string[] = [];
+    for (const id of new Set(proposalIds)) {
+      const current = this.parts.current().get(id);
+      if (current?.status === "proposed") {
+        if (await this.decide(id, "rejected", decidedBy, note)) moved.push(id);
+      } else if (current?.status === "approved") {
+        if (await this.withdraw(id, decidedBy, note)) moved.push(id);
+      }
+    }
+    return moved;
+  }
+
   async query(options: ProposalQuery): Promise<readonly ProposalRecord[]> {
     let out = [...this.parts.current().values()];
     if (options.operationId)
@@ -122,6 +291,24 @@ export class InMemoryProposalStore implements ProposalStore {
     if (options.trajectoryId)
       out = out.filter((r) => r.trajectoryId === options.trajectoryId);
     if (options.status) out = out.filter((r) => r.status === options.status);
+    if (options.statuses) {
+      const statuses = new Set(options.statuses);
+      out = out.filter((r) => statuses.has(r.status));
+    }
+    if (options.labels) {
+      const labels = new Set(options.labels);
+      out = out.filter((r) => labels.has(r.label));
+    }
+    if (options.payloadKey !== undefined) {
+      out = out.filter((r) => {
+        const k = r.payload["key"] ?? r.payload["configKey"];
+        return k === options.payloadKey;
+      });
+    }
+    if (options.excludeIds?.length) {
+      const excluded = new Set(options.excludeIds);
+      out = out.filter((r) => !excluded.has(r.proposalId));
+    }
     out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     if (options.limit && options.limit > 0) out = out.slice(0, options.limit);
     return out;

@@ -13,6 +13,13 @@
  *   served in another. Outside any tenant the key uses the "no tenant" partition, which no
  *   request reaches (resolution itself refuses work without a tenant).
  *
+ * Across instances (audit RR-9): an invalidation is also published to the shared cache (the
+ * one CACHE_PROVIDER selects — Upstash in production) as a new version stamp for the subject, or
+ * for everyone (clearPermissionsCache). An entry remembers the stamps it was resolved under and
+ * is served only while they are unchanged, so a demotion takes effect on every instance at its
+ * next request, not up to 60 seconds later — with no comparison of clocks between instances.
+ * When the stamps cannot be read the entry is not trusted: permissions are resolved again.
+ *
  * Sprint 3, Task 3.5
  *
  * Phase 2 decision: This module uses a module-level Map (mutable singleton).
@@ -22,16 +29,24 @@
  * not guessed at now. See ADR-012 for the abstraction pattern.
  */
 
+import { revokeTokenVerification } from "@/platform/auth/token-verification";
 import {
   resolvePermissions,
   type EffectivePermissions,
 } from "@/platform/auth/permissions";
 import { memoryPartition } from "@/platform/tenancy/partition";
+import { getCache } from "@/platform/cache";
+import { readStamp } from "@/platform/cache/stamp-reader";
+import { inTransaction, onCommit } from "@/platform/data";
+import { logger } from "@/lib/logger";
+import { randomUUID } from "node:crypto";
 
 interface CacheEntry {
   /** The subject, so invalidation can find every tenant's entry for it. */
   sub: string;
   data: EffectivePermissions;
+  /** The shared invalidation stamps read before resolving; undefined when unreadable. */
+  stamps: string | undefined;
   expiresAt: number;
   lastAccessed: number;
 }
@@ -46,8 +61,56 @@ function keyFor(cognitoSub: string): string {
   return `${memoryPartition()}\u0000${cognitoSub}`;
 }
 
+const STAMP_ALL = "permissions:invalidated:all";
+const stampFor = (cognitoSub: string) => `permissions:invalidated:${cognitoSub}`;
+/** How long a stamp is kept: longer than any entry lives. */
+const STAMP_TTL_SECONDS = 600;
+
+/** The current invalidation stamps for `cognitoSub`, or undefined when they cannot be read. */
+async function currentStamps(cognitoSub: string): Promise<string | undefined> {
+  // Bounded and breaker-guarded (review 13 M2): a hanging shared cache never holds a permission
+  // check; unreadable stamps mean the permissions are resolved from the database.
+  const read = await readStamp(async () => {
+    const cache = getCache();
+    const [one, all] = await Promise.all([
+      cache.get<string>(stampFor(cognitoSub)),
+      cache.get<string>(STAMP_ALL),
+    ]);
+    return `${one ?? "-"}|${all ?? "-"}`;
+  });
+  return read.ok ? read.value : undefined;
+}
+
+/** Publish an invalidation to every instance. A failure is logged; the entry TTL still bounds it. */
+async function publishStamp(key: string): Promise<void> {
+  // After the caller's transaction commits, if it is in one (review 13 L5): published before, an
+  // instance would re-resolve the permissions as they were and cache them under the new stamp.
+  // Also when the commit's outcome is unknown (review 14 L-2): an invalidation is idempotent.
+  if (
+    typeof inTransaction === "function" &&
+    inTransaction() &&
+    typeof onCommit === "function" &&
+    onCommit(() => publishStampNow(key), { idempotent: true })
+  ) {
+    return;
+  }
+  await publishStampNow(key);
+}
+
+async function publishStampNow(key: string): Promise<void> {
+  try {
+    await getCache().set(key, randomUUID(), { ttlSeconds: STAMP_TTL_SECONDS });
+  } catch (err) {
+    logger.error("Permissions invalidation not published to other instances", {
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/auth/permissions-cache",
+    });
+  }
+}
+
 /**
- * Get cached permissions for a user. Resolves from DB on cache miss.
+ * Get cached permissions for a user. Resolves from DB on cache miss, or when another instance
+ * invalidated them since they were cached (RR-9).
  */
 export async function getCachedPermissions(
   cognitoSub: string,
@@ -57,12 +120,19 @@ export async function getCachedPermissions(
   const key = keyFor(cognitoSub);
   const cached = cache.get(key);
 
-  if (cached && cached.expiresAt > now) {
+  const stamps = await currentStamps(cognitoSub);
+  if (
+    cached &&
+    cached.expiresAt > now &&
+    stamps !== undefined &&
+    cached.stamps === stamps
+  ) {
     cached.lastAccessed = now;
     return cached.data;
   }
 
-  // Cache miss or expired — resolve from DB
+  // Cache miss, expired, or invalidated somewhere — resolve from DB. The stamps were read
+  // first: an invalidation published while this runs makes the entry stale at once.
   const permissions = await resolvePermissions(cognitoSub);
 
   if (permissions) {
@@ -70,6 +140,7 @@ export async function getCachedPermissions(
     cache.set(key, {
       sub: cognitoSub,
       data: permissions,
+      stamps,
       expiresAt: now + ttlMs,
       lastAccessed: now,
     });
@@ -92,20 +163,26 @@ export async function hasCachedPermission(
 
 /**
  * Invalidate cached permissions for a user, in every tenant (over-invalidating is safe; serving
- * a stale grant is not). Call after role changes, entitlement grants/revokes.
+ * a stale grant is not), on this instance at once and on every other through the shared stamp.
+ * Call after role changes, entitlement grants/revokes.
  */
-export function invalidatePermissions(cognitoSub: string): void {
+export async function invalidatePermissions(cognitoSub: string): Promise<void> {
   for (const [key, entry] of cache) {
     if (entry.sub === cognitoSub) cache.delete(key);
   }
+  await publishStamp(stampFor(cognitoSub));
+  // What changed the user's permissions (a role, an entitlement, the account's deletion) also
+  // voids their remembered token verifications, so nothing about them is served from before.
+  await revokeTokenVerification(cognitoSub);
 }
 
 /**
- * Clear the entire cache.
+ * Clear the entire cache, here and on every instance.
  * Useful for admin operations that affect many users.
  */
-export function clearPermissionsCache(): void {
+export async function clearPermissionsCache(): Promise<void> {
   cache.clear();
+  await publishStamp(STAMP_ALL);
 }
 
 /**

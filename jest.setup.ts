@@ -44,6 +44,15 @@ if (process.env.PF_TEST_MODULES !== "none") {
   });
 }
 
+// Review 14 M-1: every test under __tests__/db runs under a 30 s bound, not jest's default 5 s —
+// DB suites share one database across parallel workers, and under CI load (test:coverage,
+// test:core, the TZ rerun) a statement may wait on the others'. By path, so it holds for every
+// invocation that loads this setup (all three CI runs do) and for a DB suite that does not import
+// __tests__/helpers/db.ts (which sets the same bound for consumers whose setup is their own).
+if (/[\\/]__tests__[\\/]db[\\/]/.test(expect.getState().testPath ?? "")) {
+  jest.setTimeout(30_000);
+}
+
 beforeAll(() => {
   registerPlatformAgents();
   registerAdaptiveReference();
@@ -56,6 +65,9 @@ beforeAll(() => {
 // ahead of a test file's own jest.mock of their dependencies.
 beforeEach(() => {
   resetSingleton("platform.rateLimit.limiter");
+  // Review 13 M2: the shared-cache stamp breaker starts closed in every test — a test whose cache
+  // fails must not leave the next test reading stamps through an open breaker.
+  resetSingleton("platform.cache.stampBreaker");
 });
 
 afterAll(() => {

@@ -75,7 +75,7 @@ describe("Provider Registry", () => {
     process.env = { ...origEnv };
   });
 
-  it("defaults to all mocks when no env vars set", async () => {
+  it("defaults to test doubles when no env vars set, and to the real AI provider (G-13)", async () => {
     const { initProviders, resetProviders } =
       await import("@/platform/providers/registry");
     resetProviders();
@@ -84,8 +84,28 @@ describe("Provider Registry", () => {
 
     expect(selections.auth).toBe("mock");
     expect(selections.cache).toBe("memory");
-    expect(selections.ai).toBe("mock");
+    // What the orchestrator builds: the setting had no effect and the registry said "mock".
+    expect(selections.ai).toBe("anthropic");
     expect(selections.errorReporter).toBe("noop");
+  });
+
+  it("AI_PROVIDER=mock installs the mock provider: no call leaves the process (G-13)", async () => {
+    process.env.AI_PROVIDER = "mock";
+    const { initProviders, resetProviders } =
+      await import("@/platform/providers/registry");
+    resetProviders();
+    initProviders();
+    const { getOrchestrator } = await import("@/platform/ai/orchestrator");
+    const fetchSpy = jest.spyOn(global, "fetch");
+    const res = await getOrchestrator().complete(
+      { tier: "fast", maxTokens: 16, messages: [{ role: "user", content: "hello" }] },
+      { useCase: "test", requestId: "r" }
+    );
+    expect(res.content[0]).toMatchObject({ type: "text", text: "[MOCK] hello" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    delete process.env.AI_PROVIDER;
+    resetProviders();
   });
 
   it("selects cognito when AUTH_PROVIDER=cognito and config present", async () => {
@@ -104,6 +124,40 @@ describe("Provider Registry", () => {
     const { getAuthProvider } = await import("@/platform/auth/config");
     const provider = getAuthProvider();
     expect(provider).toBeDefined();
+  });
+
+  it("builds the Cognito provider from every setting: hosted domain, client secret, admin credentials", async () => {
+    process.env.AUTH_PROVIDER = "cognito";
+    process.env.COGNITO_USER_POOL_ID = "us-east-1_TestPool";
+    process.env.COGNITO_CLIENT_ID = "test-client";
+    process.env.NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN =
+      "pf.auth.us-east-1.amazoncognito.com";
+    process.env.COGNITO_CLIENT_SECRET = "s".repeat(52);
+    // Built at run time: a literal access-key id reads as a leaked key to the secret scan.
+    const fakeKeyId = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
+    process.env.COGNITO_ADMIN_ACCESS_KEY_ID = fakeKeyId;
+    process.env.COGNITO_ADMIN_SECRET_ACCESS_KEY = "a".repeat(40);
+    try {
+      const { initProviders, resetProviders } =
+        await import("@/platform/providers/registry");
+      resetProviders();
+      initProviders();
+      const { getAuthProvider } = await import("@/platform/auth/config");
+      const config = (getAuthProvider() as unknown as { config: Record<string, unknown> })
+        .config;
+      expect(config).toMatchObject({
+        userPoolId: "us-east-1_TestPool",
+        clientId: "test-client",
+        hostedUiDomain: "pf.auth.us-east-1.amazoncognito.com",
+        clientSecret: "s".repeat(52),
+        adminCredentials: { accessKeyId: fakeKeyId },
+      });
+    } finally {
+      delete process.env.NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
+      delete process.env.COGNITO_CLIENT_SECRET;
+      delete process.env.COGNITO_ADMIN_ACCESS_KEY_ID;
+      delete process.env.COGNITO_ADMIN_SECRET_ACCESS_KEY;
+    }
   });
 
   it("falls back to mock when AUTH_PROVIDER=cognito but config missing", async () => {
@@ -210,7 +264,7 @@ describe("Provider Registry", () => {
       expect.objectContaining({
         auth: "mock",
         cache: "memory",
-        ai: "mock",
+        ai: "anthropic",
         errorReporter: "noop",
       })
     );
@@ -223,10 +277,14 @@ const realAuth = (): void => {
   process.env.AUTH_PROVIDER = "cognito";
   process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
   process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
+  process.env.COGNITO_CLIENT_SECRET = "s".repeat(52);
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
+  process.env.ERASURE_HASH_KEY = "e".repeat(64);
   process.env.CRON_SECRET = "c".repeat(64);
-  // TASK-139: a deployment declares its cache.
-  process.env.CACHE_PROVIDER = "memory";
+  // TASK-139: a deployment declares its cache — shared (review 8 L3: memory is refused there).
+  process.env.CACHE_PROVIDER = "upstash";
+  process.env.UPSTASH_REDIS_REST_URL = "https://cache.example.upstash.io";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "t".repeat(40);
   process.env.TENANCY_MODE = "single";
   process.env.TENANT_ID = "00000000-0000-4000-8000-000000000001";
   delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;

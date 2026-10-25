@@ -56,6 +56,7 @@ export {
   mostRestrictive,
   setModalityClassifiers,
   resetModalityClassifiers,
+  modalityClassifiersConfigured,
 } from "./screen-modality";
 export type {
   ModalityContent,
@@ -79,7 +80,6 @@ export {
   loadContentRatingThresholds,
   loadSeverityReduction,
   loadStrikeThresholds,
-  loadBlocklistOnlySurfaces,
 } from "./config";
 
 // Blocklist (for direct use and testing)

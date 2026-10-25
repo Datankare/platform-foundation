@@ -238,10 +238,17 @@ describe("POST /api/auth/sso/callback", () => {
       success: true,
       userId: "u-1",
       accessToken: "access",
-      refreshToken: "refresh",
       expiresIn: 3600,
       email: "r@x.com",
       emailVerified: true,
+    });
+    // The refresh token is never in the body: an httpOnly cookie for the auth routes (X-17).
+    const refresh = res.cookies.get("pf_refresh");
+    expect(refresh?.value).toBe("u-1.refresh");
+    expect(refresh).toMatchObject({
+      httpOnly: true,
+      sameSite: "strict",
+      path: "/api/auth",
     });
     expect(mockProvider.handleSsoCallback).toHaveBeenCalledWith(
       "google",

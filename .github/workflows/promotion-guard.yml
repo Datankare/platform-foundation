@@ -39,3 +39,54 @@ jobs:
               exit 1
               ;;
           esac
+
+      # Audit H-10: the name alone proved nothing — a fork's branch named "staging", or a
+      # promote/* branch carrying code staging never had, passed. The source must be this
+      # repository's own branch, and what it promotes must be what staging holds.
+      - name: The source is this repository's own branch
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "${HEAD_REPO}" != "${BASE_REPO}" ]; then
+            echo "::error::A promotion into main comes from this repository's own branches, not from ${HEAD_REPO}."
+            exit 1
+          fi
+
+      - name: Checkout (history, no credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: What is promoted is what staging holds
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin staging main
+          case "${HEAD_REF}" in
+            staging)
+              # The PR's head is staging's tip: nothing was pushed past the promotion.
+              if [ "$(git rev-parse origin/staging)" != "${HEAD_SHA}" ]; then
+                echo "::error::The PR's head is not staging's tip."
+                exit 1
+              fi
+              ;;
+            promote/*)
+              # Route B: a branch off main whose tree is staging's tree, exactly.
+              if [ "$(git rev-parse "${HEAD_SHA}^{tree}")" != "$(git rev-parse "origin/staging^{tree}")" ]; then
+                echo "::error::${HEAD_REF}'s tree differs from staging's: a Route-B promotion carries exactly what staging holds."
+                exit 1
+              fi
+              ;;
+            hotfix/*)
+              # A hotfix is cut from main: main is an ancestor of its head.
+              if ! git merge-base --is-ancestor origin/main "${HEAD_SHA}"; then
+                echo "::error::${HEAD_REF} is not based on main's tip."
+                exit 1
+              fi
+              ;;
+          esac
+          echo "OK: ${HEAD_REF} promotes what it should."

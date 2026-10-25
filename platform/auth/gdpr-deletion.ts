@@ -24,6 +24,9 @@
 import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import { emailHash } from "@/platform/auth/user-provisioning";
+import { invalidatePermissions } from "@/platform/auth/permissions-cache";
+import { eraseUserData, type ErasureStep } from "@/platform/auth/user-data";
 
 export interface DeletionModule {
   moduleName: string;
@@ -37,6 +40,24 @@ export interface DeletionModule {
 
 const registeredModules: DeletionModule[] = [];
 
+/**
+ * Where an account's address can stand for the account, replaced by its id at the soft delete:
+ * only whole JSON strings equal to the address ($1, ignoring case) — values and object keys —
+ * become the id ($2) (public.jsonb_replace_text_value, migration 052; review 9 L7 added keys).
+ * An address inside a longer text — a note quoting it — is free text, another person's writing,
+ * and stays; a near miss (joann@ for ann@, a plus or sub-domain variant) is another address and
+ * stays. The function is non-recursive and cannot fail on any document (review 9 H2), so one
+ * row's document can never block another account's erasure; jsonb_may_mention_text is its cheap,
+ * sound pre-filter (false only where nothing can be replaced).
+ */
+export const ADDRESS_REPLACEMENTS: readonly string[] = [
+  "update proposals set payload = jsonb_replace_text_value(payload, $1::text, $2::text), effects = jsonb_replace_text_value(effects, $1::text, $2::text) where jsonb_may_mention_text(payload, $1::text) or jsonb_may_mention_text(effects, $1::text)",
+  "update agent_trajectories set steps = jsonb_replace_text_value(steps, $1::text, $2::text) where jsonb_may_mention_text(steps, $1::text)",
+  "update audit_log set details = jsonb_replace_text_value(details, $1::text, $2::text) where jsonb_may_mention_text(details, $1::text)",
+  "update review_queue set moderation_result = jsonb_replace_text_value(moderation_result, $1::text, $2::text), explanation_chain = jsonb_replace_text_value(explanation_chain, $1::text, $2::text) where jsonb_may_mention_text(moderation_result, $1::text) or jsonb_may_mention_text(explanation_chain, $1::text)",
+  "update app_sessions set state = jsonb_replace_text_value(state, $1::text, $2::text) where jsonb_may_mention_text(state, $1::text)",
+];
+
 /** Run a write; its error message, or undefined when it succeeded. */
 async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
   try {
@@ -44,6 +65,23 @@ async function failure(write: () => Promise<unknown>): Promise<string | undefine
     return undefined;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/**
+ * A module's step; one that throws has failed (it never stops the others or the record).
+ *
+ * @external A registered module's erasure hook may reach outside the database (an identity
+ * provider, a file store): an audited act that runs one passes `{ external: true }` (review 13 L5;
+ * __tests__/audited-external-guard.test.ts reads this tag).
+ */
+async function runModule(
+  step: () => Promise<{ success: boolean; error?: string }>
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    return await step();
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -99,9 +137,37 @@ export async function softDeleteUser(
       async () => {
         const errors: string[] = [];
 
-        // 1. Anonymize user record (again is fine: an already-deleted user stays deleted).
+        // 1. Anonymize user record (again is fine: an already-deleted user stays deleted). A
+        //    banned account's address is kept only as a hash, so the ban follows the address
+        //    to a new identity and erasing the account does not lift it (audit A-11).
+        let standing: string | null = null;
+        let addressHash: { hash: string; keyId: string | null } | null = null;
+        let subject: string | null = null;
         const userError = await failure(() =>
           withTenantTx(async (tx) => {
+            const before = await tx.query<{
+              email: string | null;
+              status: string;
+              sub: string | null;
+            }>(
+              "select email, account_status::text as status, cognito_sub as sub from users where id = $1::uuid",
+              [userId]
+            );
+            standing = before.rows[0]?.status ?? null;
+            subject = before.rows[0]?.sub ?? null;
+            const email = before.rows[0]?.email;
+            addressHash = standing === "banned" && email ? emailHash(email) : null;
+            // A held action or a run may name the account by its address (change_user_role takes
+            // an email or an id): the address becomes the id here, while it is still known, so
+            // the hard purge finds every mention by the id (review 7 M4). Only a JSON string value
+            // equal to the address (ignoring case) is replaced — review 8 H-C: a substring replace
+            // corrupted another account's "joann@…" into "jo<id>", which the purge then deleted.
+            // The prefilter looks for the address as a JSON string (quoted, escaped as jsonb
+            // prints it), so it selects exactly the documents that hold such a value.
+            if (email) {
+              for (const text of ADDRESS_REPLACEMENTS)
+                await tx.query(text, [email, userId]);
+            }
             await tx.query(
               `update users
                   set email = null, display_name = '[deleted]', real_name = null,
@@ -120,10 +186,13 @@ export async function softDeleteUser(
           // Nothing to erase is not an erasure: stop before the modules and the record.
           return { success: false, errors: [`users: ${userError}`] };
         }
+        // The deleted account's cached permissions go at once, here and on every instance
+        // (review 7 M5: they were served until the cache's TTL ran out).
+        if (subject) await invalidatePermissions(subject);
 
         // 2. Run soft delete on all registered modules
         for (const mod of registeredModules) {
-          const result = await mod.softDelete(userId);
+          const result = await runModule(() => mod.softDelete(userId));
           if (!result.success) {
             errors.push(`${mod.moduleName}: ${result.error || "Unknown error"}`);
           }
@@ -134,16 +203,24 @@ export async function softDeleteUser(
         const recordError = await failure(() =>
           withTenantTx((tx) =>
             tx.query(
-              `insert into user_deletions (user_id, requested_by, modules)
-               values ($1::uuid, $2, $3::jsonb)
+              `insert into user_deletions (user_id, requested_by, modules, standing, email_hash, email_hash_key, email_hash_scheme)
+               values ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7)
                on conflict (tenant_id, user_id) do update
                  set requested_by = excluded.requested_by, modules = excluded.modules,
                      soft_deleted_at = now(), purge_after = now() + interval '30 days',
-                     purged_at = null`,
+                     purged_at = null,
+                     standing = coalesce(excluded.standing, user_deletions.standing),
+                     email_hash_key = case when excluded.email_hash is null then user_deletions.email_hash_key else excluded.email_hash_key end,
+                     email_hash_scheme = case when excluded.email_hash is null then user_deletions.email_hash_scheme else excluded.email_hash_scheme end,
+                     email_hash = coalesce(excluded.email_hash, user_deletions.email_hash)`,
               [
                 userId,
                 requestedBy,
                 JSON.stringify(registeredModules.map((m) => m.moduleName)),
+                standing,
+                (addressHash as { hash: string } | null)?.hash ?? null,
+                (addressHash as { keyId: string | null } | null)?.keyId ?? null,
+                (addressHash as { scheme: string } | null)?.scheme ?? null,
               ]
             )
           )
@@ -158,7 +235,11 @@ export async function softDeleteUser(
         }
 
         return { success: errors.length === 0, errors };
-      }
+      },
+      // The registered modules may reach outside the database (an identity provider, a file
+      // store): never inside a caller's transaction, whose rollback could not undo them (review
+      // 13 L5).
+      { external: true }
     );
   } catch (err) {
     if (err instanceof AuditWriteError)
@@ -169,25 +250,30 @@ export async function softDeleteUser(
 
 /**
  * Phase 2: Hard purge a user's data. Permanently removes all data across all modules. Called for
- * each account whose retention period has passed by purgeDueErasures.
+ * each account whose retention period has passed by purgeDueErasures, and by the admin purge.
+ *
+ * The app's modules run first; then the platform's register (platform/auth/user-data.ts) erases
+ * every platform table that holds the user's data, user row last, in one transaction — all of
+ * it or none (audit X-15, E-8: before, only the user row was deleted).
  */
 export async function hardPurgeUser(
   userId: string
-): Promise<{ success: boolean; errors: string[] }> {
+): Promise<{ success: boolean; errors: string[]; steps?: readonly ErasureStep[] }> {
   const errors: string[] = [];
+  let steps: readonly ErasureStep[] | undefined;
 
   // 1. Run hard purge on all registered modules
   for (const mod of registeredModules) {
-    const result = await mod.hardPurge(userId);
+    const result = await runModule(() => mod.hardPurge(userId));
     if (!result.success) {
       errors.push(`${mod.moduleName}: ${result.error || "Unknown error"}`);
     }
   }
 
-  // 2. Delete user record
-  const userError = await failure(() =>
-    withTenantTx((tx) => tx.query("delete from users where id = $1::uuid", [userId]))
-  );
+  // 2. The platform's tables, the user row last, in one transaction.
+  const userError = await failure(async () => {
+    steps = await withTenantTx((tx) => eraseUserData(tx, userId));
+  });
 
   if (userError) {
     errors.push(`users: ${userError}`);
@@ -213,7 +299,7 @@ export async function hardPurgeUser(
     }
   }
 
-  return { success: errors.length === 0, errors };
+  return { success: errors.length === 0, errors, ...(steps ? { steps } : {}) };
 }
 
 /** What one retention run did. */
@@ -273,7 +359,9 @@ export async function purgeDueErasures(
           return r.success
             ? { success: true as const }
             : { success: false as const, error: r.errors.join("; ") };
-        }
+        },
+        // The modules' hard purge may reach outside the database (review 13 L5).
+        { external: true }
       );
       if (result.success) purged++;
       else failed++;

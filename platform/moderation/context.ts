@@ -64,8 +64,6 @@ export interface ContextEvaluation {
   readonly attributeToUser: boolean;
   /** Context factors that influenced the evaluation */
   readonly factors: string[];
-  /** Whether to skip the classifier (blocklist-only mode) */
-  readonly blocklistOnly: boolean;
 }
 
 /**
@@ -82,14 +80,12 @@ export async function evaluateContext(
       severityReduction: 0,
       attributeToUser: true,
       factors: ["unknown-content-type: treated as generation"],
-      blocklistOnly: false,
     };
   }
 
   const factors: string[] = [];
   let severityReduction = 0;
   let attributeToUser = true;
-  const blocklistOnly = false;
 
   // ── Content type adjustments ───────────────────────────────────────
 
@@ -137,6 +133,5 @@ export async function evaluateContext(
     severityReduction,
     attributeToUser,
     factors,
-    blocklistOnly,
   };
 }

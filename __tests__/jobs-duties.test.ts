@@ -19,6 +19,9 @@ jest.mock("@/platform/auth/account-status-guard", () => ({
   expireLapsedAccountStatuses: jest.fn(),
 }));
 jest.mock("@/platform/auth/gdpr-deletion", () => ({ purgeDueErasures: jest.fn() }));
+jest.mock("@/platform/auth/user-provisioning", () => ({
+  upgradeLegacyErasureHashes: jest.fn(async () => 0),
+}));
 jest.mock("@/platform/agents/trajectory-retention", () => ({
   applyTrajectoryRetention: jest.fn(),
 }));
@@ -194,8 +197,26 @@ describe("the core duties", () => {
       failed: 0,
     });
     expect(await duty("gdpr.retention-purge")()).toMatchObject({
-      summary: { due: 100, purged: 100 },
+      summary: { due: 100, purged: 100, hashesUpgraded: 0 },
       continueWith: { part: "next" },
+    });
+  });
+
+  // Review 8 L6: the retention job upgrades legacy address hashes first, and continues while a
+  // full batch of them was upgraded.
+  it("the GDPR purge upgrades legacy address hashes, and continues while there may be more", async () => {
+    const { upgradeLegacyErasureHashes } = jest.requireMock(
+      "@/platform/auth/user-provisioning"
+    ) as { upgradeLegacyErasureHashes: jest.Mock };
+    upgradeLegacyErasureHashes.mockResolvedValueOnce(500);
+    (purgeDueErasures as jest.Mock).mockResolvedValue({ due: 0, purged: 0, failed: 0 });
+    expect(await duty("gdpr.retention-purge")()).toMatchObject({
+      summary: { due: 0, purged: 0, hashesUpgraded: 500 },
+      continueWith: { part: "next" },
+    });
+    upgradeLegacyErasureHashes.mockResolvedValueOnce(3);
+    expect(await duty("gdpr.retention-purge")()).toEqual({
+      summary: { due: 0, purged: 0, hashesUpgraded: 3 },
     });
   });
 
@@ -218,11 +239,12 @@ describe("the core duties", () => {
     });
   });
 
-  it("expires stale approvals", async () => {
+  it("expires stale approvals — every tenant's: the job passes no scope (review 11 L-5)", async () => {
     (expireStaleApprovals as jest.Mock).mockResolvedValue(7);
     await expect(duty("config.expire-approvals")()).resolves.toEqual({
       summary: { expired: 7 },
     });
+    expect(expireStaleApprovals).toHaveBeenCalledWith();
   });
 
   it("purges due tenants as the job — named as an agent, never as a user — and fails on refusal", async () => {
@@ -255,12 +277,16 @@ describe("the core duties", () => {
     setJobStore(store);
     const prune = jest.spyOn(store, "prune").mockResolvedValue(5000);
     try {
+      const before = Date.now();
       expect(await duty("jobs.prune")()).toMatchObject({
         summary: { deleted: 5000, retentionDays: 30 },
         continueWith: {},
       });
+      const after = Date.now();
+      // Bracketed by the clock read before and after, not a tolerance (review 10 L11).
       const cutoff = prune.mock.calls[0][0].getTime();
-      expect(Math.abs(Date.now() - 30 * 86_400_000 - cutoff)).toBeLessThan(5_000);
+      expect(cutoff).toBeGreaterThanOrEqual(before - 30 * 86_400_000);
+      expect(cutoff).toBeLessThanOrEqual(after - 30 * 86_400_000);
       for (const [v, want] of [
         [0, 1],
         [9999, 365],

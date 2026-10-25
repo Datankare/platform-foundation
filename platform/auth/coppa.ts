@@ -75,16 +75,29 @@ export async function recordAgeVerification(
         error?: string;
       }> => {
         const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
+          withTenantTx(async (tx) => {
+            const updated = await tx.query(
+              // The gate's flag is set with the age it follows from (X-16): a child is
+              // enforced until consent is granted. An age is recorded once; a second
+              // declaration (a child re-declaring as an adult) changes nothing.
               `update users
                   set date_of_birth = $2::date, age_verified = true, age_verified_at = now(),
                       content_rating_level = $3,
-                      parental_consent_status = $4::parental_consent_status
-                where id = $1::uuid`,
-              [userId, dateOfBirth, evaluation.contentRatingLevel, consentStatus]
-            )
-          )
+                      parental_consent_status = $4::parental_consent_status,
+                      coppa_enforcement_active = $5
+                where id = $1::uuid and age_verified is not true`,
+              [
+                userId,
+                dateOfBirth,
+                evaluation.contentRatingLevel,
+                consentStatus,
+                evaluation.requiresParentalConsent,
+              ]
+            );
+            if (updated.rowCount === 0) {
+              throw new Error("the age is already recorded, or there is no such user");
+            }
+          })
         );
 
         if (error) {
@@ -124,15 +137,21 @@ export async function recordParentalConsent(
       },
       async () => {
         const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
+          withTenantTx(async (tx) => {
+            const updated = await tx.query(
+              // Granted lifts the gate; denied keeps it — for an account that needed consent.
               `update users
                   set parental_consent_status = $2::parental_consent_status,
-                      parental_consent_email = $3
-                where id = $1::uuid`,
+                      parental_consent_email = $3,
+                      coppa_enforcement_active = ($2::parental_consent_status <> 'granted')
+                where id = $1::uuid and age_verified
+                  and parental_consent_status <> 'not_required'`,
               [userId, status, parentEmail || null]
-            )
-          )
+            );
+            if (updated.rowCount === 0) {
+              throw new Error("this account does not need parental consent");
+            }
+          })
         );
 
         if (error) {
@@ -152,5 +171,22 @@ export async function recordParentalConsent(
     if (err instanceof AuditWriteError)
       return { success: false, error: "audit unavailable" };
     throw err;
+  }
+}
+
+/** The oldest age accepted as a declared date of birth; anything older is a mistake or a probe. */
+export const MAX_DECLARED_AGE = 120;
+
+/**
+ * A declared date of birth, checked as the server records it: a real, past calendar date
+ * (YYYY-MM-DD) no more than MAX_DECLARED_AGE years ago. The evaluation, or null when refused.
+ */
+export function parseDeclaredBirthDate(value: unknown): AgeVerificationResult | null {
+  if (typeof value !== "string") return null;
+  try {
+    const evaluation = evaluateAge(value);
+    return evaluation.age <= MAX_DECLARED_AGE ? evaluation : null;
+  } catch {
+    return null;
   }
 }

@@ -3,6 +3,7 @@ import { readJsonObject, requireTextFields } from "@/platform/errors";
 import {
   authResultResponse,
   callAuthProvider,
+  concealAccount,
   passwordPolicyRefusal,
 } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
@@ -28,5 +29,9 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     }
   );
   if (!called.ok) return called.response;
-  return authResultResponse(called.result, { request, context: "Password reset failed" });
+  // Never says whether the address has an account (audit A-15).
+  return authResultResponse(concealAccount(called.result, "code"), {
+    request,
+    context: "Password reset failed",
+  });
 });

@@ -43,13 +43,13 @@ jest.mock("@/platform/auth/auth-init", () => ({ initAuth: jest.fn() }));
 // No database, as in the monkey run: creating the client throws.
 
 const ROUTES: [string, string[]][] = [
-  ["sign-up", ["email", "password"]],
+  ["sign-up", ["email", "password", "dateOfBirth"]],
   ["sign-in", ["email", "password"]],
   ["forgot-password", ["email"]],
   ["confirm-forgot-password", ["email", "code", "newPassword"]],
   ["verify-email", ["email", "code"]],
   ["resend-verification", ["email"]],
-  ["mfa-challenge", ["session", "code"]],
+  ["mfa-challenge", ["session", "code", "username"]],
   ["new-password-challenge", ["session", "newPassword", "username"]],
 ];
 
@@ -76,6 +76,7 @@ const good: Record<string, string> = {
   newPassword: "Correct-Horse-Battery-9",
   session: "s",
   username: "a@b.c",
+  dateOfBirth: "1990-01-01",
 };
 
 beforeEach(() => {
@@ -115,10 +116,14 @@ describe.each(ROUTES)("POST /api/auth/%s", (route, fields) => {
 describe("sign-up without a readable password policy", () => {
   it("applies the built-in policy — never a 500 (the database client cannot be created)", async () => {
     const signUp = await handler("sign-up");
-    const weak = await signUp(post({ email: "a@b.c", password: "short" }));
+    const weak = await signUp(
+      post({ email: "a@b.c", password: "short", dateOfBirth: good.dateOfBirth })
+    );
     expect(weak.status).toBe(400);
     expect((await weak.json()).code).toBe("auth.password_policy");
-    const strong = await signUp(post({ email: "a@b.c", password: good.password }));
+    const strong = await signUp(
+      post({ email: "a@b.c", password: good.password, dateOfBirth: good.dateOfBirth })
+    );
     expect(strong.status).toBeLessThan(500);
     expect(provider.signUp).toHaveBeenCalledTimes(1);
   });
@@ -184,7 +189,7 @@ describe("POST /api/auth/sign-out with a provider that throws", () => {
     );
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe("internal.error");
-    expect(signOut).toHaveBeenCalledWith("t");
+    expect(signOut).toHaveBeenCalledWith("t", undefined);
     // The browser still stops claiming a session.
     expect(res.headers.get("set-cookie")).toMatch(/pf_has_session=;.*Max-Age=0/i);
   });

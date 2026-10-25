@@ -17,6 +17,8 @@ export const ADMIN_TOOL_PERMISSIONS = {
   assign_permissions: "admin_manage_roles",
   change_user_role: "admin_manage_users",
   create_entitlement_group: "admin_manage_entitlements",
+  // PATCH /api/admin/entitlements as a governed action, so the page can hold it (review 7 M6).
+  set_entitlement_group_active: "admin_manage_entitlements",
   update_password_policy: "admin_manage_config",
   register_agent: "admin_manage_agents",
   suspend_agent: "admin_manage_agents",

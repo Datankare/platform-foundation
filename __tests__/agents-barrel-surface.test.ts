@@ -78,6 +78,10 @@ const EXPECTED_EXPORTS = [
   // Sprint 3c A3 — durable store install + reset, Postgres impl (ADR-053 D4)
   "PostgresApprovalPolicyStore",
   "resetApprovalPolicyStore",
+  // Review 11 H-2 — a trajectory continued in linked segments, read as one chain
+  "readTrajectoryChain",
+  "latestTrajectorySegment",
+  "chainSteps",
   "setApprovalPolicyStore",
   // ADR-030 AUX: workflow loop + capabilities (this commit)
   "advanceGoal",
@@ -99,6 +103,10 @@ const EXPECTED_EXPORTS = [
   "CORE_AGENT_GOALS",
   "isAgentGoal",
   "listAgentGoals",
+  // Review 12 — the chain read one segment at a time (M2); the capability map read fail closed (H1)
+  "trajectoryChainPages",
+  "evaluateCapabilityFeatures",
+  "requiredFeatures",
 ].sort();
 
 describe("platform/agents — public API surface", () => {

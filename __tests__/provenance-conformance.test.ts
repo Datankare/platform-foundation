@@ -4,6 +4,14 @@
 import { runProvenanceContract } from "./contract/provenance-contract";
 import { emitProvenance, verifyProvenance, detectSyntheticOrigin } from "@/platform/ai";
 
+const KEY = "provenance-conformance-key-0123456789abcdef";
+beforeAll(() => {
+  process.env.PROVENANCE_SIGNING_KEY = KEY;
+});
+afterAll(() => {
+  delete process.env.PROVENANCE_SIGNING_KEY;
+});
+
 runProvenanceContract({
   name: "provenance seam",
   emit: (image, model) => emitProvenance(image, { model }),

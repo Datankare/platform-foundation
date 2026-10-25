@@ -585,7 +585,8 @@ describe("handleResetConfig — the tenant's own value removed, governed", () =>
       "rate_limit_rpm",
       "admin-1",
       "back to default",
-      false
+      false,
+      {}
     );
   });
 
@@ -625,6 +626,7 @@ describe("handleResetConfig — the tenant's own value removed, governed", () =>
       record: {
         id: "apr-9",
         configKey: "moderation.strike_ban_threshold",
+        currentValue: 5,
         proposedValue: 100,
         changeComment: "back",
         scope: "tenant",
@@ -645,7 +647,10 @@ describe("handleResetConfig — the tenant's own value removed, governed", () =>
       "moderation.strike_ban_threshold",
       "op-2",
       "Approved: back",
-      true
+      true,
+      // Only onto the value it was requested against (review 12 H2), and onto the platform
+      // default it was requested to inherit — the approval's proposed value (review 13 M1).
+      { expectPrevious: { value: 5 }, expectInherited: { value: 100 } }
     );
     expect(mockSetConfigWithHistory).not.toHaveBeenCalled();
   });

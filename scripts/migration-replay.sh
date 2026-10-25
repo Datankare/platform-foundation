@@ -85,7 +85,8 @@ BEGIN
     'group_invites','review_queue','user_strikes','content_safety_audit','agent_budgets',
     'agent_trajectories','proposals','effect_ledger','app_sessions','document_embeddings',
     'rate_limit_events','applied_migrations','ai_metrics','tenants','tenant_domains',
-    'tenant_config_overrides','tenant_lifecycle_requests','jobs','job_schedules'
+    'tenant_config_overrides','tenant_lifecycle_requests','jobs','job_schedules',
+    'config_dual_control_seeded'
   ]) AS t WHERE to_regclass('public.' || t) IS NULL;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing tables: %', missing; END IF;
   SELECT string_agg(f, ', ') INTO missing FROM unnest(ARRAY[
@@ -100,15 +101,36 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tables without row-level security: %', missing; END IF;
-  -- No function that writes and runs as its owner (SECURITY DEFINER) is executable by anon or
-  -- authenticated: it would bypass row-level security for anyone holding the public key (TASK-137).
+  -- No function that runs as its owner (SECURITY DEFINER) is executable by anon or
+  -- authenticated: it would bypass row-level security for anyone holding the public key
+  -- (TASK-137). Every one, whatever its volatility — a stable one that reads is as much a hole as
+  -- one that writes (audit E-11: only volatile ones were checked).
   SELECT string_agg(p.proname, ', ') INTO missing FROM pg_proc p
     JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public' AND p.prosecdef AND p.provolatile = 'v'
+    WHERE n.nspname = 'public' AND p.prosecdef
       AND (has_function_privilege('anon', p.oid, 'EXECUTE')
         OR has_function_privilege('authenticated', p.oid, 'EXECUTE'));
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION 'owner-rights functions that anon or authenticated can execute: %', missing;
+  END IF;
+  -- Every owner-rights function fixes its search_path, so no caller's schema can shadow what it
+  -- calls (audit E-18).
+  SELECT string_agg(p.proname, ', ') INTO missing FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef
+      AND NOT EXISTS (SELECT 1 FROM unnest(coalesce(p.proconfig, '{}')) AS c WHERE c LIKE 'search_path=%');
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'owner-rights functions without a fixed search_path: %', missing;
+  END IF;
+  -- A view runs as its owner unless it is security_invoker, so one anon or authenticated can read
+  -- would bypass row-level security (audit E-11: views were not checked).
+  SELECT string_agg(c.relname, ', ') INTO missing FROM pg_class c
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('v', 'm')
+      AND NOT coalesce('security_invoker=true' = ANY (c.reloptions), false)
+      AND (has_table_privilege('anon', c.oid, 'SELECT')
+        OR has_table_privilege('authenticated', c.oid, 'SELECT'));
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'owner-rights views that anon or authenticated can read: %', missing;
   END IF;
   -- Governance seed is present.
   IF NOT EXISTS (SELECT 1 FROM public.roles WHERE name = 'super_admin') THEN
@@ -293,7 +315,7 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
       AND c.relname NOT IN ('permissions','roles','role_permissions','role_inheritance','entitlement_groups',
         'entitlement_permissions','deletion_manifest','platform_config','applied_migrations','tenants',
-        'job_schedules');
+        'job_schedules','config_dual_control_seeded');
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tables with no tenant_id that are not platform-owned: %', missing; END IF;
   SELECT string_agg(c.relname, ', ') INTO missing FROM pg_class c
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped
@@ -866,6 +888,297 @@ UPDATE public.platform_config SET value = 'true' WHERE key = 'jobs.jobs.prune.en
 UPDATE public.platform_config SET value = '$dual_before'::jsonb WHERE key = 'config.dual_control_keys';
 DELETE FROM public.job_schedules WHERE kind = 'replay.schedule';
 SQL
+
+step "audit wave 2: 052's changes are present"
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+DECLARE missing text;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+                  WHERE t.typname = 'audit_action' AND e.enumlabel = 'logout') THEN
+    RAISE EXCEPTION '052: audit_action has no logout';
+  END IF;
+  IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public'
+       AND table_name = 'user_deletions' AND column_name IN ('standing', 'email_hash', 'email_hash_key')) <> 3 THEN
+    RAISE EXCEPTION '052: user_deletions lacks standing, email_hash or email_hash_key';
+  END IF;
+  -- Review 8 H-C: whole-value replacement; callable by the request role, not by the public key.
+  IF to_regprocedure('public.jsonb_replace_text_value(jsonb, text, text)') IS NULL
+     OR NOT has_function_privilege('app_tenant', 'public.jsonb_replace_text_value(jsonb, text, text)', 'execute')
+     OR has_function_privilege('public', 'public.jsonb_replace_text_value(jsonb, text, text)', 'execute') THEN
+    RAISE EXCEPTION '052: jsonb_replace_text_value missing, or granted wrongly';
+  END IF;
+  IF public.jsonb_replace_text_value('{"a": ["Ann@X.Y", "joann@x.y", {"b": "ann@x.y"}], "c": "mail ann@x.y"}', 'ann@x.y', 'id')
+     <> '{"a": ["id", "joann@x.y", {"b": "id"}], "c": "mail ann@x.y"}'::jsonb THEN
+    RAISE EXCEPTION '052: jsonb_replace_text_value replaced more or less than whole values';
+  END IF;
+  -- Review 8 M2: every setting whose change is a change of power is under dual control.
+  SELECT string_agg(k, ', ') INTO missing FROM unnest(ARRAY[
+      'auth.token_cache_seconds', 'auth.token_stale_grace_seconds', 'agent.capability_features',
+      'agent.trusted_agents', 'agent.delegation.max_ttl_seconds', 'agent.budget.tenant_max_cost_per_day',
+      'account_status.known_features', 'account_status.restricted_features',
+      'account_status.suspended_features', 'coppa.enforcement_enabled', 'coppa.blocked_features',
+      'profile.screened_fields', 'moderation.level3.block_severity', 'moderation.level3.warn_severity',
+      'moderation.level3.escalate_below', 'moderation.strike_suspend_threshold',
+      'config.approval_expiry_days']) AS k
+   WHERE NOT (SELECT value @> to_jsonb(k) FROM public.platform_config WHERE key = 'config.dual_control_keys');
+  IF missing IS NOT NULL THEN RAISE EXCEPTION '052: not under dual control: %', missing; END IF;
+  SELECT string_agg(k, ', ') INTO missing FROM unnest(ARRAY['auth.staff_mfa_required', 'admin.dual_control_actions']) AS k
+   WHERE NOT EXISTS (SELECT 1 FROM public.platform_config c WHERE c.key = k AND c.permission_tier = 'safety')
+      OR NOT (SELECT value @> to_jsonb(k) FROM public.platform_config WHERE key = 'config.dual_control_keys');
+  IF missing IS NOT NULL THEN RAISE EXCEPTION '052: not seeded under dual control: %', missing; END IF;
+  SELECT string_agg(key, ', ') INTO missing FROM public.platform_config
+   WHERE key IN ('account_status.known_features', 'coppa.blocked_features') AND NOT value @> '["stream"]';
+  IF missing IS NOT NULL THEN RAISE EXCEPTION '052: stream missing from %', missing; END IF;
+  -- Retired, not deleted: the row (and so its history) stays, marked, off the dual-control list.
+  IF NOT EXISTS (SELECT 1 FROM public.platform_config
+                  WHERE key = 'moderation.blocklist_only_surfaces' AND category = 'retired')
+     OR (SELECT value ? 'moderation.blocklist_only_surfaces' FROM public.platform_config WHERE key = 'config.dual_control_keys') THEN
+    RAISE EXCEPTION '052: moderation.blocklist_only_surfaces not retired';
+  END IF;
+  -- The entitlement actions are under dual control (review 7 M6).
+  SELECT string_agg(a, ', ') INTO missing
+    FROM unnest(ARRAY['create_entitlement_group', 'set_entitlement_group_active']) AS a
+   WHERE NOT (SELECT value @> to_jsonb(a) FROM public.platform_config WHERE key = 'admin.dual_control_actions');
+  IF missing IS NOT NULL THEN RAISE EXCEPTION '052: not held for a second admin: %', missing; END IF;
+  -- One hold per change (review 10 H1): no config-writing action is held as an action — the keys
+  -- they write are, under their own rules.
+  SELECT string_agg(a, ', ') INTO missing
+    FROM unnest(ARRAY['set_capability_mapping', 'register_agent', 'suspend_agent', 'set_agent_scope', 'set_agent_ttl']) AS a
+   WHERE (SELECT value @> to_jsonb(a) FROM public.platform_config WHERE key = 'admin.dual_control_actions')
+      OR (SELECT default_value @> to_jsonb(a) FROM public.platform_config WHERE key = 'admin.dual_control_actions');
+  IF missing IS NOT NULL THEN RAISE EXCEPTION '052: a config write is held as an action too: %', missing; END IF;
+  -- Review 10 H2: a run's claim of its approval.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'proposals_status_check'
+                  AND pg_get_constraintdef(oid) LIKE '%executing%')
+     OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_proposals_tenant_one_live'
+                     AND indexdef LIKE '%executing%')
+     OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_name = 'proposals' AND column_name = 'last_run_error') THEN
+    RAISE EXCEPTION '052: proposals cannot record a run in progress (executing, last_run_error)';
+  END IF;
+  -- Review 11 H-1: a claim's generation, and a run whose outcome is unknown.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'proposals_status_check'
+                  AND pg_get_constraintdef(oid) LIKE '%indeterminate%')
+     OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_proposals_tenant_one_live'
+                     AND indexdef LIKE '%indeterminate%')
+     OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_name = 'proposals' AND column_name = 'run_token') THEN
+    RAISE EXCEPTION '052: proposals cannot record a claim''s token or an undecided run (run_token, indeterminate)';
+  END IF;
+  SELECT string_agg(t, ', ') INTO missing FROM public.deletion_manifest m, unnest(m.table_names) AS t
+   WHERE NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relname = t);
+  IF missing IS NOT NULL THEN RAISE EXCEPTION '052: the deletion manifest names missing tables: %', missing; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.deletion_manifest WHERE module_name = 'platform') THEN
+    RAISE EXCEPTION '052: the deletion manifest has no platform module';
+  END IF;
+END $$;
+SQL
+
+step "audit wave 2: a hostile trajectory chain is refused (review 12 L6)"
+# The chain guard (052) keeps every chain linear, numbered, in one tenant: each hostile row below
+# must be refused — a cycle, a skipped segment, another tenant's predecessor, a wrong step_offset,
+# a fork, a chain column changed, a step appended to a continued segment. All rolled back.
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+BEGIN;
+DO $$
+DECLARE
+  ta uuid := gen_random_uuid();
+  tb uuid := gen_random_uuid();
+  r uuid := gen_random_uuid();
+  c uuid := gen_random_uuid();
+  root uuid;
+  refused boolean;
+BEGIN
+  INSERT INTO public.tenants (id, slug, name) VALUES
+    (ta, 'replay-chain-a', 'Replay chain A'), (tb, 'replay-chain-b', 'Replay chain B');
+  INSERT INTO public.agent_trajectories (id, tenant_id, subject_kind, subject_id, trigger, scope_type, status, steps, total_cost, version)
+    VALUES (r, ta, 'agent', 'replay-chain', 't', 'platform', 'running', '[{"s":1},{"s":2}]', '{}', 1);
+  IF (SELECT chain_root_id FROM public.agent_trajectories WHERE id = r) <> r THEN
+    RAISE EXCEPTION 'a first segment is not its own chain root';
+  END IF;
+  -- A skipped segment, another tenant's predecessor, a wrong step_offset, a root not the chain's.
+  FOR i IN 1..4 LOOP
+    refused := false;
+    BEGIN
+      INSERT INTO public.agent_trajectories (id, tenant_id, subject_kind, subject_id, trigger, scope_type, status, steps, total_cost, version, segment, previous_trajectory_id, step_offset, chain_root_id)
+        VALUES (gen_random_uuid(), CASE WHEN i = 2 THEN tb ELSE ta END, 'agent', 'replay-chain', 't', 'platform', 'running', '[]', '{}', 1,
+                CASE WHEN i = 1 THEN 3 ELSE 2 END, r, CASE WHEN i = 3 THEN 5 ELSE 2 END,
+                CASE WHEN i = 4 THEN gen_random_uuid() ELSE NULL END);
+    EXCEPTION WHEN check_violation THEN refused := true;
+    END;
+    IF NOT refused THEN RAISE EXCEPTION 'hostile continuation % was accepted', i; END IF;
+  END LOOP;
+  -- The one valid continuation: its chain root is set by the database.
+  INSERT INTO public.agent_trajectories (id, tenant_id, subject_kind, subject_id, trigger, scope_type, status, steps, total_cost, version, segment, previous_trajectory_id, step_offset)
+    VALUES (c, ta, 'agent', 'replay-chain', 't', 'platform', 'running', '[]', '{}', 1, 2, r, 2);
+  SELECT chain_root_id INTO root FROM public.agent_trajectories WHERE id = c;
+  IF root <> r THEN RAISE EXCEPTION 'a continuation''s chain root is not its chain''s first segment'; END IF;
+  -- A fork: a second continuation of the same segment.
+  refused := false;
+  BEGIN
+    INSERT INTO public.agent_trajectories (id, tenant_id, subject_kind, subject_id, trigger, scope_type, status, steps, total_cost, version, segment, previous_trajectory_id, step_offset)
+      VALUES (gen_random_uuid(), ta, 'agent', 'replay-chain', 't', 'platform', 'running', '[]', '{}', 1, 2, r, 2);
+  EXCEPTION WHEN unique_violation THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION 'a forked chain was accepted'; END IF;
+  -- A cycle: the first segment re-linked after its own continuation.
+  refused := false;
+  BEGIN
+    UPDATE public.agent_trajectories SET previous_trajectory_id = c, segment = 3 WHERE id = r;
+  EXCEPTION WHEN check_violation THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION 'a cyclic chain was accepted'; END IF;
+  -- A step appended to a segment that has been continued.
+  refused := false;
+  BEGIN
+    UPDATE public.agent_trajectories SET steps = steps || '[{"s":3}]'::jsonb WHERE id = r;
+  EXCEPTION WHEN check_violation THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION 'a step was appended to a continued segment'; END IF;
+  -- An erasure's same-length rewrite of a continued segment's steps is allowed.
+  UPDATE public.agent_trajectories SET steps = '[{"s":"x"},{"s":"y"}]'::jsonb WHERE id = r;
+END $$;
+ROLLBACK;
+SQL
+
+step "audit wave 2: 052 applied again changes nothing (idempotent)"
+# An operator's choices since 052 (a key taken off dual control, stream taken off the consent-gated
+# list) must survive a re-run, as must every other object.
+dual_before=$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'config.dual_control_keys'")
+blocked_before=$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'coppa.blocked_features'")
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+UPDATE public.platform_config SET value = value - 'admin.dual_control_actions'
+ WHERE key = 'config.dual_control_keys';
+UPDATE public.platform_config SET value = value - 'stream' WHERE key = 'coppa.blocked_features';
+SQL
+before=$(snapshot)
+# Review 11 L-6: the email-hash scheme CHECK is not dropped and re-added (a full scan under an
+# exclusive lock) when it is already this release's form — the same constraint object afterwards.
+hash_check_q="SELECT c.oid::text || ':' || c.convalidated::text FROM pg_constraint c WHERE c.conrelid = 'public.user_deletions'::regclass AND c.conname = 'user_deletions_email_hash_scheme_known'"
+hash_check_before=$("${PSQL[@]}" -At -c "$hash_check_q")
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/052_audit_wave2.sql" >/dev/null 2>&1 \
+  || { echo "✗ 052 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/052_audit_wave2.sql" >/dev/null; exit 1; }
+hash_check_after=$("${PSQL[@]}" -At -c "$hash_check_q")
+case "$hash_check_before" in
+  *:true) ;;
+  *) echo "✗ the email-hash scheme CHECK is missing or not validated: $hash_check_before"; exit 1 ;;
+esac
+if [ "$hash_check_before" != "$hash_check_after" ]; then
+  echo "✗ 052 re-created the email-hash scheme CHECK on a second application ($hash_check_before → $hash_check_after)"
+  exit 1
+fi
+after=$(snapshot)
+if [ "$before" != "$after" ]; then
+  echo "✗ applying 052 a second time changed the database:"
+  diff <(echo "$before") <(echo "$after") || true
+  exit 1
+fi
+"${PSQL[@]}" -At <<SQL >/dev/null
+UPDATE public.platform_config SET value = '$dual_before'::jsonb WHERE key = 'config.dual_control_keys';
+UPDATE public.platform_config SET value = '$blocked_before'::jsonb WHERE key = 'coppa.blocked_features';
+SQL
+
+step "audit wave 2: a database that ran an earlier 052 gets the keys added since, removals stand (review 13 L4)"
+# An earlier 052 seeded the dual-control list once and kept no per-key record. Simulated here: no
+# record; agent.trajectory_max_segments never seeded (an earlier list lacked it); and
+# coppa.enforcement_enabled removed by an operator (a config-history row says so). Re-applied, 052
+# adds the never-seeded key and leaves the removed one off. Rolled back afterwards.
+"${PSQL[@]}" -At <<SQL >/dev/null
+BEGIN;
+SET LOCAL client_min_messages = warning;
+DELETE FROM public.config_dual_control_seeded;
+UPDATE public.platform_config
+   SET value = value - 'agent.trajectory_max_segments' - 'coppa.enforcement_enabled'
+ WHERE key = 'config.dual_control_keys';
+INSERT INTO public.platform_config_history
+  (config_key, previous_value, new_value, change_comment, change_source, scope)
+SELECT 'config.dual_control_keys', value || '["coppa.enforcement_enabled"]'::jsonb, value,
+       'replay: an operator takes coppa.enforcement_enabled off dual control', 'admin_ui', 'platform'
+  FROM public.platform_config WHERE key = 'config.dual_control_keys';
+\i $ROOT/supabase/migrations/052_audit_wave2.sql
+DO \$\$
+DECLARE v jsonb := (SELECT value FROM public.platform_config WHERE key = 'config.dual_control_keys');
+BEGIN
+  IF NOT v ? 'agent.trajectory_max_segments' THEN
+    RAISE EXCEPTION 'a key never seeded on this database was not added: %', v;
+  END IF;
+  IF v ? 'coppa.enforcement_enabled' THEN
+    RAISE EXCEPTION 'an operator''s removal was undone: %', v;
+  END IF;
+  IF (SELECT outcome FROM public.config_dual_control_seeded WHERE key = 'agent.trajectory_max_segments') <> 'added'
+     OR (SELECT outcome FROM public.config_dual_control_seeded WHERE key = 'coppa.enforcement_enabled') <> 'removed_by_operator'
+     OR (SELECT outcome FROM public.config_dual_control_seeded WHERE key = 'agent.trusted_agents') <> 'already_listed' THEN
+    RAISE EXCEPTION 'the seeded-keys record is wrong: %',
+      (SELECT jsonb_object_agg(key, outcome) FROM public.config_dual_control_seeded);
+  END IF;
+END \$\$;
+ROLLBACK;
+SQL
+
+step "audit wave 2: 052 keeps what is not the platform's to remove (review 7 L2)"
+# Re-applied over hostile rows: an app module's manifest row naming a table a later migration of
+# the app creates, a schema-qualified name, a quoted mixed-case name, a legacy row naming a
+# retired platform table beside a live one; and the retired key's history and a pending approval.
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+INSERT INTO public.deletion_manifest (module_name, table_names, description) VALUES
+  ('replay_app_later', ARRAY['quiz_scores'], 'replay'),
+  ('replay_app_qualified', ARRAY['public.users', 'other.schema.name'], 'replay'),
+  ('replay_app_mixed', ARRAY['Foo'], 'replay'),
+  ('replay_legacy', ARRAY['players', 'consent_records', 'player_devices'], 'replay'),
+  ('replay_legacy_only', ARRAY['player_entitlements'], 'replay');
+INSERT INTO public.platform_config_history (config_key, previous_value, new_value, changed_by, change_comment, change_source)
+  VALUES ('moderation.blocklist_only_surfaces', '[]', '["x"]', NULL, 'replay', 'admin_ui');
+INSERT INTO public.config_pending_approvals (config_key, proposed_value, change_comment, scope, tenant_id)
+  VALUES ('moderation.blocklist_only_surfaces', '["y"]', 'replay', 'platform', NULL);
+SQL
+history_before=$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.platform_config_history WHERE config_key = 'moderation.blocklist_only_surfaces'")
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/052_audit_wave2.sql" >/dev/null 2>&1 \
+  || { echo "✗ 052 failed over hostile deletion-manifest rows:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/052_audit_wave2.sql" >/dev/null; exit 1; }
+"${PSQL[@]}" -At <<SQL >/dev/null
+DO \$\$
+DECLARE got text;
+BEGIN
+  SELECT string_agg(module_name || '=' || array_to_string(table_names, '|'), ' ' ORDER BY module_name) INTO got
+    FROM public.deletion_manifest WHERE module_name LIKE 'replay\\_%';
+  IF got IS DISTINCT FROM 'replay_app_later=quiz_scores replay_app_mixed=Foo replay_app_qualified=public.users|other.schema.name replay_legacy=consent_records' THEN
+    RAISE EXCEPTION '052 changed rows that are not the platform''s to remove: %', got;
+  END IF;
+  IF (SELECT count(*) FROM public.platform_config_history WHERE config_key = 'moderation.blocklist_only_surfaces') <> $history_before THEN
+    RAISE EXCEPTION '052 lost the retired setting''s history';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.config_pending_approvals
+              WHERE config_key = 'moderation.blocklist_only_surfaces' AND status = 'pending') THEN
+    RAISE EXCEPTION '052 left an approval of the retired setting pending';
+  END IF;
+END \$\$;
+DELETE FROM public.deletion_manifest WHERE module_name LIKE 'replay\\_%';
+DELETE FROM public.config_pending_approvals WHERE config_key = 'moderation.blocklist_only_surfaces' AND change_comment = 'replay';
+DELETE FROM public.platform_config_history WHERE config_key = 'moderation.blocklist_only_surfaces' AND change_comment = 'replay';
+SQL
+
+step "audit wave 2: an email hash's key id never stands without its scheme (review 10 L12)"
+# The CHECK passed on NULL: `email_hash_scheme = 'hmac-of-sha256'` is NULL for a key id with no
+# scheme, and a CHECK passes on NULL. A hostile row is refused; the valid forms are accepted.
+hostile=$("${PSQL[@]}" -At -c "INSERT INTO public.user_deletions (tenant_id, user_id, requested_by, email_hash, email_hash_key, email_hash_scheme) SELECT id, gen_random_uuid(), 'replay', repeat('a', 64), repeat('b', 16), NULL FROM public.tenants ORDER BY id LIMIT 1" 2>&1 || true)
+case "$hostile" in
+  *user_deletions_email_hash_scheme_known*) ;;
+  *) echo "✗ a key id with no scheme was not refused: $hostile"; exit 1 ;;
+esac
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+INSERT INTO public.user_deletions (tenant_id, user_id, requested_by, email_hash, email_hash_key, email_hash_scheme)
+SELECT id, gen_random_uuid(), 'replay-valid', repeat('a', 64), k, s
+  FROM (SELECT id FROM public.tenants ORDER BY id LIMIT 1) t,
+       (VALUES (repeat('b', 16), 'hmac-of-sha256'), (NULL, 'sha256'), (NULL, NULL)) v(k, s);
+DELETE FROM public.user_deletions WHERE requested_by = 'replay-valid';
+SQL
+for bad in "repeat('b', 16), 'sha256'" "NULL, 'unknown'"; do
+  refused=$("${PSQL[@]}" -At -c "INSERT INTO public.user_deletions (tenant_id, user_id, requested_by, email_hash, email_hash_key, email_hash_scheme) SELECT id, gen_random_uuid(), 'replay', repeat('a', 64), $bad FROM public.tenants ORDER BY id LIMIT 1" 2>&1 || true)
+  case "$refused" in
+    *user_deletions_email_hash_scheme_known*) ;;
+    *) echo "✗ ($bad) was not refused: $refused"; exit 1 ;;
+  esac
+done
 
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —

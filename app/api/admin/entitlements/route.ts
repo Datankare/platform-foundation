@@ -2,7 +2,8 @@
  * app/api/admin/entitlements/route.ts — Admin entitlement management
  *
  * GET: List entitlement groups with user counts
- * PATCH: Turn a group on or off — refused unless the admin holds every permission it grants
+ * PATCH: Turn a group on or off — refused unless the admin holds every permission it grants;
+ *        under dual control (set_entitlement_group_active) held for a second admin (202)
  *
  * Entitlement groups are the platform catalog every tenant shares (ADR-053 D5). The list shows
  * them with this tenant's holders only (user_entitlements is tenant data). Turning a group on or
@@ -12,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { withOwnerTx, withTenantTx, type Tx } from "@/platform/data";
+import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
 import { checkPermissionGrant, type RoleRefusal } from "@/platform/auth/role-governance";
 import { mayChangePlatformCatalog } from "@/platform/admin/config-scope";
@@ -21,6 +22,13 @@ import { auditedResponse } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import { apiError, internalError, readJsonObject } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { groupWithPermissions } from "@/app/api/admin/ai/handlers/entitlements";
+import {
+  COMMAND_BAR_ACTOR_ID,
+  isDualControlledAction,
+  runCommandBarAction,
+} from "@/app/api/admin/ai/command-bar";
 
 type GroupRow = { id: string; code: string; display_name: string; is_active: boolean };
 
@@ -72,32 +80,6 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   return NextResponse.json({ groups: result });
 });
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** A group with the permission codes it grants; null when there is none. Read errors throw. */
-async function groupWithPermissions(
-  tx: Tx,
-  groupId: string,
-  lock: boolean
-): Promise<{ id: string; code: string; permissions: string[] } | null> {
-  if (!UUID.test(groupId)) return null;
-  const { rows } = await tx.query<{ id: string; code: string }>(
-    lock
-      ? "select id, code from entitlement_groups where id = $1::uuid for update"
-      : "select id, code from entitlement_groups where id = $1::uuid",
-    [groupId]
-  );
-  const group = rows[0];
-  if (!group) return null;
-  const perms = await tx.query<{ code: string }>(
-    `select p.code from entitlement_permissions ep
-       join permissions p on p.id = ep.permission_id
-      where ep.entitlement_group_id = $1::uuid`,
-    [group.id]
-  );
-  return { ...group, permissions: perms.rows.map((p) => p.code) };
-}
-
 export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   const verified = await requireAdmin(request, "admin_manage_entitlements");
   if (verified.error) return verified.error;
@@ -147,6 +129,54 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   const refused = checkPermissionGrant(admin, group.permissions);
   if (refused) return apiError(refused.code, { params: refused.params, request });
   const groupIdChecked = group.id;
+
+  // Under dual control (admin.dual_control_actions, set_entitlement_group_active) the change is
+  // held for a second admin, as a role change is on the users page (review 7 M6: one admin alone
+  // could turn on a group granting its permissions to everyone holding it). The hold runs the
+  // same governed action when it is approved.
+  if (await isDualControlledAction("set_entitlement_group_active")) {
+    try {
+      const trajectory = await getTrajectoryStore().create(
+        { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+        "admin-entitlements:set_entitlement_group_active",
+        "platform"
+      );
+      const outcome = await runCommandBarAction({
+        tool: "set_entitlement_group_active",
+        input: { group_id: groupIdChecked, is_active: isActive },
+        admin,
+        trajectoryId: trajectory.trajectory.trajectoryId,
+        stepIndex: 0,
+      });
+      if (outcome.kind === "held") {
+        return NextResponse.json(
+          { success: false, held: true, proposalId: outcome.proposalId },
+          { status: 202 }
+        );
+      }
+      // Ran, but what it wrote is itself waiting for an approval: held, never success.
+      if (outcome.result.held) {
+        return NextResponse.json(
+          {
+            success: false,
+            held: true,
+            ...(outcome.result.proposalId
+              ? { proposalId: outcome.result.proposalId }
+              : {}),
+          },
+          { status: 202 }
+        );
+      }
+      return outcome.result.success
+        ? NextResponse.json({ success: true })
+        : apiError("service.unavailable", {
+            params: { service: "entitlements" },
+            request,
+          });
+    } catch (err) {
+      return internalError(err, { request, context: "Entitlement change hold failed" });
+    }
+  }
 
   return auditedResponse(
     {
@@ -205,7 +235,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
         };
       }
       // Holders' cached permissions change with the group.
-      clearPermissionsCache();
+      await clearPermissionsCache();
       return { success: true, response: NextResponse.json({ success: true }) };
     },
     () => apiError("service.unavailable", { params: { service: "audit" }, request })

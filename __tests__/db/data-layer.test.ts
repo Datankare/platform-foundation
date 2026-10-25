@@ -243,6 +243,46 @@ d("platform/data on Postgres", () => {
     expect(r.rowCount).toBe(2);
   });
 
+  it("computes in UTC in every transaction, whatever the session's time zone (TASK-159)", async () => {
+    // Connections whose session is in New York — as a database or role default can make it. Set on
+    // connect, so it holds whatever the test URLs carry.
+    const newYork = (config: ReturnType<typeof poolConfig>) => {
+      const pool = new Pool(config);
+      pool.on("connect", (client) => {
+        void client.query("set time zone 'America/New_York'");
+      });
+      return pool;
+    };
+    await setDataPoolFactory((role) => newYork(poolConfig(role)));
+    // 30 days from the eve of the US fall-back change: in New York that is 30 days and an hour.
+    const span =
+      "select extract(epoch from (timestamptz '2026-10-24 12:00:00Z' + interval '30 days') - timestamptz '2026-10-24 12:00:00Z') / 86400 as days, current_setting('TimeZone') as tz";
+    try {
+      const raw = newYork(poolConfig("owner"));
+      try {
+        const { rows } = await raw.query(span);
+        expect([Number(rows[0].days).toFixed(4), rows[0].tz]).toEqual([
+          "30.0417",
+          "America/New_York",
+        ]);
+      } finally {
+        await raw.end();
+      }
+      for (const run of [
+        () => asA(() => withTenantTx((tx) => tx.query(span))),
+        () => withPlatformTx((tx) => tx.query(span)),
+        () => withOwnerTx("tenant-lifecycle", (tx) => tx.query(span)),
+      ]) {
+        const { rows } = (await run()) as unknown as {
+          rows: { days: string; tz: string }[];
+        };
+        expect([Number(rows[0].days), rows[0].tz]).toEqual([30, "UTC"]);
+      }
+    } finally {
+      await setDataPoolFactory((role) => new Pool(poolConfig(role)));
+    }
+  });
+
   it("an unreachable database is DataUnavailableError, never a hang", async () => {
     await setDataPoolFactory(
       () =>

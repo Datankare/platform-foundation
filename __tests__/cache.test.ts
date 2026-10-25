@@ -5,7 +5,7 @@
  * Redis tests mock global fetch (Upstash REST API).
  */
 
-import { InMemoryCacheProvider } from "../platform/cache/memory-cache";
+import { InMemoryCacheProvider, SWEEP_BATCH } from "../platform/cache/memory-cache";
 import { RedisCacheProvider } from "../platform/cache/redis-cache";
 import {
   createCacheProvider,
@@ -155,6 +155,55 @@ describe("InMemoryCacheProvider", () => {
 // ============================================================
 // RedisCacheProvider (mocked fetch)
 // ============================================================
+// Review 8 L3: expired entries were removed only when read again, so keys written once stayed
+// for ever (a token hash per request, a revocation stamp per user).
+describe("InMemoryCacheProvider — bounded and swept", () => {
+  afterEach(() => jest.useRealTimers());
+
+  it("sweeps expired entries as it is written to, without their being read", async () => {
+    jest.useFakeTimers();
+    const cache = new InMemoryCacheProvider();
+    for (let i = 0; i < 200; i++) await cache.set(`old-${i}`, i, { ttlSeconds: 1 });
+    jest.advanceTimersByTime(2000);
+    // Each write examines SWEEP_BATCH entries: enough writes, and every expired one is gone.
+    for (let i = 0; i < Math.ceil(200 / SWEEP_BATCH) + 2; i++)
+      await cache.set(`new-${i}`, i, { ttlSeconds: 60 });
+    expect(cache.size).toBe(Math.ceil(200 / SWEEP_BATCH) + 2);
+  });
+
+  it("never holds more than maxEntries: the expired go first, then the oldest written", async () => {
+    jest.useFakeTimers();
+    const cache = new InMemoryCacheProvider({ maxEntries: 100 });
+    for (let i = 0; i < 50; i++) await cache.set(`short-${i}`, i, { ttlSeconds: 1 });
+    for (let i = 0; i < 50; i++) await cache.set(`long-${i}`, i, { ttlSeconds: 60 });
+    jest.advanceTimersByTime(2000);
+    await cache.set("one-more", 1, { ttlSeconds: 60 });
+    expect(cache.size).toBeLessThanOrEqual(100);
+    expect(await cache.get("long-0")).toBe(0); // live entries kept while expired ones remain
+    for (let i = 0; i < 500; i++) await cache.set(`flood-${i}`, i, { ttlSeconds: 60 });
+    expect(cache.size).toBe(100);
+    expect(await cache.get("long-0")).toBeNull(); // the oldest written went
+    expect(await cache.get("flood-499")).toBe(499);
+  });
+
+  it("a key written again is the newest, and is not evicted first", async () => {
+    const cache = new InMemoryCacheProvider({ maxEntries: 3 });
+    await cache.set("a", 1);
+    await cache.set("b", 2);
+    await cache.set("c", 3);
+    await cache.set("a", 4);
+    await cache.set("d", 5);
+    expect(await cache.get("a")).toBe(4);
+    expect(await cache.get("b")).toBeNull();
+  });
+
+  it("an invalid maxEntries falls back to the default", async () => {
+    const cache = new InMemoryCacheProvider({ maxEntries: -1 });
+    for (let i = 0; i < 20; i++) await cache.set(`k${i}`, i);
+    expect(cache.size).toBe(20);
+  });
+});
+
 describe("RedisCacheProvider", () => {
   const originalFetch = global.fetch;
   let mockFetch: jest.Mock;

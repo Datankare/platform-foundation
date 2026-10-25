@@ -10,12 +10,12 @@ document is catalogued in [The full catalog](#the-full-catalog) with a one-line 
 
 - **Adopting the platform** → [SETUP_AND_INTEGRATION](SETUP_AND_INTEGRATION.md), then
   [ENV_REFERENCE](ENV_REFERENCE.md).
-- **Upgrading from v5.x** (Sprint 7R, in progress) → [MIGRATION_v5_to_v6](MIGRATION_v5_to_v6.md). From v4.x → [MIGRATION_v4_to_v5](MIGRATION_v4_to_v5.md) first. From v3.x → [MIGRATION_v3_to_v4](MIGRATION_v3_to_v4.md) first; from v2.x → [MIGRATION_v2_to_v3](MIGRATION_v2_to_v3.md) first; from v1.x → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md) before that.
+- **Upgrading from v5.x** (v6.0.0, Sprint 7R close) → [MIGRATION_v5_to_v6](MIGRATION_v5_to_v6.md) — §1 is the deploy runbook. From v4.x → [MIGRATION_v4_to_v5](MIGRATION_v4_to_v5.md) first. From v3.x → [MIGRATION_v3_to_v4](MIGRATION_v3_to_v4.md) first; from v2.x → [MIGRATION_v2_to_v3](MIGRATION_v2_to_v3.md) first; from v1.x → [MIGRATION_v1_to_v2](MIGRATION_v1_to_v2.md) before that.
 - **Building agents** → [AGENT_DELEGATION_GUIDE](AGENT_DELEGATION_GUIDE.md) +
   [AGENT_ARCHITECTURE](AGENT_ARCHITECTURE.md).
 - **Understanding the architecture** → [TAD](TAD.md) →
   [PLATFORM_ARCHITECTURE](PLATFORM_ARCHITECTURE.md) → [adr/](adr/).
-- **Operating it** → [DEPLOY_CONTAINER](DEPLOY_CONTAINER.md) (any host but Vercel), [ROTATION_RUNBOOK](ROTATION_RUNBOOK.md), [runbooks/jobs](runbooks/jobs.md) (background jobs), [SECURITY_DEBT](SECURITY_DEBT.md).
+- **Operating it** → [DEPLOY_CONTAINER](DEPLOY_CONTAINER.md) (any host but Vercel), [ROTATION_RUNBOOK](ROTATION_RUNBOOK.md), [runbooks/jobs](runbooks/jobs.md) (background jobs), [runbooks/approvals-and-agents](runbooks/approvals-and-agents.md) (undecided approvals, the agent kill switch), [SECURITY_DEBT](SECURITY_DEBT.md).
 - **What shipped** → [RELEASE_NOTES](RELEASE_NOTES.md), [GENAI_ROADMAP](GENAI_ROADMAP.md).
 
 ## Map
@@ -117,11 +117,13 @@ graph TD
 
 ### Developer Guides
 
-| Doc                                                    | What it is                                                                               |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| [AGENT_DELEGATION_GUIDE.md](AGENT_DELEGATION_GUIDE.md) | Build agents that act on a user's behalf (PKCE flow, token lifetime, failure reference). |
-| [ROTATION_RUNBOOK.md](ROTATION_RUNBOOK.md)             | Operational runbook for key/secret rotation.                                             |
-| [runbooks/jobs.md](runbooks/jobs.md)                   | Background jobs (ADR-056): dead letters, stuck jobs, pausing a schedule, nothing runs.   |
+| Doc                                                                  | What it is                                                                                             |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| [AGENT_DELEGATION_GUIDE.md](AGENT_DELEGATION_GUIDE.md)               | Build agents that act on a user's behalf (PKCE flow, token lifetime, failure reference).               |
+| [ROTATION_RUNBOOK.md](ROTATION_RUNBOOK.md)                           | Operational runbook for key/secret rotation.                                                           |
+| [runbooks/jobs.md](runbooks/jobs.md)                                 | Background jobs (ADR-056): dead letters, stuck jobs, pausing a schedule, nothing runs.                 |
+| [runbooks/approvals-and-agents.md](runbooks/approvals-and-agents.md) | Undecided approvals (a run whose outcome is unknown) and the agent kill switch (review 11).            |
+| [templates/](templates/)                                             | A consuming app's sync workflow and config, in the form the workflow-hygiene check accepts (TASK-160). |
 
 ### Principles & Standards
 

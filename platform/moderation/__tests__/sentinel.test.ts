@@ -395,3 +395,61 @@ describe("account changes are recorded first (audit X-8)", () => {
     ).toEqual(["attempted", "failed"]);
   });
 });
+
+describe("a consequence never lowers an account's standing (audit D-19)", () => {
+  it.each([
+    ["suspend", "banned", "banned"],
+    ["warn", "banned", "banned"],
+    ["warn", "suspended", "suspended"],
+    ["suspend", "restricted", "suspended"],
+    ["warn", "restricted", "restricted"],
+    ["none", "banned", "banned"],
+  ] as const)("%s on a %s account leaves it %s", (action, current, expected) => {
+    expect(consequenceToStatus(action, current)).toBe(expected);
+  });
+
+  it("a banned account reaching the suspension threshold stays banned", async () => {
+    mockDb = new MockFakeDatabase({
+      users: [{ id: MOCK_USER, account_status: "banned" }],
+      audit_log: [],
+    });
+    const sentinel = new Sentinel();
+    for (let i = 0; i < 3; i++) {
+      await sentinel.processBlock(makeBlockResult(), MOCK_USER, `req-d19-${i}`);
+    }
+    expect(mockDb.rows("users")[0].account_status).toBe("banned");
+    expect(
+      mockDb.writes.some(([op, t]: [string, string]) => `${op} ${t}` === "update users")
+    ).toBe(false);
+  });
+
+  it("an unreadable status changes nothing and says so (it is not read as active)", async () => {
+    mockDb = new MockFakeDatabase({
+      users: [{ id: MOCK_USER, account_status: "banned" }],
+      audit_log: [],
+    }).failReads("users");
+    const result = await new Sentinel().processBlock(
+      makeBlockResult(),
+      MOCK_USER,
+      "req-d19-r"
+    );
+    expect(result.reasoning).toContain("consequence not applied");
+    expect(mockDb.rows("users")[0].account_status).toBe("banned");
+  });
+
+  it.each([
+    ["no such account", []],
+    ["an unknown status", [{ id: MOCK_USER, account_status: "superuser" }]],
+  ])("%s: the consequence is not applied", async (_label, users) => {
+    mockDb = new MockFakeDatabase({ users, audit_log: [] });
+    const result = await new Sentinel().processBlock(
+      makeBlockResult(),
+      MOCK_USER,
+      "req-d19-u"
+    );
+    expect(result.reasoning).toContain("consequence not applied");
+    expect(
+      mockDb.writes.some(([op, t]: [string, string]) => `${op} ${t}` === "update users")
+    ).toBe(false);
+  });
+});

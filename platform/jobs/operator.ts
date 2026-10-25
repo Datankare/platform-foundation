@@ -182,42 +182,47 @@ export async function runNow(
     details: { type: "job_run_now", kind },
   };
   try {
-    return await audited(entry, async () => {
-      const tenancy = getTenancySettings();
-      const enqueued = await store.fanOut({
-        kind,
-        scope: def.scope,
-        idempotencyKey: `manual:${randomUUID()}`,
-        maxAttempts: def.maxAttempts,
-        source: "manual",
-        runsForSuspended: def.runsForSuspended,
-        ...(def.scope === "each-tenant" && tenancy.mode === "single"
-          ? { tenantIds: [tenancy.tenantId] }
-          : {}),
-      });
-      const report = await runDue({
-        budgetMs: RUN_NOW_BUDGET_MS,
-        kinds: [kind],
-        schedule: false,
-      });
-      // What happened, beside the attempt record: none enqueued is an outcome too.
-      await writeAuditLog({
-        ...entry,
-        details: {
-          ...entry.details,
-          outcome: "completed",
-          enqueued,
-          claimed: report.claimed,
-          succeeded: report.succeeded,
-          retried: report.retried,
-          dead: report.dead,
-          released: report.released,
-          hung: report.hung,
-          stoppedBy: report.stoppedBy,
-        },
-      });
-      return ok({ enqueued, report });
-    });
+    return await audited(
+      entry,
+      async () => {
+        const tenancy = getTenancySettings();
+        const enqueued = await store.fanOut({
+          kind,
+          scope: def.scope,
+          idempotencyKey: `manual:${randomUUID()}`,
+          maxAttempts: def.maxAttempts,
+          source: "manual",
+          runsForSuspended: def.runsForSuspended,
+          ...(def.scope === "each-tenant" && tenancy.mode === "single"
+            ? { tenantIds: [tenancy.tenantId] }
+            : {}),
+        });
+        const report = await runDue({
+          budgetMs: RUN_NOW_BUDGET_MS,
+          kinds: [kind],
+          schedule: false,
+        });
+        // What happened, beside the attempt record: none enqueued is an outcome too.
+        await writeAuditLog({
+          ...entry,
+          details: {
+            ...entry.details,
+            outcome: "completed",
+            enqueued,
+            claimed: report.claimed,
+            succeeded: report.succeeded,
+            retried: report.retried,
+            dead: report.dead,
+            released: report.released,
+            hung: report.hung,
+            stoppedBy: report.stoppedBy,
+          },
+        });
+        return ok({ enqueued, report });
+        // It runs the kind's handlers, which may reach outside the database (review 14 L-6).
+      },
+      { external: true }
+    );
   } catch (err) {
     if (err instanceof AuditWriteError) return fail("audit.unavailable");
     throw err;
@@ -231,7 +236,9 @@ async function onDeadJob(
   admin: VerifiedAdmin,
   type: "job_replayed" | "job_discarded",
   id: string,
-  act: () => Promise<DeadJobOutcome>
+  act: () => Promise<DeadJobOutcome>,
+  /** As audited()'s: `external` when the act reaches outside the database (review 14 L-6). */
+  options: { readonly external?: boolean } = {}
 ): Promise<JobsResult<{ readonly id: string; readonly kind: string }>> {
   const job = await getJobStore().getJob(id);
   if (!job) return fail("jobs.not_found");
@@ -248,7 +255,8 @@ async function onDeadJob(
         return r === "done"
           ? { success: true as const, r }
           : { success: false as const, error: r, r };
-      }
+      },
+      options
     );
     if (outcome.r === "done") return ok({ id, kind: job.kind });
     // Another operator acted between the check and the change.

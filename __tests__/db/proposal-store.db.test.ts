@@ -12,7 +12,12 @@ import { runProposalStoreContract } from "../contract/proposal-store-contract";
 import { runTenantIsolationContract } from "../contract/tenant-isolation-contract";
 import { proposalIsolation } from "../helpers/store-isolation-fixtures";
 import { PostgresProposalStore } from "@/platform/agents/postgres-proposal-store";
-import { withTenantTx } from "@/platform/data";
+import { withOwnerTx, withTenantTx } from "@/platform/data";
+import {
+  expireLapsedApprovedHolds,
+  HOLD_EXPIRY_ACTOR,
+  recoverStaleRuns,
+} from "@/platform/admin/hold-expiry";
 import {
   connectTestDatabase,
   createTestTenant,
@@ -40,9 +45,79 @@ dbDescribe("PostgresProposalStore", () => {
     await disconnectTestDatabase();
   });
 
+  let kitTenant: TestTenant;
   runProposalStoreContract({
-    makeStore: async () =>
-      inTenant(new PostgresProposalStore(), await createTestTenant()),
+    makeStore: async () => {
+      kitTenant = await createTestTenant();
+      return inTenant(new PostgresProposalStore(), kitTenant);
+    },
+    // The approval-expiry job's own recovery, on the owner connection, scoped to this tenant and
+    // with a lease the run has passed (review 11 H-1, L-5).
+    markUndecided: async (_store, proposalId) => {
+      await withOwnerTx("platform-job", async (tx) => {
+        await tx.query(
+          "update proposals set updated_at = now() - interval '1 hour' where id = $1::uuid",
+          [proposalId]
+        );
+        await recoverStaleRuns(tx, 60, { tenantIds: [kitTenant.id] });
+      });
+    },
+  });
+
+  // Review 7 M7: the config.expire-approvals job withdraws approvals never used past their
+  // period. Run as the job runs it — on the owner connection — scoped to this suite's tenant, and
+  // with a period (1 day) whose lapsed rows the real job (7 days) never sweeps from under it
+  // (review 11 L-5).
+  it("withdraws approved holds never run past the period, and nothing else", async () => {
+    const tenant = await createTestTenant();
+    const store = inTenant(new PostgresProposalStore(), tenant);
+    const make = async (op: string, status: "approved" | "proposed", daysAgo: number) => {
+      const p = await store.create({ ...base, operationId: op });
+      if (status === "approved") await store.decide(p.proposalId, "approved", "alice");
+      await tenant.run(() =>
+        withTenantTx((tx) =>
+          tx.query(
+            "update proposals set decided_at = now() - make_interval(days => $2::int), created_at = now() - make_interval(days => $2::int) where id = $1::uuid",
+            [p.proposalId, daysAgo]
+          )
+        )
+      );
+      return p.proposalId;
+    };
+    const lapsed = await make("op_lapsed", "approved", 2);
+    const recent = await make("op_recent", "approved", 0);
+    const open = await make("op_open", "proposed", 30);
+    const n = await withOwnerTx("platform-job", (tx) =>
+      expireLapsedApprovedHolds(tx, 1, { tenantIds: [tenant.id] })
+    );
+    expect(n).toBe(1);
+    const after = await store.getById(lapsed);
+    expect(after).toMatchObject({ status: "rejected", decidedBy: HOLD_EXPIRY_ACTOR });
+    expect(after?.decisionNote).toMatch(
+      /^Approved by alice at \d{4}-\d\d-\d\dT[\d:.]+Z, never run; withdrawn: expired: not run within 1 day of its approval$/
+    );
+    expect((await store.getById(recent))?.status).toBe("approved");
+    expect((await store.getById(open))?.status).toBe("proposed");
+    // Review 8 L5: each withdrawal is in the tenant's audit log, by the system.
+    const audit = await tenant.run(() =>
+      withTenantTx((tx) =>
+        tx.query(
+          "select actor_id, details from audit_log where details->>'type' = 'approval_withdrawn'"
+        )
+      )
+    );
+    expect(audit.rows).toEqual([
+      {
+        actor_id: null,
+        details: expect.objectContaining({
+          reason: "expired",
+          holdId: lapsed,
+          label: expect.any(String),
+          approvedBy: "alice",
+          agent: HOLD_EXPIRY_ACTOR,
+        }),
+      },
+    ]);
   });
 
   describe("rows from before migration 046, and tampered identities", () => {

@@ -5,6 +5,8 @@ import React from "react";
 interface ExecutionResult {
   tool: string;
   success: boolean;
+  /** Held for an approval: not done, and not failed (review 9 H1). */
+  held?: boolean;
   result?: string;
   error?: string;
 }
@@ -54,8 +56,16 @@ export default function ExecutionResultsPanel({
             {results.map((r, i) => (
               <tr key={i}>
                 <td className="py-2 px-3 border-b border-gray-800/50">
-                  <span className={r.success ? "text-green-400" : "text-red-400"}>
-                    {r.success ? "✓" : "✕"}
+                  <span
+                    className={
+                      r.success
+                        ? "text-green-400"
+                        : r.held
+                          ? "text-amber-400"
+                          : "text-red-400"
+                    }
+                  >
+                    {r.success ? "✓" : r.held ? "…" : "✕"}
                   </span>
                 </td>
                 <td className="py-2 px-3 border-b border-gray-800/50">
@@ -70,7 +80,7 @@ export default function ExecutionResultsPanel({
                   </code>
                 </td>
                 <td className="py-2 px-3 border-b border-gray-800/50 text-sm text-gray-300">
-                  {r.success ? r.result : r.error}
+                  {r.success || r.held ? (r.result ?? r.error) : r.error}
                 </td>
               </tr>
             ))}

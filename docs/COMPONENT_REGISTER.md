@@ -10,18 +10,19 @@ Datankare component rule:
 Each external dependency sits behind a provider interface with a conformance kit (ADR-027), which
 is what makes the exit paths below real rather than aspirational.
 
-_Last reviewed: 2026-10-22._
+_Last reviewed: 2026-10-24 (review 8: yaml added; jose now used — token signatures, M5)._
 
 ## Libraries and runtime
 
-| Component                                  | Licence          | Verdict |
-| ------------------------------------------ | ---------------- | ------- |
-| Next.js, React, TypeScript, Tailwind CSS   | MIT              | Pass    |
-| Jest, Playwright, fast-check               | MIT / Apache-2.0 | Pass    |
-| jose, ajv, intl-messageformat, safe-regex2 | MIT              | Pass    |
-| PostgreSQL, pgvector                       | PostgreSQL       | Pass    |
-| node-postgres (`pg`)                       | MIT              | Pass    |
-| Sentry JavaScript SDK                      | MIT              | Pass    |
+| Component                                   | Licence          | Verdict |
+| ------------------------------------------- | ---------------- | ------- |
+| Next.js, React, TypeScript, Tailwind CSS    | MIT              | Pass    |
+| Jest, Playwright, fast-check                | MIT / Apache-2.0 | Pass    |
+| jose, ajv, intl-messageformat, safe-regex2  | MIT              | Pass    |
+| yaml (tests: workflow hygiene, review 8 L4) | ISC              | Pass    |
+| PostgreSQL, pgvector                        | PostgreSQL       | Pass    |
+| node-postgres (`pg`)                        | MIT              | Pass    |
+| Sentry JavaScript SDK                       | MIT              | Pass    |
 
 ## Hosted services
 

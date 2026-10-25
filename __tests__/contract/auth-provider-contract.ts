@@ -227,13 +227,17 @@ export function runAuthProviderContract(fx: AuthContractFixtures): void {
     });
 
     it("responds to MFA challenge with valid code", async () => {
-      const result = await auth.respondToMfaChallenge(fx.mfaSession, C.totpCode);
+      const result = await auth.respondToMfaChallenge(fx.mfaSession, C.totpCode, C.email);
       expect(result.success).toBe(true);
       expect(result.accessToken).toBeDefined();
     });
 
     it("rejects invalid MFA code", async () => {
-      const result = await auth.respondToMfaChallenge(fx.mfaSession, C.invalidTotp);
+      const result = await auth.respondToMfaChallenge(
+        fx.mfaSession,
+        C.invalidTotp,
+        C.email
+      );
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
     });

@@ -54,24 +54,46 @@ docker run -d --name app -p 3000:3000 \
 Kubernetes Secrets), not a file in the repository. The settings are the same as on any host
 ([ENV_REFERENCE](ENV_REFERENCE.md)). At least these:
 
-| Setting                                            | Notes                                                                                                              |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `DEPLOYMENT_HOST`                                  | Baked as `container`. Set your host's name (`aws`, `gcp`, …) if you prefer. Never `local` or `ci` on a deployment. |
-| `AUTH_PROVIDER=cognito` and the Cognito settings   | Production refuses the mock provider (ADR-050 D1).                                                                 |
-| `GUEST_TOKEN_SECRET`, `CRON_SECRET`                | Secrets, 32+ random characters. Both required: without `CRON_SECRET` no timed duty would run, so boot refuses.     |
-| `DATABASE_URL`, `DATABASE_OWNER_URL`               | The request role (`app_tenant`) through a transaction pooler (RDS Proxy on AWS), and the owner (ADR-053 D4).       |
-| `DATABASE_SSL=verify-full` (+ `DATABASE_SSL_CA`)   | `disable` is refused outside `local`/`ci`.                                                                         |
-| Every durable store `=postgres`, `JOB_STORE`       | As on Vercel; `.env.example` lists them.                                                                           |
-| `CACHE_PROVIDER`                                   | `memory` (per instance, declared) until the Valkey provider (7P).                                                  |
-| `TENANCY_MODE`, `TENANT_ID` / `TENANT_HOST_HEADER` | Behind an AWS ALB use `TENANT_HOST_HEADER=host`.                                                                   |
-| `TRUSTED_PROXY_HOPS`                               | 1 behind a load balancer alone; 2 with a CDN in front of it.                                                       |
+| Setting                                            | Notes                                                                                                                                  |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEPLOYMENT_HOST`                                  | Baked as `container`. Set your host's name (`aws`, `gcp`, …) if you prefer. Never `local` or `ci` on a deployment.                     |
+| `AUTH_PROVIDER=cognito` and the Cognito settings   | Production refuses the mock provider (ADR-050 D1).                                                                                     |
+| `GUEST_TOKEN_SECRET`, `CRON_SECRET`                | Secrets, 32+ random characters. Both required: without `CRON_SECRET` no timed duty would run, so boot refuses.                         |
+| `DATABASE_URL`, `DATABASE_OWNER_URL`               | The request role (`app_tenant`) through a transaction pooler (RDS Proxy on AWS), and the owner (ADR-053 D4).                           |
+| `DATABASE_SSL=verify-full` (+ `DATABASE_SSL_CA`)   | `disable` is refused outside `local`/`ci`.                                                                                             |
+| Every durable store `=postgres`, `JOB_STORE`       | As on Vercel; `.env.example` lists them.                                                                                               |
+| `CACHE_PROVIDER`                                   | `valkey` with `VALKEY_URL=rediss://…` (your own Valkey or Redis), or `upstash` with its two settings. Never `memory`: refused (below). |
+| `TENANCY_MODE`, `TENANT_ID` / `TENANT_HOST_HEADER` | Behind an AWS ALB use `TENANT_HOST_HEADER=host`.                                                                                       |
+| `TRUSTED_PROXY_HOPS`                               | 1 behind a load balancer alone; 2 with a CDN in front of it.                                                                           |
 
 Boot checks the environment contract and refuses to start, naming every violation. In a
 container that also covers `NEXT_MANUAL_SIG_HANDLE` (required with `DEPLOYMENT_HOST=container`),
 `GIT_COMMIT_SHA` and the shutdown settings (§5). Apply the migrations before the first deploy
 (`docs/TENANCY_OPERATIONS.md`).
 
-Limits kept per process are per instance: the realtime connection guard, and an in-memory cache.
+Limits kept per process are per instance: the realtime connection guard.
+
+### The shared cache
+
+A deployment shares its cache across instances: sign-outs, role and MFA changes and permission
+invalidations are published through it, so a per-instance cache would carry a revocation to one
+instance and leave the others serving the revoked token (review 8 L3). `CACHE_PROVIDER=memory` is
+therefore refused at boot on every deployment host, a container included (review 9 M5 — this page
+said to use it before); the boot error says what to set. Choose one:
+
+| Choice                   | When                                                       | Settings                                                                                                                                                        |
+| ------------------------ | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CACHE_PROVIDER=valkey`  | Your host runs Valkey or Redis (ElastiCache, Memorystore…) | `VALKEY_URL=rediss://[user:password@]host:port[/db]` — no `?…` options (refused); `VALKEY_CA_CERT` (PEM) only when a private CA signed the server's certificate |
+| `CACHE_PROVIDER=upstash` | No cache server of your own (also what Vercel uses)        | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` — [MIGRATION_v5_to_v6](MIGRATION_v5_to_v6.md) step 3 has the setup                                         |
+
+Valkey: create the cluster with in-transit encryption (TLS) on and an auth token (or an ACL user)
+— on ElastiCache, a Valkey serverless cache or a replication group with
+`TransitEncryptionEnabled` and an auth token; one cache per environment. The URL holds the
+password, so it goes into the container platform's secret store — an ECS task secret from AWS
+Secrets Manager, a Kubernetes Secret — and from there into the container's environment; never into
+the image, the task definition's plain environment, a file in the repository or a log. The
+provider verifies the server's certificate and its name against the URL's host (verify-full);
+`redis://` (clear text) is refused outside a local or CI run. Check it after the deploy: `/api/health/ready` reports the cache.
 
 ## 4. The job worker
 

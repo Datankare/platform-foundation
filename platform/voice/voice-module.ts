@@ -21,11 +21,10 @@ import {
   isAudioConverterReady,
 } from "./audio-converter-readiness";
 
-/** A speech key is configured (either spelling, ignoring blanks). */
+/** A speech key is configured (GOOGLE_API_KEY, ignoring blanks; never a NEXT_PUBLIC_ one, G-13). */
 function googleSpeechReady(env: EnvSource): boolean {
-  return [env.GOOGLE_API_KEY, env.NEXT_PUBLIC_GOOGLE_API_KEY].some(
-    (v) => typeof v === "string" && v.trim() !== ""
-  );
+  const v = env.GOOGLE_API_KEY;
+  return typeof v === "string" && v.trim() !== "";
 }
 
 /** A Google slot that reports a missing key at boot (the provider is built where it is used). */

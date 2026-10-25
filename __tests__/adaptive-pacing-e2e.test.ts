@@ -41,6 +41,7 @@ import {
   type AdaptiveEffectRequest,
 } from "@/platform/adaptive";
 import { registerAdaptiveReference } from "@/platform/adaptive/bootstrap";
+import { InMemoryProposalStore } from "@/platform/agents/proposal-store";
 import { PACING_BEHAVIOR } from "@/platform/adaptive/behaviors/pacing";
 
 const orch = getOrchestrator as jest.Mock;
@@ -173,7 +174,12 @@ describe("adaptive-pacing reference — governed effect routing (ADR-036 D4)", (
     label: "adaptive-set-pace",
     cost: 0,
     stateStore: {} as never,
-    trajectoryStore: {} as never,
+    // The trajectory a held effect's proposal is recorded in (audit C-13).
+    trajectoryStore: {
+      addStep: async () => undefined,
+      updateStatus: async () => undefined,
+    } as never,
+    proposalStore: new InMemoryProposalStore(),
     trajectoryId: "t1",
     stepIndex: 0,
     expectedVersion: 1,
@@ -210,5 +216,6 @@ describe("adaptive-pacing reference — governed effect routing (ADR-036 D4)", (
 
     expect(out.status).toBe("held");
     expect(out.reason).toBe("requires-approval");
+    expect(out.proposalId).toEqual(expect.any(String));
   });
 });

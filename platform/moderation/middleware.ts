@@ -67,11 +67,6 @@ export interface ScreeningOptions {
    * this value is used for the content rating level.
    */
   contentRatingLevel?: ContentRatingLevel;
-  /**
-   * Skip the LLM classifier (use blocklist only).
-   * @deprecated Use config: moderation.blocklist_only_surfaces instead.
-   */
-  blocklistOnly?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,10 +77,9 @@ export interface ScreeningOptions {
  * Screen content through the Guardian agent pipeline.
  * Returns a ModerationResult with action, reasoning, and trajectory.
  *
- * Sprint 3b: If the Guardian blocks with attributeToUser=true and a
- * userId is known, the Sentinel is fired asynchronously to record a
- * strike and evaluate account consequences. The block result is returned
- * immediately — the Sentinel runs in the background.
+ * If the Guardian blocks with attributeToUser=true and a userId is known, the Sentinel records
+ * a strike and evaluates account consequences; an escalation is submitted to the review queue.
+ * Both finish before the result is returned (audit D-14), and neither can change it.
  */
 export async function screenContent(
   text: string,
@@ -110,117 +104,153 @@ export async function screenContent(
     mergedContext
   );
 
-  // Sprint 3b: Fire Sentinel on block + attributeToUser + known userId
+  // The consequences are recorded before the result is returned (audit D-14, X-22, RR-8). Before:
+  // both ran after the response, and a serverless platform freezes the function once it has
+  // answered, so a strike or a review item could be lost without a trace. A failure is logged
+  // and never undoes the decision; the block or withholding stands either way.
   if (result.action === "block" && result.attributeToUser && mergedContext.userId) {
-    fireSentinel(result, mergedContext.userId, options.requestId);
+    await runSentinel(result, mergedContext.userId, options.requestId);
   }
 
-  // Sprint 6: Auto-submit to review queue on escalate
-  if (result.action === "escalate" && mergedContext.userId) {
-    fireReviewSubmit(result, mergedContext.userId, options.requestId);
+  // An escalation goes to the review queue — unless nothing was judged (a classifier outage, or
+  // an answer that is not a judgement): the content is withheld, and a reviewer would have
+  // nothing to decide (RR-8: one outage filled the queue with every prompt; review 8 M4: a user
+  // whose prompts draw unreadable answers could fill it the same way). Each is counted, for the
+  // alert (moderation.screening_unjudged — docs/ASSURANCE.md).
+  if (result.screeningUnavailable) {
+    recordUnjudged(result, mergedContext.userId, options.requestId);
+  } else if (result.action === "escalate" && mergedContext.userId) {
+    await submitEscalation(result, mergedContext.userId, options.requestId);
   }
 
   return result;
 }
 
 // ---------------------------------------------------------------------------
-// Sentinel hook (async, non-blocking)
+// Unjudged screenings — withheld, never queued, counted (review 8 M4)
 // ---------------------------------------------------------------------------
 
+/** Why nothing was judged. */
+export type UnjudgedReason = "unavailable" | "unreadable";
+
+const unjudgedCounts: Record<UnjudgedReason, number> = { unavailable: 0, unreadable: 0 };
+
 /**
- * Fire the Sentinel agent asynchronously after a Guardian block.
- *
- * This is intentionally non-blocking — the block response goes back to
- * the user immediately. The Sentinel records the strike and evaluates
- * consequences in the background.
- *
- * The Sentinel itself is L19-compliant (strike recording returns success/error).
- * But from the middleware's perspective, the Sentinel is fire-and-forget
- * because the Guardian's block decision is already final — the user sees
- * "blocked" regardless of whether the strike was recorded.
- *
- * Errors are logged but never thrown.
+ * Screenings this instance withheld because nothing was judged, by reason, since it started (or
+ * since resetUnjudgedCounts). Each one is also logged with `metric: "moderation.screening_unjudged"`
+ * — the signal the alert is built on: a rise means the classifier is down, or answering in a
+ * form the parser cannot read (a model change), and content is being withheld.
  */
-function fireSentinel(result: ModerationResult, userId: string, requestId: string): void {
-  getSentinel()
-    .processBlock(result, userId, requestId)
-    .then((sentinelResult) => {
-      if (sentinelResult.consequenceAction !== "none") {
-        logger.info("Sentinel consequence applied", {
-          userId,
-          action: sentinelResult.consequenceAction,
-          previousStatus: sentinelResult.previousStatus,
-          newStatus: sentinelResult.newStatus,
-          totalActiveStrikes: sentinelResult.strikeSummary.totalActive,
-          trajectoryId: sentinelResult.trajectoryId,
-          requestId,
-          route: "platform/moderation/middleware",
-        });
-      }
-    })
-    .catch((err) => {
-      // F1: Full reconstruction payload so missed strikes can be
-      // manually reconciled from Sentry if Sentinel crashes consistently
-      logger.error("Sentinel processing failed — strike may not be recorded", {
-        userId,
-        requestId,
-        guardianAction: result.action,
-        triggeredBy: result.triggeredBy,
-        contentType: result.contentType,
-        severity: result.classifierOutput?.severity ?? "unknown",
-        categories: result.classifierOutput?.categories?.join(",") ?? "unknown",
-        guardianTrajectoryId: result.trajectoryId,
-        error: err instanceof Error ? err.message : String(err),
-        route: "platform/moderation/middleware",
-      });
-    });
+export function getUnjudgedCounts(): Readonly<Record<UnjudgedReason, number>> {
+  return { ...unjudgedCounts };
+}
+
+/** Tests only. */
+export function resetUnjudgedCounts(): void {
+  unjudgedCounts.unavailable = 0;
+  unjudgedCounts.unreadable = 0;
+}
+
+function recordUnjudged(
+  result: ModerationResult,
+  userId: string | undefined,
+  requestId: string
+): void {
+  const reason: UnjudgedReason = result.unjudgedReason ?? "unavailable";
+  unjudgedCounts[reason]++;
+  logger.warn("Screening not judged — content withheld, not queued for review", {
+    metric: "moderation.screening_unjudged",
+    reason,
+    count: unjudgedCounts[reason],
+    ...(userId ? { userId } : {}),
+    requestId,
+    route: "platform/moderation/middleware",
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Review queue hook (async, non-blocking)
+// Sentinel hook
 // ---------------------------------------------------------------------------
 
 /**
- * Fire review queue submission asynchronously after Guardian escalate.
- *
- * Non-blocking — the escalate response goes back to the user immediately.
- * The review item is created in the background.
- * Errors are logged but never thrown.
+ * Run the Sentinel after a Guardian block: it records the strike and evaluates consequences.
+ * The Guardian's block is already final — the user sees "blocked" whatever happens here — so a
+ * failure is logged with what is needed to reconcile the strike by hand, and never thrown.
  */
-function fireReviewSubmit(
+async function runSentinel(
   result: ModerationResult,
   userId: string,
   requestId: string
-): void {
-  submitForReview({
-    source: "escalation",
-    moderationResult: result,
-    targetUserId: userId,
-    requestId,
-  })
-    .then((reviewResult) => {
-      if (reviewResult.success) {
-        logger.info("Review queue: escalation submitted", {
-          userId,
-          reviewItemId: reviewResult.item?.id,
-          requestId,
-          route: "platform/moderation/middleware",
-        });
-      } else {
-        logger.error("Review queue: escalation submit failed", {
-          userId,
-          requestId,
-          error: reviewResult.error,
-          route: "platform/moderation/middleware",
-        });
-      }
-    })
-    .catch((err) => {
-      logger.error("Review queue: escalation submit error", {
+): Promise<void> {
+  try {
+    const sentinelResult = await getSentinel().processBlock(result, userId, requestId);
+    if (sentinelResult.consequenceAction !== "none") {
+      logger.info("Sentinel consequence applied", {
         userId,
+        action: sentinelResult.consequenceAction,
+        previousStatus: sentinelResult.previousStatus,
+        newStatus: sentinelResult.newStatus,
+        totalActiveStrikes: sentinelResult.strikeSummary.totalActive,
+        trajectoryId: sentinelResult.trajectoryId,
         requestId,
-        error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/middleware",
       });
+    }
+  } catch (err) {
+    // F1: Full reconstruction payload so a missed strike can be reconciled by hand.
+    logger.error("Sentinel processing failed — strike may not be recorded", {
+      userId,
+      requestId,
+      guardianAction: result.action,
+      triggeredBy: result.triggeredBy,
+      contentType: result.contentType,
+      severity: result.classifierOutput?.severity ?? "unknown",
+      categories: result.classifierOutput?.categories?.join(",") ?? "unknown",
+      guardianTrajectoryId: result.trajectoryId,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/moderation/middleware",
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Review queue hook
+// ---------------------------------------------------------------------------
+
+/** Submit an escalation to the review queue. Failures are logged and never thrown. */
+async function submitEscalation(
+  result: ModerationResult,
+  userId: string,
+  requestId: string
+): Promise<void> {
+  try {
+    const reviewResult = await submitForReview({
+      source: "escalation",
+      moderationResult: result,
+      targetUserId: userId,
+      requestId,
+    });
+    if (reviewResult.success) {
+      logger.info("Review queue: escalation submitted", {
+        userId,
+        reviewItemId: reviewResult.item?.id,
+        requestId,
+        route: "platform/moderation/middleware",
+      });
+    } else {
+      logger.error("Review queue: escalation submit failed", {
+        userId,
+        requestId,
+        error: reviewResult.error,
+        route: "platform/moderation/middleware",
+      });
+    }
+  } catch (err) {
+    logger.error("Review queue: escalation submit error", {
+      userId,
+      requestId,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/moderation/middleware",
+    });
+  }
 }

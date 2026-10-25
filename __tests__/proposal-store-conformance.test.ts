@@ -10,7 +10,13 @@ import { memoryTenant, proposalIsolation } from "./helpers/store-isolation-fixtu
 import { InMemoryProposalStore } from "@/platform/agents/proposal-store";
 
 describe("InMemoryProposalStore — conformance", () => {
-  runProposalStoreContract({ makeStore: () => new InMemoryProposalStore() });
+  runProposalStoreContract({
+    makeStore: () => new InMemoryProposalStore(),
+    // As the approval-expiry job would: the claim's lease has passed (review 11 H-1).
+    markUndecided: async (store) => {
+      (store as InMemoryProposalStore).recoverStaleRuns(Date.now() + 1);
+    },
+  });
 });
 
 describe("InMemoryProposalStore — tenants", () => {

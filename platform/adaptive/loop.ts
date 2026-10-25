@@ -9,6 +9,7 @@
  * decision. Within-session memory (D5) is read before the decision and the outcome appended after.
  */
 import { getOrchestrator } from "@/platform/ai";
+import { estimateCost } from "@/platform/ai/instrumentation";
 import { executeAgent } from "@/platform/agents/runtime";
 import type { WorkflowFn, StepOutcome, WorkflowContext } from "@/platform/agents/runtime";
 import { isValidSchema } from "@/platform/agents/schema";
@@ -42,6 +43,9 @@ export async function runAdaptive<TInput, TDecision>(
 
   const workflow: WorkflowFn = async (ctx: WorkflowContext): Promise<StepOutcome> => {
     let text: string | undefined;
+    // What the model call cost, charged to the behavior's agent budget (audit C-19: recorded as
+    // 0, so an adaptive behavior's spend was never counted against its daily cap).
+    let costUsd = 0;
 
     // Stage 1 — orchestration. Any throw here is an orchestrator error or an open breaker.
     try {
@@ -50,6 +54,11 @@ export async function runAdaptive<TInput, TDecision>(
         useCase: `adaptive:${behavior.name}`,
         requestId: ctx.trajectoryId,
       });
+      costUsd = estimateCost(
+        request.tier,
+        response.usage?.inputTokens ?? 0,
+        response.usage?.outputTokens ?? 0
+      );
       const block = response.content.find((b) => b.type === "text");
       if (!block || block.type !== "text") {
         throw new Error("adaptive: no text block in response");
@@ -85,7 +94,7 @@ export async function runAdaptive<TInput, TDecision>(
         usedFallback: fallbackReason !== undefined,
         fallbackReason: fallbackReason ?? null,
       },
-      costUsd: 0,
+      costUsd,
       continueExecution: false,
     };
   };

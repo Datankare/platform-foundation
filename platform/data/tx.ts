@@ -30,6 +30,31 @@ export class DataUnavailableError extends Error {
   }
 }
 
+/**
+ * The commit was sent and the connection failed before it answered (review 13 L5, review 14 L-2):
+ * the transaction may have committed or not. A DataUnavailableError (routes answer 503), told
+ * apart so a caller can record `indeterminate` — never "failed" — and still run what must follow
+ * a change that may have landed (a cache invalidation).
+ */
+export class CommitOutcomeUnknownError extends DataUnavailableError {
+  readonly indeterminate = true;
+  constructor(options?: { cause?: unknown }) {
+    super(
+      "The database connection failed while the transaction was committing: whether it took effect is unknown",
+      options
+    );
+    this.name = "CommitOutcomeUnknownError";
+  }
+}
+
+/** Whether `err` says a commit's outcome is unknown (CommitOutcomeUnknownError). */
+export function isCommitOutcomeUnknown(err: unknown): boolean {
+  return (
+    err instanceof CommitOutcomeUnknownError ||
+    (err as { indeterminate?: unknown } | null)?.indeterminate === true
+  );
+}
+
 /** A transaction of one kind was opened inside another kind. A programming error. */
 export class DataScopeError extends Error {
   readonly code = "data.scope";
@@ -69,7 +94,33 @@ interface Active {
   readonly tx: Tx;
   /** True once the transaction has committed or rolled back: it can no longer be joined. */
   readonly closed: () => boolean;
+  /**
+   * Run after the transaction rolls back (review 12 L1): what a write joined to it recorded as
+   * done did not happen, and a record of that is written then, outside it. Discarded at commit.
+   * Told whether it is known to have rolled back, or whether the commit's outcome is unknown
+   * (review 13 L5: the connection failed while the commit was in flight — it may have landed).
+   */
+  readonly rollbackHooks: RollbackHook[];
+  /**
+   * Run after the transaction commits (review 13 L5): a step that must not happen unless the
+   * transaction's writes did — publishing a cache invalidation, which other instances would
+   * otherwise act on before the change is visible. Discarded on rollback. One marked idempotent
+   * (review 14 L-2) also runs when the commit's outcome is unknown.
+   */
+  readonly commitHooks: CommitHook[];
 }
+
+/** A step registered with onCommit. */
+interface CommitHook {
+  readonly run: () => Promise<void>;
+  /** Harmless if the transaction did not commit (an invalidation): run on an unknown outcome too. */
+  readonly idempotent: boolean;
+}
+
+/** How a transaction a hook was registered in ended, when it did not commit. */
+export type TxEndOutcome = "rolled_back" | "indeterminate";
+/** A hook run when its transaction did not commit (onRollback). */
+export type RollbackHook = (outcome: TxEndOutcome) => Promise<void>;
 
 /**
  * How long an owner snapshot (a streamed export) may sit idle between statements before the
@@ -154,6 +205,12 @@ async function run<T>(
   // Set before commit or rollback is sent, so nothing issued from here on reaches the
   // connection: once released it may be inside another tenant's transaction.
   let closed = false;
+  const rollbackHooks: RollbackHook[] = [];
+  const commitHooks: CommitHook[] = [];
+  // Set when the commit was sent and the connection failed before it answered: the transaction
+  // may have committed or not (review 13 L5).
+  let commitUnknown = false;
+  let afterCommit: CommitHook[] = [];
   const tx: Tx = {
     tenantId,
     async query(text, values) {
@@ -186,19 +243,23 @@ async function run<T>(
     // Transaction-local (third argument true): gone at commit or rollback, so the pooled
     // connection carries nothing into the next transaction. An empty tenant id would match
     // nothing, but it is never set: platform and owner transactions do not set it at all.
+    // TimeZone is UTC in every transaction (TASK-159): `now() + interval '30 days'` and date_trunc
+    // are calendar arithmetic in the session's time zone, so a database or role set to
+    // America/New_York made a 30-day purge window 30 days and an hour across a DST change.
     if (tenantId !== undefined) {
       await tx.query(
-        "select set_config('app.tenant_id', $1, true), set_config('statement_timeout', $2, true), set_config('idle_in_transaction_session_timeout', $2, true)",
+        "select set_config('app.tenant_id', $1, true), set_config('statement_timeout', $2, true), set_config('idle_in_transaction_session_timeout', $2, true), set_config('TimeZone', 'UTC', true)",
         [tenantId, timeout]
       );
     } else {
       await tx.query(
-        "select set_config('statement_timeout', $1, true), set_config('idle_in_transaction_session_timeout', $2, true)",
+        "select set_config('statement_timeout', $1, true), set_config('idle_in_transaction_session_timeout', $2, true), set_config('TimeZone', 'UTC', true)",
         [timeout, String(options.idleTimeoutMs ?? timeout)]
       );
     }
-    const result = await active().run({ kind, tenantId, tx, closed: () => closed }, () =>
-      fn(tx)
+    const result = await active().run(
+      { kind, tenantId, tx, closed: () => closed, rollbackHooks, commitHooks },
+      () => fn(tx)
     );
     closed = true;
     try {
@@ -206,10 +267,13 @@ async function run<T>(
     } catch (err) {
       if (isConnectionFailure(err)) {
         broken = true;
-        throw new DataUnavailableError("The database connection failed", { cause: err });
+        commitUnknown = true;
+        throw new CommitOutcomeUnknownError({ cause: err });
       }
       throw err;
     }
+    rollbackHooks.length = 0;
+    afterCommit = commitHooks.splice(0);
     return result;
   } catch (err) {
     closed = true;
@@ -220,12 +284,28 @@ async function run<T>(
         broken = true;
       }
     }
+    // Rolled back (or never committed): what joined it is undone; each hook records that, in a
+    // transaction of its own. A hook's failure is its own (logged by it); the error stands. A
+    // commit whose answer was lost with the connection is not known to have rolled back: the
+    // hooks are told "indeterminate" (review 13 L5), never "rolled_back". Then the commit hooks
+    // marked idempotent run all the same (review 14 L-2): the change may have landed, and an
+    // invalidation not published for it would leave other instances serving the old value; one
+    // published for a change that did not land costs a re-read.
+    if (commitUnknown) afterCommit = commitHooks.filter((h) => h.idempotent);
+    commitHooks.length = 0;
+    await runRollbackHooks(
+      rollbackHooks.splice(0),
+      commitUnknown ? "indeterminate" : "rolled_back"
+    );
     throw err;
   } finally {
     closed = true;
     client.off("error", onError);
     // A connection whose state is unknown is destroyed, never returned to the pool.
     client.release(broken ? true : undefined);
+    // Committed (or, for idempotent steps, perhaps committed): the steps that follow it, once the
+    // connection is back (they open their own).
+    if (afterCommit.length) await runCommitHooks(afterCommit);
   }
 }
 
@@ -233,6 +313,129 @@ async function run<T>(
 export async function withTenantTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   const { tenantId } = currentTenant();
   return run("request", "tenant", tenantId, fn);
+}
+
+/**
+ * Run `fn` in a transaction of the current tenant of its own — never joining one the caller is
+ * in — so what it writes commits whether or not the caller's transaction does (review 11 L-6: an
+ * atomic action's "attempted" and "failed" audit records rolled back with the action). Uses a
+ * second connection while the caller's is held. For records of an attempt only; an effect
+ * belongs in the caller's transaction.
+ */
+export async function withSeparateTenantTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  const { tenantId } = currentTenant();
+  return active().exit(() => run("request", "tenant", tenantId, fn));
+}
+
+/** Whether the caller is inside an open transaction (which a tenant write would join). */
+export function inTransaction(): boolean {
+  const store = active().getStore();
+  return Boolean(store && !store.closed());
+}
+
+/**
+ * Run `hook` if the open transaction the caller is in rolls back — after the rollback, outside it
+ * — or, under a savepoint, if the savepoint is rolled back (review 12 L1). Returns false (and
+ * registers nothing) when the caller is in no open transaction. For records of something done
+ * inside the transaction that the rollback undid; never for an effect.
+ */
+export function onRollback(hook: RollbackHook): boolean {
+  const store = active().getStore();
+  if (!store || store.closed()) return false;
+  store.rollbackHooks.push(hook);
+  return true;
+}
+
+/**
+ * Run `hook` after the open transaction the caller is in commits — outside it — and never if it
+ * rolls back (or the savepoint it was registered under is rolled back). Returns false (and
+ * registers nothing) when the caller is in no open transaction: then the caller runs the step
+ * itself, at once (review 13 L5). For a step outside the database that must follow the
+ * transaction's writes (a cache invalidation), never for a database effect.
+ *
+ * `{ idempotent: true }` (review 14 L-2): the step is harmless if the transaction did not commit —
+ * an invalidation, which costs only a re-read — so it also runs when the commit's outcome is
+ * unknown (the connection failed while the commit was in flight: the change may have landed).
+ * Without it a lost commit dropped the invalidation of a change that may stand.
+ */
+export function onCommit(
+  hook: () => Promise<void>,
+  options: { readonly idempotent?: boolean } = {}
+): boolean {
+  const store = active().getStore();
+  if (!store || store.closed()) return false;
+  store.commitHooks.push({ run: hook, idempotent: options.idempotent === true });
+  return true;
+}
+
+async function runRollbackHooks(
+  hooks: readonly RollbackHook[],
+  outcome: TxEndOutcome
+): Promise<void> {
+  for (const hook of hooks) {
+    try {
+      await active().exit(() => hook(outcome));
+    } catch {
+      // The hook reports its own failure.
+    }
+  }
+}
+
+async function runCommitHooks(hooks: readonly CommitHook[]): Promise<void> {
+  for (const hook of hooks) {
+    try {
+      await active().exit(hook.run);
+    } catch {
+      // Best effort, as a step after a commit is: the hook reports its own failure.
+    }
+  }
+}
+
+/**
+ * Run `fn` under a savepoint of `tx`: when it throws, only its own statements are undone and `tx`
+ * stays usable — a retry inside a joined transaction is possible (review 11 L-6: a unique
+ * violation aborted the caller's whole transaction, and the retry ran in the aborted one).
+ */
+export async function withSavepoint<T>(tx: Tx, fn: () => Promise<T>): Promise<T> {
+  // One name for every savepoint: a nested one shadows the outer, and rollback/release act on
+  // the most recent of that name — so nesting works, and no SQL text is built.
+  await tx.query("savepoint pf_savepoint");
+  // Rollback hooks registered under the savepoint run when it is rolled back (review 12 L1);
+  // released, they belong to the transaction.
+  const store = active().getStore();
+  const mark = store?.rollbackHooks.length ?? 0;
+  const commitMark = store?.commitHooks.length ?? 0;
+  let result: T;
+  try {
+    result = await fn();
+  } catch (err) {
+    let undone = false;
+    try {
+      await tx.query("rollback to savepoint pf_savepoint");
+      undone = true;
+      await tx.query("release savepoint pf_savepoint");
+    } catch {
+      // The transaction itself failed; the caller's error stands.
+    }
+    if (undone && store) {
+      // What ran under the savepoint is undone: its commit hooks go, its rollback hooks run.
+      store.commitHooks.splice(commitMark);
+      await runRollbackHooks(store.rollbackHooks.splice(mark), "rolled_back");
+    }
+    throw err;
+  }
+  await tx.query("release savepoint pf_savepoint");
+  return result;
+}
+
+/**
+ * Run `fn` in a read-only transaction of the current tenant on one consistent snapshot
+ * (repeatable read) — for reading a whole export page by page without a row read twice or
+ * missed between pages (review 7 M2). Throws when there is no tenant.
+ */
+export async function withTenantSnapshot<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  const { tenantId } = currentTenant();
+  return run("request", "tenant", tenantId, fn, { snapshot: true });
 }
 
 /** Run `fn` as the request role with no tenant: platform-owned tables only. */

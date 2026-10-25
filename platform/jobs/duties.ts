@@ -37,6 +37,7 @@ import { expireStaleApprovals } from "@/platform/admin/config-approval";
 import { applyTrajectoryRetention } from "@/platform/agents/trajectory-retention";
 import { expireLapsedAccountStatuses } from "@/platform/auth/account-status-guard";
 import { purgeDueErasures } from "@/platform/auth/gdpr-deletion";
+import { upgradeLegacyErasureHashes } from "@/platform/auth/user-provisioning";
 import { getConfigNumber } from "@/platform/auth/platform-config";
 import {
   reapOverdueEscalations,
@@ -137,6 +138,8 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
       maxIntervalMinutes: 1440,
     },
     handler: async (ctx) => {
+      // Legacy unkeyed address hashes become the current key's first (review 8 L6).
+      const upgraded = await upgradeLegacyErasureHashes(ACCOUNT_BATCH);
       const r = await purgeDueErasures(ctx.agent, ERASURE_BATCH, ctx.signal);
       if (r.failed > 0) {
         throw new JobFailure(
@@ -144,8 +147,8 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
         );
       }
       return {
-        summary: { due: r.due, purged: r.purged },
-        ...more(r.stopped || r.due >= ERASURE_BATCH),
+        summary: { due: r.due, purged: r.purged, hashesUpgraded: upgraded },
+        ...more(r.stopped || r.due >= ERASURE_BATCH || upgraded >= ACCOUNT_BATCH),
       };
     },
   },

@@ -140,7 +140,9 @@ const migs = readdirSync(join(ROOT, "supabase/migrations"))
   .filter((n) => n.endsWith(".sql"))
   .sort();
 const migNums = migs.map((n) => Number(/^(\d+)/.exec(n)[1]));
-const dupes = [...new Set(migNums.filter((n, i) => migNums.indexOf(n) !== i))];
+// An app's NNN<letter>_ migration sorts after the platform's NNN and is not a duplicate (TASK-158).
+const migKeys = migs.map((n) => /^(\d+[a-z]?)/.exec(n)[1]);
+const dupes = [...new Set(migKeys.filter((n, i) => migKeys.indexOf(n) !== i))];
 console.log(
   `files: ${migs.length}   highest: ${Math.max(...migNums)}   ${dupes.length} duplicate number(s): ${dupes.length ? dupes.join(", ") : "none"}`
 );

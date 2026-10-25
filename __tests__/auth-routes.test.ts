@@ -199,7 +199,11 @@ describe("POST /api/auth/sign-up", () => {
     });
 
     const res = await handler(
-      makeRequest({ email: "new@example.com", password: "SecurePass1!" })
+      makeRequest({
+        email: "new@example.com",
+        password: "SecurePass1!",
+        dateOfBirth: "1990-01-01",
+      })
     );
     const body = await res.json();
 
@@ -217,7 +221,11 @@ describe("POST /api/auth/sign-up", () => {
     (passwordRuleViolations as jest.Mock).mockReturnValueOnce(["min_length"]);
 
     const res = await handler(
-      makeRequest({ email: "new@example.com", password: "short" })
+      makeRequest({
+        email: "new@example.com",
+        password: "short",
+        dateOfBirth: "1990-01-01",
+      })
     );
     const body = await res.json();
 
@@ -228,7 +236,13 @@ describe("POST /api/auth/sign-up", () => {
 
   it("checks the password against the stored global policy, not a hard-coded one", async () => {
     const { passwordRuleViolations } = await import("@/platform/auth/password-policy");
-    await handler(makeRequest({ email: "new@example.com", password: "SecurePass1!" }));
+    await handler(
+      makeRequest({
+        email: "new@example.com",
+        password: "SecurePass1!",
+        dateOfBirth: "1990-01-01",
+      })
+    );
     expect(passwordRuleViolations).toHaveBeenLastCalledWith(
       "SecurePass1!",
       expect.objectContaining({ minLength: 16, requireSpecial: false })
@@ -392,7 +406,9 @@ describe("POST /api/auth/mfa-challenge", () => {
       accessToken: "mfa-tok",
     });
 
-    const res = await handler(makeRequest({ session: "mfa-session", code: "123456" }));
+    const res = await handler(
+      makeRequest({ session: "mfa-session", code: "123456", username: "a@b.c" })
+    );
     const body = await res.json();
 
     expect(body.success).toBe(true);

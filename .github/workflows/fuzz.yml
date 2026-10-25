@@ -99,6 +99,17 @@ jobs:
           MONKEY_STEPS: ${{ inputs.steps || '3000' }}
           MONKEY_MOCK_USER: ${{ inputs.target_url && '0' || '1' }}
 
+      # TASK-147: paced sequences under the routes' limits (it waits out a 429, never bypasses
+      # it), reusing the ids the server returns, with the no-other-caller's-records invariant.
+      - name: Monkey (paced sequences)
+        run: node scripts/monkey/monkey.mjs
+        env:
+          MONKEY_BASE_URL: ${{ inputs.target_url || 'http://127.0.0.1:3000' }}
+          MONKEY_MODE: sequence
+          MONKEY_STEPS: "600"
+          MONKEY_RATE_PER_MIN: "90"
+          MONKEY_MOCK_USER: ${{ inputs.target_url && '0' || '1' }}
+
       - name: Server log
         if: failure() && !inputs.target_url
         run: tail -n 200 server.log

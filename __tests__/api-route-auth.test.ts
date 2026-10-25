@@ -44,12 +44,12 @@ const PLATFORM_PUBLIC: Readonly<Record<string, string>> = {
     "Readiness for load balancers and the deploy smoke test (ADR-056 D4); names and statuses only.",
   "app/api/features/route.ts":
     "Which optional features exist; read by the sign-in screen.",
-  "app/api/agent/capabilities/route.ts":
-    "Machine-readable goal vocabulary (ADR-030 D8); provider names only, no user data.",
   "app/api/auth/sign-in/route.ts": "Establishes the session.",
   "app/api/auth/sign-up/route.ts": "Creates the account.",
   "app/api/auth/sign-out/route.ts":
-    "Ends the session; revokes only the token it is given.",
+    "Ends the session; revokes only the tokens it is given (bearer and refresh cookie).",
+  "app/api/auth/refresh/route.ts":
+    "Renews the session; the httpOnly refresh cookie is the credential, checked by the provider.",
   "app/api/auth/guest/route.ts": "Mints a signed guest token (ADR-050 D4).",
   "app/api/auth/forgot-password/route.ts": "Account recovery before sign-in.",
   "app/api/auth/confirm-forgot-password/route.ts": "Account recovery before sign-in.",

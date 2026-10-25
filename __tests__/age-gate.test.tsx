@@ -11,8 +11,33 @@ const mockProps = {
   onCancel: jest.fn(),
 };
 
+// A fixed date, mid-year at noon UTC, so "25 years old" holds whatever day the suite runs and
+// in any time zone (TASK-159). Only Date is faked: React's scheduling keeps the real timers.
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.useFakeTimers({
+    now: new Date("2026-06-15T12:00:00Z"),
+    doNotFake: [
+      "hrtime",
+      "nextTick",
+      "performance",
+      "queueMicrotask",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "requestIdleCallback",
+      "cancelIdleCallback",
+      "setImmediate",
+      "clearImmediate",
+      "setInterval",
+      "clearInterval",
+      "setTimeout",
+      "clearTimeout",
+    ],
+  });
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 describe("AgeGate", () => {

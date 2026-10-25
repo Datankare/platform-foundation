@@ -17,6 +17,8 @@
  */
 
 import {
+  ActionNotRecordedError,
+  ApprovedRunFailedError,
   executeActionPipeline,
   isPipelineConflict,
   type PipelineOutcome,
@@ -35,6 +37,9 @@ import { assertValidSchema, isValidSchema, SchemaValidationError } from "./schem
 import { getTrajectoryStore } from "./trajectory-store";
 import { generateSecureId } from "./utils";
 import { performExternalEffect, type ExternalEffectOutcome } from "./external-effect";
+import { storedJsonViolation } from "@/platform/errors/json-limits";
+import { logger } from "@/lib/logger";
+import { raiseAlert } from "@/platform/observability/alert";
 
 /** Effects that reach outside the system and therefore require a ledger entry (D7). */
 const EXTERNAL_EFFECTS: readonly string[] = ["externalCall", "sendMessage"];
@@ -86,6 +91,12 @@ export interface InvokeToolArgs<TState = unknown> {
    */
   readonly sessionCeiling?: number;
   readonly trajectoryStore?: TrajectoryStore;
+  /**
+   * A long-running agent's opt-in (review 11 H-2): a full trajectory is continued in a linked new
+   * one — the result's `outcome.trajectory` is then the continuation, and the caller goes on
+   * there — instead of refusing the call (request.trajectory_full, the default).
+   */
+  readonly rolloverTrajectory?: boolean;
   /** Required only for a tool that writes managed state. */
   readonly stateStore?: ActivityStateStore<TState>;
   readonly expectedVersion?: number;
@@ -146,7 +157,10 @@ export async function invokeTool<TState = unknown>(
   args: InvokeToolArgs<TState>
 ): Promise<InvokeToolResult<TState>> {
   const { tool, input, actor } = args;
-  const retries = args.maxOutputRetries ?? DEFAULT_OUTPUT_RETRIES;
+  // An approved run executes its tool once (review 11 M-1): a retry would run approved work a
+  // second time. Invalid output after it is a failure after the work — applied.
+  const approved = args.approvedProposalId !== undefined;
+  const retries = approved ? 0 : (args.maxOutputRetries ?? DEFAULT_OUTPUT_RETRIES);
 
   // ADR-031 D7, checked BEFORE anything runs: a tool reaching outside without declaring how
   // is a contract violation, and refusing at the edge is cheaper than discovering it from a
@@ -160,6 +174,14 @@ export async function invokeTool<TState = unknown>(
   // consume budget or occupy an operationId.
   assertValidSchema(tool.inputSchema, input, "input", tool.id);
 
+  // An atomic tool's effects are all one tenant transaction's writes; an external call cannot be
+  // rolled back with them (review 10 H2).
+  if (tool.atomic && tool.externalEffects?.length) {
+    throw new Error(
+      `tool ${tool.id} is declared atomic and has external effects; an external effect cannot be part of a database transaction`
+    );
+  }
+
   let attempts = 0;
   let output: Record<string, unknown> = {};
   const effectOutcomes: ExternalEffectOutcome<Record<string, unknown>>[] = [];
@@ -168,25 +190,69 @@ export async function invokeTool<TState = unknown>(
   // handed to the pipeline, keeping a single identity across both (ADR-031 D1).
   const pendingOperationId = args.operationId ?? `op_${generateSecureId()}`;
 
+  // The managed state this call commits, computed from the tool's output inside perform —
+  // before any declared effect fires — so a state the store would refuse stops the call before
+  // it reaches outside (review 10 M5).
+  let nextState: TState | undefined;
+  const writesState = Boolean(args.computeNextState && args.stateStore);
+
   const perform = async (): Promise<Record<string, unknown>> => {
     let lastErrors: readonly string[] = [];
     for (let attempt = 0; attempt <= retries; attempt++) {
       attempts = attempt + 1;
       const candidate = await tool.execute(input);
-      if (isValidSchema(tool.outputSchema, candidate)) {
-        output = candidate;
-        // Declared external effects fire AFTER the tool's own work validates. Firing first
-        // would mean a schema failure left a charge behind it, and the retry loop would
-        // then fire it again — the ledger would catch the second, but the first would still
-        // be an effect for an invocation that failed.
-        await fireDeclaredEffects();
-        return candidate;
-      }
+      // From here the tool's own work has run. For an approved run, every failure after this
+      // point is a failure after the effect — "applied", the approval used — never "not applied"
+      // with the approval kept for a second run of the same work (review 11 M-1).
       try {
-        assertValidSchema(tool.outputSchema, candidate, "output", tool.id);
+        if (isValidSchema(tool.outputSchema, candidate)) {
+          output = candidate;
+          // Everything that would make the call unrecordable is checked BEFORE the declared
+          // external effects fire (review 10 M5: the stored-JSON limit was met after the work,
+          // and the caller was told nothing was stored). The next state must be storable; an
+          // output too large or too deep to keep is recorded as such — the step says the output
+          // was not kept — rather than failing a call whose work is done. The caller still gets
+          // the whole output.
+          if (writesState) {
+            nextState = (args.computeNextState as (o: Record<string, unknown>) => TState)(
+              candidate
+            );
+            args.stateStore!.validate?.(nextState);
+          }
+          const violation = storedJsonViolation(candidate);
+          const recorded = violation
+            ? { outputNotRecorded: { code: violation.code, max: violation.max } }
+            : candidate;
+          // Declared external effects fire AFTER the tool's own work validates. Firing first
+          // would mean a schema failure left a charge behind it, and the retry loop would
+          // then fire it again — the ledger would catch the second, but the first would still
+          // be an effect for an invocation that failed.
+          await fireDeclaredEffects();
+          return recorded;
+        }
+        try {
+          assertValidSchema(tool.outputSchema, candidate, "output", tool.id);
+        } catch (err) {
+          if (err instanceof SchemaValidationError) lastErrors = err.errors;
+          else throw err;
+        }
+        if (approved) {
+          throw new SchemaValidationError(
+            `tool ${tool.id}: output failed its schema — ${lastErrors.join("; ")}`,
+            "output",
+            tool.id,
+            lastErrors
+          );
+        }
       } catch (err) {
-        if (err instanceof SchemaValidationError) lastErrors = err.errors;
-        else throw err;
+        if (!approved || err instanceof ActionNotRecordedError) throw err;
+        throw new ActionNotRecordedError(
+          tool.id,
+          pendingOperationId,
+          true,
+          err instanceof Error ? err.message : String(err),
+          { cause: err }
+        );
       }
     }
     throw new SchemaValidationError(
@@ -223,40 +289,57 @@ export async function invokeTool<TState = unknown>(
     }
   }
 
-  const outcome = await executeActionPipeline<TState>({
-    spec: specFor(tool),
-    actor,
-    sessionId: args.sessionId,
-    operationId: args.approvedProposalId ? args.operationId : pendingOperationId,
-    label: tool.id,
-    cost: args.cost ?? 0,
-    boundary: "commitment",
-    stateStore: args.stateStore as ActivityStateStore<TState>,
-    trajectoryStore: args.trajectoryStore ?? getTrajectoryStore(),
-    trajectoryId: args.trajectoryId,
-    stepIndex: args.stepIndex,
-    expectedVersion: args.expectedVersion ?? 0,
-    perform,
-    computeNextState:
-      args.computeNextState && args.stateStore
-        ? () => (args.computeNextState as (o: Record<string, unknown>) => TState)(output)
-        : null,
-    ceilings: [
-      ...(args.budgetCeiling !== undefined
-        ? [{ limit: args.budgetCeiling, label: "agent ceiling" }]
-        : []),
-      ...(args.sessionCeiling !== undefined
-        ? [{ limit: args.sessionCeiling, label: "session ceiling" }]
-        : []),
-    ],
-    emit: args.emit,
-    stepInput: { toolId: tool.id },
-    eventIntent: "tool-call",
-    approvedProposalId: args.approvedProposalId,
-    proposalStore: args.proposalStore,
-    // What runs is what was approved: the pipeline compares it with the proposal's payload.
-    approvalInput: args.approvedProposalId ? input : undefined,
-  });
+  let outcome: PipelineOutcome<TState>;
+  try {
+    outcome = await executeActionPipeline<TState>({
+      spec: specFor(tool),
+      actor,
+      sessionId: args.sessionId,
+      operationId: args.approvedProposalId ? args.operationId : pendingOperationId,
+      label: tool.id,
+      cost: args.cost ?? 0,
+      boundary: "commitment",
+      stateStore: args.stateStore as ActivityStateStore<TState>,
+      trajectoryStore: args.trajectoryStore ?? getTrajectoryStore(),
+      trajectoryId: args.trajectoryId,
+      stepIndex: args.stepIndex,
+      expectedVersion: args.expectedVersion ?? 0,
+      rolloverTrajectory: args.rolloverTrajectory,
+      perform,
+      // Computed (and checked) inside perform, before the effects.
+      computeNextState: writesState ? () => nextState as TState : null,
+      ceilings: [
+        ...(args.budgetCeiling !== undefined
+          ? [{ limit: args.budgetCeiling, label: "agent ceiling" }]
+          : []),
+        ...(args.sessionCeiling !== undefined
+          ? [{ limit: args.sessionCeiling, label: "session ceiling" }]
+          : []),
+      ],
+      emit: args.emit,
+      stepInput: { toolId: tool.id },
+      eventIntent: "tool-call",
+      approvedProposalId: args.approvedProposalId,
+      proposalStore: args.proposalStore,
+      // What runs is what was approved: the pipeline compares it with the proposal's payload.
+      approvalInput: args.approvedProposalId ? input : undefined,
+      reportsFailure: tool.reportsFailure
+        ? () => tool.reportsFailure!(output)
+        : undefined,
+      atomic: tool.atomic,
+    });
+  } catch (err) {
+    // Applied, and its record not stored: said so, and put on the audit log (review 10 M5) — a
+    // completion that conflicted with its claim as a conflict, alerted (review 11 H-1).
+    if (err instanceof ActionNotRecordedError && err.applied) {
+      await recordUnrecorded(err, tool.id, actor.actorId);
+    } else if (err instanceof ApprovedRunFailedError) {
+      // Recorded here, outside the run's transaction: an atomic run's own records rolled back
+      // with it (review 11 L-6).
+      await recordApprovedRunFailed(err, tool.id, actor.actorId);
+    }
+    throw err;
+  }
 
   if (isPipelineConflict(outcome)) {
     return {
@@ -275,6 +358,81 @@ export async function invokeTool<TState = unknown>(
     outcome,
     effects: effectOutcomes,
   };
+}
+
+/**
+ * Audit an action that took effect without its record (review 10 M5), or whose approval's
+ * completion conflicted with its claim (review 11 H-1: raised, audited, alerted). Best effort,
+ * outside any transaction the call ran in: the error already says what happened, and an audit log
+ * that cannot be written is logged by the writer.
+ */
+async function recordUnrecorded(
+  err: ActionNotRecordedError,
+  toolId: string,
+  actorId: string
+): Promise<void> {
+  logger.error("Tool call applied; its record could not be stored", {
+    route: "platform/agents/tool-invoker",
+    toolId,
+    operationId: err.operationId,
+    reason: err.reason,
+  });
+  if (err.approvalConflict) {
+    raiseAlert({
+      name: "approvals.run_conflict",
+      message: `An approved run of ${toolId} took effect after its claim was taken back and decided otherwise; check the approval's audit trail (docs/runbooks/approvals-and-agents.md).`,
+      tags: {
+        tool: toolId,
+        operationId: err.operationId,
+        proposalId: err.proposalId ?? "",
+      },
+    });
+  }
+  try {
+    const { writeAuditLogOutsideTransaction } = await import("@/platform/auth/audit");
+    await writeAuditLogOutsideTransaction({
+      action: "admin_action",
+      agent: actorId,
+      details: {
+        type: err.approvalConflict
+          ? "approval_run_conflict"
+          : "action_applied_not_recorded",
+        tool: toolId,
+        operationId: err.operationId,
+        ...(err.proposalId ? { holdId: err.proposalId } : {}),
+        reason: err.reason.slice(0, 500),
+      },
+    });
+  } catch {
+    // Logged above; nothing more can be done here.
+  }
+}
+
+/**
+ * Audit an approved run that failed before taking effect (review 11 L-6): an atomic run's own
+ * attempt records rolled back with its transaction, so the failure is written here, after it.
+ */
+async function recordApprovedRunFailed(
+  err: ApprovedRunFailedError,
+  toolId: string,
+  actorId: string
+): Promise<void> {
+  try {
+    const { writeAuditLogOutsideTransaction } = await import("@/platform/auth/audit");
+    await writeAuditLogOutsideTransaction({
+      action: "admin_action",
+      agent: actorId,
+      details: {
+        type: "approved_run_failed",
+        tool: toolId,
+        holdId: err.proposalId,
+        approvalKept: err.released,
+        reason: err.reason.slice(0, 500),
+      },
+    });
+  } catch {
+    // Logged by the writer.
+  }
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────

@@ -8,15 +8,22 @@
  * withheld. A synthetic-origin signal on a reference image (ADR-047 detection) raises the tier.
  * Nothing surfaces until committed, and a retry never double-spends.
  *
+ * A held generation returns no image (audit C-15: it returned the draft it was holding, so a
+ * caller could show what nobody had confirmed). Once its proposal is approved, the same request
+ * with `approvedProposalId` commits the stored draft — the effect ledger returns it without a
+ * second generation — and the approval is claimed so it commits once.
+ *
  * @module platform/ai
  */
 
 import { performExternalEffect, getProposalStore } from "@/platform/agents";
+import { logger } from "@/lib/logger";
 import type { AgentIdentity } from "@/platform/kernel/types";
 import { screenModality, screenPermits } from "@/platform/moderation";
 import type { ModalityScreenResult } from "@/platform/moderation";
 import {
   emitProvenance,
+  verifyProvenance,
   detectSyntheticOrigin,
   type ImageBytes,
   type ProvenanceCredential,
@@ -36,8 +43,11 @@ export interface GenerationRequest {
   readonly requesterTrust?: RequesterTrust;
   readonly category?: string;
   /** Inbound reference images (image-to-image); screened for synthetic origin (ADR-047 D2). */
-  readonly referenceImages?: readonly ImageBytes[];
+  readonly referenceImages?: readonly ReferenceImage[];
 }
+
+/** A reference image, with the provenance credential it arrived with, if any (ADR-047 D4). */
+export type ReferenceImage = ImageBytes & { readonly provenance?: ProvenanceCredential };
 
 export type ImageGenerator = (request: GenerationRequest) => Promise<GeneratedImage>;
 
@@ -102,11 +112,30 @@ export interface GenerateOptions {
   readonly model?: string;
   /** When present, a held generation is enqueued as a proposal for the admin queue. */
   readonly approvalContext?: ApprovalContext;
+  /** Commit a held generation: its approved proposal (for this request's operationId). */
+  readonly approvedProposalId?: string;
 }
 
-/** Detect synthetic origin across a request's reference images (ADR-047 D2). */
+/**
+ * Detect synthetic origin across a request's reference images (ADR-047 D2, D4). A reference that
+ * carries a provenance credential is synthetic either way: one that verifies is this platform's
+ * own generation; one that does not (forged, altered, or unsigned) is a claim nobody can stand
+ * behind (audit X-18). Without a credential, the detector decides (fail closed when none is set).
+ */
 async function anySyntheticReference(request: GenerationRequest): Promise<boolean> {
   for (const ref of request.referenceImages ?? []) {
+    if (ref.provenance !== undefined) {
+      const image = { mediaType: ref.mediaType, data: ref.data };
+      if (!verifyProvenance(ref.provenance, image)) {
+        logger.warn(
+          "Reference image carries a provenance credential that does not verify",
+          {
+            route: "platform/ai/image-generation",
+          }
+        );
+      }
+      return true;
+    }
     if ((await detectSyntheticOrigin(ref)).synthetic) return true;
   }
   return false;
@@ -152,14 +181,33 @@ export async function generateGoverned(
   const syntheticInput = await anySyntheticReference(request);
   const tier = riskPolicy(request, verdict, { syntheticInput });
 
-  // 4. Route.
+  // 4. Route. An approved hold commits (once); anything else high-risk is held, without the image.
+  if (tier === "high" && opts.approvedProposalId) {
+    const store = getProposalStore();
+    const proposal = await store.getById(opts.approvedProposalId);
+    const matches =
+      proposal?.status === "approved" &&
+      proposal.label === "image-generation" &&
+      proposal.operationId === request.operationId;
+    const claimed = matches ? await store.consume(opts.approvedProposalId) : undefined;
+    if (!claimed) {
+      return { status: "held", tier, reason: "no approval to commit this generation" };
+    }
+    const provenance = emitProvenance(draft, { model: opts.model ?? "image-generation" });
+    return {
+      status: "committed",
+      image: draft,
+      tier,
+      provenance,
+      reason: "committed (approved)",
+    };
+  }
   if (tier === "high") {
     const proposalId = opts.approvalContext
       ? await enqueueHeldGeneration(request, opts.approvalContext)
       : undefined;
     return {
       status: "held",
-      image: draft,
       tier,
       proposalId,
       reason: syntheticInput

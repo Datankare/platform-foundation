@@ -21,6 +21,7 @@
  * identity and held in the request's tenant context for everything the route then does.
  */
 
+import { TokenVerificationUnavailableError } from "@/platform/auth/token-verification";
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthProvider } from "@/platform/auth/config";
 import { hasCachedPermission } from "@/platform/auth/permissions-cache";
@@ -55,7 +56,10 @@ export type AuthResult = AuthContext | AuthError;
 /**
  * Require authentication. Returns 401 if no valid token.
  */
-export async function requireAuth(request: NextRequest): Promise<AuthResult> {
+export async function requireAuth(
+  request: NextRequest,
+  options: { readonly privileged?: boolean } = {}
+): Promise<AuthResult> {
   const requestId = generateRequestId();
   const authHeader = request.headers.get("authorization");
 
@@ -73,7 +77,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
 
   try {
     const auth = getAuthProvider();
-    const payload = await auth.verifyToken(accessToken);
+    const payload = await auth.verifyToken(accessToken, options);
 
     if (!payload) {
       logger.warn("Invalid or expired token", {
@@ -105,6 +109,13 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
       route: request.nextUrl.pathname,
       error: err instanceof Error ? err.message : "Unknown error",
     });
+    // The identity provider could not answer (throttled, down): not a signed-out user — a 503
+    // the client retries, never a 401 that signs them out (platform/auth/token-verification.ts).
+    if (err instanceof TokenVerificationUnavailableError) {
+      return {
+        error: apiError("service.unavailable", { params: { service: "auth" }, request }),
+      };
+    }
     return {
       error: apiError("auth.token_invalid", { request }),
     };
@@ -144,6 +155,11 @@ export type ActorResult = ActorContext | ActorError;
 export interface ActorOptions {
   /** Opt-in: this route serves guests. Every other route requires a real user. */
   readonly allowGuests: boolean;
+  /**
+   * A route that acts on the account itself (its export, its deletion): it fails closed when the
+   * identity provider cannot answer — no stale grace (review 8 M5).
+   */
+  readonly privileged?: boolean;
 }
 
 /**
@@ -188,7 +204,7 @@ export async function requireActor(
     };
   }
 
-  const auth = await requireAuth(request);
+  const auth = await requireAuth(request, { privileged: options.privileged === true });
   if (auth.error) return { error: auth.error };
   return {
     actor: {

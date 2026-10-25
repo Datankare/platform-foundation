@@ -15,11 +15,18 @@ import { getConfig } from "@/platform/auth/platform-config";
 import { withTenantTx } from "@/platform/data";
 import { DEFAULT_TENANT_ID } from "@/platform/providers/environment-contract";
 import { runWithTenant } from "@/platform/tenancy/context";
+import { resetRateLimiter } from "@/platform/rate-limit";
+
+/** A guest's request: counted per address as well as per token (audit A-6). */
+const request = { headers: new Headers({ "x-forwarded-for": "198.51.100.1" }) };
 
 jest.mock("@/platform/auth/platform-config", () => ({ getConfig: jest.fn() }));
 // The Postgres store's SQL is proven against the database (__tests__/db/guest-usage.db.test.ts);
 // here only what a database cannot be made to return.
-jest.mock("@/platform/data", () => ({ withTenantTx: jest.fn() }));
+jest.mock("@/platform/data", () => ({
+  withTenantTx: jest.fn(),
+  hasDatabase: () => false,
+}));
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
@@ -31,6 +38,7 @@ beforeEach(() => {
   mockGetConfig.mockReset();
   mockTx.mockReset();
   setGuestUsageStore(new MemoryGuestUsageStore());
+  resetRateLimiter();
 });
 
 describe("getGuestTranslateAllowance", () => {
@@ -109,12 +117,15 @@ describe("PostgresGuestUsageStore", () => {
     mockGetConfig.mockResolvedValue(5 as never);
     mockTx.mockRejectedValueOnce(new Error("connection refused"));
     setGuestUsageStore(new PostgresGuestUsageStore());
-    const out = await enforceGuestAllowance({
-      kind: "guest",
-      id: newGuestId(),
-      tenantId: DEFAULT_TENANT_ID,
-      expiresAt: 0,
-    });
+    const out = await enforceGuestAllowance(
+      {
+        kind: "guest",
+        id: newGuestId(),
+        tenantId: DEFAULT_TENANT_ID,
+        expiresAt: 0,
+      },
+      { request }
+    );
     expect(out.error?.status).toBe(500);
   });
 });
@@ -149,9 +160,13 @@ describe("enforceGuestAllowance", () => {
       tenantId: DEFAULT_TENANT_ID,
       expiresAt: 0,
     };
-    await expect(enforceGuestAllowance(actor)).resolves.toEqual({ remaining: 1 });
-    await expect(enforceGuestAllowance(actor)).resolves.toEqual({ remaining: 0 });
-    const third = await enforceGuestAllowance(actor);
+    await expect(enforceGuestAllowance(actor, { request })).resolves.toEqual({
+      remaining: 1,
+    });
+    await expect(enforceGuestAllowance(actor, { request })).resolves.toEqual({
+      remaining: 0,
+    });
+    const third = await enforceGuestAllowance(actor, { request });
     expect(third.error?.status).toBe(403);
   });
 });

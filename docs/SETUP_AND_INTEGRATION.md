@@ -161,17 +161,18 @@ sync.
 - **The consumer seams — always excluded, always the consumer's own.** The platform ships these
   empty or as templates; each holds facts only the consumer knows:
 
-  | File                                                                                               | What the consumer puts there                                                                                                                                                                                                                                                                                                                                                                     |
-  | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-  | `platform/errors/app-codes.ts`, `messages/app/**`, `docs/APP_API_ERRORS.md`                        | Its own error codes and messages (ADR-051 D1)                                                                                                                                                                                                                                                                                                                                                    |
-  | `platform/route-policy/app-route-policy.ts`                                                        | Its own route guards, public or exempt routes (TASK-136), and its functions that make paid calls (`paidCalls`)                                                                                                                                                                                                                                                                                   |
-  | `platform/assurance/unwired-security.ts`                                                           | The security controls it has not wired, each with the reason (v5.0.0; checked by `security-wiring`)                                                                                                                                                                                                                                                                                              |
-  | `docs/APP_ENV_REFERENCE.md`                                                                        | Its own settings and per-environment provider choices                                                                                                                                                                                                                                                                                                                                            |
-  | `.gitleaksignore`                                                                                  | Its own secret-scan false positives. Each entry names a commit, so the platform's list can never match a consumer's history.                                                                                                                                                                                                                                                                     |
-  | `coverage-baseline.json`, `screen-literal-baseline.json`                                           | Its own ratchet baselines, measured on its own tree                                                                                                                                                                                                                                                                                                                                              |
-  | `platform/modules/app-modules.ts` (and its test, `platform/modules/__tests__/app-modules.test.ts`) | The product modules it runs with (ADR-054 D4) — none, some or all of social, voice, song-id, audio-convert, translation, games                                                                                                                                                                                                                                                                   |
-  | `platform/modules/app-home.tsx`                                                                    | What its home page shows inside the signed-in shell (`app/HomeClient.tsx`)                                                                                                                                                                                                                                                                                                                       |
-  | `instrumentation.ts`                                                                               | Its boot: `registerModules(APP_MODULES)` before `initProviders()`, `listJobDefinitions()` (validates every job kind), each step recorded (`platform/observability/boot.ts`) so `/api/health/ready` can report it, and the probes into `initObservability` — the database and cache as `healthProbes`, realtime and the modules' as `degradedOnlyProbes` (ADR-056 D4). PF's own is the reference. |
+  | File                                                                                               | What the consumer puts there                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+  | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `platform/errors/app-codes.ts`, `messages/app/**`, `docs/APP_API_ERRORS.md`                        | Its own error codes and messages (ADR-051 D1)                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+  | `platform/route-policy/app-route-policy.ts`                                                        | Its own route guards, public or exempt routes (TASK-136), and its functions that make paid calls (`paidCalls`)                                                                                                                                                                                                                                                                                                                                                                                |
+  | `platform/assurance/unwired-security.ts`                                                           | The security controls it has not wired, each with the reason (v5.0.0; checked by `security-wiring`)                                                                                                                                                                                                                                                                                                                                                                                           |
+  | `docs/APP_ENV_REFERENCE.md`                                                                        | Its own settings and per-environment provider choices                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+  | `.gitleaksignore`                                                                                  | Its own secret-scan false positives. Each entry names a commit, so the platform's list can never match a consumer's history.                                                                                                                                                                                                                                                                                                                                                                  |
+  | `coverage-baseline.json`, `screen-literal-baseline.json`                                           | Its own ratchet baselines, measured on its own tree                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+  | `platform/modules/app-modules.ts` (and its test, `platform/modules/__tests__/app-modules.test.ts`) | The product modules it runs with (ADR-054 D4) — none, some or all of social, voice, song-id, audio-convert, translation, games                                                                                                                                                                                                                                                                                                                                                                |
+  | `platform/modules/app-home.tsx`                                                                    | What its home page shows inside the signed-in shell (`app/HomeClient.tsx`)                                                                                                                                                                                                                                                                                                                                                                                                                    |
+  | `platform/modules/app-manifest.json`                                                               | Its own module manifest (TASK-157): its migration prefix (`app`), the paths it adds to a platform module (its routes, screens, hooks and tests that import the module), its own modules (`definition`, `entry`, `dependsOn`, the path lists, `migrations`) and the bare-numbered migrations it applied before the naming convention (`migrationsBeforeTheConvention`). The platform ships it empty; `scripts/module-manifest.cjs` merges it with the platform's `manifest.json` on every read |
+  | `instrumentation.ts`                                                                               | Its boot: `registerModules(APP_MODULES)` before `initProviders()`, `listJobDefinitions()` (validates every job kind), each step recorded (`platform/observability/boot.ts`) so `/api/health/ready` can report it, and the probes into `initObservability` — the database and cache as `healthProbes`, realtime and the modules' as `degradedOnlyProbes` (ADR-056 D4). PF's own is the reference.                                                                                              |
 
 - **Product modules (ADR-054).** The platform is a core plus optional modules; which files are
   each module's is in `platform/modules/manifest.json` (code, prompts and evals, routes,
@@ -183,6 +184,64 @@ sync.
   do not use. To drop a module's files entirely, exclude its manifest paths and delete them on the
   sync branch (the sync never deletes) — never a core file that imports it: the lint rule
   guarantees there is none outside the two composition roots, which are yours.
+- **An app's own module files — the app manifest (TASK-157).** `platform/modules/manifest.json` is
+  the platform's and is synced unchanged. Your files that belong to a platform module (a route
+  that imports translation, a screen that imports song-id) and your own modules go in your
+  `platform/modules/app-manifest.json`; every reader (the lint boundary, the manifest and boundary
+  tests, `npm run test:core`, the migration replay) sees the two merged:
+
+  ```json
+  {
+    "app": "playform",
+    "modules": {
+      "translation": {
+        "routes": ["app/api/translate"],
+        "tests": ["__tests__/translate-api.test.ts"]
+      },
+      "quiz": {
+        "definition": "features/quiz/module.ts",
+        "entry": "features/quiz/index.ts",
+        "dependsOn": ["social"],
+        "code": ["features/quiz"],
+        "tests": ["__tests__/quiz.test.ts"],
+        "migrations": ["supabase/migrations/052a_playform_quiz_scores.sql"]
+      }
+    },
+    "migrationsBeforeTheConvention": []
+  }
+  ```
+
+  To a platform module you add paths only (`code`, `prompts`, `evals`, `routes`, `components`,
+  `tests`, `kits`, `migrations`); its `dependsOn`, `definition`, `entry` and `kitManifest` are the
+  platform's. A new module declares all of them. The merge fails loudly — naming the file and what
+  to change — on a path claimed by two modules (or by a module and a composition root), a platform
+  module's dependencies redefined, an unknown list, an unknown dependency and a dependency cycle.
+  It also refuses an entry that takes what is the platform's (review 7 H2): a migration listed in
+  `supabase/platform-migrations.json`, anything under `platform/`, a file the platform ships
+  (`platform/modules/platform-paths.json`, generated, synced unchanged) or a directory holding one —
+  list your own files one by one. Your tables that hold no user's data go in `"noUserData"`
+  (`{ "<table>": "<why>" }`); the others are erased by your deletion module, which your migration
+  records in `deletion_manifest`. The user-data coverage test classifies your tables by these two
+  declarations and fails on one you did not declare. The manifest tests derive the module ids from
+  the merge, so your modules are checked like the platform's. `node scripts/module-manifest.cjs --check` runs the merge and the migration-name
+  check on their own.
+
+- **Your migrations never take a platform number (TASK-158).** The platform's are `NNN_<name>.sql`,
+  listed in `supabase/platform-migrations.json`. Yours are **`NNN<letter>_<app>_<name>.sql`** —
+  `052a_playform_subscription_tiers_record.sql` — which sorts after the platform's `052` and before
+  `053`, so the replay applies it after the platform migration it builds on; a migration of one of your modules
+  names the module next (`052a_playform_quiz_scores.sql` for module `quiz`). Set `"app"` in your app manifest. The replay, `migration-parity.mjs` and `applied_migrations`
+  take the letter form as any other file. `migration-naming` (and the replay, before it applies
+  anything) refuses an app migration with a bare number and says what to rename it to; one you
+  already applied to your databases under a bare number stays as it is — list it in
+  `migrationsBeforeTheConvention` (renaming an applied migration re-runs it).
+- **A compliant sync (TASK-160).** [`docs/templates/sync-from-foundation.yml`](templates/sync-from-foundation.yml)
+  and [`docs/templates/sync-config.json`](templates/sync-config.json) are the sync workflow and
+  config to copy: every exclude anchored (`/package.json` for a root file, never `package.json`,
+  which matches at any depth), and every input or step output a script uses passed through the
+  step's `env:` and quoted (`"$SOURCE_REF"`), never written `${{ … }}` inside `run:`.
+  `__tests__/workflow-hygiene.test.ts` checks both in your repository, and each failure names the
+  file, the line and what to write instead.
 - **Exclude only what you own or deliberately do not take** (learning 115). An excluded file must
   exist in the consumer, or be a platform file the consumer chose not to take. A file the consumer
   owns that is identical to the platform's should be inherited instead: excluding it silently stops
@@ -207,7 +266,7 @@ check to exclude — excluding it removes the protection it gives you. What runs
 Consumers pin to a Platform Foundation release tag (e.g. `v2.2.0`) rather than a moving branch,
 and bump deliberately. See [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for what each release
 contains and the migration guide for each major version that introduces breaking changes — the
-latest is [`MIGRATION_v4_to_v5.md`](MIGRATION_v4_to_v5.md).
+latest is [`MIGRATION_v5_to_v6.md`](MIGRATION_v5_to_v6.md).
 
 ### Dependencies: what you own, what you inherit
 

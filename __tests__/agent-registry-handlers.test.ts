@@ -15,6 +15,8 @@ const getConfig = jest.fn();
 const writeGovernedConfig = jest.fn();
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: (...a: unknown[]) => getConfig(...a),
+  // The registry is read with getConfigOrThrow (audit B-21).
+  getConfigOrThrow: (...a: unknown[]) => getConfig(...a),
 }));
 jest.mock("@/platform/admin/governed-config", () => ({
   ...jest.requireActual("@/platform/admin/governed-config"),
@@ -144,5 +146,48 @@ describe("handleSetAgentTtl", () => {
     const r = await handleSetAgentTtl({ agent_id: "agent:x", max_token_ttl: 0 }, ACTOR);
     expect(r.success).toBe(false);
     expect(writeGovernedConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("an unreadable or malformed registry is never overwritten (audit B-21)", () => {
+  it.each([
+    ["unreadable", () => getConfig.mockRejectedValue(new Error("db down"))],
+    ["not a list", () => getConfig.mockResolvedValue({ a: 1 })],
+    [
+      "a list of the wrong shape",
+      () => getConfig.mockResolvedValue([["agent:a", "oops"]]),
+    ],
+    [
+      "stored as JSON text",
+      () => getConfig.mockResolvedValue('[["agent:a",{"scopes":[]}]]'),
+    ],
+  ])("refuses every change when the registry is %s", async (_l, arrange) => {
+    arrange();
+    for (const run of [
+      () => handleRegisterAgent({ agent_id: "agent:new" }, ACTOR),
+      () => handleSuspendAgent({ agent_id: "agent:a" }, ACTOR),
+      () => handleSetAgentScope({ agent_id: "agent:a", scopes: ["*"] }, ACTOR),
+      () => handleSetAgentTtl({ agent_id: "agent:a", max_token_ttl: 60 }, ACTOR),
+    ]) {
+      const r = await run();
+      expect(r).toMatchObject({
+        success: false,
+        error: expect.stringMatching(/could not be read/),
+      });
+    }
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
+  });
+
+  it("keeps every other agent when one is registered", async () => {
+    getConfig.mockResolvedValue([
+      ["agent:a", { owner: "o", scopes: ["x"], status: "active" }],
+      ["agent:b", { owner: "o", scopes: [], status: "suspended" }],
+    ]);
+    await handleRegisterAgent({ agent_id: "agent:c" }, ACTOR);
+    expect(written().map(([id]: [string]) => id)).toEqual([
+      "agent:a",
+      "agent:b",
+      "agent:c",
+    ]);
   });
 });

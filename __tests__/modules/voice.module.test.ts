@@ -108,10 +108,11 @@ describe("voice module — provider slots", () => {
 });
 
 describe("voice module — features", () => {
-  it("offers speech input with a speech key, either spelling, ignoring blanks", () => {
+  it("offers speech input with a server-side speech key only, ignoring blanks", () => {
     expect(isFeatureAvailable("speech_input", { GOOGLE_API_KEY: "g" })).toBe(true);
+    // A NEXT_PUBLIC_ key is shipped to browsers; it is not read (audit G-13).
     expect(isFeatureAvailable("speech_input", { NEXT_PUBLIC_GOOGLE_API_KEY: "g" })).toBe(
-      true
+      false
     );
     expect(isFeatureAvailable("speech_input", { GOOGLE_API_KEY: " " })).toBe(false);
     expect(isFeatureAvailable("speech_input", {})).toBe(false);
@@ -123,7 +124,7 @@ describe("voice module — features", () => {
     );
     expect(
       isFeatureAvailable("audio_upload", { NEXT_PUBLIC_GOOGLE_API_KEY: "g", ...FFMPEG })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isFeatureAvailable("audio_upload", {
         GOOGLE_API_KEY: "g",

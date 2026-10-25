@@ -126,3 +126,18 @@ describe("createErrorReporter", () => {
     expect(reporter).toBeInstanceOf(SentryErrorReporter);
   });
 });
+
+describe("SentryErrorReporter user (audit G-13)", () => {
+  it("never sets a process-wide user: concurrent requests would share it", () => {
+    const reporter = new SentryErrorReporter({
+      dsn: "https://fake@sentry.io/123",
+      environment: "test",
+      version: "0",
+    });
+    const sdk = { setUser: jest.fn() };
+    (reporter as unknown as { sentry: unknown }).sentry = sdk;
+    reporter.setUser("user-1");
+    reporter.setUser(null);
+    expect(sdk.setUser).not.toHaveBeenCalled();
+  });
+});

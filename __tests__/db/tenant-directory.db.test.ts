@@ -160,7 +160,7 @@ dbDescribe("PostgresTenantDirectory", () => {
       from: ["active"],
       to: "suspended",
       by: "operator-7",
-      reason: "unpaid invoice 4711",
+      reason: "unpaid invoice INV-sentinel",
     });
     const ask = (scope: string | null) => {
       const read = () =>
@@ -194,7 +194,8 @@ dbDescribe("PostgresTenantDirectory", () => {
     expect(own).toMatchObject({ id: t.id, slug: t.slug, name: "Secret Co" });
     // Who suspended it and why are never the request role's to read, not even its own.
     expect(Object.keys(own)).not.toEqual(expect.arrayContaining(["status_changed_by"]));
-    expect(JSON.stringify(own)).not.toMatch(/operator-7|4711/);
+    // Sentinels no generated value (an id, a timestamp) can contain: a bare number could.
+    expect(JSON.stringify(own)).not.toMatch(/operator-7|INV-sentinel/);
     // The directory, asked from another tenant, says only what resolution needs.
     const seen = await runWithTenant({ tenantId: other.id, mode: "shared" }, () =>
       dir.getTenant(t.id)

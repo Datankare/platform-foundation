@@ -25,8 +25,10 @@ if (!url || !key) {
   process.exit(2);
 }
 
+// The platform's NNN_<name>.sql and an app's NNN<letter>_<app>_<name>.sql (TASK-158): both are
+// recorded in applied_migrations under their file names.
 const files = readdirSync(join(process.cwd(), "supabase", "migrations"))
-  .filter((f) => /^\d+_.*\.sql$/.test(f))
+  .filter((f) => /^\d+[a-z]?_.*\.sql$/.test(f))
   .sort();
 if (files.length < 10) {
   console.error("Found fewer than 10 migration files — run from the repository root.");

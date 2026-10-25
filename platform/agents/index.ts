@@ -44,6 +44,7 @@ export {
 // ── Trajectory Store (Sprint 4a) ────────────────────────────────────
 
 export type {
+  AddStepOptions,
   TrajectoryStore,
   TrajectoryQuery,
   TrajectoryCost,
@@ -54,7 +55,16 @@ export {
   getTrajectoryStore,
   setTrajectoryStore,
   resetTrajectoryStore,
+  readTrajectoryChain,
+  latestTrajectorySegment,
+  chainSteps,
+  trajectoryChainPages,
 } from "./trajectory-store";
+
+// ── Capability→feature map, read fail closed (review 12 H1) ─────────
+
+export type { CapabilityFeatureDecision } from "./capability-features";
+export { evaluateCapabilityFeatures, requiredFeatures } from "./capability-features";
 
 // ── Budget Tracker (Sprint 4a) ──────────────────────────────────────
 

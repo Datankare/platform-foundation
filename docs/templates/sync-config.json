@@ -1,0 +1,28 @@
+{
+  "$comment": "TEMPLATE (TASK-160) — copy to .github/sync-config.json. Every exclude is anchored (audit H-3): a root file is written with a leading '/', a file elsewhere with its directory. A bare name (\"package.json\", \"jest.setup.ts\") matches at any depth and silently keeps platform files of the same name out of your app. The consumer seams are always excluded (docs/SETUP_AND_INTEGRATION.md §6).",
+  "source": "Datankare/platform-foundation",
+  "source_ref": "latest",
+  "exclude": [
+    ".github/**",
+    "/.env.example",
+    "/.gitleaksignore",
+    "/README.md",
+    "/package.json",
+    "/package-lock.json",
+    "/instrumentation.ts",
+    "/jest.setup.ts",
+    "/next.config.ts",
+    "/coverage-baseline.json",
+    "/screen-literal-baseline.json",
+    "docs/APP_API_ERRORS.md",
+    "docs/APP_ENV_REFERENCE.md",
+    "messages/app/**",
+    "platform/errors/app-codes.ts",
+    "platform/route-policy/app-route-policy.ts",
+    "platform/assurance/unwired-security.ts",
+    "platform/modules/app-modules.ts",
+    "platform/modules/app-home.tsx",
+    "platform/modules/app-manifest.json",
+    "platform/modules/__tests__/app-modules.test.ts"
+  ]
+}

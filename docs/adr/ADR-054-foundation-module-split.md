@@ -1,6 +1,6 @@
 # ADR-054: The Foundation Core and Optional Product Modules
 
-Status: Proposed (Phase 5 Sprint 7R entry gate, 2026-10-21). Decision maker: Raman Sud.
+Status: Accepted (2026-10-24, Sprint 7R close, platform-foundation v6.0.0). Proposed at the Sprint 7R entry gate (2026-10-21); implementation in §5. Decision maker: Raman Sud.
 Related: ADR-001 (platform/game separation), ADR-007 (monorepo structure), ADR-019/020 (voice, song identification), ADR-021 (social), ADR-027 (conformance kits), TASK-127, TASK-136. `platform/**`, `prompts/**`, `supabase/migrations/**`, `eslint.config.mjs`.
 
 ---
@@ -42,7 +42,7 @@ Every consumer inherits everything the platform contains, including features it 
 
 ## 3. Delivery
 
-- **Sprint 7R:** the module registration hook and the extensible registries; the 16 production and 6 test-manifest violations removed, and the social agent definitions moved out of `agent-configs.ts`; the lint rule on; the module manifest; migration naming for new module migrations.
+- **Sprint 7R — delivered (R4, 2026-10-24; R7):** the module registration hook and the extensible registries; the 16 production and 6 test-manifest violations removed, and the social agent definitions moved out of `agent-configs.ts`; the lint rule on; the module manifest; migration naming for new module migrations; and at the close (R7) the app's own manifest and app migration naming (§5, "The app's manifest").
 - **Sprint 7S:** modules moved out of the core directories, existing migration seeds superseded, `lib/translate.ts` and `lib/tts.ts` retired, the guest-usage rename, the sync's `modules` selection, and Playform opting into the modules it uses.
 
 ## 4. Consequences
@@ -134,6 +134,8 @@ contract lists module durable selectors after the core's in its `DATABASE_URL is
 message; `GET /api/features` lists the core's features first (same keys and values); a module slot
 selection outside its declared values is logged (still passed on); `isFeatureAvailable` /
 `requireFeature` answer "not available" for an undeclared feature instead of throwing.
+
+**The app's manifest (R7, TASK-157, TASK-158).** `platform/modules/manifest.json` is the platform's and is synced unchanged; a consumer could not list its own files that belong to a module (Playform rewrote the platform's manifest after every sync) or declare a module of its own, and the platform's tests counted six modules. `platform/modules/app-manifest.json` is a consumer seam (sync-excluded; the platform ships it empty) that `scripts/module-manifest.cjs` merges with the platform's for every reader: an app adds paths to a platform module, or declares a module with its definition, entry, dependencies, path lists and migrations. The merge refuses a path claimed by two modules or by a module and a composition root, an app redefining a platform module's `dependsOn`, `definition`, `entry` or `kitManifest`, an unknown list, an unknown dependency and a cycle, each message naming the file and what to change. The manifest, lint and migration tests derive the module ids from the merge. Migrations: the platform's are `NNN_<name>.sql`, listed in `supabase/platform-migrations.json`; an app's are `NNN<letter>_<app>_<name>.sql` (`052a_playform_…`), sorting after the platform's `NNN` and before `NNN+1`, and an app module's name the module next. The replay checks the names before it applies anything; a bare-numbered app migration is refused unless the app applied it before the convention and lists it (`migrationsBeforeTheConvention`).
 
 **Left for 7S, by decision (§3).** Moving the modules out of the core directories; superseding the
 core migrations that seed or alter module data — 002, 005, 007 (`can_play`, `can_translate`,

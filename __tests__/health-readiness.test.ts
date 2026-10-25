@@ -42,7 +42,7 @@ import { PLATFORM_VERSION } from "@/platform/version";
 const probe = (
   name: string,
   status: HealthCheckResult["status"],
-  detail = "detail: db.internal.example:5432 password=hunter2"
+  detail = "detail: db.internal.example:port-sentinel password=hunter2"
 ): HealthProbe => ({
   name,
   check: async () => ({ name, status, detail, checkedAt: new Date().toISOString() }),
@@ -136,7 +136,8 @@ describe("GET /api/health/ready", () => {
       ready: false,
       boot: "completed",
     });
-    expect(text).not.toMatch(/hunter2|internal\.example|5432|detail/);
+    // Sentinels, not bare numbers: a timestamp in the answer could hold "5432".
+    expect(text).not.toMatch(/hunter2|internal\.example|port-sentinel|detail/);
   });
 
   it("is unready when boot failed, naming the step, even if every probe answers", async () => {
@@ -166,10 +167,25 @@ describe("GET /api/health/ready", () => {
   });
 
   it("bounds a hanging required probe: unready within the timeout", async () => {
-    boot([hanging("database")]);
-    const started = Date.now();
-    const r = await checkReadiness(200);
-    expect(Date.now() - started).toBeLessThan(2_000);
+    // On the timer the bound uses, not the wall clock (review 10 L11): the answer comes when the
+    // 200 ms timeout fires, not before, and the probe never answers at all.
+    jest.useFakeTimers();
+    let r!: Awaited<ReturnType<typeof checkReadiness>>;
+    try {
+      boot([hanging("database")]);
+      let settled = false;
+      const pending = checkReadiness(200).then((v) => {
+        settled = true;
+        r = v;
+      });
+      await jest.advanceTimersByTimeAsync(150);
+      expect(settled).toBe(false);
+      await jest.advanceTimersByTimeAsync(100);
+      await pending;
+      expect(settled).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
     expect(r).toMatchObject({ ready: false, status: "unready" });
     expect(r.checks[0]).toMatchObject({
       name: "database",

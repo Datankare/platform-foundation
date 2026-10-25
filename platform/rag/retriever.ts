@@ -139,7 +139,8 @@ export async function retrieve(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    logger.error("Retrieval failed", { error: message, query: query.query });
+    // The query is the user's text: never logged (audit G-11), only its length.
+    logger.error("Retrieval failed", { error: message, queryLength: query.query.length });
     steps.push({
       phase: "error",
       description: `Retrieval failed: ${message}`,

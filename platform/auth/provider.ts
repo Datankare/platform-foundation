@@ -39,6 +39,12 @@ import type {
   TokenPayload,
 } from "@/platform/auth/types";
 
+/** What sign-up asks besides the credentials (the server checks and records it). */
+export interface SignUpProfile {
+  /** YYYY-MM-DD — required by the platform's sign-up route (COPPA, audit X-16). */
+  readonly dateOfBirth?: string;
+}
+
 export interface AuthProvider {
   // ── Sign Up / Sign In ──────────────────────────────────────────────
 
@@ -46,7 +52,7 @@ export interface AuthProvider {
    * Register a new user with email and password.
    * Does NOT sign the user in — they must verify email first.
    */
-  signUp(email: string, password: string): Promise<AuthResult>;
+  signUp(email: string, password: string, profile?: SignUpProfile): Promise<AuthResult>;
 
   /**
    * Sign in with email and password.
@@ -55,25 +61,31 @@ export interface AuthProvider {
   signIn(email: string, password: string): Promise<AuthResult>;
 
   /**
-   * Sign out — invalidate the refresh token.
-   * Should be called with the current access token.
+   * Sign out — revoke the session (audit X-17): every token of the user's sign-in, and the
+   * refresh token when given. Throws when the revocation could not be made: a sign-out that
+   * revoked nothing is not reported as one.
    */
-  signOut(accessToken: AuthToken): Promise<void>;
+  signOut(accessToken: AuthToken, refreshToken?: AuthToken): Promise<void>;
 
   // ── Token Management ───────────────────────────────────────────────
 
   /**
    * Verify and decode a JWT access token.
    * Returns the decoded payload if valid, null if invalid/expired.
-   * This is the method called on every protected API route.
+   * This is the method called on every protected API route. `options.privileged`: the route is
+   * an administrative one, which fails closed when the provider cannot answer (a provider may
+   * throw TokenVerificationUnavailableError, platform/auth/token-verification.ts).
    */
-  verifyToken(accessToken: AuthToken): Promise<TokenPayload | null>;
+  verifyToken(
+    accessToken: AuthToken,
+    options?: { readonly privileged?: boolean }
+  ): Promise<TokenPayload | null>;
 
   /**
    * Refresh an expired access token using a refresh token.
    * Returns a new session with fresh tokens.
    */
-  refreshToken(refreshToken: AuthToken): Promise<AuthSession | null>;
+  refreshToken(refreshToken: AuthToken, username?: string): Promise<AuthSession | null>;
 
   // ── Password Management ────────────────────────────────────────────
 
@@ -131,7 +143,11 @@ export interface AuthProvider {
    * Complete MFA challenge during sign-in.
    * Called when signIn returns mfaRequired: true.
    */
-  respondToMfaChallenge(mfaSession: string, totpCode: string): Promise<AuthResult>;
+  respondToMfaChallenge(
+    mfaSession: string,
+    totpCode: string,
+    username: string
+  ): Promise<AuthResult>;
 
   /**
    * Complete a NEW_PASSWORD_REQUIRED challenge during sign-in.

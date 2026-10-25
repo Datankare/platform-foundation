@@ -95,7 +95,11 @@ export interface ErrorReporter {
     context?: ErrorContext
   ): void;
 
-  /** Set the current user context (anonymized ID only). */
+  /**
+   * Set the current user context (anonymized ID only). On a server this would be process-wide —
+   * every concurrent request's errors attributed to one user — so the server reporters ignore it
+   * and take the user from each capture's context (`ErrorContext.userId`) instead (audit G-13).
+   */
   setUser(userId: string | null): void;
 
   /** Flush pending events — call before serverless function exits. */

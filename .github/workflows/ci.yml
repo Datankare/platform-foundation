@@ -78,6 +78,14 @@ jobs:
             -c "ALTER USER postgres PASSWORD 'postgres'" -c "CREATE DATABASE replay"
           echo "Postgres $(sudo -u postgres psql -X -At -p "$port" -c 'show server_version') on port $port"
 
+      # Review 9 M5: the Valkey cache provider's suites spawn a TLS server of their own
+      # (__tests__/helpers/valkey-server.ts); REQUIRE_VALKEY_TESTS makes its absence a failure.
+      - name: Install Valkey/Redis server (the Valkey cache tests)
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq redis-server >/dev/null
+          redis-server --version
+
       # ADR-053 D8: the suites under __tests__/db (platform/data, every Postgres store, the
       # tenant isolation kit) run against a database built by the migration replay, signed in as
       # app_tenant (a throwaway password, this job only) and as the owner. REQUIRE_DB_TESTS makes a
@@ -101,6 +109,7 @@ jobs:
         run: npm run test:coverage
         env:
           REQUIRE_DB_TESTS: "1"
+          REQUIRE_VALKEY_TESTS: "1"
 
       # ADR-054 §4: the core's own tests, run as an app with no product module registered — what a
       # consumer that opts into none inherits and must pass. Module tests and the app's own
@@ -109,6 +118,21 @@ jobs:
         run: npm run test:core
         env:
           REQUIRE_DB_TESTS: "1"
+
+      # TASK-159: a 30-day purge check failed under TZ=America/New_York across a DST change. The
+      # suite runs again in a zone with DST, and the database suites with the session's time zone
+      # set there too (per connection — the data layer must make every transaction UTC itself).
+      - name: Layer 1 — Unit tests in another time zone (TASK-159)
+        run: |
+          set -euo pipefail
+          tz="options=-c%20TimeZone%3DAmerica%2FNew_York"
+          TEST_DATABASE_URL="$TEST_DATABASE_URL?$tz" \
+            TEST_DATABASE_OWNER_URL="$TEST_DATABASE_OWNER_URL?$tz" \
+            npx jest --silent
+        env:
+          TZ: America/New_York
+          REQUIRE_DB_TESTS: "1"
+          REQUIRE_VALKEY_TESTS: "1"
 
       - name: Layer 1b — Coverage ratchet (TASK-080)
         run: npm run coverage:ratchet
@@ -220,6 +244,7 @@ jobs:
           pw="ci-$(openssl rand -hex 16)"
           cron="$(openssl rand -hex 32)"
           guest="$(openssl rand -base64 48 | tr -d '\n')"
+          erasure="$(openssl rand -hex 32)"
           # Throwaway values for this job's database and app. They are never printed: they go
           # only into an env file (umask 077) passed to the containers with --env-file — not into
           # $GITHUB_ENV, whose values each later step's log header shows.
@@ -234,6 +259,7 @@ jobs:
             echo "E2E_TEST_DOUBLE_AUTH=true"
             echo "AI_PROVIDER=mock"
             echo "GUEST_TOKEN_SECRET=$guest"
+            echo "ERASURE_HASH_KEY=$erasure"
             echo "CRON_SECRET=$cron"
             echo "CACHE_PROVIDER=memory"
             echo "TENANCY_MODE=single"

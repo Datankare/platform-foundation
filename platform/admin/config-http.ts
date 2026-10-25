@@ -116,7 +116,9 @@ export function governedOutcomeResponse(
     case "pending":
       return NextResponse.json(
         {
-          success: true,
+          // Held, not done: never reported as success (review 9 H1).
+          success: false,
+          held: true,
           pending: true,
           key,
           approval: outcome.result.approval ?? outcome.result.data ?? null,
@@ -162,7 +164,8 @@ export async function configResetResponse(
       case "pending":
         return NextResponse.json(
           {
-            success: true,
+            success: false,
+            held: true,
             pending: true,
             key,
             approval: outcome.result.approval ?? outcome.result.data ?? null,

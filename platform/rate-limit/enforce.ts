@@ -10,7 +10,8 @@
  *     abuse must not disappear silently when its store does (ADR-052 D4).
  *
  * The caller is identified by its verified actor id when the route has one (after
- * verification), otherwise by its network address — always within its tenant (ADR-053 D6), so
+ * verification), otherwise by its network address — an IPv6 address by its /64, the block one
+ * client is given (audit G-8) — always within its tenant (ADR-053 D6), so
  * one tenant's traffic never uses up another's allowance.
  *
  * Because every route runs this first, it is also where a request's tenant is first
@@ -29,7 +30,7 @@ import type { NextResponse } from "next/server";
 import { apiError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import { getRateLimiter } from "./factory";
-import { getClientIp } from "./client-ip";
+import { getClientBucket } from "./client-ip";
 import { ensureRequestTenant } from "@/platform/tenancy/request";
 import type { RateLimitRule } from "./types";
 
@@ -51,7 +52,10 @@ export async function enforceRateLimit(
 ): Promise<NextResponse | null> {
   const bound = await ensureRequestTenant(request);
   if (bound.error) return bound.error;
-  const who = subject.actorId ? `actor:${subject.actorId}` : `ip:${getClientIp(request)}`;
+  // An address is counted by its bucket: an IPv6 client per /64 (audit G-8).
+  const who = subject.actorId
+    ? `actor:${subject.actorId}`
+    : `ip:${getClientBucket(request)}`;
   const identifier = `t:${bound.tenant.tenantId}:${who}`;
   const route = request.nextUrl?.pathname;
 

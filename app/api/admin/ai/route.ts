@@ -27,6 +27,7 @@ import { getOrchestrator } from "@/platform/ai";
 import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS, type AdminTool } from "./tool-schemas";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
+import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { enforceDailyPaidQuota } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -96,7 +97,7 @@ async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<
   }
 
   if (panel === "approvals") {
-    const holds = await listPendingApprovals();
+    const holds = await listPendingApprovals([COMMAND_BAR_HOLDS]);
     const summary = holds.map((h) => ({
       proposalId: h.id,
       source: h.source,

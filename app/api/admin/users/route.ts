@@ -20,6 +20,12 @@ import { logger } from "@/lib/logger";
 import { likeTerm, pageParams } from "@/lib/pagination";
 import { apiError, internalError, readJsonObject } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import {
+  COMMAND_BAR_ACTOR_ID,
+  isDualControlledAction,
+  runCommandBarAction,
+} from "@/app/api/admin/ai/command-bar";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 
 type UserRow = {
   id: string;
@@ -146,6 +152,50 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   const refused = checkRoleAssignment(admin, target.id, newRole, currentRole);
   if (refused) return apiError(refused.code, { params: refused.params, request });
 
+  // A role change under dual control (admin.dual_control_actions, change_user_role) is held for
+  // a second admin here as in the command bar — this page is not the weaker second path
+  // (audit X-10). The hold runs the same governed action when it is approved.
+  if (await isDualControlledAction("change_user_role")) {
+    try {
+      const trajectory = await getTrajectoryStore().create(
+        { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+        "admin-users:change_user_role",
+        "platform"
+      );
+      const outcome = await runCommandBarAction({
+        tool: "change_user_role",
+        input: { user_identifier: target.id, new_role: newRole.name },
+        admin,
+        trajectoryId: trajectory.trajectory.trajectoryId,
+        stepIndex: 0,
+      });
+      if (outcome.kind === "held") {
+        return NextResponse.json(
+          { success: false, held: true, proposalId: outcome.proposalId },
+          { status: 202 }
+        );
+      }
+      // Ran, but what it wrote is itself waiting for an approval: held, never success.
+      if (outcome.result.held) {
+        return NextResponse.json(
+          {
+            success: false,
+            held: true,
+            ...(outcome.result.proposalId
+              ? { proposalId: outcome.result.proposalId }
+              : {}),
+          },
+          { status: 202 }
+        );
+      }
+      return outcome.result.success
+        ? NextResponse.json({ success: true })
+        : apiError("service.unavailable", { params: { service: "roles" }, request });
+    } catch (err) {
+      return internalError(err, { request, context: "Role change hold failed" });
+    }
+  }
+
   return auditedResponse(
     {
       action: "role_changed",
@@ -204,7 +254,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
           response: apiError(outcome.code, { params: outcome.params, request }),
         };
       }
-      if (target.cognitoSub) invalidatePermissions(target.cognitoSub);
+      if (target.cognitoSub) await invalidatePermissions(target.cognitoSub);
       return { success: true, response: NextResponse.json({ success: true }) };
     },
     () => apiError("service.unavailable", { params: { service: "audit" }, request })

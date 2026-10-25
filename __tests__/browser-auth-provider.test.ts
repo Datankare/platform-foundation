@@ -60,9 +60,9 @@ describe("methods with a route post to it", () => {
     ],
     [
       "respondToMfaChallenge",
-      () => provider().respondToMfaChallenge("s", "123"),
+      () => provider().respondToMfaChallenge("s", "123", "a@b.c"),
       "/api/auth/mfa-challenge",
-      { session: "s", code: "123" },
+      { session: "s", code: "123", username: "a@b.c" },
     ],
     [
       "respondToNewPasswordChallenge",

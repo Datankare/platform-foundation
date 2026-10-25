@@ -165,18 +165,33 @@ describe("HealthRegistry", () => {
   });
 
   it("runs all probes in parallel", async () => {
+    // Asserted as work, not wall-clock time (review 10 L11): every probe is in flight before any
+    // answers — each waits until all five have started, which only a parallel run lets happen.
     const registry = new HealthRegistry("1.0.0");
+    let started = 0;
+    let maxInFlight = 0;
+    let inFlight = 0;
+    let allStarted!: () => void;
+    const gate = new Promise<void>((r) => (allStarted = r));
     for (let i = 0; i < 5; i++) {
-      registry.register(new MockHealthyProbe(`service-${i}`));
+      const probe = new MockHealthyProbe(`service-${i}`);
+      const check = probe.check.bind(probe);
+      probe.check = async () => {
+        started += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        if (started === 5) allStarted();
+        await gate;
+        inFlight -= 1;
+        return check();
+      };
+      registry.register(probe);
     }
 
-    const start = Date.now();
     const report = await registry.check();
-    const duration = Date.now() - start;
 
     expect(report.checks).toHaveLength(5);
-    // All probes run in parallel — total time should be ~1 probe, not 5x
-    expect(duration).toBeLessThan(500);
+    expect(maxInFlight).toBe(5);
   });
 
   it("getProbeNames returns registered names", () => {

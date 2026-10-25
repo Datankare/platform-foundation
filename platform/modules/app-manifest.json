@@ -1,0 +1,6 @@
+{
+  "$comment": "CONSUMER SEAM (TASK-157) — the app's own module manifest, merged with the platform's platform/modules/manifest.json by scripts/module-manifest.cjs (every reader sees the merge: the lint boundary, the manifest and boundary tests, test:core and the migration replay). Sync-excluded: the app owns it; platform-foundation ships it empty. \"app\": the app's migration prefix (lower-case, e.g. \"playform\") — its migrations are named NNN<letter>_<app>_<name>.sql; null in platform-foundation. \"modules\": a platform module's id with the paths the app adds to it (code, prompts, evals, routes, components, tests, kits, migrations — paths only), or a new module's full entry (definition, entry, dependsOn, the lists, kitManifest). \"migrationsBeforeTheConvention\": bare-numbered migrations the app applied before the convention (renaming an applied migration re-runs it). \"noUserData\" (optional): the app's tables that hold no user's data, each with why (the user-data coverage test classifies the app's tables by these and by its deletion modules' rows in deletion_manifest). An entry may name only the app's own files: never a platform migration, anything under platform/, or a file in platform/modules/platform-paths.json. See docs/SETUP_AND_INTEGRATION.md §6.",
+  "app": null,
+  "modules": {},
+  "migrationsBeforeTheConvention": []
+}

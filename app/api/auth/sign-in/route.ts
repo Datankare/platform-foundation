@@ -2,13 +2,14 @@
  * app/api/auth/sign-in/route.ts — Sign in endpoint
  *
  * POST { email, password } → AuthResult
- * Calls AuthProvider.signIn() on the server side.
+ * Calls AuthProvider.signIn() on the server side. A session is returned as the access token; the
+ * refresh token is set as an httpOnly cookie (platform/auth/auth-response.ts sessionResponse).
  */
 
 import { NextRequest } from "next/server";
 import { logger } from "@/lib/logger";
 import { readJsonObject, requireTextFields } from "@/platform/errors";
-import { authResultResponse, callAuthProvider } from "@/platform/auth/auth-response";
+import { callAuthProvider, sessionResponse } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sessionTenantRefusal } from "@/platform/tenancy/identity";
@@ -44,18 +45,11 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const refused = await sessionTenantRefusal(result, request);
   if (refused) return refused;
 
-  const response = authResultResponse(result, { request, context: "Sign in failed" });
-
-  // Set session indicator cookie for middleware route protection
-  if (result.success && result.accessToken) {
-    response.cookies.set("pf_has_session", "true", {
-      httpOnly: false, // Readable by client for UX, but not sensitive
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: result.expiresIn ?? 3600,
-    });
-  }
-
-  return response;
+  // The session: the access token in the body, the refresh token in an httpOnly cookie, the
+  // sign-in recorded first (audit X-17, A-12).
+  return sessionResponse(result, {
+    request,
+    context: "Sign in failed",
+    method: "password",
+  });
 });

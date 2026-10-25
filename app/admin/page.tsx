@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import AdminShell from "@/components/admin/AdminShell";
 import type { AdminSection } from "@/components/admin/AdminShell";
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
@@ -27,6 +28,20 @@ import {
 import { OperatorJobsView } from "@/components/admin/JobsPanels";
 import { renderMessage } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { useAuth } from "@/platform/auth/context";
+import MfaEnrollment from "@/components/admin/MfaEnrollment";
+import {
+  isPanelUnavailable,
+  PANEL_UNAVAILABLE,
+  PanelUnavailable,
+} from "@/components/admin/PanelUnavailable";
+
+/** The console's own user (GET /api/admin/session), or why it cannot open. */
+type ConsoleSession =
+  | { kind: "loading" }
+  | { kind: "admin"; roleName: string; permissions: readonly string[] }
+  | { kind: "mfa_required" }
+  | { kind: "refused" };
 
 interface ActionPlan {
   message: string;
@@ -36,6 +51,7 @@ interface ActionPlan {
 interface ExecutionResult {
   tool: string;
   success: boolean;
+  held?: boolean;
   result?: string;
   error?: string;
 }
@@ -76,11 +92,16 @@ const ENDPOINTS: Record<string, string> = {
   jobs: "/api/operator/jobs",
 };
 
-/** One read of a panel's data: undefined when the panel has none or the read failed. */
+/**
+ * One read of a panel's data: undefined when the panel has none or the read failed; the
+ * PANEL_UNAVAILABLE marker when the server answered 503 — the data could not be read, which the
+ * panel must say, never show as an empty list (review 14 L-1).
+ */
 async function fetchPanelData(panel: AdminSection): Promise<unknown> {
   const endpoint = ENDPOINTS[panel];
   if (!endpoint) return undefined;
   const res = await apiFetch(endpoint);
+  if (res.status === 503) return PANEL_UNAVAILABLE;
   return res.ok ? res.json() : undefined;
 }
 
@@ -110,6 +131,43 @@ export default function AdminPage() {
   const [results, setResults] = useState<ExecutionResult[] | null>(null);
   const [panelData, setPanelData] = useState<Record<string, unknown>>({});
   const [activePanel, setActivePanel] = useState<AdminSection>("roles");
+  const router = useRouter();
+  const [session, setSession] = useState<ConsoleSession>({ kind: "loading" });
+  const { signOut } = useAuth();
+
+  // Which sections to show: the admin's own permissions (audit B-14 — every section was shown
+  // to every admin). Display only: each section's route checks its own permission.
+  useEffect(() => {
+    let current = true;
+    void apiFetch("/api/admin/session")
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as {
+          code?: unknown;
+          roleName?: unknown;
+          permissions?: unknown;
+        };
+        if (!current) return;
+        if (res.ok && Array.isArray(body.permissions)) {
+          setSession({
+            kind: "admin",
+            roleName: typeof body.roleName === "string" ? body.roleName : "",
+            permissions: body.permissions.filter(
+              (p): p is string => typeof p === "string"
+            ),
+          });
+        } else {
+          setSession({
+            kind: body.code === "auth.mfa_required" ? "mfa_required" : "refused",
+          });
+        }
+      })
+      .catch(() => {
+        if (current) setSession({ kind: "refused" });
+      });
+    return () => {
+      current = false;
+    };
+  }, []);
 
   const showPanelData = useCallback((panel: AdminSection, data: unknown) => {
     if (data !== undefined) setPanelData((prev) => ({ ...prev, [panel]: data }));
@@ -211,15 +269,54 @@ export default function AdminPage() {
           <ExecutionResultsPanel results={results} onDismiss={() => setResults(null)} />
         )}
 
-        {DataView && <DataView data={panelData[section]} />}
+        {DataView &&
+          (isPanelUnavailable(panelData[section]) ? (
+            <PanelUnavailable
+              panel={PANEL_TITLES[section] || section}
+              onRetry={() => void refreshData(section)}
+            />
+          ) : (
+            <DataView data={panelData[section]} />
+          ))}
       </div>
     );
   }
 
+  // Nobody, or someone without administrative access: no console shell at all (audit B-14).
+  if (session.kind === "refused") {
+    return (
+      <main className="mx-auto max-w-md p-8 text-center">
+        <p className="mb-4 text-sm text-gray-300">
+          {renderMessage("screens.admin_console.refused")}
+        </p>
+        <button
+          type="button"
+          className="rounded bg-blue-600 px-4 py-2 text-sm text-white"
+          onClick={() => router.push("/auth")}
+        >
+          {renderMessage("screens.admin_console.sign_in")}
+        </button>
+      </main>
+    );
+  }
+
+  if (session.kind === "mfa_required") {
+    return (
+      <MfaEnrollment
+        onSignOut={() => {
+          void signOut().then(() => router.push("/auth"));
+        }}
+      />
+    );
+  }
+
+  const granted = session.kind === "admin" ? session.permissions : [];
   return (
     <AdminShell
-      adminName="Administrator"
-      hasPermission={() => true}
+      adminName={
+        session.kind === "admin" ? session.roleName || "Administrator" : "Administrator"
+      }
+      hasPermission={(code) => granted.includes("*") || granted.includes(code)}
       onSignOut={() => {
         // A full load, not client navigation: leaving the console keeps no in-memory state.
         // eslint-disable-next-line @next/next/no-location-assign-relative-destination

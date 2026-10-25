@@ -56,7 +56,7 @@ export interface AccountStatusGateResult {
    * request is refused, but the account is not banned — callers report this code
    * (`account.not_provisioned`), not the status.
    */
-  readonly code?: "account.not_provisioned";
+  readonly code?: "account.not_provisioned" | "account.not_found";
 }
 
 /** User account state loaded from the DB */
@@ -64,6 +64,11 @@ interface UserAccountRow {
   accountStatus: AccountStatus;
   /** No row, and provisioning it failed (TASK-117). accountStatus is the fail-closed value. */
   notProvisioned?: true;
+  /**
+   * The account was erased (soft-deleted, or purged): it has no access, whatever its status
+   * said (audit A-11). accountStatus is the fail-closed value.
+   */
+  deleted?: true;
   restrictedUntil: string | null;
   suspendedUntil: string | null;
   bannedAt: string | null;
@@ -199,6 +204,7 @@ async function loadSuspendedFeatures(): Promise<readonly string[]> {
 // ---------------------------------------------------------------------------
 
 interface AccountRow {
+  deleted: boolean;
   account_status: string;
   restricted_until: string | null;
   suspended_until: string | null;
@@ -211,12 +217,14 @@ const isoOrNull = (v: Date | null): string | null => (v ? v.toISOString() : null
 async function readAccountRow(userId: string): Promise<AccountRow | null> {
   const { rows } = await withTenantTx((tx) =>
     tx.query<{
+      deleted: boolean;
       account_status: string;
       restricted_until: Date | null;
       suspended_until: Date | null;
       banned_at: Date | null;
     }>(
-      `select account_status::text as account_status, restricted_until, suspended_until, banned_at
+      `select deleted_at is not null as deleted, account_status::text as account_status,
+              restricted_until, suspended_until, banned_at
          from users where id = $1::uuid`,
       [userId]
     )
@@ -224,6 +232,7 @@ async function readAccountRow(userId: string): Promise<AccountRow | null> {
   const row = rows[0];
   if (!row) return null;
   return {
+    deleted: row.deleted === true,
     account_status: row.account_status,
     restricted_until: isoOrNull(row.restricted_until),
     suspended_until: isoOrNull(row.suspended_until),
@@ -263,6 +272,7 @@ async function loadAccountState(
         };
       }
       if (outcome === "failed") return { ...failClosed, notProvisioned: true };
+      if (outcome === "erased") return { ...failClosed, deleted: true };
       try {
         data = await readAccountRow(userId);
       } catch {
@@ -270,6 +280,9 @@ async function loadAccountState(
       }
       if (!data) return { ...failClosed, notProvisioned: true };
     }
+
+    // An erased account keeps its row until the purge; it has no access meanwhile (A-11).
+    if (data.deleted) return { ...failClosed, deleted: true };
 
     // B5: Validate status is a known value
     const status = VALID_STATUSES.has(data.account_status)
@@ -466,6 +479,15 @@ export async function checkAccountStatus(
       accountStatus: state.accountStatus,
       feature,
       code: "account.not_provisioned",
+    };
+  }
+  if (state.deleted) {
+    return {
+      allowed: false,
+      reason: "This account has been deleted.",
+      accountStatus: state.accountStatus,
+      feature,
+      code: "account.not_found",
     };
   }
 
@@ -712,7 +734,7 @@ export async function expireLapsedAccountStatuses(
 export async function isInGoodStanding(userId: string): Promise<boolean> {
   if (!userId || !UUID_PATTERN.test(userId)) return false;
   const state = await loadAccountState(userId);
-  if (state.notProvisioned) return false;
+  if (state.notProvisioned || state.deleted) return false;
   switch (state.accountStatus) {
     case "active":
     case "warned":

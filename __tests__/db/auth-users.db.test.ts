@@ -22,7 +22,11 @@ import {
   isInGoodStanding,
 } from "@/platform/auth/account-status-guard";
 import { auditRowsForUser } from "@/platform/auth/audit";
-import { checkCoppaGate, updateCoppaEnforcement } from "@/platform/auth/coppa-gate";
+import {
+  checkCoppaGate,
+  consentFeatureFallback,
+  updateCoppaEnforcement,
+} from "@/platform/auth/coppa-gate";
 import { recordAgeVerification, recordParentalConsent } from "@/platform/auth/coppa";
 import {
   getOwnProfile,
@@ -258,6 +262,190 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
     });
   });
 
+  // ── Audit A-11: an erased account has no access, and its ban survives a new identity ──
+
+  it("refuses an account that was erased (soft-deleted), whatever its status says", async () => {
+    const id = await t.user();
+    await sql(t, "update users set deleted_at = now() where id = $1::uuid", [id]);
+    await expect(t.run(() => checkAccountStatus(id, "generate"))).resolves.toMatchObject({
+      allowed: false,
+      code: "account.not_found",
+    });
+    await expect(t.run(() => isInGoodStanding(id))).resolves.toBe(false);
+  });
+
+  it("never provisions an erased identity again — even after its row is purged", async () => {
+    const id = uuid();
+    await sql(
+      t,
+      "insert into user_deletions (user_id, requested_by, purged_at) values ($1::uuid, 'test', now())",
+      [id]
+    );
+    await expect(
+      t.run(() => ensureUserProvisioned(id, { email: "back@x.y" }))
+    ).resolves.toBe("erased");
+    expect(await userRow(t, id)).toBeUndefined();
+    await expect(t.run(() => checkAccountStatus(id, "generate"))).resolves.toMatchObject({
+      allowed: false,
+      code: "account.not_found",
+    });
+  });
+
+  it("starts a new identity banned when its address belongs to a banned account", async () => {
+    const banned = await t.user();
+    await sql(
+      t,
+      "update users set email = 'evader@x.y', account_status = 'banned', banned_at = now() where id = $1::uuid",
+      [banned]
+    );
+    const fresh = uuid();
+    await expect(
+      t.run(() => ensureUserProvisioned(fresh, { email: " Evader@X.Y " }))
+    ).resolves.toBe("created");
+    expect(await userRow(t, fresh)).toMatchObject({
+      account_status: "banned",
+      status_changed_by: "platform:ban-carry-over",
+    });
+    const audit = await t.run(() => withTenantTx((tx) => auditRowsForUser(tx, fresh, 5)));
+    expect(audit[0].details).toMatchObject({ banCarriedOver: true });
+  });
+
+  it("starts a new identity banned when its address was erased while banned (hash only)", async () => {
+    const { emailHash } = jest.requireActual("@/platform/auth/user-provisioning");
+    const h = emailHash("gone@x.y");
+    await sql(
+      t,
+      "insert into user_deletions (user_id, requested_by, standing, email_hash, email_hash_key, email_hash_scheme) values ($1::uuid, 'test', 'banned', $2, $3, $4)",
+      [uuid(), h.hash, h.keyId, h.scheme]
+    );
+    const fresh = uuid();
+    await t.run(() => ensureUserProvisioned(fresh, { email: "gone@x.y" }));
+    expect((await userRow(t, fresh))!.account_status).toBe("banned");
+  });
+
+  // Review 8 L6: the legacy form and the previous key still match, and a match is rehashed
+  // under the current key (so the previous key can be retired).
+  // Review 9 M6: and the pre-release review 7 form (HMAC of the address, no key id, no scheme
+  // recorded) — matched by the address, never guessed at.
+  it.each(["legacy", "previous", "review7"])(
+    "honours a ban hashed in the %s form, and rehashes it under the current key",
+    async (form) => {
+      const actual = jest.requireActual("@/platform/auth/user-provisioning");
+      const env = process.env as Record<string, string | undefined>;
+      const saved = {
+        key: env.ERASURE_HASH_KEY,
+        previous: env.ERASURE_HASH_KEY_PREVIOUS,
+      };
+      env.ERASURE_HASH_KEY = "c".repeat(64);
+      env.ERASURE_HASH_KEY_PREVIOUS = "p".repeat(64);
+      try {
+        const [current, previous, legacy, review7] = actual.erasureHashCandidates(
+          `${form}-gone@x.y`
+        );
+        const old = form === "legacy" ? legacy : form === "review7" ? review7 : previous;
+        const erased = uuid();
+        await sql(
+          t,
+          "insert into user_deletions (user_id, requested_by, standing, email_hash, email_hash_key, email_hash_scheme) values ($1::uuid, 'test', 'banned', $2, $3, $4)",
+          // An earlier build's row has no recorded scheme (only a key id identifies one).
+          [erased, old.hash, old.keyId, old.keyId ? old.scheme : null]
+        );
+        const fresh = uuid();
+        await t.run(() =>
+          ensureUserProvisioned(fresh, { email: ` ${form.toUpperCase()}-Gone@X.Y ` })
+        );
+        expect((await userRow(t, fresh))!.account_status).toBe("banned");
+        expect(
+          await sql(
+            t,
+            "select email_hash, email_hash_key, email_hash_scheme from user_deletions where user_id = $1::uuid",
+            [erased]
+          )
+        ).toEqual([
+          {
+            email_hash: current.hash,
+            email_hash_key: current.keyId,
+            email_hash_scheme: "hmac-of-sha256",
+          },
+        ]);
+      } finally {
+        if (saved.key === undefined) delete env.ERASURE_HASH_KEY;
+        else env.ERASURE_HASH_KEY = saved.key;
+        if (saved.previous === undefined) delete env.ERASURE_HASH_KEY_PREVIOUS;
+        else env.ERASURE_HASH_KEY_PREVIOUS = saved.previous;
+      }
+    }
+  );
+
+  it("the retention job's upgrade turns every row recorded as unkeyed into the current key's, without the address", async () => {
+    const actual = jest.requireActual("@/platform/auth/user-provisioning");
+    const forms = actual.erasureHashCandidates("old-ban@x.y");
+    const current = forms[0];
+    const legacy = forms.find((f: { scheme: string }) => f.scheme === "sha256");
+    const erased = uuid();
+    await sql(
+      t,
+      "insert into user_deletions (user_id, requested_by, standing, email_hash, email_hash_scheme) values ($1::uuid, 'test', 'banned', $2, 'sha256')",
+      [erased, legacy.hash]
+    );
+    expect(await t.run(() => actual.upgradeLegacyErasureHashes())).toBe(1);
+    expect(
+      await sql(
+        t,
+        "select email_hash, email_hash_key, email_hash_scheme from user_deletions where user_id = $1::uuid",
+        [erased]
+      )
+    ).toEqual([
+      {
+        email_hash: current.hash,
+        email_hash_key: current.keyId,
+        email_hash_scheme: "hmac-of-sha256",
+      },
+    ]);
+    expect(await t.run(() => actual.upgradeLegacyErasureHashes())).toBe(0);
+    const fresh = uuid();
+    await t.run(() => ensureUserProvisioned(fresh, { email: "old-ban@x.y" }));
+    expect((await userRow(t, fresh))!.account_status).toBe("banned");
+  });
+
+  it("does not carry a ban to another tenant, or from an account that was not banned", async () => {
+    const other = await createTestTenant();
+    const banned = await t.user();
+    await sql(
+      t,
+      "update users set email = 'tenantonly@x.y', account_status = 'banned' where id = $1::uuid",
+      [banned]
+    );
+    const elsewhere = uuid();
+    await other.run(() => ensureUserProvisioned(elsewhere, { email: "tenantonly@x.y" }));
+    expect((await userRow(other, elsewhere))!.account_status).toBe("active");
+    await sql(
+      t,
+      "insert into user_deletions (user_id, requested_by, standing, email_hash) values ($1::uuid, 'test', 'active', $2)",
+      [uuid(), "a".repeat(64)]
+    );
+    const fresh = uuid();
+    await t.run(() => ensureUserProvisioned(fresh, { email: "clean@x.y" }));
+    expect((await userRow(t, fresh))!.account_status).toBe("active");
+  });
+
+  it("refuses a malformed deletion record (the hash's shape and the standing are checked)", async () => {
+    await expect(
+      sql(
+        t,
+        "insert into user_deletions (user_id, requested_by, standing, email_hash) values ($1::uuid, 'test', 'banned', 'plain@address')",
+        [uuid()]
+      )
+    ).rejects.toThrow();
+    await expect(
+      sql(
+        t,
+        "insert into user_deletions (user_id, requested_by, standing) values ($1::uuid, 'test', 'emperor')",
+        [uuid()]
+      )
+    ).rejects.toThrow();
+  });
+
   it("does not see a user of another tenant (refused as not provisioned there)", async () => {
     const other = await createTestTenant();
     const id = await t.user();
@@ -272,6 +460,7 @@ dbDescribe(`${SUITE} checkAccountStatus / isInGoodStanding`, () => {
 dbDescribe(`${SUITE} COPPA gate and records`, () => {
   it("allows a user not under enforcement, blocks one under it", async () => {
     const id = await t.user();
+    await t.run(() => recordAgeVerification(id, "1990-01-01"));
     await expect(t.run(() => checkCoppaGate(id, "generate"))).resolves.toMatchObject({
       allowed: true,
       consentStatus: "not_required",
@@ -334,6 +523,8 @@ dbDescribe(`${SUITE} COPPA gate and records`, () => {
 
   it("records a parental decision, audited as granted or denied", async () => {
     const id = await t.user();
+    const child = `${new Date().getUTCFullYear() - 8}-01-01`;
+    await t.run(() => recordAgeVerification(id, child));
     await expect(
       t.run(() => recordParentalConsent(id, "granted", "parent@example.com"))
     ).resolves.toEqual({ success: true });
@@ -348,7 +539,71 @@ dbDescribe(`${SUITE} COPPA gate and records`, () => {
     expect(audit.map((r) => r.action).sort()).toEqual([
       "consent_denied",
       "consent_granted",
+      "profile_updated",
     ]);
+  });
+
+  // ── Audit X-16: the gate holds for an account whose age is unknown, and follows the age ──
+
+  it("refuses consent-gated features to an account whose age was never recorded", async () => {
+    const id = await t.user();
+    // The core's consent-gated features and each registered module's (translate with the
+    // translation module); a core-only app has no translate feature to gate.
+    for (const feature of consentFeatureFallback()) {
+      await expect(t.run(() => checkCoppaGate(id, feature))).resolves.toMatchObject({
+        allowed: false,
+        code: "account.age_unverified",
+      });
+    }
+    await expect(
+      t.run(() => checkCoppaGate(id, "update_profile"))
+    ).resolves.toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it("puts a child under the gate at verification, and lifts it only with granted consent", async () => {
+    const id = await t.user();
+    await t.run(() =>
+      recordAgeVerification(id, `${new Date().getUTCFullYear() - 9}-03-03`)
+    );
+    expect((await userRow(t, id))!.coppa_enforcement_active).toBe(true);
+    await expect(t.run(() => checkCoppaGate(id, "stream"))).resolves.toMatchObject({
+      allowed: false,
+      code: "account.consent_required",
+    });
+    await t.run(() => recordParentalConsent(id, "granted"));
+    await expect(t.run(() => checkCoppaGate(id, "stream"))).resolves.toMatchObject({
+      allowed: true,
+    });
+    await t.run(() => recordParentalConsent(id, "denied"));
+    expect((await userRow(t, id))!.coppa_enforcement_active).toBe(true);
+  });
+
+  it("records an age once: a child cannot re-declare as an adult", async () => {
+    const id = await t.user();
+    const child = `${new Date().getUTCFullYear() - 9}-03-03`;
+    await t.run(() => recordAgeVerification(id, child));
+    const again = await t.run(() => recordAgeVerification(id, "1980-01-01"));
+    expect(again.success).toBe(false);
+    const row = (await userRow(t, id))!;
+    expect(row.content_rating_level).toBe(1);
+    expect(row.coppa_enforcement_active).toBe(true);
+  });
+
+  it("refuses a consent decision for an account that needs none (an adult's, or an unverified one)", async () => {
+    const adult = await t.user();
+    await t.run(() => recordAgeVerification(adult, "1990-01-01"));
+    await expect(
+      t.run(() => recordParentalConsent(adult, "granted"))
+    ).resolves.toMatchObject({
+      success: false,
+    });
+    const unknown = await t.user();
+    await expect(
+      t.run(() => recordParentalConsent(unknown, "granted"))
+    ).resolves.toMatchObject({ success: false });
+    expect((await userRow(t, unknown))!.parental_consent_status).toBe("not_required");
   });
 
   it("changes nothing when the record cannot be written", async () => {
@@ -600,8 +855,10 @@ dbDescribe(`${SUITE} tenant isolation: users (ADR-053 D8)`, () => {
     const [a, b] = [await createTestTenant(), await createTestTenant()];
     const sub = uuid();
     await a.run(() => ensureUserProvisioned(sub));
-    // The insert conflicts with A's row and does nothing; B still has no row.
-    await expect(b.run(() => ensureUserProvisioned(sub))).resolves.toBe("existing");
+    // The insert conflicts with A's row and does nothing; B still has no row, and provisioning
+    // says so: "failed" — the identity is held outside B (it answered "existing" before the
+    // every-key arbiter, which no row of B's backed).
+    await expect(b.run(() => ensureUserProvisioned(sub))).resolves.toBe("failed");
     await expect(b.run(() => checkAccountStatus(sub, "generate"))).resolves.toMatchObject(
       {
         allowed: false,
@@ -618,5 +875,56 @@ dbDescribe(SUITE, () => {
       await expect(ensureUserProvisioned(uuid())).resolves.toBe("failed");
       await expect(getOwnProfile(uuid())).rejects.toThrow(/profile read failed/);
     });
+  });
+});
+
+// ── Erasure-hash schemes, recorded (review 9 M6) ────────────────────────────────────────
+
+dbDescribe(`${SUITE} erasure-hash schemes`, () => {
+  // Review 9 M6: a row the review 7 build wrote (HMAC of the address, no key id) was read as the
+  // unkeyed form and "upgraded" into a hash that matched nothing — the ban was lost. Now only a
+  // row recorded as 'sha256' is upgraded; an unmarked row, or one recorded as 'hmac', is left as
+  // it is, and still carries its ban when the address signs up again (and is rehashed then).
+  it.each([
+    ["unmarked", null],
+    ["recorded as the review 7 form", "hmac"],
+  ])("never upgrades a row %s: its ban survives", async (_name, scheme) => {
+    const actual = jest.requireActual("@/platform/auth/user-provisioning");
+    const forms = actual.erasureHashCandidates("r7-ban@x.y");
+    const review7 = forms.find(
+      (f: { scheme: string; keyId: string | null }) => f.scheme === "hmac"
+    );
+    const erased = uuid();
+    await sql(
+      t,
+      "insert into user_deletions (user_id, requested_by, standing, email_hash, email_hash_scheme) values ($1::uuid, 'test', 'banned', $2, $3)",
+      [erased, review7.hash, scheme]
+    );
+    expect(await t.run(() => actual.upgradeLegacyErasureHashes())).toBe(0);
+    expect(
+      await sql(t, "select email_hash from user_deletions where user_id = $1::uuid", [
+        erased,
+      ])
+    ).toEqual([{ email_hash: review7.hash }]);
+    const fresh = uuid();
+    await t.run(() => ensureUserProvisioned(fresh, { email: "R7-Ban@x.y" }));
+    expect((await userRow(t, fresh))!.account_status).toBe("banned");
+    expect(
+      await sql(
+        t,
+        "select email_hash, email_hash_scheme from user_deletions where user_id = $1::uuid",
+        [erased]
+      )
+    ).toEqual([{ email_hash: forms[0].hash, email_hash_scheme: "hmac-of-sha256" }]);
+  });
+
+  it("a key id without the keyed scheme is refused by the database", async () => {
+    await expect(
+      sql(
+        t,
+        "insert into user_deletions (user_id, requested_by, standing, email_hash, email_hash_key, email_hash_scheme) values ($1::uuid, 'test', 'banned', $2, 'abcdefabcdefabcd', 'sha256')",
+        [uuid(), "a".repeat(64)]
+      )
+    ).rejects.toThrow(/user_deletions_email_hash_scheme_known/);
   });
 });

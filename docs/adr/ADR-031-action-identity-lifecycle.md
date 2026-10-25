@@ -222,6 +222,53 @@ The ADR-029 conformance kit MUST include arms for:
   never collapsed to success or failure.
 - **Identity-before-commitment** — a rejected proposal has a trajectory and no `stateVersion`.
 
+## Amendment (v6.0.0, review 10, 2026-10-24) — an approval is claimed for its run
+
+`executed` was set by the step that used the approval, immediately before the action ran, so a run
+that then failed transiently burned it: the answer said "try again" and the retry was refused.
+Now the proposal lifecycle has `executing` — the approval in use by one run:
+
+    approved --claim--> executing --complete--> executed
+                            \--release (failed before taking effect)--> approved
+
+Each transition is a compare-and-set on the status it moves from (`ProposalStore.claim`,
+`complete`, `release`), so concurrent runs of one approval run once. A run that throws, or whose
+result reports failure (`Tool.reportsFailure`), releases its claim with the reason
+(`last_run_error`); one that took effect — even if its record then could not be stored
+(`ActionNotRecordedError`) — completes it. Where every effect is a write in the tenant's own
+transaction (`Tool.atomic`, `ProposalStore.atomically`), the claim, the effect, the trajectory step
+and the completion are one transaction. A run whose process died is left `executing`; after a
+10-minute lease the approval-expiry job recovers it — `executed` when a commitment step carrying
+its operation id was recorded (it took effect), `approved` otherwise — and audits each recovery.
+At most one proposal per operation is open, approved, executing or executed.
+
+## Amendment (v6.0.0, review 11, 2026-10-24) — a claim's generation, and an undecided run
+
+The review 10 recovery was unsafe for a run slower than its lease: the job returned the approval
+to `approved` ("no step recorded"), the run then took effect, its completion lost its
+compare-and-set and was swallowed — and "approve again" ran the effect a second time. Now:
+
+    approved --claim(token)--> executing --complete(token)--> executed
+                                   |  \--release(token), failed before the work returned--> approved
+                                   \--lease passed, outcome unknown--> indeterminate
+    indeterminate --complete(token)--> executed          (the run itself, should it end)
+    indeterminate --mark_executed (a person)--> executed
+    indeterminate --reapprove (a person, fresh approval)--> approved
+
+- **A claim's generation.** `claim` mints a run token; `complete` and `release` move the claim only
+  with it. A run never ends a claim it no longer holds. A completion that does not land is raised
+  as applied (`ActionNotRecordedError`, `approvalConflict`), audited and alerted — never swallowed.
+- **Never a guess.** A non-atomic run that did not end within its lease may have taken effect —
+  the process may have died between the effect and its record — so the recovery never returns it
+  to `approved`: `executed` when its commitment step was recorded (in its trajectory or a
+  continuation of it), else `indeterminate`, which is not runnable and waits for a person. Only an
+  atomic run — claim, effect, step and completion one transaction — is returned to `approved`: its
+  effect rolled back with its claim. The "no step recorded → approved" rule is removed.
+- **Applied is applied.** Once a tool's own work has returned, every later failure is "applied"
+  (the claim completed); only a failure before it returns releases the claim. An approved tool
+  executes once (no output-schema retry).
+- At most one proposal per operation is open, approved, executing, undecided or executed.
+
 ## Related
 
 ADR-028 (application framework — D3 action pipeline, D4 trajectory append, D5 optimistic

@@ -16,6 +16,7 @@
 import type { AgentIdentity, BudgetConfig } from "@/platform/agents/types";
 import { generateSecureId } from "@/platform/agents/utils";
 import { getTrajectoryStore } from "@/platform/agents";
+import { latestTrajectorySegment } from "@/platform/agents/trajectory-store";
 import {
   executeActionPipeline,
   repairSession,
@@ -265,8 +266,12 @@ export async function dispatch<TState, TAction, TConfig>(
       stateStore: getActivityStateStore<TState>(),
       trajectoryStore: getTrajectoryStore(),
       trajectoryId: session.trajectory.trajectoryId,
-      stepIndex: session.trajectory.steps.length,
+      // The move's index in the whole session, across its trajectory's segments.
+      stepIndex: (session.trajectory.stepOffset ?? 0) + session.trajectory.steps.length,
       expectedVersion: session.current.version,
+      // A session outgrows one trajectory (review 11 H-2: the 1 001st move was refused): a full
+      // one is continued in a linked new one, with the move, and the result carries it.
+      rolloverTrajectory: true,
       computeNextState: () => definition.applyAction(session.current.state, action),
       budgetCeiling: session.budget?.maxCostPerTrajectory,
       ceilingLabel: "session ceiling",
@@ -381,12 +386,19 @@ export async function loadSession<TState, TAction, TConfig>(
     throw new SessionAccessDeniedError(args.sessionId, args.actor.actorId);
   }
 
+  // The session's trajectory, found without reading its steps (review 12 M2), then the TAIL of
+  // its chain read alone (review 11 H-2: its moves continue there) — never a predecessor's steps.
+  // A session's history is read by paging its segments (trajectoryChainPages).
   const trajectories = await getTrajectoryStore().query({
     subjectKind: "session",
     subjectId: args.sessionId,
     limit: 1,
+    withoutSteps: true,
   });
-  const record = trajectories[0];
+  const newest = trajectories[0];
+  const record = newest
+    ? await latestTrajectorySegment(getTrajectoryStore(), newest.trajectory.trajectoryId)
+    : undefined;
   if (!record) {
     throw new Error(`app-framework: no trajectory for session ${args.sessionId}`);
   }
@@ -402,11 +414,12 @@ export async function loadSession<TState, TAction, TConfig>(
       stateStore: store,
       trajectoryStore: getTrajectoryStore(),
       emit,
+      rolloverTrajectory: true,
     });
   }
 
   const refreshed = repair?.repaired
-    ? await getTrajectoryStore().getById(record.trajectory.trajectoryId)
+    ? await latestTrajectorySegment(getTrajectoryStore(), record.trajectory.trajectoryId)
     : record;
 
   return {

@@ -4,6 +4,12 @@
  * Refused when the tenant does not accept new accounts (signups_enabled). In a shared
  * deployment the new account is assigned the tenant of the address it signed up at (ADR-053
  * D2); if that assignment fails, the account is assigned at its first sign-in instead.
+ *
+ * Age (COPPA, audit X-16): `dateOfBirth` (YYYY-MM-DD) is required and checked here, before the
+ * account exists. The account's platform row is created at once with that age recorded, so a
+ * child's account starts under the consent gate. If the record cannot be written the account
+ * still exists, unverified — and an unverified account is refused every consent-gated feature
+ * until its age is recorded (POST /api/account/age), so the failure is never an adult's access.
  */
 
 import { NextRequest } from "next/server";
@@ -12,6 +18,7 @@ import { apiError, readJsonObject, requireTextFields } from "@/platform/errors";
 import {
   authResultResponse,
   callAuthProvider,
+  concealAccount,
   passwordPolicyRefusal,
 } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
@@ -21,6 +28,8 @@ import {
   sessionTenantRefusal,
   signupsOpen,
 } from "@/platform/tenancy/identity";
+import { parseDeclaredBirthDate, recordAgeVerification } from "@/platform/auth/coppa";
+import { ensureUserProvisioned } from "@/platform/auth/user-provisioning";
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
@@ -30,10 +39,16 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const read = await readJsonObject(request);
   if (!read.ok) return read.response;
   // Typed as text: requireTextFields below refuses anything else before it is used.
-  const body = read.body as { email: string; password: string };
+  const body = read.body as { email: string; password: string; dateOfBirth: string };
 
-  const invalid = requireTextFields(body, ["email", "password"], request);
+  const invalid = requireTextFields(body, ["email", "password", "dateOfBirth"], request);
   if (invalid) return invalid;
+  if (!parseDeclaredBirthDate(body.dateOfBirth)) {
+    return apiError("request.invalid_value", {
+      params: { field: "dateOfBirth", allowed: ["a past date of birth, YYYY-MM-DD"] },
+      request,
+    });
+  }
 
   if (!(await signupsOpen())) return apiError("auth.signups_closed", { request });
 
@@ -54,11 +69,42 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   if (result.success) {
     // No email in the log: logs are not a store of personal data (ring 6).
     logger.info("User registered", { route: "api/auth/sign-up" });
-    if (result.userId) await assignCurrentTenant(result.userId);
+    if (result.userId) {
+      await assignCurrentTenant(result.userId);
+      await recordSignUpAge(result.userId, body.email, body.dateOfBirth);
+    }
   }
   // A provider that signs the new account straight in returns a session: checked like sign-in's.
   const refused = await sessionTenantRefusal(result, request);
   if (refused) return refused;
 
-  return authResultResponse(result, { request, context: "Sign up failed" });
+  // An address that already has an account is answered as a new one (audit A-15).
+  return authResultResponse(concealAccount(result, "create"), {
+    request,
+    context: "Sign up failed",
+  });
 });
+
+/** Create the account's row with its declared age; a failure leaves it unverified (gated). */
+async function recordSignUpAge(
+  userId: string,
+  email: string,
+  dateOfBirth: string
+): Promise<void> {
+  const provisioned = await ensureUserProvisioned(userId, { email });
+  if (provisioned !== "created" && provisioned !== "existing") {
+    if (provisioned !== "skipped") {
+      logger.warn("Sign-up: the account's age could not be recorded yet", {
+        outcome: provisioned,
+        route: "api/auth/sign-up",
+      });
+    }
+    return;
+  }
+  const recorded = await recordAgeVerification(userId, dateOfBirth);
+  if (!recorded.success) {
+    logger.warn("Sign-up: the account's age could not be recorded; it stays unverified", {
+      route: "api/auth/sign-up",
+    });
+  }
+}

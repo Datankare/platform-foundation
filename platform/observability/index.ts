@@ -38,6 +38,7 @@ import { createMetricsSink } from "./metrics-sink";
 import { HealthRegistry } from "./health";
 import { resetHealthCache } from "./health-memo";
 import { logger } from "@/lib/logger";
+import { OBSERVABILITY_STATE_KEY } from "./state-key";
 import {
   getSingleton,
   hasSingleton,
@@ -63,7 +64,7 @@ interface ObservabilityState {
  * entries, so instrumentation.ts set state on one copy of this file while every route read
  * another and found null. A module-identity diagnostic showed the two ids.
  */
-const STATE_KEY = "platform.observability.state";
+const STATE_KEY = OBSERVABILITY_STATE_KEY;
 
 /** The current state, or null when initObservability() has not run in this process. */
 function readState(): ObservabilityState | null {

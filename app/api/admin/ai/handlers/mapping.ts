@@ -7,22 +7,48 @@
  * key's tier permission, validation, history, two-person approval and dual control (audit X-7).
  * Vocabulary-free — capability and feature names are opaque strings the handler does not
  * enumerate.
+ *
+ * One hold, the key's (review 10 H1, H3): set_capability_mapping is a config write
+ * (COMMAND_BAR_CONFIG_WRITES, command-bar.ts), never held as an action; a write to a
+ * dual-controlled key is held by the config writer under the key's own rules, and the command bar
+ * reports it held.
  */
 
-import { getConfig } from "@/platform/auth/platform-config";
+import {
+  CAPABILITY_FEATURES_KEY,
+  readCapabilityFeatures,
+} from "@/platform/agents/governed-agent-config";
 import { writeGovernedConfig } from "@/platform/admin/governed-config";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import { fromGovernedConfig, type ActionResult } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const CAPABILITY_FEATURES_KEY = "agent.capability_features";
+export { CAPABILITY_FEATURES_KEY };
 
-async function readPairs(): Promise<[string, string[]][]> {
-  const pairs = await getConfig<[string, string[]][]>(CAPABILITY_FEATURES_KEY, []);
-  return Array.isArray(pairs)
-    ? pairs.map(([c, f]) => [c, Array.isArray(f) ? f : []])
-    : [];
+/**
+ * The map as [capability, features[]] pairs, or null when it cannot be read or is not that shape
+ * (review 13 P). Never an empty list in place of an unreadable one: the handler writes the whole
+ * list back, so "unreadable" read as "empty" would erase every mapping (as audit B-21 found for
+ * the agent registry). A copy: the handler changes it in place.
+ */
+async function readPairs(): Promise<[string, string[]][] | null> {
+  let pairs: unknown;
+  try {
+    pairs = await readCapabilityFeatures();
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(pairs)) return null;
+  const wellFormed = pairs.every(
+    (p) =>
+      Array.isArray(p) &&
+      p.length === 2 &&
+      typeof p[0] === "string" &&
+      Array.isArray(p[1]) &&
+      (p[1] as unknown[]).every((f) => typeof f === "string")
+  );
+  return wellFormed ? structuredClone(pairs as [string, string[]][]) : null;
 }
 
 /**
@@ -38,6 +64,12 @@ export async function handleSetCapabilityMapping(
   const remove: boolean = input.remove === true;
 
   const pairs = await readPairs();
+  if (!pairs) {
+    return {
+      success: false,
+      error: "The capability map could not be read, so nothing was changed.",
+    };
+  }
   const idx = pairs.findIndex(([c]) => c === capability);
 
   let summary: string;

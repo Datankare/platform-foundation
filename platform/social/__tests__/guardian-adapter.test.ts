@@ -107,9 +107,17 @@ describe("createGuardianScreenFn", () => {
       expect.stringContaining("social-screen-"),
       expect.objectContaining({
         contentType: "social",
-        contentRatingLevel: 3,
+        contentRatingLevel: 1,
       })
     );
+  });
+
+  it("screens at the strictest rating by default, and at a caller's when given (audit D-18)", async () => {
+    mockScreen.mockResolvedValue({ action: "allow", reasoning: "" });
+    await createGuardianScreenFn()("Name", "group-name");
+    expect(mockScreen.mock.calls.at(-1)[3].contentRatingLevel).toBe(1);
+    await createGuardianScreenFn(2)("Name", "group-name");
+    expect(mockScreen.mock.calls.at(-1)[3].contentRatingLevel).toBe(2);
   });
 
   it("uses 'input' direction for all social screening", async () => {

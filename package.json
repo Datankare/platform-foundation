@@ -1,6 +1,6 @@
 {
   "name": "platform-foundation",
-  "version": "5.1.1",
+  "version": "6.0.0",
   "license": "MIT",
   "engines": {
     "node": ">=22"
@@ -28,12 +28,13 @@
     "jobs:worker": "node scripts/jobs-worker.mjs"
   },
   "dependencies": {
-    "@sentry/nextjs": "^11.8.0",
+    "@sentry/nextjs": "^11.9.0",
     "@supabase/supabase-js": "^2.117.2",
     "ajv": "8.20.0",
-    "intl-messageformat": "12.1.3",
+    "intl-messageformat": "12.1.4",
+    "ioredis": "5.11.1",
     "jose": "^6.2.12",
-    "next": "16.4.2",
+    "next": "16.4.3",
     "pg": "8.23.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -43,25 +44,26 @@
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
-    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
-    "@types/jest": "^29.5.14",
+    "@types/jest": "^30.0.0",
     "@types/node": "^24",
     "@types/pg": "8.23.1",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "babel-jest": "^30.4.1",
-    "eslint": "^9",
-    "eslint-config-next": "16.4.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "babel-jest": "^30.5.2",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.4.3",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-regexp": "^3.3.1",
     "fast-check": "4.10.2",
-    "jest": "^30.3.0",
-    "jest-environment-jsdom": "^30.4.1",
+    "jest": "^30.5.2",
+    "jest-environment-jsdom": "^30.5.2",
     "prettier": "3.9.10",
     "tailwindcss": "^4",
     "ts-jest": "^29.4.15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "yaml": "2.9.1"
   },
   "jest": {
     "preset": "ts-jest",
@@ -135,7 +137,7 @@
       ]
     },
     "transformIgnorePatterns": [
-      "/node_modules/(?!(intl-messageformat|@formatjs)/)"
+      "/node_modules/(?!(intl-messageformat|@formatjs|jose)/)"
     ]
   },
   "overrides": {

@@ -88,6 +88,15 @@ export const DEFAULT_RULES = {
   AUTH_ACCOUNT: { id: "auth:account", maxRequests: 10, windowSeconds: 3600 },
   /** Guest token minting: 20 per hour per IP */
   AUTH_GUEST: { id: "auth:guest", maxRequests: 20, windowSeconds: 3600 },
+  /**
+   * Guests' paid requests from one address bucket, whatever guest token they carry: 20 per day
+   * (audit A-6, X-20). Each guest token's own allowance still applies within it.
+   */
+  GUEST_PAID_PER_ADDRESS: {
+    id: "guest:paid-address",
+    maxRequests: 20,
+    windowSeconds: 86400,
+  },
   /** Session plumbing (hosted sign-in redirects, sign-out): 30 per minute per IP */
   AUTH_SESSION: { id: "auth:session", maxRequests: 30, windowSeconds: 60 },
   /** Admin operations: 30 per minute */

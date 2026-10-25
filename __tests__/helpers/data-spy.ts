@@ -46,25 +46,30 @@ export function spiedData(): Record<string, unknown> {
   return {
     ...actual,
     withTenantTx: <T>(fn: (tx: import("@/platform/data").Tx) => Promise<T>) =>
-      actual.withTenantTx((tx) =>
-        fn({
-          tenantId: tx.tenantId,
-          async query(text, values) {
-            const m = WRITE.exec(text);
-            if (m) {
-              const verb = m[1].split(/\s+/)[0].toLowerCase();
-              const table = m[2].toLowerCase();
-              if (table === "audit_log" && dataSpy().auditDown) {
-                throw new Error("audit store down");
-              }
-              const result = await tx.query(text, values);
-              if (result.rowCount > 0) dataSpy().writes.push([verb, table]);
-              return result as never;
-            }
-            return tx.query(text, values) as never;
-          },
-        })
-      ),
+      actual.withTenantTx((tx) => fn(spied(tx))),
+    withSeparateTenantTx: <T>(fn: (tx: import("@/platform/data").Tx) => Promise<T>) =>
+      actual.withSeparateTenantTx((tx) => fn(spied(tx))),
+  };
+}
+
+/** `tx` with its writes observed (and audit_log writes failing while auditDown). */
+function spied(tx: import("@/platform/data").Tx): import("@/platform/data").Tx {
+  return {
+    tenantId: tx.tenantId,
+    async query(text, values) {
+      const m = WRITE.exec(text);
+      if (m) {
+        const verb = m[1].split(/\s+/)[0].toLowerCase();
+        const table = m[2].toLowerCase();
+        if (table === "audit_log" && dataSpy().auditDown) {
+          throw new Error("audit store down");
+        }
+        const result = await tx.query(text, values);
+        if (result.rowCount > 0) dataSpy().writes.push([verb, table]);
+        return result as never;
+      }
+      return tx.query(text, values) as never;
+    },
   };
 }
 

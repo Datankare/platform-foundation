@@ -35,16 +35,20 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     AUTH_PROVIDER: "cognito",
     NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_AbC123",
     NEXT_PUBLIC_COGNITO_CLIENT_ID: "abc123def456",
+    COGNITO_CLIENT_SECRET: "s".repeat(52),
     NEXT_PUBLIC_COGNITO_REGION: "us-east-1",
     COGNITO_REGION: "us-east-1",
     SUPABASE_URL: "https://abcdefghijklmnop.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: JWT,
     GUEST_TOKEN_SECRET: GUEST_SECRET,
+    ERASURE_HASH_KEY: "e".repeat(64),
     CRON_SECRET: "c".repeat(64),
     APP_STATE_STORE: "supabase",
     TRAJECTORY_STORE: "supabase",
     BUDGET_STORE: "supabase",
-    CACHE_PROVIDER: "memory",
+    CACHE_PROVIDER: "upstash",
+    UPSTASH_REDIS_REST_URL: "https://cache.example.upstash.io",
+    UPSTASH_REDIS_REST_TOKEN: "t".repeat(40),
     TENANCY_MODE: "single",
     TENANT_ID: "00000000-0000-4000-8000-000000000001",
     DATABASE_URL: REQUEST_DB,
@@ -220,6 +224,9 @@ describe("D1 — no test-double auth in production", () => {
   });
 });
 
+const SHARED_CACHE =
+  "set CACHE_PROVIDER=upstash with UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (Vercel, or any host), or CACHE_PROVIDER=valkey with VALKEY_URL=rediss://… (a container host's own Valkey or Redis); memory is for local and CI runs only (DEPLOYMENT_HOST=local or ci)";
+
 describe("the cache is chosen, never inferred (TASK-139)", () => {
   it("a deployment must declare CACHE_PROVIDER — even with the Redis URL set", () => {
     expect(
@@ -229,13 +236,27 @@ describe("the cache is chosen, never inferred (TASK-139)", () => {
           UPSTASH_REDIS_REST_URL: "https://r.upstash.io",
         })
       )
-    ).toEqual([
-      "CACHE_PROVIDER is required: upstash (shared), or memory (per instance, declared on purpose)",
-    ]);
+    ).toEqual([`CACHE_PROVIDER is required — ${SHARED_CACHE}`]);
   });
 
-  it("accepts memory when declared, and upstash with its credentials", () => {
-    expect(checkEnvironmentContract(valid({ CACHE_PROVIDER: "memory" }))).toEqual([]);
+  it("accepts memory only in a local or CI run, and upstash with its credentials", () => {
+    // Review 8 L3: a deployment's cache carries token revocations to every instance.
+    // Review 9 M5: the refusal says exactly what to set.
+    expect(checkEnvironmentContract(valid({ CACHE_PROVIDER: "memory" }))).toEqual([
+      `CACHE_PROVIDER=memory in a deployment — sign-outs, role and MFA changes would reach only the instance that made them. ${SHARED_CACHE}`,
+    ]);
+    for (const host of ["vercel", "container", "aws"])
+      expect(
+        checkEnvironmentContract(
+          valid({ CACHE_PROVIDER: "memory", DEPLOYMENT_HOST: host })
+        )
+      ).toHaveLength(host === "container" ? 2 : 1);
+    for (const host of ["local", "ci"])
+      expect(
+        checkEnvironmentContract(
+          valid({ CACHE_PROVIDER: "memory", DEPLOYMENT_HOST: host })
+        )
+      ).toEqual([]);
     expect(
       checkEnvironmentContract(
         valid({
@@ -248,10 +269,112 @@ describe("the cache is chosen, never inferred (TASK-139)", () => {
   });
 
   it("upstash without its credentials is refused, naming each", () => {
-    expect(checkEnvironmentContract(valid({ CACHE_PROVIDER: "upstash" }))).toEqual([
-      "UPSTASH_REDIS_REST_URL is required by CACHE_PROVIDER=upstash but not set",
-      "UPSTASH_REDIS_REST_TOKEN is required by CACHE_PROVIDER=upstash but not set",
+    expect(
+      checkEnvironmentContract(
+        valid({
+          CACHE_PROVIDER: "upstash",
+          UPSTASH_REDIS_REST_URL: undefined,
+          UPSTASH_REDIS_REST_TOKEN: undefined,
+        })
+      )
+    ).toEqual([
+      expect.stringMatching(
+        /^UPSTASH_REDIS_REST_URL is required by CACHE_PROVIDER=upstash but not set — copy it from the Upstash database's REST API panel into the host's secret store/
+      ),
+      expect.stringMatching(
+        /^UPSTASH_REDIS_REST_TOKEN is required by CACHE_PROVIDER=upstash but not set — /
+      ),
     ]);
+  });
+
+  // Review 9 M5: a container host's own Valkey or Redis.
+  it("valkey: needs VALKEY_URL, over TLS in a deployment (redis:// only locally and in CI)", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({
+          CACHE_PROVIDER: "valkey",
+          VALKEY_URL: "rediss://:pw@cache.internal:6379",
+        })
+      )
+    ).toEqual([]);
+    expect(checkEnvironmentContract(valid({ CACHE_PROVIDER: "valkey" }))).toEqual([
+      expect.stringMatching(
+        /^VALKEY_URL is required by CACHE_PROVIDER=valkey but not set — /
+      ),
+    ]);
+    expect(
+      checkEnvironmentContract(
+        valid({ CACHE_PROVIDER: "valkey", VALKEY_URL: "redis://cache.internal:6379" })
+      )
+    ).toEqual([expect.stringMatching(/^VALKEY_URL must use rediss:\/\/ \(TLS/)]);
+    expect(
+      checkEnvironmentContract(
+        valid({
+          CACHE_PROVIDER: "valkey",
+          VALKEY_URL: "redis://localhost:6379",
+          DEPLOYMENT_HOST: "ci",
+        })
+      )
+    ).toEqual([]);
+    // Never the value: a URL may carry the password.
+    const violations = checkEnvironmentContract(
+      valid({ CACHE_PROVIDER: "valkey", VALKEY_URL: "http://user:s3cret@x" })
+    );
+    expect(violations.join(" ")).not.toContain("s3cret");
+    expect(violations).toEqual([
+      expect.stringMatching(/^VALKEY_URL has the wrong shape/),
+      expect.stringMatching(/^VALKEY_URL must use rediss:\/\//),
+    ]);
+  });
+
+  // Review 10 M6: a URL's query parameters would override TLS and the command timeout.
+  it.each([
+    "rediss://:pw@cache.internal:6379/?tls=",
+    "rediss://:pw@cache.internal:6379/?commandTimeout=0",
+    "rediss://:pw@cache.internal:6379/0#x",
+  ])("valkey: VALKEY_URL with a query string or fragment is refused (%s)", (url) => {
+    const violations = checkEnvironmentContract(
+      valid({ CACHE_PROVIDER: "valkey", VALKEY_URL: url })
+    );
+    expect(violations).toEqual([
+      expect.stringMatching(/^VALKEY_URL must not carry a query string or fragment/),
+    ]);
+    expect(violations.join(" ")).not.toContain(":pw@");
+  });
+
+  // Review 11 L-6: every rule the provider applies, at boot — never a bare URIError at first use.
+  it.each([
+    [
+      "rediss://u:p%zz@cache.internal",
+      /^VALKEY_URL has a malformed percent-escape in its password .*\(config\.valkey_url_invalid\)$/,
+    ],
+    [
+      "rediss://u%zz:p@cache.internal",
+      /^VALKEY_URL has a malformed percent-escape in its user name/,
+    ],
+    [
+      "rediss://user@cache.internal:6380",
+      /^VALKEY_URL names a user without a password .*\(config\.valkey_url_invalid\)$/,
+    ],
+    ["rediss://cache.internal/100", /^VALKEY_URL's path must be a database number/],
+    ["rediss://cache.internal:99999", /^VALKEY_URL is not a URL/],
+  ])("valkey: VALKEY_URL %s is refused at boot, coded", (url, message) => {
+    const violations = checkEnvironmentContract(
+      valid({ CACHE_PROVIDER: "valkey", VALKEY_URL: url })
+    );
+    expect(violations).toEqual([expect.stringMatching(message)]);
+    expect(violations.join(" ")).not.toContain("p%zz");
+  });
+
+  it("valkey: a password alone, or a user and a password, boots", () => {
+    for (const url of [
+      "rediss://:p%40ss@cache.internal",
+      "rediss://u:p@cache.internal:6380/2",
+    ]) {
+      expect(
+        checkEnvironmentContract(valid({ CACHE_PROVIDER: "valkey", VALKEY_URL: url }))
+      ).toEqual([]);
+    }
   });
 
   it.each(["redis", "Memory", "upstash ", "none"])("refuses the value %p", (v) => {
@@ -274,9 +397,7 @@ describe("the cache is chosen, never inferred (TASK-139)", () => {
           NEXT_MANUAL_SIG_HANDLE: "true",
         })
       )
-    ).toEqual([
-      "CACHE_PROVIDER is required: upstash (shared), or memory (per instance, declared on purpose)",
-    ]);
+    ).toEqual([`CACHE_PROVIDER is required — ${SHARED_CACHE}`]);
   });
 });
 
@@ -321,7 +442,8 @@ describe("D2 — one source, declared shape", () => {
     ]);
   });
 
-  it.each(["sb_secret_abc123", "sb_publishable_abc123", "not-a-key"])(
+  // Built at run time: a literal "sb_secret_…" reads as a leaked key to the secret scan.
+  it.each([["sb", "secret_abc123"].join("_"), "sb_publishable_abc123", "not-a-key"])(
     "refuses a service-role key that is not the legacy JWT (%s)",
     (key) => {
       const v = checkEnvironmentContract(valid({ SUPABASE_SERVICE_ROLE_KEY: key }));
@@ -369,6 +491,17 @@ describe("required settings", () => {
     ]);
   });
 
+  it("cognito requires a confidential app client (audit A-7)", () => {
+    expect(checkEnvironmentContract(valid({ COGNITO_CLIENT_SECRET: undefined }))).toEqual(
+      [
+        "COGNITO_CLIENT_SECRET is required by AUTH_PROVIDER=cognito (a confidential app client)",
+      ]
+    );
+    expect(
+      checkEnvironmentContract(valid({ COGNITO_CLIENT_SECRET: "short" }))
+    ).toContainEqual(expect.stringMatching(/^COGNITO_CLIENT_SECRET has the wrong shape/));
+  });
+
   it("cognito region must match the pool id's region", () => {
     const v = checkEnvironmentContract(
       valid({ NEXT_PUBLIC_COGNITO_REGION: "us-west-2", COGNITO_REGION: undefined })
@@ -407,9 +540,13 @@ describe("required settings", () => {
         AUTH_PROVIDER: "cognito",
         NEXT_PUBLIC_COGNITO_USER_POOL_ID: "eu-west-1_X",
         NEXT_PUBLIC_COGNITO_CLIENT_ID: "c",
+        COGNITO_CLIENT_SECRET: "s".repeat(52),
         GUEST_TOKEN_SECRET: GUEST_SECRET,
+        ERASURE_HASH_KEY: "e".repeat(64),
         CRON_SECRET: "c".repeat(64),
-        CACHE_PROVIDER: "memory",
+        CACHE_PROVIDER: "upstash",
+        UPSTASH_REDIS_REST_URL: "https://cache.example.upstash.io",
+        UPSTASH_REDIS_REST_TOKEN: "t".repeat(40),
         TENANCY_MODE: "single",
         TENANT_ID: "00000000-0000-4000-8000-000000000001",
       })
@@ -419,6 +556,17 @@ describe("required settings", () => {
   it("a real auth provider requires GUEST_TOKEN_SECRET (D4)", () => {
     expect(checkEnvironmentContract(valid({ GUEST_TOKEN_SECRET: undefined }))).toEqual([
       "GUEST_TOKEN_SECRET is required by AUTH_PROVIDER=cognito (signed guest tokens)",
+    ]);
+  });
+
+  it("a real auth provider requires ERASURE_HASH_KEY (review 7 L4)", () => {
+    expect(checkEnvironmentContract(valid({ ERASURE_HASH_KEY: undefined }))).toEqual([
+      "ERASURE_HASH_KEY is required by AUTH_PROVIDER=cognito (the erased-ban address hash)",
+    ]);
+    expect(checkEnvironmentContract(valid({ ERASURE_HASH_KEY: "short" }))).toEqual([
+      expect.stringMatching(
+        /^ERASURE_HASH_KEY has the wrong shape — expected at least 32 random characters/
+      ),
     ]);
   });
 
@@ -951,5 +1099,61 @@ describe("ADR-055 — the container image's settings", () => {
       drainMs: 30_000,
       timeoutMs: 31_000,
     });
+  });
+});
+
+// Audit G-13 and X-18: settings that had no effect, or leaked, and the provenance key's shape.
+describe("audit G-13 — AI provider, public Google key; X-18 provenance key", () => {
+  it.each(["vercel", "container", undefined])(
+    "refuses the mock AI provider on a %s deployment",
+    (host) => {
+      expect(
+        checkEnvironmentContract(
+          valid({ DEPLOYMENT_HOST: host, AI_PROVIDER: "mock" })
+        ).join("\n")
+      ).toMatch(/AI_PROVIDER is "mock"/);
+    }
+  );
+
+  it.each(["local", "ci"])("accepts the mock AI provider in a %s run", (host) => {
+    expect(
+      checkEnvironmentContract(
+        valid({ DEPLOYMENT_HOST: host, AI_PROVIDER: "mock" })
+      ).join("\n")
+    ).not.toMatch(/AI_PROVIDER/);
+  });
+
+  it.each(["openai", "Anthropic", " mock", ""])("refuses AI_PROVIDER=%p", (value) => {
+    const v = checkEnvironmentContract(valid({ AI_PROVIDER: value })).join("\n");
+    if (value === "") expect(v).not.toMatch(/AI_PROVIDER/);
+    else expect(v).toMatch(/AI_PROVIDER has the wrong shape/);
+  });
+
+  it("accepts AI_PROVIDER=anthropic and an unset one", () => {
+    expect(checkEnvironmentContract(valid({ AI_PROVIDER: "anthropic" }))).toEqual([]);
+    expect(checkEnvironmentContract(valid())).toEqual([]);
+  });
+
+  it("refuses a Google key under a NEXT_PUBLIC_ name (shipped to browsers)", () => {
+    expect(
+      checkEnvironmentContract(valid({ NEXT_PUBLIC_GOOGLE_API_KEY: "AIza-secret" })).join(
+        "\n"
+      )
+    ).toMatch(/NEXT_PUBLIC_GOOGLE_API_KEY is set/);
+  });
+
+  it.each(["short", "x".repeat(31), "has space in it but is long enough 1234"])(
+    "refuses a provenance key of the wrong shape: %p",
+    (key) => {
+      expect(
+        checkEnvironmentContract(valid({ PROVENANCE_SIGNING_KEY: key })).join("\n")
+      ).toMatch(/PROVENANCE_SIGNING_KEY has the wrong shape/);
+    }
+  );
+
+  it("accepts a well-formed provenance key", () => {
+    expect(
+      checkEnvironmentContract(valid({ PROVENANCE_SIGNING_KEY: "k".repeat(64) }))
+    ).toEqual([]);
   });
 });

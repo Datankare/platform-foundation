@@ -175,7 +175,9 @@ are consumer-side (see AGENT_DELEGATION_GUIDE)
 
 _Confidential & Proprietary — Datankare — March 2026_
 
-_Last reviewed: October 2026 (Sprint 7R entry gate — ADR-053 tenancy, ADR-054 core/modules, ADR-055 deploy anywhere, ADR-056 operations baseline, all Proposed; server code to reach Postgres directly)_
+_Last reviewed: October 24, 2026 (Sprint 7R close — ADR-053, ADR-054, ADR-055, ADR-056 Accepted; PF v6.0.0)_
+
+_Previously reviewed: October 2026 (Sprint 7R entry gate — ADR-053 tenancy, ADR-054 core/modules, ADR-055 deploy anywhere, ADR-056 operations baseline, all Proposed; server code to reach Postgres directly)_
 
 _Last reviewed: October 2026 (Sprint 7A close — ADR-050 Accepted, PF v3.0.0; ADR-051 Proposed until Sprint 7B; schema baseline + migration replay)_
 

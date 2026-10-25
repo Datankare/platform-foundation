@@ -28,19 +28,30 @@ jest.mock("@/platform/auth/account-status-guard", () =>
 jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
-jest.mock("@/platform/gdpr", () => ({ PurgePipeline: jest.fn() }));
+jest.mock("@/platform/gdpr", () => ({ createPlatformPurgePipeline: jest.fn() }));
 jest.mock("@/platform/ai", () => ({ getOrchestrator: jest.fn() }));
 jest.mock("@/prompts", () => ({
   getPromptConfig: jest.fn(() => ({ tier: "standard", maxTokens: 1000, name: "admin" })),
   buildAdminSystemPrompt: jest.fn(() => "sys"),
 }));
 jest.mock("@/platform/moderation/store", () => ({ getModerationStore: jest.fn() }));
+/** Whether this suite's direct-change cases have the action off the dual-control list. */
+const mockDualControl = { off: false };
+jest.mock("@/app/api/admin/ai/command-bar", () => {
+  const actual = jest.requireActual("@/app/api/admin/ai/command-bar");
+  return {
+    ...actual,
+    isDualControlledAction: jest.fn(async (tool: string) =>
+      mockDualControl.off ? false : actual.isDualControlledAction(tool)
+    ),
+  };
+});
 
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
-import { PurgePipeline } from "@/platform/gdpr";
+import { createPlatformPurgePipeline } from "@/platform/gdpr";
 import { getOrchestrator } from "@/platform/ai";
 import { buildAdminSystemPrompt } from "@/prompts";
 import { getModerationStore } from "@/platform/moderation/store";
@@ -448,9 +459,39 @@ dbDescribe(`${SUITE} GET /api/admin/users`, () => {
   });
 });
 
+dbDescribe(`${SUITE} PATCH /api/admin/users under dual control (audit X-10)`, () => {
+  it("holds a role change for a second admin by default, and changes nothing", async () => {
+    const before = (await auditOf(a)).length;
+    const res = await usersPATCH(
+      req("/api/admin/users", admin, {
+        method: "PATCH",
+        body: { userId: carol, roleId: moderatorRole },
+      })
+    );
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body).toMatchObject({ held: true, proposalId: expect.any(String) });
+    expect(await roleOf(carol)).toBe(freeRole);
+    expect(
+      (await auditOf(a)).slice(before).filter((r) => r.action === "role_changed")
+    ).toEqual([]);
+  });
+});
+
 dbDescribe(`${SUITE} PATCH /api/admin/users`, () => {
   const patch = (body: unknown, caller: Parameters<typeof asCallerIn>[0] = admin) =>
     usersPATCH(req("/api/admin/users", caller, { method: "PATCH", body }));
+
+  // These cases are the direct change: the role-change action taken off the dual-control list
+  // (an operator's governed choice) — for this suite only, through the route's reading of the
+  // list. The shared configuration row is never changed: suites run in parallel against one
+  // database, and another suite's holds must not depend on this one's timing.
+  beforeAll(() => {
+    mockDualControl.off = true;
+  });
+  afterAll(() => {
+    mockDualControl.off = false;
+  });
 
   afterEach(async () => {
     await q("update users set role_id = $2::uuid where id = $1::uuid", [carol, freeRole]);
@@ -841,14 +882,16 @@ dbDescribe(`${SUITE} POST /api/admin/gdpr`, () => {
   ) => gdprPOST(req("/api/admin/gdpr", caller, { method: "POST", body, raw }));
 
   beforeEach(() => {
-    (PurgePipeline as unknown as jest.Mock).mockClear();
+    (createPlatformPurgePipeline as unknown as jest.Mock).mockClear();
     execute.mockReset().mockResolvedValue({
       purgeId: "pg1",
       status: "completed",
       totalDeleted: 3,
       steps: [{ handler: "db", success: true, deletedCount: 3 }],
     });
-    (PurgePipeline as unknown as jest.Mock).mockImplementation(() => ({ execute }));
+    (createPlatformPurgePipeline as unknown as jest.Mock).mockImplementation(() => ({
+      execute,
+    }));
   });
 
   it("purges for a super_admin, recording them as the requester", async () => {
@@ -859,6 +902,8 @@ dbDescribe(`${SUITE} POST /api/admin/gdpr`, () => {
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ requestedBy: superAdmin.userId, userId: carol })
     );
+    // The platform's own pipeline, for this requester (audit X-15: it had no handler).
+    expect(createPlatformPurgePipeline).toHaveBeenCalledWith(superAdmin.userId);
     expect((await auditOf(a)).slice(before)[0]).toMatchObject({
       action: "gdpr_purge_executed",
       actor_id: superAdmin.userId,
@@ -884,7 +929,7 @@ dbDescribe(`${SUITE} POST /api/admin/gdpr`, () => {
       code: "admin.target_not_found",
       params: { target: "user" },
     });
-    expect(PurgePipeline).not.toHaveBeenCalled();
+    expect(createPlatformPurgePipeline).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
     expect((await auditOf(a)).length).toBe(auditA);
     expect((await auditOf(b)).length).toBe(auditB);

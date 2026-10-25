@@ -2390,7 +2390,7 @@ Playform by hand. Screen-literal baseline 297 → 287.
 | **Severity** | Low — the sink is opt-in; selecting it fails on first use |
 | **Phase**    | Phase 5                                                   |
 | **Target**   | Phase 5, Sprint 7R                                        |
-| **Status**   | Fixed on develop (Sprint 7R R2)                           |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R2)                            |
 | **Logged**   | 2026-09-29                                                |
 
 **What:** `platform/observability/metrics-sink.ts` reads and writes `ai_metrics` through PostgREST,
@@ -2411,7 +2411,7 @@ or remove the Supabase sink if metrics stay in Sentry/Langfuse.
 | **Severity** | Medium — row-level security is the only barrier for the API roles |
 | **Phase**    | Phase 5                                                           |
 | **Target**   | Phase 5, Sprint 7T (moved from Phase 6 by ADR-053 D6)             |
-| **Status**   | Resolved on develop (Sprint 7R R3, migration 049)                 |
+| **Status**   | Resolved in v6.0.0 (Sprint 7R R3, migration 049)                  |
 | **Logged**   | 2026-09-29                                                        |
 
 **What:** Supabase's "automatically expose new tables" grants `ALL` on every `public` table to
@@ -2686,15 +2686,15 @@ updated. The MIT terms are unchanged either way.
 
 ### TASK-126 — Tenancy model: one codebase, shared or dedicated deployment
 
-| Field        | Detail                                                                   |
-| ------------ | ------------------------------------------------------------------------ |
-| **ID**       | TASK-126                                                                 |
-| **Type**     | Architecture                                                             |
-| **Severity** | High — the most expensive change to make late; blocks monetisation       |
-| **Phase**    | Phase 5                                                                  |
-| **Target**   | Phase 5, Sprint 7R (decision and groundwork), Sprint 7T (implementation) |
-| **Status**   | Implemented on develop (Sprint 7R R3); deployment and Playform with R7   |
-| **Logged**   | 2026-10-20                                                               |
+| Field        | Detail                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-126                                                                                       |
+| **Type**     | Architecture                                                                                   |
+| **Severity** | High — the most expensive change to make late; blocks monetisation                             |
+| **Phase**    | Phase 5                                                                                        |
+| **Target**   | Phase 5, Sprint 7R (decision and groundwork), Sprint 7T (implementation)                       |
+| **Status**   | Implemented in v6.0.0 (Sprint 7R R3; ADR-053 Accepted 2026-10-24); Playform adopts with v0.9.0 |
+| **Logged**   | 2026-10-20                                                                                     |
 
 **What:** the platform has no tenant concept. No table carries a tenant or organisation; row-level security
 is written for users and admins; roles are global; config, rate limits, AI budgets, caches, audit and metrics
@@ -2729,15 +2729,15 @@ Postgres. Operating guide: [TENANCY_OPERATIONS.md](TENANCY_OPERATIONS.md); ADR-0
 
 ### TASK-127 — Split the foundation from product modules
 
-| Field        | Detail                                                                      |
-| ------------ | --------------------------------------------------------------------------- |
-| **ID**       | TASK-127                                                                    |
-| **Type**     | Architecture                                                                |
-| **Severity** | Medium — every consumer inherits, patches and tests features it may not use |
-| **Phase**    | Phase 5                                                                     |
-| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7S (implementation)                   |
-| **Status**   | Boundary implemented on develop (Sprint 7R R4); the move out is 7S          |
-| **Logged**   | 2026-10-20                                                                  |
+| Field        | Detail                                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-127                                                                                                                      |
+| **Type**     | Architecture                                                                                                                  |
+| **Severity** | Medium — every consumer inherits, patches and tests features it may not use                                                   |
+| **Phase**    | Phase 5                                                                                                                       |
+| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7S (implementation)                                                                     |
+| **Status**   | Boundary implemented in v6.0.0 (Sprint 7R R4; the app manifest R7, TASK-157; ADR-054 Accepted 2026-10-24); the move out is 7S |
+| **Logged**   | 2026-10-20                                                                                                                    |
 
 **What:** games, social groups and agents, song identification, audio conversion and the voice pipeline live
 in the foundation, so every consumer inherits them. Raised by the 2026-10-17 assessment.
@@ -2771,15 +2771,15 @@ guest-usage rename, the sync's `modules` selection, and Playform opting in.
 
 ### TASK-128 — Deploy anywhere: a container image, infrastructure as code, a second host
 
-| Field        | Detail                                                                      |
-| ------------ | --------------------------------------------------------------------------- |
-| **ID**       | TASK-128                                                                    |
-| **Type**     | Architecture — deployability                                                |
-| **Severity** | High — portability off the current hosts is designed for but untested       |
-| **Phase**    | Phase 5                                                                     |
-| **Target**   | Phase 5, Sprint 7R (decision, container build), Sprint 7P (AWS environment) |
-| **Status**   | Open — container image fixed on develop (Sprint 7R R6); AWS is Sprint 7P    |
-| **Logged**   | 2026-10-20                                                                  |
+| Field        | Detail                                                                                             |
+| ------------ | -------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-128                                                                                           |
+| **Type**     | Architecture — deployability                                                                       |
+| **Severity** | High — portability off the current hosts is designed for but untested                              |
+| **Phase**    | Phase 5                                                                                            |
+| **Target**   | Phase 5, Sprint 7R (decision, container build), Sprint 7P (AWS environment)                        |
+| **Status**   | Open — the container image in v6.0.0 (Sprint 7R R6; ADR-055 Accepted 2026-10-24); AWS is Sprint 7P |
+| **Logged**   | 2026-10-20                                                                                         |
 
 **What:** only Vercel has been deployed to; `infra/` holds placeholders; the environment contract detects a
 hosted deployment through `VERCEL=1`; the cache provider speaks Upstash's REST protocol only.
@@ -2813,15 +2813,15 @@ Valkey provider, CI deploying to both hosts with the smoke test on both.
 
 ### TASK-129 — Operations baseline: recovery, alerting, objectives, background work
 
-| Field        | Detail                                                    |
-| ------------ | --------------------------------------------------------- |
-| **ID**       | TASK-129                                                  |
-| **Type**     | Operations                                                |
-| **Severity** | High — required for any mission-critical claim            |
-| **Phase**    | Phase 5                                                   |
-| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7O (implementation) |
-| **Status**   | Open — background work fixed on develop (Sprint 7R R5)    |
-| **Logged**   | 2026-10-20                                                |
+| Field        | Detail                                                                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-129                                                                                                                                 |
+| **Type**     | Operations                                                                                                                               |
+| **Severity** | High — required for any mission-critical claim                                                                                           |
+| **Phase**    | Phase 5                                                                                                                                  |
+| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7O (implementation)                                                                                |
+| **Status**   | Open — background work and health in v6.0.0 (Sprint 7R R5; ADR-056 Accepted 2026-10-24); recovery, alerting and objectives are Sprint 7O |
+| **Logged**   | 2026-10-20                                                                                                                               |
 
 **What:** no backup or restore design (recovery relies on the database plan's defaults), no RPO or RTO, no
 alerting or on-call runbooks, no service-level objectives, and no durable queue or scheduler (retries and
@@ -3046,7 +3046,7 @@ platform's and Playform's migration sets.
 | **Severity** | Medium — admin actions cannot be attributed |
 | **Phase**    | Phase 5                                     |
 | **Target**   | Phase 5, Sprint 7X                          |
-| **Status**   | Fixed on develop (Sprint 7X, v5.0.0)        |
+| **Status**   | Fixed in v5.0.0 (Sprint 7X)                 |
 | **Logged**   | 2026-10-21                                  |
 
 **What:** `adminGuard` verifies the caller and then returns `null`, so routes cannot name the admin who acted. `getAdminActorId` (`platform/auth/admin-guard.ts`) returns the placeholder `"authenticated-admin"` (or `"dev-admin"`), and admin audit records carry it. Three routes recover the actor with a second `optionalAuth` call. Found by the Sprint 7R tenancy survey.
@@ -3064,7 +3064,7 @@ platform's and Playform's migration sets.
 | **Severity** | Medium — a misconfigured cache silently becomes per instance |
 | **Phase**    | Phase 5                                                      |
 | **Target**   | Phase 5, Sprint 7R                                           |
-| **Status**   | Fixed on develop (Sprint 7R R2)                              |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R2)                               |
 | **Logged**   | 2026-10-21                                                   |
 
 **What:** `platform/cache/index.ts` selects Redis only when `UPSTASH_REDIS_REST_URL` is present and otherwise uses an in-memory cache, in production too, silently (it warns only when the URL is set without its token). `CACHE_PROVIDER=upstash` with missing credentials also warns and falls back, and `getCache` otherwise ignores `CACHE_PROVIDER`. The cache is not in the environment contract. Found by the Sprint 7R deploy-anywhere survey.
@@ -3072,6 +3072,8 @@ platform's and Playform's migration sets.
 **Plan:** The cache becomes an explicit `CACHE_PROVIDER` selection, honoured by `getCache` and declared in the contract; production refuses an in-memory cache unless the E2E harness opts out, as for every durable store (ADR-048 D3, ADR-055 D4) (R2).
 
 **Fixed (Sprint 7R R2):** `CACHE_PROVIDER` is declared in the environment contract and read through one resolver by the cache, the registry and the contract. A deployment must set it; a Redis URL alone no longer selects Redis; `upstash` without its credentials refuses to boot, in the cache and the registry alike. Decision, against the plan's wording: `memory` is accepted when declared, because the cache holds nothing authoritative (losing it costs hits, not correctness) — the defect was the silence, not the in-memory cache. Deploy prerequisite: `CACHE_PROVIDER` in every Vercel project before the 7R promotion.
+
+**Revised (review 8 L3, TASK-162):** `memory` is no longer accepted in a deployment. The cache now carries token revocations (sign-out, role and MFA changes) and permission invalidations to every instance, so a per-instance cache is a correctness defect, not lost hits: only a local or CI run (`DEPLOYMENT_HOST` `local`/`ci`) may use it. Deploy prerequisite: `CACHE_PROVIDER=upstash` with its credentials in every Vercel project (MIGRATION_v5_to_v6 step 3).
 
 ### TASK-140 — Off Vercel, production would accept the test-harness switches
 
@@ -3082,7 +3084,7 @@ platform's and Playform's migration sets.
 | **Severity** | High — on any other host, mock sign-in and in-memory stores would be accepted in production |
 | **Phase**    | Phase 5                                                                                     |
 | **Target**   | Phase 5, Sprint 7R                                                                          |
-| **Status**   | Fixed on develop (Sprint 7X, v5.0.0)                                                        |
+| **Status**   | Fixed in v5.0.0 (Sprint 7X)                                                                 |
 | **Logged**   | 2026-10-21                                                                                  |
 
 **What:** The environment contract treats a deployment as hosted only when `VERCEL=1`, and only a hosted deployment refuses `E2E_IN_MEMORY_STORES` and `E2E_TEST_DOUBLE_AUTH` (and reports `ADMIN_DEV_BYPASS`, which `adminGuard` separately ignores in any production build). A container or any other host would accept the first two in production. The deployed commit is read only from `VERCEL_GIT_COMMIT_SHA` and the version from `npm_package_version`. Not exploitable today (only Vercel is deployed); must be closed before any other host. Found by the Sprint 7R deploy-anywhere survey.
@@ -3100,7 +3102,7 @@ platform's and Playform's migration sets.
 | **Severity** | High — the escalation SLA (ADR-041) and retention rules are not enforced |
 | **Phase**    | Phase 5                                                                  |
 | **Target**   | Phase 5, Sprint 7R                                                       |
-| **Status**   | Fixed on develop (Sprint 7R R5)                                          |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R5)                                           |
 | **Logged**   | 2026-10-21                                                               |
 
 **What:** The escalation-SLA reaper is a route nothing calls; `releaseExpiredClaims` and `expireStrikes` have no caller; the GDPR retention purge is manual; the analyst and curator agents have budgets but no schedule. There is no queue, outbox or dead-letter handling. Found by the Sprint 7R operations survey.
@@ -3118,7 +3120,7 @@ platform's and Playform's migration sets.
 | **Severity** | Medium — a deployment with an unreachable database reports healthy |
 | **Phase**    | Phase 5                                                            |
 | **Target**   | Phase 5, Sprint 7R                                                 |
-| **Status**   | Fixed on develop (Sprint 7R R5)                                    |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R5)                                     |
 | **Logged**   | 2026-10-21                                                         |
 
 **What:** `/api/health` runs only the song-identification probe; the database, cache and realtime probes exist but are not registered, and there is no separate readiness check. Found by the Sprint 7R operations survey.
@@ -3136,7 +3138,7 @@ platform's and Playform's migration sets.
 | **Severity** | Low — a scheduled job that always fails hides real failures |
 | **Phase**    | Phase 5                                                     |
 | **Target**   | Phase 5, Sprint 7R                                          |
-| **Status**   | Fixed on develop (Sprint 7R R5)                             |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R5)                              |
 | **Logged**   | 2026-10-21                                                  |
 
 **What:** `.github/workflows/load-test.yml` runs every Monday against `http://localhost:3000` without starting a server. Found by the Sprint 7R operations survey.
@@ -3154,7 +3156,7 @@ platform's and Playform's migration sets.
 | **Severity** | Low — the daily cap resets at a different hour on each host |
 | **Phase**    | Phase 5                                                     |
 | **Target**   | Phase 5, Sprint 7R                                          |
-| **Status**   | Fixed on develop (Sprint 7R R2)                             |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R2)                              |
 | **Logged**   | 2026-10-21                                                  |
 
 **What:** `BudgetTracker.getCurrentPeriod()` (`platform/agents/budget-tracker.ts`) builds `YYYY-MM-DD` from local time. Vercel runs in UTC; a container or another host may not, so the governed daily cap (ADR-048) would reset at different hours. Found by the Sprint 7R tenancy survey.
@@ -3172,7 +3174,7 @@ platform's and Playform's migration sets.
 | **Severity** | Critical — privilege escalation and missing audit in production while every test passed |
 | **Phase**    | Phase 5                                                                                 |
 | **Target**   | Phase 5, Sprint 7X (Wave 1: v5.0.0; Waves 2 and 3 follow)                               |
-| **Status**   | Wave 1 fixed on develop (v5.0.0); Waves 2 and 3 open                                    |
+| **Status**   | Wave 1 fixed in v5.0.0; Wave 2 fixed in v6.0.0 (Sprint 7R close); Wave 3 open (X-25)    |
 | **Logged**   | 2026-10-21                                                                              |
 
 **What:** A moderator could make themselves `super_admin` through the AI command bar, any admin could assign any role, and role changes left no audit record — while unit, integration and end-to-end tests, CodeQL, Semgrep and every sprint-close review passed. Route tests stubbed the admin guard; a self-elevation check was tested but never called; no test acted as the wrong role (learning 116). The independent whole-system review that followed found 7 Critical and 18 High findings and many Medium and Low ones; the register is [audits/2026-10-REGISTER.md](audits/2026-10-REGISTER.md).
@@ -3183,6 +3185,8 @@ platform's and Playform's migration sets.
 
 **Wave 2:** runtime holds (X-10), purge handlers and export/erasure routes (X-15), age consent (X-16), sessions (X-17), multimodal safety and provenance (X-18), guest continuation (X-20), remaining fire-and-forget writes (X-22), and the Medium and Low items the register marks Wave 2 (including RR-8, RR-15, RR-17, RR-19, RR-23). **Wave 3:** latent modules (X-25) before any route reaches them. Consumer-owned findings (X-9 and others) are fixed in the consumer's adoption.
 
+**Wave 2 fixed on develop (Sprint 7R close, for v6.0.0):** every item, one by one, with its true state and its test, in the register's [Wave 2](audits/2026-10-REGISTER.md#wave-2-sprint-7x-on-develop-for-v600) section; migration 052 (idempotent, applied twice by the replay). Found while fixing: `/api/stream`'s feature was in neither governed list, so every user was refused it on a database deployment (052 adds it); the provider registry built the Cognito provider without its hosted-UI domain, admin credentials or secret; a number setting accepted `null`, `""`, `true` and `[]` and stored them as given, a text setting accepted objects, and an object without a prototype made validation throw (TASK-147's property tests); `AI_PROVIDER` had no effect. Accepted with reasons: G-14 (the health report's commit, ADR-050 D6) and H-13 (identifiers in public history). Wave 3 (X-25) stays open; `latent-modules-unreached` fails as soon as a route reaches those modules.
+
 ### TASK-146 — Privileged and isolation paths are not yet tested against real Postgres
 
 | Field        | Detail                                                                        |
@@ -3192,7 +3196,7 @@ platform's and Playform's migration sets.
 | **Severity** | Medium — a database-only behaviour (a constraint, a grant, a type) can differ |
 | **Phase**    | Phase 5                                                                       |
 | **Target**   | Phase 5, Sprint 7X Wave 2                                                     |
-| **Status**   | In progress (stores and data paths on real Postgres since Sprint 7R R3)       |
+| **Status**   | Fixed in v6.0.0 (Sprint 7X Wave 2)                                            |
 | **Logged**   | 2026-10-22                                                                    |
 
 **What:** Adversarial Validation practice 5 asks that privileged and data-isolation paths run against real Postgres. Today the routes run against `FakeDatabase` (filters evaluated, unique constraints, failures injected, filter strings refused) and the SQL runs against real Postgres only in the migration replay. Uuid and enum column semantics — the cause of X-8 and E-15 — are exactly what an in-memory database does not reproduce. Recorded in [ASSURANCE.md](ASSURANCE.md) §3.
@@ -3207,6 +3211,13 @@ lifecycle — each with the cross-tenant isolation kit — and every SQL stateme
 against the schema (`sql-schema-parity.db.test.ts`). Remaining for Wave 2: the route-level role matrix itself
 against that database.
 
+**Done (Sprint 7X Wave 2):** `__tests__/db/route-role-matrix.db.test.ts` runs every privileged route — the 34
+administration, moderation and account route handlers, with a check that fails when a new route file is not
+in the matrix — as every role of the real catalog, as nobody, as a suspended `super_admin` and as a
+`super_admin` without a second factor, in a test tenant on the replayed database: refused exactly when the
+role lacks the permission, never a 500, hostile bodies answered with a 4xx, and generated bodies (TASK-147)
+never a 500. `__tests__/db/user-data-coverage.db.test.ts` proves erasure and export over every table.
+
 ### TASK-147 — Generated hostile input covers few suites; the monkey run is bounded by rate limits
 
 | Field        | Detail                                                       |
@@ -3216,12 +3227,14 @@ against that database.
 | **Severity** | Medium — hand-picked hostile cases miss what nobody imagined |
 | **Phase**    | Phase 5                                                      |
 | **Target**   | Phase 5, Sprint 7X Wave 2                                    |
-| **Status**   | Open                                                         |
+| **Status**   | Fixed in v6.0.0 (Sprint 7X Wave 2)                           |
 | **Logged**   | 2026-10-22                                                   |
 
 **What:** Property tests cover sanitization, output screening, paging and search; most suites use hand-picked hostile cases only. The monkey run sweeps every route as every caller first, but from one address most of its random steps are then refused with 429 — correctly, since it must not bypass the limits. Recorded in [ASSURANCE.md](ASSURANCE.md) §3.
 
 **Plan:** Property tests for every validator and every route's body schema (generated bodies, `fast-check`); the monkey run gains a sequence mode that paces itself under each route's limit, and invariants after each step on the data it may see (no other user's records).
+
+**Done (Sprint 7X Wave 2):** `__tests__/validator-properties.test.ts` drives every validator at an input boundary (birth dates, config values, passwords, tenant slugs, names, hosts and ids, language codes, stream bodies, refresh cookies, JSON bodies, text fields, avatar addresses, address buckets, tool schemas) with generated values of every shape; it found four defects, fixed with it (a number setting stored `null`/`""`/`true`/`[]`, a text setting objects; validation threw on an object without a prototype; `isValidSchema` threw; language codes were unbounded). Every privileged route's body is fuzzed against Postgres in the role matrix (TASK-146). The monkey run's `MONKEY_MODE=sequence` takes paced sequences through each family of routes (it waits out a 429's `Retry-After`, never bypasses the limiter), reuses the ids the server returned, and checks I6 — no response to one caller carries another caller's identity (`__tests__/monkey-sequence.test.ts`); the fuzz workflow runs it after the sweep. Provenance, guest continuation and admin search keep their property tests.
 
 ### TASK-148 — Migration records claimed what never happened (the role model)
 
@@ -3232,7 +3245,7 @@ against that database.
 | **Severity** | Medium — a record that claims an effect hides a database that differs from the code |
 | **Phase**    | Phase 5                                                                             |
 | **Target**   | Phase 5, Sprint 7R                                                                  |
-| **Status**   | Fixed on develop (Sprint 7R R2, platform part); Playform's record with its adoption |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R2, platform part); Playform records its own with v0.9.0 |
 | **Logged**   | 2026-10-23                                                                          |
 
 **What:** The first live run of the migration-parity check (2026-10-23, with credentials) failed on both
@@ -3257,15 +3270,15 @@ check reports it.
 
 ### TASK-149 — ESLint 9 is out of support; ESLint 10 waits on Next's plugins
 
-| Field        | Detail                                                          |
-| ------------ | --------------------------------------------------------------- |
-| **ID**       | TASK-149                                                        |
-| **Type**     | Dependency hygiene                                              |
-| **Severity** | Low — development tooling only; nothing it checks reaches users |
-| **Phase**    | Phase 5                                                         |
-| **Target**   | Phase 5, Sprint 7R close (re-checked each dependency batch)     |
-| **Status**   | Open                                                            |
-| **Logged**   | 2026-10-23                                                      |
+| Field        | Detail                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| **ID**       | TASK-149                                                                                 |
+| **Type**     | Dependency hygiene                                                                       |
+| **Severity** | Low — development tooling only; nothing it checks reaches users                          |
+| **Phase**    | Phase 5                                                                                  |
+| **Target**   | Phase 5, Sprint 7R close (re-checked each dependency batch)                              |
+| **Status**   | Open — re-checked 2026-10-24 (Sprint 7R close): the plugins still declare ESLint up to 9 |
+| **Logged**   | 2026-10-23                                                                               |
 
 **What:** `npm` reports `eslint@9.39.5` as no longer supported. ESLint 10 is held back (Dependabot
 ignores its major) because the React, accessibility and import plugins in `eslint-config-next` 16.4
@@ -3273,6 +3286,13 @@ declare ESLint up to 9 and install only by overriding their peer range.
 
 **Plan:** at each dependency batch, check the three plugins' declared ESLint range; move both
 repositories to ESLint 10 together the batch they declare it, and lift the Dependabot ignore.
+
+**Re-checked 2026-10-24 (Sprint 7R close dependency batch).** `eslint-config-next` 16.4.3 (latest)
+depends on `eslint-plugin-react` ^7.37.0, `eslint-plugin-jsx-a11y` ^6.10.0 and
+`eslint-plugin-import` ^2.32.0. The latest of each — `eslint-plugin-react` 7.37.5 (peer `eslint`
+`^3 || … || ^9.7`), `eslint-plugin-jsx-a11y` 6.10.2 (`^3 || … || ^9`) and `eslint-plugin-import`
+2.32.0 (`^2 || … || ^9`) — still declare ESLint up to 9 (`eslint-plugin-react-hooks` 7.1.1 already
+declares `^10.0.0`). ESLint stays on 9.39.5 (latest 10.13.0) and the Dependabot ignore stays.
 
 ### TASK-150 — Two reviewers could act on one review item at once
 
@@ -3283,7 +3303,7 @@ repositories to ESLint 10 together the batch they declare it, and lift the Depen
 | **Severity** | Medium — a resolution could overwrite another reviewer's, unrecorded |
 | **Phase**    | Phase 5                                                              |
 | **Target**   | Phase 5, Sprint 7R R3                                                |
-| **Status**   | Fixed on develop (Sprint 7R R3)                                      |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R3)                                       |
 | **Logged**   | 2026-10-23                                                           |
 
 **What:** a claim, release or resolution of a review-queue item read the item, checked its state and wrote
@@ -3303,7 +3323,7 @@ conformance kit covers both races.
 | **Severity** | Medium — the erasure ran, but its record did not, and callers saw errors |
 | **Phase**    | Phase 5                                                                  |
 | **Target**   | Phase 5, Sprint 7R R3                                                    |
-| **Status**   | Fixed on develop (Sprint 7R R3)                                          |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R3)                                           |
 | **Logged**   | 2026-10-23                                                               |
 
 **What:** `softDeleteUser` recorded each erasure in a table no migration created, so every soft deletion
@@ -3322,7 +3342,7 @@ purged.
 | **Severity** | Medium — an administrator who closed sign-ups still received new users |
 | **Phase**    | Phase 5                                                                |
 | **Target**   | Phase 5, Sprint 7R R3                                                  |
-| **Status**   | Fixed on develop (Sprint 7R R3)                                        |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R3)                                         |
 | **Logged**   | 2026-10-23                                                             |
 
 **What:** the setting existed in `platform_config` and the admin console, but sign-up never read it.
@@ -3340,7 +3360,7 @@ shared deployment decides for itself.
 | **Severity** | Medium — two different requests could share a key and one answer |
 | **Phase**    | Phase 5                                                          |
 | **Target**   | Phase 5, Sprint 7R R3                                            |
-| **Status**   | Fixed on develop (Sprint 7R R3)                                  |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R3)                                   |
 | **Logged**   | 2026-10-23                                                       |
 
 **What:** the cache key was a 32-bit string hash of the prompt, so collisions were likely at volume (and
@@ -3358,7 +3378,7 @@ shared between tenants.
 | **Severity** | High — the admin console and three screens could not work signed in |
 | **Phase**    | Phase 5                                                             |
 | **Target**   | Phase 5, Sprint 7R R3                                               |
-| **Status**   | Fixed on develop (Sprint 7R R3)                                     |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R3)                                      |
 | **Logged**   | 2026-10-24                                                          |
 
 **What:** the server authenticates every API call by its `Authorization: Bearer` header, but the admin
@@ -3381,7 +3401,7 @@ before a session exists, or that set the header themselves).
 | **Severity** | High — a dual-controlled change approved by a second admin silently did nothing |
 | **Phase**    | Phase 5                                                                         |
 | **Target**   | Phase 5, Sprint 7R R3                                                           |
-| **Status**   | Fixed on develop (Sprint 7R R3)                                                 |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R3)                                                  |
 | **Logged**   | 2026-10-24                                                                      |
 
 **What:** a change to a key in `config.dual_control_keys` is held at runtime (ADR-039 F2b-2) and approved
@@ -3404,7 +3424,7 @@ that approval. A change that cannot be applied answers 503 and is logged.
 | **Severity** | High — pools closed under requests; a deployment without CRON_SECRET ran no duty |
 | **Phase**    | Phase 5                                                                          |
 | **Target**   | Phase 5, Sprint 7R (before R4–R6 are released)                                   |
-| **Status**   | Fixed on develop (Sprint 7R, before release)                                     |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R, before release)                                      |
 | **Logged**   | 2026-10-24                                                                       |
 
 **What:** an adversarial review of the unreleased R4–R6 commits found sixteen defects, each proved by a test
@@ -3430,6 +3450,407 @@ that approval. A change that cannot be applied answers 503 and is logged.
 | 14  | Low  | "run now" enqueued tenant by tenant inside the request         | one `insert … select` fan-out; a second audit record carries the outcome                                                                                                                  | `jobs-operator-routes.test.ts`, `job-store-contract.ts`                            |
 | 15  | Low  | a shortened interval waited for the old slot                   | a slot is due at `least(next_run_at, last_run_at + interval now)` — in the claim of the slot itself, so however the change was approved                                                   | `job-store-contract.ts` (both stores)                                              |
 | 16  | Low  | health routes ran every probe and reported per request         | one shared run per 3 s (single flight); problems reported on change of state                                                                                                              | `health-readiness.test.ts`, `health-route.test.ts`                                 |
+
+### TASK-157 — A consumer could not add its own files to a module, or declare a module
+
+| Field        | Detail                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-157                                                                                   |
+| **Type**     | Consumer seam — module manifest (ADR-054 D6)                                               |
+| **Severity** | Medium — consumers rewrote a platform file after every sync; the tests assumed six modules |
+| **Phase**    | Phase 5                                                                                    |
+| **Target**   | Phase 5, Sprint 7R R7                                                                      |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R7)                                                             |
+| **Logged**   | 2026-10-24                                                                                 |
+
+**What:** `platform/modules/manifest.json` (the lint zones, the manifest tests, `test:core`, the
+replay order) is the platform's and synced unchanged, so an app had no place for its own files that
+belong to a module or for a module of its own. Playform appended its paths to the platform's file
+after every sync (an overlay script); the platform's tests hard-coded the six module ids.
+
+**Fix:** `platform/modules/app-manifest.json`, a consumer seam (sync-excluded; empty in the
+platform), merged by `scripts/module-manifest.cjs` for every reader. An app adds paths to a
+platform module or declares a module (definition, entry, dependencies, path lists, migrations).
+The merge refuses a path claimed by two modules (or by a module and a composition root), a
+platform module's `dependsOn`/`definition`/`entry`/`kitManifest` redefined, an unknown list, an
+unknown dependency and a cycle, each message naming the file and what to change.
+`node scripts/module-manifest.cjs --check` runs it on its own. The module manifest, lint and
+migration tests derive the ids from the merge. Tests: `__tests__/module-app-manifest.test.ts`.
+Documented in SETUP_AND_INTEGRATION §6, MIGRATION_v5_to_v6 §1b, ADR-054 §5.
+
+### TASK-158 — Consumer migrations collided with the platform's numbers
+
+| Field        | Detail                                                                 |
+| ------------ | ---------------------------------------------------------------------- |
+| **ID**       | TASK-158                                                               |
+| **Type**     | Consumer seam — migration naming                                       |
+| **Severity** | Medium — two migrations with one number apply in an order nobody chose |
+| **Phase**    | Phase 5                                                                |
+| **Target**   | Phase 5, Sprint 7R R7                                                  |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R7)                                         |
+| **Logged**   | 2026-10-24                                                             |
+
+**What:** Playform's own 052 and 053 took numbers the platform then used (`052_audit_wave2.sql`).
+
+**Fix:** the platform's migrations are `NNN_<name>.sql`, listed in
+`supabase/platform-migrations.json`; an app's are `NNN<letter>_<app>_<name>.sql` (`052a_playform_…`),
+sorting after the platform's NNN and before NNN+1 (an app module's name the module next). The
+replay, `migration-parity.mjs`, the role catalog, the baseline and tracking checks accept the form;
+`migrationNameProblems` (`__tests__/migration-naming.test.ts`, and the replay before it applies
+anything) refuses an app migration with a bare number — naming the file to rename it to — unless
+the app applied it before the convention and lists it (`migrationsBeforeTheConvention`), a
+letter-form file without the app's prefix or sharing a letter, the letter form in the platform,
+and an unlisted platform migration. Documented in SETUP_AND_INTEGRATION §6, MIGRATION_v5_to_v6,
+CONTRIBUTING ("Writing a migration").
+
+### TASK-159 — Tests and day arithmetic depended on the time zone
+
+| Field        | Detail                                                                       |
+| ------------ | ---------------------------------------------------------------------------- |
+| **ID**       | TASK-159                                                                     |
+| **Type**     | Correctness — time zones                                                     |
+| **Severity** | Medium — a 30-day purge window was 30 days and an hour in a New York session |
+| **Phase**    | Phase 5                                                                      |
+| **Target**   | Phase 5, Sprint 7R R7                                                        |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R7)                                               |
+| **Logged**   | 2026-10-24                                                                   |
+
+**What:** the operator-deletion test (`purge_after` within 30 days) failed with the database
+session in America/New_York across the US DST change: `now() + interval '30 days'` is calendar
+arithmetic in the session's time zone. The age tests compared with the host's local year and date.
+
+**Fix:** every `platform/data` transaction sets `TimeZone` to UTC with its other settings
+(`platform/data/tx.ts`); a DB test proves a New York session computes 30.0417 days raw and exactly
+30 inside each kind of transaction. The age tests use a fixed instant (Date only faked in the
+component test). The unit suite and DB suites pass under `TZ=America/New_York`, `Asia/Kolkata` and
+`UTC`, the DB suites also with the session time zone set to New York per connection; CI runs the
+suite again under `TZ=America/New_York` with New York database sessions (ci.yml).
+
+The repeated runs also surfaced two failures that were not the zone's, both fixed: the route role
+matrix gave its callers' `users` rows a `cognito_sub` other than their identity's, so a well-formed
+appeal was answered 403 `account.not_found` (fast-check counterexample; the rows now carry the
+identity's sub, with a regression case); and the birth-date property generated an invalid `Date`
+about once in 2000, which threw in the generator (`fc.date({ noInvalidDate: true })`).
+
+### TASK-160 — The workflow-hygiene check failed consumers without saying what to change
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-160                                                                 |
+| **Type**     | Consumer experience — assurance checks                                   |
+| **Severity** | Low — a synced check failed with a bare list of patterns and expressions |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | Phase 5, Sprint 7R R7                                                    |
+| **Status**   | Fixed in v6.0.0 (Sprint 7R R7)                                           |
+| **Logged**   | 2026-10-24                                                               |
+
+**What:** `__tests__/workflow-hygiene.test.ts` (H-3, H-9) failed Playform's sync — excludes without
+a `/`, step outputs interpolated inside `run:` — and the platform had no compliant sync to copy.
+
+**Fix:** each failure names the file and line and what to write instead (`env:` and `"$NAME"`; a
+leading `/` for a root file); `exclude_patterns` are checked too. `docs/templates/sync-from-foundation.yml`
+and `docs/templates/sync-config.json` are the compliant form, held to the same checks in the platform.
+
+### TASK-161 — Review 7 of the v6.0.0 candidate
+
+| Field        | Detail                                          |
+| ------------ | ----------------------------------------------- |
+| **ID**       | TASK-161                                        |
+| **Type**     | Security, privacy, scalability — release review |
+| **Severity** | High (H1, H2) to Low                            |
+| **Phase**    | Phase 5                                         |
+| **Target**   | Phase 5, Sprint 7R close                        |
+| **Status**   | Fixed in v6.0.0                                 |
+| **Logged**   | 2026-10-24                                      |
+
+**What:** an adversarial review of the unreleased Wave 2 and close-out changes (H1–H2, M1–M7,
+L1–L6), and three items found adopting it in Playform (P1 the user-data coverage test failed every
+consumer, P2 a flaky logger assertion, P3 one Cognito GetUser per request under a rate quota).
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-7-of-the-unreleased-wave-2-and-close-out-2026-10-24-fixed-in-v600)
+lists them. New settings: `ERASURE_HASH_KEY` (required in production), `PROVENANCE_SIGNING_KEY_PREVIOUS`
+(optional), the governed `auth.token_cache_seconds` and `auth.token_stale_grace_seconds` (052).
+
+### TASK-162 — Review 8 of the v6.0.0 candidate
+
+| Field        | Detail                                          |
+| ------------ | ----------------------------------------------- |
+| **ID**       | TASK-162                                        |
+| **Type**     | Security, privacy, scalability — release review |
+| **Severity** | High (H-A to H-D) to Low                        |
+| **Phase**    | Phase 5                                         |
+| **Target**   | Phase 5, Sprint 7R close                        |
+| **Status**   | Fixed in v6.0.0                                 |
+| **Logged**   | 2026-10-24                                      |
+
+**What:** a second adversarial review of the candidate (H-A to H-D, M1–M5, L1–L6): a signed-out
+token served from the token cache after a racing GetUser; partly readable classifier answers
+clearing level 3; the address replacement at erasure corrupting and then deleting another
+account's proposal; glob and case-variant paths in the app manifest; a new user's tenant missing
+for the token cache's window; power settings outside dual control; the user-data coverage test
+seeing only some columns and trusting claims; unjudged answers flooding the review queue; account
+and MFA routes on the stale grace, and forged tokens draining the GetUser quota; and six low
+findings.
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-8-of-the-v600-candidate-2026-10-24-fixed-in-v600)
+lists them. New: `ERASURE_HASH_KEY_PREVIOUS` (optional, rotation); `CACHE_PROVIDER=memory` refused
+in a deployment; the `yaml` dev dependency and `jose` transformed for Jest (a consumer's own
+`package.json`, MIGRATION §5); 052 seeds more keys under dual control (first application) and
+adds `jsonb_replace_text_value` and `user_deletions.email_hash_key`;
+`supabase/optional/redact_orphan_addresses.sql` (operator step for accounts erased before
+v6.0.0).
+
+### TASK-163 — Review 9 of the v6.0.0 candidate
+
+| Field        | Detail                                          |
+| ------------ | ----------------------------------------------- |
+| **ID**       | TASK-163                                        |
+| **Type**     | Security, privacy, scalability — release review |
+| **Severity** | High (H1, H2) to Low                            |
+| **Phase**    | Phase 5                                         |
+| **Target**   | Phase 5, Sprint 7R close                        |
+| **Status**   | Fixed in v6.0.0                                 |
+| **Logged**   | 2026-10-24                                      |
+
+**What:** a third adversarial review of the candidate (H1–H2, M3–M6, L7–L11): an approved
+command-bar action whose write is itself dual-controlled was held a second time and reported
+applied; the erasure's JSON rewrite recursed, so one deep document failed another account's whole
+erasure (and a large one took seconds a row); a classifier answer with `"reason": null` was
+unjudged; a cold instance's one failed JWKS fetch refused every token for 30 s and bypassed the
+stale grace; `CACHE_PROVIDER=memory` was refused while the container guide said to use it; the
+erased-ban key ring read a review 7 row as the unkeyed form and "upgraded" it into a hash matching
+nothing; an address as an object key survived erasure; workflow hygiene missed `with: *alias` and
+mixed-case `uses:`; a made-up `kid` spent the refresh cooldown so a rotated one was a 401; app
+manifest lookalike paths (`platform./auth`, zero-width, fullwidth slash, `%2F`) were accepted; an
+outage answer after a revocation stood on the pre-revocation entry.
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-9-of-the-v600-candidate-2026-10-24-fixed-in-v600)
+lists them. New: a held result everywhere (`held: true`, never success) and an approval
+capability (`platform/action-pipeline/approval-capability.ts`) minted when an approval is used;
+a non-recursive `jsonb_replace_text_value` that replaces keys too, `jsonb_may_mention_text`, and
+`user_deletions.email_hash_scheme` (052); stored-JSON limits with `request.json_too_deep` /
+`request.json_too_large`; `CACHE_PROVIDER=valkey` (`VALKEY_URL`, `VALKEY_CA_CERT`) on `ioredis`
+5.11.1 (pinned); the CI test layer installs `redis-server` and sets `REQUIRE_VALKEY_TESTS=1`.
+
+### TASK-164 — Review 10 of the v6.0.0 candidate
+
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-164                               |
+| **Type**     | Security, reliability — release review |
+| **Severity** | High (H1–H3) to Low                    |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7R close               |
+| **Status**   | Fixed in v6.0.0                        |
+| **Logged**   | 2026-10-24                             |
+
+**What:** a fourth adversarial review of the candidate (H1–H3, M4–M6, L7–L12): the command bar's
+agent and capability actions were held twice — as an action and by their key — and the action's
+approval carried a capability that let the write skip the key's hold, so an approver without
+`config_manage_safety` cleared a safety-tier change, and a claim from any approval could write
+`config.dual_control_keys`; an approval was consumed before its run, so a transient failure burned
+it; a cold instance slept up to 30 s per request during a JWKS outage; stored-JSON limits were met
+after the effect; `VALKEY_URL` query parameters overrode TLS; the erasure rewrite could change a
+document's type or lose a colliding key; `jsonDepth` undercounted shared sub-objects; trajectories
+grew without bound; wall-clock test assertions; a CHECK passed on NULL.
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-10-of-the-v600-candidate-2026-10-24-fixed-in-v600)
+lists them. Simplified rather than patched: one hold per change — config-writing actions
+(`COMMAND_BAR_CONFIG_WRITES`) are held only by their key, under the key's rules; the approval
+capability is removed; a test-enforced invariant keeps the two lists apart. New: proposal status
+`executing` with `claim` / `complete` / `release` and `atomically` (052: `proposals.last_run_error`),
+`approvals.run_failed`, the run-recovery job step; `ApprovedRunFailedError`,
+`ActionNotRecordedError`, `Tool.reportsFailure`, `Tool.atomic`, `ActivityStateStore.validate`,
+`TrajectoryStore.assertRoomForStep`, `request.trajectory_full`.
+
+### TASK-165 — Review 11 of the v6.0.0 candidate
+
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-165                               |
+| **Type**     | Security, reliability — release review |
+| **Severity** | High (H-1, H-2) to Low                 |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7R close               |
+| **Status**   | Fixed in v6.0.0                        |
+| **Logged**   | 2026-10-24                             |
+
+**What:** a fifth adversarial review of the candidate (H-1, H-2, M-1, M-2, L-1–L-6): a run slower
+than its 10-minute lease applied twice — the recovery gave its approval back and its completion
+was swallowed; the trajectory cap refused an app session's 1 001st move; an approved run that
+failed after its work was released as "not applied"; suspending an agent waited for a second
+safety admin; a shared large string defeated the JSON size pre-check; erasure's redaction wiped
+whole documents; one oversized search row hid the rest; the in-memory byte count reset on a status
+change; a DB test's job swept parallel suites' rows; and six smaller gaps (atomic audit records
+rolled back, a retry in an aborted transaction, a constraint re-added on every application, a 10 s
+JWKS join, two `VALKEY_URL` forms).
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-11-of-the-v600-candidate-2026-10-24-fixed-in-v600)
+lists them. New: a claim's run token and the `indeterminate` proposal status with
+`ProposalStore.resolveIndeterminate` and the decisions `mark_executed` / `reapprove`
+(`approvals.indeterminate`); trajectory continuations (`segment`, `previous_trajectory_id`,
+`step_offset`; `addStep(…, { rollover })`, `invokeTool({ rolloverTrajectory })`,
+`readTrajectoryChain`); strictly power-reducing config changes applied by one admin
+(`platform/admin/power-reduction.ts`) and the operator kill switch
+(`POST /api/operator/tenants/[id]/agents/suspend`, `admin.kill_switch_failed`);
+`setConfigWithHistory`'s compare-and-set; `withSeparateTenantTx`, `withSavepoint`,
+`inTransaction` (platform/data); `raiseAlert` (platform/observability/alert.ts);
+`platform/cache/valkey-url.ts`; runbook `docs/runbooks/approvals-and-agents.md`.
+
+### TASK-166 — Review 12 of the v6.0.0 candidate
+
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-166                               |
+| **Type**     | Security, reliability — release review |
+| **Severity** | High (H1, H2) to Low                   |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7R close               |
+| **Status**   | Fixed in v6.0.0                        |
+| **Logged**   | 2026-10-24                             |
+
+**What:** a sixth adversarial review of the candidate (H1, H2, M1, M2, L1–L7): removing a
+capability mapping was taken for a power reduction and applied by one admin, though a consumer
+reading an absent capability as needing no features is widened by it; an older held change to the
+agent registry, approved after the kill switch, applied its whole value and re-activated every
+agent; a rollover appended first-fit, so a later small step went back into an earlier segment;
+session chains grew without bound and `loadSession` read every segment; an audited act inside a
+transaction that rolled back left only "attempted"; a `toJSON` value passed the size pre-check as
+one byte; the kill switch audited before its compare-and-set; one-admin reductions were audited
+best-effort after the write; a tenant's compare-and-set was not serialised against a platform
+default write; a cyclic chain could hang the recovery; and the kill switch reached other instances
+only after the 60-second config cache, did not exist for a single-tenant deployment, and
+`mark_executed` needed no independence.
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-12-of-the-v600-candidate-2026-10-24-fixed-in-v600)
+lists them. New: `platform/agents/capability-features.ts` (`evaluateCapabilityFeatures`, the
+consumer contract: an absent capability is not allowed) and its kit
+`__tests__/contract/capability-features-contract.ts`; a held change's recorded previous value
+(`heldPrevious`) with `approvals.stale` and `platform/admin/stale-change.ts`;
+`platform/admin/hold-withdrawal.ts` (`withdrawSupersededHolds`) and
+`withdrawPendingApprovalsForKey`; `TrajectoryStore.chainTail` / `chainSegment`,
+`TrajectoryQuery.withoutSteps`, `trajectoryChainPages`, `agent_trajectories.chain_root_id` and the
+chain guard trigger (052), `agent.trajectory_max_segments` with `request.trajectory_chain_full`;
+`onRollback` (platform/data) and `platform/kernel/audit-correlation.ts`; `audited(…, { recordSuccess })`;
+`clearTenantConfig`'s compare-and-set; `publishConfigInvalidation`; `POST /api/admin/agents/suspend`.
+
+### TASK-167 — Review 13 of the v6.0.0 candidate
+
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-167                               |
+| **Type**     | Security, reliability — release review |
+| **Severity** | Medium (M1, M2, P) to Low              |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7R close               |
+| **Status**   | Fixed in v6.0.0                        |
+| **Logged**   | 2026-10-24                             |
+
+**What:** a seventh adversarial review of the candidate (M1, M2, P, L1–L7 and a test gap; no
+Critical or High): an approved reset was compare-and-set on the tenant's value only, not on the
+platform default it resets to; every read of a stamped key (and every permission check) waited on
+the shared cache with no bound of its own; the capability contract kit did not fit a consumer's
+decision, and its "malformed allows nothing" contradicted consumers' built-in fallback map; a
+superseded-hold withdrawal ignored scope; the runbook's recovery for an unpublished invalidation
+did nothing when every agent was already suspended; the chain guard did not serialise a
+continuation's insert with an update of its predecessor; a database that had run an earlier 052
+never got `agent.trajectory_max_segments` under dual control; `rolled_back` could be recorded for a
+commit whose outcome was unknown; ABA on a compare-and-set was undocumented; the kill switch's
+withdrawal was unbounded; and the kill switch's H2 scenarios had no Postgres test.
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-13-of-the-v600-candidate-2026-10-24-fixed-in-v600)
+lists them. New: `clearTenantConfig({ expectInherited })` and `HeldPrevious.inherited`;
+`platform/cache/stamp-reader.ts` (`readStamp`, the stamp breaker, alert `cache.stamp_breaker_open`);
+the consumer-shaped capability kit (`consumerEvaluator`) and
+`platform/agents/governed-agent-config.ts` (`readTrustedAgents`, `readCapabilityFeatures`,
+`evaluateGovernedCapability`); `holdScope` and scoped `withdrawSupersededHolds` /
+`withdrawPendingApprovalsForKey`; the kill switch's `republished`; the chain guard's predecessor
+lock; `config_dual_control_seeded` (052); `TxEndOutcome` / `onCommit` (platform/data), `audited`'s
+`indeterminate` outcome and `{ external: true }` (`AuditedExternalActError`); `ProposalQuery`
+filters and `ProposalStore.supersede`; alert `approvals.withdrawal_incomplete`.
+
+### TASK-168 — Two defects found adopting v6.0.0 in Playform
+
+| Field        | Detail                                   |
+| ------------ | ---------------------------------------- |
+| **ID**       | TASK-168                                 |
+| **Type**     | Reliability, consumer correctness        |
+| **Severity** | Medium (provisioning race) to Low (test) |
+| **Phase**    | Phase 5                                  |
+| **Target**   | Phase 5, Sprint 7R close                 |
+| **Status**   | Fixed in v6.0.0                          |
+| **Logged**   | 2026-10-24                               |
+
+**What:** found while Playform adopted the candidate, each carried there as a sync-excluded copy.
+(1) `__tests__/migration-naming.test.ts`'s numbering-range case checked this repository's own
+migration files against a hand-made manifest with no `migrationsBeforeTheConvention`, so it failed
+in any consumer with grandfathered migrations (Playform's `007_playform_…`, 031–036). (2)
+`ensureUserProvisioned`'s account insert said `on conflict (id) do nothing`, which does not
+arbitrate the `cognito_sub` key (`players_cognito_sub_key`): of two or three first requests for one
+user at once, one could pass the id check before the winner's row reached the index, then fail on
+the subject key with a unique violation — refused as `account.not_provisioned` (about 2 in 900
+concurrent attempts).
+
+**Fix:** (1) the test reads the merged manifest (`scripts/module-manifest.cjs`, the app's
+grandfather list included) and checks the repository's migrations three ways — the platform's
+against `supabase/platform-migrations.json`, the app's own against the convention and the
+001-to-latest range, the grandfathered ones for existence and replay order only; constructed cases
+use the platform's list, or this repository's files with its own manifest; a fixture app repository
+with grandfathered migrations is its self-test. Consumers inherit it unchanged. (2) the insert says
+`on conflict do nothing` (no target: every unique key of the row arbitrates — Postgres waits for a
+concurrent writer of either key and inserts nothing, never a unique violation), then, in the same
+tenant transaction, reads which row holds the identity: this id → `existing`; this subject under
+another id → `failed`; nothing visible (held in another tenant) → `failed` (it answered `existing`
+before, which no row of the tenant backed; the guard refused either way). No retry is needed.
+`__tests__/db/provisioning-race.db.test.ts` injects the interleaving with a second connection
+holding the conflicting row (waiting on `pg_blocking_pids`), and stresses 150 rounds of three
+concurrent first requests.
+
+### TASK-169 — Review 14 of the v6.0.0 candidate (final verification)
+
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-169                               |
+| **Type**     | Security, reliability — release review |
+| **Severity** | Medium (M-1, M-2) to Low               |
+| **Phase**    | Phase 5                                |
+| **Target**   | Phase 5, Sprint 7R close               |
+| **Status**   | Fixed in v6.0.0                        |
+| **Logged**   | 2026-10-24                             |
+
+**What:** the final verification review of the candidate (M-1, M-2, L-1–L-6; no Critical or High):
+DB tests ran under jest's default 5 s bound in parallel workers on one shared database, with
+route-role-matrix properties of 200 round trips each; event-loop lag on a CPU-saturated instance
+opened the stamp breaker against a healthy cache, and a flapping cache raised an alert per opening;
+the agent-registry and capability-mapping panels showed a 503 as an empty list and the routes
+answered `[]` for a malformed stored value; a commit lost with its connection dropped the
+invalidation of a change that may stand, and the non-joined config and role write paths called it
+"failed"; a withdrawal's `skip locked` left an approval held by a concurrent reviewer pending,
+unreported; a platform-scope withdrawal reached only the current tenant; the capability contract
+kit used fixed capability names; the audited-external guard was a per-file hand count, and the
+audit note on `auditedResponse` was untrue of the purge route.
+
+**Fix:** every finding, each with its regression test — the
+[register](audits/2026-10-REGISTER.md#found-by-review-14-of-the-v600-candidate-2026-10-24-fixed-in-v600)
+lists them. New: a 30 s bound for every DB test (`jest.setup.ts` by path, `DB_TEST_TIMEOUT_MS` in
+`__tests__/helpers/db.ts`) and `fuzzParamsPart`; the stamp reader's yield, per-read lag measure,
+`STAMP_LAG_BOUND_MS`, metric and alert `cache.stamp_read_lag`, rate-limited alerts with a count
+(`STAMP_ALERT_INTERVAL_MS`), `stampReadsLostToLag`, `instanceLoopDelay`;
+`platform/observability/metric-event.ts`; `PanelUnavailable` / `PANEL_UNAVAILABLE`,
+`isWellFormedTrustedAgents`, `isWellFormedCapabilityMap`; `onCommit(hook, { idempotent })`,
+`CommitOutcomeUnknownError`, `isCommitOutcomeUnknown`, `indeterminate` on `WriteResult` and the
+command bar's `ActionResult`; `withdrawPendingApprovalsForKey`'s `remaining`, the cross-tenant
+platform-scope withdrawal (`SupersededWithdrawal.tenants`, `remaining`); the kit's `names`
+(`PF_CAPABILITY_NAMES`, `contractNames`, `capabilityContractCases`, `capabilityContractViolations`);
+`__tests__/helpers/audited-external-scan.ts`, the JSDoc tag `@external`, and `{ external }` on
+`auditedResponse`, `runAudited` and the other wrappers.
 
 ## Known Issue — TASK-020 numbering collision
 
@@ -3476,7 +3897,29 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: October 23, 2026 (Sprint 7R R3 — tenancy: TASK-126 implemented, TASK-114 resolved, TASK-146 progress; TASK-150–155 found and fixed)_
+_Last updated: October 24, 2026 (review 14 of the v6.0.0 candidate — TASK-169 filed and fixed)_
+
+_Previously updated: October 24, 2026 (Playform adoption defects — TASK-168 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 13 of the v6.0.0 candidate — TASK-167 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 12 of the v6.0.0 candidate — TASK-166 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 11 of the v6.0.0 candidate — TASK-165 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 10 of the v6.0.0 candidate — TASK-164 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 9 of the v6.0.0 candidate — TASK-163 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 8 of the v6.0.0 candidate — TASK-162 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 7 of the v6.0.0 candidate — TASK-161 filed and fixed)_
+
+_Previously updated: October 24, 2026 (Sprint 7R close, v6.0.0 — TASK-157–160 filed and fixed; TASK-149 re-checked; every 7R and 7X task's status reconciled to the release)_
+
+_Previously updated: October 24, 2026 (Sprint 7X Wave 2 — TASK-145 Wave 2, TASK-146 and TASK-147 fixed on develop)_
+
+_Previously updated: October 23, 2026 (Sprint 7R R3 — tenancy: TASK-126 implemented, TASK-114 resolved, TASK-146 progress; TASK-150–155 found and fixed)_
 
 _Previously updated: October 23, 2026 (Sprint 7R R2 — integrity fixes: role-model records, ai_metrics, chosen cache, UTC budget day and age; TASK-148, TASK-149)_
 

@@ -144,6 +144,17 @@ export interface ModerationResult {
   trajectoryId: string;
   /** Guardian agent ID */
   agentId: string;
+  /**
+   * True when the content was not judged — the classifier was unavailable, or the screening run
+   * did not complete — and the action is the fail-closed one (audit RR-8). Such content is
+   * withheld, but it is not put in the review queue: an outage is not the user's content.
+   */
+  screeningUnavailable?: boolean;
+  /**
+   * Why nothing was judged, when screeningUnavailable: the classifier could not be reached (or
+   * the run did not complete), or it answered something that is not a judgement (review 8 M4).
+   */
+  unjudgedReason?: "unavailable" | "unreadable";
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +462,8 @@ export interface CoppaGateResult {
   readonly contentRatingLevel: ContentRatingLevel;
   /** User's parental consent status */
   readonly consentStatus: string;
+  /** Why it was refused, as an error code (refusals only). */
+  readonly code?: "account.age_unverified" | "account.consent_required";
 }
 
 // ---------------------------------------------------------------------------

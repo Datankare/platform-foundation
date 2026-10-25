@@ -9,18 +9,30 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { CognitoAuthProvider, CognitoError } from "@/platform/auth/cognito-provider";
+import { getCache } from "@/platform/cache";
+import { createHmac } from "node:crypto";
+import {
+  CognitoAuthProvider,
+  CognitoError,
+  secretHash,
+} from "@/platform/auth/cognito-provider";
 import type { CognitoConfig } from "@/platform/auth/cognito-provider";
+import { TEST_JWKS, signJwt } from "./helpers/test-jwt";
 
 const TEST_CONFIG: CognitoConfig = {
   region: "us-east-1",
   userPoolId: "us-east-1_TestPool",
   clientId: "test-client-id",
   timeoutMs: 5000,
+  jwks: TEST_JWKS,
 };
 
 const originalFetch = global.fetch;
 let mockFetch: jest.Mock;
+
+// Each test asks GetUser afresh: what an earlier one verified is not remembered for it
+// (platform/auth/token-verification.ts — tested on its own).
+beforeEach(() => getCache().clear());
 
 beforeEach(() => {
   mockFetch = jest.fn();
@@ -44,10 +56,22 @@ function cognitoError(type: string, message: string, status = 400) {
 }
 
 // Fake JWT with decodable payload
+// Signed as the pool signs (review 8 M5: the provider checks the signature before GetUser).
 function fakeJwt(payload: Record<string, unknown>): string {
-  const header = Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${header}.${body}.fake-signature`;
+  return signJwt(payload);
+}
+
+/** An access token this app client would be issued (audit A-3: GetUser alone is not enough). */
+function accessJwt(extra: Record<string, unknown> = {}): string {
+  return fakeJwt({
+    sub: "user-123",
+    token_use: "access",
+    client_id: TEST_CONFIG.clientId,
+    iss: `https://cognito-idp.${TEST_CONFIG.region}.amazonaws.com/${TEST_CONFIG.userPoolId}`,
+    iat: 1000,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    ...extra,
+  });
 }
 
 describe("CognitoAuthProvider — signIn", () => {
@@ -174,7 +198,7 @@ describe("CognitoAuthProvider — signUp", () => {
 
 describe("CognitoAuthProvider — verifyToken", () => {
   it("returns payload for valid token", async () => {
-    const accessToken = fakeJwt({ sub: "user-123", iat: 1000, exp: 9999 });
+    const accessToken = accessJwt();
     mockFetch.mockResolvedValueOnce(
       cognitoOk({
         Username: "user-123",
@@ -203,7 +227,7 @@ describe("CognitoAuthProvider — verifyToken", () => {
     ["reports no session without origin_jti", {}, undefined],
     ["reports no session for an empty origin_jti", { origin_jti: "" }, undefined],
   ])("%s", async (_label, extra, expected) => {
-    const accessToken = fakeJwt({ sub: "user-123", iat: 1000, exp: 9999, ...extra });
+    const accessToken = accessJwt(extra);
     mockFetch.mockResolvedValueOnce(
       cognitoOk({
         Username: "user-123",
@@ -223,9 +247,7 @@ describe("CognitoAuthProvider — verifyToken", () => {
       mockFetch.mockResolvedValueOnce(
         cognitoOk({ Username: "user-123", UserAttributes: [] })
       );
-      await new CognitoAuthProvider(TEST_CONFIG).verifyToken(
-        fakeJwt({ sub: "user-123" })
-      );
+      await new CognitoAuthProvider(TEST_CONFIG).verifyToken(accessJwt());
     }
     const after = (logger.warn as jest.Mock).mock.calls.filter(([m]: [string]) =>
       m.includes("origin_jti")
@@ -400,12 +422,11 @@ describe("CognitoAuthProvider — guest mode", () => {
 });
 
 describe("CognitoAuthProvider — resilience", () => {
-  it("signOut does not throw on Cognito failure (P6)", async () => {
+  it("signOut reports a revocation that failed — never a sign-out that revoked nothing (X-17)", async () => {
     mockFetch.mockRejectedValueOnce(new Error("Network down"));
 
     const provider = new CognitoAuthProvider(TEST_CONFIG);
-    // Should not throw
-    await provider.signOut("some-token");
+    await expect(provider.signOut("some-token")).rejects.toThrow("Network down");
   });
 
   it("verifyToken returns null on network failure (P6)", async () => {
@@ -487,5 +508,251 @@ describe("CognitoAuthProvider — error codes (ADR-051)", () => {
       "N3w!Passw0rd#"
     );
     expect(result.errorCode).toBe("auth.code_invalid");
+  });
+});
+
+describe("CognitoAuthProvider — whose token it is (audit A-3)", () => {
+  const getUserOk = () =>
+    mockFetch.mockResolvedValueOnce(
+      cognitoOk({
+        Username: "user-123",
+        UserAttributes: [{ Name: "email", Value: "test@example.com" }],
+        UserMFASettingList: ["SOFTWARE_TOKEN_MFA"],
+      })
+    );
+
+  it.each([
+    ["another app client's token (a shared pool)", { client_id: "other-client" }],
+    ["an ID token", { token_use: "id" }],
+    ["a token with no token_use", { token_use: undefined }],
+    [
+      "another pool's token",
+      { iss: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_Other" },
+    ],
+    ["an expired token", { exp: Math.floor(Date.now() / 1000) - 1 }],
+    ["a token with no expiry", { exp: undefined }],
+  ])("refuses %s even though GetUser accepted it", async (_label, extra) => {
+    getUserOk();
+    const payload = await new CognitoAuthProvider(TEST_CONFIG).verifyToken(
+      accessJwt(extra)
+    );
+    expect(payload).toBeNull();
+  });
+
+  it("refuses an undecodable token", async () => {
+    getUserOk();
+    expect(await new CognitoAuthProvider(TEST_CONFIG).verifyToken("opaque")).toBeNull();
+  });
+
+  it("accepts this client's access token and reports its second factor (A-9)", async () => {
+    getUserOk();
+    const payload = await new CognitoAuthProvider(TEST_CONFIG).verifyToken(accessJwt());
+    expect(payload).toMatchObject({ sub: "user-123", mfaEnabled: true });
+  });
+
+  it("reports no second factor when the user has none", async () => {
+    mockFetch.mockResolvedValueOnce(
+      cognitoOk({ Username: "user-123", UserAttributes: [] })
+    );
+    const payload = await new CognitoAuthProvider(TEST_CONFIG).verifyToken(accessJwt());
+    expect(payload?.mfaEnabled).toBe(false);
+  });
+});
+
+describe("CognitoAuthProvider — a confidential app client (audit A-7)", () => {
+  const SECRET = "s3cr3t".repeat(8);
+  const CONFIDENTIAL: CognitoConfig = { ...TEST_CONFIG, clientSecret: SECRET };
+  const expected = (username: string) =>
+    createHmac("sha256", SECRET)
+      .update(username + TEST_CONFIG.clientId)
+      .digest("base64");
+  const sent = (i = 0) => JSON.parse(mockFetch.mock.calls[i][1].body as string);
+
+  beforeEach(() => mockFetch.mockResolvedValue(cognitoOk({})));
+
+  it("computes Cognito's SECRET_HASH, and none for a public client", () => {
+    expect(secretHash(CONFIDENTIAL, "a@b.c")).toBe(expected("a@b.c"));
+    expect(secretHash(TEST_CONFIG, "a@b.c")).toBeUndefined();
+  });
+
+  it.each([
+    ["signUp", (p: CognitoAuthProvider) => p.signUp("a@b.c", "pw"), "SecretHash"],
+    [
+      "forgotPassword",
+      (p: CognitoAuthProvider) => p.forgotPassword("a@b.c"),
+      "SecretHash",
+    ],
+    [
+      "confirmForgotPassword",
+      (p: CognitoAuthProvider) => p.confirmForgotPassword("a@b.c", "1", "pw"),
+      "SecretHash",
+    ],
+    [
+      "confirmEmailVerification",
+      (p: CognitoAuthProvider) => p.confirmEmailVerification("a@b.c", "1"),
+      "SecretHash",
+    ],
+    [
+      "resendEmailVerification",
+      (p: CognitoAuthProvider) => p.resendEmailVerification("a@b.c"),
+      "SecretHash",
+    ],
+  ])("%s sends the hash for the user", async (_label, call, field) => {
+    await call(new CognitoAuthProvider(CONFIDENTIAL));
+    expect(sent()[field]).toBe(expected("a@b.c"));
+  });
+
+  it("sign-in, the challenges and refresh carry it in their parameters", async () => {
+    const provider = new CognitoAuthProvider(CONFIDENTIAL);
+    await provider.signIn("a@b.c", "pw");
+    expect(sent(0).AuthParameters.SECRET_HASH).toBe(expected("a@b.c"));
+    await provider.respondToMfaChallenge("sess", "123456", "a@b.c");
+    expect(sent(1).ChallengeResponses).toMatchObject({
+      USERNAME: "a@b.c",
+      SECRET_HASH: expected("a@b.c"),
+    });
+    await provider.respondToNewPasswordChallenge("sess", "pw", "a@b.c");
+    expect(sent(2).ChallengeResponses.SECRET_HASH).toBe(expected("a@b.c"));
+    await provider.refreshToken("refresh", "user-123");
+    expect(sent(3).AuthParameters.SECRET_HASH).toBe(expected("user-123"));
+  });
+
+  it("does not try a refresh it cannot hash (no user id)", async () => {
+    expect(
+      await new CognitoAuthProvider(CONFIDENTIAL).refreshToken("refresh")
+    ).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a refreshed session for another user", async () => {
+    mockFetch.mockResolvedValueOnce(
+      cognitoOk({
+        AuthenticationResult: {
+          AccessToken: fakeJwt({ sub: "someone-else" }),
+          ExpiresIn: 60,
+        },
+      })
+    );
+    expect(
+      await new CognitoAuthProvider(CONFIDENTIAL).refreshToken("refresh", "user-123")
+    ).toBeNull();
+  });
+
+  it("revokes the refresh token with the client secret at sign-out (X-17)", async () => {
+    await new CognitoAuthProvider(CONFIDENTIAL).signOut("access", "refresh");
+    expect(mockFetch.mock.calls[0][1].headers["X-Amz-Target"]).toMatch(/RevokeToken$/);
+    expect(sent(0)).toEqual({
+      ClientId: TEST_CONFIG.clientId,
+      Token: "refresh",
+      ClientSecret: SECRET,
+    });
+    expect(mockFetch.mock.calls[1][1].headers["X-Amz-Target"]).toMatch(/GlobalSignOut$/);
+  });
+
+  it("treats an expired access token as signed out once its refresh token is revoked", async () => {
+    mockFetch
+      .mockResolvedValueOnce(cognitoOk({}))
+      .mockResolvedValueOnce(
+        cognitoError("NotAuthorizedException", "Access Token has expired")
+      );
+    await expect(
+      new CognitoAuthProvider(CONFIDENTIAL).signOut("expired", "refresh")
+    ).resolves.toBeUndefined();
+  });
+
+  it("reports an expired access token with no refresh token revoked", async () => {
+    mockFetch.mockResolvedValueOnce(
+      cognitoError("NotAuthorizedException", "Access Token has expired")
+    );
+    await expect(
+      new CognitoAuthProvider(CONFIDENTIAL).signOut("expired")
+    ).rejects.toThrow();
+  });
+
+  it("authenticates at the token endpoint with the secret", async () => {
+    mockFetch.mockResolvedValueOnce(
+      cognitoOk({ access_token: fakeJwt({ sub: "u" }), refresh_token: "r" })
+    );
+    await new CognitoAuthProvider({
+      ...CONFIDENTIAL,
+      hostedUiDomain: "x.auth.us-east-1.amazoncognito.com",
+    }).handleSsoCallback("google", "code", "https://app.example/auth/callback");
+    expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe(
+      `Basic ${Buffer.from(`${TEST_CONFIG.clientId}:${SECRET}`).toString("base64")}`
+    );
+  });
+});
+
+describe("CognitoAuthProvider — MFA and SSO (audit A-9, A-13)", () => {
+  it("answers the MFA challenge for the user it was issued to, never a placeholder", async () => {
+    mockFetch.mockResolvedValueOnce(cognitoOk({}));
+    await new CognitoAuthProvider(TEST_CONFIG).respondToMfaChallenge(
+      "sess",
+      "123456",
+      "person@example.com"
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.ChallengeResponses.USERNAME).toBe("person@example.com");
+  });
+
+  it("asks hosted sign-in for the scope GetUser needs, so SSO users are not refused", async () => {
+    const result = await new CognitoAuthProvider({
+      ...TEST_CONFIG,
+      hostedUiDomain: "x.auth.us-east-1.amazoncognito.com",
+    }).initiateSso("google", "https://app.example/auth/callback");
+    const scope = new URL(result.redirectUrl!).searchParams.get("scope")!.split(" ");
+    expect(scope).toEqual(
+      expect.arrayContaining(["openid", "aws.cognito.signin.user.admin"])
+    );
+  });
+});
+
+describe("CognitoAuthProvider.verifyToken against the GetUser quota", () => {
+  const getUserOk = () =>
+    cognitoOk({
+      Username: "user-123",
+      UserAttributes: [{ Name: "email", Value: "a@b.c" }],
+      UserMFASettingList: ["SOFTWARE_TOKEN_MFA"],
+    });
+
+  it("refuses a foreign or expired token before any call to Cognito", async () => {
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    expect(await provider.verifyToken(accessJwt({ exp: 1 }))).toBeNull();
+    expect(await provider.verifyToken(accessJwt({ client_id: "other" }))).toBeNull();
+    expect(await provider.verifyToken("not-a-jwt")).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("asks GetUser once for a token used twice in its window", async () => {
+    mockFetch.mockResolvedValue(getUserOk());
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    const token = accessJwt({ jti: "once" });
+    expect(await provider.verifyToken(token)).toMatchObject({ sub: "user-123" });
+    expect(await provider.verifyToken(token)).toMatchObject({ sub: "user-123" });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a throttled GetUser is never read as an invalid token: privileged fails closed", async () => {
+    mockFetch.mockResolvedValue(
+      cognitoError("TooManyRequestsException", "Rate exceeded")
+    );
+    const provider = new CognitoAuthProvider(TEST_CONFIG);
+    await expect(
+      provider.verifyToken(accessJwt({ jti: "throttled" }), { privileged: true })
+    ).rejects.toThrow(/token verification unavailable: TooManyRequestsException/);
+    await expect(provider.verifyToken(accessJwt({ jti: "throttled-2" }))).rejects.toThrow(
+      /unavailable/
+    );
+  });
+
+  it("a revoked token (NotAuthorizedException) is invalid", async () => {
+    mockFetch.mockResolvedValue(
+      cognitoError("NotAuthorizedException", "Access Token has been revoked")
+    );
+    expect(
+      await new CognitoAuthProvider(TEST_CONFIG).verifyToken(
+        accessJwt({ jti: "revoked" })
+      )
+    ).toBeNull();
   });
 });

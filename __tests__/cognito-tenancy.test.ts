@@ -7,11 +7,13 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
+import { getCache } from "@/platform/cache";
 import {
   CognitoAuthProvider,
   TENANT_ATTRIBUTE,
   type CognitoConfig,
 } from "@/platform/auth/cognito-provider";
+import { TEST_JWKS, signJwt } from "./helpers/test-jwt";
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const BASE: CognitoConfig = {
@@ -19,6 +21,7 @@ const BASE: CognitoConfig = {
   userPoolId: "us-east-1_TestPool",
   clientId: "test-client-id",
   timeoutMs: 5000,
+  jwks: TEST_JWKS,
 };
 const ADMIN: CognitoConfig = {
   ...BASE,
@@ -30,6 +33,10 @@ const ADMIN: CognitoConfig = {
 
 const originalFetch = global.fetch;
 let mockFetch: jest.Mock;
+// Each test asks GetUser afresh: what an earlier one verified is not remembered for it
+// (platform/auth/token-verification.ts — tested on its own).
+beforeEach(() => getCache().clear());
+
 beforeEach(() => {
   mockFetch = jest.fn();
   global.fetch = mockFetch;
@@ -48,8 +55,8 @@ const fail = (type: string, status = 400) => ({
   status,
   json: async () => ({ __type: type, message: type }),
 });
-const fakeJwt = (payload: Record<string, unknown>) =>
-  `h.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.s`;
+// Signed as the pool signs (review 8 M5: the provider checks the signature before GetUser).
+const fakeJwt = (payload: Record<string, unknown>) => signJwt(payload);
 
 /** The action and body of the n-th call, and its headers. */
 function call(n: number) {
@@ -66,7 +73,15 @@ function call(n: number) {
 }
 
 describe("verifyToken carries the tenant attribute", () => {
-  const token = fakeJwt({ sub: "user-1", iat: 1000, exp: 9_999_999_999 });
+  // An access token issued to this app client (audit A-3).
+  const token = fakeJwt({
+    sub: "user-1",
+    token_use: "access",
+    client_id: BASE.clientId,
+    iss: `https://cognito-idp.${BASE.region}.amazonaws.com/${BASE.userPoolId}`,
+    iat: 1000,
+    exp: 9_999_999_999,
+  });
 
   it("reports the tenant the pool holds", async () => {
     mockFetch.mockResolvedValueOnce(
@@ -104,6 +119,54 @@ describe("verifyToken carries the tenant attribute", () => {
     expect((await new CognitoAuthProvider(BASE).verifyToken(token))?.tenantId).toBe(
       "not-a-uuid"
     );
+  });
+});
+
+describe("an attribute change voids remembered verifications (review 8 M1)", () => {
+  const token = fakeJwt({
+    sub: "user-1",
+    username: "user-1",
+    token_use: "access",
+    client_id: BASE.clientId,
+    iss: `https://cognito-idp.${BASE.region}.amazonaws.com/${BASE.userPoolId}`,
+    iat: 1000,
+    exp: 9_999_999_999,
+  });
+  const getUser = (verified: boolean) =>
+    ok({
+      Username: "user-1",
+      UserAttributes: [{ Name: "email_verified", Value: String(verified) }],
+    });
+
+  it("after the address is verified, the next request reads it from the pool, not the cache", async () => {
+    const p = new CognitoAuthProvider(ADMIN);
+    mockFetch.mockResolvedValueOnce(getUser(false));
+    expect((await p.verifyToken(token))?.emailVerified).toBe(false);
+    mockFetch
+      .mockResolvedValueOnce(ok({})) // ConfirmSignUp
+      .mockResolvedValueOnce(ok({ Username: "user-1" })) // AdminGetUser: the token's subject
+      .mockResolvedValueOnce(getUser(true));
+    expect(await p.confirmEmailVerification("a@b.c", "123456")).toEqual({
+      success: true,
+    });
+    expect(call(2).action).toBe("AdminGetUser");
+    expect((await p.verifyToken(token))?.emailVerified).toBe(true);
+    expect(call(3).action).toBe("GetUser");
+  });
+
+  it("a lookup that fails is logged; the verification still succeeds", async () => {
+    mockFetch
+      .mockResolvedValueOnce(ok({}))
+      .mockResolvedValueOnce(fail("InternalErrorException", 500));
+    expect(
+      await new CognitoAuthProvider(ADMIN).confirmEmailVerification("a@b.c", "1")
+    ).toEqual({ success: true });
+  });
+
+  it("without administrative credentials nothing more is called", async () => {
+    mockFetch.mockResolvedValueOnce(ok({}));
+    await new CognitoAuthProvider(BASE).confirmEmailVerification("a@b.c", "1");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 

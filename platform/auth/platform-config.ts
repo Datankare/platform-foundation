@@ -12,6 +12,17 @@
  * recorded in the audit log first (no record, no change — audit X-8) and in
  * platform_config_history. Reads are cached per instance for 60 seconds, per tenant.
  *
+ * Across instances (review 12 L7): the keys whose change must reach every instance at once — the
+ * agent registry and the capability map (POWER_REDUCIBLE_KEYS: a kill switch, a suspension) — are
+ * served from the cache only while their shared invalidation stamp is the one they were read
+ * under. Every write of such a key publishes a new stamp through the shared cache (the one
+ * CACHE_PROVIDER selects), as the permissions cache does (audit RR-9): every instance re-reads
+ * the key at its next read, not up to 60 seconds later. A stamp that cannot be read is not
+ * trusted (the key is read from the database); a stamp read waits at most 200 ms and is not
+ * attempted while the shared cache keeps failing (a circuit breaker, review 13 M2 —
+ * platform/cache/stamp-reader.ts); a stamp that cannot be published is logged and alerted
+ * (config.invalidation_unpublished) — then the 60-second TTL is the bound.
+ *
  * Data access is through platform/data (ADR-053 D4): a tenant's reads run in its transaction
  * (row-level security shows it only its own values); platform-default writes run on the owner
  * connection, the one path that may change platform_config.
@@ -22,8 +33,15 @@
 
 import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import { randomUUID } from "node:crypto";
+import { getCache } from "@/platform/cache";
+import { readStamp } from "@/platform/cache/stamp-reader";
+import { raiseAlert } from "@/platform/observability/alert";
+import { POWER_REDUCIBLE_KEYS } from "@/platform/admin/power-reduction";
 import {
   hasDatabase,
+  inTransaction,
+  onCommit,
   withOwnerTx,
   withPlatformTx,
   withTenantTx,
@@ -57,6 +75,8 @@ export interface ConfigEntry {
 interface CacheEntry {
   value: unknown;
   expiresAt: number;
+  /** A shared-stamped key's invalidation stamp when it was read (review 12 L7). */
+  stamp?: string;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -74,20 +94,112 @@ function cacheKey(key: string): string {
  */
 const STORAGE_FAILURE =
   "The change could not be saved: the database is unavailable or refused it.";
+/** A write whose commit was lost with its connection (review 14 L-2): it may have landed. */
+const COMMIT_UNKNOWN =
+  "The database connection was lost while the change was being saved: it may or may not have been applied. Read the setting again before you retry.";
 
-function getCached(key: string): unknown | undefined {
-  const k = cacheKey(key);
-  const entry = cache.get(k);
-  if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) {
-    cache.delete(k);
-    return undefined;
-  }
-  return entry.value;
+/** Whether a write's error says its commit's outcome is unknown (platform/data, by shape). */
+function commitOutcomeUnknown(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === "object" &&
+    (err as { indeterminate?: unknown }).indeterminate === true
+  );
 }
 
-function setCache(key: string, value: unknown): void {
-  cache.set(cacheKey(key), { value, expiresAt: Date.now() + CACHE_TTL_MS });
+/** Whether a change of `key` is published to every instance (review 12 L7). */
+export function isSharedInvalidationKey(key: string): boolean {
+  return POWER_REDUCIBLE_KEYS.has(key);
+}
+
+const stampKey = (key: string) => `config:invalidated:${key}`;
+/** How long a stamp is kept: longer than any cache entry lives. */
+const STAMP_TTL_SECONDS = 600;
+
+/**
+ * The shared invalidation stamp of `key` ("-" when none was published), or undefined when it
+ * cannot be read — then nothing cached for it is trusted and the key is read from the database.
+ * Bounded (review 13 M2): at most STAMP_READ_TIMEOUT_MS, and not attempted at all while the
+ * stamp breaker is open (platform/cache/stamp-reader.ts) — a hanging shared cache never holds a
+ * read of a stamped key.
+ */
+async function currentStamp(key: string): Promise<string | undefined> {
+  const read = await readStamp(
+    async () => (await getCache().get<string>(stampKey(key))) ?? "-"
+  );
+  return read.ok ? read.value : undefined;
+}
+
+/**
+ * Tell every instance that `key` changed (review 12 L7): a new stamp in the shared cache, so each
+ * drops its cached value at its next read. Logged and alerted when it cannot be published (the
+ * 60-second TTL is then the bound). Returns whether it was published. This instance forgets the
+ * key itself in the write.
+ */
+export async function publishConfigInvalidation(key: string): Promise<boolean> {
+  if (!isSharedInvalidationKey(key)) return true;
+  // Inside a caller's transaction the change is not visible until it commits: published now,
+  // another instance would re-read the OLD value and cache it under the new stamp. So it is
+  // published after the commit — and never if the transaction rolls back (review 13 L5). When
+  // the commit's outcome is unknown (its connection was lost) it is published all the same
+  // (review 14 L-2): the change may have landed, and a needless invalidation costs a re-read.
+  if (typeof inTransaction === "function" && inTransaction()) {
+    if (
+      typeof onCommit === "function" &&
+      onCommit(() => publishNow(key).then(() => {}), { idempotent: true })
+    ) {
+      return true;
+    }
+  }
+  return publishNow(key);
+}
+
+async function publishNow(key: string): Promise<boolean> {
+  try {
+    await getCache().set(stampKey(key), randomUUID(), { ttlSeconds: STAMP_TTL_SECONDS });
+    return true;
+  } catch (err) {
+    logger.error("Config invalidation not published to other instances", {
+      key,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/auth/platform-config",
+    });
+    raiseAlert({
+      name: "config.invalidation_unpublished",
+      message: `A change of ${key} could not be published to other instances; they may serve the old value for up to ${CACHE_TTL_MS / 1000} s.`,
+      tags: { key },
+    });
+    return false;
+  }
+}
+
+/**
+ * The cached value of `key`, or undefined. For a shared-stamped key, also the stamp read now
+ * (`stamp`): the caller caches what it reads under it.
+ */
+async function getCached(
+  key: string
+): Promise<{ value: unknown | undefined; stamp?: string; trusted: boolean }> {
+  const shared = isSharedInvalidationKey(key);
+  const stamp = shared ? await currentStamp(key) : undefined;
+  const k = cacheKey(key);
+  const entry = cache.get(k);
+  // A stamp that cannot be read: nothing cached is trusted, and nothing read is cached.
+  if (shared && stamp === undefined) return { value: undefined, trusted: false };
+  if (!entry) return { value: undefined, stamp, trusted: true };
+  if (Date.now() > entry.expiresAt || (shared && entry.stamp !== stamp)) {
+    cache.delete(k);
+    return { value: undefined, stamp, trusted: true };
+  }
+  return { value: entry.value, stamp, trusted: true };
+}
+
+function setCache(key: string, value: unknown, stamp?: string): void {
+  cache.set(cacheKey(key), {
+    value,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    ...(stamp !== undefined ? { stamp } : {}),
+  });
 }
 
 /** Forget `key` for every tenant on this instance (a platform default changed). */
@@ -135,8 +247,8 @@ async function readEffective(key: string): Promise<ValueRow | null> {
  * Uses the per-tenant cache (60s TTL).
  */
 export async function getConfig<T = unknown>(key: string, defaultValue?: T): Promise<T> {
-  const cached = getCached(key);
-  if (cached !== undefined) return cached as T;
+  const cached = await getCached(key);
+  if (cached.value !== undefined) return cached.value as T;
 
   let row: ValueRow | null = null;
   if (hasDatabase()) {
@@ -161,7 +273,7 @@ export async function getConfig<T = unknown>(key: string, defaultValue?: T): Pro
     return defaultValue as T;
   }
 
-  setCache(key, row.value);
+  if (cached.trusted) setCache(key, row.value, cached.stamp);
   return row.value as T;
 }
 
@@ -171,8 +283,8 @@ export async function getConfig<T = unknown>(key: string, defaultValue?: T): Pro
  * closed, which getConfig's default makes impossible to tell apart from a stored value.
  */
 export async function getConfigOrThrow<T = unknown>(key: string): Promise<T> {
-  const cached = getCached(key);
-  if (cached !== undefined) return cached as T;
+  const cached = await getCached(key);
+  if (cached.value !== undefined) return cached.value as T;
   if (!hasDatabase()) {
     throw new Error(`Config key "${key}" unreadable: no database is configured`);
   }
@@ -185,7 +297,7 @@ export async function getConfigOrThrow<T = unknown>(key: string): Promise<T> {
     );
   }
   if (!row) throw new Error(`Config key "${key}" unreadable: not found`);
-  setCache(key, row.value);
+  if (cached.trusted) setCache(key, row.value, cached.stamp);
   return row.value as T;
 }
 
@@ -238,7 +350,17 @@ interface EnhancedConfigRow {
   tenant_overridable: boolean;
 }
 
-/** Every entry with its effective value for the current tenant (or the defaults, outside one). */
+/**
+ * A setting retired by a migration (category 'retired', review 7 L2): kept with its history as
+ * the record of what it was, never listed and never set.
+ */
+export const RETIRED_CATEGORY = "retired";
+
+/**
+ * Every entry with its effective value for the current tenant (or the defaults, outside one).
+ * The list leaves out retired settings; one read by its key is returned (so a write can say why
+ * it is refused).
+ */
 async function readEntries(key?: string): Promise<EnhancedConfigRow[]> {
   const params = key === undefined ? [] : [key];
   const tenantSql =
@@ -248,6 +370,7 @@ async function readEntries(key?: string): Promise<EnhancedConfigRow[]> {
                 coalesce(o.updated_at, c.updated_at) as updated_at, c.default_value, c.value_type,
                 c.min_value, c.max_value, c.allowed_values, c.permission_tier, c.tenant_overridable
            from platform_config c left join tenant_config_overrides o on o.key = c.key
+          where c.category <> 'retired'
           order by c.category, c.key`
       : `select c.key, coalesce(o.value, c.value) as value, c.value as platform_value,
                 (o.key is not null) as overridden, c.description, c.category,
@@ -260,7 +383,7 @@ async function readEntries(key?: string): Promise<EnhancedConfigRow[]> {
       ? `select c.key, c.value, c.value as platform_value, false as overridden, c.description,
                 c.category, c.updated_at, c.default_value, c.value_type, c.min_value, c.max_value,
                 c.allowed_values, c.permission_tier, c.tenant_overridable
-           from platform_config c order by c.category, c.key`
+           from platform_config c where c.category <> 'retired' order by c.category, c.key`
       : `select c.key, c.value, c.value as platform_value, false as overridden, c.description,
                 c.category, c.updated_at, c.default_value, c.value_type, c.min_value, c.max_value,
                 c.allowed_values, c.permission_tier, c.tenant_overridable
@@ -460,10 +583,20 @@ export function validateConfigValue(
     return { valid: false, errors };
   }
 
+  // TASK-147: every case decides on the value's own type — no String() or Number() of an
+  // arbitrary value (an object without a prototype made String() throw: an uncoded 500), and
+  // the value a form sends as text ("50", "true", "[...]") is stored as the type it names
+  // (`value`), never as the text (null, "", true and [] passed a number setting as 0 or 1).
+  let value: unknown = proposedValue;
   switch (entry.valueType) {
     case "number": {
       const num =
-        typeof proposedValue === "number" ? proposedValue : Number(proposedValue);
+        typeof proposedValue === "number"
+          ? proposedValue
+          : typeof proposedValue === "string" &&
+              /^-?\d+(?:\.\d+)?$/.test(proposedValue.trim())
+            ? Number(proposedValue.trim())
+            : NaN;
       if (!Number.isFinite(num)) {
         errors.push(`Value must be a number, got: ${typeof proposedValue}`);
         break;
@@ -474,57 +607,56 @@ export function validateConfigValue(
       if (entry.maxValue !== null && num > entry.maxValue) {
         errors.push(`Value ${num} exceeds maximum ${entry.maxValue}`);
       }
+      value = num;
       break;
     }
     case "boolean": {
-      if (
-        typeof proposedValue !== "boolean" &&
-        proposedValue !== "true" &&
-        proposedValue !== "false"
-      ) {
-        errors.push(
-          `Value must be a boolean (true/false), got: ${String(proposedValue)}`
-        );
+      if (typeof proposedValue === "boolean") break;
+      if (proposedValue === "true" || proposedValue === "false") {
+        value = proposedValue === "true";
+        break;
       }
+      errors.push(`Value must be a boolean (true/false), got: ${typeof proposedValue}`);
       break;
     }
     case "string_enum": {
-      const strVal = String(proposedValue);
-      if (entry.allowedValues !== null && !entry.allowedValues.includes(strVal)) {
+      if (typeof proposedValue !== "string") {
+        errors.push(`Value must be text, got: ${typeof proposedValue}`);
+        break;
+      }
+      if (entry.allowedValues !== null && !entry.allowedValues.includes(proposedValue)) {
         errors.push(
-          `Value "${strVal}" is not in allowed values: ${entry.allowedValues.join(", ")}`
+          `Value "${proposedValue}" is not in allowed values: ${entry.allowedValues.join(", ")}`
         );
       }
       break;
     }
     case "json_array": {
-      if (!Array.isArray(proposedValue)) {
-        // Try parsing if string
-        if (typeof proposedValue === "string") {
-          try {
-            const parsed = JSON.parse(proposedValue);
-            if (!Array.isArray(parsed)) {
-              errors.push("Value must be a JSON array");
-            }
-          } catch {
-            errors.push("Value must be a valid JSON array");
-          }
-        } else {
-          errors.push("Value must be a JSON array");
+      if (Array.isArray(proposedValue)) break;
+      if (typeof proposedValue === "string") {
+        try {
+          const parsed: unknown = JSON.parse(proposedValue);
+          if (Array.isArray(parsed)) value = parsed;
+          else errors.push("Value must be a JSON array");
+        } catch {
+          errors.push("Value must be a valid JSON array");
         }
+      } else {
+        errors.push("Value must be a JSON array");
       }
       break;
     }
     case "string": {
-      // String type — no special validation beyond existence
-      if (proposedValue === null || proposedValue === undefined) {
-        errors.push("Value must not be null or undefined");
+      if (typeof proposedValue !== "string") {
+        errors.push(
+          `Value must be text, got: ${proposedValue === null ? "null" : typeof proposedValue}`
+        );
       }
       break;
     }
   }
 
-  return { valid: errors.length === 0, errors };
+  return errors.length === 0 ? { valid: true, errors, value } : { valid: false, errors };
 }
 
 // ── History Operations ──────────────────────────────────────────────────
@@ -618,7 +750,42 @@ type WriteResult = {
   error?: string;
   validationErrors?: readonly string[];
   historyWriteFailed?: boolean;
+  /**
+   * A compare-and-set found the value it replaces changed since it was read (review 11 M-2,
+   * review 12 H2): nothing was changed.
+   */
+  stale?: boolean;
+  /**
+   * The write's commit was lost with its connection (review 14 L-2): it may or may not have been
+   * applied. Not a success — and not a failure: the audit records `indeterminate`, and the
+   * invalidation was published all the same.
+   */
+  indeterminate?: boolean;
 };
+
+/**
+ * Serialise writes of `key` for the transaction (review 11 M-2, review 12 L5). A platform-default
+ * write takes the key's platform lock; a tenant's write takes the platform lock FIRST and then its
+ * own — its compare-and-set may compare against the platform default it inherits, so a concurrent
+ * default change must not land between its check and its write. One order everywhere (platform,
+ * then tenant): two writers cannot wait on each other. Transaction-scoped advisory locks: open to
+ * every role, released at commit.
+ */
+async function lockConfigKey(
+  tx: Tx,
+  key: string,
+  scope: ConfigScope,
+  tenantId: string | undefined
+): Promise<void> {
+  await tx.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [
+    `platform_config:platform:${key}`,
+  ]);
+  if (scope === "tenant") {
+    await tx.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `platform_config:${tenantId}:${key}`,
+    ]);
+  }
+}
 
 /**
  * Set a config value with full validation, history logging, and audit.
@@ -634,6 +801,16 @@ type WriteResult = {
  * The caller decides whether the actor may make the change at all (tier permissions, operator
  * status: governed-config.ts). This enforces only what the data model requires.
  */
+/** The value a compare-and-set write expected was changed by another write first. */
+class ConfigChangedError extends Error {
+  constructor(key: string) {
+    super(
+      `"${key}" changed since it was read, so nothing was changed. Read it again and retry.`
+    );
+    this.name = "ConfigChangedError";
+  }
+}
+
 export async function setConfigWithHistory(
   key: string,
   value: unknown,
@@ -642,13 +819,29 @@ export async function setConfigWithHistory(
   changeSource: ConfigChangeSource = "config_agent",
   /** A5: Pass a pre-loaded entry to avoid redundant DB round trip */
   preloadedEntry?: EnhancedConfigEntry,
-  target: ConfigWriteTarget = PLATFORM_DEFAULT_TARGET
+  target: ConfigWriteTarget = PLATFORM_DEFAULT_TARGET,
+  options: {
+    /**
+     * Compare-and-set (review 11 M-2): write only if the value being replaced — the target's, read
+     * in the writing transaction — still equals this one; otherwise nothing is changed and the
+     * result says the value changed. A change judged against the value it replaces (a power
+     * reduction) cannot then undo a concurrent change.
+     */
+    readonly expectPrevious?: { readonly value: unknown };
+  } = {}
 ): Promise<WriteResult> {
   const entry = preloadedEntry ?? (await getEnhancedConfig(key));
   if (!entry) {
     return {
       success: false,
       error: `Config key "${key}" not found. Cannot create new keys via this endpoint.`,
+    };
+  }
+
+  if (entry.category === RETIRED_CATEGORY) {
+    return {
+      success: false,
+      error: `Config key "${key}" is retired: nothing reads it, and it cannot be set.`,
     };
   }
 
@@ -660,6 +853,8 @@ export async function setConfigWithHistory(
       validationErrors: validation.errors,
     };
   }
+  // Stored as the type the setting names ("50" from a form is stored as 50).
+  value = validation.value;
 
   const tenant = peekTenant();
   if (target.scope === "tenant") {
@@ -687,6 +882,31 @@ export async function setConfigWithHistory(
       : null;
 
   const write = async (tx: Tx) => {
+    // Writes of one key are serialised for the transaction (review 11 M-2, review 12 L5): a
+    // compare-and-set below then reads what is committed, and no write — of this scope or of the
+    // platform default a tenant's value inherits — lands between its check and its write.
+    await lockConfigKey(tx, key, target.scope, tenant?.tenantId);
+    if (options.expectPrevious) {
+      // The value this write replaces: the tenant's own, else the platform default it inherits.
+      // jsonb equality is by value, not by text.
+      const expected = JSON.stringify(options.expectPrevious.value ?? null);
+      const own =
+        target.scope === "tenant"
+          ? await tx.query<{ same: boolean }>(
+              "select value = $3::jsonb as same from tenant_config_overrides where tenant_id = $1::uuid and key = $2",
+              [tenant!.tenantId, key, expected]
+            )
+          : { rows: [] as { same: boolean }[] };
+      const same = own.rows.length
+        ? own.rows[0].same
+        : (
+            await tx.query<{ same: boolean }>(
+              "select value = $2::jsonb as same from platform_config where key = $1",
+              [key, expected]
+            )
+          ).rows[0]?.same === true;
+      if (!same) throw new ConfigChangedError(key);
+    }
     if (target.scope === "platform") {
       const r = await tx.query(
         "update platform_config set value = $2::jsonb, updated_by = $3::uuid, updated_at = now() where key = $1",
@@ -739,6 +959,24 @@ export async function setConfigWithHistory(
           if (target.scope === "tenant" && !target.operator) await withTenantTx(write);
           else await withOwnerTx("operator", write);
         } catch (err) {
+          if (err instanceof ConfigChangedError) {
+            return { success: false, error: err.message, stale: true };
+          }
+          if (commitOutcomeUnknown(err)) {
+            // It may have landed: every instance forgets the key, as after a write (review 14 L-2).
+            logger.error(
+              "Config update's commit was lost: whether it was applied is unknown",
+              {
+                key,
+                scope: target.scope,
+                route: "platform/auth/platform-config",
+              }
+            );
+            if (target.scope === "platform") forgetEverywhere(key);
+            else cache.delete(cacheKey(key));
+            await publishConfigInvalidation(key);
+            return { success: false, error: COMMIT_UNKNOWN, indeterminate: true };
+          }
           logger.error("Config update failed", {
             key,
             scope: target.scope,
@@ -749,6 +987,7 @@ export async function setConfigWithHistory(
         }
         if (target.scope === "platform") forgetEverywhere(key);
         else cache.delete(cacheKey(key));
+        await publishConfigInvalidation(key);
         return { success: true, historyWriteFailed: false };
       }
     );
@@ -771,11 +1010,30 @@ export async function clearTenantConfig(
   key: string,
   actorId: string,
   changeComment: string,
-  operator: boolean
+  operator: boolean,
+  options: {
+    /**
+     * Compare-and-set (review 12 H2): remove the tenant's value only if it is still this one (an
+     * approved reset, against the value recorded when it was requested); otherwise nothing is
+     * changed and the result is stale.
+     */
+    readonly expectPrevious?: { readonly value: unknown };
+    /**
+     * Compare-and-set of what the reset resets TO (review 13 M1): remove the tenant's value only
+     * if the platform default it will inherit is still this one — the value the approver was
+     * shown when the reset was requested. A default changed since makes the reset stale: the
+     * tenant would otherwise be left with a value no approver saw.
+     */
+    readonly expectInherited?: { readonly value: unknown };
+  } = {}
 ): Promise<WriteResult> {
   const entry = await getEnhancedConfig(key);
   if (!entry) return { success: false, error: `Config key "${key}" not found.` };
-  if (!entry.overridden) return { success: true };
+  if (!entry.overridden) {
+    return options.expectPrevious
+      ? { success: false, error: new ConfigChangedError(key).message, stale: true }
+      : { success: true };
+  }
   const tenant = peekTenant();
   if (!tenant) return { success: false, error: "A tenant's value needs a tenant." };
   if (!entry.tenantOverridable && !operator) {
@@ -785,6 +1043,24 @@ export async function clearTenantConfig(
     };
   }
   const write = async (tx: Tx) => {
+    // The same locks, in the same order, as a write of the key (review 12 L5).
+    await lockConfigKey(tx, key, "tenant", tenant.tenantId);
+    if (options.expectPrevious) {
+      const { rows } = await tx.query<{ same: boolean }>(
+        "select value = $3::jsonb as same from tenant_config_overrides where tenant_id = $1::uuid and key = $2",
+        [tenant.tenantId, key, JSON.stringify(options.expectPrevious.value ?? null)]
+      );
+      if (rows[0]?.same !== true) throw new ConfigChangedError(key);
+    }
+    if (options.expectInherited) {
+      // Under the key's platform lock (taken first, above): no default change lands between this
+      // check and the delete.
+      const { rows } = await tx.query<{ same: boolean }>(
+        "select value = $2::jsonb as same from platform_config where key = $1",
+        [key, JSON.stringify(options.expectInherited.value ?? null)]
+      );
+      if (rows[0]?.same !== true) throw new ConfigChangedError(key);
+    }
     await tx.query(
       "delete from tenant_config_overrides where tenant_id = $1::uuid and key = $2",
       [tenant.tenantId, key]
@@ -820,6 +1096,22 @@ export async function clearTenantConfig(
           if (operator) await withOwnerTx("operator", write);
           else await withTenantTx(write);
         } catch (err) {
+          if (err instanceof ConfigChangedError) {
+            return { success: false, error: err.message, stale: true };
+          }
+          if (commitOutcomeUnknown(err)) {
+            // It may have landed: every instance forgets the key, as after a reset (review 14 L-2).
+            logger.error(
+              "Config reset's commit was lost: whether it was applied is unknown",
+              {
+                key,
+                route: "platform/auth/platform-config",
+              }
+            );
+            cache.delete(cacheKey(key));
+            await publishConfigInvalidation(key);
+            return { success: false, error: COMMIT_UNKNOWN, indeterminate: true };
+          }
           logger.error("Config reset failed", {
             key,
             error: err instanceof Error ? err.message : String(err),
@@ -828,6 +1120,7 @@ export async function clearTenantConfig(
           return { success: false, error: STORAGE_FAILURE };
         }
         cache.delete(cacheKey(key));
+        await publishConfigInvalidation(key);
         return { success: true };
       }
     );

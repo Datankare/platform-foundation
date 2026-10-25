@@ -16,6 +16,7 @@
  */
 
 import type { ActivityStateStore, StateReducer } from "./state-store";
+import { assertStorableJson } from "@/platform/errors/json-limits";
 import type { CommitResult, SessionMeta, VersionedState } from "./types";
 import { DataUnavailableError, withTenantTx } from "@/platform/data";
 import { TenantContextError } from "@/platform/tenancy/context";
@@ -27,7 +28,17 @@ interface Row {
 }
 
 export class PostgresActivityStateStore<TState> implements ActivityStateStore<TState> {
+  /**
+   * The refusal a commit of `state` would meet, thrown now (review 10 M5): the pipeline asks
+   * before the action's effect, so a state too deep or too large never follows an applied effect.
+   */
+  validate(state: TState): void {
+    assertStorableJson(state, "app_sessions.state");
+  }
+
   async create(sessionId: string, initialState: TState): Promise<VersionedState<TState>> {
+    // Session state is caller-shaped JSON: bounded before it is stored (review 9 H2).
+    assertStorableJson(initialState, "app_sessions.state");
     try {
       await withTenantTx((tx) =>
         tx.query(
@@ -71,6 +82,7 @@ export class PostgresActivityStateStore<TState> implements ActivityStateStore<TS
     newState: TState,
     producedBy: string
   ): Promise<CommitResult<TState>> {
+    assertStorableJson(newState, "app_sessions.state");
     // The CAS: the version is part of the WHERE clause, so a moved version matches no row.
     // Do NOT split this into read-then-update — that reopens the race it closes.
     const result = await withTenantTx(async (tx) => {
@@ -117,6 +129,7 @@ export class PostgresActivityStateStore<TState> implements ActivityStateStore<TS
       );
       if (!rows.length) return undefined;
       const next = reducer(rows[0].state as TState);
+      assertStorableJson(next, "app_sessions.state");
       const updated = await tx.query<Row>(
         `update app_sessions
             set state = $2::jsonb, version = version + 1, produced_by = $3, updated_at = now()

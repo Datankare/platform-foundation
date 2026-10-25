@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
+import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
 import { apiError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 
@@ -21,7 +22,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
 
   const requestId = generateRequestId();
   try {
-    const approvals = await listPendingApprovals();
+    const approvals = await listPendingApprovals([COMMAND_BAR_HOLDS]);
     return NextResponse.json({ approvals, requestId });
   } catch (err) {
     logger.error(

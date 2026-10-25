@@ -14,6 +14,7 @@
  * @see ADR-012 Auth Architecture
  */
 
+import { createHmac } from "node:crypto";
 import type { AuthProvider } from "@/platform/auth/provider";
 import type {
   AuthResult,
@@ -45,6 +46,21 @@ import {
 import { signAwsJsonPost, type AwsCredentials } from "@/platform/auth/aws-sigv4";
 import type { TenantAttributeReadiness } from "@/platform/auth/provider";
 import type { ErrorCode } from "@/platform/errors/registry";
+import type { JSONWebKeySet } from "jose";
+import {
+  JwksUnavailableError,
+  poolKeyStore,
+  staticKeyStore,
+  verifyAccessTokenSignature,
+  type JwksKeyStore,
+} from "@/platform/auth/jwt-verification";
+import {
+  TokenVerificationUnavailableError,
+  TokenVerifier,
+  revokeTokenVerification,
+  type ProviderOutcome,
+  type VerifyOptions,
+} from "@/platform/auth/token-verification";
 
 /** ADR-051: Cognito exception types → platform error codes. Anything else is internal. */
 const COGNITO_ERROR_CODES: Readonly<Record<string, ErrorCode>> = {
@@ -79,13 +95,25 @@ export interface CognitoConfig {
   adminCredentials?: AwsCredentials;
   /** Hosted sign-in host name (NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN); required for SSO. */
   hostedUiDomain?: string;
+  /**
+   * The app client's secret (COGNITO_CLIENT_SECRET, audit A-7). With it the client is
+   * confidential: every unauthenticated pool call carries a SECRET_HASH only the server can
+   * compute, so nobody can sign up, sign in or reset a password around the platform's routes.
+   */
+  clientSecret?: string;
   timeoutMs?: number;
+  /**
+   * The pool's signing keys, fixed (tests; a deployment that pins them). Unset: fetched from the
+   * pool's JWKS address and kept (platform/auth/jwt-verification.ts, review 8 M5).
+   */
+  jwks?: JSONWebKeySet;
 }
 
 export function getCognitoConfigFromEnv(): CognitoConfig {
   // ADR-050 D2: the contract resolver is the one reader (no AWS_REGION — that is the host's
   // function region, not the pool's).
-  const { region, userPoolId, clientId, hostedUiDomain } = getCognitoSettings();
+  const { region, userPoolId, clientId, hostedUiDomain, clientSecret } =
+    getCognitoSettings();
   const adminCredentials = getCognitoAdminCredentials();
 
   if (!userPoolId || !clientId) {
@@ -100,8 +128,55 @@ export function getCognitoConfigFromEnv(): CognitoConfig {
     userPoolId,
     clientId,
     hostedUiDomain,
+    ...(clientSecret ? { clientSecret } : {}),
     ...(adminCredentials ? { adminCredentials } : {}),
   };
+}
+
+/**
+ * Cognito's SECRET_HASH for `username`: Base64(HMAC-SHA256(secret, username + clientId)), or
+ * nothing for a public client (no secret configured).
+ */
+export function secretHash(config: CognitoConfig, username: string): string | undefined {
+  if (!config.clientSecret) return undefined;
+  return createHmac("sha256", config.clientSecret)
+    .update(username + config.clientId)
+    .digest("base64");
+}
+
+/** `{ SecretHash }` for the user-pool calls that take it, or nothing for a public client. */
+function withSecretHash(
+  config: CognitoConfig,
+  username: string
+): { SecretHash?: string } {
+  const hash = secretHash(config, username);
+  return hash ? { SecretHash: hash } : {};
+}
+
+/** `{ SECRET_HASH }` for AuthParameters and ChallengeResponses, or nothing. */
+function withSecretParam(
+  config: CognitoConfig,
+  username: string
+): { SECRET_HASH?: string } {
+  const hash = secretHash(config, username);
+  return hash ? { SECRET_HASH: hash } : {};
+}
+
+/** Why a token GetUser accepted is still not ours (audit A-3), or null when it is. */
+export function foreignTokenReason(
+  config: CognitoConfig,
+  claims: Record<string, unknown> | null,
+  nowSeconds: number = Math.floor(Date.now() / 1000)
+): string | null {
+  if (!claims) return "undecodable";
+  // GetUser accepts an access token from any app client of the pool, and a pool shared by two
+  // environments would let one environment's token in to the other.
+  if (claims.token_use !== "access") return "not an access token";
+  if (claims.client_id !== config.clientId) return "issued to another app client";
+  const issuer = `https://cognito-idp.${config.region}.amazonaws.com/${config.userPoolId}`;
+  if (claims.iss !== issuer) return "issued by another pool";
+  if (typeof claims.exp !== "number" || claims.exp <= nowSeconds) return "expired";
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +197,25 @@ export class CognitoError extends Error {
     super(message);
     this.name = "CognitoError";
   }
+}
+
+/**
+ * Whether a Cognito failure is Cognito's — throttled (the GetUser quota), down, unreachable —
+ * not the token's. Such a failure is never read as "invalid token" (a signed-out user): the
+ * caller fails closed with 503, or an ordinary route stands on a recent verification.
+ */
+export function cognitoUnavailable(error: unknown): boolean {
+  if (!(error instanceof CognitoError)) return true;
+  return (
+    error.cognitoType === "TooManyRequestsException" ||
+    error.cognitoType === "LimitExceededException" ||
+    error.cognitoType === "InternalErrorException" ||
+    error.cognitoType === "ServiceUnavailableException" ||
+    error.cognitoType === "TimeoutError" ||
+    error.cognitoType === "NetworkError" ||
+    error.statusCode === 429 ||
+    error.statusCode >= 500
+  );
 }
 
 async function callCognito(
@@ -247,9 +341,17 @@ function tenantAttribute(attrs: Array<{ Name: string; Value: string }> | undefin
 
 export class CognitoAuthProvider implements AuthProvider {
   private readonly config: CognitoConfig;
+  /** This instance's verifier: the shared cache, and its own in-flight GetUser calls. */
+  private readonly tokens: TokenVerifier;
+  /** The pool's signing keys: every token's signature is checked before GetUser (M5). */
+  private readonly keys: JwksKeyStore;
 
-  constructor(config: CognitoConfig) {
+  constructor(config: CognitoConfig, tokens: TokenVerifier = new TokenVerifier()) {
     this.config = config;
+    this.tokens = tokens;
+    this.keys = config.jwks
+      ? staticKeyStore(config.jwks)
+      : poolKeyStore(config.region, config.userPoolId);
   }
 
   // ── Sign Up / Sign In ──
@@ -258,6 +360,7 @@ export class CognitoAuthProvider implements AuthProvider {
     try {
       const result = await callCognito(this.config, "SignUp", {
         ClientId: this.config.clientId,
+        ...withSecretHash(this.config, email),
         Username: email,
         Password: password,
         UserAttributes: [{ Name: "email", Value: email }],
@@ -280,7 +383,11 @@ export class CognitoAuthProvider implements AuthProvider {
       const result = await callCognito(this.config, "InitiateAuth", {
         ClientId: this.config.clientId,
         AuthFlow: "USER_PASSWORD_AUTH",
-        AuthParameters: { USERNAME: email, PASSWORD: password },
+        AuthParameters: {
+          USERNAME: email,
+          PASSWORD: password,
+          ...withSecretParam(this.config, email),
+        },
       });
 
       if (result.ChallengeName === "SOFTWARE_TOKEN_MFA") {
@@ -325,53 +432,162 @@ export class CognitoAuthProvider implements AuthProvider {
     }
   }
 
-  async signOut(accessToken: AuthToken): Promise<void> {
-    try {
-      await callCognito(this.config, "GlobalSignOut", { AccessToken: accessToken });
-      logger.info("User signed out");
-    } catch (error) {
-      logger.warn("Sign out failed — client tokens cleared anyway", {
-        error: error instanceof Error ? error.message : "Unknown",
+  /**
+   * Revoke the session (audit X-17): GlobalSignOut ends every token of the user's sign-ins, and
+   * the refresh token, when the caller has it, is revoked itself (RevokeToken) so it can never
+   * mint another access token. Either failing is thrown: a sign-out that did not revoke must
+   * not be reported as one.
+   */
+  async signOut(accessToken: AuthToken, refreshToken?: AuthToken): Promise<void> {
+    let revoked = false;
+    if (refreshToken) {
+      await callCognito(this.config, "RevokeToken", {
+        ClientId: this.config.clientId,
+        Token: refreshToken,
+        ...(this.config.clientSecret ? { ClientSecret: this.config.clientSecret } : {}),
       });
+      revoked = true;
     }
+    if (accessToken) {
+      try {
+        await callCognito(this.config, "GlobalSignOut", { AccessToken: accessToken });
+      } catch (error) {
+        // An access token that has already expired cannot sign out; with its refresh token
+        // revoked there is nothing left that can mint another.
+        const expired =
+          error instanceof CognitoError && error.cognitoType === "NotAuthorizedException";
+        if (!(expired && revoked)) throw error;
+      }
+    }
+    logger.info("User signed out");
   }
 
   // ── Token Management ──
 
-  async verifyToken(accessToken: AuthToken): Promise<TokenPayload | null> {
-    try {
-      const result = await callCognito(this.config, "GetUser", {
-        AccessToken: accessToken,
+  /**
+   * Verify an access token (GetUser), remembered briefly in the shared cache and revocable at
+   * once (platform/auth/token-verification.ts). Refused locally, before any call, when it is not
+   * this app's or has expired. Throws TokenVerificationUnavailableError when Cognito cannot
+   * answer (throttled, down) and no remembered verification may stand in — a privileged route
+   * never uses one.
+   */
+  async verifyToken(
+    accessToken: AuthToken,
+    options: VerifyOptions = {}
+  ): Promise<TokenPayload | null> {
+    const decoded = decodeJwtPayload(accessToken);
+    // These prove it is this app's (audit A-3); checked first, so a foreign, expired or
+    // undecodable token costs no call against the GetUser quota.
+    const foreign = foreignTokenReason(this.config, decoded);
+    if (foreign || !decoded) {
+      logger.warn("Access token refused", {
+        reason: foreign ?? "undecodable",
+        route: "platform/auth/cognito-provider",
       });
+      return null;
+    }
+    // Review 8 M5: the claims alone are anyone's to write. The signature is checked against the
+    // pool's keys here, so a forged token never reaches GetUser (whose quota a flood of them
+    // would drain into an outage).
+    // When the signing keys cannot be had, the token is neither good nor bad yet: it goes to the
+    // token verifier as the identity provider not answering (review 9 M4) — a fresh remembered
+    // verification of this very token (keyed by its hash: GetUser verified it) is honoured, an
+    // ordinary route may use the stale grace, a privileged one fails closed. GetUser is not
+    // asked: an unverified signature never costs a call against its quota.
+    let signed;
+    let keysUnavailable: string | undefined;
+    try {
+      signed = await verifyAccessTokenSignature(accessToken, {
+        issuer: `https://cognito-idp.${this.config.region}.amazonaws.com/${this.config.userPoolId}`,
+        clientId: this.config.clientId,
+        keys: this.keys,
+      });
+    } catch (error) {
+      if (!(error instanceof JwksUnavailableError)) throw error;
+      keysUnavailable = error.reason;
+    }
+    const subject =
+      typeof decoded.username === "string" && decoded.username
+        ? decoded.username
+        : typeof decoded.sub === "string"
+          ? decoded.sub
+          : "";
+    if (keysUnavailable !== undefined) {
+      if (!subject) throw new TokenVerificationUnavailableError(keysUnavailable);
+      const reason = keysUnavailable;
+      return this.tokens.verify(
+        accessToken,
+        { exp: decoded.exp as number, subject },
+        async () => ({ kind: "unavailable", reason }),
+        options
+      );
+    }
+    if (!signed || !signed.ok) {
+      logger.warn("Access token refused", {
+        reason: signed?.reason ?? "unverified",
+        route: "platform/auth/cognito-provider",
+      });
+      return null;
+    }
+    if (!subject) return null;
+    return this.tokens.verify(
+      accessToken,
+      { exp: decoded.exp as number, subject },
+      () => this.askGetUser(accessToken, decoded),
+      options
+    );
+  }
 
-      const attrs = result.UserAttributes as Array<{ Name: string; Value: string }>;
-      const decoded = decodeJwtPayload(accessToken);
-      warnOnceWithoutSession(decoded);
-
-      return {
+  /** GetUser, as an outcome: valid, invalid (the token), or unavailable (Cognito). */
+  private async askGetUser(
+    accessToken: AuthToken,
+    decoded: Record<string, unknown>
+  ): Promise<ProviderOutcome> {
+    let result: Record<string, unknown>;
+    try {
+      result = await callCognito(this.config, "GetUser", { AccessToken: accessToken });
+    } catch (error) {
+      return cognitoUnavailable(error)
+        ? { kind: "unavailable", reason: (error as CognitoError).cognitoType }
+        : { kind: "invalid" };
+    }
+    const attrs = result.UserAttributes as Array<{ Name: string; Value: string }>;
+    warnOnceWithoutSession(decoded);
+    const mfa = (result.UserMFASettingList as unknown[] | undefined) ?? [];
+    return {
+      kind: "valid",
+      payload: {
+        // Audit A-9: whether the user signs in with a second factor (staff must, by default).
+        mfaEnabled: mfa.includes("SOFTWARE_TOKEN_MFA"),
         sub: result.Username as string,
         email: attrs?.find((a) => a.Name === "email")?.Value ?? "",
         emailVerified: attrs?.find((a) => a.Name === "email_verified")?.Value === "true",
-        iat: (decoded?.iat as number) ?? 0,
-        exp: (decoded?.exp as number) ?? 0,
+        iat: (decoded.iat as number) ?? 0,
+        exp: (decoded.exp as number) ?? 0,
         // origin_jti: the sign-in this token descends from, kept across refreshes (PF v5.1.0).
-        ...(typeof decoded?.origin_jti === "string" && decoded.origin_jti
+        ...(typeof decoded.origin_jti === "string" && decoded.origin_jti
           ? { sessionId: decoded.origin_jti }
           : {}),
         // ADR-053 D2: read in the same GetUser call that verifies the token, so it is current.
         ...tenantAttribute(attrs),
-      };
-    } catch {
-      return null;
-    }
+      },
+    };
   }
 
-  async refreshToken(refreshToken: AuthToken): Promise<AuthSession | null> {
+  async refreshToken(
+    refreshToken: AuthToken,
+    username?: string
+  ): Promise<AuthSession | null> {
     try {
+      // A confidential client's refresh is hashed with the user's id (the token's subject).
+      if (this.config.clientSecret && !username) return null;
       const result = await callCognito(this.config, "InitiateAuth", {
         ClientId: this.config.clientId,
         AuthFlow: "REFRESH_TOKEN_AUTH",
-        AuthParameters: { REFRESH_TOKEN: refreshToken },
+        AuthParameters: {
+          REFRESH_TOKEN: refreshToken,
+          ...(username ? withSecretParam(this.config, username) : {}),
+        },
       });
 
       const auth = result.AuthenticationResult as Record<string, unknown>;
@@ -379,6 +595,8 @@ export class CognitoAuthProvider implements AuthProvider {
 
       const decoded = decodeJwtPayload(auth.AccessToken as string);
       const expiresIn = (auth.ExpiresIn as number) ?? 3600;
+      // The refreshed session is the same user's, or it is not used.
+      if (username && decoded?.sub !== username) return null;
 
       return {
         userId: (decoded?.sub as string) ?? "",
@@ -398,6 +616,7 @@ export class CognitoAuthProvider implements AuthProvider {
     try {
       await callCognito(this.config, "ForgotPassword", {
         ClientId: this.config.clientId,
+        ...withSecretHash(this.config, email),
         Username: email,
       });
       return { success: true, deliveryMedium: "email" };
@@ -414,6 +633,7 @@ export class CognitoAuthProvider implements AuthProvider {
     try {
       await callCognito(this.config, "ConfirmForgotPassword", {
         ClientId: this.config.clientId,
+        ...withSecretHash(this.config, email),
         Username: email,
         ConfirmationCode: code,
         Password: newPassword,
@@ -450,9 +670,11 @@ export class CognitoAuthProvider implements AuthProvider {
     try {
       await callCognito(this.config, "ConfirmSignUp", {
         ClientId: this.config.clientId,
+        ...withSecretHash(this.config, email),
         Username: email,
         ConfirmationCode: code,
       });
+      await this.revokeVerificationsOf(email);
       return { success: true };
     } catch (error) {
       return this.codedFailure(error, "Verification failed");
@@ -463,6 +685,7 @@ export class CognitoAuthProvider implements AuthProvider {
     try {
       await callCognito(this.config, "ResendConfirmationCode", {
         ClientId: this.config.clientId,
+        ...withSecretHash(this.config, email),
         Username: email,
       });
       return { success: true };
@@ -508,15 +731,22 @@ export class CognitoAuthProvider implements AuthProvider {
     }
   }
 
-  async respondToMfaChallenge(mfaSession: string, totpCode: string): Promise<AuthResult> {
+  async respondToMfaChallenge(
+    mfaSession: string,
+    totpCode: string,
+    username: string
+  ): Promise<AuthResult> {
     try {
+      // Cognito answers the challenge only for the user it was issued to: a placeholder
+      // username failed every MFA sign-in and counted towards the account's lockout (A-9).
       const result = await callCognito(this.config, "RespondToAuthChallenge", {
         ClientId: this.config.clientId,
         ChallengeName: "SOFTWARE_TOKEN_MFA",
         Session: mfaSession,
         ChallengeResponses: {
-          USERNAME: "MFA_USER",
+          USERNAME: username,
           SOFTWARE_TOKEN_MFA_CODE: totpCode,
+          ...withSecretParam(this.config, username),
         },
       });
 
@@ -557,6 +787,7 @@ export class CognitoAuthProvider implements AuthProvider {
         ChallengeResponses: {
           USERNAME: username,
           NEW_PASSWORD: newPassword,
+          ...withSecretParam(this.config, username),
         },
       });
 
@@ -625,7 +856,9 @@ export class CognitoAuthProvider implements AuthProvider {
     const url = new URL(`https://${domain}/oauth2/authorize`);
     url.searchParams.set("client_id", this.config.clientId);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", "openid email profile");
+    // aws.cognito.signin.user.admin: without it the token cannot call GetUser, which is how
+    // every request verifies it, so every SSO user was refused after signing in (audit A-13).
+    url.searchParams.set("scope", "openid email profile aws.cognito.signin.user.admin");
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("identity_provider", identityProvider);
     if (options.state) url.searchParams.set("state", options.state);
@@ -667,7 +900,17 @@ export class CognitoAuthProvider implements AuthProvider {
         // be refused and mask the first outcome.
         maxRetries: 0,
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          // A confidential client authenticates at the token endpoint (audit A-7).
+          ...(this.config.clientSecret
+            ? {
+                Authorization: `Basic ${Buffer.from(
+                  `${this.config.clientId}:${this.config.clientSecret}`
+                ).toString("base64")}`,
+              }
+            : {}),
+        },
         body: new URLSearchParams(form),
       });
 
@@ -786,6 +1029,33 @@ export class CognitoAuthProvider implements AuthProvider {
       );
     }
     return this.config.adminCredentials;
+  }
+
+  /**
+   * After an attribute of the user changed (the address verified): every remembered
+   * verification of their tokens is voided, so the next request reads the attribute (review 8
+   * M1). Cognito issues no token to an unconfirmed account, so nothing can be remembered before
+   * a first verification; a verified address changing later is voided the same way. The token's
+   * subject is the pool's username for the address (AdminGetUser); without administrative
+   * credentials it cannot be looked up, and the fresh window (≤ 60 s) bounds it.
+   */
+  private async revokeVerificationsOf(username: string): Promise<void> {
+    if (!this.config.adminCredentials) return;
+    try {
+      const user = await callCognito(
+        this.config,
+        "AdminGetUser",
+        { UserPoolId: this.config.userPoolId, Username: username },
+        this.config.adminCredentials
+      );
+      if (typeof user.Username === "string" && user.Username)
+        await revokeTokenVerification(user.Username);
+    } catch (error) {
+      logger.warn("Remembered token verifications not voided after an attribute change", {
+        route: "platform/auth/cognito-provider",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

@@ -121,7 +121,14 @@ describe("PF's app modules", () => {
       await import("@/platform/auth/account-status-guard");
     expect(listRateRules().map((r) => r.value.id)).toContain("song:identify");
     expect([...consentFeatureFallback()].sort()).toEqual(
-      ["translate", "transcribe", "identify_song", "generate", "upload_file"].sort()
+      [
+        "translate",
+        "transcribe",
+        "identify_song",
+        "generate",
+        "stream",
+        "upload_file",
+      ].sort()
     );
     expect([...restrictedFeatureFallback()].sort()).toEqual(
       [

@@ -62,6 +62,43 @@ function severityAtOrAbove(severity: SafetySeverity, threshold: SafetySeverity):
   return SEVERITY_RANK[severity] >= SEVERITY_RANK[threshold];
 }
 
+/**
+ * Whether a classifier output is a judgement the thresholds may act on (review 8 H-B): not
+ * marked unjudged, a confidence in 0–1 and a known severity. Checked here as well as in the
+ * parser, so no output — whatever produced it — reaches the thresholds on a placeholder.
+ */
+export function isJudgement(output: {
+  readonly unjudged?: true;
+  readonly confidence: unknown;
+  readonly severity: unknown;
+  readonly safe: unknown;
+}): boolean {
+  return (
+    output.unjudged !== true &&
+    typeof output.safe === "boolean" &&
+    typeof output.confidence === "number" &&
+    Number.isFinite(output.confidence) &&
+    output.confidence >= 0 &&
+    output.confidence <= 1 &&
+    typeof output.severity === "string" &&
+    Object.prototype.hasOwnProperty.call(SEVERITY_RANK, output.severity)
+  );
+}
+
+/**
+ * The result's fields when nothing was judged — an outage, or an answer that is not a judgement:
+ * the content is withheld and not queued for review (review 8 M4: unjudged answers were queued,
+ * and a user could fill the queue with them).
+ */
+function unjudgedFields(
+  unavailable: boolean,
+  unjudged: boolean
+): Pick<ModerationResult, "screeningUnavailable" | "unjudgedReason"> {
+  if (unavailable) return { screeningUnavailable: true, unjudgedReason: "unavailable" };
+  if (unjudged) return { screeningUnavailable: true, unjudgedReason: "unreadable" };
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Trajectory helpers
 // ---------------------------------------------------------------------------
@@ -158,6 +195,10 @@ export class Guardian {
       triggeredBy: ModerationResult["triggeredBy"];
       severityAdjustment: number;
       reasoning: string;
+      classifierCostUsd: number;
+      classifierUnavailable: boolean;
+      /** The classifier answered, but not a judgement (review 8 H-B, M4). */
+      unjudged: boolean;
     } = {
       ctxEval: await evaluateContext(context),
       blocklistResult: scanBlocklist(text),
@@ -165,6 +206,9 @@ export class Guardian {
       triggeredBy: "none",
       severityAdjustment: 0,
       reasoning: "",
+      classifierCostUsd: 0,
+      classifierUnavailable: false,
+      unjudged: false,
     };
     // evaluateContext/scanBlocklist are re-run inside the workflow steps below so each stage is
     // recorded against the runtime trajectory; the initial values above keep the type definite.
@@ -230,18 +274,25 @@ export class Guardian {
               continueExecution: false,
             };
           }
-          acc.classifierOutput = await classify(text, requestId);
+          const classified = await classify(text, requestId);
+          acc.classifierOutput = classified;
+          // What the call cost (D-20: recorded as 0), and whether it judged anything (RR-8).
+          acc.classifierCostUsd = Number.isFinite(classified.costUsd)
+            ? classified.costUsd
+            : 0;
+          acc.classifierUnavailable = classified.unavailable === true;
           return {
             action: "classify-content",
             boundary: "cognition",
             input: { textLength: text.length },
             output: {
-              safe: acc.classifierOutput.safe,
-              categories: acc.classifierOutput.categories,
-              confidence: acc.classifierOutput.confidence,
-              severity: acc.classifierOutput.severity,
+              safe: classified.safe,
+              categories: classified.categories,
+              confidence: classified.confidence,
+              severity: classified.severity,
+              ...(acc.classifierUnavailable ? { unavailable: true } : {}),
             },
-            costUsd: 0,
+            costUsd: acc.classifierCostUsd,
             continueExecution: true,
           };
         }
@@ -250,7 +301,20 @@ export class Guardian {
           acc.severityAdjustment =
             acc.ctxEval.severityReduction > 0 ? -acc.ctxEval.severityReduction : 0;
 
-          if (classifierOutput.safe) {
+          if (acc.classifierUnavailable || !isJudgement(classifierOutput)) {
+            acc.unjudged = !acc.classifierUnavailable;
+            // Nothing was judged (an outage, or an answer that could not be read): the text is
+            // withheld at every rating level, whatever the thresholds (review 7 H1). Before: the
+            // placeholder confidence 0.5 / severity medium went through the level's thresholds,
+            // and level 3's (escalate below 0.5, warn at high) allowed it.
+            acc.action = "escalate";
+            acc.triggeredBy = "content-rating";
+            reasonParts.push(
+              acc.classifierUnavailable
+                ? "Classifier unavailable — content withheld at every rating level (fail-closed)."
+                : "Classifier answer unreadable — withheld for human review at every rating level (fail-closed)."
+            );
+          } else if (classifierOutput.safe) {
             acc.action = acc.blocklistResult.matched ? "warn" : "allow";
             acc.triggeredBy = acc.blocklistResult.matched ? "blocklist" : "none";
             reasonParts.push(
@@ -381,8 +445,10 @@ export class Guardian {
         contextFactors: acc.ctxEval.factors,
         attributeToUser: acc.ctxEval.attributeToUser,
         pipelineLatencyMs: Date.now() - startTime,
-        classifierCostUsd: 0,
+        classifierCostUsd: acc.classifierCostUsd,
         trajectoryId: exec.trajectoryId,
+        screeningUnavailable: true,
+        unjudgedReason: "unavailable",
       });
       logModerationAudit(text, failClosed, requestId);
       return failClosed;
@@ -401,8 +467,10 @@ export class Guardian {
       contextFactors: acc.ctxEval.factors,
       attributeToUser: acc.ctxEval.attributeToUser,
       pipelineLatencyMs: Date.now() - startTime,
-      classifierCostUsd: 0,
+      classifierCostUsd: acc.classifierCostUsd,
       trajectoryId: exec.trajectoryId,
+      // Nothing judged: withheld, and not queued for review (review 8 M4).
+      ...unjudgedFields(acc.classifierUnavailable, acc.unjudged),
     });
 
     logModerationAudit(text, result, requestId);
@@ -426,6 +494,8 @@ export class Guardian {
     pipelineLatencyMs: number;
     classifierCostUsd: number;
     trajectoryId: string;
+    screeningUnavailable?: boolean;
+    unjudgedReason?: ModerationResult["unjudgedReason"];
   }): ModerationResult {
     return {
       action: params.action,
@@ -443,6 +513,8 @@ export class Guardian {
       classifierCostUsd: params.classifierCostUsd,
       trajectoryId: params.trajectoryId,
       agentId: this.identity.actorId,
+      ...(params.screeningUnavailable ? { screeningUnavailable: true } : {}),
+      ...(params.unjudgedReason ? { unjudgedReason: params.unjudgedReason } : {}),
     };
   }
 }

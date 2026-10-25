@@ -79,7 +79,9 @@ async function recorded<T>(
   actor: Operator | SystemActor,
   type: string,
   details: Record<string, unknown>,
-  act: () => Promise<OperatorResult<T>>
+  act: () => Promise<OperatorResult<T>>,
+  /** As audited()'s: `external` when the act reaches outside the database (review 14 L-6). */
+  options: { readonly external?: boolean } = {}
 ): Promise<OperatorResult<T>> {
   try {
     // audited() reads `success`/`error` to record the outcome; the caller gets the result alone.
@@ -94,7 +96,8 @@ async function recorded<T>(
         return result.ok
           ? { success: true as const, result }
           : { success: false as const, error: result.message, result };
-      }
+      },
+      options
     );
     return out.result;
   } catch (err) {
@@ -787,10 +790,16 @@ export async function makeTenantAdmin(
     return fail("tenant.invalid", "Give the user's email address.");
   }
   if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
-  return recorded(operator, "tenant_admin_granted", { tenantId, email: address }, () =>
-    withOwnerTx("tenant-lifecycle", async (tx) => {
-      const { rows } = await tx.query<PromotionRow>(
-        `with candidates as (
+  // Invalidated once the promotion has committed, on every instance (RR-9).
+  let promotedSub: string | null = null;
+  return recorded(
+    operator,
+    "tenant_admin_granted",
+    { tenantId, email: address },
+    async () => {
+      const result = await withOwnerTx("tenant-lifecycle", async (tx) => {
+        const { rows } = await tx.query<PromotionRow>(
+          `with candidates as (
            select id, email_verified from users
             where tenant_id = $1::uuid and lower(email) = $2 and deleted_at is null
             for update
@@ -810,30 +819,33 @@ export async function makeTenantAdmin(
          )
          select tally.live, tally.verified, p.id, p.cognito_sub
            from tally left join promoted p on true`,
-        [tenantId, address]
-      );
-      const r = rows[0];
-      if (!r || r.live === 0) {
-        return fail<{ userId: string }>(
-          "tenant.user_not_found",
-          "No user with that email in this tenant; they must sign up at one of its addresses first."
+          [tenantId, address]
         );
-      }
-      if (r.live > 1) {
-        return fail<{ userId: string }>(
-          "tenant.state_conflict",
-          "More than one account in this tenant has that email; none was made administrator."
-        );
-      }
-      if (!r.id) {
-        return fail<{ userId: string }>(
-          "tenant.state_conflict",
-          "That account has not verified its email; it was not made administrator."
-        );
-      }
-      if (r.cognito_sub) invalidatePermissions(r.cognito_sub);
-      return ok({ userId: r.id });
-    })
+        const r = rows[0];
+        if (!r || r.live === 0) {
+          return fail<{ userId: string }>(
+            "tenant.user_not_found",
+            "No user with that email in this tenant; they must sign up at one of its addresses first."
+          );
+        }
+        if (r.live > 1) {
+          return fail<{ userId: string }>(
+            "tenant.state_conflict",
+            "More than one account in this tenant has that email; none was made administrator."
+          );
+        }
+        if (!r.id) {
+          return fail<{ userId: string }>(
+            "tenant.state_conflict",
+            "That account has not verified its email; it was not made administrator."
+          );
+        }
+        promotedSub = r.cognito_sub;
+        return ok({ userId: r.id });
+      });
+      if (promotedSub) await invalidatePermissions(promotedSub);
+      return result;
+    }
   );
 }
 

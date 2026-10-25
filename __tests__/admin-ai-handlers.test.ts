@@ -16,9 +16,11 @@ jest.mock("@/platform/auth/password-policy", () => ({
   getGlobalPasswordPolicy: jest.fn(),
   saveGlobalPasswordPolicy: jest.fn(),
 }));
-jest.mock("@/platform/auth/platform-config", () => ({
-  getConfig: jest.fn(),
-}));
+jest.mock("@/platform/auth/platform-config", () => {
+  const getConfig = jest.fn();
+  // The registry is read with getConfigOrThrow (audit B-21); both answer from one mock.
+  return { getConfig, getConfigOrThrow: (key: string) => getConfig(key) };
+});
 jest.mock("@/platform/admin/governed-config", () => ({
   ...jest.requireActual("@/platform/admin/governed-config"),
   writeGovernedConfig: jest.fn(),
@@ -382,8 +384,9 @@ describe("search handler", () => {
     const res = await handleSearch({ table: "users" }, admin);
     expect(res.success).toBe(true);
     expect(res.result).toMatch(/00000000-0000-4000-8000-00000000b001/);
+    // The 20 newest rows, in a stable order (review 11 L-3).
     expect(fakeData().statements[0].sql).toBe(
-      "select to_jsonb(t) as r from users t limit 20"
+      "select to_jsonb(t) as r from users t order by t.created_at desc, t.id limit 20"
     );
   });
 
@@ -445,7 +448,9 @@ describe("hostile cases", () => {
       { capability: "c", features: ["f"] },
       admin
     );
-    expect(res.success).toBe(true);
+    // Review 9 H1: a hold is its own result — never success, never a failure.
+    expect(res.success).toBe(false);
+    expect(res.held).toBe(true);
     expect(res.result).toMatch(/held for approval/);
   });
 });

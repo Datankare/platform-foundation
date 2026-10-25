@@ -16,8 +16,7 @@ import AppHome from "@/platform/modules/app-home";
 
 export default function HomeClient() {
   const router = useRouter();
-  const { user, isLoading, isAuthenticated, isGuest, signOut, getAccessToken } =
-    useAuth();
+  const { user, isLoading, isAuthenticated, isGuest, signOut } = useAuth();
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -26,19 +25,10 @@ export default function HomeClient() {
   }, [isAuthenticated, isLoading, router]);
 
   const handleSignOut = useCallback(async () => {
-    const token = getAccessToken();
-    // Call server to clear cookie + invalidate Cognito session
-    await fetch("/api/auth/sign-out", {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    // Clear client-side session cookie
-    document.cookie = "pf_has_session=; path=/; max-age=0; SameSite=Lax";
-
-    signOut();
+    // The server revokes the session (refresh cookie and access token), then it ends here.
+    await signOut();
     router.replace("/auth");
-  }, [signOut, router, getAccessToken]);
+  }, [signOut, router]);
 
   if (isLoading) {
     return (

@@ -5,25 +5,51 @@
  *   P3 — Protected routes screened before access
  *   P9 — Auth failures logged with route context
  *
- * Routes:
- *   /auth        — public (login/register)
- *   /auth/callback — public (SSO return, TASK-101)
- *   /api/features — public (which optional features exist; the sign-in screen reads it)
- *   /api/auth/*  — public (auth API endpoints)
- *   /api/health  — public (health check)
- *   /api/*       — protected (requires Bearer token)
- *   /admin/*     — protected (requires Bearer token + admin role)
- *   /profile     — protected
- *   /            — protected (redirects to /auth if no session)
+ * What it checks, and what it does not (audit A-16): only that a request PRESENTS a session —
+ * the pf_has_session indicator cookie or an Authorization header. It verifies nothing; the
+ * indicator is not a credential and anyone can set it. Every API route verifies its caller
+ * itself (requireAuth, requireActor, requireAdmin — enforced by __tests__/api-route-auth.test.ts),
+ * and a page holds no data of its own: what it shows comes from those verified API calls.
  *
- * Client-side token is stored in localStorage (not cookies),
- * so this proxy checks for a lightweight session indicator cookie
- * set by the auth API routes. The actual JWT validation happens
- * in the API route handlers via requireAuth().
+ * Routes:
+ *   /auth, /auth/callback — public (sign-in, SSO return)
+ *   /api/auth/*, /api/health*, /api/features — passed through (each route decides)
+ *   /api/*       — refused 401 without a session indicator or a bearer; otherwise passed to the
+ *                  route, which verifies the token and the caller's permissions
+ *   other pages  — redirected to /auth without the session indicator (a convenience, not a
+ *                  control: /admin's data is behind requireAdmin on the API)
+ *
+ * The browser keeps the short-lived access token in its storage; the refresh token is an
+ * httpOnly cookie sent only to /api/auth (platform/auth/auth-response.ts).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/platform/errors";
+import {
+  CSP_HEADER,
+  NONCE_HEADER,
+  contentSecurityPolicy,
+  newNonce,
+} from "@/platform/security/csp";
+
+/**
+ * Every response carries a Content Security Policy with its own nonce (audit G-10); the request
+ * carries it on to Next.js, which puts the nonce on the scripts it renders.
+ */
+function withPolicy(request: NextRequest, respond: (headers: Headers) => NextResponse) {
+  const nonce = newNonce();
+  const policy = contentSecurityPolicy(nonce, {
+    development: process.env.NODE_ENV === "development",
+  });
+  const headers = new Headers(request.headers);
+  headers.set(NONCE_HEADER, nonce);
+  headers.set(CSP_HEADER, policy);
+  const response = respond(headers);
+  response.headers.set(CSP_HEADER, policy);
+  return response;
+}
+
+const pass = (headers: Headers) => NextResponse.next({ request: { headers } });
 
 /** Routes that don't require authentication */
 const PUBLIC_ROUTES = new Set(["/auth", "/auth/callback"]);
@@ -44,11 +70,15 @@ function isPublicRoute(pathname: string): boolean {
 }
 
 export function proxy(request: NextRequest) {
+  return withPolicy(request, (headers) => route(request, headers));
+}
+
+function route(request: NextRequest, headers: Headers): NextResponse {
   const { pathname } = request.nextUrl;
 
   // Public routes — pass through
   if (isPublicRoute(pathname)) {
-    return NextResponse.next();
+    return pass(headers);
   }
 
   // API routes — require Authorization header (validated in route handlers)
@@ -63,7 +93,7 @@ export function proxy(request: NextRequest) {
     // Credentials present: the route handler validates them. An API call is never redirected
     // to the sign-in page — a bearer-only client (an agent, the deployed smoke test, k6) has no
     // session cookie and would otherwise receive a 307 to /auth instead of the API's answer.
-    return NextResponse.next();
+    return pass(headers);
   }
 
   // Page routes — check for session cookie (lightweight check)
@@ -77,7 +107,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(authUrl);
   }
 
-  return NextResponse.next();
+  return pass(headers);
 }
 
 export const config = {

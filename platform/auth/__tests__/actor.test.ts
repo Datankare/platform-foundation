@@ -9,6 +9,7 @@ import { requireActor, requireAuth } from "@/platform/auth/middleware";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
 import { mintGuestToken, newGuestId } from "@/platform/auth/guest-token";
 import { checkAccountStatus } from "@/platform/auth/account-status-guard";
+import { checkCoppaGate } from "@/platform/auth/coppa-gate";
 import type { AuthProvider } from "@/platform/auth/provider";
 
 jest.mock("@/lib/logger", () => ({
@@ -20,6 +21,8 @@ jest.mock("@/platform/auth/account-status-guard", () => ({
   checkAccountStatus: jest.fn(),
 }));
 const mockStatus = checkAccountStatus as jest.MockedFunction<typeof checkAccountStatus>;
+jest.mock("@/platform/auth/coppa-gate", () => ({ checkCoppaGate: jest.fn() }));
+const mockCoppa = checkCoppaGate as jest.MockedFunction<typeof checkCoppaGate>;
 
 function req(token?: string): NextRequest {
   const headers = new Headers();
@@ -45,6 +48,14 @@ beforeEach(() => {
     accountStatus: "active",
     feature: "translate",
   } as Awaited<ReturnType<typeof checkAccountStatus>>);
+  mockCoppa.mockReset();
+  mockCoppa.mockResolvedValue({
+    allowed: true,
+    reason: "",
+    feature: "translate",
+    contentRatingLevel: 3,
+    consentStatus: "not_required",
+  });
 });
 
 describe("requireActor", () => {
@@ -171,5 +182,65 @@ describe("requireActorWithStatus", () => {
     const r = await requireActorWithStatus(req(token), "profile", { allowGuests: false });
     expect(r.error?.status).toBe(401);
     expect(mockStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("requireActorWithStatus — age and consent (audit X-16)", () => {
+  it.each([
+    ["account.age_unverified", 403],
+    ["account.consent_required", 403],
+  ] as const)("refuses a user the gate refuses with %s", async (code, status) => {
+    mockCoppa.mockResolvedValueOnce({
+      allowed: false,
+      reason: "x",
+      feature: "stream",
+      contentRatingLevel: 1,
+      consentStatus: "pending",
+      code,
+    });
+    const r = await requireActorWithStatus(req(userToken), "stream", {
+      allowGuests: false,
+    });
+    expect(r.error?.status).toBe(status);
+    await expect(r.error?.json()).resolves.toMatchObject({
+      code,
+      params: { feature: "stream" },
+    });
+    expect(mockCoppa).toHaveBeenCalledWith(userId, "stream");
+  });
+
+  it("checks the gate only after account standing allows", async () => {
+    mockStatus.mockResolvedValueOnce({
+      allowed: false,
+      accountStatus: "banned",
+      feature: "stream",
+      reason: "x",
+    } as Awaited<ReturnType<typeof checkAccountStatus>>);
+    await requireActorWithStatus(req(userToken), "stream", { allowGuests: false });
+    expect(mockCoppa).not.toHaveBeenCalled();
+  });
+
+  it("does not gate a guest (no account, no age)", async () => {
+    const { token } = await mintGuestToken();
+    const r = await requireActorWithStatus(req(token), "translate", {
+      allowGuests: true,
+    });
+    expect(r.actor?.kind).toBe("guest");
+    expect(mockCoppa).not.toHaveBeenCalled();
+  });
+
+  it("answers an erased account account.not_found (audit A-11)", async () => {
+    mockStatus.mockResolvedValueOnce({
+      allowed: false,
+      accountStatus: "banned",
+      feature: "translate",
+      reason: "deleted",
+      code: "account.not_found",
+    } as Awaited<ReturnType<typeof checkAccountStatus>>);
+    const r = await requireActorWithStatus(req(userToken), "translate", {
+      allowGuests: false,
+    });
+    expect(r.error?.status).toBe(403);
+    await expect(r.error?.json()).resolves.toMatchObject({ code: "account.not_found" });
   });
 });

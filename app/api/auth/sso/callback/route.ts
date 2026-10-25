@@ -3,13 +3,18 @@
  *
  * POST { code, state } from /auth/callback. Checks `state` against the attempt cookie set by
  * GET /api/auth/sso/[provider] (constant time), exchanges the code with the PKCE verifier, and
- * returns the session like sign-in: { success, userId, accessToken, refreshToken, expiresIn,
- * email, emailVerified }. The attempt cookie is cleared on every outcome — an attempt is used
- * once. The ID token itself is not returned.
+ * returns the session like sign-in: { success, userId, accessToken, expiresIn, email,
+ * emailVerified }, the refresh token in the httpOnly refresh cookie (sessionResponse). The attempt
+ * cookie is cleared on every outcome — an attempt is used once. The ID token itself is not
+ * returned.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { authResultResponse, callAuthProvider } from "@/platform/auth/auth-response";
+import {
+  authResultResponse,
+  callAuthProvider,
+  sessionResponse,
+} from "@/platform/auth/auth-response";
 import { isFeatureAvailable } from "@/platform/features";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { logger } from "@/lib/logger";
@@ -106,26 +111,20 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   if (refused) return endAttempt(refused);
 
   const identity = idTokenIdentity(result.idToken);
-  const response = authResultResponse(
+  const response = await sessionResponse(
     {
       success: true,
       userId: result.userId,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
       expiresIn: result.expiresIn,
-      email: identity.email,
-      emailVerified: identity.emailVerified,
     },
-    { request }
+    {
+      request,
+      context: "SSO callback failed",
+      method: "sso",
+      extra: { email: identity.email, emailVerified: identity.emailVerified },
+    }
   );
-
-  // Session indicator for the page proxy, as sign-in sets it.
-  response.cookies.set("pf_has_session", "true", {
-    httpOnly: false,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: result.expiresIn ?? 3600,
-  });
   return endAttempt(response);
 });

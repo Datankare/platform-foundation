@@ -343,3 +343,30 @@ describe("getOrchestrator / setOrchestrator", () => {
     expect(getOrchestrator()).toBe(mock);
   });
 });
+
+describe("a failed stream is not retried as a second paid call (audit C-20)", () => {
+  it("surfaces the failure; complete() is never called behind it", async () => {
+    const complete = jest.fn();
+    const provider = {
+      name: "test",
+      complete,
+      async *stream() {
+        throw new Error("upstream reset");
+      },
+    };
+    const orch = createOrchestrator({ provider: provider as never });
+    const chunks: unknown[] = [];
+    await expect(
+      (async () => {
+        for await (const c of orch.stream(
+          { tier: "fast", messages: [{ role: "user", content: "x" }], maxTokens: 10 },
+          { useCase: "test", requestId: "r" }
+        )) {
+          chunks.push(c);
+        }
+      })()
+    ).rejects.toThrow("upstream reset");
+    expect(complete).not.toHaveBeenCalled();
+    expect(chunks).toEqual([]);
+  });
+});

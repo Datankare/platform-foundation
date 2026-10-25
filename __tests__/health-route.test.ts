@@ -123,15 +123,16 @@ describe("GET /api/health — OWASP A05, detail suppression", () => {
         {
           name: "supabase",
           status: "unhealthy",
-          detail: "Supabase returned 401 for project xyz",
+          detail: "Supabase returned code-sentinel for project xyz-sentinel",
           checkedAt: "t",
         },
       ])
     );
     const body = await (await GET()).json();
     // Neither the credential hint nor the project ref may appear anywhere in the payload.
-    expect(JSON.stringify(body)).not.toContain("401");
-    expect(JSON.stringify(body)).not.toContain("xyz");
+    // Sentinels: a bare "401" could appear in a timestamp's milliseconds.
+    expect(JSON.stringify(body)).not.toContain("code-sentinel");
+    expect(JSON.stringify(body)).not.toContain("xyz-sentinel");
     expect(body.checks[0]).toEqual({
       name: "supabase",
       status: "unhealthy",

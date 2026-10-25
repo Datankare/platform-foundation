@@ -70,9 +70,15 @@ export function sanitizeForLog(text: string, maxLength = 100): string {
  * Validate that a string is safe to use as a language code.
  * Language codes are alphanumeric with hyphens only (e.g. en-US, hi-IN).
  */
+/** The longest language tag accepted (BCP 47 tags in practical use are far shorter). */
+export const MAX_LANGUAGE_CODE_LENGTH = 35;
+
 export function sanitizeLanguageCode(code: string): string {
   if (!code || typeof code !== "string") return "en-US";
   // Language codes: letters, digits, hyphens only
   const cleaned = code.replace(/[^a-zA-Z0-9-]/g, ""); // eslint-disable-line regexp/use-ignore-case -- ASCII-only language code sanitization
-  return cleaned.length > 0 ? cleaned : "en-US";
+  // Bounded (TASK-147: it was not — any length reached the provider): no real tag is longer.
+  return cleaned.length > 0 && cleaned.length <= MAX_LANGUAGE_CODE_LENGTH
+    ? cleaned
+    : "en-US";
 }

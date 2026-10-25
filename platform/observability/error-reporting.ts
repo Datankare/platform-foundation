@@ -191,10 +191,13 @@ export class SentryErrorReporter implements ErrorReporter {
     });
   }
 
-  setUser(userId: string | null): void {
-    if (!this.sentry) return;
-    /* istanbul ignore next -- requires @sentry/nextjs installed */
-    this.sentry.setUser(userId ? { id: userId } : null);
+  /**
+   * Not set process-wide (audit G-13): on a server Sentry's user is global to the process, so one
+   * request's user would be attached to every concurrent request's errors. The user is set on
+   * each capture's own scope from its context (`ErrorContext.userId`).
+   */
+  setUser(_userId: string | null): void {
+    // Intentionally not forwarded to Sentry.setUser.
   }
 
   async flush(timeoutMs = 2000): Promise<void> {

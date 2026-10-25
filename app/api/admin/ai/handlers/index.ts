@@ -13,7 +13,10 @@ export {
   handleAssignPermissions,
   handleChangeUserRole,
 } from "./roles";
-export { handleCreateEntitlementGroup } from "./entitlements";
+export {
+  handleCreateEntitlementGroup,
+  handleSetEntitlementGroupActive,
+} from "./entitlements";
 export { handleUpdatePasswordPolicy } from "./config";
 export { handleSearch } from "./search";
 export {

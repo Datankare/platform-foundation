@@ -6,8 +6,9 @@ import { handleSetCapabilityMapping } from "@/app/api/admin/ai/handlers/mapping"
 
 const getConfig = jest.fn();
 const writeGovernedConfig = jest.fn();
+// The map is read fail closed (review 13 P): getConfigOrThrow, never getConfig's default.
 jest.mock("@/platform/auth/platform-config", () => ({
-  getConfig: (...a: unknown[]) => getConfig(...a),
+  getConfigOrThrow: (...a: unknown[]) => getConfig(...a),
 }));
 jest.mock("@/platform/admin/governed-config", () => ({
   ...jest.requireActual("@/platform/admin/governed-config"),
@@ -84,6 +85,33 @@ describe("handleSetCapabilityMapping", () => {
     getConfig.mockResolvedValue([["translate", ["translate"]]]);
     const r = await handleSetCapabilityMapping(
       { capability: "none", remove: true },
+      ACTOR
+    );
+    expect(r.success).toBe(false);
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
+  });
+
+  it("an unreadable map changes nothing — never read as empty, which would erase every mapping (review 13 P)", async () => {
+    getConfig.mockRejectedValue(new Error("config store down"));
+    const r = await handleSetCapabilityMapping(
+      { capability: "summarize", features: ["x"] },
+      ACTOR
+    );
+    expect(r).toEqual({
+      success: false,
+      error: "The capability map could not be read, so nothing was changed.",
+    });
+    expect(writeGovernedConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["not a list", { translate: ["translate"] }],
+    ["an entry not a pair", [["translate"]]],
+    ["features not strings", [["translate", [1]]]],
+  ])("a malformed map (%s) changes nothing", async (_name, map) => {
+    getConfig.mockResolvedValue(map);
+    const r = await handleSetCapabilityMapping(
+      { capability: "x", features: ["y"] },
       ACTOR
     );
     expect(r.success).toBe(false);

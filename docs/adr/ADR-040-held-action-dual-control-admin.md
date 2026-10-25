@@ -138,6 +138,109 @@ A single `PendingApproval` view-model that both hold records map into, discrimin
 - `HeldActionsPanel` a11y: keyboard reachable, roles/labels present, a self-owned hold renders its
   approve control disabled.
 
+## Amendment (v6.0.0, review 10, 2026-10-24) — one hold per change
+
+Review 10 found the same effect governed by two holds. A command-bar action that writes a
+dual-controlled config key (`register_agent`, `set_agent_scope`, `set_capability_mapping`, …) was
+held as an action — cleared under the action's own permission (`admin_manage_agents`,
+`admin_manage_config`) — and, so its write was not held again, the approval carried a capability
+that let the write skip the key's hold (review 9). The action's lesser permission thereby cleared
+a safety-tier change, against "approve iff independently authorized to edit"; and a claim was not
+bound to what its approval covered.
+
+Decided — simplify, not patch:
+
+- **The key's hold is the one hold on a config write.** An action whose effect is a governed config
+  write (`COMMAND_BAR_CONFIG_WRITES`) is never held as an action: it goes straight to
+  `writeGovernedConfig`, which holds a write to a dual-controlled key under the key's own rules —
+  the approver needs the key's tier permission (`config_manage_safety` for a safety key), may not
+  be the requester, must be an operator for a shared deployment's platform default
+  (`CONFIG_HOLDS.approverRefusal`, as `approvedChangeTarget` for a held config approval), and the
+  approval lapses. The command bar reports it held. Actions whose effect is not a config write keep
+  the action-level hold (`admin.dual_control_actions`).
+- **No capability.** `approval-capability.ts`, `ActionContext.approval` and the redeem path in
+  `dispatchConfigTool` are removed: nothing a caller presents lets a write skip its key's hold.
+- **The settings that govern holding are held by their own rule**: `config.dual_control_keys`,
+  `config.require_two_person_approval` and `admin.dual_control_actions` (`ALWAYS_DUAL_CONTROLLED`).
+- **Invariant, test-enforced**: no action is both on `admin.dual_control_actions` (the code's
+  default and 052's seed) and a config write, and every handler that writes governed config is
+  declared one (`__tests__/r10-one-hold.test.ts`); at runtime a list entry for a config write is
+  ignored. Double holds and capability bypasses cannot recur.
+
+**An approval survives a failed run.** A run claims its approval (`approved -> executing`) and ends
+it: `executed` when it took effect, `approved` again (compare-and-set) when it failed before taking
+effect — the decision answers `approvals.run_failed`, and approving again retries it; a run whose
+process died is recovered after a lease by the approval-expiry job (ADR-031 amendment).
+
+**Review 11 (2026-10-24).** An approved run whose outcome is unknown — it did not end within its
+lease and left no step — is `indeterminate`, never approved again by the job (ADR-031 amendment).
+The approvals surface lists it first and offers two decisions instead of approve/reject:
+`mark_executed` (verified that it took effect; the decider needs the hold's permission) and
+`reapprove` (verified that it did not; a fresh approval — independent of the requester, under the
+hold's own scope rules — run at once, once); both recorded as `approval_decision`. Runbook:
+`docs/runbooks/approvals-and-agents.md`.
+
+**A reduction of power is not held (review 11 M-2).** The kill switch must not wait for a second
+admin. A change to `agent.trusted_agents` or `agent.capability_features` that a strict diff proves
+only removes power — a suspension, a scope subset, a lower token lifetime, a whole mapping removed
+— is applied at once by the one admin making it, who must hold the key's tier permission
+(`config_manage_safety`, the permission an approver of the held change needs; `admin_manage_agents`
+was rejected: an unheld reduction must need no less than approving it), compare-and-set against
+the value it replaces, audited and alerted, without two-person approval. A change with any
+widening in it is held whole — the diff cannot carry a widening past the hold. Operators suspend
+every agent of a tenant at once (`POST /api/operator/tenants/[id]/agents/suspend`).
+
+**Review 12 (2026-10-24).**
+
+- _Capability mappings (H1)._ A `capability_features` change is a reduction only when it adds
+  required features to mappings that exist (the same capabilities before and after, each feature
+  list a superset). Removing a mapping, emptying it or removing all of them is a widening for a
+  consumer that reads an absent capability as needing no features — Playform's
+  `evaluateCapability` did — and is held. **The consumer contract:** a capability absent from
+  `agent.capability_features` is NOT allowed (never a vacuous pass); a malformed map allows
+  nothing; a mapped capability is allowed when every listed feature is held (an explicit empty list
+  needs none). `platform/agents/capability-features.ts` (`evaluateCapabilityFeatures`) is the
+  reference evaluator; `__tests__/contract/capability-features-contract.ts` is the kit a consumer
+  runs against its own. The platform holds removals even under the contract (a removal then
+  narrows): an unheld change is proved against what every consumer may do, not what one should.
+- _Held changes are applied only onto what they replace (H2)._ Every held config change records
+  the value it replaces at request time — `heldPrevious` on a runtime hold (set by the dispatcher,
+  never by a caller), `current_value` on a two-person approval — and its approval applies it with
+  a compare-and-set against that value. Changed since (a kill switch, a power reduction, another
+  approved change): nothing applied, the hold withdrawn and audited, `approvals.stale` (409); the
+  requester asks again. A hold that recorded no value is refused the same way. The kill switch and
+  every unheld reduction withdraw the pending holds on their key (audited, reason `superseded`).
+  Whole-value application had let an approved scope change, requested before the kill switch,
+  re-activate every agent the switch suspended.
+- _Reach and independence (L7)._ A change of either key is published to every instance's config
+  cache through the shared cache; the kill switch exists for the current tenant in every
+  deployment mode (`POST /api/admin/agents/suspend`, `config_manage_safety`); `mark_executed` is
+  refused to the hold's requester, as approval is. Runbook: `docs/runbooks/approvals-and-agents.md`.
+
+**Review 13 (2026-10-24).**
+
+- _The consumer contract is fail closed, and usable (P)._ A malformed **or unreadable**
+  `agent.capability_features` allows nothing — there is no built-in fallback map. A consumer's
+  "fail-safe" built-in map is a second, ungoverned copy of the policy: falling back to it on an
+  outage or a malformed value turns "the policy could not be read" into "allow what the code
+  shipped with", and no admin approved that. The platform reads both governed agent keys with
+  getConfigOrThrow semantics (`platform/agents/governed-agent-config.ts`: `readTrustedAgents`,
+  `readCapabilityFeatures`, `evaluateGovernedCapability`); a consumer must too
+  (MIGRATION_v5_to_v6 §1b). The kit runs a consumer's own decision through its seams — the map
+  read, the account's features, the decision — so no adapter is written by hand.
+- _A reset is compared on what it resets to (M1)._ A held reset records the platform default it
+  would inherit; its approval applies only while that default stands (compare-and-set on the
+  tenant's row and `platform_config.value`, under the platform lock taken first).
+- _Withdrawal follows scope (L1)._ A reduction withdraws the holds of the scope it reduced only: a
+  tenant's reduction never withdraws a pending change to the platform default (or the reverse).
+- _ABA is accepted (L6)._ The compare-and-set compares values, not versions: a value changed and
+  changed back before the approval (A → B → A) passes, and the approved change lands on exactly
+  the value its approver was shown. A version column would also refuse it, at the cost of refusing
+  every approval whose key was touched and restored (a reduction undone, an edit reverted) — work
+  for the requester with no change to what is applied. The intermediate change is in the key's
+  history; the runbook (§5) tells an approver to reject when it matters (a kill switch that was then
+  undone). `db/r13` asserts the behaviour.
+
 ## Alternatives considered
 
 - **Runtime-holds-only surface** — rejected: leaves config-approval holds with no surface, the same

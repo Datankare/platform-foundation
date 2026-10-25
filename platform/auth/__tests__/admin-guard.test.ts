@@ -41,8 +41,11 @@ const req = (caller: CallerName) =>
   new NextRequest("http://localhost/api/admin/x", { headers: authAs(caller) });
 
 const ROLES = Object.keys(CALLERS).filter(
-  (c) => c !== "suspended_super_admin"
-) as Exclude<keyof typeof CALLERS, "suspended_super_admin">[];
+  (c) => c !== "suspended_super_admin" && c !== "password_only_super_admin"
+) as Exclude<
+  keyof typeof CALLERS,
+  "suspended_super_admin" | "password_only_super_admin"
+>[];
 
 describe("requireAdmin — every role against every permission", () => {
   const cases = ROLES.flatMap((role) =>
@@ -114,6 +117,60 @@ describe("requireAdmin — refusals", () => {
     );
     const result = await requireAdmin(req("super_admin"), "can_access_admin");
     expect(result.error?.status).toBe(429);
+  });
+});
+
+describe("requireAdmin — a second factor (audit A-9)", () => {
+  it.each(PERMISSION_CATALOG)(
+    "refuses a password-only super_admin %s while staff MFA is required (the default)",
+    async (permission) => {
+      const result = await requireAdmin(req("password_only_super_admin"), permission);
+      expect(result.admin).toBeUndefined();
+      expect(result.error?.status).toBe(403);
+      expect((await result.error!.json()).code).toBe("auth.mfa_required");
+    }
+  );
+
+  it("refuses an identity whose provider cannot say (mfaEnabled absent)", async () => {
+    const { requireAuth } = jest.requireMock("@/platform/auth/middleware");
+    (requireAuth as jest.Mock).mockResolvedValueOnce({
+      user: { sub: CALLERS.super_admin.sub, email: "x@test" },
+      accessToken: "test",
+    });
+    const result = await requireAdmin(req("super_admin"), "can_access_admin");
+    expect((await result.error!.json()).code).toBe("auth.mfa_required");
+  });
+
+  it.each([
+    ["an unreadable setting", () => Promise.reject(new Error("db down"))],
+    ["a malformed setting", () => Promise.resolve("no")],
+    ["a missing setting", () => Promise.resolve(undefined)],
+  ])("keeps requiring it on %s (fail closed)", async (_label, answer) => {
+    const config = jest.requireActual("@/platform/auth/platform-config");
+    const spy = jest.spyOn(config, "getConfig").mockImplementation(answer as never);
+    try {
+      const result = await requireAdmin(
+        req("password_only_super_admin"),
+        "can_access_admin"
+      );
+      expect((await result.error!.json()).code).toBe("auth.mfa_required");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("admits a password-only admin only when the setting is explicitly off", async () => {
+    const config = jest.requireActual("@/platform/auth/platform-config");
+    const spy = jest.spyOn(config, "getConfig").mockResolvedValue(false as never);
+    try {
+      const result = await requireAdmin(
+        req("password_only_super_admin"),
+        "can_access_admin"
+      );
+      expect(result.admin?.userId).toBe(CALLERS.password_only_super_admin.userId);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

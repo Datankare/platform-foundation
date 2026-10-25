@@ -83,6 +83,19 @@ platform/cache/
 └── README.md         ← This file
 ```
 
+## Invalidation stamps, bounded (review 13 M2)
+
+`stamp-reader.ts` (`readStamp`) is how the config service and the permissions cache read a shared
+invalidation stamp: at most 200 ms per read, and a circuit breaker that stops asking a failing
+cache for 30 s after 5 failures in a row (alert `cache.stamp_breaker_open`), then probes once. An
+unreadable stamp means the value is read from the database and nothing cached is served.
+
+Event-loop lag is not a cache failure (review 14 M-2): at the bound the reader yields once and
+takes an answer that has arrived; a read still unanswered while the instance's event loop was
+delayed more than 100 ms (measured per read; the instance's `monitorEventLoopDelay` p99/max is
+reported with it) is counted as lag — metric and alert `cache.stamp_read_lag` — and never opens the
+breaker. Both alerts are raised at most once per 5 minutes per instance, with a count.
+
 ## See Also
 
 - ADR-015: GenAI-Native Stack (cache layer)

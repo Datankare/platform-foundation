@@ -92,7 +92,6 @@ describe("AuthContextProvider after a restore", () => {
     act(() =>
       result.current.setSession({
         accessToken: "new-token",
-        refreshToken: "r",
         userId: "new",
         email: "n@x.y",
         emailVerified: true,
@@ -102,7 +101,10 @@ describe("AuthContextProvider after a restore", () => {
     expect(result.current.getAccessToken()).toBe("new-token");
     expect(localStorage.getItem("pf_access_token")).toBe("new-token");
 
-    act(() => result.current.signOut());
+    global.fetch = jest.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+    await act(async () => {
+      await result.current.signOut();
+    });
     expect(result.current.user).toBeNull();
     expect(result.current.getAccessToken()).toBeNull();
     expect(localStorage.getItem("pf_access_token")).toBeNull();

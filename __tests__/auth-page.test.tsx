@@ -55,16 +55,52 @@ describe("AuthPage", () => {
     expect(screen.getByLabelText("Password")).toBeDefined();
   });
 
-  it("switches to register view when Create one is clicked", () => {
+  /** The age gate the register view opens with (COPPA, audit X-16). */
+  const declareBirthDate = (month: string, day: string, year: string) => {
+    expect(screen.getByRole("heading", { name: "Verify Your Age" })).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Month"), { target: { value: month } });
+    fireEvent.change(screen.getByLabelText("Day"), { target: { value: day } });
+    fireEvent.change(screen.getByLabelText("Year"), { target: { value: year } });
+    fireEvent.click(screen.getByText("Continue"));
+  };
+
+  it("asks for a date of birth before the account form (audit X-16)", () => {
     render(<AuthPage />);
     fireEvent.click(screen.getByText("Create one"));
+    expect(screen.queryByRole("heading", { name: "Create Account" })).toBeNull();
+    declareBirthDate("01", "15", "1990");
     expect(screen.getByRole("heading", { name: "Create Account" })).toBeDefined();
     expect(screen.getByLabelText("Confirm Password")).toBeDefined();
+  });
+
+  it("sends the declared date of birth with the sign-up", async () => {
+    const signUp = jest.fn().mockResolvedValue({
+      success: true,
+      emailVerificationRequired: true,
+    });
+    registerAuthProvider(createMockAuthProvider({ signUp }));
+    render(<AuthPage />);
+    fireEvent.click(screen.getByText("Create one"));
+    declareBirthDate("01", "15", "1990");
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@b.c" } });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "Correct-Horse-Battery-9" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm Password"), {
+      target: { value: "Correct-Horse-Battery-9" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create account/i }));
+    await waitFor(() =>
+      expect(signUp).toHaveBeenCalledWith("a@b.c", "Correct-Horse-Battery-9", {
+        dateOfBirth: "1990-01-15",
+      })
+    );
   });
 
   it("switches back to login from register", () => {
     render(<AuthPage />);
     fireEvent.click(screen.getByText("Create one"));
+    declareBirthDate("01", "15", "1990");
     expect(screen.getByRole("heading", { name: "Create Account" })).toBeDefined();
 
     fireEvent.click(screen.getByText("Sign in"));

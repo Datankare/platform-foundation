@@ -194,7 +194,8 @@ platform-foundation/
 ├── shared/                  ← Types, config and UI utilities shared with consumers
 ├── messages/                ← Message catalog (errors.*, screens.*) — ADR-051
 ├── prompts/                 ← Versioned LLM prompts
-├── supabase/migrations/     ← Numbered SQL migrations (applied in the SQL Editor)
+├── supabase/migrations/     ← Numbered SQL migrations (applied in the SQL Editor; listed in
+│                              supabase/platform-migrations.json — see Writing a migration)
 ├── scripts/                 ← Migration replay, monkey run, checks, deploy smoke, jobs worker,
 │                              the CI base-image pull
 ├── __tests__/               ← Tests; __tests__/db runs against the replayed Postgres
@@ -203,6 +204,20 @@ platform-foundation/
 │                              docs/DEPLOY_CONTAINER.md); .dockerignore keeps the context lean
 └── .env.example             ← Environment variable template
 ```
+
+### Writing a migration
+
+A platform migration is `supabase/migrations/NNN_<name>.sql` with the next free number. It records
+itself in `applied_migrations` (`migration-tracking`), is idempotent, enables row-level security on
+every table it creates, and is **listed in `supabase/platform-migrations.json`** — the platform's
+own migrations, so an app's never collide with them. A module's is `NNN_<module>_<name>.sql`,
+listed in its manifest entry (ADR-054 D5).
+
+Platform-foundation never uses the letter form `NNN<letter>_…`: that form is the apps'
+(`052a_playform_…`, sorting after the platform's 052 and before 053 — TASK-158).
+`migration-naming` and `node scripts/module-manifest.cjs --check` refuse an unlisted platform
+migration, a letter-form one here, and an app migration with a bare number in a consumer; the
+replay runs the same check before it applies anything.
 
 ### The Two-Layer Rule
 

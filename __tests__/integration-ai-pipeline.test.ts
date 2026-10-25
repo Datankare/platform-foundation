@@ -195,23 +195,29 @@ describe("AI Pipeline Integration", () => {
       expect(recordedMetrics[0].timeToFirstTokenMs).toBeDefined();
     });
 
-    it("falls back to complete() when stream() throws", async () => {
+    it("does not fall back to a second, paid complete() when stream() throws (audit C-20)", async () => {
+      const complete = jest.fn();
       const provider = createMockProvider({
         stream: jest.fn().mockImplementation(async function* () {
           throw new AIProviderError("stream broken", "transient");
         }),
+        complete,
       });
       orchestrator = createOrchestrator({ provider });
 
       const chunks: AIStreamChunk[] = [];
-      for await (const chunk of orchestrator.stream(makeRequest("hello"), defaultOpts)) {
-        chunks.push(chunk);
-      }
-
-      // Should have fallen back to complete()
-      expect(chunks).toHaveLength(1);
-      expect(chunks[0].text).toBe("Hello from mock");
-      expect(chunks[0].done).toBe(true);
+      await expect(
+        (async () => {
+          for await (const chunk of orchestrator.stream(
+            makeRequest("hello"),
+            defaultOpts
+          )) {
+            chunks.push(chunk);
+          }
+        })()
+      ).rejects.toThrow("stream broken");
+      expect(chunks).toEqual([]);
+      expect(complete).not.toHaveBeenCalled();
     });
   });
 

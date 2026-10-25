@@ -70,7 +70,7 @@ jest.mock("@/platform/auth/platform-config", () => ({
   clearTenantConfig: jest.fn(),
 }));
 jest.mock("@/platform/admin/config-handlers", () => ({
-  resumeApprovedConfigChange: jest.fn(),
+  runApprovedConfigChange: jest.fn(),
 }));
 
 import { NextRequest } from "next/server";
@@ -84,7 +84,7 @@ import {
 } from "@/platform/admin/config-approval";
 import { setConfigWithHistory } from "@/platform/auth/platform-config";
 import { fakeData } from "./helpers/fake-data";
-import { resumeApprovedConfigChange } from "@/platform/admin/config-handlers";
+import { runApprovedConfigChange } from "@/platform/admin/config-handlers";
 import { POST } from "@/app/api/admin/approvals/[id]/route";
 
 const mockStore = getProposalStore as jest.Mock;
@@ -114,6 +114,8 @@ function holdFor(principal: string | undefined) {
   mockStore.mockReturnValue({
     getById: jest.fn().mockResolvedValue({
       proposalId: "p1",
+      label: "update_config",
+      status: "proposed",
       actor: {
         actorType: "agent",
         actorId: "config-manager-x",
@@ -135,11 +137,16 @@ beforeEach(() => {
   mockApproveHeld.mockResolvedValue({ kind: "approved", proposal: {} });
   mockRejectHeld.mockResolvedValue({ status: "rejected" });
   mockApply.mockResolvedValue({ success: true });
-  (resumeApprovedConfigChange as jest.Mock).mockResolvedValue(null);
+  (runApprovedConfigChange as jest.Mock).mockResolvedValue({
+    toolId: "update_config",
+    success: true,
+    data: { applied: true },
+    durationMs: 1,
+  });
 });
 
 describe("an approved held config change is applied on its approval", () => {
-  const resume = resumeApprovedConfigChange as jest.Mock;
+  const resume = runApprovedConfigChange as jest.Mock;
   const tool = (data: Record<string, unknown>, success = true, error?: string) =>
     resume.mockResolvedValue({
       toolId: "update_config",
@@ -180,18 +187,52 @@ describe("an approved held config change is applied on its approval", () => {
       tool(data, success, error);
       const res = await approveRuntime();
       expect(res.status).toBe(503);
-      const body = JSON.stringify(await res.json());
+      const json = await res.json();
+      // True (review 10 H2): the approval stands, and approving again retries it.
+      expect(json.code).toBe("approvals.run_failed");
+      const body = JSON.stringify(json);
       expect(body).not.toContain("audit down");
       expect(body).not.toContain("governs the platform");
     }
   );
 
-  it("a hold that is not a config change is only approved (its own caller resumes it)", async () => {
-    resume.mockResolvedValue(null);
+  it("a hold no authority owns is not decided here — an agent's step is its owner's (B-10)", async () => {
+    mockStore.mockReturnValue({
+      getById: jest.fn().mockResolvedValue({
+        proposalId: "p1",
+        label: "process_content",
+        status: "proposed",
+        actor: { actorType: "agent", actorId: "agent-1", onBehalfOf: "someone" },
+        payload: {},
+      }),
+    });
+    for (const caller of ["safety_approver", "super_admin"] as const) {
+      const res = await approveRuntime(caller);
+      expect(res.status).toBe(404);
+      expect((await res.json()).code).toBe("approvals.hold_not_found");
+    }
+    expect(mockApproveHeld).not.toHaveBeenCalled();
+  });
+
+  it("runs an approved hold whose run failed again on a new approval — without re-approving", async () => {
+    mockStore.mockReturnValue({
+      getById: jest.fn().mockResolvedValue({
+        proposalId: "p1",
+        label: "update_config",
+        status: "approved",
+        actor: {
+          actorType: "agent",
+          actorId: "config-manager-x",
+          onBehalfOf: CALLERS.super_admin.userId,
+        },
+        payload: {},
+      }),
+    });
+    tool({ applied: true });
     const res = await approveRuntime();
-    const body = await res.json();
-    expect(body.outcome).toBe("approved");
-    expect(body.applied).toBeUndefined();
+    expect(res.status).toBe(200);
+    expect(mockApproveHeld).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledWith("p1");
   });
 });
 
@@ -266,6 +307,8 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
     mockStore.mockReturnValue({
       getById: jest.fn().mockResolvedValue({
         proposalId: "p1",
+        label: "update_config",
+        status: "proposed",
         actor: {
           actorType: "agent",
           actorId: "config-manager-x",
@@ -305,6 +348,7 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
         success: true,
         record: {
           configKey: "moderation.strike_ban_threshold",
+          currentValue: 3,
           proposedValue: 4,
           changeComment: "tighten",
           scope: "platform",
@@ -331,7 +375,9 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
         "config_agent",
         undefined,
         // Outside a shared deployment the recorded scope is applied as the approver.
-        { scope: "platform", operator: false }
+        { scope: "platform", operator: false },
+        // Only onto the value it was requested against (review 12 H2).
+        { expectPrevious: { value: 3 } }
       );
     });
 

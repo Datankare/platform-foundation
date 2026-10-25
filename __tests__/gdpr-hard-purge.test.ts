@@ -5,6 +5,10 @@
  * dry-run mode, timeout, error handling, and audit callback.
  */
 
+jest.mock("@/lib/logger", () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+}));
+
 import {
   PurgePipeline,
   CachePurgeHandler,
@@ -280,7 +284,9 @@ describe("PurgePipeline — audit callback", () => {
     const pipeline = new PurgePipeline();
     pipeline.register(createMockHandler("h1", 10, 1));
 
-    const consoleSpy = jest.spyOn(console, "error").mockImplementation();
+    const { logger } = jest.requireMock("@/lib/logger") as {
+      logger: { error: jest.Mock };
+    };
     pipeline.onAudit(async () => {
       throw new Error("Audit DB down");
     });
@@ -293,11 +299,10 @@ describe("PurgePipeline — audit callback", () => {
 
     // Purge still succeeded
     expect(result.status).toBe("completed");
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("purge audit log"),
-      expect.any(Error)
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("Purge record not written"),
+      expect.objectContaining({ error: "Audit DB down" })
     );
-    consoleSpy.mockRestore();
   });
 });
 

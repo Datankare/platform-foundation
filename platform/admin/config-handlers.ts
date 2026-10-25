@@ -75,6 +75,21 @@ import { proposeOnce, PipelineRejectedError } from "@/platform/action-pipeline";
 import { approvalPolicy } from "@/platform/agents/gating";
 import { getApprovalPolicyStore } from "@/platform/agents/approval-policy-store";
 import { logger } from "@/lib/logger";
+import { raiseAlert } from "@/platform/observability/alert";
+import {
+  canonical,
+  isPowerReducibleKey,
+  powerReduction,
+  type PowerDiff,
+} from "@/platform/admin/power-reduction";
+import {
+  isHeldPrevious,
+  staleChangeMessage,
+  STALE_CHANGE_PREFIX,
+  type HeldPrevious,
+} from "@/platform/admin/stale-change";
+import { audited, AuditWriteError } from "@/platform/auth/audit";
+import { withdrawSupersededHolds } from "@/platform/admin/hold-withdrawal";
 
 // ---------------------------------------------------------------------------
 // Tool execution wrapper
@@ -183,6 +198,25 @@ export interface UpdateConfigInput {
    * confirmed: true.
    */
   readonly confirmed?: boolean;
+  /**
+   * Set by dispatchConfigTool only — never taken from a caller — when the change provably only
+   * removes power (review 11 M-2, power-reduction.ts): the value it replaces. The change is then
+   * applied by the one admin, without two-person approval, only if it is still a reduction of
+   * this value and the stored value is still this one (compare-and-set); otherwise not at all.
+   */
+  readonly expectPrevious?: { readonly value: unknown };
+  /**
+   * Set by dispatchConfigTool only — never taken from a caller — on a held change (review 12 H2):
+   * the value the change replaces, at request time. When the held change is approved it is
+   * applied only if the key still holds this value (compare-and-set); otherwise nothing is
+   * changed, the result is stale, and the hold is withdrawn.
+   */
+  readonly heldPrevious?: HeldPrevious;
+}
+
+/** The stale result of a held change whose replaced value changed (review 12 H2). */
+function staleResult(key: string) {
+  return { applied: false, stale: true, error: staleChangeMessage(key) };
 }
 
 /**
@@ -228,9 +262,31 @@ export async function handleUpdateConfig(
       return { applied: false, error: decision.reason };
     }
 
-    // 4. Check if two-person approval is needed
+    // 3a. An approved held change (review 12 H2): only onto the value it was requested against.
+    const replaced =
+      decision.target.scope === "platform" ? entry.platformValue : entry.value;
+    if (
+      input.heldPrevious !== undefined &&
+      canonical(replaced) !== canonical(input.heldPrevious.value)
+    ) {
+      return staleResult(input.key);
+    }
+
+    // 3b. A change that only removes power (review 11 M-2): proved again, here, against the
+    // value it replaces — which the write then compares and sets.
+    let reduction: PowerDiff | undefined;
+    if (input.expectPrevious !== undefined) {
+      reduction = powerReduction(input.key, input.expectPrevious.value, input.value);
+      if (!reduction.reduces) {
+        return { applied: false, error: `Not applied: ${reduction.reason}` };
+      }
+    }
+
+    // 4. Check if two-person approval is needed (never for a proven reduction)
     const needsApproval =
-      entry.permissionTier === "safety" && (await isApprovalRequired());
+      !reduction?.reduces &&
+      entry.permissionTier === "safety" &&
+      (await isApprovalRequired());
 
     // 5. Build the reconfirmation data (A8: pure function, independently testable)
     const changeRequest = buildChangeRequest(
@@ -253,8 +309,7 @@ export async function handleUpdateConfig(
       // Create pending approval — don't apply
       const approvalResult = await createApprovalRequest({
         configKey: input.key,
-        currentValue:
-          decision.target.scope === "platform" ? entry.platformValue : entry.value,
+        currentValue: input.heldPrevious ? input.heldPrevious.value : replaced,
         proposedValue: input.value,
         requestedBy: input.actorId,
         changeComment: input.changeComment,
@@ -271,16 +326,54 @@ export async function handleUpdateConfig(
       };
     }
 
-    // 6. Apply the change directly (A5: pass loaded entry to skip re-load)
-    const result = await setConfigWithHistory(
-      input.key,
-      input.value,
-      input.actorId,
-      input.changeComment,
-      "config_agent",
-      entry,
-      decision.target
-    );
+    // 6. Apply the change directly (A5: pass loaded entry to skip re-load). Compare-and-set
+    // against the value a reduction was proved of (review 11 M-2), or a held change was requested
+    // against (review 12 H2).
+    const expectPrevious = reduction?.reduces
+      ? input.expectPrevious
+      : input.heldPrevious
+        ? { value: input.heldPrevious.value }
+        : undefined;
+    const write = () =>
+      setConfigWithHistory(
+        input.key,
+        input.value,
+        input.actorId,
+        input.changeComment,
+        "config_agent",
+        entry,
+        decision.target,
+        ...(expectPrevious ? [{ expectPrevious }] : [])
+      );
+    let result: Awaited<ReturnType<typeof setConfigWithHistory>>;
+    if (reduction?.reduces) {
+      // Recorded before it takes effect, fail closed (review 12 L4): no record, no reduction.
+      try {
+        result = await audited(
+          powerReductionEntry(input.key, input.actorId, reduction.changes),
+          write
+        );
+      } catch (err) {
+        if (err instanceof AuditWriteError) {
+          return {
+            applied: false,
+            error: "The audit log is unavailable, so the value was not changed.",
+          };
+        }
+        throw err;
+      }
+      if (result.success) {
+        await announcePowerReduction(
+          input.key,
+          input.actorId,
+          reduction.changes,
+          decision.target.scope
+        );
+      }
+    } else {
+      result = await write();
+    }
+    if (result.stale && input.heldPrevious) return staleResult(input.key);
 
     return {
       applied: result.success,
@@ -303,6 +396,8 @@ export interface ResetConfigInput {
   readonly actorIsOperator?: boolean;
   /** P10: must be true to apply; otherwise a preview. */
   readonly confirmed?: boolean;
+  /** As for update_config: set by dispatchConfigTool on a held reset (review 12 H2). */
+  readonly heldPrevious?: HeldPrevious;
 }
 
 /**
@@ -317,6 +412,19 @@ export async function handleResetConfig(
   return executeToolCall("reset_config", async () => {
     const entry = await getEnhancedConfig(input.key);
     if (!entry) return { applied: false, error: `Config key "${input.key}" not found.` };
+    // An approved held reset (review 12 H2): only of the value it was requested against.
+    const held = input.heldPrevious;
+    // And only onto the platform default it was requested to inherit (review 13 M1): a held reset
+    // that did not record it cannot be proved current (fail closed).
+    if (
+      held !== undefined &&
+      (entry.overridden !== (held.overridden === true) ||
+        (entry.overridden && canonical(entry.value) !== canonical(held.value)) ||
+        !("inherited" in held) ||
+        canonical(entry.platformValue) !== canonical(held.inherited))
+    ) {
+      return staleResult(input.key);
+    }
     if (!isSharedDeployment() || !entry.overridden) {
       return { applied: true, unchanged: true };
     }
@@ -338,8 +446,10 @@ export async function handleResetConfig(
     if (needsApproval) {
       const approvalResult = await createApprovalRequest({
         configKey: input.key,
-        currentValue: entry.value,
-        proposedValue: entry.platformValue,
+        currentValue: held ? held.value : entry.value,
+        // What the tenant would inherit, recorded now (review 13 M1): the approval resets only
+        // while the platform default is still this value.
+        proposedValue: held ? held.inherited : entry.platformValue,
         requestedBy: input.actorId,
         changeComment: input.changeComment,
         impactSummary: changeRequest.impact,
@@ -358,8 +468,15 @@ export async function handleResetConfig(
       input.key,
       input.actorId,
       input.changeComment,
-      operator
+      operator,
+      held
+        ? {
+            expectPrevious: { value: held.value },
+            expectInherited: { value: held.inherited },
+          }
+        : {}
     );
+    if (result.stale) return staleResult(input.key);
     return { applied: result.success, error: result.error, changeRequest };
   });
 }
@@ -713,12 +830,16 @@ export async function handleApproveChange(
         );
         if (!decision.ok)
           return Promise.resolve({ success: false, error: decision.reason });
+        // Only onto the value it was requested against (review 12 H2).
+        const expectPrevious = { value: record.currentValue };
         if (record.action === "reset") {
+          // And onto the platform default it inherits as requested (review 13 M1).
           return clearTenantConfig(
             record.configKey,
             input.reviewerId,
             `Approved: ${record.changeComment}`,
-            decision.target.operator
+            decision.target.operator,
+            { expectPrevious, expectInherited: { value: record.proposedValue } }
           );
         }
         return setConfigWithHistory(
@@ -728,7 +849,8 @@ export async function handleApproveChange(
           `Approved: ${record.changeComment}`,
           "config_agent",
           undefined,
-          decision.target
+          decision.target,
+          { expectPrevious }
         );
       }
     );
@@ -1140,10 +1262,16 @@ const REQUIRED_FIELDS: Record<string, readonly string[]> = {
  *     tool schema level (P6) + handler validation (validateConfigValue).
  *     See Gotcha #3.
  */
-/** Settings whose changes are always dual-controlled, whatever config.dual_control_keys says. */
+/**
+ * Settings whose changes are always dual-controlled, whatever config.dual_control_keys says: the
+ * settings that govern holding itself — which keys are held, two-person approval, which
+ * administrative actions are held (review 10: admin.dual_control_actions is held by its own rule,
+ * not only by being listed, so emptying the key list cannot be the step that frees it).
+ */
 export const ALWAYS_DUAL_CONTROLLED: readonly string[] = [
   "config.dual_control_keys",
   "config.require_two_person_approval",
+  "admin.dual_control_actions",
 ];
 
 /** Whether a change to `key` needs a runtime hold and an independent approver (ADR-039 F2b-2). */
@@ -1172,13 +1300,43 @@ const CONFIG_TOOL_BY_ID: ReadonlyMap<string, Tool> = new Map(
 /** The config tools a runtime (dual-control) hold can stand for. */
 const RESUMABLE_TOOLS: ReadonlySet<string> = new Set(["update_config", "reset_config"]);
 
+/** Whether a config tool's result says the change did not take effect (review 10 H2). */
+export function configResultFailure(output: Record<string, unknown>): string | undefined {
+  const r = output as unknown as ConfigToolResult;
+  const data = (r?.data ?? {}) as {
+    applied?: boolean;
+    requiresApproval?: boolean;
+    approvalError?: string;
+    error?: string;
+    validationErrors?: string[];
+    stale?: boolean;
+  };
+  // A stale held change (review 12 H2): marked, so the decision withdraws the hold.
+  if (data.stale) {
+    const text = data.error ?? r?.error ?? "the value changed";
+    return text.startsWith(STALE_CHANGE_PREFIX) ? text : `${STALE_CHANGE_PREFIX}${text}`;
+  }
+  if (r?.success && data.applied) return undefined;
+  if (r?.success && data.requiresApproval && !data.approvalError) return undefined;
+  return (
+    r?.error ??
+    data.error ??
+    data.approvalError ??
+    (data.validationErrors?.length ? data.validationErrors.join("; ") : undefined) ??
+    "the change was not applied"
+  );
+}
+
 /**
  * Apply a config change whose dual-control hold has just been approved (ADR-040): the held
  * tool runs again on its approved proposal — exactly the approved payload, the same operation,
- * as the proposer — and the pipeline consumes the approval, so it releases one change once.
- * A hold that is not a config change is not this function's (its own caller resumes it).
+ * as the proposer — and the pipeline claims the approval for the run, so it releases one change
+ * once. A run that fails before the change takes effect keeps the approval (review 10 H2): the
+ * pipeline's ApprovedRunFailedError is thrown, as is PipelineRejectedError when another run holds
+ * the approval or it was used. Null for a hold that is not a config change (its own caller
+ * resumes it).
  */
-export async function resumeApprovedConfigChange(
+export async function runApprovedConfigChange(
   proposalId: string
 ): Promise<ConfigToolResult | null> {
   const proposalStore = getProposalStore();
@@ -1186,32 +1344,54 @@ export async function resumeApprovedConfigChange(
   if (!proposal || !RESUMABLE_TOOLS.has(proposal.label)) return null;
   const tool = CONFIG_TOOL_BY_ID.get(proposal.label);
   if (!tool) return null;
-  const start = Date.now();
-  const stepIndex = Number(/_(\d+)$/.exec(proposal.operationId)?.[1] ?? 0);
-  try {
-    const invoked = await invokeTool({
-      // The held form of the tool (dual control raised its risk), so the approval is what
-      // lets it through — never a lower-risk copy that would skip the gate.
-      tool: { ...tool, declaredRisk: "restricted" },
-      input: proposal.payload,
-      actor: proposal.actor,
-      sessionId: proposal.sessionId,
-      trajectoryId: proposal.trajectoryId,
-      stepIndex,
-      trajectoryStore: getTrajectoryStore(),
-      proposalStore,
-      approvedProposalId: proposal.proposalId,
-      operationId: proposal.operationId,
-    });
-    return invoked.output as unknown as ConfigToolResult;
-  } catch (err) {
+  // Every held config change records the value it replaces (review 12 H2); one that does not
+  // cannot be proved current, so it is not applied (fail closed): the requester asks again.
+  if (!isHeldPrevious(proposal.payload["heldPrevious"])) {
+    const key =
+      typeof proposal.payload["key"] === "string"
+        ? proposal.payload["key"]
+        : "the setting";
     return {
       toolId: proposal.label,
+      success: false,
+      data: { ...staleResult(key), error: staleChangeMessage(key) },
+      error: staleChangeMessage(key),
+      durationMs: 0,
+    };
+  }
+  const stepIndex = Number(/_(\d+)$/.exec(proposal.operationId)?.[1] ?? 0);
+  const invoked = await invokeTool({
+    // The held form of the tool (dual control raised its risk), so the approval is what
+    // lets it through — never a lower-risk copy that would skip the gate.
+    tool: { ...tool, declaredRisk: "restricted", reportsFailure: configResultFailure },
+    input: proposal.payload,
+    actor: proposal.actor,
+    sessionId: proposal.sessionId,
+    trajectoryId: proposal.trajectoryId,
+    stepIndex,
+    trajectoryStore: getTrajectoryStore(),
+    proposalStore,
+    approvedProposalId: proposal.proposalId,
+    operationId: proposal.operationId,
+  });
+  return invoked.output as unknown as ConfigToolResult;
+}
+
+/** runApprovedConfigChange, with any error as a failed result (the error's own message). */
+export async function resumeApprovedConfigChange(
+  proposalId: string
+): Promise<ConfigToolResult | null> {
+  const start = Date.now();
+  try {
+    return await runApprovedConfigChange(proposalId);
+  } catch (err) {
+    return {
+      toolId: "update_config",
       success: false,
       data: null,
       error:
         err instanceof PipelineRejectedError && err.reason === "approval-used"
-          ? "This approved change has already been applied."
+          ? "This approved change is being applied or has already been applied."
           : err instanceof Error
             ? err.message
             : String(err),
@@ -1219,6 +1399,70 @@ export async function resumeApprovedConfigChange(
     };
   }
 }
+
+/**
+ * The stored value a change would replace — at the scope it would be written to (an update), or
+ * the tenant's own value and whether it has one (a reset) — or undefined when the entry or scope
+ * cannot be resolved (the change then fails on its own when run).
+ */
+async function valueBefore(
+  toolId: string,
+  key: string,
+  input: Record<string, unknown>
+): Promise<HeldPrevious | undefined> {
+  const entry = await getEnhancedConfig(key);
+  if (!entry) return undefined;
+  if (toolId === "reset_config") {
+    return {
+      value: entry.overridden ? entry.value : null,
+      overridden: entry.overridden,
+      inherited: entry.platformValue,
+    };
+  }
+  const scope =
+    input.scope === "platform" || input.scope === "tenant" ? input.scope : undefined;
+  const target = resolveConfigTarget(input.actorIsOperator === true, entry, scope);
+  if (!target.ok) return undefined;
+  return {
+    value: target.target.scope === "platform" ? entry.platformValue : entry.value,
+  };
+}
+
+/** The audit record of a power reduction applied by one admin (review 11 M-2, review 12 L4). */
+function powerReductionEntry(key: string, actorId: string, changes: readonly string[]) {
+  return {
+    action: "admin_action" as const,
+    ...(UUID_RE.test(actorId) ? { actorId } : { agent: actorId }),
+    details: { type: "power_reduction_applied", key, changes: changes.slice(0, 100) },
+  };
+}
+
+/**
+ * A power reduction applied by one admin (review 11 M-2), after its record (review 12 L4):
+ * alerted, so the second admin it did not wait for hears of it; and every pending hold on the key
+ * withdrawn (review 12 H2) — each was requested against a value that no longer stands.
+ */
+async function announcePowerReduction(
+  key: string,
+  actorId: string,
+  changes: readonly string[],
+  scope: ConfigScope
+): Promise<void> {
+  raiseAlert({
+    name: "config.power_reduced",
+    message: `${key} reduced without a second admin: ${changes.join("; ")}`.slice(0, 500),
+    tags: { key },
+  });
+  // Only the holds of the scope that was reduced (review 13 L1).
+  await withdrawSupersededHolds(
+    key,
+    actorId,
+    "a power reduction was applied to the key",
+    scope
+  );
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function dispatchConfigTool(
   toolId: string,
@@ -1296,9 +1540,41 @@ export async function dispatchConfigTool(
   // the settings that govern dual control itself are always held, so emptying the list cannot
   // be the step that turns it off.
   const targetKey = typeof input.key === "string" ? input.key : undefined;
-  const isDualControl =
+  let isDualControl =
     (toolId === "update_config" || toolId === "reset_config") &&
     (targetKey === undefined || (await isDualControlledKey(targetKey)));
+
+  // Review 11 M-2: a change that provably only removes power (an agent suspended, a scope or a
+  // token lifetime narrowed, a required feature added to a capability) is not held — the kill
+  // switch must not wait for a second admin. Proved against the value it replaces; the handler
+  // proves it again and the write compares and sets. A caller never supplies the value replaced,
+  // neither this one nor a held change's (review 12 H2).
+  const { expectPrevious: _ignored, heldPrevious: _ignoredHeld, ...callerInput } = input;
+  void _ignored;
+  void _ignoredHeld;
+  input = callerInput;
+  if (
+    isDualControl &&
+    toolId === "update_config" &&
+    targetKey &&
+    isPowerReducibleKey(targetKey)
+  ) {
+    const before = await valueBefore(toolId, targetKey, input);
+    if (
+      before !== undefined &&
+      powerReduction(targetKey, before.value, input.value).reduces
+    ) {
+      isDualControl = false;
+      input = { ...input, expectPrevious: { value: before.value } };
+    }
+  }
+  // Review 12 H2: a held change records the value it replaces, so its approval applies it only
+  // onto that value (compare-and-set) — never over a kill switch or any change made since.
+  if (isDualControl && targetKey && RESUMABLE_TOOLS.has(toolId)) {
+    const before = await valueBefore(toolId, targetKey, input);
+    if (before !== undefined) input = { ...input, heldPrevious: before };
+  }
+
   const effectiveTool: Tool = isDualControl
     ? { ...tool, declaredRisk: "restricted" }
     : tool;

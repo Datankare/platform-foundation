@@ -37,7 +37,13 @@ jest.mock("@/platform/data", () =>
 );
 
 import { FakeDatabase } from "@/__tests__/helpers/fake-database";
-import { submitForReview, claimItem, resolveItem } from "../review-service";
+import {
+  submitForReview,
+  claimItem,
+  unclaimItem,
+  resolveItem,
+  reapOverdueEscalations,
+} from "../review-service";
 import { InMemoryReviewQueueStore, setReviewQueueStore } from "../review-store";
 import { InMemoryStrikeStore, setStrikeStore } from "../strikes";
 import type { AccountStatus, ModerationResult } from "../types";
@@ -388,5 +394,61 @@ describe("X-8 — recorded first, and nothing half-done", () => {
     const second = await overturn(id);
     expect(second.success).toBe(true);
     expect(user().account_status).toBe("active");
+  });
+});
+
+describe("decision races (audit D-16)", () => {
+  it("an overturn that loses the item to another decision changes nothing on the account", async () => {
+    setBy("active", "banned");
+    const { id } = await submitAndClaim({ source: "ban_review" });
+    // The claim is released and another reviewer takes and decides the item, between this
+    // reviewer's read and its resolve.
+    const realUpdate = store.update.bind(store);
+    let raced = false;
+    jest.spyOn(store, "update").mockImplementation(async (itemId, fields, expected) => {
+      if (!raced && fields.status === "resolved") {
+        raced = true;
+        await realUpdate(itemId, { status: "pending", claimedBy: null, claimedAt: null });
+        await realUpdate(itemId, {
+          status: "resolved",
+          resolvedBy: "00000000-0000-4000-8000-0000000000e2",
+          decision: "uphold",
+        });
+      }
+      return realUpdate(itemId, fields, expected);
+    });
+    const res = await overturn(id);
+    expect(res.success).toBe(false);
+    expect(user().account_status).toBe("banned");
+    expect(
+      db.writes.filter(([op, table]) => op === "update" && table === "users")
+    ).toEqual([]);
+  });
+
+  it("a failed restoration reopens the item for the same reviewer (not resolved)", async () => {
+    setBy("active", "banned");
+    const { id } = await submitAndClaim({ source: "ban_review" });
+    db.failWrites("users");
+    expect((await overturn(id)).success).toBe(false);
+    const item = await store.getById(id);
+    expect(item).toMatchObject({ status: "claimed", claimedBy: REVIEWER });
+    expect(user().account_status).toBe("banned");
+  });
+
+  it("the reaper does not decide an item another reviewer claimed after it looked", async () => {
+    const { id } = await submitAndClaim({ source: "escalation", action: "escalate" });
+    const stale = await store.getById(id);
+    const OTHER = "00000000-0000-4000-8000-0000000000e3";
+    await unclaimItem(id, REVIEWER);
+    await claimItem(id, OTHER);
+    jest
+      .spyOn(store, "query")
+      .mockImplementation(async (q) => (q?.status === "claimed" ? [stale!] : []));
+    const report = await reapOverdueEscalations(new Date(Date.now() + 365 * 86_400_000));
+    expect(report.blocked + report.escalatedHigher).toBe(0);
+    expect(await store.getById(id)).toMatchObject({
+      status: "claimed",
+      claimedBy: OTHER,
+    });
   });
 });

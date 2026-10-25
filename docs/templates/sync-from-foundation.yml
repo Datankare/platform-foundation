@@ -1,0 +1,118 @@
+# Sync from Platform Foundation — TEMPLATE for a consuming app (TASK-160)
+#
+# Copy to .github/workflows/sync-from-foundation.yml in your app, with .github/sync-config.json
+# (docs/templates/sync-config.json). platform-foundation's own __tests__/workflow-hygiene.test.ts
+# runs in your repository over your workflows and your sync-config, and this template passes it:
+#
+#   - No `${{ … }}` inside a `run:` script (audit H-9). An input, a ref, a step output built from
+#     them is shell-interpolated before the script runs — command injection. Every value a script
+#     uses comes in through the step's `env:` and is quoted ("$SOURCE_REF").
+#   - Every exclude in sync-config.json is anchored (H-3): `/package.json`, `platform/x/**`, never
+#     a bare `package.json`, which matches at any depth.
+#
+# The rsync runs WITHOUT --delete by design: files the platform removes are removed by hand
+# (docs/SETUP_AND_INTEGRATION.md §6). After it, your app's own module manifest
+# (platform/modules/app-manifest.json, sync-excluded) needs no step: scripts/module-manifest.cjs
+# merges it with the platform's on every read (TASK-157).
+
+name: Sync from Platform Foundation
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Override source ref (tag, branch, or "latest")'
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: develop
+          path: target
+
+      - name: Read sync config
+        id: config
+        env:
+          REF_OVERRIDE: ${{ github.event.inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          SOURCE=$(jq -r '.source' target/.github/sync-config.json)
+          REF_CONFIG=$(jq -r '.source_ref' target/.github/sync-config.json)
+          echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+          echo "source_ref=${REF_OVERRIDE:-$REF_CONFIG}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve latest release tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE: ${{ steps.config.outputs.source }}
+          REF: ${{ steps.config.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" = "latest" ]; then
+            REF=$(gh api "repos/$SOURCE/releases/latest" --jq '.tag_name')
+          fi
+          echo "resolved_ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Using ref: $REF"
+
+      - name: Checkout platform-foundation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Expressions in `with:` are not shell: they are safe here.
+          repository: ${{ steps.config.outputs.source }}
+          ref: ${{ steps.resolve.outputs.resolved_ref }}
+          token: ${{ github.token }}
+          path: source
+          persist-credentials: false
+
+      - name: Sync files
+        id: sync
+        env:
+          RESOLVED_REF: ${{ steps.resolve.outputs.resolved_ref }}
+        run: |
+          set -euo pipefail
+          SHA=$(git -C source rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          EXCLUDES=(--exclude=.git --exclude=node_modules)
+          while IFS= read -r pattern; do
+            EXCLUDES+=("--exclude=$pattern")
+          done < <(jq -r '.exclude[]' target/.github/sync-config.json)
+          rsync -a --checksum "${EXCLUDES[@]}" source/ target/
+          echo "Synced $RESOLVED_REF @ $SHA"
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.FOUNDATION_SYNC_TOKEN }}
+          SOURCE: ${{ steps.config.outputs.source }}
+          REF: ${{ steps.resolve.outputs.resolved_ref }}
+          SHA: ${{ steps.sync.outputs.sha }}
+        run: |
+          set -euo pipefail
+          cd target
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            echo "Up to date with $SOURCE $REF @ $SHA"
+            exit 0
+          fi
+          BRANCH="auto-sync/foundation-$(date +%Y%m%d-%H%M%S)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore(sync): inherit platform-foundation $REF @ $SHA"
+          git push origin "$BRANCH"
+          gh pr create --base develop --head "$BRANCH" \
+            --title "chore(sync): inherit platform-foundation $REF @ ${SHA:0:7}" \
+            --body "Automated pull from \`$SOURCE@$SHA\` (ref \`$REF\`). No --delete: remove files the platform deleted by hand. Run every gate before merging."

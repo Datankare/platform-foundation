@@ -55,6 +55,9 @@ export function resetAuthProvider(): void {
 /**
  * Get the registered auth provider.
  * Throws if no provider has been registered — fail-fast on misconfiguration.
+ *
+ * @external The provider is the identity provider (Cognito): an audited act that calls it passes
+ * `{ external: true }` (review 14 L-6; __tests__/audited-external-guard.test.ts reads this tag).
  */
 export function getAuthProvider(): AuthProvider {
   const provider = readRegisteredProvider();

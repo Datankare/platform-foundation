@@ -28,3 +28,11 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+-- Supabase's default privileges (audit E-11): in a Supabase project every table, function and
+-- sequence the migration role creates in public is granted to the API roles unless a migration
+-- revokes it. Without these the replay checked a database more closed than production — a
+-- function a migration forgot to revoke passed here and was executable by anon there.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;

@@ -174,19 +174,6 @@ export async function loadStrikeThresholds(): Promise<StrikeThresholds> {
 }
 
 // ---------------------------------------------------------------------------
-// Blocklist-only surfaces
-// ---------------------------------------------------------------------------
-
-/**
- * Load the list of surfaces that should use blocklist-only mode
- * (skip classifier for latency-critical paths).
- */
-export async function loadBlocklistOnlySurfaces(): Promise<readonly ContentType[]> {
-  const surfaces = await getConfig<ContentType[]>(key("blocklist_only_surfaces"), []);
-  return Array.isArray(surfaces) ? surfaces : [];
-}
-
-// ---------------------------------------------------------------------------
 // Escalation SLA + remedial action (ADR-041)
 // ---------------------------------------------------------------------------
 

@@ -56,6 +56,7 @@ import {
   type TrajectoryStore,
 } from "@/platform/agents/trajectory-store";
 import { PostgresTrajectoryStore } from "@/platform/agents/postgres-trajectory-store";
+import { expireStaleApprovals } from "@/platform/admin/config-approval";
 
 let a: TestTenant;
 let b: TestTenant;
@@ -544,7 +545,11 @@ dbDescribe("the core duties, run as jobs", () => {
     expect(left.sort()).toEqual([ids.oldRunning, ids.newDone].sort());
   });
 
-  it("config.expire-approvals expires stale approvals, a tenant's and the platform's", async () => {
+  // Review 11 L-5: the job sweeps every tenant on the owner connection — run here, it recovered
+  // and withdrew rows parallel suites were asserting on. The job's own function, on the same
+  // owner path, scoped to this suite's tenant and the platform's rows; the duty calls it unscoped
+  // (jobs-duties).
+  it("config.expire-approvals' sweep expires stale approvals, a tenant's and the platform's", async () => {
     const { rows } = await owner<{
       id: string;
       tenant_id: string | null;
@@ -558,8 +563,8 @@ dbDescribe("the core duties, run as jobs", () => {
        returning id, tenant_id, expires_at`,
       [a.id]
     );
-    const r = await runFor("config.expire-approvals", null);
-    expect(r.succeeded).toBe(1);
+    const expired = await expireStaleApprovals({ tenantIds: [a.id], platform: true });
+    expect(expired).toBeGreaterThanOrEqual(2);
     const status = (
       await owner<{ change_comment: string; status: string }>(
         "select change_comment, status::text from config_pending_approvals where id = any($1::uuid[]) order by change_comment",

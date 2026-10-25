@@ -18,7 +18,8 @@ const PLATFORM_DIRECT: Readonly<Record<string, string>> = {
   "components/auth/AuthPage.tsx": "/api/auth/guest — creates the session",
   "app/auth/callback/SsoCallbackClient.tsx":
     "/api/auth/sso/callback — creates the session",
-  "app/HomeClient.tsx": "/api/auth/sign-out — sets the Authorization header itself",
+  "platform/auth/context.tsx":
+    "/api/auth/refresh (the httpOnly refresh cookie is the credential) and /api/auth/sign-out (sets the Authorization header itself)",
   "hooks/useRealtimeStream.ts": "/api/stream — sets the Authorization header itself",
 };
 

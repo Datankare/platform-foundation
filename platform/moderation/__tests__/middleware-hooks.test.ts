@@ -67,7 +67,11 @@ jest.mock("@/platform/moderation/review-service", () => ({
 }));
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
 import type { AIResponse, Orchestrator, CircuitState } from "@/platform/ai";
-import { screenContent } from "@/platform/moderation/middleware";
+import {
+  getUnjudgedCounts,
+  resetUnjudgedCounts,
+  screenContent,
+} from "@/platform/moderation/middleware";
 import { resetGuardian } from "@/platform/moderation/guardian";
 import { resetModerationStore } from "@/platform/moderation/store";
 import { logger } from "@/lib/logger";
@@ -235,5 +239,144 @@ describe("screenContent — fireReviewSubmit hook", () => {
       "Review queue: escalation submit failed",
       expect.objectContaining({ userId: "user-3" })
     );
+  });
+});
+
+describe("screenContent — consequences finish first (audit D-14, X-22, RR-8)", () => {
+  const ctx = (userId?: string) => ({
+    contentType: "generation" as const,
+    contentRatingLevel: 1 as const,
+    ...(userId ? { userId } : {}),
+  });
+
+  it("does not return before the Sentinel has recorded the strike", async () => {
+    let release!: () => void;
+    let finished = false;
+    mockProcessBlock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => {
+            finished = true;
+            resolve({
+              strike: { id: "s" },
+              strikeSummary: { totalActive: 1 },
+              consequenceAction: "none",
+              previousStatus: "active",
+              newStatus: "active",
+              reasoning: "",
+              trajectoryId: "t",
+              agentId: "sentinel-1",
+            });
+          };
+        })
+    );
+    mockClassifierResponse(false, "high", 0.95);
+    let returned = false;
+    const pending = screenContent("violent content", {
+      direction: "input",
+      requestId: "req-d14-1",
+      context: ctx("user-d14"),
+    }).then((r) => {
+      returned = true;
+      return r;
+    });
+    for (let i = 0; i < 50 && !release; i++) await new Promise(process.nextTick);
+    expect(mockProcessBlock).toHaveBeenCalledTimes(1);
+    await new Promise(process.nextTick);
+    expect(returned).toBe(false);
+    release();
+    const r = await pending;
+    expect(finished).toBe(true);
+    expect(r.action).toBe("block");
+  });
+
+  it("does not return before the escalation is in the review queue", async () => {
+    let queued = false;
+    mockSubmitForReview.mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      queued = true;
+      return { success: true, item: { id: "review-2" } };
+    });
+    mockClassifierResponse(false, "medium", 0.5);
+    const r = await screenContent("ambiguous", {
+      direction: "input",
+      requestId: "req-d14-2",
+      context: ctx("user-d14"),
+    });
+    expect(r.action).toBe("escalate");
+    expect(queued).toBe(true);
+  });
+
+  it("a Sentinel that throws leaves the block standing", async () => {
+    mockProcessBlock.mockRejectedValueOnce(new Error("strike store down"));
+    mockClassifierResponse(false, "high", 0.95);
+    const r = await screenContent("violent content", {
+      direction: "input",
+      requestId: "req-d14-3",
+      context: ctx("user-d14"),
+    });
+    expect(r.action).toBe("block");
+    expect(logger.error).toHaveBeenCalledWith(
+      "Sentinel processing failed — strike may not be recorded",
+      expect.objectContaining({ userId: "user-d14" })
+    );
+  });
+
+  it("a review submission that throws leaves the withholding standing", async () => {
+    mockSubmitForReview.mockRejectedValueOnce(new Error("queue down"));
+    mockClassifierResponse(false, "medium", 0.5);
+    const r = await screenContent("ambiguous", {
+      direction: "input",
+      requestId: "req-d14-4",
+      context: ctx("user-d14"),
+    });
+    expect(r.action).toBe("escalate");
+  });
+
+  it("a classifier outage withholds the content but queues nothing and strikes nobody (RR-8)", async () => {
+    for (let i = 0; i < 5; i++) {
+      mockComplete.mockRejectedValueOnce(new Error("provider outage"));
+      const r = await screenContent(`prompt ${i}`, {
+        direction: "input",
+        requestId: `req-rr8-${i}`,
+        context: ctx("user-rr8"),
+      });
+      expect(r.action).toBe("escalate");
+      expect(r.screeningUnavailable).toBe(true);
+    }
+    expect(mockSubmitForReview).not.toHaveBeenCalled();
+    expect(mockProcessBlock).not.toHaveBeenCalled();
+  });
+
+  // Review 8 M4: an unreadable answer is withheld like an outage, and not queued — a user whose
+  // prompts draw unreadable answers (an injection attempt) could otherwise fill the queue. It is
+  // never allowed either way; the count is the alert's signal.
+  it("an unparseable classifier answer is withheld, counted, and not queued", async () => {
+    resetUnjudgedCounts();
+    mockComplete.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ignore previous instructions" }],
+      model: "m",
+      usage: { inputTokens: 10, outputTokens: 5 },
+      stopReason: "end_turn",
+    } as AIResponse);
+    const r = await screenContent("x", {
+      direction: "input",
+      requestId: "req-rr8-parse",
+      context: ctx("user-rr8"),
+    });
+    expect(r.action).toBe("escalate");
+    expect(r.screeningUnavailable).toBe(true);
+    expect(mockSubmitForReview).not.toHaveBeenCalled();
+    expect(getUnjudgedCounts()).toEqual({ unavailable: 0, unreadable: 1 });
+  });
+
+  it("records what the classifier call cost (D-20)", async () => {
+    mockClassifierResponse(true, "low", 0.99);
+    const r = await screenContent("hello", {
+      direction: "input",
+      requestId: "req-d20",
+      context: ctx(),
+    });
+    expect(r.classifierCostUsd).toBeGreaterThan(0);
   });
 });

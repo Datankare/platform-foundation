@@ -9,19 +9,22 @@ what the registered modules add to it.
 
 ## Files
 
-| File               | What it is                                                                                                             |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `types.ts`         | `PlatformModule` — what a module may declare                                                                           |
-| `define.ts`        | `definePlatformModule` — validates and freezes a declaration                                                           |
-| `registry.ts`      | `registerModules` (once, at boot), `getModules`, `isModuleEnabled`, `getModule`; `resetModuleRegistry` (tests)         |
-| `compose.ts`       | How a core registry adds the modules' entries to its own, refusing a name already taken                                |
-| `contributions.ts` | What boot does with the modules: `assertModuleContributions`, `registerModuleContentTypes`, `createModuleHealthProbes` |
-| `app-modules.ts`   | **Consumer seam** — the app's list of modules                                                                          |
-| `app-home.tsx`     | **Consumer seam** — what the app's home page shows (PF: the translation demo)                                          |
-| `manifest.json`    | Where each module's files are: code, prompts, evals, routes, components, tests, kits, migrations                       |
+| File                | What it is                                                                                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`          | `PlatformModule` — what a module may declare                                                                            |
+| `define.ts`         | `definePlatformModule` — validates and freezes a declaration                                                            |
+| `registry.ts`       | `registerModules` (once, at boot), `getModules`, `isModuleEnabled`, `getModule`; `resetModuleRegistry` (tests)          |
+| `compose.ts`        | How a core registry adds the modules' entries to its own, refusing a name already taken                                 |
+| `contributions.ts`  | What boot does with the modules: `assertModuleContributions`, `registerModuleContentTypes`, `createModuleHealthProbes`  |
+| `app-modules.ts`    | **Consumer seam** — the app's list of modules                                                                           |
+| `app-home.tsx`      | **Consumer seam** — what the app's home page shows (PF: the translation demo)                                           |
+| `manifest.json`     | Where each module's files are: code, prompts, evals, routes, components, tests, kits, migrations                        |
+| `app-manifest.json` | **Consumer seam** — the app's own: paths it adds to a platform module, its own modules, its migration prefix (TASK-157) |
 
 `scripts/module-manifest.cjs` is the one reader of `manifest.json` (the lint boundary, the boundary
-and manifest tests, the conformance composition and the migration replay all use it).
+and manifest tests, the conformance composition and the migration replay all use it). It merges
+the app's `app-manifest.json` in, and refuses a path claimed twice, a platform module's
+dependencies redefined, an unknown dependency or a cycle ([SETUP_AND_INTEGRATION](../../docs/SETUP_AND_INTEGRATION.md) §6).
 
 ## Writing a module
 

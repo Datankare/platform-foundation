@@ -9,8 +9,9 @@
  * POST /api/admin/gdpr/purge
  *   Body: { userId: string, reason: string, dryRun?: boolean }
  *   Requires: admin_purge_user_data (super_admin only, migration 041)
- *   Fails closed: with no purge handlers registered nothing would be erased, so the route answers
- *   503 rather than reporting success (audit X-15).
+ *   Erases the account and every platform table that holds its data (platform/auth/user-data.ts,
+ *   through createPlatformPurgePipeline); a dry run counts the rows. A purge that does not
+ *   complete answers with its steps and is recorded as failed (audit X-15).
  *   Returns: PurgeResult
  *   Tenancy: the target must be a user of the request's tenant (ADR-053 D5) — a soft-deleted one
  *   included, since erasing a deleted account is the common case — or the route answers 404
@@ -24,7 +25,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { auditedResponse } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
-import { PurgePipeline } from "@/platform/gdpr";
+import { createPlatformPurgePipeline } from "@/platform/gdpr";
 import type { PurgeRequest } from "@/platform/gdpr";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { withTenantTx } from "@/platform/data";
@@ -119,15 +120,9 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   });
 
   try {
-    // Create pipeline — consumers register their handlers at app startup.
-    // PF provides the pipeline; app-level code registers handlers.
-    // This route demonstrates the pattern; Playform overrides with its handlers.
-    const pipeline = new PurgePipeline({ timeoutMs: 30_000 });
-
-    // NOTE: In production, handlers are registered at app startup
-    // and the pipeline is a singleton. This route would call
-    // getPurgePipeline() instead of creating a new one.
-    // Phase 3 will add a pipeline registry pattern.
+    // The platform's handler erases the account and every platform table that holds its data
+    // (audit X-15: before, the pipeline had no handler and nothing was erased).
+    const pipeline = createPlatformPurgePipeline(admin.userId);
 
     // An irreversible erasure is recorded before it runs; with no record it does not run.
     return await auditedResponse(
@@ -155,7 +150,10 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
           response: NextResponse.json(result),
         };
       },
-      () => apiError("service.unavailable", { params: { service: "audit" }, request })
+      () => apiError("service.unavailable", { params: { service: "audit" }, request }),
+      // The purge runs every registered module's erasure hook, which may reach outside the
+      // database (review 14 L-6).
+      { external: true }
     );
   } catch (error) {
     logger.error("GDPR purge failed", {

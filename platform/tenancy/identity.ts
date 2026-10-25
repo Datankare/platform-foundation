@@ -28,6 +28,10 @@ import { getConfigBoolean, getConfigOrThrow } from "@/platform/auth/platform-con
 import { hasDatabase, withOwnerTx } from "@/platform/data";
 import { apiError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
+import {
+  forgetTokenVerification,
+  revokeTokenVerification,
+} from "@/platform/auth/token-verification";
 import { peekTenant } from "./context";
 
 export type IdentityTenantRefusal =
@@ -91,8 +95,13 @@ export async function assignCurrentTenant(userId: string): Promise<boolean> {
       route: "platform/tenancy/identity",
       error: r.error,
     });
+    return false;
   }
-  return r.success;
+  // A verification remembered before the assignment carries no tenant (review 8 M1: the new
+  // user's requests were refused tenant.missing until the entry aged out, ~30 s). Every token of
+  // the user is verified again, on every instance, and so reads the tenant just written.
+  await revokeTokenVerification(userId);
+  return true;
 }
 
 /**
@@ -134,9 +143,11 @@ export async function ensureIdentityTenant(
   } else if (!(await signupsOpen())) {
     return { ok: false, code: "auth.signups_closed" };
   }
-  return (await assignCurrentTenant(payload.sub))
-    ? { ok: true }
-    : { ok: false, code: "service.unavailable" };
+  if (!(await assignCurrentTenant(payload.sub)))
+    return { ok: false, code: "service.unavailable" };
+  // This token's own entry, verified above without the tenant, goes too (M1).
+  await forgetTokenVerification(accessToken);
+  return { ok: true };
 }
 
 /**

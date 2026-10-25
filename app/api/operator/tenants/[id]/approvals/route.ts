@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
+import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
 import { internalError } from "@/platform/errors";
 import { inTargetTenant } from "@/platform/tenancy/operator-target";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -23,7 +24,10 @@ export const GET = tenantRoute(async function GET(
   const { id } = await params;
   return inTargetTenant(id, request, async () => {
     try {
-      return NextResponse.json({ tenantId: id, approvals: await listPendingApprovals() });
+      return NextResponse.json({
+        tenantId: id,
+        approvals: await listPendingApprovals([COMMAND_BAR_HOLDS]),
+      });
     } catch (error) {
       return internalError(error, { request, context: "Tenant approvals read failed" });
     }

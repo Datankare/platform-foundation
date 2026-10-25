@@ -24,6 +24,7 @@ import type {
   PurgeStepResult,
 } from "./types";
 import { generateId } from "@/platform/agents/utils";
+import { logger } from "@/lib/logger";
 
 /**
  * Generate a unique purge ID.
@@ -171,7 +172,14 @@ export class PurgePipeline {
           completed_at: completedAt,
         });
       } catch (auditError) {
-        console.error("[gdpr] Failed to write purge audit log:", auditError);
+        logger.error(
+          "Purge record not written (the purge ran; its audit record stands)",
+          {
+            purgeId,
+            error: auditError instanceof Error ? auditError.message : String(auditError),
+            route: "platform/gdpr/hard-purge",
+          }
+        );
       }
     }
 

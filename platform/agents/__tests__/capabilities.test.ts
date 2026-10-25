@@ -6,7 +6,7 @@
  * and serialises; its behaviour is these assertions plus getActiveProviders/listWorkflows.
  */
 
-import { buildCapabilities } from "../capabilities";
+import { buildCapabilities, capabilitySelections } from "../capabilities";
 import {
   listWorkflows,
   registerWorkflow,
@@ -118,5 +118,58 @@ describe("listWorkflows", () => {
 
   it("returns an empty list when nothing is registered", () => {
     expect(listWorkflows()).toEqual([]);
+  });
+});
+
+describe("capabilitySelections (audit C-21)", () => {
+  it("shows the providers that do goals' work and none of the platform's plumbing", () => {
+    expect(
+      capabilitySelections({
+        ai: "anthropic",
+        embeddingProvider: "openai",
+        songId: "acrcloud",
+        tts: "google",
+        auth: "cognito",
+        cache: "upstash",
+        errorReporter: "sentry",
+        realtime: "supabase",
+        rateLimiter: "postgres",
+        effectLedger: "postgres",
+        strikeStore: "postgres",
+        reviewQueueStore: "postgres",
+        jobStore: "postgres",
+      })
+    ).toEqual({
+      ai: "anthropic",
+      embeddingProvider: "openai",
+      songId: "acrcloud",
+      tts: "google",
+    });
+  });
+});
+
+describe("GET /api/agent/capabilities (audit I-7)", () => {
+  const get = async (headers: Record<string, string>) => {
+    const { GET } = await import("@/app/api/agent/capabilities/route");
+    const { NextRequest } = await import("next/server");
+    return GET(new NextRequest("http://localhost/api/agent/capabilities", { headers }));
+  };
+
+  it("refuses a caller it cannot verify", async () => {
+    expect((await get({})).status).toBe(401);
+    expect((await get({ authorization: "Bearer forged" })).status).toBe(401);
+  });
+
+  it("answers a verified guest, without the plumbing", async () => {
+    const { mintGuestToken } = await import("@/platform/auth/guest-token");
+    const { token } = await mintGuestToken();
+    const res = await get({ authorization: `Bearer ${token}` });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Object.keys(body.providerSelections)).not.toEqual(
+      expect.arrayContaining(["strikeStore"])
+    );
+    expect(body.providerSelections).not.toHaveProperty("rateLimiter");
+    expect(body.providerSelections).not.toHaveProperty("auth");
   });
 });

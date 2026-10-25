@@ -16,9 +16,11 @@
  *
  * Environment variables (all optional — omit for mock/fallback):
  *   AUTH_PROVIDER      = "cognito" | "mock"      (default: "mock"; "mock" refused in production — ADR-050 D1)
- *   CACHE_PROVIDER     = "upstash" | "memory"    (default outside production: "memory";
- *                                                   required in production — TASK-139)
- *   AI_PROVIDER        = "anthropic" | "mock"    (default: "mock")
+ *   CACHE_PROVIDER     = "upstash" | "valkey" | "memory" (default outside production: "memory";
+ *                                                   required in production — TASK-139; a
+ *                                                   deployment refuses memory — review 8 L3)
+ *   AI_PROVIDER        = "anthropic" | "mock"    (default: "anthropic"; "mock" outside a local
+ *                                                   or CI run is refused — audit G-13)
  *   ERROR_REPORTER     = "sentry" | "noop"       (default: "noop")
  *   REALTIME_PROVIDER  = "supabase" | "mock"     (default: "mock")
  *   EMBEDDING_PROVIDER     = "openai" | "mock"      (default: "mock")
@@ -54,6 +56,8 @@ import {
   setReviewQueueStore,
 } from "@/platform/moderation/review-store";
 import { logger } from "@/lib/logger";
+import { createOrchestrator, setOrchestrator } from "@/platform/ai/orchestrator";
+import { createMockAIProvider } from "@/platform/ai/mock-provider";
 import { PostgresJobStore } from "@/platform/jobs/postgres-store";
 import { setJobStore } from "@/platform/jobs/store";
 import {
@@ -115,7 +119,7 @@ import type { Contributed, ModuleProviderSlot } from "@/platform/modules/types";
 // ---------------------------------------------------------------------------
 
 export type AuthProviderType = "cognito" | "mock";
-export type CacheProviderType = "upstash" | "memory";
+export type CacheProviderType = "upstash" | "valkey" | "memory";
 export type AIProviderType = "anthropic" | "mock";
 export type ErrorReporterType = "sentry" | "noop";
 export type RealtimeProviderType = "supabase" | "mock";
@@ -218,7 +222,7 @@ function getCoreSelections(): CoreProviderSelections {
   return {
     auth: (getAuthProviderSetting() as AuthProviderType) ?? "mock",
     cache: (getCacheProviderSetting() as CacheProviderType | undefined) ?? "memory",
-    ai: (process.env.AI_PROVIDER as AIProviderType) ?? "mock",
+    ai: (process.env.AI_PROVIDER as AIProviderType) ?? "anthropic",
     errorReporter: (process.env.ERROR_REPORTER as ErrorReporterType) ?? "noop",
     realtime: (process.env.REALTIME_PROVIDER as RealtimeProviderType) ?? "mock",
     moderationStore: (process.env.MODERATION_STORE as ModerationStoreType) ?? "memory",
@@ -264,7 +268,7 @@ function initAuthProvider(type: AuthProviderType): void {
   if (type === "cognito") {
     // ADR-050 D2: one resolver for the Cognito ids. In production the contract has already
     // refused a missing pool/client, so the mock fallback below is reachable only outside it.
-    const { region, userPoolId, clientId } = getCognitoSettings();
+    const { userPoolId, clientId } = getCognitoSettings();
 
     if (!userPoolId || !clientId) {
       logger.warn(
@@ -274,7 +278,11 @@ function initAuthProvider(type: AuthProviderType): void {
       return;
     }
 
-    registerAuthProvider(createCognitoAuthProvider({ region, userPoolId, clientId }));
+    // Every Cognito setting, from the one resolver (getCognitoConfigFromEnv): the hosted sign-in
+    // domain (SSO), the client secret (audit A-7) and the administrative credentials (tenant
+    // assignment). Built from the three ids alone, SSO answered "not configured", shared
+    // tenancy could not assign a tenant, and a confidential client was refused every call.
+    registerAuthProvider(createCognitoAuthProvider());
     return;
   }
 
@@ -293,11 +301,24 @@ function initCacheProvider(type: CacheProviderType): void {
       );
     }
   }
+  if (type === "valkey" && !(process.env.VALKEY_URL ?? "")) {
+    throw new Error("CACHE_PROVIDER=valkey but VALKEY_URL is not set");
+  }
   // The cache singleton is built from the same selection on first use.
   resetCache();
 }
 
+/**
+ * Audit G-13: AI_PROVIDER had no effect — the orchestrator always called Anthropic, and the
+ * registry reported "mock" as the default. Now "mock" installs the echoing mock provider (a local
+ * or CI run only: the environment contract refuses it elsewhere, since it would answer the
+ * safety classifier too), and "anthropic", the default, is what the orchestrator builds.
+ */
 function initAIProvider(type: AIProviderType): void {
+  if (type === "mock") {
+    setOrchestrator(createOrchestrator({ provider: createMockAIProvider() }));
+    return;
+  }
   if (type === "anthropic") {
     const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
     if (!apiKey) {

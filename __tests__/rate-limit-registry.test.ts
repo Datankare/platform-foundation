@@ -24,11 +24,16 @@ const realAuth = (): void => {
   process.env.AUTH_PROVIDER = "cognito";
   process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID = "us-east-1_AbC123";
   process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID = "abc123def456";
+  process.env.COGNITO_CLIENT_SECRET = "s".repeat(52);
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
+  process.env.ERASURE_HASH_KEY = "e".repeat(64);
   process.env.CRON_SECRET = "c".repeat(64);
-  process.env.CACHE_PROVIDER = "memory";
+  // TASK-139: a deployment declares its cache — shared (review 8 L3).
+  process.env.CACHE_PROVIDER = "upstash";
+  process.env.UPSTASH_REDIS_REST_URL = "https://cache.example.upstash.io";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "t".repeat(40);
   process.env.TENANCY_MODE = "single";
-  process.env.TENANT_ID = "00000000-0000-4000-8000-000000000001"; // TASK-139: a deployment declares its cache
+  process.env.TENANT_ID = "00000000-0000-4000-8000-000000000001";
   delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
   delete process.env.E2E_TEST_DOUBLE_AUTH;
 };

@@ -94,6 +94,8 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
           exp: Math.floor(Date.now() / 1000) + 3600,
           // One sign-in session for the one mock token (TokenPayload.sessionId).
           sessionId: MOCK_SESSION_ID,
+          // The mock user signs in with a second factor (audit A-9: staff must).
+          mfaEnabled: true,
           ...(tenants.has(MOCK_USER_ID) ? { tenantId: tenants.get(MOCK_USER_ID) } : {}),
         };
       }
@@ -161,7 +163,8 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
 
     async respondToMfaChallenge(
       _mfaSession: string,
-      totpCode: string
+      totpCode: string,
+      _username: string
     ): Promise<AuthResult> {
       if (totpCode === "000000") {
         return {

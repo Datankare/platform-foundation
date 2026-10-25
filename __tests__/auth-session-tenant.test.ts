@@ -157,7 +157,13 @@ const SESSION_ROUTES: Record<string, (host?: string) => Promise<Response>> = {
   "sign-in": (host) =>
     signIn(post("/api/auth/sign-in", { email: "a@b.c", password: "x" }, host)),
   "mfa-challenge": (host) =>
-    mfa(post("/api/auth/mfa-challenge", { session: "s", code: "123456" }, host)),
+    mfa(
+      post(
+        "/api/auth/mfa-challenge",
+        { session: "s", code: "123456", username: "a@b.c" },
+        host
+      )
+    ),
   "new-password-challenge": (host) =>
     newPassword(
       post(
@@ -254,7 +260,11 @@ describe("sign-up", () => {
       }),
     });
     const res = await signUp(
-      post("/api/auth/sign-up", { email: "a@b.c", password: STRONG })
+      post("/api/auth/sign-up", {
+        email: "a@b.c",
+        password: STRONG,
+        dateOfBirth: "1990-01-01",
+      })
     );
     expect(res.status).toBe(403);
     const body = await res.json();
@@ -264,7 +274,11 @@ describe("sign-up", () => {
 
   it("an ordinary sign-up (no session) is unchanged", async () => {
     const res = await signUp(
-      post("/api/auth/sign-up", { email: "a@b.c", password: STRONG })
+      post("/api/auth/sign-up", {
+        email: "a@b.c",
+        password: STRONG,
+        dateOfBirth: "1990-01-01",
+      })
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
@@ -281,7 +295,13 @@ const PASSWORD_ROUTES: Record<
   (password: string, host?: string) => Promise<Response>
 > = {
   "sign-up": (password, host) =>
-    signUp(post("/api/auth/sign-up", { email: "a@b.c", password }, host)),
+    signUp(
+      post(
+        "/api/auth/sign-up",
+        { email: "a@b.c", password, dateOfBirth: "1990-01-01" },
+        host
+      )
+    ),
   "confirm-forgot-password": (password, host) =>
     confirmReset(
       post(

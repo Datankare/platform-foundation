@@ -6,10 +6,14 @@
  *   const cache = createCacheProvider(); // auto-detects from env
  *
  * Environment variables:
- *   CACHE_PROVIDER           — upstash | memory (TASK-139: chosen, never inferred; production
- *                              requires it — environment contract)
+ *   CACHE_PROVIDER           — upstash | valkey | memory (TASK-139: chosen, never inferred;
+ *                              production requires it — environment contract; a deployment
+ *                              refuses memory — review 8 L3)
  *   UPSTASH_REDIS_REST_URL   — Redis REST endpoint (with CACHE_PROVIDER=upstash)
  *   UPSTASH_REDIS_REST_TOKEN — Redis auth token (with CACHE_PROVIDER=upstash)
+ *   VALKEY_URL               — rediss:// URL of a Valkey or Redis server (with
+ *                              CACHE_PROVIDER=valkey — container hosts, review 9 M5)
+ *   VALKEY_CA_CERT           — optional PEM CA bundle (a private CA)
  *   CACHE_NAMESPACE          — Key prefix (default: "pf:")
  *   CACHE_DEFAULT_TTL        — Default TTL in seconds (default: 3600)
  *
@@ -32,6 +36,8 @@ export type {
 export { InMemoryCacheProvider } from "./memory-cache";
 export { RedisCacheProvider } from "./redis-cache";
 export type { RedisCacheConfig } from "./redis-cache";
+export { ValkeyCacheProvider } from "./valkey-cache";
+export type { ValkeyCacheConfig } from "./valkey-cache";
 export { createCacheHealthProbe, createCacheReadinessProbe } from "./health-probe";
 
 // AI-specific cache (GenAI Principle P4: cached AI responses)
@@ -40,9 +46,13 @@ export type { AICacheConfig, AICacheMetricsCallback } from "./ai-cache";
 
 import { InMemoryCacheProvider } from "./memory-cache";
 import { RedisCacheProvider } from "./redis-cache";
+import { ValkeyCacheProvider } from "./valkey-cache";
 import type { CacheConfig, CacheProvider } from "./types";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
-import { getCacheProviderSetting } from "@/platform/providers/environment-contract";
+import {
+  allowsHarnessSwitches,
+  getCacheProviderSetting,
+} from "@/platform/providers/environment-contract";
 
 /** Singleton cache instance */
 /** ADR-032: anchored on globalThis — a module-scope `let` is duplicated per bundle entry. */
@@ -59,8 +69,10 @@ function writeCacheInstance(next: CacheProvider | null): void {
  * Primarily for testing or when you need a non-singleton instance.
  */
 export function createCacheProvider(config?: Partial<CacheConfig>): CacheProvider {
+  const setting = getCacheProviderSetting();
   const provider =
-    config?.provider ?? (getCacheProviderSetting() === "upstash" ? "redis" : "memory");
+    config?.provider ??
+    (setting === "upstash" ? "redis" : setting === "valkey" ? "valkey" : "memory");
   const namespace = config?.namespace ?? getEnv("CACHE_NAMESPACE", "pf:");
   const defaultTTLSeconds =
     config?.defaultTTLSeconds ?? parseInt(getEnv("CACHE_DEFAULT_TTL", "3600"), 10);
@@ -78,6 +90,21 @@ export function createCacheProvider(config?: Partial<CacheConfig>): CacheProvide
     }
 
     return new RedisCacheProvider({ url, token, namespace, defaultTTLSeconds });
+  }
+
+  if (provider === "valkey") {
+    const url = config?.valkeyUrl ?? process.env.VALKEY_URL;
+    if (!url) {
+      // Fail closed (TASK-139), as for Upstash.
+      throw new Error("CACHE_PROVIDER=valkey but VALKEY_URL is not set");
+    }
+    return new ValkeyCacheProvider({
+      url,
+      caCert: config?.valkeyCaCert ?? process.env.VALKEY_CA_CERT,
+      allowPlaintext: config?.valkeyAllowPlaintext ?? allowsHarnessSwitches(),
+      namespace,
+      defaultTTLSeconds,
+    });
   }
 
   return new InMemoryCacheProvider({ namespace, defaultTTLSeconds });

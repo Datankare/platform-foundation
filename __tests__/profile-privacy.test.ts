@@ -75,67 +75,66 @@ describe("validatePassword", () => {
 
 // ── COPPA Age Tests ─────────────────────────────────────────────────────
 
+// A fixed instant, mid-year at noon UTC (TASK-159): the expectations below must not depend on
+// the day the suite runs or the host's time zone (TZ=Asia/Kolkata on 1 January is next year).
+const NOW = new Date("2026-06-15T12:00:00Z");
+
 describe("calculateAge", () => {
   it("calculates age correctly for past birthday this year", () => {
-    const year = new Date().getFullYear() - 25;
-    const age = calculateAge(`${year}-01-01`);
+    const year = NOW.getUTCFullYear() - 25;
+    const age = calculateAge(`${year}-01-01`, NOW);
     expect(age).toBe(25);
   });
 
   it("calculates age correctly when birthday has not occurred yet", () => {
-    const year = new Date().getFullYear() - 25;
-    const age = calculateAge(`${year}-12-31`);
-    // If today is before Dec 31, age should be 24
-    const now = new Date();
-    if (now.getMonth() < 11 || (now.getMonth() === 11 && now.getDate() < 31)) {
-      expect(age).toBe(24);
-    } else {
-      expect(age).toBe(25);
-    }
+    const year = NOW.getUTCFullYear() - 25;
+    const age = calculateAge(`${year}-12-31`, NOW);
+    // NOW is before Dec 31, so the 25th birthday has not arrived.
+    expect(age).toBe(24);
   });
 
   it("returns 0 for someone born today", () => {
-    const today = new Date().toISOString().split("T")[0];
-    const age = calculateAge(today);
+    const today = NOW.toISOString().split("T")[0];
+    const age = calculateAge(today, NOW);
     expect(age).toBe(0);
   });
 });
 
 describe("evaluateAge", () => {
   it("flags under-13 as minor requiring parental consent", () => {
-    const year = new Date().getFullYear() - 10;
-    const result = evaluateAge(`${year}-01-01`);
+    const year = NOW.getUTCFullYear() - 10;
+    const result = evaluateAge(`${year}-01-01`, NOW);
     expect(result.isMinor).toBe(true);
     expect(result.requiresParentalConsent).toBe(true);
     expect(result.contentRatingLevel).toBe(1);
   });
 
   it("flags 13-17 as minor without parental consent", () => {
-    const year = new Date().getFullYear() - 15;
-    const result = evaluateAge(`${year}-01-01`);
+    const year = NOW.getUTCFullYear() - 15;
+    const result = evaluateAge(`${year}-01-01`, NOW);
     expect(result.isMinor).toBe(true);
     expect(result.requiresParentalConsent).toBe(false);
     expect(result.contentRatingLevel).toBe(2);
   });
 
   it("flags 18+ as adult", () => {
-    const year = new Date().getFullYear() - 25;
-    const result = evaluateAge(`${year}-01-01`);
+    const year = NOW.getUTCFullYear() - 25;
+    const result = evaluateAge(`${year}-01-01`, NOW);
     expect(result.isMinor).toBe(false);
     expect(result.requiresParentalConsent).toBe(false);
     expect(result.contentRatingLevel).toBe(3);
   });
 
   it("boundary: exactly 13 is not under-13", () => {
-    const year = new Date().getFullYear() - 13;
-    const result = evaluateAge(`${year}-01-01`);
+    const year = NOW.getUTCFullYear() - 13;
+    const result = evaluateAge(`${year}-01-01`, NOW);
     expect(result.requiresParentalConsent).toBe(false);
     expect(result.contentRatingLevel).toBe(2);
   });
 
   it("boundary: exactly 18 is adult", () => {
-    const year = new Date().getFullYear() - 18;
-    const result = evaluateAge(`${year}-01-01`);
+    const year = NOW.getUTCFullYear() - 18;
+    const result = evaluateAge(`${year}-01-01`, NOW);
     expect(result.isMinor).toBe(false);
     expect(result.contentRatingLevel).toBe(3);
   });

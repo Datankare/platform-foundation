@@ -25,7 +25,7 @@ import type {
 } from "./approval-policy-store";
 import { approvalRulesProblem, DEFAULT_APPROVAL_POLICY } from "./approval-policy-store";
 import { generateUuid } from "./utils";
-import { withTenantTx } from "@/platform/data";
+import { withSavepoint, withTenantTx } from "@/platform/data";
 
 const MAX_VERSION_CONFLICT_RETRIES = 5;
 
@@ -73,9 +73,13 @@ export class PostgresApprovalPolicyStore implements ApprovalPolicyStore {
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < MAX_VERSION_CONFLICT_RETRIES; attempt++) {
       try {
+        // Under a savepoint (review 11 L-6): inside a caller's transaction (an atomic approved
+        // run joins one) a unique violation would abort the whole transaction, and the retry
+        // would run in the aborted one; the savepoint undoes only this attempt.
         const { rows } = await withTenantTx((tx) =>
-          tx.query<PolicyRow>(
-            `insert into agent_approval_policy (id, version, default_approver, rules, decided_by)
+          withSavepoint(tx, () =>
+            tx.query<PolicyRow>(
+              `insert into agent_approval_policy (id, version, default_approver, rules, decided_by)
              select $1::uuid,
                     coalesce((select max(version) from agent_approval_policy), $2::int) + 1,
                     coalesce(
@@ -85,13 +89,14 @@ export class PostgresApprovalPolicyStore implements ApprovalPolicyStore {
                     $4::jsonb,
                     $5
              returning version, default_approver, rules`,
-            [
-              generateUuid(),
-              DEFAULT_APPROVAL_POLICY.version,
-              DEFAULT_APPROVAL_POLICY.default,
-              JSON.stringify(rules),
-              decidedBy,
-            ]
+              [
+                generateUuid(),
+                DEFAULT_APPROVAL_POLICY.version,
+                DEFAULT_APPROVAL_POLICY.default,
+                JSON.stringify(rules),
+                decidedBy,
+              ]
+            )
           )
         );
         return mapRow(rows[0]);

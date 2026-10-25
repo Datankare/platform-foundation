@@ -127,6 +127,15 @@ export interface Trajectory {
   readonly createdAt: string;
   /** ISO timestamp of last update */
   readonly updatedAt: string;
+  /**
+   * Which segment of its chain this trajectory is (1 for the first; review 11 H-2): a trajectory
+   * that reached its cap is continued by a new one, linked to it. Absent means 1.
+   */
+  readonly segment?: number;
+  /** The segment this one continues (review 11 H-2); absent for a first segment. */
+  readonly previousTrajectoryId?: string;
+  /** Steps held by the earlier segments of its chain (absent means 0): a step's index in the whole run is stepOffset + its position here. */
+  readonly stepOffset?: number;
 }
 
 // ── Step (P18) ────────────────────────────────────────────────────────
@@ -312,6 +321,19 @@ export interface Tool {
    * (P4) — and a ledger nothing writes to cannot prevent a double-fire.
    */
   readonly externalEffects?: readonly ToolExternalEffect[];
+  /**
+   * Whether the tool's own (schema-valid) output says it did not take effect — the reason, or
+   * undefined when it did. Asked only for a run released by an approval: such a run that reports
+   * failure keeps its approval for a retry, as one that throws does (review 10 H2).
+   */
+  readonly reportsFailure?: (output: Record<string, unknown>) => string | undefined;
+  /**
+   * Every effect of this tool is a write in the current tenant's database transaction
+   * (platform/data withTenantTx — never the owner connection, never an external call). Its
+   * approved run then claims the approval, takes effect, records its step and completes the
+   * approval in one transaction (review 10 H2). A tool with externalEffects cannot be atomic.
+   */
+  readonly atomic?: boolean;
 }
 
 /**
@@ -849,6 +871,11 @@ export interface TrajectoryQuery {
   readonly scopeId?: string;
   readonly status?: TrajectoryStatus;
   readonly limit?: number;
+  /**
+   * Return each record without its steps (`steps: []`; review 12 M2): for finding a trajectory —
+   * a session's newest segment — without reading every step it holds.
+   */
+  readonly withoutSteps?: boolean;
 }
 
 /** Cost summary stored alongside trajectory */
@@ -869,6 +896,16 @@ export interface TrajectoryRecord {
   readonly costSummary: TrajectoryCost;
 }
 
+/** How a step is appended (review 11 H-2). */
+export interface AddStepOptions {
+  /**
+   * Continue a full trajectory in a linked new one instead of refusing the step — up to the
+   * governed agents.trajectory_max_segments segments per chain (review 12 M2), past which the
+   * step is refused (request.trajectory_chain_full).
+   */
+  readonly rollover?: boolean;
+}
+
 export interface TrajectoryStore {
   /**
    * Create a new trajectory for an explicit subject. Returns the record.
@@ -884,8 +921,27 @@ export interface TrajectoryStore {
     scopeId?: string
   ): Promise<TrajectoryRecord>;
 
-  /** Add a step to a trajectory. Returns updated record. */
-  addStep(trajectoryId: string, step: Step): Promise<TrajectoryRecord | undefined>;
+  /**
+   * Add a step to a trajectory. Returns the updated record.
+   *
+   * The step goes to the TAIL of the chain `trajectoryId` belongs to (review 12 M1): whichever
+   * segment's id is given, it is appended after every step already recorded, so the chain's steps
+   * are in the order they were added and each segment's stepOffset is the count of every step
+   * before it. Concurrent appends serialise on the tail.
+   *
+   * With `rollover` (review 11 H-2), a tail without room for the step is continued: in the same
+   * transaction as the append, a new trajectory is started for the same subject, trigger and
+   * scope, linked to it (previousTrajectoryId, segment + 1, stepOffset), and the step is appended
+   * there. The record returned is then the continuation's. At most
+   * agents.trajectory_max_segments segments (review 12 M2): past that the step is refused
+   * (request.trajectory_chain_full). Without it, a full tail is refused
+   * (request.trajectory_full) — the default for every untrusted growth path.
+   */
+  addStep(
+    trajectoryId: string,
+    step: Step,
+    options?: AddStepOptions
+  ): Promise<TrajectoryRecord | undefined>;
 
   /** Update trajectory status. */
   updateStatus(
@@ -896,8 +952,34 @@ export interface TrajectoryStore {
   /** Get a trajectory by ID. */
   getById(trajectoryId: string): Promise<TrajectoryRecord | undefined>;
 
+  /**
+   * The last segment of the chain `trajectoryId` belongs to (itself when never continued), read
+   * alone — no predecessor's steps (review 12 M2). Undefined when the trajectory does not exist.
+   */
+  chainTail(trajectoryId: string): Promise<TrajectoryRecord | undefined>;
+
+  /**
+   * Segment `segment` (1 = the first) of the chain `trajectoryId` belongs to, read alone: how a
+   * reader that needs the history pages through it one segment at a time (review 12 M2).
+   */
+  chainSegment(
+    trajectoryId: string,
+    segment: number
+  ): Promise<TrajectoryRecord | undefined>;
+
   /** Query trajectories with filters. */
   query(options: TrajectoryQuery): Promise<readonly TrajectoryRecord[]>;
+
+  /**
+   * Throw the store's coded refusal (request.trajectory_full) when the trajectory cannot take one
+   * more step of the largest storable size: it holds the most steps or bytes one trajectory may
+   * (review 10 L10). The pipeline asks before the action runs, so a full trajectory refuses the
+   * action instead of recording nothing after it. Optional: a store with no cap has room always.
+   * addStep refuses a step past the cap as well. Asked of the chain's tail (review 12 M1); with
+   * `rollover`, a full tail has room while the chain may still grow a segment, and the refusal
+   * past agents.trajectory_max_segments is request.trajectory_chain_full (review 12 M2).
+   */
+  assertRoomForStep?(trajectoryId: string, options?: AddStepOptions): Promise<void>;
 
   /**
    * Retention: delete up to `limit` of the current tenant's completed and failed trajectories
@@ -921,13 +1003,34 @@ export interface TrajectoryStore {
  * (D8). They are deliberately distinct from TrajectoryStatus: a trajectory can be paused
  * while its proposal is still `proposed`, and conflating the two would lose that.
  *
- * `executed` is TERMINAL too: the approval was used — claimed atomically by the one commit it
- * released, immediately before the action ran, so it can never release a second (PF v5.1.0). It
- * records that the action was attempted: if the action then failed, its trajectory says so
- * (`failed`); the approval is not reusable, because external effects may already have fired.
+ * `executing` is the approval in use (review 10 H2): claimed, atomically, by the one run it
+ * releases (approved -> executing), immediately before the action runs. Each claim carries a fresh
+ * run token (its generation, review 11 H-1): the run's completion and release compare it, so a run
+ * whose claim was taken back can never end another run's claim. The run ends it: `executed` when
+ * the action took effect, back to `approved` (compare-and-set, recorded) when it failed before
+ * taking effect — so a transient failure does not burn the approval, and approving again retries
+ * it. While `executing`, no second run can claim it.
+ *
+ * `indeterminate` (review 11 H-1): a run that did not end within its lease — slower than the
+ * lease, or its process died — and whose effect cannot be known: the approval-expiry job moves it
+ * here (platform/admin/hold-expiry.ts), never back to `approved` (the process may have died
+ * between the effect and its record). It is not runnable: a human decides — marks it executed
+ * after verifying the effect happened, or re-approves it with a fresh approval (both audited,
+ * ProposalStore.resolveIndeterminate). The run itself, should it still end, completes it by its
+ * token. Only an atomic run (claim, effect and completion in one transaction) is returned to
+ * `approved`: its effect rolled back with its claim.
+ *
+ * `executed` is TERMINAL: the approval was used and the action took effect (or took effect and
+ * its record could not be stored — the error says so); it can never release a second run.
  */
 export type ProposalStatus =
-  "proposed" | "approved" | "rejected" | "superseded" | "executed";
+  | "proposed"
+  | "approved"
+  | "executing"
+  | "indeterminate"
+  | "rejected"
+  | "superseded"
+  | "executed";
 
 /** A held gated action awaiting a decision. */
 export interface ProposalRecord {
@@ -948,6 +1051,19 @@ export interface ProposalRecord {
   readonly decidedBy?: string;
   readonly decidedAt?: string;
   readonly decisionNote?: string;
+  /**
+   * Why the last run of this approval failed before taking effect, when one did (review 10 H2):
+   * the approval stands, and approving it again runs it again.
+   */
+  readonly lastRunError?: string;
+  /**
+   * The current claim's token (its generation, review 11 H-1), while `executing` or
+   * `indeterminate`, and kept once `executed`: only the run holding it may complete or release
+   * the claim.
+   */
+  readonly runToken?: string;
+  /** The current claim is an atomic run's (one transaction with its effect, review 11 H-1). */
+  readonly runAtomic?: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -956,6 +1072,17 @@ export interface ProposalQuery {
   readonly operationId?: string;
   readonly trajectoryId?: string;
   readonly status?: ProposalStatus;
+  /** Any of these statuses (with `status`: both must hold). */
+  readonly statuses?: readonly ProposalStatus[];
+  /** Any of these labels (tool ids). */
+  readonly labels?: readonly string[];
+  /**
+   * The config key the payload names (`payload.key`, else `payload.configKey`) — how the holds on
+   * one key are found without reading every hold of the tenant (review 13 L7).
+   */
+  readonly payloadKey?: string;
+  /** Leave these proposals out (a caller paging through what it has not handled yet). */
+  readonly excludeIds?: readonly string[];
   readonly limit?: number;
 }
 
@@ -984,16 +1111,88 @@ export interface ProposalStore {
   /** Transition a proposal, only from `proposed`. Returns undefined if it already moved. */
   decide(
     proposalId: string,
-    status: Exclude<ProposalStatus, "proposed" | "executed">,
+    status: Exclude<
+      ProposalStatus,
+      "proposed" | "executed" | "executing" | "indeterminate"
+    >,
     decidedBy: string,
     note?: string
   ): Promise<ProposalRecord | undefined>;
   /**
-   * Use an approval: `approved` -> `executed`, atomically, only from `approved`. Returns
-   * undefined when it was not approved (already used, or never approved) — two concurrent
-   * commits on one approval must not both win (PF v5.1.0).
+   * Use an approval whose effect is decided in the same step: `approved` -> `executed`,
+   * atomically, only from `approved`. Returns undefined when it was not approved (in use, used,
+   * or never approved) — two concurrent commits on one approval must not both win (PF v5.1.0).
+   * An action that runs after the claim uses claim / complete / release instead (review 10 H2).
    */
   consume(proposalId: string): Promise<ProposalRecord | undefined>;
+  /**
+   * Claim an approval for one run: `approved` -> `executing`, atomically, only from `approved`,
+   * with a fresh run token (review 11 H-1) the record carries. Undefined when it is not approved
+   * (another run holds it, it was used, its outcome is undecided, or it was never approved).
+   * `atomic`: the run is one transaction with its effect.
+   */
+  claim(
+    proposalId: string,
+    options?: { readonly atomic?: boolean }
+  ): Promise<ProposalRecord | undefined>;
+  /**
+   * The claimed run took effect: `executing` or `indeterminate` -> `executed`, only when
+   * `runToken` is the claim's — or already `executed` by that claim (the recovery found its
+   * step). Undefined when the claim is another's or was decided otherwise: a conflict the caller
+   * must raise, audit and report, never swallow (review 11 H-1).
+   */
+  complete(proposalId: string, runToken: string): Promise<ProposalRecord | undefined>;
+  /**
+   * The claimed run failed before taking effect: `executing` or `indeterminate` -> `approved`,
+   * only when `runToken` is the claim's — the approval stands and may be run again. `note` (why)
+   * is kept on the proposal.
+   */
+  release(
+    proposalId: string,
+    note: string,
+    runToken: string
+  ): Promise<ProposalRecord | undefined>;
+  /**
+   * A human's decision on an `indeterminate` run (review 11 H-1): `executed` (verified that it
+   * took effect) or `approved` (verified that it did not, and approved again — a fresh approval:
+   * `decidedBy` and the decision time are replaced, the old run token cleared). Only from
+   * `indeterminate`; undefined otherwise. The caller audits it.
+   */
+  resolveIndeterminate(
+    proposalId: string,
+    resolution: "executed" | "approved",
+    decidedBy: string,
+    note: string
+  ): Promise<ProposalRecord | undefined>;
+  /**
+   * Run `fn` in one database transaction of the current tenant, which every tenant-transaction
+   * write `fn` makes joins (platform/data): a claim, the effect and its completion inside commit
+   * together or not at all. Absent on a store with no transactions (in memory).
+   */
+  atomically?<T>(fn: () => Promise<T>): Promise<T>;
+  /**
+   * Withdraw an approval that was never used: `approved` -> `rejected`, atomically, only from
+   * `approved` (review 7 M7 — an approved hold whose run failed could neither expire nor be
+   * rejected). `decidedBy` is who withdrew it (an admin, or the expiry); the note keeps who had
+   * approved it and when. Returns undefined when it was not approved (used, or never approved).
+   */
+  withdraw(
+    proposalId: string,
+    decidedBy: string,
+    note: string
+  ): Promise<ProposalRecord | undefined>;
+  /**
+   * Withdraw many pending holds at once (review 13 L7): each of `proposalIds` that is `proposed`
+   * becomes `rejected` with `note`, each that is `approved` becomes `rejected` as `withdraw` does
+   * (its note keeps who had approved it and when) — one statement, atomically per proposal. Any
+   * other status is left alone. Returns the ids moved. Optional: a store without it is withdrawn
+   * from one proposal at a time (decide / withdraw).
+   */
+  supersede?(
+    proposalIds: readonly string[],
+    decidedBy: string,
+    note: string
+  ): Promise<readonly string[]>;
   query(options: ProposalQuery): Promise<readonly ProposalRecord[]>;
 }
 

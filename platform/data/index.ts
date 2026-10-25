@@ -28,16 +28,26 @@
  */
 
 export {
+  CommitOutcomeUnknownError,
   DataUnavailableError,
   DataScopeError,
+  isCommitOutcomeUnknown,
   OWNER_PURPOSES,
   OWNER_SNAPSHOT_IDLE_TIMEOUT_MS,
+  inTransaction,
+  onRollback,
+  onCommit,
   withOwnerSnapshot,
   withOwnerTx,
   withPlatformTx,
+  withSavepoint,
+  withSeparateTenantTx,
+  withTenantSnapshot,
   withTenantTx,
   type OwnerPurpose,
+  type RollbackHook,
   type Tx,
+  type TxEndOutcome,
 } from "./tx";
 export {
   closeDataPools,

@@ -9,7 +9,7 @@ describe("permissions cache", () => {
   it("getCacheStats returns initial state", async () => {
     const { getCacheStats, clearPermissionsCache } =
       await import("@/platform/auth/permissions-cache");
-    clearPermissionsCache();
+    await clearPermissionsCache();
     const stats = getCacheStats();
     expect(stats.size).toBe(0);
     expect(stats.maxSize).toBe(10000);
@@ -19,15 +19,15 @@ describe("permissions cache", () => {
   it("invalidatePermissions removes entry", async () => {
     const { invalidatePermissions, clearPermissionsCache, getCacheStats } =
       await import("@/platform/auth/permissions-cache");
-    clearPermissionsCache();
-    invalidatePermissions("nonexistent");
+    await clearPermissionsCache();
+    await invalidatePermissions("nonexistent");
     expect(getCacheStats().size).toBe(0);
   });
 
   it("clearPermissionsCache empties the cache", async () => {
     const { clearPermissionsCache, getCacheStats } =
       await import("@/platform/auth/permissions-cache");
-    clearPermissionsCache();
+    await clearPermissionsCache();
     expect(getCacheStats().size).toBe(0);
   });
 });

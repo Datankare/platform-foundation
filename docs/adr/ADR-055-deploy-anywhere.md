@@ -1,6 +1,6 @@
 # ADR-055: Deploy Anywhere — One Container Image, Any Host
 
-Status: Proposed (Phase 5 Sprint 7R entry gate, 2026-10-21). Decision maker: Raman Sud.
+Status: Accepted (2026-10-24, Sprint 7R close, platform-foundation v6.0.0). Proposed at the Sprint 7R entry gate (2026-10-21); implementation in §5. Decision maker: Raman Sud.
 Related: ADR-032 (singletons), ADR-050 (environment contract), ADR-052 (rate limiting), ADR-053 (tenancy, D4 direct Postgres), ADR-056 (operations baseline), TASK-128, TASK-139, TASK-140, TASK-141. `next.config.ts`, `instrumentation.ts`, `app/api/health`, `platform/providers/**`, `platform/cache/**`, `infra/**`.
 
 ---
@@ -32,7 +32,7 @@ The platform has been deployed only on Vercel. The decision of 2026-10-17 keeps 
 
 ## 3. Delivery
 
-- **Sprint 7R:** standalone output, the Dockerfile and `.dockerignore`, `DEPLOYMENT_HOST` (with the harness switches inverted) and `GIT_COMMIT_SHA` in the contract, version from the `platform/version.ts` constant, boot failures recorded for readiness, the cache's production fallback refused, graceful shutdown, the live/ready split with database and cache probes, and a CI job that builds the image, runs it and passes the deploy smoke test against it.
+- **Sprint 7R — delivered (R2, Sprint 7X, R6; 2026-10-24):** standalone output, the Dockerfile and `.dockerignore`, `DEPLOYMENT_HOST` (with the harness switches inverted) and `GIT_COMMIT_SHA` in the contract, version from the `platform/version.ts` constant, boot failures recorded for readiness, the cache's production fallback refused, graceful shutdown, the live/ready split with database and cache probes, and a CI job that builds the image, runs it and passes the deploy smoke test against it.
 - **Sprint 7P:** OpenTofu for AWS, runtime browser settings, the Valkey provider, CI deploying to both hosts with the smoke test on both, and the audio-conversion service decision.
 
 ## 4. Consequences

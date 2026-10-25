@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { readJsonObject, requireTextFields } from "@/platform/errors";
 import {
-  authResultResponse,
   callAuthProvider,
   passwordPolicyRefusal,
+  sessionResponse,
 } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -37,8 +37,9 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-053 D2: the session it ends in is this tenant's identity's, or is not returned.
   const refused = await sessionTenantRefusal(called.result, request);
   if (refused) return refused;
-  return authResultResponse(called.result, {
+  return sessionResponse(called.result, {
     request,
     context: "New-password challenge failed",
+    method: "new_password",
   });
 });

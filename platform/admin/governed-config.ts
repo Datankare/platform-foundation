@@ -9,7 +9,14 @@
  *      config_manage_safety for a safety-tier or unknown key).
  *   2. The value passes the key's validation, and the change is recorded in config history
  *      (handleUpdateConfig).
- *   3. Two-person approval and dual-control holds apply (dispatchConfigTool).
+ *   3. Two-person approval and dual-control holds apply (dispatchConfigTool), always: a write to
+ *      a dual-controlled key is held under the key's own rules — the approver needs the key's
+ *      tier permission (requiredPermissionForKey), may not be the requester, must be an operator
+ *      for a shared deployment's platform default (approvedChangeTarget), and the approval
+ *      lapses (config.approval_expiry_days). Nothing a caller presents lets a write skip it: the
+ *      command bar's config-writing actions are not held as actions at all, so this is the one
+ *      hold on their effect (review 10 H1, H3 — the approval capability of review 9 let an
+ *      action-level approval, cleared by a lesser approver, stand in for the key's).
  *   4. The change goes where the deployment allows (ADR-053 D5, config-scope.ts): the platform
  *      default in a single-tenant deployment; in a shared one, the tenant's own value — any key
  *      for an operator, tenant-settable keys for a tenant's administrators — or, for an
@@ -69,19 +76,16 @@ export async function writeGovernedConfig(
   const decision = resolveConfigTarget(operator, entry, change.scope);
   if (!decision.ok) return { kind: "refused_scope", reason: decision.reason };
 
-  const result = await dispatchConfigTool(
-    "update_config",
-    {
-      key: change.key,
-      value: change.value,
-      changeComment: change.changeComment,
-      actorId: admin.userId,
-      actorIsOperator: operator,
-      ...(change.scope ? { scope: change.scope } : {}),
-      confirmed: true,
-    },
-    context
-  );
+  const input = {
+    key: change.key,
+    value: change.value,
+    changeComment: change.changeComment,
+    actorId: admin.userId,
+    actorIsOperator: operator,
+    ...(change.scope ? { scope: change.scope } : {}),
+    confirmed: true,
+  };
+  const result = await dispatchConfigTool("update_config", input, context);
 
   if (result.held) return { kind: "pending", result };
   const data = (result.data ?? {}) as {

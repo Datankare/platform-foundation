@@ -148,3 +148,64 @@ describe("D10 — indeterminate propagates to workflow status", () => {
     expect(result.finalStatus).toBe("indeterminate");
   });
 });
+
+describe("D10 — an effect recorded under a step's own operation is the run's (audit C-18)", () => {
+  beforeEach(() => {
+    resetAgentRegistry();
+    registerAgent({
+      id: "payer",
+      name: "payer",
+      description: "test",
+      tools: [],
+      budgetConfig: {
+        maxCostPerTrajectory: 1,
+        maxCostPerDay: 10,
+        maxStepsPerTrajectory: 6,
+      },
+      effortTier: "standard",
+    });
+  });
+
+  const run = (operationOf: (trajectoryId: string) => string) => {
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const ledger = new InMemoryEffectLedger();
+    const workflow: WorkflowFn = async (ctx) => {
+      // As the governed pipeline records it: under the step's operation, not the trajectory.
+      const operationId = operationOf(ctx.trajectoryId);
+      await ledger.begin({
+        operationId,
+        effectKey: "charge",
+        effectType: "externalCall",
+      });
+      await ledger.resolve(operationId, "charge", "indeterminate", { error: "timeout" });
+      return {
+        action: "charge",
+        boundary: "commitment",
+        input: {},
+        output: {},
+        costUsd: 0,
+        continueExecution: false,
+      };
+    };
+    return executeAgent(
+      "payer",
+      "test",
+      "platform",
+      undefined,
+      workflow,
+      trajectoryStore,
+      new BudgetTracker(),
+      ledger
+    );
+  };
+
+  it("reports indeterminate for an unresolved effect of a step operation", async () => {
+    const result = await run((t) => `op_${t}_0`);
+    expect(result.finalStatus).toBe("indeterminate");
+  });
+
+  it("is not made indeterminate by another run's effect", async () => {
+    const result = await run(() => "op_some-other-trajectory_0");
+    expect(result.finalStatus).toBe("completed");
+  });
+});

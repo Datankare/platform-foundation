@@ -102,8 +102,22 @@ describe("validateConfigValue", () => {
       expect(result.errors[0]).toContain("must be a number");
     });
 
-    it("coerces numeric string", () => {
-      expect(validateConfigValue(entry, "50").valid).toBe(true);
+    it("accepts a numeric string, as the number it names (stored as a number)", () => {
+      expect(validateConfigValue(entry, "50")).toMatchObject({ valid: true, value: 50 });
+    });
+
+    it.each([
+      [null],
+      [""],
+      ["  "],
+      [true],
+      [[]],
+      [["5"]],
+      ["0x10"],
+      ["1e3"],
+      [Object.create(null)],
+    ])("rejects %p, which Number() would have made a number (TASK-147)", (v) => {
+      expect(validateConfigValue(entry, v).valid).toBe(false);
     });
 
     it("accepts number with no min/max constraints", () => {
@@ -214,8 +228,15 @@ describe("validateConfigValue", () => {
     it("rejects null", () => {
       const result = validateConfigValue(entry, null);
       expect(result.valid).toBe(false);
-      expect(result.errors[0]).toContain("must not be null");
+      expect(result.errors[0]).toContain("must be text");
     });
+
+    it.each([[5], [true], [{ a: 1 }], [["x"]], [Object.create(null)]])(
+      "rejects the non-text %p, and never throws (TASK-147)",
+      (v) => {
+        expect(validateConfigValue(entry, v).valid).toBe(false);
+      }
+    );
 
     it("rejects undefined", () => {
       const result = validateConfigValue(entry, undefined);

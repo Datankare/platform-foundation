@@ -48,8 +48,8 @@ export interface GoalCapability {
  * The capabilities document.
  *
  * `providerSelections` carries slot -> chosen-impl NAMES only ("mock", "google",
- * "acrcloud"), never credentials or URLs — the same OWASP-A05 posture /api/health takes,
- * because this route is likewise unauthenticated.
+ * "acrcloud"), never credentials or URLs, and only for the providers that do goals' work
+ * (capabilitySelections) — the route serves verified callers, user or guest.
  *
  * `notReported` names the D8 fields this surface does not yet carry, so a discovering
  * agent knows they are absent-by-design rather than absent-by-omission, and so the gap
@@ -59,6 +59,21 @@ export interface Capabilities {
   readonly goals: readonly GoalCapability[];
   readonly providerSelections: Readonly<Record<string, string>>;
   readonly notReported: readonly string[];
+}
+
+/**
+ * Which selections a caller may see: the providers that do a goal's work (the model, embeddings,
+ * the modules' providers — song identification, speech, translation). Never the platform's own
+ * plumbing — the stores, cache, rate limiter, auth provider, error reporter, effect ledger and
+ * realtime transport — which told any caller how the deployment is built (audit C-21, I-7).
+ */
+const PLUMBING =
+  /(?:Store|store)$|^(?:auth|cache|errorReporter|effectLedger|rateLimiter|realtime)$/;
+
+export function capabilitySelections(
+  all: Readonly<Record<string, string>>
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(Object.entries(all).filter(([slot]) => !PLUMBING.test(slot)));
 }
 
 /** D8 fields deferred to TASK-086. Named in the payload, not silently dropped. */

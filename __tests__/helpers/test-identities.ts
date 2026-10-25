@@ -48,6 +48,8 @@ export interface TestIdentity {
   readonly permissions: readonly string[];
   /** False for a restricted, suspended or banned account. */
   readonly inGoodStanding: boolean;
+  /** Whether the identity signs in with a second factor (audit A-9); true unless set. */
+  readonly mfaEnabled: boolean;
 }
 
 // Shared through globalThis so a test that calls jest.resetModules() — which loads a fresh copy
@@ -67,7 +69,7 @@ function suffix(name: string): string {
 /** A caller holding exactly `role`'s permissions. Names must be unique per identity. */
 export function identityFor(
   role: string,
-  options: { name?: string; inGoodStanding?: boolean } = {}
+  options: { name?: string; inGoodStanding?: boolean; mfaEnabled?: boolean } = {}
 ): TestIdentity {
   const permissions = ROLE_PERMISSIONS[role];
   if (!permissions) throw new Error(`No role "${role}" in the catalog`);
@@ -80,6 +82,7 @@ export function identityFor(
     roleName: role,
     permissions,
     inGoodStanding: options.inGoodStanding ?? true,
+    mfaEnabled: options.mfaEnabled ?? true,
   };
   registry.set(identity.sub, identity);
   return identity;
@@ -97,9 +100,19 @@ export const CALLERS = {
     name: "suspended_super_admin",
     inGoodStanding: false,
   }),
+  /** A super_admin who signs in with a password only (audit A-9). */
+  password_only_super_admin: identityFor("super_admin", {
+    name: "password_only_super_admin",
+    mfaEnabled: false,
+  }),
 } as const;
 
 export type CallerName = keyof typeof CALLERS | "anonymous";
+
+/** The test caller with this token subject, if any. */
+export function identityForSub(sub: string): TestIdentity | undefined {
+  return registry.get(sub);
+}
 
 /** Request headers that authenticate as `caller` (none for "anonymous"). */
 export function authAs(caller: CallerName | TestIdentity): Record<string, string> {
@@ -124,7 +137,11 @@ export function mockMiddleware(): any {
       const identity = identityFromRequest(request);
       if (!identity) return { error: apiError("auth.required", { request }) };
       return {
-        user: { sub: identity.sub, email: `${identity.name}@test` },
+        user: {
+          sub: identity.sub,
+          email: `${identity.name}@test`,
+          mfaEnabled: identity.mfaEnabled,
+        },
         accessToken: "test",
       };
     }),

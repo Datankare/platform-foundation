@@ -134,10 +134,12 @@ describe("admin authorization matrix", () => {
   });
 
   it("runs every execute-route handler under a mapped permission", () => {
-    const src = read("app/api/admin/ai/execute/route.ts");
+    // The execute route runs the command bar's handler table (command-bar.ts, audit X-10).
+    expect(read("app/api/admin/ai/execute/route.ts")).toContain("runCommandBarAction");
+    const src = read("app/api/admin/ai/command-bar.ts");
     const table = src.slice(
-      src.indexOf("const toolHandlers"),
-      src.indexOf("};", src.indexOf("const toolHandlers"))
+      src.indexOf("export const COMMAND_BAR_HANDLERS"),
+      src.indexOf("};", src.indexOf("export const COMMAND_BAR_HANDLERS"))
     );
     const handled = [...table.matchAll(/^\s+([a-z_]+):/gm)].map((m) => m[1]);
     expect(handled.length).toBeGreaterThan(10);
@@ -152,6 +154,7 @@ describe("admin authorization matrix", () => {
     assign_permissions: "app/api/admin/roles/route.ts",
     change_user_role: "app/api/admin/users/route.ts",
     create_entitlement_group: "app/api/admin/entitlements/route.ts",
+    set_entitlement_group_active: "app/api/admin/entitlements/route.ts",
     update_password_policy: "app/api/admin/password-policy/route.ts",
     register_agent: "app/api/admin/agent-registry/route.ts",
     suspend_agent: "app/api/admin/agent-registry/route.ts",

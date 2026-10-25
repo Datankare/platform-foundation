@@ -4,6 +4,10 @@
  */
 import { runMultimodalInputContract } from "./contract/multimodal-input-contract";
 import { createOrchestrator } from "@/platform/ai";
+import {
+  setModalityClassifiers,
+  resetModalityClassifiers,
+} from "@/platform/moderation/screen-modality";
 import type {
   AIProvider,
   AIRequest,
@@ -15,6 +19,17 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req",
 }));
+
+// The deployment's classifiers clear the content (the defaults withhold everything: X-18).
+beforeAll(() =>
+  setModalityClassifiers({
+    hardRefuse: async () => false,
+    nsfw: async () => ({ axis: "nsfw", action: "allow" }),
+    realPerson: async () => ({ axis: "real-person", action: "allow" }),
+    baseline: async () => ({ axis: "baseline", action: "allow" }),
+  })
+);
+afterAll(() => resetModalityClassifiers());
 
 runMultimodalInputContract({
   name: "orchestrator + provider",

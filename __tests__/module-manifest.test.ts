@@ -1,7 +1,8 @@
 /**
  * __tests__/module-manifest.test.ts — platform/modules/manifest.json is true (ADR-054 D6)
  *
- * The manifest says where each module's files are today; the lint boundary, the boundary test,
+ * The manifest — the platform's merged with the app's (platform/modules/app-manifest.json,
+ * TASK-157) — says where each module's files are today; the lint boundary, the boundary test,
  * the conformance composition, the migration replay and (Sprint 7S) the consumer sync all read
  * it. So it is checked both ways:
  *
@@ -78,10 +79,17 @@ function listedPaths(id: string): [string, string][] {
 }
 
 describe("module manifest (ADR-054 D6)", () => {
-  it("self-test: lists the six modules and finds their files", () => {
-    expect([...IDS].sort()).toEqual(
-      ["audio-convert", "games", "social", "song-id", "translation", "voice"].sort()
-    );
+  it("self-test: lists the platform's modules and the app's, and finds their files", () => {
+    // The ids come from the merged manifest (the platform's, then the app's own — TASK-157), never
+    // a copy: an app that declares a module is checked like the platform's six.
+    const platformIds = Object.keys(mm.loadPlatformManifest().modules);
+    expect(platformIds.length).toBeGreaterThan(0);
+    expect(IDS).toEqual([
+      ...platformIds,
+      ...Object.keys(mm.loadAppManifest().modules ?? {}).filter(
+        (id) => !platformIds.includes(id)
+      ),
+    ]);
     expect(zoneFiles("social")).toContain("platform/social/module.ts");
     expect(zoneFiles("song-id")).toContain("platform/voice/acrcloud-identify.ts");
     expect(mm.zoneOf(MANIFEST, "platform/voice/chunker.ts")).toBe("voice");
@@ -168,7 +176,8 @@ describe("module manifest (ADR-054 D6)", () => {
   it("migrations are listed by one module at most, under supabase/migrations", () => {
     const all = IDS.flatMap((id) => MANIFEST.modules[id].migrations);
     expect(new Set(all).size).toBe(all.length);
-    for (const p of all) expect(p).toMatch(/^supabase\/migrations\/\d{3}_[\w-]+\.sql$/);
+    for (const p of all)
+      expect(p).toMatch(/^supabase\/migrations\/\d{3}[a-z]?_[\w-]+\.sql$/);
   });
 
   it("dependencies name listed modules and form no cycle", () => {

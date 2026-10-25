@@ -52,19 +52,22 @@ const admin: VerifiedAdmin = {
 
 /** A database holding one user (role ops) and two roles, each with can_play. */
 function answerer(failing?: RegExp) {
-  return (sql: string): unknown[] | undefined => {
+  return (sql: string, values: readonly unknown[] = []): unknown[] | undefined => {
     if (failing?.test(sql)) throw new Error("relation unavailable");
+    // The direct change is tested here: role changes are not on the dual-control list.
+    if (/from platform_config/.test(sql) && values[0] === "admin.dual_control_actions") {
+      return [{ value: [] }];
+    }
     if (sql.startsWith("select id, cognito_sub, role_id from users")) {
       return [{ id: USER, cognito_sub: "sub-u", role_id: ROLE_OPS }];
     }
-    if (sql.startsWith("select id, name from roles where name")) {
+    if (sql.startsWith("select id, name, is_default from roles where name")) {
       return [{ id: ROLE_NEW, name: "staff" }];
     }
-    if (sql.startsWith("select id, name from roles where id")) {
+    if (sql.startsWith("select id, name, is_default from roles where id")) {
       return [{ id: ROLE_OPS, name: "ops" }];
     }
-    if (sql.startsWith("select p.code from role_permissions"))
-      return [{ code: "can_play" }];
+    if (sql.startsWith("select p.code from permissions p")) return [{ code: "can_play" }];
     return undefined;
   };
 }
@@ -127,7 +130,7 @@ describe("handleChangeUserRole", () => {
   it("refuses a user whose current role does not exist", async () => {
     const base = answerer();
     fakeData().answer = (sql) =>
-      sql.startsWith("select id, name from roles where id") ? [] : base(sql);
+      sql.startsWith("select id, name, is_default from roles where id") ? [] : base(sql);
     const res = await handleChangeUserRole(
       { user_identifier: USER, new_role: "staff" },
       admin
@@ -141,9 +144,9 @@ describe("handleChangeUserRole", () => {
 
   it("returns a failed update as a failure, recorded as failed", async () => {
     const base = answerer();
-    fakeData().answer = (sql) => {
+    fakeData().answer = (sql, values) => {
       if (sql.startsWith("update users")) throw new Error("write refused");
-      return base(sql);
+      return base(sql, values);
     };
     const res = await handleChangeUserRole(
       { user_identifier: USER, new_role: "staff" },
@@ -184,11 +187,12 @@ describe("PATCH /api/admin/users", () => {
   it("refuses a user whose current role does not exist (404)", async () => {
     const base = answerer();
     fakeData().answer = (sql, values) =>
-      sql.startsWith("select id, name from roles where id") && values[0] === ROLE_OPS
+      sql.startsWith("select id, name, is_default from roles where id") &&
+      values[0] === ROLE_OPS
         ? []
-        : sql.startsWith("select id, name from roles where id")
+        : sql.startsWith("select id, name, is_default from roles where id")
           ? [{ id: ROLE_NEW, name: "staff" }]
-          : base(sql);
+          : base(sql, values);
     const res = await usersPATCH(
       req("/api/admin/users", "PATCH", { userId: USER, roleId: ROLE_NEW })
     );
@@ -198,9 +202,9 @@ describe("PATCH /api/admin/users", () => {
 
   it("answers 500 when the update fails, recording the attempt as failed", async () => {
     const base = answerer();
-    fakeData().answer = (sql) => {
+    fakeData().answer = (sql, values) => {
       if (sql.startsWith("update users")) throw new Error("write refused");
-      return base(sql);
+      return base(sql, values);
     };
     const res = await usersPATCH(
       req("/api/admin/users", "PATCH", { userId: USER, roleId: ROLE_NEW })

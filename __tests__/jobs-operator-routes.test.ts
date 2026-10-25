@@ -305,7 +305,9 @@ describe("POST /api/operator/jobs/schedules/[kind]/run", () => {
         action: "admin_action",
         details: { type: "job_run_now", kind: "test.sched" },
       }),
-      expect.any(Function)
+      expect.any(Function),
+      // It runs the kind's handlers, which may reach outside the database (review 14 L-6).
+      { external: true }
     );
     const jobs = await store.listJobs({ kind: "test.sched" });
     expect(jobs[0].source).toBe("manual");

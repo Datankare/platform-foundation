@@ -418,62 +418,14 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
 
         recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage);
 
-        // Fallback: if streaming failed mid-way, try complete()
-        if (totalText === "") {
-          logger.info("Streaming failed, falling back to complete()", {
-            useCase: opts.useCase,
-            error: errorMessage,
-          });
-
-          try {
-            const response = await provider.complete(effectiveRequest);
-            const fallbackLatency = Date.now() - startTime;
-            circuitBreaker.recordSuccess();
-
-            const text = response.content
-              .filter((b) => b.type === "text")
-              .map((b) => (b as { type: "text"; text: string }).text)
-              .join("");
-
-            const metrics: AICallMetrics = {
-              useCase: `${opts.useCase}-stream-fallback`,
-              requestId: opts.requestId,
-              model: response.model,
-              tier: effectiveRequest.tier,
-              inputTokens: response.usage.inputTokens,
-              outputTokens: response.usage.outputTokens,
-              estimatedCostUsd: estimateCost(
-                effectiveRequest.tier,
-                response.usage.inputTokens,
-                response.usage.outputTokens
-              ),
-              latencyMs: fallbackLatency,
-              cached: false,
-              success: true,
-              timestamp: new Date().toISOString(),
-            };
-            recordMetrics(metrics);
-
-            yield {
-              text,
-              done: true,
-              usage: {
-                inputTokens: response.usage.inputTokens,
-                outputTokens: response.usage.outputTokens,
-                cost: estimateCost(
-                  effectiveRequest.tier,
-                  response.usage.inputTokens,
-                  response.usage.outputTokens
-                ),
-              },
-            };
-            return;
-          } catch (fallbackErr) {
-            // Both stream and complete failed
-            throw fallbackErr;
-          }
-        }
-
+        // No second, non-streamed call after a failed stream (audit C-20): the failed stream may
+        // already have been billed, and a fallback made every failure two paid calls — one an
+        // attacker could repeat at will. The failure is the caller's to answer (a coded error).
+        logger.info("Streaming failed; not retried as a second paid call", {
+          useCase: opts.useCase,
+          receivedText: totalText.length > 0,
+          error: errorMessage,
+        });
         throw err;
       }
     },

@@ -49,12 +49,21 @@ describe("logger", () => {
     expect(console.log).toHaveBeenCalledTimes(2);
   });
 
-  it("defaults to error level when LOG_LEVEL is unset", () => {
+  it("defaults to warn level when LOG_LEVEL is unset (audit G-11)", () => {
     delete process.env.LOG_LEVEL;
     logger.info("should not appear");
+    logger.debug("should not appear");
     expect(console.log).not.toHaveBeenCalled();
+    logger.warn("should appear");
     logger.error("should appear");
+    expect(console.warn).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unknown LOG_LEVEL falls back to warn, not to silence", () => {
+    process.env.LOG_LEVEL = "verbose";
+    logger.warn("should appear");
+    expect(console.warn).toHaveBeenCalledTimes(1);
   });
 
   it("includes optional fields in log entry", () => {
@@ -155,17 +164,32 @@ describe("logger", () => {
     expect(console.log).not.toHaveBeenCalled();
   });
 
+  // Each secret is a sentinel no generated value can contain (a timestamp, an id): the test
+  // once looked for "555" anywhere in the line and failed when a timestamp's milliseconds were
+  // 555 (about 1 run in 1000).
   it.each([
-    ["email", { email: "a@b.com" }],
-    ["password", { password: "hunter2" }],
-    ["a nested token", { context: { accessToken: "abc" } }],
-    ["an authorization header", { headers: { Authorization: "Bearer x" } }],
-    ["a field in an array", { items: [{ phone: "555" }] }],
-  ])("never writes %s to the log (ring 6)", (_label, fields) => {
+    ["email", { email: "sentinel-a@b.example" }, "sentinel-a@b.example"],
+    ["password", { password: "sentinel-hunter-two" }, "sentinel-hunter-two"],
+    [
+      "a nested token",
+      { context: { accessToken: "sentinel-token-abc" } },
+      "sentinel-token-abc",
+    ],
+    [
+      "an authorization header",
+      { headers: { Authorization: "Bearer sentinel-bearer" } },
+      "sentinel-bearer",
+    ],
+    [
+      "a field in an array",
+      { items: [{ phone: "sentinel-phone-555" }] },
+      "sentinel-phone",
+    ],
+  ])("never writes %s to the log (ring 6)", (_label, fields, secret) => {
     process.env.LOG_LEVEL = "error";
     logger.error("leak attempt", fields as never);
     const output = (console.error as jest.Mock).mock.calls[0][0] as string;
-    expect(output).not.toMatch(/a@b\.com|hunter2|"abc"|Bearer x|555/);
+    expect(output).not.toContain(secret);
     expect(output).toContain("[redacted]");
   });
 

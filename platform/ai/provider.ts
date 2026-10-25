@@ -194,6 +194,8 @@ export class AnthropicProvider implements AIProvider {
       },
       body: JSON.stringify(body),
       signal: options?.abortSignal,
+      // A stream: the timeout covers the first byte; the caller's signal bounds the rest (G-9).
+      stream: true,
     });
 
     if (!response.ok) {

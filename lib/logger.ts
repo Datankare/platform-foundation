@@ -4,7 +4,8 @@ import { generateId } from "@/platform/agents/utils";
  *
  * Design principles:
  * - Four levels aligned with NotificationLevel: error | warn | info | debug
- * - Default level: error (production-safe, minimal noise)
+ * - Default level: warn — fallbacks, refusals and degraded paths are warnings, and an error-only
+ *   default hid every one of them (audit G-11)
  * - Runtime-configurable via LOG_LEVEL environment variable
  * - Every log entry is structured JSON with mandatory fields
  * - Trace context (traceId, spanId) auto-injected when observability is initialized
@@ -60,7 +61,7 @@ export interface LogEntry {
 function getConfiguredLevel(): LogLevel {
   const raw = process.env.LOG_LEVEL?.toLowerCase();
   if (raw && raw in LOG_LEVEL_PRIORITY) return raw as LogLevel;
-  return "error"; // production-safe default
+  return "warn"; // audit G-11: "error" hid every fallback and degraded-path warning
 }
 
 function shouldLog(level: LogLevel): boolean {

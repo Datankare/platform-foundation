@@ -1,12 +1,17 @@
 {
   "errors": {
     "account": {
+      "age_already_recorded": "Your date of birth is already recorded. Contact support to correct it.",
+      "age_unverified": "Confirm your date of birth to use {feature}.",
+      "consent_required": "A parent or guardian needs to give consent before you can use {feature}.",
+      "export_too_large": "Your account holds more than {limit, number} records, more than one download can carry. Nothing was cut off — contact support for your full copy.",
       "not_found": "Your account could not be found.",
       "not_provisioned": "Your account is still being set up. Try again in a moment.",
       "restricted": "Your account cannot use this feature right now."
     },
     "admin": {
       "config_invalid_value": "That value is not allowed for {key}.",
+      "kill_switch_failed": "The agents could not all be suspended. Nothing was changed; try again.",
       "operator_only": "Only a platform operator can change this: it is shared by every tenant.",
       "config_scope_refused": "{key} governs the platform, so only an operator can change it.",
       "self_target": "You cannot take this action on your own account.",
@@ -18,17 +23,23 @@
       "expired": "This approval has expired. Request the change again.",
       "hold_not_found": "That held action was not found.",
       "permission_required": "Clearing this change requires the {permission} permission.",
-      "self_approval": "You cannot approve your own change; another approver must clear it."
+      "run_failed": "Approved, but it could not be applied. It is still approved: approve it again to retry, or reject it.",
+      "indeterminate": "This approved change was being applied and its outcome is unknown. Verify whether it took effect, then mark it executed or approve it again.",
+      "self_approval": "You cannot approve your own change; another approver must clear it.",
+      "stale": "The setting changed after this change was requested, so nothing was changed and the request was withdrawn. Request the change again."
     },
     "auth": {
       "account_exists": "An account with this email already exists.",
       "challenge_failed": "Verification did not complete. Try again.",
       "code_expired": "That code has expired. Request a new one.",
       "code_invalid": "That code is not correct.",
+      "default_role_limited": "The {role} role is given to every new account, so it cannot carry the {permission} permission.",
       "email_not_verified": "Verify your email to continue.",
       "grant_exceeds_own": "You cannot grant or remove the {permission} permission, because you do not hold it.",
       "guest_invalid": "Your guest session has expired. Start a new one or sign in.",
+      "guest_refused": "Guest access is not available while your account is restricted.",
       "invalid_credentials": "Email or password is incorrect.",
+      "mfa_required": "Administrative access needs two-step verification. Set it up, then sign in again.",
       "password_policy": "The password does not meet the requirements.",
       "permission_denied": "You do not have permission to do this.",
       "required": "Sign in to continue.",
@@ -78,6 +89,10 @@
       "field_not_accepted": "{field} cannot be set by the request.",
       "invalid_body": "The request body is not in the expected shape.",
       "invalid_json": "The request body is not valid JSON.",
+      "json_too_deep": "The data is nested too deeply to store (at most {max, number} levels).",
+      "json_too_large": "The data is too large to store (at most {max, number} bytes).",
+      "trajectory_full": "This run has recorded as much as one run may (at most {max, number} steps, 16 MiB in all). Start a new one; nothing was done.",
+      "trajectory_chain_full": "This session or run has recorded as much as one may (at most {max, number} segments of up to 1,000 steps each). Start a new one; nothing was done.",
       "invalid_value": "{field} must be one of: {allowed}.",
       "missing_fields": "Required: {fields}.",
       "text_empty": "Enter some text.",
@@ -206,6 +221,12 @@
       "platform_governed": "operators only",
       "safety_tier": "safety"
     },
+    "held": {
+      "mark_executed": "Took effect",
+      "mark_executed_label": "Mark {label} executed: verified that it took effect",
+      "reapprove": "Did not — approve again",
+      "reapprove_label": "Approve {label} again: verified that it did not take effect"
+    },
     "jobs": {
       "nav": "Jobs (operators)",
       "title": "Jobs",
@@ -276,6 +297,30 @@
       "tenant_intro": "This tenant's most recent background jobs. Operators manage schedules and failed jobs.",
       "tenant_none": "No background jobs yet.",
       "tenant_unavailable": "The job history could not be read right now."
+    },
+    "mfa": {
+      "title": "Two-step verification is required",
+      "intro": "Administrative access needs a second factor. Set up an authenticator app, then sign in again.",
+      "start": "Set up two-step verification",
+      "add_key": "Add this key to your authenticator app:",
+      "or_open": "Or open:",
+      "code_label": "The 6-digit code it shows",
+      "confirm": "Confirm",
+      "done": "Two-step verification is on. Sign in again to continue.",
+      "sign_in_again": "Sign in again",
+      "setup_failed": "Setup failed.",
+      "code_refused": "That code was not accepted."
+    },
+    "admin_console": {
+      "refused": "This page is for administrators. Sign in with an account that has administrative access.",
+      "sign_in": "Sign in",
+      "loading": "Loading…",
+      "unavailable_title": "Unavailable — could not read",
+      "unavailable_body": "{panel} could not be read just now, so nothing is shown: this is not an empty list. Nothing was changed. Try again in a moment; if it keeps failing, the service behind it needs a look.",
+      "retry": "Try again",
+      "retry_label": "Try reading {panel} again",
+      "no_agents": "No agents registered.",
+      "no_mappings": "No mappings configured."
     }
   }
 }

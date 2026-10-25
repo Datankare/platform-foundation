@@ -297,11 +297,15 @@ describe("work in flight when the drain ends (review finding 1)", () => {
         },
       },
     });
+    const before = Date.now();
     const done = h.handler("SIGTERM");
     h.releaseDrain();
     await done;
-    // The wait ends STOP_RESERVE_MS before the bound (the drain was instant in this harness).
-    expect(waited).toBeGreaterThan(9_000 - STOP_RESERVE_MS - 100);
+    const elapsed = Date.now() - before;
+    // The wait ends STOP_RESERVE_MS before the bound (the drain was instant in this harness) —
+    // less whatever time passed before it began, bracketed by the clock, not a fixed slack
+    // (review 10 L11).
+    expect(waited).toBeGreaterThanOrEqual(9_000 - STOP_RESERVE_MS - elapsed);
     expect(waited).toBeLessThanOrEqual(9_000 - STOP_RESERVE_MS);
     expect(h.effects().slice(-2)).toEqual(["clear timer", "exit 1"]);
     expect(h.effects()).toContain("database pools");
@@ -330,12 +334,14 @@ describe("work in flight when the drain ends (review finding 1)", () => {
     setJobStore(store);
     const kind = "test.shutdown-tick";
     let attempts = 0;
+    let toldToStop = false;
     registerJob(
       kind,
       async (ctx: JobContext) => {
         attempts++;
         // A cooperative duty: works item by item until told to stop.
         while (!ctx.signal.aborted) await new Promise((r) => setTimeout(r, 10));
+        toldToStop = true;
         return { continueWith: { part: "next" } };
       },
       { description: "Works until told to stop.", timeoutMs: 20_000 }
@@ -363,12 +369,13 @@ describe("work in flight when the drain ends (review finding 1)", () => {
         exit: (code) => order.push(`exit ${code}`),
         log: () => undefined,
       });
-      const started = Date.now();
       const stopping = handler("SIGTERM");
       const r = await report;
       order.push("tick answered");
       await stopping;
-      expect(Date.now() - started).toBeLessThan(5_000);
+      // It ended because it was told to stop — not at its 20 s time (asserted as work, not as
+      // wall-clock time: review 10 L11).
+      expect(toldToStop).toBe(true);
       expect(order).toEqual(["tick answered", "pools", "exit 0"]);
       expect(attempts).toBe(1);
       // The running job completed with its continuation; the batch's other job (two 20 s

@@ -185,3 +185,71 @@ describe("an existing account (from before the deployment was shared)", () => {
     await expect(provider.getUserTenant!(sub)).resolves.toBeNull();
   });
 });
+
+describe("review 8 M1: a verification remembered before the tenant was assigned", () => {
+  it("is voided by the assignment: the next request reads the tenant (never tenant.missing)", async () => {
+    const { TokenVerifier } = await import("@/platform/auth/token-verification");
+    const { getCache } = await import("@/platform/cache");
+    await getCache().clear();
+    // A provider like Cognito's: GetUser answers the identity's current tenant, and what it
+    // answered is remembered in the shared cache.
+    const tenants = new Map<string, string>();
+    const verifier = new TokenVerifier();
+    let asked = 0;
+    const cached: AuthProvider = {
+      ...createMockAuthProvider(),
+      verifyToken: (t: string) =>
+        verifier.verify(
+          t,
+          { exp: Math.floor(Date.now() / 1000) + 3600, subject: "u-1" },
+          async () => {
+            asked++;
+            const tenantId = tenants.get("u-1");
+            return {
+              kind: "valid",
+              payload: {
+                sub: "u-1",
+                email: "u@x.y",
+                emailVerified: true,
+                iat: 0,
+                exp: Math.floor(Date.now() / 1000) + 3600,
+                ...(tenantId ? { tenantId } : {}),
+              },
+            };
+          }
+        ),
+      assignTenant: async (userId: string, tenantId: string) => {
+        tenants.set(userId, tenantId);
+        return { success: true };
+      },
+    };
+    registerAuthProvider(cached);
+    await expect(shared(A, () => ensureIdentityTenant("tok-new-user"))).resolves.toEqual({
+      ok: true,
+    });
+    // The very next request: the tenant is there — asked again, not served from the cache.
+    expect((await cached.verifyToken("tok-new-user"))?.tenantId).toBe(A);
+    expect(asked).toBe(2);
+    // And then remembered as usual.
+    expect((await cached.verifyToken("tok-new-user"))?.tenantId).toBe(A);
+    expect(asked).toBe(2);
+  });
+
+  it("a failed assignment voids nothing and is unavailable", async () => {
+    registerAuthProvider({
+      ...createMockAuthProvider(),
+      verifyToken: async () => ({
+        sub: "u-2",
+        email: "",
+        emailVerified: true,
+        iat: 0,
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      }),
+      assignTenant: async () => ({ success: false, error: "down" }),
+    });
+    await expect(shared(A, () => ensureIdentityTenant("t"))).resolves.toEqual({
+      ok: false,
+      code: "service.unavailable",
+    });
+  });
+});

@@ -41,9 +41,15 @@ import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
  * with SHA-256 over an unambiguous encoding. A cache hit serves one request's response to
  * another, so the key must not collide: it was a 32-bit FNV hash, where unrelated prompts share a
  * key after a few tens of thousands of entries, and it named no tenant.
+ *
+ * `scope` — whose answer this is (a user id, or any caller-chosen partition). A response that
+ * depends on more than the prompt (a tool that read the user's data, a user's context) must be
+ * cached under its user's scope, so one user's answer is never served to another (audit G-12).
+ * Unscoped entries are shared by everyone in the tenant who sends the same prompt.
  */
-export function buildAICacheKey(request: AIRequest): string {
+export function buildAICacheKey(request: AIRequest, scope?: string): string {
   const material = JSON.stringify([
+    scope ?? null,
     request.tier,
     request.system ?? "",
     request.messages.map((m: { role: string; content: string | unknown }) => [
@@ -112,10 +118,14 @@ export class AICache {
    * Look up a cached AI response.
    * Returns the cached AIResponse or null if not found.
    */
-  async get(request: AIRequest, useCase: string): Promise<AIResponse | null> {
+  async get(
+    request: AIRequest,
+    useCase: string,
+    scope?: string
+  ): Promise<AIResponse | null> {
     if (!this.enabled) return null;
 
-    const key = buildAICacheKey(request);
+    const key = buildAICacheKey(request, scope);
 
     try {
       const cached = await this.cache.get<AIResponse>(key);
@@ -143,10 +153,15 @@ export class AICache {
    * Store an AI response in cache.
    * TTL is determined by use case or default.
    */
-  async set(request: AIRequest, response: AIResponse, useCase: string): Promise<void> {
+  async set(
+    request: AIRequest,
+    response: AIResponse,
+    useCase: string,
+    scope?: string
+  ): Promise<void> {
     if (!this.enabled) return;
 
-    const key = buildAICacheKey(request);
+    const key = buildAICacheKey(request, scope);
     const ttl = this.ttlByUseCase[useCase] ?? this.defaultTTL;
 
     try {
@@ -159,8 +174,8 @@ export class AICache {
   /**
    * Invalidate cached response for a specific request.
    */
-  async invalidate(request: AIRequest): Promise<void> {
-    const key = buildAICacheKey(request);
+  async invalidate(request: AIRequest, scope?: string): Promise<void> {
+    const key = buildAICacheKey(request, scope);
     await this.cache.delete(key);
   }
 

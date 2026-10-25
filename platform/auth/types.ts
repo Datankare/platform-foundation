@@ -59,6 +59,11 @@ export interface TokenPayload {
    * Not yet checked — platform/tenancy/resolve.ts decides whether it is acceptable.
    */
   tenantId?: string;
+  /**
+   * Whether the user signs in with a second factor, when the provider says (audit A-9). Staff
+   * without one are refused administrative access while `auth.staff_mfa_required` is on.
+   */
+  mfaEnabled?: boolean;
   /** Additional claims from the provider (groups, roles, etc.) */
   [key: string]: unknown;
 }

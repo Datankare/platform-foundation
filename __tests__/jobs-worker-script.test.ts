@@ -14,6 +14,8 @@ const SECRET = "w".repeat(40);
 
 let answers: { status: number; body: unknown; delayMs?: number }[] = [];
 let calls: { method: string; url: string; auth: string | undefined }[] = [];
+/** Ticks the fake app has answered (a delayed answer counts once it is sent). */
+let answered = 0;
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   req.resume();
@@ -25,6 +27,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   const a = answers.length > 1 ? answers.shift()! : answers[0];
   const answer = () => {
     if (res.destroyed) return;
+    answered += 1;
     res.writeHead(a.status, { "content-type": "application/json" });
     res.end(JSON.stringify(a.body));
   };
@@ -41,6 +44,7 @@ afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   calls = [];
   answers = [];
+  answered = 0;
 });
 
 const ok = (stoppedBy: "idle" | "budget") => ({
@@ -154,13 +158,14 @@ describe("jobs worker", () => {
       await new Promise((r) => setTimeout(r, 50));
     }
     expect(calls).toHaveLength(1);
-    const started = Date.now();
     const code = await new Promise<number | null>((resolve) => {
       child.on("exit", (c) => resolve(c));
       child.kill("SIGTERM");
     });
     expect(code).toBe(0);
-    expect(Date.now() - started).toBeLessThan(5_000);
+    // It exited with the tick still unanswered — it did not wait for it (asserted as work, not
+    // as wall-clock time: review 10 L11).
+    expect(answered).toBe(0);
     expect(out).toContain("stopped — the tick in flight is the app's to finish");
   });
 

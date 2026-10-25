@@ -27,7 +27,6 @@ const EXPECTED_EXPORTS = [
   "getQueueStats",
   "getReviewQueueStore",
   "hashInput",
-  "loadBlocklistOnlySurfaces",
   "loadContentRatingThresholds",
   "loadSeverityReduction",
   "loadStrikeThresholds",
@@ -53,6 +52,7 @@ const EXPECTED_EXPORTS = [
   "mostRestrictive",
   "setModalityClassifiers",
   "resetModalityClassifiers",
+  "modalityClassifiersConfigured",
   // ADR-054 D4 — content kinds: the core's and the registered modules'
   "CORE_MODERATION_CONTENT_TYPES",
   "isModerationContentType",

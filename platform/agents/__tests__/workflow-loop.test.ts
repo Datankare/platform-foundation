@@ -17,6 +17,7 @@ import {
   type WorkflowDefinition,
 } from "../workflow-loop";
 import { InMemoryTrajectoryStore } from "../trajectory-store";
+import { getBudgetTracker, resetBudgetTracker } from "../budget-tracker";
 import type { AgentIdentity, Tool } from "@/platform/kernel";
 import { withModules, WORKFLOW_GOALS_FIXTURE } from "@/__tests__/helpers/modules";
 
@@ -195,5 +196,165 @@ describe("workflow loop refusal paths", () => {
     const recorded = response.trajectory.steps.reduce((sum, s) => sum + s.cost, 0);
     expect(response.cost.estimatedCostUSD).toBeCloseTo(recorded, 9);
     expect(response.cost.apiCalls).toBe(response.trajectory.steps.length);
+  });
+});
+
+describe("budgets are cumulative and governed (audit C-8)", () => {
+  /** A workflow of `n` steps, each declaring `cost`. */
+  function costly(n: number, cost: number): WorkflowDefinition {
+    return {
+      ...definition("translate"),
+      steps: Array.from({ length: n }, (_, i) => ({
+        tool: stepTool(`costly-${i}`),
+        intent: "inform" as const,
+        estimatedCostUSD: cost,
+        input: () => ({ text: `s${i}` }),
+      })),
+    };
+  }
+
+  beforeEach(() => {
+    resetWorkflowRegistry();
+    resetBudgetTracker();
+  });
+
+  it("stops a workflow whose steps together exceed the ceiling, though each is under it", async () => {
+    registerWorkflow(costly(10, 0.4));
+    const response = await runGoal({
+      goal: "translate",
+      input: {},
+      actor: ACTOR,
+      budgetMaxUSD: 1,
+      trajectoryStore: new InMemoryTrajectoryStore(),
+    });
+    // 0.4 + 0.4 = 0.8; a third would be 1.2 > 1.
+    expect(
+      response.trajectory.steps.filter((s) => s.boundary === "commitment")
+    ).toHaveLength(2);
+    expect(response.trajectory.status).toBe("paused");
+  });
+
+  it("counts the hops before this one when choreographed", async () => {
+    registerWorkflow(costly(5, 0.4));
+    const store = new InMemoryTrajectoryStore();
+    let response = await advanceGoal({
+      goal: "translate",
+      input: {},
+      actor: ACTOR,
+      budgetMaxUSD: 1,
+      trajectoryStore: store,
+    });
+    for (let hop = 0; hop < 4; hop++) {
+      response = await advanceGoal({
+        goal: "translate",
+        input: {},
+        actor: ACTOR,
+        budgetMaxUSD: 1,
+        trajectoryId: response.trajectory.trajectoryId,
+        trajectoryStore: store,
+      });
+    }
+    expect(
+      response.trajectory.steps.filter((s) => s.boundary === "commitment")
+    ).toHaveLength(2);
+  });
+
+  it("is bounded by the actor's governed daily budget when no ceiling is given", async () => {
+    registerWorkflow(costly(3, 0.01));
+    const tracker = getBudgetTracker();
+    jest.spyOn(tracker, "checkBudget").mockResolvedValueOnce({
+      allowed: true,
+    } as never);
+    jest.spyOn(tracker, "checkBudget").mockResolvedValueOnce({
+      allowed: false,
+      reason: "daily cost cap reached",
+    } as never);
+    const consume = jest.spyOn(tracker, "consume");
+    const response = await runGoal({
+      goal: "translate",
+      input: {},
+      actor: ACTOR,
+      trajectoryStore: new InMemoryTrajectoryStore(),
+    });
+    expect(
+      response.trajectory.steps.filter((s) => s.boundary === "commitment")
+    ).toHaveLength(1);
+    expect(response.trajectory.status).toBe("paused");
+    expect(consume).toHaveBeenCalledWith("unit", "platform", undefined, 0.01);
+  });
+
+  it("pauses, spending nothing, when the budget cannot be read (fail closed)", async () => {
+    registerWorkflow(costly(2, 0.01));
+    jest
+      .spyOn(getBudgetTracker(), "checkBudget")
+      .mockRejectedValueOnce(new Error("db down"));
+    const response = await runGoal({
+      goal: "translate",
+      input: {},
+      actor: ACTOR,
+      trajectoryStore: new InMemoryTrajectoryStore(),
+    });
+    expect(response.trajectory.steps).toHaveLength(0);
+    expect(response.trajectory.status).toBe("paused");
+  });
+
+  it("charges a user's agent to the user's budget scope", async () => {
+    registerWorkflow(costly(1, 0.02));
+    const consume = jest.spyOn(getBudgetTracker(), "consume");
+    await runGoal({
+      goal: "translate",
+      input: {},
+      actor: { ...ACTOR, onBehalfOf: "user-7" },
+      trajectoryStore: new InMemoryTrajectoryStore(),
+    });
+    expect(consume).toHaveBeenCalledWith("unit", "user", "user-7", 0.02);
+  });
+});
+
+describe("a delegated agent stays within its consented scope (audit C-2)", () => {
+  beforeEach(() => {
+    resetWorkflowRegistry();
+    resetBudgetTracker();
+    registerWorkflow({ ...definition("translate"), requiredCapability: "translate.run" });
+  });
+
+  const delegated = (scope: string[]): AgentIdentity => ({
+    ...ACTOR,
+    onBehalfOf: "user-9",
+    delegation: { onBehalfOf: "user-9", scope, method: "oauth2.1-pkce" },
+  });
+
+  it("denies a capability outside the delegation's scope, even when the agent holds it", async () => {
+    const response = await runGoal({
+      goal: "translate",
+      input: { text: "hi" },
+      actor: delegated(["something.else"]),
+      checkCapability: async () => true,
+      trajectoryStore: new InMemoryTrajectoryStore(),
+    });
+    expect(response.capabilityCheck).toMatchObject({ state: "denied" });
+    expect(response.trajectory.steps).toHaveLength(0);
+  });
+
+  it("grants one inside it", async () => {
+    const response = await runGoal({
+      goal: "translate",
+      input: { text: "hi" },
+      actor: delegated(["translate.run"]),
+      checkCapability: async () => true,
+      trajectoryStore: new InMemoryTrajectoryStore(),
+    });
+    expect(response.capabilityCheck).toMatchObject({ state: "granted" });
+  });
+
+  it("never grants on scope alone: the capability check still decides", async () => {
+    const response = await runGoal({
+      goal: "translate",
+      input: { text: "hi" },
+      actor: delegated(["translate.run"]),
+      checkCapability: async () => false,
+      trajectoryStore: new InMemoryTrajectoryStore(),
+    });
+    expect(response.capabilityCheck).toMatchObject({ state: "denied" });
   });
 });

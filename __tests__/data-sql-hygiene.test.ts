@@ -37,6 +37,8 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "turning a shared entitlement group on or off, after mayChangePlatformCatalog (ADR-053 D5)",
   "platform/admin/config-approval.ts":
     "the config.expire-approvals platform job: expiring stale approvals across tenants (TASK-036, ADR-056 D3)",
+  "platform/admin/hold-withdrawal.ts":
+    "a platform-scope reduction's withdrawal: finding the tenants holding platform-scope holds of the key, ids only — the withdrawal then runs as each tenant (review 14 L-4)",
   "platform/jobs/postgres-store.ts":
     "the job runner: claiming, settling and scheduling every tenant's jobs; operators' cross-tenant job views (ADR-056 D2)",
 };

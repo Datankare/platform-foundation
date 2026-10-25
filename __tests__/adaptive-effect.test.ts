@@ -8,6 +8,7 @@ jest.mock("@/platform/action-pipeline", () => {
 });
 import { executeActionPipeline, PipelineRejectedError } from "@/platform/action-pipeline";
 import { routeAdaptiveEffect } from "@/platform/adaptive/effect";
+import { InMemoryProposalStore } from "@/platform/agents/proposal-store";
 import type { AdaptiveEffectRequest } from "@/platform/adaptive";
 
 const pipe = executeActionPipeline as jest.Mock;
@@ -23,7 +24,12 @@ const req = (): AdaptiveEffectRequest<St> => ({
   label: "adaptive-set-level",
   cost: 0,
   stateStore: {} as never,
-  trajectoryStore: {} as never,
+  // The trajectory a held effect's proposal is recorded in (audit C-13).
+  trajectoryStore: {
+    addStep: async () => undefined,
+    updateStatus: async () => undefined,
+  } as never,
+  proposalStore: new InMemoryProposalStore(),
   trajectoryId: "t1",
   stepIndex: 0,
   expectedVersion: 3,
@@ -64,6 +70,10 @@ describe("adaptive effect routing (ADR-036 D4)", () => {
     const r = await routeAdaptiveEffect(req());
     expect(r.status).toBe("held");
     expect(r.reason).toBe("requires-approval");
+    // Held for real: a proposal an approver can decide (audit C-13).
+    expect(r.proposalId).toEqual(expect.any(String));
+    // Held for real: a proposal an approver can decide (audit C-13).
+    expect(r.proposalId).toEqual(expect.any(String));
   });
 
   it("translates budget-exceeded to rejected", async () => {

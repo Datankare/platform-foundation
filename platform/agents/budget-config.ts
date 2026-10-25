@@ -61,3 +61,29 @@ export function resolveDailyCostCap(perAgentDefault: number): Promise<number> {
 export function resolveStepCap(perAgentDefault: number): Promise<number> {
   return resolveCap(BUDGET_STEP_CAP_KEY, perAgentDefault);
 }
+
+/**
+ * The most segments one trajectory chain — a session's or a rolled-over run's — may have (review
+ * 12 M2): with every segment at most 1 000 steps and 16 MiB, a chain is bounded at this many
+ * times that. Governed (safety tier, operator-set; migration 052).
+ */
+export const TRAJECTORY_SEGMENTS_KEY = "agent.trajectory_max_segments";
+/** The seeded default, used too when the setting cannot be read: never unbounded. */
+export const DEFAULT_TRAJECTORY_MAX_SEGMENTS = 20;
+/** The bounds the migration declares for the setting. */
+export const TRAJECTORY_MAX_SEGMENTS_LIMIT = 1_000;
+
+/** The current tenant's cap on segments per trajectory chain; unreadable or invalid: the default. */
+export async function resolveTrajectoryMaxSegments(): Promise<number> {
+  try {
+    const { getConfig } = await import("@/platform/auth/platform-config");
+    const v = Number(
+      await getConfig<number>(TRAJECTORY_SEGMENTS_KEY, DEFAULT_TRAJECTORY_MAX_SEGMENTS)
+    );
+    return Number.isInteger(v) && v >= 1 && v <= TRAJECTORY_MAX_SEGMENTS_LIMIT
+      ? v
+      : DEFAULT_TRAJECTORY_MAX_SEGMENTS;
+  } catch {
+    return DEFAULT_TRAJECTORY_MAX_SEGMENTS;
+  }
+}

@@ -21,6 +21,7 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 const mockGetConfig = jest.fn();
+const mockHasDatabase = jest.fn(() => true);
 
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: (...args: any[]) => mockGetConfig(...args),
@@ -38,6 +39,7 @@ const mockSupabase = {
 
 /** The data layer: each query answers from mockSupabase.from("users"). */
 jest.mock("@/platform/data", () => ({
+  hasDatabase: () => mockHasDatabase(),
   withTenantTx: (fn: (tx: unknown) => unknown) =>
     fn({
       query: async () => {
@@ -76,6 +78,79 @@ beforeEach(() => {
 // checkCoppaGate
 // ═══════════════════════════════════════════════════════════════════════
 
+describe("checkCoppaGate — an account whose age was never recorded (audit X-16)", () => {
+  const unverified = (enforced: boolean) =>
+    mockSupabase.from.mockReturnValue(
+      createChainMock({
+        data: {
+          age_verified: false,
+          coppa_enforcement_active: enforced,
+          content_rating_level: 3,
+          parental_consent_status: "not_required",
+        },
+        error: null,
+      })
+    );
+
+  it.each(["generate", "translate", "upload_file"])(
+    "refuses %s, whatever the stored flag says",
+    async (feature) => {
+      unverified(false);
+      const result = await checkCoppaGate(
+        "550e8400-e29b-41d4-a716-446655440010",
+        feature
+      );
+      expect(result).toMatchObject({ allowed: false, code: "account.age_unverified" });
+    }
+  );
+
+  it("allows a feature that needs no consent", async () => {
+    unverified(false);
+    const result = await checkCoppaGate(
+      "550e8400-e29b-41d4-a716-446655440010",
+      "update_profile"
+    );
+    expect(result.allowed).toBe(true);
+  });
+
+  it("refuses a child awaiting consent with the consent code", async () => {
+    mockSupabase.from.mockReturnValue(
+      createChainMock({
+        data: {
+          age_verified: true,
+          coppa_enforcement_active: true,
+          content_rating_level: 1,
+          parental_consent_status: "pending",
+        },
+        error: null,
+      })
+    );
+    const result = await checkCoppaGate(
+      "550e8400-e29b-41d4-a716-446655440011",
+      "generate"
+    );
+    expect(result).toMatchObject({ allowed: false, code: "account.consent_required" });
+  });
+
+  it("blocks stream when the governed list cannot be read (the core's own features)", async () => {
+    unverified(false);
+    mockGetConfig.mockImplementation((key: string, defaultValue: unknown) =>
+      key === "coppa.blocked_features"
+        ? Promise.reject(new Error("db down"))
+        : Promise.resolve(key === "coppa.enforcement_enabled" ? true : defaultValue)
+    );
+    const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440013", "stream");
+    expect(result).toMatchObject({ allowed: false, code: "account.age_unverified" });
+  });
+
+  it("enforces nothing without a database (mock and CI runs), like the account-status guard", async () => {
+    mockHasDatabase.mockReturnValueOnce(false);
+    const result = await checkCoppaGate("550e8400-e29b-41d4-a716-446655440012", "stream");
+    expect(result.allowed).toBe(true);
+    expect(mockSupabase.from).not.toHaveBeenCalled();
+  });
+});
+
 describe("checkCoppaGate", () => {
   describe("input validation (S1)", () => {
     it("rejects empty userId", async () => {
@@ -93,6 +168,7 @@ describe("checkCoppaGate", () => {
     it("accepts valid UUID", async () => {
       const chain = createChainMock({
         data: {
+          age_verified: true,
           coppa_enforcement_active: false,
           content_rating_level: 3,
           parental_consent_status: "not_required",
@@ -128,6 +204,7 @@ describe("checkCoppaGate", () => {
     it("allows adult users", async () => {
       const chain = createChainMock({
         data: {
+          age_verified: true,
           coppa_enforcement_active: false,
           content_rating_level: 3,
           parental_consent_status: "not_required",
@@ -148,6 +225,7 @@ describe("checkCoppaGate", () => {
     it("allows consented minor", async () => {
       const chain = createChainMock({
         data: {
+          age_verified: true,
           coppa_enforcement_active: false,
           content_rating_level: 1,
           parental_consent_status: "granted",
@@ -169,6 +247,7 @@ describe("checkCoppaGate", () => {
     it("blocks content-generating features", async () => {
       const chain = createChainMock({
         data: {
+          age_verified: true,
           coppa_enforcement_active: true,
           content_rating_level: 1,
           parental_consent_status: "pending",
@@ -190,6 +269,7 @@ describe("checkCoppaGate", () => {
     it("blocks all configured features", async () => {
       const chain = createChainMock({
         data: {
+          age_verified: true,
           coppa_enforcement_active: true,
           content_rating_level: 1,
           parental_consent_status: "denied",
@@ -216,6 +296,7 @@ describe("checkCoppaGate", () => {
     it("allows features not in the blocked list", async () => {
       const chain = createChainMock({
         data: {
+          age_verified: true,
           coppa_enforcement_active: true,
           content_rating_level: 1,
           parental_consent_status: "pending",
@@ -273,6 +354,7 @@ describe("checkCoppaGate", () => {
 
       const chain = createChainMock({
         data: {
+          age_verified: true,
           coppa_enforcement_active: true,
           content_rating_level: 1,
           parental_consent_status: "pending",

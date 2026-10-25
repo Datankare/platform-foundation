@@ -26,6 +26,13 @@
  * @module platform/admin
  */
 
+import {
+  approvalExpiryDays,
+  expireLapsedApprovedHolds,
+  recoverStaleRuns,
+  RUN_LEASE_SECONDS,
+  type SweepScope,
+} from "@/platform/admin/hold-expiry";
 import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import type { ErrorCode } from "@/platform/errors/registry";
@@ -226,12 +233,45 @@ export async function approveAndApply(
   approvalId: string,
   reviewerId: string,
   reviewComment: string,
-  apply: (record: ConfigApprovalRecord) => Promise<{ success: boolean; error?: string }>
+  apply: (
+    record: ConfigApprovalRecord
+  ) => Promise<{ success: boolean; error?: string; stale?: boolean }>
 ): Promise<ConfigApprovalResult & { applyError?: string }> {
   const approved = await approveChange(approvalId, reviewerId, reviewComment);
   if (!approved.success || !approved.record) return approved;
   const applied = await apply(approved.record);
   if (applied.success) return approved;
+
+  // The value it replaces changed since it was requested (review 12 H2): nothing was applied, and
+  // the approval is withdrawn — never reopened to be approved onto a value it was not judged
+  // against. The requester asks again. (The decision itself is audited by its caller.)
+  if (applied.stale) {
+    try {
+      await withTenantTx((tx) =>
+        tx.query(
+          `update config_pending_approvals
+              set status = 'rejected', review_comment = $2
+            where id = $1::uuid and status = 'approved'`,
+          [
+            approvalId,
+            `withdrawn: stale — "${approved.record!.configKey}" changed since it was requested`,
+          ]
+        )
+      );
+    } catch (err) {
+      logger.error("A stale approval could not be withdrawn", {
+        approvalId,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/admin/config-approval",
+      });
+    }
+    return {
+      success: false,
+      error: applied.error ?? "The setting changed since this change was requested.",
+      errorCode: "approvals.stale",
+      applyError: applied.error,
+    };
+  }
 
   try {
     await withTenantTx((tx) =>
@@ -259,6 +299,101 @@ export async function approveAndApply(
     errorParams: { service: "config" },
     applyError: applied.error,
   };
+}
+
+/** Pending approvals withdrawn per statement and audit record (review 13 L7). */
+export const APPROVAL_WITHDRAWAL_BATCH = 100;
+/** The most batches one call withdraws; the rest refuse stale when approved. */
+export const APPROVAL_WITHDRAWAL_MAX_BATCHES = 20;
+
+/**
+ * Withdraw every pending approval of `configKey` of `scope` in the current tenant (review 12 H2;
+ * review 13 L1 — a tenant-scope reduction withdraws only tenant-scope approvals, a platform-scope
+ * one only platform-scope approvals): the kill switch or a power reduction changed the key, and
+ * each was requested against the value it held before. In batches (review 13 L7): each batch is
+ * one update and one audit record (approval_withdrawn, reason "superseded", `holdIds`) in one
+ * transaction — no record, no withdrawal — at most APPROVAL_WITHDRAWAL_MAX_BATCHES of them.
+ * `actorId` is who reduced the key (a users.id, else recorded as an agent). Returns the ids
+ * withdrawn, and whether any were left — and how many (`remaining`).
+ *
+ * An approval row a concurrent reviewer holds (approveChange's `for update`) is skipped (`skip
+ * locked`), never waited on. So after the batches the pending approvals of the key and scope that
+ * were requested before the withdrawal began are ALWAYS counted (review 14 L-3: a skipped row was
+ * left pending and unreported): any left is `incomplete` (the caller alerts
+ * `approvals.withdrawal_incomplete`). A row left pending is still safe: its approval applies only
+ * onto the value it was requested against (compare-and-set, stale-change.ts) and refuses as
+ * `approvals.stale` — the reduction cannot be undone by it.
+ *
+ * In the current tenant only: hold-withdrawal.ts runs it in every tenant holding platform-scope
+ * approvals of the key (review 14 L-4).
+ */
+export async function withdrawPendingApprovalsForKey(
+  configKey: string,
+  actorId: string,
+  note: string,
+  cause: string,
+  scope: ConfigScope
+): Promise<{ withdrawn: string[]; incomplete: boolean; remaining: number }> {
+  const isUser = UUID.test(actorId);
+  const { recordAudit } = await import("@/platform/auth/audit");
+  const withdrawn: string[] = [];
+  // What "left" means: requested before the withdrawal began — one requested since was requested
+  // against the reduced value, and stands.
+  const { rows: began } = await withTenantTx((tx) =>
+    tx.query<{ at: string }>("select clock_timestamp()::text as at")
+  );
+  const startedAt = began[0]?.at ?? null;
+  for (let batch = 0; batch < APPROVAL_WITHDRAWAL_MAX_BATCHES; batch++) {
+    const ids = await withTenantTx(async (tx) => {
+      const { rows } = await tx.query<{ id: string }>(
+        `update config_pending_approvals
+            set status = 'rejected', reviewed_by = $2::uuid, review_comment = $3, reviewed_at = now()
+          where id in (select id from config_pending_approvals
+                        where config_key = $1 and status = 'pending' and scope = $4
+                        order by created_at
+                        limit $5::int
+                        for update skip locked)
+          returning id`,
+        [
+          configKey,
+          isUser ? actorId : null,
+          note.slice(0, 1000),
+          scope,
+          APPROVAL_WITHDRAWAL_BATCH,
+        ]
+      );
+      if (rows.length) {
+        await recordAudit({
+          action: "admin_action",
+          ...(isUser ? { actorId } : { agent: actorId }),
+          details: {
+            type: "approval_withdrawn",
+            reason: "superseded",
+            cause: cause.slice(0, 500),
+            holdIds: rows.map((r) => r.id),
+            source: "config-approval",
+            key: configKey,
+            scope,
+            count: rows.length,
+          },
+        });
+      }
+      return rows.map((r) => r.id);
+    });
+    withdrawn.push(...ids);
+    if (ids.length < APPROVAL_WITHDRAWAL_BATCH) break;
+  }
+  // Always (review 14 L-3): the bound reached, or rows skipped as locked — is anything left?
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ n: number | string }>(
+      `select count(*)::int as n from config_pending_approvals
+        where config_key = $1 and status = 'pending' and scope = $2
+          and ($3::timestamptz is null or created_at <= $3::timestamptz)`,
+      [configKey, scope, startedAt]
+    )
+  );
+  const remaining = Number(rows[0]?.n ?? 0) || 0;
+  return { withdrawn, incomplete: remaining > 0, remaining };
 }
 
 /**
@@ -443,19 +578,38 @@ export async function countPendingApprovals(): Promise<number> {
 
 /**
  * Mark every pending approval past its expiry as expired — each tenant's and the platform's own
+ * — and withdraw every runtime hold approved but never run within the same period
+ * (platform/admin/hold-expiry.ts, review 7 M7)
  * (a shared deployment's platform defaults, tenant_id null) — so no list keeps offering a
  * decision that would be refused (TASK-036). Returns the count expired. A platform job: the
  * owner connection, from the runner only, never a request.
  *
+ * `scope` is for tests (review 11 L-5): only those tenants' rows — and the platform's own when
+ * `platform` is set — so a test's run does not sweep a parallel test's rows. The job passes none.
+ *
  * @scheduled config.expire-approvals
  */
-export async function expireStaleApprovals(): Promise<number> {
-  const { rowCount } = await withOwnerTx("platform-job", (tx) =>
-    tx.query(
-      "update config_pending_approvals set status = 'expired' where status = 'pending' and expires_at < now()"
-    )
-  );
-  return rowCount;
+export async function expireStaleApprovals(
+  scope?: SweepScope & { readonly platform?: boolean }
+): Promise<number> {
+  const days = await approvalExpiryDays();
+  return withOwnerTx("platform-job", async (tx) => {
+    const { rowCount } = await tx.query(
+      `update config_pending_approvals set status = 'expired'
+        where status = 'pending' and expires_at < now()
+          and ($1::uuid[] is null or tenant_id = any($1::uuid[])
+               or ($2::boolean and tenant_id is null))`,
+      [scope?.tenantIds ?? null, scope?.platform === true]
+    );
+    // A run that never ended is taken back: executed when its step was recorded, approved again
+    // when it was atomic, else undecided (review 10 H2, review 11 H-1) — before the lapse check,
+    // so an approval given back past its period lapses in the same pass.
+    const recovered = await recoverStaleRuns(tx, RUN_LEASE_SECONDS, scope ?? {});
+    // And every runtime hold approved but never run past the same period (review 7 M7).
+    return (
+      rowCount + recovered + (await expireLapsedApprovedHolds(tx, days, scope ?? {}))
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------

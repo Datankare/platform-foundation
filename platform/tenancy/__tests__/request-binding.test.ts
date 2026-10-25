@@ -220,7 +220,9 @@ describe("shared mode — anonymous requests and limits", () => {
       expect(await enforceRateLimit(req("acme.example.com"), RULE)).toBeNull()
     );
     expect(check).toHaveBeenCalledWith(`t:${A}:ip:203.0.113.7`, RULE);
-  });
+    // 5 000 requests: 3.6 s at four workers on two cores, near jest's default 5 s (review 14
+    // M-1 measured 5.9 s with three CPU burners on two cores).
+  }, 30_000);
 
   it("addresses that cannot be read (no snapshot yet) are 503, never a tenant", async () => {
     setTenantDirectory(new CachedTenantDirectory(directory));

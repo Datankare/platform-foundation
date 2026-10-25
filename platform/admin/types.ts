@@ -108,6 +108,8 @@ export type ConfigScope = "platform" | "tenant";
 export interface ConfigValidationResult {
   readonly valid: boolean;
   readonly errors: readonly string[];
+  /** When valid: the value as the setting's type (a form's "50" as 50, "true" as true). */
+  readonly value?: unknown;
 }
 
 // ---------------------------------------------------------------------------

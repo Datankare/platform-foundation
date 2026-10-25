@@ -8,6 +8,7 @@ import ForgotPasswordForm from "@/components/auth/ForgotPasswordForm";
 import MfaChallengeForm from "@/components/auth/MfaChallengeForm";
 import NewPasswordForm from "@/components/auth/NewPasswordForm";
 import EmailVerificationForm from "@/components/auth/EmailVerificationForm";
+import AgeGate from "@/components/auth/AgeGate";
 import { getAuthProvider } from "@/platform/auth/config";
 import { useAuth } from "@/platform/auth/context";
 import type { SsoProvider } from "@/platform/auth/types";
@@ -40,8 +41,21 @@ export default function AuthPage() {
   const [mfaSession, setMfaSession] = useState<string | null>(null);
   const [challengeSession, setChallengeSession] = useState<string | null>(null);
   const [pendingEmail, setPendingEmail] = useState<string>("");
+  // Asked before the account form (COPPA, audit X-16); the server checks and records it.
+  const [dateOfBirth, setDateOfBirth] = useState<string | null>(null);
   const ssoProviders = useSsoProviders();
   const { setSession } = useAuth();
+  // A completed sign-in; the refresh token stays in the server's httpOnly cookie (audit X-17).
+  const signIn = (r: { accessToken?: string; userId?: string }, address: string) => {
+    if (r.accessToken && r.userId) {
+      setSession({
+        accessToken: r.accessToken,
+        userId: r.userId,
+        email: address,
+        emailVerified: true,
+      });
+    }
+  };
 
   const { returnError, dismissReturnError } = useReturnError();
   const error = actionError ?? returnError;
@@ -60,6 +74,8 @@ export default function AuthPage() {
 
       if (result.mfaRequired && result.mfaSession) {
         setMfaSession(result.mfaSession);
+        // The challenge is answered for the user it was issued to (audit A-9).
+        setPendingEmail(email);
         setView("mfa-challenge");
         return;
       }
@@ -82,15 +98,7 @@ export default function AuthPage() {
         return;
       }
 
-      if (result.accessToken && result.refreshToken && result.userId) {
-        setSession({
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
-          userId: result.userId,
-          email,
-          emailVerified: true,
-        });
-      }
+      signIn(result, email);
     } catch {
       /* justified */
       // Auth errors shown to user via setError
@@ -105,7 +113,11 @@ export default function AuthPage() {
     setIsLoading(true);
     try {
       const auth = getAuthProvider();
-      const result = await auth.signUp(email, password);
+      if (!dateOfBirth) {
+        setError("Please enter your date of birth first.");
+        return;
+      }
+      const result = await auth.signUp(email, password, { dateOfBirth });
 
       if (!result.success) {
         setError(result.error || "Registration failed");
@@ -209,22 +221,18 @@ export default function AuthPage() {
     setIsLoading(true);
     try {
       const auth = getAuthProvider();
-      const result = await auth.respondToMfaChallenge(mfaSession || "", totpCode);
+      const result = await auth.respondToMfaChallenge(
+        mfaSession || "",
+        totpCode,
+        pendingEmail
+      );
 
       if (!result.success) {
         setError(result.error || "Invalid code");
         return;
       }
 
-      if (result.accessToken && result.refreshToken && result.userId) {
-        setSession({
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
-          userId: result.userId,
-          email: pendingEmail,
-          emailVerified: true,
-        });
-      }
+      signIn(result, pendingEmail);
     } catch {
       /* justified */
       // Auth errors shown to user via setError
@@ -274,7 +282,6 @@ export default function AuthPage() {
 
       setSession({
         accessToken: result.token,
-        refreshToken: "",
         userId: result.guestId,
         email: "",
         emailVerified: false,
@@ -305,15 +312,7 @@ export default function AuthPage() {
         return;
       }
 
-      if (result.accessToken && result.refreshToken && result.userId) {
-        setSession({
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
-          userId: result.userId,
-          email: pendingEmail,
-          emailVerified: true,
-        });
-      }
+      signIn(result, pendingEmail);
     } catch {
       /* justified */
       // Auth errors shown to user via setError
@@ -343,7 +342,14 @@ export default function AuthPage() {
         />
       )}
 
-      {view === "register" && (
+      {view === "register" && dateOfBirth === null && (
+        <AgeGate
+          onVerified={(_result, declared) => setDateOfBirth(declared)}
+          onCancel={() => switchView("login")}
+        />
+      )}
+
+      {view === "register" && dateOfBirth !== null && (
         <RegisterForm
           onSubmit={handleRegister}
           onBackToLogin={() => switchView("login")}

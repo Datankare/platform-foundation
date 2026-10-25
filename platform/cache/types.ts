@@ -90,8 +90,8 @@ export interface CacheProvider {
 
 /** Factory configuration for cache providers */
 export interface CacheConfig {
-  /** Provider type: "redis" | "memory" */
-  provider: "redis" | "memory";
+  /** Provider type: "redis" (Upstash REST) | "valkey" (the Redis protocol) | "memory" */
+  provider: "redis" | "valkey" | "memory";
   /** Key prefix/namespace. Default: "pf:" */
   namespace?: string;
   /** Default TTL in seconds for all entries. Default: 3600 (1 hour). */
@@ -100,4 +100,10 @@ export interface CacheConfig {
   redisUrl?: string;
   /** Redis auth token (required for Upstash). */
   redisToken?: string;
+  /** rediss:// URL (required for provider: "valkey"). */
+  valkeyUrl?: string;
+  /** PEM CA bundle for a Valkey server whose certificate a private CA signed. */
+  valkeyCaCert?: string;
+  /** Allow redis:// (plain TCP) for Valkey — a local or CI run only. */
+  valkeyAllowPlaintext?: boolean;
 }

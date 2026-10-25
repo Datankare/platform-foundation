@@ -42,13 +42,18 @@ import type {
 } from "@/platform/kernel";
 import { generateSecureId } from "@/platform/agents/utils";
 import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk";
+import { canonicalJson } from "./canonical-json";
+import { withAuditCorrelation } from "@/platform/kernel/audit-correlation";
 
 // ── Rejection ─────────────────────────────────────────────────────────
 
 export type PipelineRejectionReason =
   | "requires-approval"
   | "budget-exceeded"
-  /** The approval was valid but already used by another commit: it released one, not two. */
+  /**
+   * The approval was valid but is in use by another run, or was already used: it releases one
+   * run at a time, and one effect in all.
+   */
   | "approval-used";
 
 /** One applicable spending limit, and whose it is (ADR-029 D8). */
@@ -86,6 +91,66 @@ export class PipelineRejectedError extends Error {
   }
 }
 
+/**
+ * An approved action's run failed before it took effect (review 10 H2). The approval was not
+ * used: its claim was released (executing -> approved, compare-and-set) — or, for an atomic
+ * action, the transaction that held the claim rolled back with the effect — so approving again
+ * runs it again. `released` is false only when the release itself could not be written; the
+ * approval-expiry job then marks it `indeterminate` once its lease has passed, for a person to
+ * decide (review 11 H-1).
+ */
+export class ApprovedRunFailedError extends Error {
+  constructor(
+    readonly label: string,
+    readonly proposalId: string,
+    readonly reason: string,
+    readonly released: boolean,
+    options?: { cause?: unknown }
+  ) {
+    super(
+      `${label}: approved, not applied: ${reason}. ${
+        released
+          ? "The approval stands: approve it again to retry."
+          : "Its approval could not be given back: once its run's lease has passed it is marked undecided, for a person to mark executed or approve again."
+      }`,
+      options
+    );
+    this.name = "ApprovedRunFailedError";
+  }
+}
+
+/**
+ * The action took effect, and its record could not be stored (review 10 M5): the state commit or
+ * the trajectory step failed after the effect was applied. Never reported as "nothing happened":
+ * `applied` says what is true, and the adapter audits it. An approval it ran under is used.
+ */
+export class ActionNotRecordedError extends Error {
+  /**
+   * The run's approval was no longer this run's to complete (review 11 H-1): its claim was taken
+   * back after its lease and decided otherwise. Audited as a conflict, and alerted.
+   */
+  readonly approvalConflict: boolean;
+  /** The approval the run ran under, when it ran under one. */
+  readonly proposalId: string | undefined;
+  constructor(
+    readonly label: string,
+    readonly operationId: string,
+    readonly applied: boolean,
+    readonly reason: string,
+    options?: { cause?: unknown; approvalConflict?: boolean; proposalId?: string }
+  ) {
+    super(
+      applied
+        ? `${label}: applied, but its record could not be stored (${reason}); operation ${operationId}`
+        : `${label}: not applied: ${reason}`,
+      options?.cause === undefined ? undefined : { cause: options.cause }
+    );
+    this.name = "ActionNotRecordedError";
+    this.approvalConflict = options?.approvalConflict === true;
+    this.proposalId = options?.proposalId;
+  }
+}
+
 // ── Request / outcome ─────────────────────────────────────────────────
 
 export interface PipelineRequest<TState> {
@@ -108,6 +173,13 @@ export interface PipelineRequest<TState> {
   readonly trajectoryId: string;
   readonly stepIndex: number;
   readonly expectedVersion: number;
+  /**
+   * Continue a full trajectory in a linked new one rather than refusing the action (review 11
+   * H-2): set by an adapter whose subject legitimately outgrows one trajectory — every app
+   * session, and an agent run whose caller opts in. The outcome's trajectory is then the
+   * continuation. Unset, a full trajectory refuses the action before it runs.
+   */
+  readonly rolloverTrajectory?: boolean;
 
   /**
    * Produces the next managed state, or null when this action writes no managed state —
@@ -121,7 +193,20 @@ export interface PipelineRequest<TState> {
    * A session action has none — its effect IS the state transition. A tool call has one,
    * and its return value becomes part of the trajectory step's output.
    */
-  readonly perform?: () => Promise<Record<string, unknown>>;
+  readonly perform?: (context: ActionContext) => Promise<Record<string, unknown>>;
+  /**
+   * For an approved run: whether the action's own result says it did not take effect (the reason,
+   * or undefined when it did). A run that reports failure releases its approval, as one that
+   * throws does (review 10 H2) — an action reporting `{ success: false }` applied nothing.
+   */
+  readonly reportsFailure?: () => string | undefined;
+  /**
+   * The action's every effect is a write in the current tenant's database transaction. With an
+   * approval, and a proposal store that has transactions, the claim, the effect, the state
+   * commit, the trajectory step and the approval's completion are one transaction: all of them
+   * or none (review 10 H2).
+   */
+  readonly atomic?: boolean;
 
   /** Session or agent ceiling in USD; absent = unbounded. Shorthand for a single ceiling. */
   readonly budgetCeiling?: number;
@@ -183,27 +268,8 @@ export function isPipelineConflict<TState>(
   return (outcome as PipelineConflict<TState>).conflict === true;
 }
 
-/**
- * JSON with object keys sorted at every depth, so equal values compare equal as text. The value
- * is first taken through JSON itself (toJSON, dropped undefined, NaN to null), so the comparison
- * is of what a durable store keeps — two Dates differ by their time, not both become `{}`.
- */
-export function canonicalJson(value: unknown): string {
-  const text = JSON.stringify(value);
-  if (text === undefined) return "undefined";
-  const sort = (v: unknown): unknown => {
-    if (Array.isArray(v)) return v.map(sort);
-    if (v && typeof v === "object") {
-      return Object.fromEntries(
-        Object.keys(v as Record<string, unknown>)
-          .sort()
-          .map((k) => [k, sort((v as Record<string, unknown>)[k])])
-      );
-    }
-    return v;
-  };
-  return JSON.stringify(sort(JSON.parse(text)));
-}
+/** JSON with object keys sorted at every depth (canonical-json.ts). */
+export { canonicalJson };
 
 // ── The pipeline ──────────────────────────────────────────────────────
 
@@ -301,40 +367,215 @@ export async function executeActionPipeline<TState>(
     boundary: req.boundary,
   });
 
-  // 5b. Use the approval — atomically, immediately before anything runs. The checks above are
-  // read-then-act; two concurrent commits could both pass them. Only the one whose claim
-  // matches the still-approved row proceeds (PF v5.1.0 review: one approval ran its step three
-  // times under concurrent resumes).
-  if (tier === "two-phase" && req.approvedProposalId && req.proposalStore) {
-    const claimed = await req.proposalStore.consume(req.approvedProposalId);
-    if (!claimed) {
-      throw new PipelineRejectedError(
-        `${req.label}: approval ${req.approvedProposalId} was already used (ADR-031 D2)`,
-        "approval-used"
-      );
-    }
+  // 5a. Nothing runs that could not be recorded (review 10 M5, L10): a full trajectory refuses
+  // the action now, and a state the store would refuse is found before the action's effect —
+  // for an action whose effect IS the state transition, it is computed here.
+  // With rollover, a full tail has room while the chain may still grow a segment; past its cap
+  // (agent.trajectory_max_segments, review 12 M2) the action is refused before it runs too.
+  await req.trajectoryStore.assertRoomForStep?.(
+    req.trajectoryId,
+    req.rolloverTrajectory ? { rollover: true } : undefined
+  );
+  let nextState: TState | undefined;
+  let nextComputed = false;
+  if (req.computeNextState && !req.perform) {
+    nextState = req.computeNextState();
+    req.stateStore.validate?.(nextState);
+    nextComputed = true;
   }
 
-  // 6. Execute, for adapters whose action does something other than transition state.
-  // Runs after gating so a refused call never executes, and before commit so a failing
-  // execution leaves no committed state behind it.
-  const performed = req.perform ? await req.perform() : undefined;
+  const approvalId =
+    tier === "two-phase" && req.approvedProposalId && req.proposalStore
+      ? req.approvedProposalId
+      : undefined;
+  const proposalStore = req.proposalStore;
+  const atomic = Boolean(approvalId && req.atomic && proposalStore?.atomically);
 
+  // 5b-8. The run. With an approval it is claimed first — atomically, immediately before anything
+  // runs (approved -> executing, with a fresh run token). The checks above are read-then-act; two
+  // concurrent runs could both pass them, and only the one whose claim matches the still-approved
+  // row proceeds (PF v5.1.0: one approval ran its step three times under concurrent resumes). The
+  // run ends its own claim, by its token (review 11 H-1): executed when the action took effect;
+  // released back to approved only when it failed before the action's own work returned, so a
+  // transient failure does not burn the approval (review 10 H2) and a failure after the work is
+  // never reported as "not applied" (review 11 M-1). An end that does not land — the claim was
+  // taken back (a run slower than its lease) and decided otherwise — is raised, never swallowed.
+  const run = async (): Promise<PipelineOutcome<TState>> => {
+    let token: string | undefined;
+    if (approvalId && proposalStore) {
+      const claimed = await proposalStore.claim(approvalId, { atomic });
+      if (!claimed) {
+        const now = await proposalStore.getById(approvalId);
+        throw new PipelineRejectedError(
+          now?.status === "executing"
+            ? `${req.label}: approval ${approvalId} is in use by another run (ADR-031 D2)`
+            : now?.status === "indeterminate"
+              ? `${req.label}: approval ${approvalId}'s last run did not end within its lease and its outcome is unknown; a person must mark it executed or approve it again (review 11 H-1)`
+              : `${req.label}: approval ${approvalId} was already used (ADR-031 D2)`,
+          "approval-used"
+        );
+      }
+      token = claimed.runToken ?? "";
+    }
+
+    /** End the claim as executed, by its token; a completion that does not land is raised. */
+    const completeClaim = async (): Promise<void> => {
+      if (!approvalId || !proposalStore) return;
+      let done: ProposalRecord | undefined;
+      let failure: string | undefined;
+      try {
+        done = await proposalStore.complete(approvalId, token!);
+      } catch (err) {
+        failure = err instanceof Error ? err.message : String(err);
+      }
+      if (done) return;
+      const reason =
+        failure !== undefined
+          ? `its approval's completion could not be written (${failure}); the approval-expiry job settles it`
+          : `its approval's claim was no longer this run's (taken back after its lease and decided otherwise); recorded as a conflict`;
+      throw new ActionNotRecordedError(req.label, operationId, true, reason, {
+        approvalConflict: failure === undefined,
+        proposalId: approvalId,
+      });
+    };
+
+    /** Give the approval back (failed before taking effect); whether that landed. */
+    const releaseClaim = async (note: string): Promise<boolean> => {
+      if (!approvalId || !proposalStore) return false;
+      return proposalStore
+        .release(approvalId, note.slice(0, 500), token!)
+        .then((r) => r !== undefined)
+        .catch(() => false);
+    };
+
+    // 6. Execute, for adapters whose action does something other than transition state. Runs
+    // after gating so a refused call never executes, and before commit so a failing execution
+    // leaves no committed state behind it.
+    let performed: Record<string, unknown> | undefined;
+    try {
+      performed = req.perform ? await req.perform(context) : undefined;
+      const failed = approvalId ? req.reportsFailure?.() : undefined;
+      if (failed !== undefined) {
+        throw new ApprovedRunFailedError(req.label, approvalId!, failed, true);
+      }
+    } catch (err) {
+      if (!approvalId || !proposalStore) throw err;
+      // The action's own work returned, and something after it failed (review 11 M-1): applied.
+      // The approval is used — completed by this run's claim — and the error says so.
+      if (err instanceof ActionNotRecordedError && err.applied) {
+        if (atomic) {
+          // Atomic: the transaction rolls back with everything, the claim included.
+          throw new ApprovedRunFailedError(req.label, approvalId, err.reason, true, {
+            cause: err,
+          });
+        }
+        await completeClaim();
+        throw err;
+      }
+      const reason =
+        err instanceof ApprovedRunFailedError
+          ? err.reason
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      // Atomic: the transaction that holds the claim rolls back with everything else.
+      if (atomic)
+        throw new ApprovedRunFailedError(req.label, approvalId, reason, true, {
+          cause: err,
+        });
+      const released = await releaseClaim(`run failed, approval kept: ${reason}`);
+      throw new ApprovedRunFailedError(req.label, approvalId, reason, released, {
+        cause: err,
+      });
+    }
+
+    // 7-8. Commit and record. A failure here comes after the effect (performed) — reported as
+    // applied, never as "nothing was stored" (review 10 M5). Atomic: it rolls the effect back too.
+    let outcome: PipelineOutcome<TState>;
+    try {
+      if (req.computeNextState && !nextComputed) {
+        nextState = req.computeNextState();
+        req.stateStore.validate?.(nextState);
+      }
+      outcome = await commitAndRecord(
+        req,
+        tier,
+        context,
+        operationId,
+        performed,
+        nextState
+      );
+    } catch (err) {
+      const applied = req.perform !== undefined;
+      if (atomic && approvalId) {
+        throw new ApprovedRunFailedError(
+          req.label,
+          approvalId,
+          err instanceof Error ? err.message : String(err),
+          true,
+          { cause: err }
+        );
+      }
+      if (approvalId && proposalStore) {
+        // Applied: the approval is used. Not applied (the commit was the effect): it stands.
+        if (applied) await completeClaim();
+        else await releaseClaim("commit failed, approval kept");
+      }
+      if (err instanceof ActionNotRecordedError) throw err;
+      throw new ActionNotRecordedError(
+        req.label,
+        operationId,
+        applied,
+        err instanceof Error ? err.message : String(err),
+        { cause: err }
+      );
+    }
+
+    if (approvalId && proposalStore) {
+      if (isPipelineConflict(outcome) && req.perform === undefined) {
+        // A lost CAS mutated nothing: the approval was not used.
+        await releaseClaim("state moved before commit, approval kept");
+      } else {
+        // Took effect. Atomic: a completion that does not land rolls the whole run back. Otherwise
+        // a completion that does not land is raised (applied; review 11 H-1) — a failed write
+        // leaves the claim to the recovery job, which finds this run's recorded step.
+        await completeClaim();
+      }
+    }
+    return outcome;
+  };
+
+  const go = () => (atomic ? proposalStore!.atomically!(run) : run());
+  // An approved run's own audit records name its hold and operation (review 12 L1).
+  return approvalId
+    ? withAuditCorrelation({ holdId: approvalId, operationId }, go)
+    : go();
+}
+
+/** Stages 7-8: commit managed state, append the trajectory step, emit. */
+async function commitAndRecord<TState>(
+  req: PipelineRequest<TState>,
+  tier: DurabilityTier,
+  context: ActionContext,
+  operationId: string,
+  performed: Record<string, unknown> | undefined,
+  nextState: TState | undefined
+): Promise<PipelineOutcome<TState>> {
   // 7. Commit managed state, if this action writes any.
   let committed: VersionedState<TState> | null = null;
   if (req.computeNextState) {
-    const nextState = req.computeNextState();
+    const state = nextState as TState;
     if (req.spec.commutative) {
       committed = await req.stateStore.reduceCommit(
         req.sessionId,
-        () => nextState,
+        () => state,
         operationId
       );
     } else {
       const res = await req.stateStore.commit(
         req.sessionId,
         req.expectedVersion,
-        nextState,
+        state,
         operationId
       );
       if (!res.ok) {
@@ -374,14 +615,30 @@ export async function executeActionPipeline<TState>(
     effects: context.effects,
     effectiveRisk: context.effectiveRisk,
   };
-  const record = await req.trajectoryStore.addStep(req.trajectoryId, step);
+  let record: Awaited<ReturnType<TrajectoryStore["addStep"]>>;
+  try {
+    record = await req.trajectoryStore.addStep(
+      req.trajectoryId,
+      step,
+      req.rolloverTrajectory ? { rollover: true } : undefined
+    );
+  } catch (err) {
+    // The commit (if any) stands: the action took effect when it performed or committed.
+    throw new ActionNotRecordedError(
+      req.label,
+      operationId,
+      req.perform !== undefined || committed !== null,
+      err instanceof Error ? err.message : String(err),
+      { cause: err }
+    );
+  }
 
-  // 8. Emit.
+  // 8. Emit — naming the trajectory the step went to (a continuation, after a rollover).
   req.emit?.({
     type: "state-change",
     sessionId: req.sessionId,
     operationId: context.operationId,
-    trajectoryId: req.trajectoryId,
+    trajectoryId: record?.trajectory.trajectoryId ?? req.trajectoryId,
     stepIndex: step.stepIndex,
     proposalId: context.proposalId,
     actor: context.actor,
@@ -731,7 +988,12 @@ export async function proposeOnce(req: ProposeRequest): Promise<ProposalRecord> 
     // Approved or already used: this operation has its decision — proposing it again would
     // ask for a second approval of an action that has one (PF v5.1.0; the database enforces
     // the same with idx_proposals_one_live, migration 046).
-    if (existing.some((p) => p.status === "approved" || p.status === "executed")) {
+    if (
+      existing.some(
+        (p) =>
+          p.status === "approved" || p.status === "executing" || p.status === "executed"
+      )
+    ) {
       throw new PipelineRejectedError(
         `${req.label}: operation ${req.operationId} is already approved`,
         "approval-used"
@@ -857,6 +1119,8 @@ export interface RepairRequest<TState> {
   readonly stateStore: ActivityStateStore<TState>;
   readonly trajectoryStore: TrajectoryStore;
   readonly emit?: (event: SessionEvent) => void;
+  /** The repaired step may continue a full trajectory (an app session's, review 11 H-2). */
+  readonly rolloverTrajectory?: boolean;
 }
 
 export interface RepairOutcome {
@@ -910,25 +1174,29 @@ export async function repairSession<TState>(
 
   // The tail: the trajectory step and the event that the interrupted operation never wrote.
   const timestamp = new Date().toISOString();
-  await req.trajectoryStore.addStep(req.trajectoryId, {
-    stepIndex: record.trajectory.steps.length,
-    action: "repaired-commit",
-    input: { operationId, actorId: req.actor.actorId },
-    output: { version: state.version, repaired: true },
-    cost: 0,
-    durationMs: 0,
-    timestamp,
-    boundary: "commitment",
-    operationId,
-    actor: req.actor,
-  });
+  await req.trajectoryStore.addStep(
+    req.trajectoryId,
+    {
+      stepIndex: (record.trajectory.stepOffset ?? 0) + record.trajectory.steps.length,
+      action: "repaired-commit",
+      input: { operationId, actorId: req.actor.actorId },
+      output: { version: state.version, repaired: true },
+      cost: 0,
+      durationMs: 0,
+      timestamp,
+      boundary: "commitment",
+      operationId,
+      actor: req.actor,
+    },
+    req.rolloverTrajectory ? { rollover: true } : undefined
+  );
 
   req.emit?.({
     type: "state-change",
     sessionId: req.sessionId,
     operationId,
     trajectoryId: req.trajectoryId,
-    stepIndex: record.trajectory.steps.length,
+    stepIndex: (record.trajectory.stepOffset ?? 0) + record.trajectory.steps.length,
     actor: req.actor,
     boundary: "commitment",
     intent: "repair",

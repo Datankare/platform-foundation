@@ -56,7 +56,6 @@ export default function SsoCallbackClient() {
         }
         setSession({
           accessToken: data.accessToken,
-          refreshToken: typeof data.refreshToken === "string" ? data.refreshToken : "",
           userId: data.userId,
           email: typeof data.email === "string" ? data.email : "",
           emailVerified: data.emailVerified === true,

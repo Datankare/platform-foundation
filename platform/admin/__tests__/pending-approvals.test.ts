@@ -23,7 +23,7 @@ function proposal(overrides: Record<string, unknown> = {}) {
     operationId: "op1",
     sessionId: "s1",
     trajectoryId: "t1",
-    label: "config.set",
+    label: "update_config",
     status: "proposed",
     actor: { actorType: "user", actorId: "admin-1" },
     effects: ["restricted"],
@@ -32,6 +32,15 @@ function proposal(overrides: Record<string, unknown> = {}) {
     createdAt: "2026-01-02T00:00:00.000Z",
     updatedAt: "2026-01-02T00:00:00.000Z",
     ...overrides,
+  };
+}
+
+/** A proposal store holding `proposals`, answering a query by status. */
+function storeWith(proposals: ReturnType<typeof proposal>[]) {
+  return {
+    query: jest.fn(async ({ status }: { status?: string }) =>
+      proposals.filter((p) => !status || p.status === status)
+    ),
   };
 }
 
@@ -57,7 +66,7 @@ function approval(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockTier.mockResolvedValue("safety");
-  mockStore.mockReturnValue({ query: jest.fn().mockResolvedValue([proposal()]) });
+  mockStore.mockReturnValue(storeWith([proposal()]));
   mockList.mockResolvedValue([approval()]);
 });
 
@@ -92,11 +101,56 @@ describe("listPendingApprovals — ADR-040 040a", () => {
   });
 
   it("falls back to config_manage_safety when a runtime proposal names no config key", async () => {
-    mockStore.mockReturnValue({
-      query: jest.fn().mockResolvedValue([proposal({ payload: {} })]),
-    });
+    mockStore.mockReturnValue(storeWith([proposal({ payload: {} })]));
     mockList.mockResolvedValue([]);
     const out = await listPendingApprovals();
     expect(out[0].requiredPermission).toBe("config_manage_safety");
+  });
+
+  it("does not list a hold no authority owns — an agent's step is its owner's to decide (B-10)", async () => {
+    mockStore.mockReturnValue(
+      storeWith([
+        proposal({
+          proposalId: "w1",
+          label: "process_content",
+          actor: { actorType: "agent", actorId: "agent-1", onBehalfOf: "user-1" },
+        }),
+      ])
+    );
+    mockList.mockResolvedValue([]);
+    expect(await listPendingApprovals()).toEqual([]);
+  });
+
+  it("lists an app authority's hold with that authority's permission and the person it is for", async () => {
+    const authority = {
+      name: "test",
+      owns: (p: { label: string }) => p.label === "change_user_role",
+      requiredPermission: jest.fn(async () => "admin_manage_users"),
+      resume: jest.fn(),
+    };
+    mockStore.mockReturnValue(
+      storeWith([
+        proposal({
+          proposalId: "c1",
+          label: "change_user_role",
+          payload: {},
+          actor: { actorType: "agent", actorId: "command-bar", onBehalfOf: "admin-9" },
+        }),
+      ])
+    );
+    mockList.mockResolvedValue([]);
+    const [only] = await listPendingApprovals([authority]);
+    expect(only).toMatchObject({
+      id: "c1",
+      requiredPermission: "admin_manage_users",
+      requester: "admin-9",
+    });
+  });
+
+  it("lists an approved hold that could not run, so it can be approved again", async () => {
+    mockStore.mockReturnValue(storeWith([proposal({ status: "approved" })]));
+    mockList.mockResolvedValue([]);
+    const [only] = await listPendingApprovals();
+    expect(only.reason).toMatch(/could not be applied/);
   });
 });

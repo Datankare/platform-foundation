@@ -354,3 +354,71 @@ describe("screenProfileUpdate", () => {
     expect(result.reasons._userId).toMatch(/Invalid user ID/);
   });
 });
+
+describe("profile field shapes (audit D-11)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setupDefaultConfig();
+    allowGuardian();
+  });
+
+  const refused = async (update: Record<string, unknown>) =>
+    screenProfileUpdate(VALID_USER_ID, update as never, "req-d11");
+
+  it.each([
+    "javascript:alert(1)",
+    "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+    "http://cdn.example.com/a.png",
+    "https://user:pass@cdn.example.com/a.png",
+    "https://localhost/a.png",
+    "https://127.0.0.1/a.png",
+    "https://10.0.0.5/a.png",
+    "https://[::1]/a.png",
+    "https://metadata.internal/latest",
+    "https://printer.local/a.png",
+    "https://cdn.example.com:8443/a.png",
+    "//cdn.example.com/a.png",
+    "not a url",
+    `https://cdn.example.com/${"a".repeat(2100)}`,
+  ])("refuses the avatar address %s", async (avatarUrl) => {
+    const r = await refused({ avatarUrl });
+    expect(r.allowed).toBe(false);
+    expect(r.blockedFields).toEqual(["avatarUrl"]);
+  });
+
+  it("accepts a public https avatar, and clearing it", async () => {
+    expect(
+      (await refused({ avatarUrl: "https://cdn.example.com/u/1.png" })).allowed
+    ).toBe(true);
+    expect((await refused({ avatarUrl: "" })).allowed).toBe(true);
+    expect((await refused({ avatarUrl: null })).allowed).toBe(true);
+  });
+
+  it.each([
+    [{ avatarUrl: ["https://cdn.example.com/a.png"] }, "avatarUrl"],
+    [{ avatarUrl: { href: "x" } }, "avatarUrl"],
+    [{ profileVisibility: "everyone" }, "profileVisibility"],
+    [{ avatarVisibility: ["public"] }, "avatarVisibility"],
+    [{ emailOptIn: "true" }, "emailOptIn"],
+    [{ pushNotificationsEnabled: 1 }, "pushNotificationsEnabled"],
+    [{ languagePreference: "en'; drop table users;--" }, "languagePreference"],
+    [{ timezone: "../../etc/passwd" }, "timezone"],
+    [{ timezone: "A".repeat(80) }, "timezone"],
+    [{ isAdmin: true }, "isAdmin"],
+  ])("refuses %j", async (update, field) => {
+    const r = await refused(update);
+    expect(r.allowed).toBe(false);
+    expect(r.blockedFields).toContain(field);
+    expect(mockScreenContent).not.toHaveBeenCalled();
+  });
+
+  it("accepts well-formed settings", async () => {
+    const r = await refused({
+      profileVisibility: "public",
+      emailOptIn: false,
+      languagePreference: "pt-BR",
+      timezone: "America/Argentina/Buenos_Aires",
+    });
+    expect(r.allowed).toBe(true);
+  });
+});
