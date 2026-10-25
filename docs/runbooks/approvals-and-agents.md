@@ -1,23 +1,24 @@
-# Runbook — undecided approvals and the agent kill switch (review 11 H-1, M-2; review 12 H2, L7; reviews 13, 14)
+# Runbook — undecided approvals and the agent kill switch (review 11 H-1, M-2; review 12 H2, L7; reviews 13, 14; TASK-170, TASK-172, TASK-173)
 
 Two incidents a person must act on: an approved change whose run did not end within its lease, so
 whether it took effect is unknown (an **undecided** approval, status `indeterminate`); and an agent
 that must be stopped now (the **kill switch**). Every action here is audited and alerted.
 
-| Symptom                                                                    | Section                                                                              |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Alert `approvals.indeterminate`; a row "whether it took effect is unknown" | [1. An undecided approval](#1-an-undecided-approval)                                 |
-| Alert `approvals.run_conflict`                                             | [2. A run that ended after it was decided](#2-a-run-that-ended-after-it-was-decided) |
-| An agent misbehaves and must stop                                          | [3. Suspending agents](#3-suspending-agents)                                         |
-| Alert `config.power_reduced` or `agents.emergency_suspended`               | [4. A reduction nobody approved](#4-a-reduction-nobody-approved)                     |
-| A decision answers `approvals.stale`                                       | [5. A stale held change](#5-a-stale-held-change)                                     |
-| Alert `config.invalidation_unpublished`                                    | [3. Suspending agents](#how-fast-it-reaches-every-instance)                          |
-| Alert `cache.stamp_breaker_open`                                           | [3. Suspending agents](#how-fast-it-reaches-every-instance)                          |
-| Alert `cache.stamp_read_lag`                                               | [3. Suspending agents](#how-fast-it-reaches-every-instance)                          |
-| A config or role change answered "may or may not have been applied"        | [1. An undecided approval](#1-an-undecided-approval)                                 |
-| An admin panel shows "Unavailable — could not read"                        | [3. Suspending agents](#3-suspending-agents)                                         |
-| Alert `approvals.withdrawal_incomplete`                                    | [3. Suspending agents](#3-suspending-agents)                                         |
-| An audit record with `outcome: indeterminate`                              | [1. An undecided approval](#1-an-undecided-approval)                                 |
+| Symptom                                                                       | Section                                                                                    |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Alert `approvals.indeterminate`; a row "whether it took effect is unknown"    | [1. An undecided approval](#1-an-undecided-approval)                                       |
+| Alert `approvals.run_conflict`                                                | [2. A run that ended after it was decided](#2-a-run-that-ended-after-it-was-decided)       |
+| An agent misbehaves and must stop                                             | [3. Suspending agents](#3-suspending-agents)                                               |
+| Alert `config.power_reduced` or `agents.emergency_suspended`                  | [4. A reduction nobody approved](#4-a-reduction-nobody-approved)                           |
+| A decision answers `approvals.stale`                                          | [5. A stale held change](#5-a-stale-held-change)                                           |
+| Alert `config.invalidation_unpublished`                                       | [3. Suspending agents](#how-fast-it-reaches-every-instance)                                |
+| Alert `cache.stamp_breaker_open`                                              | [3. Suspending agents](#how-fast-it-reaches-every-instance)                                |
+| Alert `cache.stamp_read_lag`                                                  | [3. Suspending agents](#how-fast-it-reaches-every-instance)                                |
+| A config or role change answered "may or may not have been applied"           | [1. An undecided approval](#1-an-undecided-approval)                                       |
+| An admin panel shows "Unavailable — could not read"                           | [3. Suspending agents](#3-suspending-agents)                                               |
+| Alert `approvals.withdrawal_incomplete`                                       | [3. Suspending agents](#3-suspending-agents)                                               |
+| An audit record with `outcome: indeterminate`                                 | [1. An undecided approval](#1-an-undecided-approval)                                       |
+| An agent workflow is `awaiting_retry`, or a held step says "approve it again" | [1b. A workflow waiting to be approved again](#1b-a-workflow-waiting-to-be-approved-again) |
 
 Read-only SQL below runs on the owner connection (the Supabase SQL editor, or `psql
 "$DATABASE_OWNER_URL"`). Decisions are made through the console or the API, never by hand, so they
@@ -78,6 +79,45 @@ invalidation is published all the same (every instance re-reads the key, or the 
 permissions, at its next read), so whichever way it went, no instance serves a stale value. Read
 the setting (or the user's role) again: if it shows the new value, it landed — do nothing; if not,
 make the change again.
+
+## 1b. A workflow waiting to be approved again
+
+An agent workflow's approved step whose run failed before taking effect keeps its approval
+(`approvals.run_failed`, "approve it again to retry"). Its trajectory waits at that step in
+**`awaiting_retry`** (migration 053, TASK-170) — it is not over, and its own agent cannot retry it:
+the agent's continuation runs nothing and is answered `held` with `awaiting: "retry"`. A run whose
+approval could not be given back leaves the trajectory **`indeterminate`** until a person decides
+the run (§1); its continuation answers `awaiting: "outcome"`.
+
+```sql
+select tenant_id, id, trigger, status, updated_at from agent_trajectories
+ where status in ('awaiting_retry', 'indeterminate') order by updated_at;
+```
+
+| To                      | Do (through the app's approval route — never by hand)                                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retry it                | Approve it again: the route runs `resumeApprovedAction` on the kept approval — once, however many approve at once; the workflow then continues                                            |
+| Not retry it            | Reject it: the route withdraws the kept approval (`withdrawHeldAction`); the trajectory records the withdrawal and is `failed`                                                            |
+| Decide an undecided run | `reapprove` (it did not take effect — `resolveUndecidedHeldAction` "approved", then resumed once) or `mark_executed` (it did — the workflow ends `failed`: its output was never recorded) |
+
+**A run lost mid-run** (TASK-173): when `config.expire-approvals` takes back an agent workflow's run
+that never ended, it moves the workflow with the approval, in the same statement — `indeterminate`
+for an undecided run (decide it as in §1, then it resumes once), `awaiting_retry` for an atomic run
+approved again. Its `approval_run_recovered` audit record names the trajectory moved
+(`trajectoryId`, `trajectoryFrom`, `trajectoryStatus`; null when the trajectory was already
+finished). Whatever the trajectory's status, the agent's continuation answers `held` with the right
+`awaiting` and never proposes the step again.
+
+```sql
+select created_at, details->>'holdId' as hold, details->>'status' as approval,
+       details->>'trajectoryId' as trajectory, details->>'trajectoryFrom' as was,
+       details->>'trajectoryStatus' as now
+  from audit_log where details->>'type' = 'approval_run_recovered' order by created_at desc limit 20;
+```
+
+A kept approval withdrawn by another path (`config.expire-approvals` once it lapses) ends its
+workflow the next time the workflow is continued. Retention keeps `awaiting_retry` and
+`indeterminate` trajectories.
 
 ## 2. A run that ended after it was decided
 
@@ -140,13 +180,21 @@ value it was requested against (compare-and-set, §5), which the reduction chang
 as `approvals.stale` — it cannot undo the reduction. Reject them from the approvals page (or let
 them lapse); the query above lists them.
 
+**In the console** (TASK-172): the admin console's **Agent kill switch** section (shown to
+`config_manage_safety` holders) suspends the current tenant's agents; the operators' **Tenants**
+console has **Agent kill switch** on each tenant's row (`platform_operate`). Each asks for the
+reason, then for an explicit confirmation, and shows what the route answered: the agents suspended,
+the pending holds withdrawn, and — when none was active — whether every instance was told again to
+drop its cached registry (`republished`; "did not go through" is `config.invalidation_unpublished`,
+below). "Unavailable" (503) means nothing was suspended: try again, or use the API.
+
 **Every agent of a tenant at once** (operators, `platform_operate`):
 
 ```bash
 curl -sS -X POST "https://$HOST/api/operator/tenants/$TENANT_ID/agents/suspend" \
   -H "authorization: Bearer $OPERATOR_TOKEN" -H "content-type: application/json" \
   -d '{"reason": "incident 2026-10-24: agent:x looping"}'
-# → {"suspended": ["agent:x", "agent:y"]}
+# → {"suspended": ["agent:x", "agent:y"], "withdrawn": ["<hold id>", …]}
 ```
 
 **Every agent of the current tenant, in any deployment mode** (review 12 L7) — a single-tenant

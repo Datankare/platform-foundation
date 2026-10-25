@@ -33,6 +33,11 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req",
 }));
 jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
+// The operators' route runs its work in the target tenant; here, the one this suite runs in.
+jest.mock("@/platform/tenancy/operator-target", () => ({
+  inTargetTenant: (_id: string, _request: unknown, work: () => Promise<Response>) =>
+    work(),
+}));
 
 const DUAL_KEYS = ["agent.trusted_agents", "agent.capability_features"];
 const store = new Map<string, unknown>();
@@ -129,6 +134,7 @@ import {
 import { POST as execute } from "@/app/api/admin/ai/execute/route";
 import { POST as decide } from "@/app/api/admin/approvals/[id]/route";
 import { POST as suspendRoute } from "@/app/api/admin/agents/suspend/route";
+import { POST as operatorSuspendRoute } from "@/app/api/operator/tenants/[id]/agents/suspend/route";
 import { suspendAllAgents } from "@/platform/admin/agent-kill-switch";
 
 const operator = identityFor("super_admin", { name: "rv12_operator" });
@@ -295,7 +301,13 @@ describe("R12-4 a change held before the kill switch cannot undo it", () => {
       agent_id: "agent:b",
       max_token_ttl: 600,
     });
-    const [second, first] = await proposals.query({});
+    // Picked by content, not by order: both holds can share a millisecond (createdAt ties on a
+    // fast machine), so "newest first" does not tell them apart.
+    const held = await proposals.query({});
+    expect(held).toHaveLength(2);
+    const first = held.find((h) => JSON.stringify(h.payload).includes('"z"'))!;
+    const second = held.find((h) => h.proposalId !== first.proposalId)!;
+    expect(JSON.stringify(second.payload)).toContain("600");
     expect((await decideAs("safety_approver", first.proposalId)).status).toBe(200);
     expect(
       (store.get("agent.trusted_agents") as [string, { scopes: string[] }][])[0][1].scopes
@@ -437,6 +449,33 @@ describe("R12-L7 mark_executed needs independence; the kill switch in a single-t
       withdrawn: [],
     });
     expect(statuses()).toEqual(["suspended", "suspended"]);
+  });
+
+  it("POST /api/operator/tenants/[id]/agents/suspend answers what the console shows: suspended and withdrawn (TASK-172)", async () => {
+    const res = await operatorSuspendRoute(
+      post(
+        "/api/operator/tenants/t1/agents/suspend",
+        { reason: "incident" },
+        "super_admin"
+      ),
+      { params: Promise.resolve({ id: "t1" }) }
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      suspended: ["agent:a", "agent:b"],
+      withdrawn: [],
+    });
+    expect(statuses()).toEqual(["suspended", "suspended"]);
+    const again = await operatorSuspendRoute(
+      post("/api/operator/tenants/t1/agents/suspend", { reason: "again" }, "super_admin"),
+      { params: Promise.resolve({ id: "t1" }) }
+    );
+    expect(await again.json()).toMatchObject({ suspended: [], withdrawn: [] });
+    const missing = await operatorSuspendRoute(
+      post("/api/operator/tenants/t1/agents/suspend", { reason: "" }, "super_admin"),
+      { params: Promise.resolve({ id: "t1" }) }
+    );
+    expect(missing.status).toBe(400);
   });
 
   it("refuses an admin without config_manage_safety, and a missing reason", async () => {

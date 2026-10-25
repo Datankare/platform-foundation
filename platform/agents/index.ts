@@ -134,10 +134,13 @@ export {
   approvalPolicy,
   approveHeldAction,
   rejectHeldAction,
+  withdrawHeldAction,
+  resolveUndecidedHeldAction,
+  endHeldTrajectory,
   heldActionRefusal,
   principalOf,
 } from "./gating";
-export type { HeldActionRefusal } from "./gating";
+export type { HeldActionRefusal, ResolveUndecidedArgs } from "./gating";
 export {
   getApprovalPolicyStore,
   setApprovalPolicyStore,

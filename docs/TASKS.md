@@ -3852,6 +3852,126 @@ platform-scope withdrawal (`SupersededWithdrawal.tenants`, `remaining`); the kit
 `__tests__/helpers/audited-external-scan.ts`, the JSDoc tag `@external`, and `{ external }` on
 `auditedResponse`, `runAudited` and the other wrappers.
 
+### TASK-170 — An agent workflow could not be retried by approving its step again
+
+| Field        | Detail                            |
+| ------------ | --------------------------------- |
+| **ID**       | TASK-170                          |
+| **Type**     | Reliability, consumer correctness |
+| **Severity** | Medium                            |
+| **Phase**    | Phase 5                           |
+| **Target**   | v6.0.0 (RC)                       |
+| **Status**   | Fixed on develop (v6.0.0 RC)      |
+| **Logged**   | 2026-10-25                        |
+
+**What:** found adopting v6.0.0 in Playform. An approved step whose run fails before taking effect
+keeps its approval (`ApprovedRunFailedError`, released — review 10 H2: "approve it again to
+retry"), but the workflow loop marked its trajectory `failed`, and a failed trajectory is never
+continued. For an agent workflow the kept approval could only lapse or be withdrawn; Playform's
+approval route reopened the trajectory (`failed` → `running`) itself.
+
+**Fix:** the loop leaves such a trajectory `awaiting_retry` (migration 053, a new
+`trajectory_status` value; retention keeps it) — or `indeterminate` when the approval could not be
+given back (the run's outcome unknown). A continuation by the workflow's own agent runs nothing in
+either: it answers `held` with `awaiting: "retry"` or `"outcome"` (`HeldAction.awaiting`,
+`lastRunError`), and settles a decision made elsewhere — a withdrawn or rejected step, or one
+marked executed (its output never recorded), ends the workflow `failed` with the decision recorded
+(`endHeldTrajectory`) and is refused as over. `resumeApprovedAction` on the kept approval is
+"approve again": it resumes the trajectory at that step; concurrent ones run it once (the run's
+claim), the others are refused. `withdrawHeldAction` withdraws a kept approval and ends its
+workflow; `resolveUndecidedHeldAction` decides an undecided run (`approved` → `awaiting_retry`,
+then resumed; `executed` → ended). Tests: `platform/agents/__tests__/held-action-retry.test.ts`
+(memory), `__tests__/db/held-action-retry.db.test.ts` (Postgres: concurrent re-approvals, the job's
+recovery, retention); the replay checks 053 and its second application.
+
+### TASK-171 — The token-verification tests could not run against an app's own provider
+
+| Field        | Detail                               |
+| ------------ | ------------------------------------ |
+| **ID**       | TASK-171                             |
+| **Type**     | Test assurance, consumer correctness |
+| **Severity** | Low                                  |
+| **Phase**    | Phase 5                              |
+| **Target**   | v6.0.0 (RC)                          |
+| **Status**   | Fixed on develop (v6.0.0 RC)         |
+| **Logged**   | 2026-10-25                           |
+
+**What:** `__tests__/jwt-verification.test.ts` and `__tests__/rv9-jwks-outage.test.ts` (reviews 8
+M5, 9 M4/L9/L11) drove the platform's `CognitoAuthProvider` class, so an app with its own
+AuthProvider kept sync-excluded copies with its provider spliced in (Playform's are on the AWS SDK).
+
+**Fix:** their cases are a provider-level kit, `__tests__/contract/auth-token-verification-contract.ts`
+— `runAuthTokenVerificationContract(name, { makeProvider, makeKeyStore?, verifySignature?, cleanup? })`:
+the provider is built over the kit's signing-key store (a JWKS fake it controls), `TokenVerifier`
+and user lookup (`user` / `unavailable` / `invalid`). Every case of the two files is in it, the
+revocation-during-lookup ones (L11) now through the provider, plus a refused lookup.
+`__tests__/auth-token-verification-conformance.test.ts` runs it against the platform's provider and
+keeps the pool-helper cases (JWKS address, one store per pool, pinned keys); the two files are
+removed. A provider that skips the signature check fails 23 of the kit's cases.
+
+### TASK-172 — The admin console did not offer the kill switch its own guide asks for
+
+| Field        | Detail                       |
+| ------------ | ---------------------------- |
+| **ID**       | TASK-172                     |
+| **Type**     | Operability, security UX     |
+| **Severity** | Low                          |
+| **Phase**    | Phase 5                      |
+| **Target**   | v6.0.0 (RC)                  |
+| **Status**   | Fixed on develop (v6.0.0 RC) |
+| **Logged**   | 2026-10-25                   |
+
+**What:** `POST /api/admin/agents/suspend` (review 12 L7) is the kill switch for a single-tenant
+deployment's administrators, and the migration guide asks admin UIs to offer it to
+`config_manage_safety` holders — the platform's console did not (Playform built
+`/agent/kill-switch`); the operators' console had no per-tenant one either.
+
+**Fix:** `components/admin/AgentKillSwitchPanel.tsx`: `AgentKillSwitch` (a route, an optional
+tenant) — a required reason, an explicit confirmation step (inline; never `window.prompt` or
+`window.confirm`), `apiFetch`, and the answer: agents suspended, holds withdrawn, `republished`
+(or not), 503 as unavailable. The admin console's **Agent kill switch** section is shown to
+`config_manage_safety` holders only; the operators' Tenants console opens it per tenant
+(`platform_operate`). Every word from `screens.kill_switch`. The operators' route also answers
+`withdrawn` (and bounds the reason at 500 characters, as the admin route). Tests:
+`__tests__/agent-kill-switch-panel.test.tsx` (jsdom, axe WCAG 2.2 AA), the operators' route in
+`__tests__/rv12-killswitch.test.ts`.
+
+### TASK-173 — A workflow whose run was lost answered its continuation with a 500
+
+| Field        | Detail                            |
+| ------------ | --------------------------------- |
+| **ID**       | TASK-173                          |
+| **Type**     | Reliability, consumer correctness |
+| **Severity** | Medium                            |
+| **Phase**    | Phase 5                           |
+| **Target**   | v6.0.0 (RC)                       |
+| **Status**   | Fixed on develop (v6.0.0 RC)      |
+| **Logged**   | 2026-10-25                        |
+
+**What:** found adopting `050219d` in Playform. When an approved workflow step's run never ended
+(an instance lost mid-run), `config.expire-approvals` (`recoverStaleRuns`) moved its approval to
+`indeterminate` — or, for an atomic run, back to `approved` — but left its trajectory `running`.
+The agent's own continuation then re-proposed the step, and the proposal store's one-live rule
+refused it with a plain error (`operation … already has an open, approved or used proposal`): a 500
+from Playform's `process-content`, not `held` with `awaiting: "outcome"`. Nothing ran twice.
+
+**Fix:** the recovery moves the run's trajectory to the matching waiting state in the same
+statement — `indeterminate` (from `running`, `paused` or `awaiting_retry`) for an undecided run,
+`awaiting_retry` (from `running` or `paused`) for an atomic run approved again; a finished
+trajectory is left as it is. Its audit record (`approval_run_recovered`) carries `trajectoryId`,
+`trajectoryFrom`, `trajectoryStatus` (null when none moved). `RECOVERED_TRAJECTORY` holds the
+mapping; the in-memory recovery takes the trajectory store (`recoverStaleRuns(before,
+trajectories)`, `InMemoryTrajectoryStore.moveStatus`). Defence in depth, for any other path to the
+state: every continuation (`runGoal`, `advanceGoal`) reads its next step's proposal whatever the
+trajectory's status — undecided answers `held`/`awaiting: "outcome"`, approved after a failed run
+(`lastRunError`) `held`/`awaiting: "retry"`, the trajectory moved to match; a fresh approval still
+runs. A hold refused for such a proposal answers the same, and `proposeOnce` refuses an
+`indeterminate` operation as decided (`approval-used`) instead of reaching the store. Tests:
+`platform/agents/__tests__/held-action-retry.test.ts` (memory) and
+`__tests__/db/held-action-retry.db.test.ts` (Postgres, the job's statement and its audit): lost
+mid-run → recovery → held awaiting outcome; `resolveUndecidedHeldAction` then resumed once; atomic
+→ `awaiting_retry`; a trajectory left `running` still answered held. No migration.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -3897,7 +4017,9 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: October 24, 2026 (review 14 of the v6.0.0 candidate — TASK-169 filed and fixed)_
+_Last updated: October 25, 2026 (gaps found adopting v6.0.0 in Playform — TASK-170–173 filed and fixed)_
+
+_Previously updated: October 24, 2026 (review 14 of the v6.0.0 candidate — TASK-169 filed and fixed)_
 
 _Previously updated: October 24, 2026 (Playform adoption defects — TASK-168 filed and fixed)_
 

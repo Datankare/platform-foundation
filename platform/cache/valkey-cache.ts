@@ -22,6 +22,7 @@
  */
 
 import Redis, { type RedisOptions } from "ioredis";
+import { GuardedValkeyConnector } from "./valkey-connector";
 import { parseValkeyUrl } from "./valkey-url";
 import type {
   CacheGetOptions,
@@ -76,6 +77,9 @@ export function valkeyConnectionOptions(config: ValkeyCacheConfig): {
     // A command is not retried underneath the caller: one reconnect attempt at most.
     maxRetriesPerRequest: 1,
     enableReadyCheck: true,
+    // Every error on the socket handled for its whole life: a TLS alert arriving after the
+    // first error would otherwise be thrown as an uncaught exception (valkey-connector.ts).
+    Connector: GuardedValkeyConnector,
   };
   if (endpoint.tls) {
     options.tls = {

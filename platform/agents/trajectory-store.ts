@@ -293,6 +293,31 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     return updated;
   }
 
+  /**
+   * Move `trajectoryId` to `to` only if its status is one of `from` (compare-and-set), at once —
+   * what the in-memory recovery of a lost run uses (InMemoryProposalStore.recoverStaleRuns,
+   * TASK-173). Returns the moved record, or undefined when it was not in one of `from`.
+   */
+  moveStatus(
+    trajectoryId: string,
+    from: readonly TrajectoryStatus[],
+    to: TrajectoryStatus
+  ): TrajectoryRecord | undefined {
+    const records = this.parts.current();
+    const current = records.get(trajectoryId);
+    if (!current || !from.includes(current.trajectory.status)) return undefined;
+    const updated: TrajectoryRecord = {
+      ...current,
+      trajectory: {
+        ...current.trajectory,
+        status: to,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    records.set(trajectoryId, updated);
+    return updated;
+  }
+
   async getById(trajectoryId: string): Promise<TrajectoryRecord | undefined> {
     return this.parts.current().get(trajectoryId);
   }

@@ -19,7 +19,8 @@ export type AdminSection =
   | "dual-control"
   | "tenant"
   | "tenants"
-  | "jobs";
+  | "jobs"
+  | "kill-switch";
 
 interface AdminShellProps {
   /** Current admin's display name */
@@ -92,6 +93,13 @@ const NAV_ITEMS: {
     label: "Trusted Agents",
     icon: "🤖",
     permission: "admin_manage_agents",
+  },
+  {
+    // The single-tenant kill switch (TASK-172): the registry's own tier permission, as the route.
+    section: "kill-switch",
+    label: renderMessage("screens.kill_switch.nav"),
+    icon: "🛑",
+    permission: "config_manage_safety",
   },
   {
     section: "per-account",

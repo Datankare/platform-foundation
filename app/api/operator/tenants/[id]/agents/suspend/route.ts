@@ -4,7 +4,10 @@
  *
  * POST { reason } — suspends every agent registered for the tenant at once, without a second
  * admin (platform/admin/agent-kill-switch.ts): a strict reduction of power, compare-and-set,
- * audited and alerted. Answers { suspended: [agent ids] }. Reactivation is held as before.
+ * audited and alerted; the pending holds on the tenant's registry are withdrawn. Answers
+ * { suspended: [agent ids], withdrawn: [hold ids] } (and `republished` when nothing was active),
+ * as POST /api/admin/agents/suspend does — the operators' console shows all three (TASK-172).
+ * Reactivation is held as before.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -34,7 +37,7 @@ export const POST = tenantRoute(async function POST(
   }
   return inTargetTenant(id, request, async () => {
     try {
-      const outcome = await suspendAllAgents(guard.admin, reason.trim());
+      const outcome = await suspendAllAgents(guard.admin, reason.trim().slice(0, 500));
       if (!outcome.ok) {
         logger.warn("Agent kill switch refused", {
           tenantId: id,
@@ -45,6 +48,7 @@ export const POST = tenantRoute(async function POST(
       }
       return NextResponse.json({
         suspended: outcome.suspended,
+        withdrawn: outcome.withdrawn ?? [],
         ...(outcome.republished !== undefined
           ? { republished: outcome.republished }
           : {}),

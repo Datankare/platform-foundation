@@ -321,6 +321,35 @@
       "retry_label": "Try reading {panel} again",
       "no_agents": "No agents registered.",
       "no_mappings": "No mappings configured."
+    },
+    "kill_switch": {
+      "nav": "Agent kill switch",
+      "title": "Agent kill switch",
+      "intro": "Suspends every agent registered for this deployment at once. One administrator can do it — it only takes power away — and it is recorded in the audit log and alerted. Pending holds on the agent registry are withdrawn. Reactivating an agent stays a held change that a second administrator approves (Trusted Agents).",
+      "intro_tenant": "Suspends every agent registered for {tenant} at once. It only takes power away, so no second operator is needed; it is recorded in the tenant's audit log and alerted, and the pending holds on its agent registry are withdrawn. Reactivating an agent stays a held change.",
+      "form_label": "Suspend every agent",
+      "form_label_tenant": "Suspend every agent of {tenant}",
+      "reason": "Reason (recorded with the suspension)",
+      "reason_hint": "Say what happened, for the audit log and whoever reactivates the agents.",
+      "suspend": "Suspend every agent",
+      "confirm_heading": "Suspend every agent now?",
+      "confirm_heading_tenant": "Suspend every agent of {tenant} now?",
+      "confirm_body": "Every agent stops acting at once, and the pending holds on the agent registry are withdrawn. It is not undone here: reactivating an agent is a held change.",
+      "confirm_reason": "Reason: {reason}",
+      "confirm_yes": "Yes, suspend every agent",
+      "cancel": "Cancel",
+      "close": "Close",
+      "busy": "Suspending…",
+      "open": "Agent kill switch",
+      "open_label": "Agent kill switch for {tenant}",
+      "suspended": "{count, plural, one {# agent suspended} other {# agents suspended}}: {agents}.",
+      "withdrawn": "{count, plural, =0 {No pending hold was withdrawn.} one {# pending hold withdrawn:} other {# pending holds withdrawn:}}",
+      "none_active": "No agent was active, so none was suspended.",
+      "republished": "Every instance was told again to drop its cached agent registry.",
+      "unpublished": "Telling every instance to drop its cached agent registry did not go through — check the alerts (config.invalidation_unpublished) before relying on it.",
+      "unavailable": "The kill switch could not be reached just now (unavailable). Nothing was suspended; try again.",
+      "failed": "Not suspended: {reason}",
+      "refused": "The request was refused."
     }
   }
 }

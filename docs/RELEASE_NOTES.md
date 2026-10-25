@@ -9,6 +9,51 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ---
 
+## v6.0.0 (continued) — gaps found adopting the release candidate in Playform
+
+Four gaps Playform worked around in its own code (its `docs/APP_SECURITY_DEBT.md`), closed in the
+platform. Deploy: migration 053 in the SQL Editor ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md)
+§1 step 2), then the code. Consumer steps: §1b, the four "Release candidate" rows.
+
+- **Approve again to retry, for agent workflows (TASK-170).** An approved workflow step whose run
+  fails before taking effect keeps its approval — and now its workflow too: the trajectory waits at
+  that step in `awaiting_retry` (migration 053) instead of ending `failed`. Approving it again
+  (`resumeApprovedAction` on the kept approval) resumes it there, once, however many approve at
+  once; the workflow's own agent cannot retry it alone (its continuation answers `held`, `awaiting:
+"retry"`). A run whose approval could not be given back blocks the workflow (`indeterminate`,
+  `awaiting: "outcome"`) until a person decides it — `resolveUndecidedHeldAction`; a withdrawal
+  (`withdrawHeldAction`, or the expiry job) ends it, recorded. Runbook
+  [approvals-and-agents §1b](runbooks/approvals-and-agents.md#1b-a-workflow-waiting-to-be-approved-again).
+- **A lost run's workflow waits with its approval (TASK-173).** When `config.expire-approvals`
+  takes back a run that never ended (an instance lost mid-run), it now moves the run's trajectory
+  too, in the same audited statement: `indeterminate` for an undecided run, `awaiting_retry` for an
+  atomic one approved again. The agent's continuation answers `held` (`awaiting: "outcome"` /
+  `"retry"`) instead of re-proposing the step — which the proposal store refused with a plain
+  error, a 500 in the consumer's route. And every continuation reads its next step's proposal
+  whatever the trajectory says, so any other path to that state answers `held` too. No migration.
+- **A token-verification kit for any AuthProvider (TASK-171).** The hostile-token, signing-key,
+  cold-start, outage and revocation cases of reviews 8 and 9 are a provider-level conformance kit,
+  `__tests__/contract/auth-token-verification-contract.ts`
+  (`runAuthTokenVerificationContract(name, { makeProvider })`), given the provider's key store,
+  token verifier and user lookup. The platform runs it against `CognitoAuthProvider`; an app runs it
+  against its own provider instead of copying the cases.
+- **The kill switch in the consoles (TASK-172).** The admin console's **Agent kill switch**
+  (`config_manage_safety`, `POST /api/admin/agents/suspend`) and a per-tenant one in the operators'
+  Tenants console (`platform_operate`): a required reason, an explicit confirmation, and the result —
+  agents suspended, holds withdrawn, the invalidation republished. The operators' route also answers
+  `withdrawn`. Components `AgentKillSwitch`, `AdminKillSwitchView`; catalog `screens.kill_switch`.
+- **No uncaught exception from the Valkey socket.** ioredis listens for a socket's `error` with
+  `once()`; a TLS alert arriving after the first error (a server the client cannot verify, closed
+  while reconnecting) was thrown as an uncaught exception and stopped the process — the Valkey
+  suite's intermittent failure under load. The provider now gives ioredis its own connector
+  (`platform/cache/valkey-connector.ts`, ioredis's public `Connector` option) that opens the socket
+  with the same verify-full settings and keeps a listener for the socket's whole life; later errors
+  are counted (`valkeyLateSocketErrors()`), never thrown. Proved deterministically and against a real
+  TLS server under CPU load (`__tests__/valkey-connector.test.ts`: 2 of 5 runs failed without it,
+  10 of 10 passed with it).
+
+---
+
 ## v6.0.0 — Tenancy, modules, jobs, the container, and the audit's Wave 2
 
 Date: 2026-10-24 (Sprint 7R close). **Breaking** — deploy with the ordered runbook in

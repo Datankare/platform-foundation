@@ -69,6 +69,10 @@ const EXPECTED_EXPORTS = [
   "approveHeldAction",
   "rejectHeldAction",
   "approvalPolicy",
+  // TASK-170 — an approved step whose run did not take effect: withdrawn, or its outcome decided
+  "withdrawHeldAction",
+  "resolveUndecidedHeldAction",
+  "endHeldTrajectory",
   // Sprint 3c A1 — admin-governable approval policy
   "DEFAULT_APPROVAL_POLICY",
   "approvalRulesProblem",

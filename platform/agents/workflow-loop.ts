@@ -33,15 +33,20 @@ import type {
   Step,
   Tool,
   TrajectoryRecord,
+  TrajectoryStatus,
   TrajectoryStore,
 } from "@/platform/kernel";
 import { EFFECT_RISK_FLOOR } from "@/platform/kernel";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
-import { PipelineRejectedError, proposeOnce } from "@/platform/action-pipeline";
+import {
+  ApprovedRunFailedError,
+  PipelineRejectedError,
+  proposeOnce,
+} from "@/platform/action-pipeline";
 import { invokeTool } from "./tool-invoker";
 import { getTrajectoryStore } from "./trajectory-store";
 import { getProposalStore } from "./proposal-store";
-import { approvalPolicy, principalOf } from "./gating";
+import { approvalPolicy, endHeldTrajectory, principalOf } from "./gating";
 import { getBudgetTracker } from "./budget-tracker";
 import { logger } from "@/lib/logger";
 import { getApprovalPolicyStore } from "./approval-policy-store";
@@ -431,6 +436,18 @@ async function runSteps(
           try {
             held = await holdStep(definition, step, i, ctx, args, store, trajectoryId);
           } catch (holdErr) {
+            // The step's proposal waits for a decision on a run of it (TASK-173: its approval
+            // undecided, or kept after a failed run) though this trajectory did not say so:
+            // answer that, truthfully, rather than the store's refusal to propose it again.
+            const current = await proposalForStep(proposalStore, trajectoryId, i);
+            const awaiting = waitsFor(current);
+            if (current && awaiting) {
+              await store.updateStatus(trajectoryId, WAITING_STATUS[awaiting]);
+              return {
+                stop: "held",
+                held: await heldAgain(definition, current, awaiting),
+              };
+            }
             if (
               (holdErr instanceof PipelineRejectedError &&
                 holdErr.reason === "approval-used") ||
@@ -447,6 +464,17 @@ async function runSteps(
         // budget-exceeded: pause, recoverable by raising the ceiling (ADR-029 D8).
         await store.updateStatus(trajectoryId, "paused");
         return { stop: "paused" };
+      }
+      if (approved && err instanceof ApprovedRunFailedError) {
+        // The approved step failed before taking effect (TASK-170). Its approval was kept: the
+        // workflow waits at this step for it to be approved again (awaiting_retry) — it is not
+        // over, and its own agent cannot retry it without that decision. An approval that could
+        // not be given back leaves the run's outcome unknown: blocked until a person decides it.
+        await store.updateStatus(
+          trajectoryId,
+          err.released ? "awaiting_retry" : "indeterminate"
+        );
+        throw err;
       }
       await store.updateStatus(trajectoryId, "failed");
       throw err;
@@ -497,6 +525,142 @@ async function approvedProposalForStep(
     status: "approved",
   });
   return approved.find((p) => p.trajectoryId === trajectoryId);
+}
+
+/**
+ * Statuses in which a workflow waits for a decision on its approved step (TASK-170): its run
+ * failed before taking effect with the approval kept (awaiting_retry), or its outcome is unknown
+ * (indeterminate). A continuation by the workflow's own agent runs nothing in them; only
+ * resumeApprovedAction, after the step is approved again, continues one.
+ */
+const AWAITING_DECISION: ReadonlySet<TrajectoryStatus> = new Set<TrajectoryStatus>([
+  "awaiting_retry",
+  "indeterminate",
+]);
+
+/** Proposal statuses that are still this step's decision (not ended). */
+const LIVE_PROPOSAL = new Set(["proposed", "approved", "executing", "indeterminate"]);
+
+/** The proposal made for step `stepIndex` of this trajectory: its live one, else the latest. */
+async function proposalForStep(
+  proposalStore: ProposalStore,
+  trajectoryId: string,
+  stepIndex: number
+): Promise<ProposalRecord | undefined> {
+  const all = (
+    await proposalStore.query({ operationId: stepOperationId(trajectoryId, stepIndex) })
+  ).filter((p) => p.trajectoryId === trajectoryId);
+  return all.find((p) => LIVE_PROPOSAL.has(p.status)) ?? all[0];
+}
+
+/**
+ * What a step's proposal waits for whatever its trajectory's status says (TASK-173): `outcome` —
+ * its approved run's outcome is unknown (indeterminate); `retry` — approved, and a run of it
+ * ended without taking effect (its approval kept, with why: lastRunError). Undefined for a
+ * proposal that waits for nothing of the kind: open, freshly approved (a continuation runs it),
+ * in use or ended.
+ */
+function waitsFor(proposal: ProposalRecord | undefined): "retry" | "outcome" | undefined {
+  if (proposal?.status === "indeterminate") return "outcome";
+  if (proposal?.status === "approved" && proposal.lastRunError) return "retry";
+  return undefined;
+}
+
+/** The trajectory status that matches what a step waits for. */
+const WAITING_STATUS = {
+  retry: "awaiting_retry",
+  outcome: "indeterminate",
+} as const satisfies Record<"retry" | "outcome", TrajectoryStatus>;
+
+/** The HeldAction for a step that was already approved, now waiting for a decision again. */
+async function heldAgain(
+  definition: WorkflowDefinition,
+  proposal: ProposalRecord,
+  awaiting: "retry" | "outcome"
+): Promise<HeldAction> {
+  const policy = await getApprovalPolicyStore().load();
+  return {
+    proposalId: proposal.proposalId,
+    operationId: proposal.operationId,
+    label: proposal.label,
+    effectiveRisk: proposal.effectiveRisk,
+    effects: proposal.effects,
+    approver: approvalPolicy(proposal.effectiveRisk, proposal.effects, policy),
+    approvalEndpoint: `${definition.endpoint}/approve`,
+    ...(proposal.observedVersion !== undefined
+      ? { observedVersion: proposal.observedVersion }
+      : {}),
+    awaiting,
+    ...(proposal.lastRunError ? { lastRunError: proposal.lastRunError } : {}),
+  };
+}
+
+/**
+ * A continuation of a workflow that waits for a decision on its approved step (TASK-170) — by
+ * its own agent, not a resume of an approval. Nothing runs. What it answers follows the step's
+ * proposal, whichever path decided it (an approval route, the expiry job, an operator):
+ *
+ *   approved (kept)        held, awaiting "retry": approving it again resumes it
+ *   indeterminate          held, awaiting "outcome": a person marks it executed or approves again
+ *   executing              a run of it is in progress: HeldActionNotApprovedError, as for a race
+ *   rejected / superseded  withdrawn or rejected: the workflow ends (failed, the decision
+ *                          recorded) and is refused as over (TrajectoryAccessError)
+ *   executed               marked executed by a person: its output was never recorded, so the
+ *                          workflow cannot continue past it — it ends the same way
+ *   none / proposed        the approved step has run since (or a new hold): the loop continues
+ *
+ * A trajectory NOT in a waiting status (TASK-173: left `running` by a path that moved only the
+ * approval — an instance lost mid-run, recovered by a job that did not move it) is answered by
+ * the proposal too, but only where it waits (waitsFor): undecided — held, awaiting "outcome";
+ * approved with its run failed — held, awaiting "retry"; the trajectory moved to match. Anything
+ * else continues as before (a fresh approval runs; the loop's own checks answer the rest), so
+ * the step is never re-proposed against a standing approval and the caller is answered
+ * truthfully, never with the store's one-live refusal.
+ */
+async function awaitingDecision(
+  definition: WorkflowDefinition,
+  args: RunGoalArgs,
+  store: TrajectoryStore,
+  record: TrajectoryRecord
+): Promise<Omit<RunResult, "capability"> | undefined> {
+  const proposalStore = args.proposalStore ?? getProposalStore();
+  const trajectoryId = record.trajectory.trajectoryId;
+  const index = commitmentCount(record.trajectory.steps);
+  const proposal = await proposalForStep(proposalStore, trajectoryId, index);
+  if (!AWAITING_DECISION.has(record.trajectory.status)) {
+    const awaiting = waitsFor(proposal);
+    if (!proposal || !awaiting) return undefined;
+    return waitAgain(definition, store, record, proposal, awaiting);
+  }
+  if (!proposal || proposal.status === "proposed") return undefined;
+  if (proposal.status === "executing") {
+    throw new HeldActionNotApprovedError(proposal.proposalId);
+  }
+  if (proposal.status === "approved" || proposal.status === "indeterminate") {
+    return waitAgain(
+      definition,
+      store,
+      record,
+      proposal,
+      proposal.status === "approved" ? "retry" : "outcome"
+    );
+  }
+  await endHeldTrajectory(store, proposal);
+  throw new TrajectoryAccessError(trajectoryId);
+}
+
+/** Held again, awaiting `awaiting`: the trajectory moved to the matching waiting status. */
+async function waitAgain(
+  definition: WorkflowDefinition,
+  store: TrajectoryStore,
+  record: TrajectoryRecord,
+  proposal: ProposalRecord,
+  awaiting: "retry" | "outcome"
+): Promise<Omit<RunResult, "capability">> {
+  const status = WAITING_STATUS[awaiting];
+  if (record.trajectory.status !== status)
+    await store.updateStatus(record.trajectory.trajectoryId, status);
+  return { stop: "held", held: await heldAgain(definition, proposal, awaiting) };
 }
 
 /**
@@ -587,10 +751,16 @@ function affordances(
   result: RunResult
 ): readonly NextAction[] {
   if (result.stop === "held") {
+    const by = result.held?.approver.actorType ?? "an approver";
     return [
       {
         action: "retry",
-        description: `Held for approval by ${result.held?.approver.actorType ?? "an approver"} — poll or resume after a decision`,
+        description:
+          result.held?.awaiting === "retry"
+            ? `Approved, and its run failed before taking effect — waiting to be approved again by ${by}; poll after a decision`
+            : result.held?.awaiting === "outcome"
+              ? `Its approved run's outcome is unknown — waiting for ${by} to mark it executed or approve it again; poll after a decision`
+              : `Held for approval by ${by} — poll or resume after a decision`,
         endpoint: definition.endpoint,
         requiredParams: ["trajectoryId"],
         estimatedCostUSD: 0,
@@ -664,6 +834,12 @@ async function assemble(
 
   if (result.stop === "completed" && remaining === 0) {
     await store.updateStatus(trajectoryId, "completed");
+  } else if (
+    result.stop === "completed" &&
+    AWAITING_DECISION.has(record.trajectory.status)
+  ) {
+    // The approved step ran on its resume (TASK-170): the workflow is under way again.
+    await store.updateStatus(trajectoryId, "running");
   }
 
   const settled = await store.getById(trajectoryId);
@@ -762,6 +938,12 @@ export async function runGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>
   const trajectoryId = record.trajectory.trajectoryId;
   const from = commitmentCount(record.trajectory.steps);
 
+  // Every continuation asks what its next step waits for (TASK-173), whatever the trajectory's
+  // status says.
+  const waiting = await awaitingDecision(definition, args, store, record);
+  if (waiting)
+    return assemble(definition, store, trajectoryId, { ...waiting, capability });
+
   const stepResult = await runSteps(
     definition,
     args,
@@ -782,6 +964,17 @@ export async function runGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>
  * The agent picks the next hop from nextActions and calls again with the trajectoryId.
  */
 export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>> {
+  return advance(args, false);
+}
+
+/**
+ * The next step. `resuming` — resumeApprovedAction, after the step's approval was (again)
+ * given: a workflow waiting for that decision is continued, not answered as waiting.
+ */
+async function advance(
+  args: RunGoalArgs,
+  resuming: boolean
+): Promise<AgentResponse<unknown>> {
   const definition = resolveWorkflow(args.goal);
   const store = args.trajectoryStore ?? getTrajectoryStore();
 
@@ -793,6 +986,13 @@ export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unkn
   const record = await openTrajectory(args, store);
   const trajectoryId = record.trajectory.trajectoryId;
   const from = commitmentCount(record.trajectory.steps);
+
+  if (!resuming) {
+    // As runGoal: what the next step waits for, whatever the trajectory's status (TASK-173).
+    const waiting = await awaitingDecision(definition, args, store, record);
+    if (waiting)
+      return assemble(definition, store, trajectoryId, { ...waiting, capability });
+  }
 
   const stepResult =
     from >= definition.steps.length
@@ -840,6 +1040,14 @@ export interface ResumeApprovedActionArgs {
  * proposal was made for, so the same approval cannot be replayed to drive later steps. Throws
  * HeldActionNotApprovedError when the proposal is not approved or its step is not next,
  * TrajectoryAccessError when its trajectory is gone.
+ *
+ * Approving again (TASK-170). When the step's run fails before taking effect, its approval is
+ * kept and the workflow waits in `awaiting_retry`; it is continued only here — calling this again
+ * for the kept approval (after the caller's own decision checks) is what "approve it again to
+ * retry" does. Concurrent calls run the step once: the run claims the approval, and every other
+ * call is refused (HeldActionNotApprovedError). A run whose outcome is unknown leaves the
+ * workflow `indeterminate` and refused here until a person decides it
+ * (resolveUndecidedHeldAction); a withdrawal (withdrawHeldAction) ends it.
  */
 export async function resumeApprovedAction(
   args: ResumeApprovedActionArgs
@@ -858,17 +1066,20 @@ export async function resumeApprovedAction(
     throw new HeldActionNotApprovedError(args.proposalId);
   }
 
-  return advanceGoal({
-    goal: record.trigger as AgentGoal,
-    input: {},
-    actor: proposal.actor,
-    sessionId: proposal.sessionId,
-    trajectoryId: proposal.trajectoryId,
-    trajectoryStore: store,
-    proposalStore,
-    checkCapability: args.checkCapability,
-    budgetMaxUSD: args.budgetMaxUSD,
-  });
+  return advance(
+    {
+      goal: record.trigger as AgentGoal,
+      input: {},
+      actor: proposal.actor,
+      sessionId: proposal.sessionId,
+      trajectoryId: proposal.trajectoryId,
+      trajectoryStore: store,
+      proposalStore,
+      checkCapability: args.checkCapability,
+      budgetMaxUSD: args.budgetMaxUSD,
+    },
+    true
+  );
 }
 
 // ── Gotchas ───────────────────────────────────────────────────────────

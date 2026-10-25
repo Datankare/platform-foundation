@@ -15,6 +15,7 @@ import type {
   ProposalRecord,
   ProposalStatus,
   ProposalStore,
+  TrajectoryStatus,
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
@@ -43,6 +44,41 @@ export const INDETERMINATE_NOTE =
 /** Why an atomic run that never ended was returned to approved (its effect rolled back with it). */
 export const ATOMIC_RECOVERED_NOTE =
   "atomic run did not end within its lease; its transaction rolled back with its effect, approval kept";
+
+/**
+ * Where a recovered run leaves its workflow (TASK-173). When the approval-expiry job takes back a
+ * run that never ended (an instance lost mid-run), the run's trajectory was left as the run had it
+ * — `running` (or `awaiting_retry`, for a retry) — and its own agent's continuation re-proposed the
+ * step, which the one-live rule refused with a plain error. The recovery now moves the trajectory
+ * to the waiting state that matches the approval, in the same transaction:
+ *
+ *   approval indeterminate  ->  trajectory indeterminate (blocked: a person decides its outcome)
+ *   approval approved again ->  trajectory awaiting_retry (an atomic run: approve it again to retry)
+ *
+ * — only from the statuses a run leaves it in; a finished (completed, failed) or already
+ * undecided trajectory is left as it is. A run whose step was recorded (executed) moves nothing.
+ */
+export const RECOVERED_TRAJECTORY: Readonly<
+  Record<
+    "indeterminate" | "approved",
+    { readonly to: TrajectoryStatus; readonly from: readonly TrajectoryStatus[] }
+  >
+> = {
+  indeterminate: { to: "indeterminate", from: ["running", "paused", "awaiting_retry"] },
+  approved: { to: "awaiting_retry", from: ["running", "paused"] },
+};
+
+/**
+ * The trajectories an in-memory recovery moves (InMemoryTrajectoryStore.moveStatus): structural,
+ * so this module does not import the trajectory store.
+ */
+export interface RecoveryTrajectories {
+  moveStatus(
+    trajectoryId: string,
+    from: readonly TrajectoryStatus[],
+    to: TrajectoryStatus
+  ): unknown;
+}
 
 /** The note a withdrawn approval keeps: who had approved it and when, then why it was withdrawn. */
 export function withdrawalNote(approved: ProposalRecord, note: string): string {
@@ -225,9 +261,14 @@ export class InMemoryProposalStore implements ProposalStore {
    * Take back every run claimed before `before` (ms since the epoch) that never ended — the
    * in-memory form of the approval-expiry job's recovery (hold-expiry.ts), for tests: an atomic
    * run's approval is approved again (its effect rolled back with it), any other is
-   * `indeterminate` (review 11 H-1: its effect may have happened).
+   * `indeterminate` (review 11 H-1: its effect may have happened). Given `trajectories`, each
+   * recovered run's trajectory moves to the matching waiting state (RECOVERED_TRAJECTORY,
+   * TASK-173), as the database job does in its statement.
    */
-  recoverStaleRuns(before: number): readonly ProposalRecord[] {
+  recoverStaleRuns(
+    before: number,
+    trajectories?: RecoveryTrajectories
+  ): readonly ProposalRecord[] {
     const out: ProposalRecord[] = [];
     for (const r of [...this.parts.current().values()]) {
       if (r.status === "executing" && Date.parse(r.updatedAt) < before) {
@@ -240,7 +281,14 @@ export class InMemoryProposalStore implements ProposalStore {
           : this.transition(r.proposalId, ["executing"], "indeterminate", {
               lastRunError: INDETERMINATE_NOTE,
             });
-        if (back) out.push(back);
+        if (back) {
+          out.push(back);
+          const move =
+            RECOVERED_TRAJECTORY[
+              back.status === "approved" ? "approved" : "indeterminate"
+            ];
+          trajectories?.moveStatus(back.trajectoryId, move.from, move.to);
+        }
       }
     }
     return out;

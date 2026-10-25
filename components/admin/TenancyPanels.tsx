@@ -8,7 +8,8 @@
  *                        spend against its cap, and the settings they may set for it
  *   OperatorTenantsView  operators (platform_operate): every tenant — provision, addresses,
  *                        suspend/resume/restore, two-operator deletion, first administrator,
- *                        export, purge — and whether the deployment is ready for tenants
+ *                        export, purge, the tenant's agent kill switch (TASK-172) — and whether
+ *                        the deployment is ready for tenants
  *
  * Every action calls the server, which decides; this only shows what it answers. Every word on
  * these screens comes from the catalog (screens.tenancy, ADR-051): no literals.
@@ -18,6 +19,7 @@ import React, { useCallback, useId, useState } from "react";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { TenantJobsList, type JobRow } from "@/components/admin/JobsPanels";
+import { AgentKillSwitch } from "@/components/admin/AgentKillSwitchPanel";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.tenancy.${key}`, values);
@@ -391,12 +393,14 @@ function TenantRowView({
   act,
   ask,
   onSettings,
+  onKillSwitch,
 }: {
   tenant: TenantRow;
   busy: boolean;
   act: Act;
   ask: (q: Question) => void;
   onSettings: (tenant: TenantRow) => void;
+  onKillSwitch: (tenant: TenantRow) => void;
 }) {
   const base = `/api/operator/tenants/${encodeURIComponent(tenant.id)}`;
   const named = { tenant: tenant.name };
@@ -580,6 +584,16 @@ function TenantRowView({
               {t("settings")}
             </button>
           )}
+          {tenant.status !== "deleted" && (
+            <button
+              className={quiet}
+              aria-label={renderMessage("screens.kill_switch.open_label", named)}
+              disabled={busy}
+              onClick={() => onKillSwitch(tenant)}
+            >
+              {renderMessage("screens.kill_switch.open")}
+            </button>
+          )}
           {!tenant.purgedAt && (
             <a
               className={quiet}
@@ -623,6 +637,7 @@ export function OperatorTenantsView({
     tenant: TenantRow;
     data: TenantSettingsData;
   } | null>(null);
+  const [killSwitchFor, setKillSwitchFor] = useState<TenantRow | null>(null);
 
   const openSettings = async (tenant: TenantRow) => {
     setBusy(true);
@@ -803,12 +818,21 @@ export function OperatorTenantsView({
                 act={act}
                 ask={setQuestion}
                 onSettings={(row) => void openSettings(row)}
+                onKillSwitch={setKillSwitchFor}
               />
             ))}
           </tbody>
         </table>
         {status && <Status {...status} />}
       </section>
+      {killSwitchFor && (
+        <AgentKillSwitch
+          key={killSwitchFor.id}
+          endpoint={`/api/operator/tenants/${encodeURIComponent(killSwitchFor.id)}/agents/suspend`}
+          tenant={killSwitchFor.name}
+          onClose={() => setKillSwitchFor(null)}
+        />
+      )}
       {settingsFor && (
         <OperatorTenantSettings
           key={settingsFor.tenant.id}

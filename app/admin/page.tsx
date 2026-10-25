@@ -26,6 +26,7 @@ import {
   TenantSettingsView,
 } from "@/components/admin/TenancyPanels";
 import { OperatorJobsView } from "@/components/admin/JobsPanels";
+import { AdminKillSwitchView } from "@/components/admin/AgentKillSwitchPanel";
 import { renderMessage } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { useAuth } from "@/platform/auth/context";
@@ -65,6 +66,7 @@ const PANEL_TITLES: Record<string, string> = {
   tenant: "Tenant",
   tenants: "Tenants",
   jobs: renderMessage("screens.jobs.title"),
+  "kill-switch": renderMessage("screens.kill_switch.title"),
 };
 
 const PANEL_HINTS: Record<string, string> = {
@@ -123,7 +125,11 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
   tenant: TenantSettingsView,
   tenants: OperatorTenantsView,
   jobs: OperatorJobsView,
+  "kill-switch": AdminKillSwitchView,
 };
+
+/** Sections that are a form of their own, with no command bar (the kill switch, TASK-172). */
+const NO_PROMPT_BAR: ReadonlySet<string> = new Set(["kill-switch"]);
 
 export default function AdminPage() {
   const [currentPlan, setCurrentPlan] = useState<ActionPlan | null>(null);
@@ -247,14 +253,16 @@ export default function AdminPage() {
           {PANEL_TITLES[section] || section}
         </h2>
 
-        <AdminPromptBar
-          panel={section}
-          placeholder={PANEL_HINTS[section]}
-          onPlanReceived={(plan) => {
-            setCurrentPlan(plan);
-            setResults(null);
-          }}
-        />
+        {!NO_PROMPT_BAR.has(section) && (
+          <AdminPromptBar
+            panel={section}
+            placeholder={PANEL_HINTS[section]}
+            onPlanReceived={(plan) => {
+              setCurrentPlan(plan);
+              setResults(null);
+            }}
+          />
+        )}
 
         {currentPlan && (
           <ActionConfirmPanel

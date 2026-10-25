@@ -143,6 +143,112 @@ export async function rejectHeldAction(
   });
 }
 
+// ── An approved step whose run did not take effect (TASK-170) ─────────
+
+/** Workflow statuses a held step's end may still end; a finished trajectory stays as it is. */
+const OPEN_TRAJECTORY = new Set(["running", "paused", "awaiting_retry", "indeterminate"]);
+
+/**
+ * Record on a held action's trajectory how its step's decision ended — withdrawn, rejected,
+ * superseded, or marked executed with no recorded output — and end the workflow (`failed`; it is
+ * then never continued). A trajectory already completed or failed is left as it is. The record
+ * is best effort (a full trajectory refuses it, logged by the store); the status is not.
+ */
+export async function endHeldTrajectory(
+  trajectoryStore: TrajectoryStore,
+  proposal: ProposalRecord
+): Promise<void> {
+  const record = await trajectoryStore.getById(proposal.trajectoryId);
+  if (!record || !OPEN_TRAJECTORY.has(record.trajectory.status)) return;
+  await trajectoryStore
+    .addStep(proposal.trajectoryId, {
+      stepIndex: 0,
+      action: proposal.label,
+      input: { operationId: proposal.operationId, actorId: proposal.actor.actorId },
+      output: {
+        proposalId: proposal.proposalId,
+        status: proposal.status,
+        decidedBy: proposal.decidedBy ?? "",
+        note: (proposal.decisionNote ?? proposal.lastRunError ?? "").slice(0, 500),
+        ...(proposal.status === "executed" ? { outputRecorded: false } : {}),
+      },
+      cost: 0,
+      durationMs: 0,
+      timestamp: new Date().toISOString(),
+      boundary: "cognition",
+      operationId: proposal.operationId,
+      proposalId: proposal.proposalId,
+      actor: proposal.actor,
+      effects: proposal.effects,
+      effectiveRisk: proposal.effectiveRisk,
+    })
+    .catch(() => undefined);
+  await trajectoryStore.updateStatus(proposal.trajectoryId, "failed");
+}
+
+/**
+ * Withdraw a kept approval — approved, its run failed before taking effect — instead of
+ * approving it again (approved -> rejected, ProposalStore.withdraw), and end its workflow: the
+ * trajectory records the withdrawal and is `failed`, never continued (TASK-170). Returns the
+ * withdrawn record, or undefined when it was not approved (used, in use, or never approved).
+ * The caller checks who may decide (heldActionRefusal) and audits it.
+ */
+export async function withdrawHeldAction(
+  args: ApproveHeldActionArgs
+): Promise<ProposalRecord | undefined> {
+  const proposalStore = args.proposalStore ?? getProposalStore();
+  const trajectoryStore = args.trajectoryStore ?? getTrajectoryStore();
+  const withdrawn = await proposalStore.withdraw(
+    args.proposalId,
+    args.decidedBy,
+    args.note?.trim() || "withdrawn: not approved again after its run failed"
+  );
+  if (withdrawn) await endHeldTrajectory(trajectoryStore, withdrawn);
+  return withdrawn;
+}
+
+export interface ResolveUndecidedArgs extends ApproveHeldActionArgs {
+  /** `executed`: verified that the run took effect; `approved`: verified that it did not. */
+  readonly resolution: "executed" | "approved";
+}
+
+/**
+ * A person's decision on an approved run whose outcome is unknown (proposal `indeterminate`,
+ * review 11 H-1), for a workflow (TASK-170): `approved` — it did not take effect and is approved
+ * again: the workflow waits in `awaiting_retry`, and the caller then runs it with
+ * resumeApprovedAction (once); `executed` — it took effect, but its output was never recorded, so
+ * the workflow cannot continue past it: it ends (`failed`, the decision recorded). Returns the
+ * resolved record, or undefined when the run was not undecided. The caller checks who may decide
+ * and audits it.
+ */
+export async function resolveUndecidedHeldAction(
+  args: ResolveUndecidedArgs
+): Promise<ProposalRecord | undefined> {
+  const proposalStore = args.proposalStore ?? getProposalStore();
+  const trajectoryStore = args.trajectoryStore ?? getTrajectoryStore();
+  const note =
+    args.note?.trim() ||
+    (args.resolution === "executed"
+      ? "verified as applied"
+      : "approved again: verified that its run did not take effect");
+  const done = await proposalStore.resolveIndeterminate(
+    args.proposalId,
+    args.resolution,
+    args.decidedBy,
+    note
+  );
+  if (!done) return undefined;
+  if (args.resolution === "executed") {
+    await endHeldTrajectory(trajectoryStore, done);
+  } else {
+    const record = await trajectoryStore.getById(done.trajectoryId);
+    if (record?.trajectory.status === "indeterminate") {
+      await trajectoryStore.updateStatus(done.trajectoryId, "awaiting_retry");
+    }
+  }
+  return done;
+}
+
 // ── Who may decide a held action (PF v5.1.0) ──────────────────────────
 
 /**

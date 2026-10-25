@@ -26,7 +26,13 @@
  *     raised and a human decides on the approvals page: mark it executed after verifying, or
  *     approve it again (a fresh approval). The run, should it still end, completes it by its token.
  *
- * Each recovery is recorded in its tenant's audit log, in the same statement.
+ * Its workflow waits with it (TASK-173): the run's trajectory, left `running` by the lost run,
+ * moves to `indeterminate` (blocked until a person decides) or, for an atomic run approved again,
+ * `awaiting_retry` — so the agent's own continuation answers held instead of re-proposing a step
+ * whose approval stands (the one-live rule refused that with a plain error: a 500 in a consumer).
+ *
+ * Each recovery is recorded in its tenant's audit log, in the same statement — with the
+ * trajectory it moved, if any.
  *
  * Every sweep here takes an optional scope (`tenantIds`): the job passes none and sweeps every
  * tenant; a test passes its own tenants, so a parallel test's rows are never swept by another's
@@ -41,6 +47,7 @@ import type { ProposalRecord } from "@/platform/kernel/types";
 import {
   ATOMIC_RECOVERED_NOTE,
   INDETERMINATE_NOTE,
+  RECOVERED_TRAJECTORY,
 } from "@/platform/agents/proposal-store";
 import { raiseAlert } from "@/platform/observability/alert";
 
@@ -143,9 +150,11 @@ export const RUN_RECOVERY_ACTOR = "system:approval-run-recovery";
  * the owner connection (the job), every tenant's (or `scope.tenantIds`'). A run whose step was
  * recorded (a commitment step carrying its operation id) took effect: executed. An atomic run's
  * effect rolled back with its claim: approved again. Any other's outcome is unknown:
- * indeterminate — never approved again (review 11 H-1), a human decides. Each recovery is
- * recorded in its tenant's audit log by the system, in the same statement: no record, no
- * recovery. Undecided runs raise an alert. Returns the count recovered.
+ * indeterminate — never approved again (review 11 H-1), a human decides. The run's trajectory
+ * moves to the matching waiting state (RECOVERED_TRAJECTORY, TASK-173) in the same statement.
+ * Each recovery is recorded in its tenant's audit log by the system, in the same statement, with
+ * the trajectory moved (`trajectoryId`, `trajectoryFrom`, `trajectoryStatus`; null when none
+ * moved): no record, no recovery. Undecided runs raise an alert. Returns the count recovered.
  */
 export async function recoverStaleRuns(
   tx: Tx,
@@ -193,15 +202,38 @@ export async function recoverStaleRuns(
               updated_at = now()
          from stale s
         where p.tenant_id = s.tenant_id and p.id = s.id and p.status = 'executing'
-        returning p.tenant_id, p.id, p.label, p.status
+        returning p.tenant_id, p.id, p.label, p.status, p.trajectory_id
+     ),
+     -- The run's workflow waits with its approval (TASK-173): only from a status a run leaves it
+     -- in, so a finished or already undecided trajectory is left as it is.
+     waiting as (
+       select t.tenant_id, t.id, t.status as from_status, r.id as hold_id,
+              case when r.status = 'indeterminate' then $6::text else $8::text end as to_status
+         from recovered r
+         join agent_trajectories t
+           on t.tenant_id = r.tenant_id and t.id::text = r.trajectory_id
+        where (r.status = 'indeterminate' and t.status::text = any($7::text[]))
+           or (r.status = 'approved' and t.status::text = any($9::text[]))
+          for update of t
+     ),
+     moved as (
+       update agent_trajectories t
+          set status = w.to_status::trajectory_status, version = t.version + 1,
+              updated_at = now()
+         from waiting w
+        where t.tenant_id = w.tenant_id and t.id = w.id
+        returning t.tenant_id, t.id, w.hold_id, w.from_status, t.status
      ),
      audit as (
        insert into audit_log (tenant_id, action, details)
        select r.tenant_id, 'admin_action'::audit_action,
               jsonb_build_object('type', 'approval_run_recovered', 'holdId', r.id,
                                  'label', r.label, 'status', r.status,
+                                 'trajectoryId', m.id, 'trajectoryFrom', m.from_status,
+                                 'trajectoryStatus', m.status,
                                  'agent', $2::text, 'outcome', 'succeeded')
          from recovered r
+         left join moved m on m.tenant_id = r.tenant_id and m.hold_id = r.id
      )
      -- A data-modifying WITH runs once whether or not it is read: every recovery is audited.
      select r.status, count(*)::int as n from recovered r group by r.status`,
@@ -211,6 +243,10 @@ export async function recoverStaleRuns(
       ATOMIC_RECOVERED_NOTE,
       INDETERMINATE_NOTE,
       scope.tenantIds ?? null,
+      RECOVERED_TRAJECTORY.indeterminate.to,
+      RECOVERED_TRAJECTORY.indeterminate.from,
+      RECOVERED_TRAJECTORY.approved.to,
+      RECOVERED_TRAJECTORY.approved.from,
     ]
   );
   const undecided = rows.find((r) => r.status === "indeterminate")?.n ?? 0;

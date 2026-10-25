@@ -1180,6 +1180,33 @@ for bad in "repeat('b', 16), 'sha256'" "NULL, 'unknown'"; do
   esac
 done
 
+step "053: a workflow can wait to be approved again (awaiting_retry); applied again changes nothing"
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+                  WHERE t.typname = 'trajectory_status' AND e.enumlabel = 'awaiting_retry') THEN
+    RAISE EXCEPTION '053: trajectory_status has no awaiting_retry';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.applied_migrations
+                  WHERE filename = '053_trajectory_awaiting_retry.sql') THEN
+    RAISE EXCEPTION '053 is not recorded in applied_migrations';
+  END IF;
+  PERFORM 'awaiting_retry'::public.trajectory_status;
+END $$;
+SQL
+enum_before=$("${PSQL[@]}" -At -c "SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = 'public.trajectory_status'::regtype")
+before=$(snapshot)
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/053_trajectory_awaiting_retry.sql" >/dev/null 2>&1 \
+  || { echo "✗ 053 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/053_trajectory_awaiting_retry.sql" >/dev/null; exit 1; }
+after=$(snapshot)
+enum_after=$("${PSQL[@]}" -At -c "SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = 'public.trajectory_status'::regtype")
+if [ "$before" != "$after" ] || [ "$enum_before" != "$enum_after" ]; then
+  echo "✗ applying 053 a second time changed the database:"
+  diff <(echo "$before"; echo "$enum_before") <(echo "$after"; echo "$enum_after") || true
+  exit 1
+fi
+
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —
 # given here for the check only, and taken away again.

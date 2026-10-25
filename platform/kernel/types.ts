@@ -95,12 +95,20 @@ export interface AgentIdentity {
  * - completed: all steps finished successfully
  * - failed: a step failed and the trajectory was not recovered
  * - paused: checkpointed and waiting for resume or human approval
+ * - awaiting_retry: an approved step's run failed before taking effect and its approval was kept
+ *   (ApprovedRunFailedError, released). Continued only by approving that step again
+ *   (resumeApprovedAction), at that step, once; a withdrawal or rejection ends it (failed)
+ * - indeterminate: an effect neither confirmed nor denied — for a workflow, also an approved
+ *   step's run whose approval could not be given back (its outcome unknown): blocked until a
+ *   person decides the run (mark it executed, or approve it again)
  */
 export type TrajectoryStatus =
   | "running"
   | "completed"
   | "failed"
   | "paused"
+  // Migration 053: an approved step whose run failed before taking effect, approval kept.
+  | "awaiting_retry"
   // ADR-029 D10: an external effect neither confirmed nor denied. A workflow
   // containing one is itself indeterminate and MUST NOT report completed.
   | "indeterminate";
@@ -763,6 +771,16 @@ export interface HeldAction {
   readonly approvalEndpoint: string;
   /** State version observed at proposal time — the stale-approval anchor (ADR-031 D5). */
   readonly observedVersion?: number;
+  /**
+   * What the held step waits for, when it is not a first decision (absent): `retry` — it was
+   * approved, its run failed before taking effect and the approval was kept: approving it again
+   * runs it (once); `outcome` — its run's outcome is unknown: a person marks it executed or
+   * approves it again. Set on the response to a continuation of an `awaiting_retry` or
+   * `indeterminate` workflow, which runs nothing.
+   */
+  readonly awaiting?: "retry" | "outcome";
+  /** Why the last run of the approved step failed (the kept approval's lastRunError). */
+  readonly lastRunError?: string;
 }
 
 /**
@@ -983,7 +1001,7 @@ export interface TrajectoryStore {
 
   /**
    * Retention: delete up to `limit` of the current tenant's completed and failed trajectories
-   * last updated before `cutoff`. Running, paused and indeterminate ones are kept — a held
+   * last updated before `cutoff`. Running, paused, awaiting_retry and indeterminate ones are kept — a held
    * action may still resume them. Returns the count deleted; throws when it could not run.
    *
    * @scheduled agents.trajectory-retention

@@ -987,11 +987,16 @@ export async function proposeOnce(req: ProposeRequest): Promise<ProposalRecord> 
     if (live) return live;
     // Approved or already used: this operation has its decision — proposing it again would
     // ask for a second approval of an action that has one (PF v5.1.0; the database enforces
-    // the same with idx_proposals_one_live, migration 046).
+    // the same with idx_proposals_one_live, migration 046). An approved run whose outcome is
+    // unknown (indeterminate) has its decision too (TASK-173): refused the same way, never sent
+    // on to the store's one-live refusal as a plain error.
     if (
       existing.some(
         (p) =>
-          p.status === "approved" || p.status === "executing" || p.status === "executed"
+          p.status === "approved" ||
+          p.status === "executing" ||
+          p.status === "indeterminate" ||
+          p.status === "executed"
       )
     ) {
       throw new PipelineRejectedError(

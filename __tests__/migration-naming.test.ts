@@ -185,9 +185,11 @@ describe("migration naming (TASK-158)", () => {
   });
 
   it("self-test: the consumer checks catch a fixture app's misnamed, out-of-range or missing migrations", () => {
+    // One past the platform's latest migration, whatever it is (the platform adds migrations).
+    const beyond = `${String(LATEST(PLATFORM) + 1).padStart(3, "0")}a_fixture_beyond.sql`;
     const cases: [object, string[], RegExp][] = [
       [FIXTURE_APP, ["052_fixture_bare.sql"], /052_fixture_bare\.sql/],
-      [FIXTURE_APP, ["053a_fixture_beyond.sql"], /053a_fixture_beyond\.sql: .*001 to/],
+      [FIXTURE_APP, [beyond], new RegExp(`${beyond.replace(".", "\\.")}: .*001 to`)],
       [FIXTURE_APP, ["040a_other_prefix.sql"], /040a_other_prefix\.sql/],
       [
         {
