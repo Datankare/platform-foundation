@@ -35,6 +35,8 @@ import { logger, generateRequestId } from "@/lib/logger";
 import { apiError } from "@/platform/errors";
 import { bindIdentityTenant, ensureRequestTenant } from "@/platform/tenancy/request";
 import type { TenantContext } from "@/platform/tenancy/context";
+import { resolveAccountRecord } from "@/platform/auth/account-identity";
+import { syncEmailVerification } from "@/platform/auth/email-verification";
 
 export interface AuthContext {
   user: TokenPayload;
@@ -129,6 +131,12 @@ export async function requireAuth(
 export type Actor =
   | {
       readonly kind: "user";
+      /**
+       * The account (users.id) the verified identity is bound to (users.cognito_sub) — never
+       * the subject itself: an account re-linked to a new identity pool keeps its id
+       * (platform/auth/account-identity.ts, TASK-174). For a first request it is the id the
+       * account is created with (the subject). The subject is `user.sub`.
+       */
       readonly id: string;
       readonly tenantId: string;
       readonly user: TokenPayload;
@@ -206,10 +214,43 @@ export async function requireActor(
 
   const auth = await requireAuth(request, { privileged: options.privileged === true });
   if (auth.error) return { error: auth.error };
+  // The account the identity is bound to (TASK-174): what every account-keyed step that follows
+  // (status, consent, export, erasure, sessions) reads. Unreadable: unavailable, never a guess.
+  let account: Awaited<ReturnType<typeof resolveAccountRecord>>["resolution"];
+  let address: Awaited<ReturnType<typeof resolveAccountRecord>>["address"];
+  try {
+    ({ resolution: account, address } = await resolveAccountRecord(auth.user.sub));
+  } catch (err) {
+    logger.error("The identity's account could not be resolved", {
+      route: request.nextUrl.pathname,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      error: apiError("service.unavailable", {
+        params: { service: "accounts" },
+        request,
+      }),
+    };
+  }
+  if (account.kind === "conflict") {
+    // Its would-be id is another identity's account: never served to this one.
+    logger.warn(
+      "Identity refused: its account id is held by another identity's account",
+      {
+        route: request.nextUrl.pathname,
+      }
+    );
+    // Not retryable (review 15 L4): account.not_provisioned told the client to retry.
+    return { error: apiError("account.identity_conflict", { request }) };
+  }
+  // The address the provider verified (TASK-176): users.email_verified brought up to date —
+  // false → true for the same address only, written once (compared against the row just read).
+  if (account.kind === "bound" && address)
+    await syncEmailVerification(account.accountId, address, auth.user);
   return {
     actor: {
       kind: "user",
-      id: auth.user.sub,
+      id: account.accountId,
       tenantId: auth.tenant.tenantId,
       user: auth.user,
     },

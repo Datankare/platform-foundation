@@ -27,8 +27,9 @@ Two things follow from that:
 
 ## 2. Prerequisites
 
-- **Node.js** — a current LTS. (The CI pins specific action versions; match your local Node to
-  the version the project's CI uses to avoid engine warnings.)
+- **Node.js** — 24, the version in `.nvmrc` and in CI; at least 22.12 (`engines` in
+  `package.json`). The operator commands (`scripts/relink-identity.mjs`) run the platform's
+  TypeScript directly and refuse older Node with exit 2. Check with `node -v`.
 - **npm** — comes with Node.
 - **A Supabase project** — only when you want durable storage (most real features). Free tier
   is fine to start.
@@ -111,15 +112,32 @@ This powers safety classification, moderation, agent reasoning, and the admin AI
 
 ### 4d. Real auth (Cognito)
 
+The pool must have the shape the platform requires ([`ENV_REFERENCE.md`](ENV_REFERENCE.md#cognito-pool-shape-review-17-l2l4),
+review 17 L2/L4): **users sign in by email address** (the pool's sign-in identifier is the email
+address — fixed when the pool is created; a pool that signs in by username cannot refresh
+sessions), and the app client is **confidential** (it has a secret) and may **read `identities`**
+(readable attributes unset, or including `identities`).
+
 ```bash
 AUTH_PROVIDER=cognito
-NEXT_PUBLIC_AUTH_PROVIDER=cognito
 NEXT_PUBLIC_COGNITO_USER_POOL_ID=<pool>
 NEXT_PUBLIC_COGNITO_CLIENT_ID=<client>
-COGNITO_REGION=<region>
-COGNITO_USER_POOL_ID=<pool>
-COGNITO_CLIENT_ID=<client>
-AWS_REGION=<region>
+COGNITO_CLIENT_SECRET=<the app client's secret>
+GUEST_TOKEN_SECRET=$(openssl rand -base64 48)
+ERASURE_HASH_KEY=$(openssl rand -hex 32)
+REFRESH_COOKIE_KEY=$(openssl rand -hex 32)   # the refresh cookie's HMAC (review 17 M1)
+```
+
+The `COGNITO_*` aliases are accepted only when equal to the `NEXT_PUBLIC_` names; `AWS_REGION` is
+not read. Check the pool shape (with the AWS CLI; readiness checks it too when the app has the
+administrative credentials):
+
+```bash
+aws cognito-idp describe-user-pool --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POOL_ID" \
+  --query UserPool.UsernameAttributes          # must include "email"
+aws cognito-idp describe-user-pool-client --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POOL_ID" \
+  --client-id "$NEXT_PUBLIC_COGNITO_CLIENT_ID" \
+  --query UserPoolClient.ReadAttributes        # null, or must include "identities"
 ```
 
 ### 4e. Agent delegation keys (if you use agents on-behalf-of users)
@@ -137,7 +155,8 @@ After configuring a database + LLM + auth:
 
 1. `npm run build` — a production build must succeed (this catches SSR/prerender issues that
    dev mode hides).
-2. Sign in through the auth flow.
+2. Sign in through the auth flow. With Cognito, `curl -s <origin>/api/health/ready` answers
+   `200` with the `identity-pool` check `healthy` (the pool's shape — §4d).
 3. Hit `/api/agent/capabilities` — it returns the goals the platform exposes.
 4. Open the admin surface and run a natural-language command (e.g. view the trusted-agent
    registry) — the prompt → plan → confirm → execute loop should round-trip.

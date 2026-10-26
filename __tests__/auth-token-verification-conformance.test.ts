@@ -46,7 +46,10 @@ function cognitoReply(answer: UserLookupAnswer) {
   if (answer.kind === "user")
     return reply(200, {
       Username: answer.username,
-      UserAttributes: [{ Name: "email", Value: answer.email }],
+      UserAttributes: [
+        { Name: "email", Value: answer.email },
+        ...(answer.sub ? [{ Name: "sub", Value: answer.sub }] : []),
+      ],
     });
   if (answer.kind === "unavailable")
     return reply(400, { __type: "TooManyRequestsException", message: answer.reason });
@@ -131,7 +134,10 @@ describe("the platform's pool key helpers", () => {
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ Username: "user-123", UserAttributes: [] }),
+      json: async () => ({
+        Username: "user-123",
+        UserAttributes: [{ Name: "sub", Value: "user-123" }],
+      }),
     })) as unknown as typeof fetch;
     const provider = new CognitoAuthProvider({
       region: "us-east-1",

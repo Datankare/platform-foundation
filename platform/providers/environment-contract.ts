@@ -42,6 +42,9 @@ export interface SettingDeclaration {
 
 const REGION = "[a-z]{2}(?:-[a-z]+)+-\\d";
 
+/** A Cognito user pool id, `<region>_<id>` — any region, GovCloud's (`us-gov-west-1_…`) included. */
+export const COGNITO_POOL_ID = new RegExp(`^${REGION}_[A-Za-z0-9]+$`);
+
 /** The tenant every existing record belongs to (ADR-053, migration 049). */
 export const DEFAULT_TENANT_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -71,7 +74,7 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
   {
     name: "NEXT_PUBLIC_COGNITO_USER_POOL_ID",
     aliases: ["COGNITO_USER_POOL_ID"],
-    shape: new RegExp(`^${REGION}_[A-Za-z0-9]+$`),
+    shape: COGNITO_POOL_ID,
     shapeHint: "<region>_<id>, e.g. us-east-1_AbC123",
   },
   {
@@ -105,6 +108,14 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     aliases: [],
     shape: /^(?:google|apple|microsoft)(?:,(?:google|apple|microsoft))*$/,
     shapeHint: "a comma-separated list of: google, apple, microsoft (no spaces)",
+  },
+  {
+    name: "AUTH_TRUSTED_EMAIL_IDPS",
+    aliases: [],
+    // Review 17 L3: spaces around the commas are allowed, and names match case-insensitively.
+    shape: /^ *[\w.-]{1,32} *(?:, *[\w.-]{1,32} *)*$/,
+    shapeHint:
+      "a comma-separated list of the pool's identity provider names whose email_verified claim is trusted, matched case-insensitively (spaces around commas allowed), e.g. Google or Google, SignInWithApple — never a provider whose address the user can change unverified (Microsoft Entra ID: mutable email, nOAuth)",
   },
   {
     name: "SUPABASE_URL",
@@ -313,6 +324,20 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
       "the erasure-hash key before the current one (rotation, review 8 L6): bans it hashed still match, and each is rehashed under the current key when it matches; nothing new is hashed with it",
   },
   {
+    name: "REFRESH_COOKIE_KEY",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "at least 32 random characters, e.g. openssl rand -hex 32 — the key of the HMAC that makes the refresh cookie tamper-evident (review 17 M1); to rotate it, move the old value to REFRESH_COOKIE_KEY_PREVIOUS",
+  },
+  {
+    name: "REFRESH_COOKIE_KEY_PREVIOUS",
+    aliases: [],
+    shape: /^[\w+/=.~-]{32,512}$/,
+    shapeHint:
+      "the refresh-cookie key before the current one (rotation, review 17 M1): cookies it signed are still accepted; nothing new is signed with it — remove it once the refresh-token lifetime (30 days) has passed",
+  },
+  {
     name: "PROVENANCE_SIGNING_KEY",
     aliases: [],
     shape: /^[\w+/=.~-]{32,512}$/,
@@ -448,6 +473,18 @@ export function getPreviousErasureHashKey(
   env: EnvSource = process.env
 ): string | undefined {
   return resolveSetting("ERASURE_HASH_KEY_PREVIOUS", env);
+}
+
+/** Review 17 M1: the key of the refresh cookie's HMAC; undefined when not set. */
+export function getRefreshCookieKey(env: EnvSource = process.env): string | undefined {
+  return resolveSetting("REFRESH_COOKIE_KEY", env);
+}
+
+/** The refresh-cookie key before the current one (rotation): verifies, never signs. */
+export function getPreviousRefreshCookieKey(
+  env: EnvSource = process.env
+): string | undefined {
+  return resolveSetting("REFRESH_COOKIE_KEY_PREVIOUS", env);
 }
 
 /** ADR-050 D4: the guest-token signing secret. */
@@ -606,6 +643,75 @@ export function getDatabaseSettings(env: EnvSource = process.env): DatabaseSetti
   };
 }
 
+/** Whether a database URL names this machine (localhost, 127.0.0.1): a connection that never leaves it. */
+function isLocalDatabaseHost(url: string): boolean {
+  const host = /^postgres(?:ql)?:\/\/[^@/]*@([^:/?]+)/i.exec(url)?.[1]?.toLowerCase();
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+/**
+ * The contract's checks of one database connection (ADR-053 D4) — the boot check's, and an
+ * operator command's that connects from a workstation (scripts/relink-identity.mjs, review 15 L2):
+ *
+ *   - `shapes` (default true): the URL setting, DATABASE_SSL and DATABASE_SSL_CA have their
+ *     declared shapes (an unknown DATABASE_SSL is never read as verify-full);
+ *   - no TLS option in the URL: node-postgres lets the URL's `sslmode` override the `ssl` the
+ *     platform passes, so `?sslmode=disable` (or `no-verify`) would silently undo DATABASE_SSL;
+ *   - `sslDisable` (default true): DATABASE_SSL=disable only for a database on this machine — an
+ *     operator's connection to a remote database is never plaintext;
+ *   - `requireCa` (default false): verify-full needs DATABASE_SSL_CA (an operator's machine does
+ *     not hold the provider's CA in its store).
+ *
+ * The boot check passes `shapes: false` (its own loop reports shapes) and judges DATABASE_SSL=disable
+ * by DEPLOYMENT_HOST instead.
+ */
+export function databaseConnectionViolations(
+  env: EnvSource,
+  name: "DATABASE_URL" | "DATABASE_OWNER_URL",
+  options: {
+    readonly shapes?: boolean;
+    readonly sslDisable?: boolean;
+    readonly requireCa?: boolean;
+  } = {}
+): string[] {
+  const violations: string[] = [];
+  const url = resolveSetting(name, env);
+  const ssl = resolveSetting("DATABASE_SSL", env);
+  const ca = resolveSetting("DATABASE_SSL_CA", env);
+  if (options.shapes !== false) {
+    for (const [setting, value] of [
+      [name, url],
+      ["DATABASE_SSL", ssl],
+      ["DATABASE_SSL_CA", ca],
+    ] as const) {
+      const d = declaration(setting);
+      if (value !== undefined && !d.shape.test(value))
+        violations.push(`${setting} has the wrong shape — expected ${d.shapeHint}`);
+    }
+  }
+  if (url !== undefined && /[?&](?:ssl|sslmode|sslcert|sslkey|sslrootcert)=/i.test(url)) {
+    violations.push(
+      `${name} carries TLS options — set DATABASE_SSL (and DATABASE_SSL_CA) instead`
+    );
+  }
+  if (
+    options.sslDisable !== false &&
+    ssl === "disable" &&
+    url !== undefined &&
+    !isLocalDatabaseHost(url)
+  ) {
+    violations.push(
+      `DATABASE_SSL=disable is for a database on this machine only — ${name} names another host: set DATABASE_SSL=verify-full and DATABASE_SSL_CA`
+    );
+  }
+  if (options.requireCa === true && ssl !== "disable" && ca === undefined) {
+    violations.push(
+      "DATABASE_SSL_CA is required with DATABASE_SSL=verify-full (the database's CA certificate, PEM)"
+    );
+  }
+  return violations;
+}
+
 /** Where the tenant directory is kept; undefined when unset (memory outside production). */
 export function getTenantDirectoryStoreSetting(
   env: EnvSource = process.env
@@ -678,6 +784,34 @@ export function getSsoProviders(env: EnvSource = process.env): SsoProviderId[] {
   const value = resolveSetting("SSO_PROVIDERS", env);
   if (value === undefined || !declaration("SSO_PROVIDERS").shape.test(value)) return [];
   return [...new Set(value.split(",") as SsoProviderId[])];
+}
+
+/** The federated identity providers trusted by default for `email_verified` (review 16 L8). */
+export const DEFAULT_TRUSTED_EMAIL_IDPS: readonly string[] = ["Google"];
+
+/**
+ * The identity providers (the pool's provider names, as `identities` names them) whose
+ * `email_verified` claim is trusted (review 16 L8): AUTH_TRUSTED_EMAIL_IDPS, default Google only.
+ * A malformed value trusts none — fail closed (boot refuses it in production, by its shape).
+ * Cognito's own verification (a native user's code) is always trusted; a federated user from any
+ * provider not listed never counts as verified — not by the re-link, not by the TASK-176 sync.
+ */
+export function getTrustedEmailIdps(env: EnvSource = process.env): ReadonlySet<string> {
+  const value = resolveSetting("AUTH_TRUSTED_EMAIL_IDPS", env);
+  if (value === undefined) return new Set(DEFAULT_TRUSTED_EMAIL_IDPS);
+  if (!declaration("AUTH_TRUSTED_EMAIL_IDPS").shape.test(value)) return new Set();
+  // Review 17 L3: trimmed; matched case-insensitively (identity-directory emailClaimTrusted).
+  return new Set(value.split(",").map((name) => name.trim()));
+}
+
+/** Review 17 L3: what is wrong with AUTH_TRUSTED_EMAIL_IDPS, or undefined when it is usable. */
+export function trustedEmailIdpsViolation(
+  env: EnvSource = process.env
+): string | undefined {
+  const value = resolveSetting("AUTH_TRUSTED_EMAIL_IDPS", env);
+  if (value === undefined || declaration("AUTH_TRUSTED_EMAIL_IDPS").shape.test(value))
+    return undefined;
+  return `AUTH_TRUSTED_EMAIL_IDPS has the wrong shape — expected ${declaration("AUTH_TRUSTED_EMAIL_IDPS").shapeHint}`;
 }
 
 function poolRegion(userPoolId: string): string | undefined {
@@ -795,6 +929,26 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
     );
   }
 
+  // Review 17 M1: the refresh cookie (`<user id>.<mac>.<refresh token>`) is an HMAC under this
+  // key, so a cookie naming another user than the one it was issued to is refused. Required with
+  // a real auth provider, as the guest secret is.
+  if (!TEST_DOUBLE_AUTH_PROVIDERS.has(auth) && getRefreshCookieKey(env) === undefined) {
+    violations.push(
+      `REFRESH_COOKIE_KEY is required by AUTH_PROVIDER=${auth} (the refresh cookie's HMAC)`
+    );
+  }
+  const cookieKey = getRefreshCookieKey(env);
+  if (cookieKey !== undefined && cookieKey === getPreviousRefreshCookieKey(env)) {
+    violations.push(
+      "REFRESH_COOKIE_KEY_PREVIOUS is the same as REFRESH_COOKIE_KEY — set it to the key before the current one, or unset it"
+    );
+  }
+  if (getPreviousRefreshCookieKey(env) !== undefined && cookieKey === undefined) {
+    violations.push(
+      "REFRESH_COOKIE_KEY_PREVIOUS is set without REFRESH_COOKIE_KEY — rotation keeps the old key beside a new one"
+    );
+  }
+
   // Provider-specific requirements.
   if (auth === "cognito") {
     const { userPoolId, clientId } = getCognitoSettings(env);
@@ -899,19 +1053,11 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
       );
     }
   }
-  for (const [name, url] of [
-    ["DATABASE_URL", db.url],
-    ["DATABASE_OWNER_URL", db.ownerUrl],
-  ] as const) {
-    if (
-      url !== undefined &&
-      /[?&](?:ssl|sslmode|sslcert|sslkey|sslrootcert)=/i.test(url)
-    ) {
-      violations.push(
-        `${name} carries TLS options — set DATABASE_SSL (and DATABASE_SSL_CA) instead`
-      );
-    }
-  }
+  violations.push(
+    ...(["DATABASE_URL", "DATABASE_OWNER_URL"] as const).flatMap((name) =>
+      databaseConnectionViolations(env, name, { shapes: false, sslDisable: false })
+    )
+  );
   if (resolveSetting("DATABASE_SSL", env) === "disable" && !harnessAllowed) {
     violations.push(
       'DATABASE_SSL=disable is for local and CI runs only (DEPLOYMENT_HOST "local" or "ci")'

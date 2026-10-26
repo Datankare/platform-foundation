@@ -37,6 +37,7 @@ import {
   ssoRedirectUri,
 } from "@/platform/auth/sso";
 import { GET as start } from "@/app/api/auth/sso/[provider]/route";
+import { readRefreshCookie } from "@/platform/auth/auth-response";
 import { POST as callback } from "@/app/api/auth/sso/callback/route";
 
 const ORIGIN = "https://staging.example.com";
@@ -244,7 +245,11 @@ describe("POST /api/auth/sso/callback", () => {
     });
     // The refresh token is never in the body: an httpOnly cookie for the auth routes (X-17).
     const refresh = res.cookies.get("pf_refresh");
-    expect(refresh?.value).toBe("u-1.refresh");
+    // `<user id>.<mac>.<token>`, the MAC binding the id to the token (review 17 M1).
+    expect(readRefreshCookie(refresh?.value)).toEqual({
+      userId: "u-1",
+      refreshToken: "refresh",
+    });
     expect(refresh).toMatchObject({
       httpOnly: true,
       sameSite: "strict",

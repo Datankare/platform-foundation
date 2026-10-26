@@ -44,9 +44,13 @@ import {
   isTenantId,
 } from "@/platform/providers/environment-contract";
 import { signAwsJsonPost, type AwsCredentials } from "@/platform/auth/aws-sigv4";
-import type { TenantAttributeReadiness } from "@/platform/auth/provider";
+import type {
+  PoolShapeReadiness,
+  TenantAttributeReadiness,
+} from "@/platform/auth/provider";
 import type { ErrorCode } from "@/platform/errors/registry";
 import type { JSONWebKeySet } from "jose";
+import { identityProvidersOf } from "@/platform/auth/identity-directory";
 import {
   JwksUnavailableError,
   poolKeyStore,
@@ -135,7 +139,11 @@ export function getCognitoConfigFromEnv(): CognitoConfig {
 
 /**
  * Cognito's SECRET_HASH for `username`: Base64(HMAC-SHA256(secret, username + clientId)), or
- * nothing for a public client (no secret configured).
+ * nothing for a public client (no secret configured). A refresh (REFRESH_TOKEN_AUTH) is hashed
+ * with the user's `sub`: right for the pool shape the platform requires — users sign in by email
+ * address (UsernameAttributes includes email), so the pool's username of a native user is its
+ * sub. A pool that signs in by a chosen username is refused at readiness (checkPoolShape,
+ * review 17 L4; docs/ENV_REFERENCE.md "Cognito pool shape").
  */
 export function secretHash(config: CognitoConfig, username: string): string | undefined {
   if (!config.clientSecret) return undefined;
@@ -335,6 +343,50 @@ function tenantAttribute(attrs: Array<{ Name: string; Value: string }> | undefin
   return typeof value === "string" && value.length > 0 ? { tenantId: value } : {};
 }
 
+/**
+ * The federated providers a GetUser answer says the user signs in with (review 16 L8): from the
+ * `identities` attribute — any provider listed there means not native, a native user an operator
+ * linked to a federated identity (AdminLinkProviderForUser) included (review 17 L2); none (native)
+ * when it is absent and the pool's username is the user's sub (a pool that signs in by address
+ * names a native user by its sub) — but only while the app client may read `identities`
+ * (`identitiesReadable` not false: checkPoolShape found it hidden, review 17 L2), since a hidden
+ * attribute is absent for every user; unknown — no field, so the address claim is never trusted —
+ * otherwise. The username is evidence here only — never the account's subject, which is always
+ * the `sub` (ADR-012, TASK-177).
+ */
+export function identityProvidersFrom(
+  poolUsername: unknown,
+  attrs: Array<{ Name: string; Value: string }> | undefined,
+  identitiesReadable: boolean | undefined = undefined
+): { identityProviders?: readonly string[] } {
+  const identities = attrs?.find((a) => a.Name === "identities")?.Value;
+  if (identities) return { identityProviders: identityProvidersOf(identities) };
+  if (identitiesReadable === false) return {};
+  const sub = attrs?.find((a) => a.Name === "sub")?.Value;
+  return typeof poolUsername === "string" && poolUsername && poolUsername === sub
+    ? { identityProviders: [] }
+    : {};
+}
+
+/**
+ * The operator's check of the pool shape (review 17 L2/L4), for a deployment whose app has no
+ * administrative credentials to check it itself: UsernameAttributes must include "email", and
+ * ReadAttributes must be null (every attribute) or include "identities".
+ */
+export const POOL_SHAPE_OPERATOR_CHECK =
+  'aws cognito-idp describe-user-pool --user-pool-id <pool> --query UserPool.UsernameAttributes  (must include "email"); aws cognito-idp describe-user-pool-client --user-pool-id <pool> --client-id <client> --query UserPoolClient.ReadAttributes  (null, or must include "identities")';
+
+/** The `sub` attribute of a GetUser / AdminGetUser answer (undefined when it has none). */
+function subAttribute(
+  attrs: Array<{ Name: string; Value: string }> | undefined
+): string | undefined {
+  const value = attrs?.find((a) => a.Name === "sub")?.Value;
+  return typeof value === "string" && value ? value : undefined;
+}
+
+/** How many sub → pool-username pairs a provider remembers for its administrative calls. */
+const POOL_USERNAMES_MAX = 10_000;
+
 // ---------------------------------------------------------------------------
 // CognitoAuthProvider
 // ---------------------------------------------------------------------------
@@ -345,6 +397,19 @@ export class CognitoAuthProvider implements AuthProvider {
   private readonly tokens: TokenVerifier;
   /** The pool's signing keys: every token's signature is checked before GetUser (M5). */
   private readonly keys: JwksKeyStore;
+  /**
+   * The pool username of each subject seen in a signed token or a pool answer (TASK-177). The
+   * subject is the `sub`; an administrative call (AdminGetUser, AdminUpdateUserAttributes) names a
+   * user by its username — a native user's `sub` is accepted there too, a federated user's is not
+   * (`Google_…` is its username). Learnt from the signature-checked `username` claim, never
+   * guessed; a subject not seen here is addressed by its `sub` (right for every native user).
+   */
+  private readonly poolUsernames = new Map<string, string>();
+  /**
+   * Whether the app client may read `identities` (review 17 L2): learnt by checkPoolShape;
+   * undefined until then. False: no user is taken as native for want of the attribute.
+   */
+  private identitiesReadable: boolean | undefined = undefined;
 
   constructor(config: CognitoConfig, tokens: TokenVerifier = new TokenVerifier()) {
     this.config = config;
@@ -435,28 +500,36 @@ export class CognitoAuthProvider implements AuthProvider {
   /**
    * Revoke the session (audit X-17): GlobalSignOut ends every token of the user's sign-ins, and
    * the refresh token, when the caller has it, is revoked itself (RevokeToken) so it can never
-   * mint another access token. Either failing is thrown: a sign-out that did not revoke must
-   * not be reported as one.
+   * mint another access token. GlobalSignOut goes first (review 17 M1): RevokeToken also voids
+   * the access tokens that refresh token issued — sign-out's own freshly refreshed one included —
+   * so asked second, GlobalSignOut would be refused and the user's other sessions kept. A
+   * failure is thrown — a sign-out that did not revoke must not be reported as one — except:
+   * an access token that cannot sign out (expired) when its refresh token is then revoked, and
+   * a refresh token already void because GlobalSignOut ended every token.
    */
   async signOut(accessToken: AuthToken, refreshToken?: AuthToken): Promise<void> {
-    let revoked = false;
-    if (refreshToken) {
-      await callCognito(this.config, "RevokeToken", {
-        ClientId: this.config.clientId,
-        Token: refreshToken,
-        ...(this.config.clientSecret ? { ClientSecret: this.config.clientSecret } : {}),
-      });
-      revoked = true;
-    }
+    const notAuthorized = (error: unknown) =>
+      error instanceof CognitoError && error.cognitoType === "NotAuthorizedException";
+    let signedOutEverywhere = false;
     if (accessToken) {
       try {
         await callCognito(this.config, "GlobalSignOut", { AccessToken: accessToken });
+        signedOutEverywhere = true;
       } catch (error) {
         // An access token that has already expired cannot sign out; with its refresh token
-        // revoked there is nothing left that can mint another.
-        const expired =
-          error instanceof CognitoError && error.cognitoType === "NotAuthorizedException";
-        if (!(expired && revoked)) throw error;
+        // revoked below there is nothing left that can mint another.
+        if (!(notAuthorized(error) && refreshToken)) throw error;
+      }
+    }
+    if (refreshToken) {
+      try {
+        await callCognito(this.config, "RevokeToken", {
+          ClientId: this.config.clientId,
+          Token: refreshToken,
+          ...(this.config.clientSecret ? { ClientSecret: this.config.clientSecret } : {}),
+        });
+      } catch (error) {
+        if (!(notAuthorized(error) && signedOutEverywhere)) throw error;
       }
     }
     logger.info("User signed out");
@@ -506,12 +579,10 @@ export class CognitoAuthProvider implements AuthProvider {
       if (!(error instanceof JwksUnavailableError)) throw error;
       keysUnavailable = error.reason;
     }
-    const subject =
-      typeof decoded.username === "string" && decoded.username
-        ? decoded.username
-        : typeof decoded.sub === "string"
-          ? decoded.sub
-          : "";
+    // TASK-177: the subject is the token's `sub` — a UUID, unique in the pool and never reused,
+    // the same for a native and a federated user (whose username is `Google_…`). Every subject
+    // the platform produces (sessions, revocation stamps, provisioning) is this one.
+    const subject = typeof decoded.sub === "string" ? decoded.sub : "";
     if (keysUnavailable !== undefined) {
       if (!subject) throw new TokenVerificationUnavailableError(keysUnavailable);
       const reason = keysUnavailable;
@@ -530,18 +601,37 @@ export class CognitoAuthProvider implements AuthProvider {
       return null;
     }
     if (!subject) return null;
+    // The signature is good: its `username` claim is the pool's own, the handle its
+    // administrative calls need for this subject (a federated user's is not its sub).
+    if (typeof decoded.username === "string" && decoded.username)
+      this.rememberPoolUsername(subject, decoded.username);
     return this.tokens.verify(
       accessToken,
       { exp: decoded.exp as number, subject },
-      () => this.askGetUser(accessToken, decoded),
+      () => this.askGetUser(accessToken, decoded, subject),
       options
     );
+  }
+
+  private rememberPoolUsername(sub: string, username: string): void {
+    this.poolUsernames.delete(sub);
+    this.poolUsernames.set(sub, username);
+    if (this.poolUsernames.size > POOL_USERNAMES_MAX) {
+      const oldest = this.poolUsernames.keys().next().value;
+      if (oldest !== undefined) this.poolUsernames.delete(oldest);
+    }
+  }
+
+  /** The name an administrative call gives the user whose subject (`sub`) this is. */
+  private poolUsernameOf(sub: AuthUserId): string {
+    return this.poolUsernames.get(sub) ?? sub;
   }
 
   /** GetUser, as an outcome: valid, invalid (the token), or unavailable (Cognito). */
   private async askGetUser(
     accessToken: AuthToken,
-    decoded: Record<string, unknown>
+    decoded: Record<string, unknown>,
+    subject: string
   ): Promise<ProviderOutcome> {
     let result: Record<string, unknown>;
     try {
@@ -552,6 +642,13 @@ export class CognitoAuthProvider implements AuthProvider {
         : { kind: "invalid" };
     }
     const attrs = result.UserAttributes as Array<{ Name: string; Value: string }>;
+    // The pool's record is of the token's own subject, or the token is not believed — an answer
+    // without a `sub` included (review 17 L1: GetUser always lists it; one that does not cannot
+    // be shown to be this user's). Its username is remembered only after that check.
+    const sub = subAttribute(attrs);
+    if (sub === undefined || sub !== subject) return { kind: "invalid" };
+    if (typeof result.Username === "string" && result.Username)
+      this.rememberPoolUsername(subject, result.Username);
     warnOnceWithoutSession(decoded);
     const mfa = (result.UserMFASettingList as unknown[] | undefined) ?? [];
     return {
@@ -559,9 +656,14 @@ export class CognitoAuthProvider implements AuthProvider {
       payload: {
         // Audit A-9: whether the user signs in with a second factor (staff must, by default).
         mfaEnabled: mfa.includes("SOFTWARE_TOKEN_MFA"),
-        sub: result.Username as string,
+        // TASK-177: the `sub` (a UUID for every user), never the pool's username.
+        sub: subject,
         email: attrs?.find((a) => a.Name === "email")?.Value ?? "",
         emailVerified: attrs?.find((a) => a.Name === "email_verified")?.Value === "true",
+        // Review 16 L8: who verified the address — the federated providers (`identities`), or
+        // none for a native user (its pool username is its sub). Neither said: unknown, never
+        // trusted.
+        ...identityProvidersFrom(result.Username, attrs, this.identitiesReadable),
         iat: (decoded.iat as number) ?? 0,
         exp: (decoded.exp as number) ?? 0,
         // origin_jti: the sign-in this token descends from, kept across refreshes (PF v5.1.0).
@@ -576,17 +678,17 @@ export class CognitoAuthProvider implements AuthProvider {
 
   async refreshToken(
     refreshToken: AuthToken,
-    username?: string
+    subject?: AuthUserId
   ): Promise<AuthSession | null> {
     try {
       // A confidential client's refresh is hashed with the user's id (the token's subject).
-      if (this.config.clientSecret && !username) return null;
+      if (this.config.clientSecret && !subject) return null;
       const result = await callCognito(this.config, "InitiateAuth", {
         ClientId: this.config.clientId,
         AuthFlow: "REFRESH_TOKEN_AUTH",
         AuthParameters: {
           REFRESH_TOKEN: refreshToken,
-          ...(username ? withSecretParam(this.config, username) : {}),
+          ...(subject ? withSecretParam(this.config, subject) : {}),
         },
       });
 
@@ -596,7 +698,7 @@ export class CognitoAuthProvider implements AuthProvider {
       const decoded = decodeJwtPayload(auth.AccessToken as string);
       const expiresIn = (auth.ExpiresIn as number) ?? 3600;
       // The refreshed session is the same user's, or it is not used.
-      if (username && decoded?.sub !== username) return null;
+      if (subject && decoded?.sub !== subject) return null;
 
       return {
         userId: (decoded?.sub as string) ?? "",
@@ -1008,8 +1110,11 @@ export class CognitoAuthProvider implements AuthProvider {
         AccessToken: accessToken,
       });
       const attrs = result.UserAttributes as Array<{ Name: string; Value: string }>;
+      // TASK-177: the subject is the `sub`, as verifyToken names it — never the username.
+      const sub = subAttribute(attrs) ?? decodeJwtPayload(accessToken)?.sub;
+      if (typeof sub !== "string" || !sub) return null;
       return {
-        userId: result.Username as string,
+        userId: sub,
         email: attrs?.find((a) => a.Name === "email")?.Value ?? "",
         emailVerified: attrs?.find((a) => a.Name === "email_verified")?.Value === "true",
       };
@@ -1036,20 +1141,22 @@ export class CognitoAuthProvider implements AuthProvider {
    * verification of their tokens is voided, so the next request reads the attribute (review 8
    * M1). Cognito issues no token to an unconfirmed account, so nothing can be remembered before
    * a first verification; a verified address changing later is voided the same way. The token's
-   * subject is the pool's username for the address (AdminGetUser); without administrative
-   * credentials it cannot be looked up, and the fresh window (≤ 60 s) bounds it.
+   * subject is the user's `sub` (TASK-177), read with AdminGetUser for the address; without
+   * administrative credentials it cannot be looked up, and the fresh window (≤ 60 s) bounds it.
    */
-  private async revokeVerificationsOf(username: string): Promise<void> {
+  private async revokeVerificationsOf(email: string): Promise<void> {
     if (!this.config.adminCredentials) return;
     try {
       const user = await callCognito(
         this.config,
         "AdminGetUser",
-        { UserPoolId: this.config.userPoolId, Username: username },
+        { UserPoolId: this.config.userPoolId, Username: email },
         this.config.adminCredentials
       );
-      if (typeof user.Username === "string" && user.Username)
-        await revokeTokenVerification(user.Username);
+      const sub = subAttribute(
+        user.UserAttributes as Array<{ Name: string; Value: string }> | undefined
+      );
+      if (sub) await revokeTokenVerification(sub);
     } catch (error) {
       logger.warn("Remembered token verifications not voided after an attribute change", {
         route: "platform/auth/cognito-provider",
@@ -1079,7 +1186,8 @@ export class CognitoAuthProvider implements AuthProvider {
         "AdminUpdateUserAttributes",
         {
           UserPoolId: this.config.userPoolId,
-          Username: userId,
+          // The user's subject is its sub; the call names it by the pool's username (TASK-177).
+          Username: this.poolUsernameOf(userId),
           UserAttributes: [{ Name: TENANT_ATTRIBUTE, Value: tenantId }],
         },
         this.requireAdmin()
@@ -1097,7 +1205,7 @@ export class CognitoAuthProvider implements AuthProvider {
       const result = await callCognito(
         this.config,
         "AdminGetUser",
-        { UserPoolId: this.config.userPoolId, Username: userId },
+        { UserPoolId: this.config.userPoolId, Username: this.poolUsernameOf(userId) },
         this.requireAdmin()
       );
       const attrs = result.UserAttributes as
@@ -1241,6 +1349,69 @@ export class CognitoAuthProvider implements AuthProvider {
       return {
         state: "unknown",
         reason: `the pool could not be described (${error instanceof CognitoError ? error.cognitoType : "error"})`,
+      };
+    }
+  }
+
+  /**
+   * Whether the pool has the shape the platform requires (review 17 L2/L4): users sign in by
+   * email address (UsernameAttributes includes email — a native user's pool username is then its
+   * sub, which the refresh's SECRET_HASH and the native-user rule rely on; fixed when the pool is
+   * created), and the app client may read `identities` (who verified an address). Needs the
+   * administrative credentials (DescribeUserPool, DescribeUserPoolClient); without them `unknown`
+   * and the operator's check (POOL_SHAPE_OPERATOR_CHECK). What it learns about `identities` is
+   * used at once: hidden, no user is taken as native for want of it.
+   */
+  async checkPoolShape(): Promise<PoolShapeReadiness> {
+    const credentials = this.config.adminCredentials;
+    if (!credentials) {
+      return {
+        state: "unknown",
+        reason: `administrative credentials are not configured — check the pool by hand: ${POOL_SHAPE_OPERATOR_CHECK}`,
+        cause: "no_credentials",
+      };
+    }
+    try {
+      const pool = await callCognito(
+        this.config,
+        "DescribeUserPool",
+        { UserPoolId: this.config.userPoolId },
+        credentials
+      );
+      const usernameAttributes = ((pool.UserPool as Record<string, unknown> | undefined)
+        ?.UsernameAttributes ?? []) as unknown[];
+      const client = await callCognito(
+        this.config,
+        "DescribeUserPoolClient",
+        { UserPoolId: this.config.userPoolId, ClientId: this.config.clientId },
+        credentials
+      );
+      const read = ((client.UserPoolClient ?? {}) as { ReadAttributes?: unknown })
+        .ReadAttributes;
+      // An absent ReadAttributes list means "every attribute".
+      this.identitiesReadable = !Array.isArray(read) || read.includes("identities");
+      if (!usernameAttributes.includes("email")) {
+        return {
+          state: "unsafe",
+          reason:
+            "the pool signs in by username (UsernameAttributes does not include email): a native user's username is not its sub, so refreshing a session fails (SECRET_HASH) — the platform needs a pool whose users sign in by email address (fixed at pool creation: a new pool)",
+          cause: "username_sign_in",
+        };
+      }
+      if (!this.identitiesReadable) {
+        return {
+          state: "unsafe",
+          reason:
+            "the app client cannot read the identities attribute: no user is taken as native, so no address is marked verified from the pool — add identities to the client's readable attributes",
+          cause: "identities_hidden",
+        };
+      }
+      return { state: "ready" };
+    } catch (error) {
+      return {
+        state: "unknown",
+        reason: `the pool could not be described (${error instanceof CognitoError ? error.cognitoType : "error"})`,
+        cause: "unavailable",
       };
     }
   }

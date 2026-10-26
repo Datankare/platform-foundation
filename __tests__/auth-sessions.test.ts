@@ -60,11 +60,16 @@ import { POST as mfaChallenge } from "@/app/api/auth/mfa-challenge/route";
 import { POST as mfaSetup } from "@/app/api/auth/mfa/setup/route";
 import { POST as mfaVerify } from "@/app/api/auth/mfa/verify/route";
 import { POST as mfaDisable } from "@/app/api/auth/mfa/disable/route";
-import { readRefreshCookie } from "@/platform/auth/auth-response";
+import { readRefreshCookie, refreshCookieValue } from "@/platform/auth/auth-response";
 import { requestOrigin } from "@/platform/auth/auth-events";
+import * as tv from "@/platform/auth/token-verification";
 
 const USER = "6f1c2d3e-4a5b-4c6d-8e7f-901234567890";
 const OTHER = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f01234567";
+
+/** The refresh cookie the platform issues for `userId` and `token` (signed, review 17 M1). */
+const signed = (userId: string, token: string): string =>
+  refreshCookieValue(userId, token)!;
 
 function req(
   path: string,
@@ -121,8 +126,15 @@ describe("sign-in hands out a session (X-17, A-12, A-17)", () => {
       expiresIn: 3600,
     });
     const cookie = res.cookies.get("pf_refresh");
+    // `<user id>.<mac>.<refresh token>` (review 17 M1).
+    expect(cookie?.value).toMatch(
+      new RegExp(`^${USER}\\.[\\w-]{43}\\.refresh\\.with\\.dots$`)
+    );
+    expect(readRefreshCookie(cookie?.value)).toEqual({
+      userId: USER,
+      refreshToken: "refresh.with.dots",
+    });
     expect(cookie).toMatchObject({
-      value: `${USER}.refresh.with.dots`,
       httpOnly: true,
       sameSite: "strict",
       path: "/api/auth",
@@ -232,6 +244,17 @@ describe("POST /api/auth/refresh (A-14)", () => {
     ["a cookie with no user id", "refresh-only"],
     ["a cookie with a malformed user id", "../x.refresh"],
     ["an oversized cookie", `${USER}.${"a".repeat(9000)}`],
+    // Review 17 M1: the id is bound to the token by the MAC.
+    ["an unsigned cookie (the format before the MAC)", `${USER}.refresh-1`],
+    ["a cookie whose MAC is made up", `${USER}.${"A".repeat(43)}.refresh-1`],
+    [
+      "a cookie whose id was swapped for another user's",
+      signed(USER, "refresh-1").replace(USER, OTHER),
+    ],
+    [
+      "a cookie whose token was swapped",
+      signed(USER, "refresh-1").replace(/refresh-1$/, "refresh-2"),
+    ],
   ])("refuses %s, clears the cookies and never calls the provider", async (_l, value) => {
     const res = await refresh(
       req("/api/auth/refresh", value !== undefined ? { cookie: cookie(value) } : {})
@@ -250,7 +273,7 @@ describe("POST /api/auth/refresh (A-14)", () => {
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
     });
     const res = await refresh(
-      req("/api/auth/refresh", { cookie: cookie(`${USER}.refresh.with.dots`) })
+      req("/api/auth/refresh", { cookie: cookie(signed(USER, "refresh.with.dots")) })
     );
     expect(res.status).toBe(200);
     expect(provider.refreshToken).toHaveBeenCalledWith("refresh.with.dots", USER);
@@ -272,25 +295,62 @@ describe("POST /api/auth/refresh (A-14)", () => {
     ],
   ])("refuses when %s", async (_l, session) => {
     provider.refreshToken.mockResolvedValue(session);
-    const res = await refresh(req("/api/auth/refresh", { cookie: cookie(`${USER}.r`) }));
+    const res = await refresh(
+      req("/api/auth/refresh", { cookie: cookie(signed(USER, "r")) })
+    );
     expect(res.status).toBe(401);
     expect(res.headers.get("set-cookie")).toMatch(/pf_refresh=;.*Max-Age=0/i);
   });
 
   it("answers a coded 500 when the provider throws", async () => {
     provider.refreshToken.mockRejectedValue(new Error("down"));
-    const res = await refresh(req("/api/auth/refresh", { cookie: cookie(`${USER}.r`) }));
+    const res = await refresh(
+      req("/api/auth/refresh", { cookie: cookie(signed(USER, "r")) })
+    );
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe("internal.error");
   });
 
-  it("parses only <user id>.<token>, splitting at the first dot", () => {
-    expect(readRefreshCookie(`${USER}.a.b.c`)).toEqual({
+  it("parses only <user id>.<mac>.<token> whose MAC holds; the token may hold dots", () => {
+    expect(readRefreshCookie(signed(USER, "a.b.c"))).toEqual({
       userId: USER,
       refreshToken: "a.b.c",
     });
+    expect(readRefreshCookie(`${USER}.a.b.c`)).toBeNull();
     expect(readRefreshCookie(".token")).toBeNull();
     expect(readRefreshCookie(`${USER}.`)).toBeNull();
+    expect(refreshCookieValue("has.dots", "t")).toBeNull();
+    expect(refreshCookieValue(USER, "")).toBeNull();
+  });
+
+  it("verifies under the previous key while rotating; signs only under the current one", () => {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = { k: env.REFRESH_COOKIE_KEY, p: env.REFRESH_COOKIE_KEY_PREVIOUS };
+    try {
+      env.REFRESH_COOKIE_KEY = "o".repeat(64);
+      const old = signed(USER, "r");
+      env.REFRESH_COOKIE_KEY = "n".repeat(64);
+      expect(readRefreshCookie(old)).toBeNull();
+      env.REFRESH_COOKIE_KEY_PREVIOUS = "o".repeat(64);
+      expect(readRefreshCookie(old)).toEqual({ userId: USER, refreshToken: "r" });
+      expect(signed(USER, "r")).not.toBe(old);
+      delete env.REFRESH_COOKIE_KEY;
+      delete env.REFRESH_COOKIE_KEY_PREVIOUS;
+      // Production without a key: nothing is signed, nothing verifies (the contract refuses it).
+      const nodeEnv = env.NODE_ENV;
+      env.NODE_ENV = "production";
+      try {
+        expect(refreshCookieValue(USER, "r")).toBeNull();
+        expect(readRefreshCookie(old)).toBeNull();
+      } finally {
+        env.NODE_ENV = nodeEnv;
+      }
+    } finally {
+      if (saved.k === undefined) delete env.REFRESH_COOKIE_KEY;
+      else env.REFRESH_COOKIE_KEY = saved.k;
+      if (saved.p === undefined) delete env.REFRESH_COOKIE_KEY_PREVIOUS;
+      else env.REFRESH_COOKIE_KEY_PREVIOUS = saved.p;
+    }
   });
 });
 
@@ -300,10 +360,13 @@ describe("POST /api/auth/sign-out (X-17, A-12)", () => {
     const res = await signOut(
       req("/api/auth/sign-out", {
         headers: { authorization: "Bearer access-1" },
-        cookie: `pf_refresh=${USER}.refresh-1`,
+        cookie: `pf_refresh=${signed(USER, "refresh-1")}`,
       })
     );
     expect(res.status).toBe(200);
+    // The bearer is verified before its sign-out ends it: its subject is proven.
+    expect(provider.verifyToken).toHaveBeenCalledWith("access-1");
+    expect(provider.refreshToken).not.toHaveBeenCalled();
     expect(provider.signOut).toHaveBeenCalledWith("access-1", "refresh-1");
     const set = res.headers.get("set-cookie") ?? "";
     expect(set).toMatch(/pf_refresh=;.*Max-Age=0/i);
@@ -313,10 +376,42 @@ describe("POST /api/auth/sign-out (X-17, A-12)", () => {
     );
   });
 
-  it("revokes the refresh token even without an access token", async () => {
+  it("without an access token, proves the cookie's user by a refresh and signs that user out everywhere", async () => {
     provider.signOut.mockResolvedValue(undefined);
-    await signOut(req("/api/auth/sign-out", { cookie: `pf_refresh=${USER}.refresh-1` }));
+    provider.refreshToken.mockResolvedValue({
+      userId: USER,
+      accessToken: "access-minted",
+      refreshToken: "refresh-1",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+    const revoke = jest.spyOn(tv, "revokeTokenVerification");
+    const res = await signOut(
+      req("/api/auth/sign-out", { cookie: `pf_refresh=${signed(USER, "refresh-1")}` })
+    );
+    expect(res.status).toBe(200);
+    expect(provider.refreshToken).toHaveBeenCalledWith("refresh-1", USER);
+    expect(provider.signOut).toHaveBeenCalledWith("access-minted", "refresh-1");
+    expect(revoke).toHaveBeenCalledWith(USER);
+    expect(mockRecordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "logout", actorId: USER })
+    );
+    revoke.mockRestore();
+  });
+
+  it("a refresh token the provider no longer honours is still revoked; nobody is proven", async () => {
+    provider.signOut.mockResolvedValue(undefined);
+    provider.refreshToken.mockResolvedValue(null);
+    const revoke = jest.spyOn(tv, "revokeTokenVerification");
+    const res = await signOut(
+      req("/api/auth/sign-out", { cookie: `pf_refresh=${signed(USER, "refresh-1")}` })
+    );
+    expect(res.status).toBe(200);
     expect(provider.signOut).toHaveBeenCalledWith("", "refresh-1");
+    expect(revoke).not.toHaveBeenCalled();
+    expect(mockRecordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "logout", actorId: undefined })
+    );
+    revoke.mockRestore();
   });
 
   it("never sends a guest token to the auth provider", async () => {
@@ -332,7 +427,7 @@ describe("POST /api/auth/sign-out (X-17, A-12)", () => {
     const res = await signOut(
       req("/api/auth/sign-out", {
         headers: { authorization: "Bearer access-1" },
-        cookie: `pf_refresh=${USER}.refresh-1`,
+        cookie: `pf_refresh=${signed(USER, "refresh-1")}`,
       })
     );
     expect(res.status).toBe(500);

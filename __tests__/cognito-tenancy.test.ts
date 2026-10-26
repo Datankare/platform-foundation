@@ -87,7 +87,10 @@ describe("verifyToken carries the tenant attribute", () => {
     mockFetch.mockResolvedValueOnce(
       ok({
         Username: "user-1",
-        UserAttributes: [{ Name: TENANT_ATTRIBUTE, Value: TENANT }],
+        UserAttributes: [
+          { Name: "sub", Value: "user-1" },
+          { Name: TENANT_ATTRIBUTE, Value: TENANT },
+        ],
       })
     );
     expect((await new CognitoAuthProvider(BASE).verifyToken(token))?.tenantId).toBe(
@@ -97,11 +100,16 @@ describe("verifyToken carries the tenant attribute", () => {
 
   it("reports none when the attribute is absent or empty", async () => {
     mockFetch
-      .mockResolvedValueOnce(ok({ Username: "user-1", UserAttributes: [] }))
+      .mockResolvedValueOnce(
+        ok({ Username: "user-1", UserAttributes: [{ Name: "sub", Value: "user-1" }] })
+      )
       .mockResolvedValueOnce(
         ok({
           Username: "user-1",
-          UserAttributes: [{ Name: TENANT_ATTRIBUTE, Value: "" }],
+          UserAttributes: [
+            { Name: "sub", Value: "user-1" },
+            { Name: TENANT_ATTRIBUTE, Value: "" },
+          ],
         })
       );
     const p = new CognitoAuthProvider(BASE);
@@ -113,7 +121,10 @@ describe("verifyToken carries the tenant attribute", () => {
     mockFetch.mockResolvedValueOnce(
       ok({
         Username: "user-1",
-        UserAttributes: [{ Name: TENANT_ATTRIBUTE, Value: "not-a-uuid" }],
+        UserAttributes: [
+          { Name: "sub", Value: "user-1" },
+          { Name: TENANT_ATTRIBUTE, Value: "not-a-uuid" },
+        ],
       })
     );
     expect((await new CognitoAuthProvider(BASE).verifyToken(token))?.tenantId).toBe(
@@ -135,7 +146,10 @@ describe("an attribute change voids remembered verifications (review 8 M1)", () 
   const getUser = (verified: boolean) =>
     ok({
       Username: "user-1",
-      UserAttributes: [{ Name: "email_verified", Value: String(verified) }],
+      UserAttributes: [
+        { Name: "sub", Value: "user-1" },
+        { Name: "email_verified", Value: String(verified) },
+      ],
     });
 
   it("after the address is verified, the next request reads it from the pool, not the cache", async () => {
@@ -144,7 +158,10 @@ describe("an attribute change voids remembered verifications (review 8 M1)", () 
     expect((await p.verifyToken(token))?.emailVerified).toBe(false);
     mockFetch
       .mockResolvedValueOnce(ok({})) // ConfirmSignUp
-      .mockResolvedValueOnce(ok({ Username: "user-1" })) // AdminGetUser: the token's subject
+      // AdminGetUser: the token's subject is the user's sub (TASK-177), never its username.
+      .mockResolvedValueOnce(
+        ok({ Username: "Google_1", UserAttributes: [{ Name: "sub", Value: "user-1" }] })
+      )
       .mockResolvedValueOnce(getUser(true));
     expect(await p.confirmEmailVerification("a@b.c", "123456")).toEqual({
       success: true,
@@ -203,6 +220,41 @@ describe("assignTenant", () => {
     expect(JSON.stringify(c.headers)).not.toContain(
       ADMIN.adminCredentials!.secretAccessKey
     );
+  });
+
+  it("TASK-177: a federated user's subject (its sub) is addressed by the pool username its signed token named — Cognito accepts no federated sub there", async () => {
+    const SUB = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
+    const p = new CognitoAuthProvider(ADMIN);
+    // Not seen yet: addressed by the sub (right for every native user).
+    mockFetch.mockResolvedValueOnce(ok({}));
+    await p.assignTenant(SUB, TENANT);
+    expect(call(0).body.Username).toBe(SUB);
+    // A signed token of the user names its username: used from then on.
+    mockFetch.mockResolvedValueOnce(
+      ok({ Username: "Google_1093", UserAttributes: [{ Name: "sub", Value: SUB }] })
+    );
+    await p.verifyToken(
+      fakeJwt({
+        sub: SUB,
+        username: "Google_1093",
+        token_use: "access",
+        client_id: BASE.clientId,
+        iss: `https://cognito-idp.${BASE.region}.amazonaws.com/${BASE.userPoolId}`,
+        iat: 1000,
+        exp: 9_999_999_999,
+      })
+    );
+    mockFetch.mockResolvedValueOnce(ok({})).mockResolvedValueOnce(ok({}));
+    await expect(p.assignTenant(SUB, TENANT)).resolves.toEqual({ success: true });
+    expect(call(2)).toMatchObject({
+      action: "AdminUpdateUserAttributes",
+      body: { Username: "Google_1093" },
+    });
+    await p.getUserTenant(SUB);
+    expect(call(3)).toMatchObject({
+      action: "AdminGetUser",
+      body: { Username: "Google_1093" },
+    });
   });
 
   it("maps a Cognito refusal to a coded failure", async () => {

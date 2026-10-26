@@ -33,7 +33,7 @@ import { logger } from "@/lib/logger";
 import { unionWithModules } from "@/platform/modules/compose";
 import type { AccountStatus } from "@/platform/moderation/types";
 import {
-  ensureUserProvisioned,
+  provisionAccount,
   type ProvisioningProfile,
 } from "@/platform/auth/user-provisioning";
 
@@ -261,7 +261,7 @@ async function loadAccountState(
 
     // First use of a new account: create its row, then read what was stored (TASK-117).
     if (!data) {
-      const outcome = await ensureUserProvisioned(userId, profile);
+      const { outcome, accountId } = await provisionAccount(userId, profile);
       if (outcome === "skipped") {
         // No database configured (mock/CI) — nothing to load; authentication passed.
         return {
@@ -273,6 +273,16 @@ async function loadAccountState(
       }
       if (outcome === "failed") return { ...failClosed, notProvisioned: true };
       if (outcome === "erased") return { ...failClosed, deleted: true };
+      // The identity's account has another id (re-linked to a new identity pool, TASK-174): the
+      // caller passed the subject where the account id belongs — the per-account checks already
+      // read under it would be another account's. Refused (fail closed), never read through.
+      if (accountId?.toLowerCase() !== userId.toLowerCase()) {
+        logger.warn(
+          "Account status guard: called with an identity's subject, not its account id",
+          { route: "platform/auth/account-status-guard" }
+        );
+        return { ...failClosed, notProvisioned: true };
+      }
       try {
         data = await readAccountRow(userId);
       } catch {
@@ -354,7 +364,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  *   - suspended → check suspended features config list; auto-expire if past
  *   - banned → block all features
  *
- * @param userId - User to check
+ * @param userId - The account (users.id) — requireActor's `actor.id`, never the token's subject
+ *   (they differ for an account re-linked to a new identity pool, TASK-174)
  * @param feature - Feature identifier (must match config list entries)
  */
 // ---------------------------------------------------------------------------

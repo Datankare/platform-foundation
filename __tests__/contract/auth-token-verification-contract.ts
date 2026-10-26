@@ -27,6 +27,10 @@
  *        revocation voids the stand-in
  *   L11  an "unavailable" lookup after a revocation during the call never stands on the entry
  *        read before it; without a revocation the grace stands; an unreadable stamp is no proof
+ *   177  the subject is the token's `sub` (TASK-177) — for a federated user too, whose username
+ *        (`Google_…`) differs: payload.sub is the sub, never the username, and a revocation by
+ *        the sub voids that user's remembered verification; one by the username voids nothing;
+ *        a lookup answering for another sub, or with no sub at all, is refused (review 17 M2/L1)
  *
  * How to run it — a factory for the provider under test, given what the kit controls:
  *
@@ -76,7 +80,16 @@ import {
 
 /** What the kit's user lookup answers for a token (the provider's GetUser, or its equivalent). */
 export type UserLookupAnswer =
-  | { readonly kind: "user"; readonly username: string; readonly email: string }
+  | {
+      readonly kind: "user";
+      readonly username: string;
+      readonly email: string;
+      /**
+       * The pool's `sub` attribute of the user (GetUser lists it): the token's own sub. An answer
+       * without one must be refused (review 17 L1).
+       */
+      readonly sub?: string;
+    }
   | { readonly kind: "unavailable"; readonly reason: string }
   | { readonly kind: "invalid" };
 
@@ -201,19 +214,22 @@ interface Kit {
   readonly pinnedKeys: () => JwksKeyStore;
 }
 
-/** The lookup's default answer: the token's own user. */
+/** The lookup's default answer: the token's own user (its username and its sub). */
 function userAnswer(token: string): UserLookupAnswer {
   const [, payload] = token.split(".");
   let username = "user-123";
+  let sub: string | undefined;
   try {
     const c = JSON.parse(Buffer.from(payload ?? "", "base64url").toString()) as {
       username?: unknown;
+      sub?: unknown;
     };
     if (typeof c.username === "string") username = c.username;
+    if (typeof c.sub === "string") sub = c.sub;
   } catch {
     // the default
   }
-  return { kind: "user", username, email: "u@x.y" };
+  return { kind: "user", username, email: "u@x.y", ...(sub ? { sub } : {}) };
 }
 
 export function runAuthTokenVerificationContract(
@@ -272,6 +288,66 @@ export function runAuthTokenVerificationContract(
     suppressedRefreshCases(k);
     unavailableKeyCases(k);
     revocationDuringLookupCases(k);
+    subjectCases(k);
+  });
+}
+
+/** A federated (Google) user as the pool issues its access token: username ≠ sub. */
+const FEDERATED = {
+  sub: "7d3f0a52-1c9e-4b6a-9f21-5e8c0d4b2a17",
+  username: "Google_109320000000000000001",
+} as const;
+
+function subjectCases(k: Kit): void {
+  describe("the subject is the token's sub, for every user (TASK-177)", () => {
+    it("a federated user (username Google_…) is named by its sub, never its username", async () => {
+      const p = k.provider(k.pinnedKeys());
+      const payload = await p.verifyToken(signJwt(accessClaims(FEDERATED)));
+      expect(payload).toMatchObject({ sub: FEDERATED.sub });
+      expect(payload!.sub).not.toBe(FEDERATED.username);
+      // A native user of a pool that signs in by address: its username is its sub — the same.
+      const native = "0b6e7c1d-2f3a-4b5c-8d9e-0f1a2b3c4d5e";
+      expect(
+        await p.verifyToken(signJwt(accessClaims({ sub: native, username: native })))
+      ).toMatchObject({ sub: native });
+    });
+
+    it("a revocation by the sub voids a federated user's remembered verification; one by the username voids nothing", async () => {
+      const p = k.provider(k.pinnedKeys());
+      const token = signJwt(accessClaims({ ...FEDERATED, jti: "fed-1" }));
+      await p.verifyToken(token);
+      await p.verifyToken(token);
+      expect(k.state.lookup).toHaveBeenCalledTimes(1);
+      await revokeTokenVerification(FEDERATED.username, k.state.shared);
+      await p.verifyToken(token);
+      expect(k.state.lookup).toHaveBeenCalledTimes(1);
+      await revokeTokenVerification(FEDERATED.sub, k.state.shared);
+      expect(await p.verifyToken(token)).toMatchObject({ sub: FEDERATED.sub });
+      expect(k.state.lookup).toHaveBeenCalledTimes(2);
+    });
+
+    it("a lookup answering for another user than the token's sub is never that token's", async () => {
+      const p = k.provider(k.pinnedKeys());
+      k.state.lookup = jest.fn(async (_token: string): Promise<UserLookupAnswer> => ({
+        kind: "user",
+        username: FEDERATED.username,
+        email: "u@x.y",
+        sub: "00000000-0000-4000-8000-000000000000",
+      }));
+      // Review 17 M2: refused — never the token's user with another user's attributes.
+      expect(await p.verifyToken(signJwt(accessClaims(FEDERATED)))).toBeNull();
+      expect(k.state.lookup).toHaveBeenCalledTimes(1);
+    });
+
+    it("a lookup answering with no sub is never that token's (review 17 L1)", async () => {
+      const p = k.provider(k.pinnedKeys());
+      k.state.lookup = jest.fn(async (_token: string): Promise<UserLookupAnswer> => ({
+        kind: "user",
+        username: FEDERATED.username,
+        email: "u@x.y",
+      }));
+      expect(await p.verifyToken(signJwt(accessClaims(FEDERATED)))).toBeNull();
+    });
   });
 }
 

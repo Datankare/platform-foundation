@@ -23,6 +23,7 @@ export type {
   TrajectoryCost,
   TrajectoryRecord,
   TrajectoryStore,
+  UpdateStatusOptions,
 } from "@/platform/kernel/types";
 import type {
   AddStepOptions,
@@ -31,6 +32,7 @@ import type {
   TrajectoryCost,
   TrajectoryRecord,
   TrajectoryStore,
+  UpdateStatusOptions,
 } from "@/platform/kernel/types";
 import { generateId } from "./utils";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
@@ -71,6 +73,9 @@ function stepBytes(step: Step): number {
 // ---------------------------------------------------------------------------
 
 export class InMemoryTrajectoryStore implements TrajectoryStore {
+  /** updateStatus honours `from` (checked and written with no await between them). */
+  readonly supportsStatusCas = true;
+
   /** trajectoryId → record, per tenant. Insertion order is creation order. */
   private readonly parts = new TenantPartitionedMap<string, TrajectoryRecord>();
 
@@ -275,11 +280,15 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
 
   async updateStatus(
     trajectoryId: string,
-    status: TrajectoryStatus
+    status: TrajectoryStatus,
+    options: UpdateStatusOptions = {}
   ): Promise<TrajectoryRecord | undefined> {
     const records = this.parts.current();
     const current = records.get(trajectoryId);
     if (!current) return undefined;
+    // Compare-and-set (TASK-175): checked and written with no await between them.
+    if (options.from && !options.from.includes(current.trajectory.status))
+      return undefined;
 
     const updated: TrajectoryRecord = {
       ...current,

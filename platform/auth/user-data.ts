@@ -838,6 +838,8 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "user_deletions.requested_by": "the record of an erasure, which must outlive it",
   "user_deletions.standing": "the record of an erasure, which must outlive it",
   "user_deletions.user_id": "the record of an erasure, which must outlive it",
+  "user_deletions.cognito_sub":
+    "the record of an erasure: the identity it closed, never provisioned again (TASK-174)",
   // The platform's own machinery.
   "applied_migrations.confidence": "schema history",
   "applied_migrations.filename": "schema history",

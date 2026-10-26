@@ -39,6 +39,8 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "the config.expire-approvals platform job: expiring stale approvals across tenants (TASK-036, ADR-056 D3)",
   "platform/admin/hold-withdrawal.ts":
     "a platform-scope reduction's withdrawal: finding the tenants holding platform-scope holds of the key, ids only — the withdrawal then runs as each tenant (review 14 L-4)",
+  "platform/auth/identity-relink.ts":
+    "the operator command re-linking accounts to a new identity pool: the address's accounts in whichever tenant holds them, changed with their audit record in one transaction (TASK-174)",
   "platform/jobs/postgres-store.ts":
     "the job runner: claiming, settling and scheduling every tenant's jobs; operators' cross-tenant job views (ADR-056 D2)",
 };

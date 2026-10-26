@@ -42,6 +42,7 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     SUPABASE_SERVICE_ROLE_KEY: JWT,
     GUEST_TOKEN_SECRET: GUEST_SECRET,
     ERASURE_HASH_KEY: "e".repeat(64),
+    REFRESH_COOKIE_KEY: "r".repeat(64),
     CRON_SECRET: "c".repeat(64),
     APP_STATE_STORE: "supabase",
     TRAJECTORY_STORE: "supabase",
@@ -543,6 +544,7 @@ describe("required settings", () => {
         COGNITO_CLIENT_SECRET: "s".repeat(52),
         GUEST_TOKEN_SECRET: GUEST_SECRET,
         ERASURE_HASH_KEY: "e".repeat(64),
+        REFRESH_COOKIE_KEY: "r".repeat(64),
         CRON_SECRET: "c".repeat(64),
         CACHE_PROVIDER: "upstash",
         UPSTASH_REDIS_REST_URL: "https://cache.example.upstash.io",
@@ -568,6 +570,45 @@ describe("required settings", () => {
         /^ERASURE_HASH_KEY has the wrong shape — expected at least 32 random characters/
       ),
     ]);
+  });
+
+  it("a real auth provider requires REFRESH_COOKIE_KEY; its previous key only beside it, never equal (review 17 M1)", () => {
+    expect(checkEnvironmentContract(valid({ REFRESH_COOKIE_KEY: undefined }))).toEqual([
+      "REFRESH_COOKIE_KEY is required by AUTH_PROVIDER=cognito (the refresh cookie's HMAC)",
+    ]);
+    expect(checkEnvironmentContract(valid({ REFRESH_COOKIE_KEY: "short" }))).toEqual([
+      expect.stringMatching(
+        /^REFRESH_COOKIE_KEY has the wrong shape — expected at least 32 random characters/
+      ),
+    ]);
+    expect(
+      checkEnvironmentContract(valid({ REFRESH_COOKIE_KEY_PREVIOUS: "p".repeat(64) }))
+    ).toEqual([]);
+    expect(
+      checkEnvironmentContract(valid({ REFRESH_COOKIE_KEY_PREVIOUS: "r".repeat(64) }))
+    ).toEqual([
+      "REFRESH_COOKIE_KEY_PREVIOUS is the same as REFRESH_COOKIE_KEY — set it to the key before the current one, or unset it",
+    ]);
+    expect(
+      checkEnvironmentContract(
+        valid({
+          REFRESH_COOKIE_KEY: undefined,
+          REFRESH_COOKIE_KEY_PREVIOUS: "p".repeat(64),
+        })
+      )
+    ).toEqual([
+      "REFRESH_COOKIE_KEY is required by AUTH_PROVIDER=cognito (the refresh cookie's HMAC)",
+      "REFRESH_COOKIE_KEY_PREVIOUS is set without REFRESH_COOKIE_KEY — rotation keeps the old key beside a new one",
+    ]);
+  });
+
+  it("AUTH_TRUSTED_EMAIL_IDPS: spaces around commas accepted, malformed refused (review 17 L3)", () => {
+    for (const v of ["google", "Google, SignInWithApple", " Google ,Apple "])
+      expect(checkEnvironmentContract(valid({ AUTH_TRUSTED_EMAIL_IDPS: v }))).toEqual([]);
+    for (const v of ["Google,,Apple", "Google;Apple", "Google,", ",Google", "Goo gle"])
+      expect(checkEnvironmentContract(valid({ AUTH_TRUSTED_EMAIL_IDPS: v }))).toEqual([
+        expect.stringMatching(/^AUTH_TRUSTED_EMAIL_IDPS has the wrong shape/),
+      ]);
   });
 
   it("refuses a short GUEST_TOKEN_SECRET", () => {

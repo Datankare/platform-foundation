@@ -65,8 +65,15 @@ jest.mock("@/platform/data", () => ({
 }));
 
 const mockEnsureProvisioned = jest.fn();
+/** The outcome the test sets; the account is the id asked for unless the test says another. */
+const mockProvisionedAccountId = jest.fn((id: string): string | undefined => id);
 jest.mock("@/platform/auth/user-provisioning", () => ({
-  ensureUserProvisioned: (...args: any[]) => mockEnsureProvisioned(...args),
+  provisionAccount: async (...args: any[]) => {
+    const outcome = await mockEnsureProvisioned(...args);
+    return outcome === "created" || outcome === "existing"
+      ? { outcome, accountId: mockProvisionedAccountId(args[0]) }
+      : { outcome };
+  },
 }));
 
 // ── Imports ─────────────────────────────────────────────────────────────
@@ -324,6 +331,16 @@ describe("checkAccountStatus", () => {
   it("refuses as not provisioned when the row is still missing after provisioning", async () => {
     usersReads(null, null);
     mockEnsureProvisioned.mockResolvedValue("existing");
+    const result = await checkAccountStatus(VALID_USER_ID, "generate");
+    expect(result).toMatchObject({ allowed: false, code: "account.not_provisioned" });
+  });
+
+  it("hostile: called with a re-linked account's subject — refused, never read through to the account (TASK-174)", async () => {
+    // Provisioning finds the identity's account under another id: the per-account blocks were
+    // read under the subject, so serving the account's status would skip its restrictions.
+    usersReads(null, ACTIVE_ROW);
+    mockEnsureProvisioned.mockResolvedValue("existing");
+    mockProvisionedAccountId.mockReturnValueOnce("0f0e0d0c-0b0a-4000-8000-000000000001");
     const result = await checkAccountStatus(VALID_USER_ID, "generate");
     expect(result).toMatchObject({ allowed: false, code: "account.not_provisioned" });
   });

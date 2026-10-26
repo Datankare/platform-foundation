@@ -130,6 +130,7 @@ function routeCognito(action: string, payload: CognitoPayload) {
         return ok({
           Username: "user-123",
           UserAttributes: [
+            { Name: "sub", Value: "user-123" },
             { Name: "email", Value: C.email },
             { Name: "email_verified", Value: "true" },
           ],

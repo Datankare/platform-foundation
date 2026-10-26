@@ -90,6 +90,8 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
           sub: MOCK_USER_ID,
           email: MOCK_EMAIL,
           emailVerified: true,
+          // Verified by the (mock) pool itself: a native user (review 16 L8).
+          identityProviders: [],
           iat: Math.floor(Date.now() / 1000),
           exp: Math.floor(Date.now() / 1000) + 3600,
           // One sign-in session for the one mock token (TokenPayload.sessionId).

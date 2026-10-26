@@ -13,14 +13,16 @@ architecture decision.
 
 ## Files
 
-| File             | Purpose                                                                                                     |
-| ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| `types.ts`       | Provider-agnostic type definitions (AuthResult, TokenPayload, etc.)                                         |
-| `provider.ts`    | `AuthProvider` interface — the contract                                                                     |
-| `index.ts`       | Public API — re-exports types and interface                                                                 |
-| `guest-token.ts` | Platform-owned signed guest tokens (ADR-050 D4) — providers delegate here                                   |
-| `middleware.ts`  | `requireAuth`, `optionalAuth`, `requirePermission`, `requireActor` (user, or guest where the route opts in) |
-| `actor-guard.ts` | `requireActorWithStatus` — actor + account status (users only; guests are bounded by the guest allowance)   |
+| File                                                                        | Purpose                                                                                                                        |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `types.ts`                                                                  | Provider-agnostic type definitions (AuthResult, TokenPayload, etc.)                                                            |
+| `provider.ts`                                                               | `AuthProvider` interface — the contract                                                                                        |
+| `index.ts`                                                                  | Public API — re-exports types and interface                                                                                    |
+| `guest-token.ts`                                                            | Platform-owned signed guest tokens (ADR-050 D4) — providers delegate here                                                      |
+| `middleware.ts`                                                             | `requireAuth`, `optionalAuth`, `requirePermission`, `requireActor` (user, or guest where the route opts in)                    |
+| `actor-guard.ts`                                                            | `requireActorWithStatus` — actor + account status (users only; guests are bounded by the guest allowance)                      |
+| `account-identity.ts`                                                       | Which account an identity names: the row bound to its subject (`users.cognito_sub`) — `actor.id`, never the subject (TASK-174) |
+| `identity-relink.ts`, `identity-relink-command.ts`, `identity-directory.ts` | The operator command re-linking accounts to a new identity pool (`scripts/relink-identity.mjs`; docs/TENANCY_OPERATIONS.md §6) |
 
 ## Usage
 

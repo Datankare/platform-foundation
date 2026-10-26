@@ -2,7 +2,8 @@
  * app/api/auth/refresh/route.ts — Renew the access token (audit A-14, X-17)
  *
  * POST, no body. The refresh token is read from the httpOnly refresh cookie — script never sees
- * it — and exchanged for a new access token for the same user; the answer is
+ * it, and a cookie whose MAC fails (review 17 M1: forged, edited, or unsigned) is refused like a
+ * missing one — and exchanged for a new access token for the same user; the answer is
  * { success, userId, accessToken, expiresIn }, with the session indicator renewed. A missing,
  * malformed, expired or revoked refresh token answers auth.token_invalid and clears the cookies:
  * the browser signs in again. SameSite=Strict keeps another site from triggering it; it returns

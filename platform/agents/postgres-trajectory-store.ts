@@ -44,6 +44,7 @@ import type {
   TrajectoryRecord,
   TrajectoryQuery,
   TrajectorySubject,
+  UpdateStatusOptions,
   TrajectoryCost,
 } from "./trajectory-store";
 import { generateUuid } from "./utils";
@@ -142,6 +143,9 @@ const QUERY_WITHOUT_STEPS = `select id, subject_kind, subject_id, trigger, scope
           limit $7::int`;
 
 export class PostgresTrajectoryStore implements TrajectoryStore {
+  /** updateStatus honours `from` under the row's lock. */
+  readonly supportsStatusCas = true;
+
   async create(
     subject: TrajectorySubject,
     trigger: string,
@@ -332,9 +336,13 @@ export class PostgresTrajectoryStore implements TrajectoryStore {
 
   async updateStatus(
     trajectoryId: string,
-    status: TrajectoryStatus
+    status: TrajectoryStatus,
+    options: UpdateStatusOptions = {}
   ): Promise<TrajectoryRecord | undefined> {
     return this.lockedUpdate(trajectoryId, async (tx, row) => {
+      // Compare-and-set (TASK-175): the row is locked, so the status read is the one replaced.
+      if (options.from && !options.from.includes(row.status as TrajectoryStatus))
+        return undefined;
       const { rows } = await tx.query<TrajectoryRow>(
         `update agent_trajectories
             set status = $2::trajectory_status, version = version + 1, updated_at = now()

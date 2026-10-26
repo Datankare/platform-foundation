@@ -321,7 +321,8 @@ async function runSteps(
   trajectoryId: string,
   from: number,
   to: number,
-  priorOutputs: readonly Record<string, unknown>[]
+  priorOutputs: readonly Record<string, unknown>[],
+  resume?: ResumeBinding
 ): Promise<Omit<RunResult, "capability">> {
   // The store the hold was written to (holdStep defaults the same way), so a resume finds the
   // approval wherever it was recorded.
@@ -364,18 +365,29 @@ async function runSteps(
     // approved: the proposal's own tool and payload, never input recomputed from this call
     // (a resume must not turn one approval into a different action).
     const approved = await approvedProposalForStep(proposalStore, trajectoryId, i);
+    // A resume runs its own approval's step and nothing else (TASK-175): the step must still be
+    // the one it released and still approved under that proposal — else another call has run it
+    // (or holds it), and this one is refused rather than running it without the approval.
+    if (
+      resume &&
+      (i !== resume.stepIndex || approved?.proposalId !== resume.proposalId)
+    ) {
+      throw new HeldActionNotApprovedError(resume.proposalId);
+    }
     if (approved && approved.label !== step.tool.id) {
-      await store.updateStatus(trajectoryId, "failed");
+      await settle(store, trajectoryId, "failed", resume);
       throw new ApprovalMismatchError(approved.proposalId, step.tool.id);
     }
 
-    // The governed budget, before anything is spent; unreadable is exhausted (fail closed).
+    // The governed budget, before anything is spent; unreadable is exhausted (fail closed). On a
+    // resume this is before the claim: its pause applies only while the workflow is open
+    // (review 16) — a concurrent resume that ran the step meanwhile is never overwritten.
     const allowed = await tracker
       .checkBudget(args.actor.actorId, budgetScope.type, budgetScope.id)
       .then((r) => r.allowed)
       .catch(() => false);
     if (!allowed) {
-      await store.updateStatus(trajectoryId, "paused");
+      await settle(store, trajectoryId, "paused", resume);
       return { stop: "paused" };
     }
 
@@ -417,8 +429,13 @@ async function runSteps(
         });
     } catch (err) {
       if (err instanceof PipelineRejectedError) {
-        if (err.reason === "approval-used") {
-          // Another call ran this step on the same approval: nothing to hold or pause here.
+        if (
+          err.reason === "approval-used" ||
+          (resume && err.reason === "requires-approval")
+        ) {
+          // Another call ran this step on the same approval: nothing to hold or pause here. A
+          // resume whose approval the pipeline no longer finds approved (claimed, used or
+          // withdrawn since it was read — TASK-175) is refused the same way: never re-held.
           throw new HeldActionNotApprovedError(approved?.proposalId ?? "");
         }
         if (err.reason === "requires-approval") {
@@ -442,7 +459,16 @@ async function runSteps(
             const current = await proposalForStep(proposalStore, trajectoryId, i);
             const awaiting = waitsFor(current);
             if (current && awaiting) {
-              await store.updateStatus(trajectoryId, WAITING_STATUS[awaiting]);
+              // Only while the workflow is still open (TASK-175: compare-and-set): a resume that
+              // ran the step since is not undone, and this call stands down.
+              const moved = await store.updateStatus(
+                trajectoryId,
+                WAITING_STATUS[awaiting],
+                {
+                  from: OPEN_WORKFLOW,
+                }
+              );
+              if (!moved) throw new HeldActionNotApprovedError(current.proposalId);
               return {
                 stop: "held",
                 held: await heldAgain(definition, current, awaiting),
@@ -458,11 +484,11 @@ async function runSteps(
             }
             throw holdErr;
           }
-          await store.updateStatus(trajectoryId, "paused");
+          await settle(store, trajectoryId, "paused", resume);
           return { stop: "held", held };
         }
         // budget-exceeded: pause, recoverable by raising the ceiling (ADR-029 D8).
-        await store.updateStatus(trajectoryId, "paused");
+        await settle(store, trajectoryId, "paused", resume);
         return { stop: "paused" };
       }
       if (approved && err instanceof ApprovedRunFailedError) {
@@ -470,18 +496,42 @@ async function runSteps(
         // workflow waits at this step for it to be approved again (awaiting_retry) — it is not
         // over, and its own agent cannot retry it without that decision. An approval that could
         // not be given back leaves the run's outcome unknown: blocked until a person decides it.
-        await store.updateStatus(
-          trajectoryId,
-          err.released ? "awaiting_retry" : "indeterminate"
-        );
+        // This call claimed the approval, so the run was its own: on a resume the status moves
+        // only while the workflow is open (one ended meanwhile stays ended), and the run's own
+        // failure is what the caller is told either way.
+        const waiting = err.released ? "awaiting_retry" : "indeterminate";
+        if (resume)
+          await store.updateStatus(trajectoryId, waiting, { from: OPEN_WORKFLOW });
+        else await store.updateStatus(trajectoryId, waiting);
         throw err;
       }
-      await store.updateStatus(trajectoryId, "failed");
+      await settle(store, trajectoryId, "failed", resume);
       throw err;
     }
   }
 
   return { stop: "completed" };
+}
+
+/**
+ * Write a status the run's own path decided (TASK-175, review 16). Outside a resume, as it says.
+ * On a resume — whose checks before its claim are read-then-act — only while the workflow is
+ * still open (compare-and-set from OPEN_WORKFLOW): a concurrent resume that ran the step and
+ * completed (or a withdrawal that ended) the workflow meanwhile is never overwritten; this call
+ * is then refused (HeldActionNotApprovedError), as the loser of the race it is.
+ */
+async function settle(
+  store: TrajectoryStore,
+  trajectoryId: string,
+  status: TrajectoryStatus,
+  resume: ResumeBinding | undefined
+): Promise<void> {
+  if (!resume) {
+    await store.updateStatus(trajectoryId, status);
+    return;
+  }
+  const moved = await store.updateStatus(trajectoryId, status, { from: OPEN_WORKFLOW });
+  if (!moved) throw new HeldActionNotApprovedError(resume.proposalId);
 }
 
 /** Whether step `stepIndex` has already committed, or its approval is in use or was used. */
@@ -537,6 +587,14 @@ const AWAITING_DECISION: ReadonlySet<TrajectoryStatus> = new Set<TrajectoryStatu
   "awaiting_retry",
   "indeterminate",
 ]);
+
+/** Workflow statuses that are not finished: a decision on a step may still move them. */
+const OPEN_WORKFLOW: readonly TrajectoryStatus[] = [
+  "running",
+  "paused",
+  "awaiting_retry",
+  "indeterminate",
+];
 
 /** Proposal statuses that are still this step's decision (not ended). */
 const LIVE_PROPOSAL = new Set(["proposed", "approved", "executing", "indeterminate"]);
@@ -658,8 +716,14 @@ async function waitAgain(
   awaiting: "retry" | "outcome"
 ): Promise<Omit<RunResult, "capability">> {
   const status = WAITING_STATUS[awaiting];
-  if (record.trajectory.status !== status)
-    await store.updateStatus(record.trajectory.trajectoryId, status);
+  if (record.trajectory.status !== status) {
+    // Only from the status read (TASK-175): a resume that ran the step since is not undone, and
+    // this continuation — which saw a decision that has since been acted on — is refused.
+    const moved = await store.updateStatus(record.trajectory.trajectoryId, status, {
+      from: [record.trajectory.status],
+    });
+    if (!moved) throw new HeldActionNotApprovedError(proposal.proposalId);
+  }
   return { stop: "held", held: await heldAgain(definition, proposal, awaiting) };
 }
 
@@ -821,7 +885,8 @@ async function assemble(
   definition: WorkflowDefinition,
   store: TrajectoryStore,
   trajectoryId: string,
-  result: RunResult
+  result: RunResult,
+  resumed = false
 ): Promise<AgentResponse<unknown>> {
   const record = await store.getById(trajectoryId);
   if (!record) {
@@ -833,13 +898,18 @@ async function assemble(
   const remaining = Math.max(definition.steps.length - commitmentCount(steps), 0);
 
   if (result.stop === "completed" && remaining === 0) {
-    await store.updateStatus(trajectoryId, "completed");
+    // A resume's run completed it — but a workflow ended meanwhile (withdrawn) stays ended
+    // (review 16: no unconditional status write on a resume path).
+    if (resumed)
+      await store.updateStatus(trajectoryId, "completed", { from: OPEN_WORKFLOW });
+    else await store.updateStatus(trajectoryId, "completed");
   } else if (
     result.stop === "completed" &&
     AWAITING_DECISION.has(record.trajectory.status)
   ) {
-    // The approved step ran on its resume (TASK-170): the workflow is under way again.
-    await store.updateStatus(trajectoryId, "running");
+    // The approved step ran on its resume (TASK-170): the workflow is under way again — unless
+    // it moved since (TASK-175: compare-and-set).
+    await store.updateStatus(trajectoryId, "running", { from: [...AWAITING_DECISION] });
   }
 
   const settled = await store.getById(trajectoryId);
@@ -964,16 +1034,28 @@ export async function runGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>
  * The agent picks the next hop from nextActions and calls again with the trajectoryId.
  */
 export async function advanceGoal(args: RunGoalArgs): Promise<AgentResponse<unknown>> {
-  return advance(args, false);
+  return advance(args, undefined);
 }
 
 /**
- * The next step. `resuming` — resumeApprovedAction, after the step's approval was (again)
- * given: a workflow waiting for that decision is continued, not answered as waiting.
+ * The approval a resume runs (TASK-175): its proposal and the step it was made for. A resume
+ * binds the run to exactly that — the step must still be next, and still approved under that
+ * proposal, when it runs — so whether it ran is decided by its own claim of that approval (the
+ * pipeline's compare-and-set, approved -> executing), never by what an earlier read saw.
+ */
+interface ResumeBinding {
+  readonly proposalId: string;
+  readonly stepIndex: number;
+}
+
+/**
+ * The next step. `resume` — resumeApprovedAction, after the step's approval was (again) given: a
+ * workflow waiting for that decision is continued, not answered as waiting, and only that step
+ * runs, on that approval (ResumeBinding).
  */
 async function advance(
   args: RunGoalArgs,
-  resuming: boolean
+  resume: ResumeBinding | undefined
 ): Promise<AgentResponse<unknown>> {
   const definition = resolveWorkflow(args.goal);
   const store = args.trajectoryStore ?? getTrajectoryStore();
@@ -987,7 +1069,13 @@ async function advance(
   const trajectoryId = record.trajectory.trajectoryId;
   const from = commitmentCount(record.trajectory.steps);
 
-  if (!resuming) {
+  if (resume) {
+    // Read again, after resumeApprovedAction's own look: a concurrent resume may have run the
+    // step since. Then this approval releases nothing — refused, never answered with the
+    // workflow that other call completed (nor allowed to run the step after it).
+    if (from !== resume.stepIndex)
+      throw new HeldActionNotApprovedError(resume.proposalId);
+  } else {
     // As runGoal: what the next step waits for, whatever the trajectory's status (TASK-173).
     const waiting = await awaitingDecision(definition, args, store, record);
     if (waiting)
@@ -1006,10 +1094,31 @@ async function advance(
           from + 1,
           record.trajectory.steps
             .filter((s: Step) => s.boundary === "commitment")
-            .map((s: Step) => s.output)
+            .map((s: Step) => s.output),
+          resume
         );
 
-  return assemble(definition, store, trajectoryId, { ...stepResult, capability });
+  return assemble(
+    definition,
+    store,
+    trajectoryId,
+    { ...stepResult, capability },
+    resume !== undefined
+  );
+}
+
+/**
+ * The trajectory store does not declare that its updateStatus honours `from` (compare-and-set,
+ * `supportsStatusCas: true`): no held action is resumed on it (review 16 L6). A consumer store
+ * passes the TrajectoryStore conformance kit's compare-and-set case and declares it.
+ */
+export class TrajectoryStoreCasError extends Error {
+  constructor() {
+    super(
+      "the trajectory store does not declare supportsStatusCas: true (updateStatus honouring `from`) — no held action is resumed on it"
+    );
+    this.name = "TrajectoryStoreCasError";
+  }
 }
 
 /** A resume of a held action that is not (or no longer) approved. */
@@ -1045,7 +1154,10 @@ export interface ResumeApprovedActionArgs {
  * kept and the workflow waits in `awaiting_retry`; it is continued only here — calling this again
  * for the kept approval (after the caller's own decision checks) is what "approve it again to
  * retry" does. Concurrent calls run the step once: the run claims the approval, and every other
- * call is refused (HeldActionNotApprovedError). A run whose outcome is unknown leaves the
+ * call is refused (HeldActionNotApprovedError) — decided by that claim alone (TASK-175): the
+ * checks here are read-then-act, so a call that passed them is bound to the approval and step it
+ * saw (ResumeBinding) and succeeds only by claiming it; one that loses is refused, never answered
+ * with the workflow another call completed. A run whose outcome is unknown leaves the
  * workflow `indeterminate` and refused here until a person decides it
  * (resolveUndecidedHeldAction); a withdrawal (withdrawHeldAction) ends it.
  */
@@ -1054,6 +1166,9 @@ export async function resumeApprovedAction(
 ): Promise<AgentResponse<unknown>> {
   const proposalStore = args.proposalStore ?? getProposalStore();
   const store = args.trajectoryStore ?? getTrajectoryStore();
+  // A resume is safe only on a store whose updateStatus honours `from` (review 16 L6): one that
+  // ignores it would let a loser's status overwrite the winner's — refused, never run.
+  if (store.supportsStatusCas !== true) throw new TrajectoryStoreCasError();
   const proposal = await proposalStore.getById(args.proposalId);
   if (!proposal || proposal.status !== "approved") {
     throw new HeldActionNotApprovedError(args.proposalId);
@@ -1078,7 +1193,7 @@ export async function resumeApprovedAction(
       checkCapability: args.checkCapability,
       budgetMaxUSD: args.budgetMaxUSD,
     },
-    true
+    { proposalId: proposal.proposalId, stepIndex: next }
   );
 }
 

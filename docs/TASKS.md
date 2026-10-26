@@ -3972,6 +3972,273 @@ runs. A hold refused for such a proposal answers the same, and `proposeOnce` ref
 mid-run → recovery → held awaiting outcome; `resolveUndecidedHeldAction` then resumed once; atomic
 → `awaiting_retry`; a trajectory left `running` still answered held. No migration.
 
+### TASK-174 — Accounts could not be re-linked to their identity in a new user pool
+
+| Field        | Detail                                                |
+| ------------ | ----------------------------------------------------- |
+| **ID**       | TASK-174                                              |
+| **Type**     | Identity, operations, data integrity                  |
+| **Severity** | High                                                  |
+| **Phase**    | Phase 5                                               |
+| **Target**   | v6.0.0 (RC)                                           |
+| **Status**   | Fixed on develop (v6.0.0 RC); reviews 15 and 16 fixed |
+| **Logged**   | 2026-10-25                                            |
+
+**What:** found deploying Playform v0.9.0. Playform's dev/staging Cognito pool was replaced (the
+old one was deleted with its AWS account). Every `users` row carried the old pool's subject in
+`users.cognito_sub` — and as its `id` (`id = cognito_sub = sub`). Lookups are by `cognito_sub`,
+provisioning by `id = sub` with a follow-up read that answered `failed` for a subject held by
+another account, and the address is not unique: a sign-in with the new pool's subject was given a
+second, ordinary account; the staff accounts (super_admin, admin) were unreachable, and nobody
+could sign in as `super_admin` to repair it. The owner's rule forbids fixing it by hand in the
+database; production will hit the same when it moves to its own pool.
+
+**Fix (ADR-012 amendment):** an account is bound to its identity by `users.cognito_sub` and keeps
+its id. `platform/auth/account-identity.ts` (`resolveAccount`, `bindingOf`, `auditableAccountId`)
+is the one rule; `requireActor`'s `actor.id` is the bound account (a subject whose id is another
+identity's account is refused, `account.identity_conflict` since review 15; an unreadable binding 503); provisioning
+(`provisionAccount`) recognises an account by its subject before inserting and answers its id; the
+account guard refuses a re-linked account's subject passed as its id (fail closed); the guest
+route's standing check and the sign-in, sign-out and MFA audit records resolve the account. The
+erasure record keeps the subject (`user_deletions.cognito_sub`, migration 054), so a re-linked
+account is never provisioned again once purged. The operator command
+`node scripts/relink-identity.mjs` (`platform/auth/identity-relink.ts`,
+`identity-relink-command.ts`, `identity-directory.ts`; `scripts/ts-paths-hook.mjs` runs the
+platform's TypeScript in Node with no build step) re-links an address — or every staff account, or
+every account — after checking the pool (one user, enabled, confirmed or federated, verified) and
+the database (one live account; not another tenant's identity; not an erased one; a new subject
+already held only by a stray first-sign-in account that is safe to merge, and merged only when
+named); the subject changes with its audit record (`identity_relinked`: operator, OS user, host,
+reason, subjects as hashes) in one owner transaction; a dry run is read-only; both subjects'
+caches are voided after the commit. Runbook: `docs/TENANCY_OPERATIONS.md` §6. Tests:
+`__tests__/identity-relink.test.ts` (the binding rule, the pool client against a local stand-in,
+the pool's answer, arguments, output, exit codes), `__tests__/relink-identity-script.test.ts` (the
+script as an operator starts it), `platform/auth/__tests__/actor-account.test.ts`,
+`__tests__/db/identity-relink.db.test.ts` (Postgres: dry run changes nothing; applied; afterwards
+the new subject reaches the staff account through permissions, the admin guard, the actor and
+account guards, provisioning — no second row —, the identity's tenant, the export route and
+erasure; unverified, two pool users, two accounts, a stray merged or refused, hostile case and
+whitespace, SQL-ish and wildcard characters, another tenant's identity, a subject whose id is
+another identity's account; bulk), `__tests__/db/provisioning-race.db.test.ts` (a concurrent
+re-link: `existing` under its id), migration 054 in the replay (applied twice, backfill).
+
+**Review 15 (hostile review of the re-link; every finding fixed, proofs kept as regression tests in
+`__tests__/db/identity-relink-hostile.db.test.ts`):**
+
+| Finding | What was wrong                                                                                                                                                                     | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Test                                                                        |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| H1      | The target was chosen by `users.email` alone: a later run moved an already-linked account to whoever now holds its old address in the pool (address changed there, mailbox reused) | A target must be unbound in the current pool: refused `account.bound_in_pool` when ListUsers finds its current subject (`IdentityDirectory.findBySub`), `account.relinked_in_pool` when an `identity_relinked` record names it and this pool; `--created-before <pool move time>` is required and an account made at or after it is never a target; replacing a current-pool identity is refused with guidance (account recovery)                                                                                                                                                                                                                                                                                                | hostile H1 ×5                                                               |
+| M1      | Every live row with the address counted: an unconfirmed sign-up (or a Kelvin sign U+212A, which `toLowerCase()` makes "k") blocked a re-link as `account.many`                     | Only rows made before the move count; one verified row is the target whatever unverified rows exist; an unverified target only by id (`--unverified-account`, bulk `--accept-unverified`, `account.unverified` offers it); non-ASCII addresses refused (`address.unsupported`); provisioning stores an address with only ASCII letters lower-cased (`storedEmail`), a lookalike stays itself; the ban carry-over still matches it folded                                                                                                                                                                                                                                                                                         | hostile M1 ×6; unit normalisation property                                  |
+| M2      | A post-commit invalidation error made the command say "Nothing was changed" (exit 3): `revokeTokenVerification`'s `getCache()` default parameter threw outside its try             | `getCache()` resolved inside the try (`revokeTokenVerification`, `forgetTokenVerification`); each subject's invalidation caught and reported (`notInvalidated`); the command prints "Applied" with a warning naming what was not voided and the bound (≤ 60 s), exit 5                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `token-revocation-cache-misconfigured.test.ts`; hostile M2 ×2; command unit |
+| M3      | Bulk across tenants planned two accounts onto one subject; the run died on a unique violation                                                                                      | Plans binding one subject twice are both refused `subject.contested` (dry run too); the rest proceed only with `--skip-ambiguous`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | hostile M3                                                                  |
+| M4      | `--all` read users unindexed per address in one long transaction                                                                                                                   | Migration 055 (`users_tenant_email_lookup_idx` on `(tenant_id, lower(btrim(email)))`); set-based lookups (one statement per chunk; tenants expanded so every probe is an index scan); chunks of 500 addresses, each one owner transaction planned again under lock; the report and output say which chunks applied; a rerun completes (applied ones read `linked`); exit 6 for partly applied. Measured at 100,000 accounts (local Postgres 16, fake pool): dry run 6.7 s, apply 20.2 s (200 chunks), rerun 6.2 s; a chunk's lookup 3 ms (index scan) vs 85–141 ms (sequential scan) without 055, where the 100,000 run hit the statement timeout; the index builds in 0.15 s at 100,000 rows (SHARE lock: writes to users wait) | hostile M4 ×4; replay step 055                                              |
+| L1      | Sentinel revoked token verifications by account id                                                                                                                                 | `returning cognito_sub`, revoked by the subject (no other revoke/invalidate call is keyed by an account id)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `moderation-account-status.db.test.ts` L1                                   |
+| L2      | The command did not apply the contract's database checks                                                                                                                           | `databaseConnectionViolations` (environment contract) used by the contract and `missingSettings`: no TLS option in the URL, `DATABASE_SSL=disable` only for a local database, the CA with verify-full, shapes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | unit ×10                                                                    |
+| L3      | On conflict, a sign-in event was recorded under the account the old subject no longer names                                                                                        | `auditableAccountId` records no actor on a conflict                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | hostile L3; unit                                                            |
+| L4      | Conflict answered 503 `account.not_provisioned` (retryable)                                                                                                                        | `403 account.identity_conflict` (catalog, API_ERRORS)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `actor-account.test.ts`; `identity-relink.db.test.ts`                       |
+| L5      | `--apply --skip-ambiguous` with changes exited like nothing changed                                                                                                                | Exit 4 (applied, some skipped) distinct from 1 (nothing changed); codes in `EXIT`, the usage, the runbook                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | command unit                                                                |
+| L6      | Bulk asked the pool only in lower case                                                                                                                                             | Each address asked in lower case and as stored                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | hostile L6                                                                  |
+| L7      | A stray's data was counted without a lock on tables lacking a foreign key to users; GovCloud pool ids refused                                                                      | Counted again after the delete in the same transaction (a gain undoes that merge, under a savepoint); `COGNITO_POOL_ID` from the contract accepts `us-gov-*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | hostile L7; unit                                                            |
+
+**Review 16 (every finding fixed; the reviewer's proofs kept, asserting the fixed behaviour, in
+`__tests__/db/identity-relink-r16.db.test.ts`, `__tests__/identity-relink.test.ts` and
+`platform/agents/__tests__/held-action-resume-budget-race.test.ts`):**
+
+| Finding               | What was wrong                                                                                                                                                                           | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Test                                                                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D4f (High)            | A pre-move account whose own address was never verified went to whoever verifies that address in the new pool, with only a printed note (bulk too)                                       | Re-linked only on the operator's confirmation for that account: `--confirm-unverified <id>` (repeatable; `--unverified-account <id>` is also its confirmation), recorded `unverifiedConfirmed`; otherwise `account.needs_confirmation`, and the dry run lists each account with its flag; an unused confirmation is reported. The old pool's own status is out of reach once it is deleted (runbook §6.6)                                                                                                                | r16 D4f ×2; hostile TASK-176 ×2 (updated); command unit                                                                                                                         |
+| M (federated subject) | The re-link wrote the pool's `sub`; the platform's verifier names a request by the Cognito username (`Google_…` for a federated user) — a re-linked Google staff account was unreachable | `--subject username\|sub` (required, never guessed): `DirectoryUser.subject` is the verifier's subject — `username` for the platform's provider, `sub` for one that binds the token's sub (Playform's) — used to bind, to ask the pool whether an account is bound there (ListUsers `username = "…"` / `sub = "…"`, exact), to detect contested subjects and strays; recorded `subjectAttribute`. Fakes give every user a username ≠ sub. _Superseded by TASK-177: the subject is always the `sub`; the flag is removed_ | r16 federated ×5 (requireActor, permissions, requireAdmin, account guard; sub mode; bound-in-pool by username; contested); directory unit (both filters); cognito-provider unit |
+| M2                    | `invalidatePermissions` / `revokeTokenVerification` swallowed failures, so `notInvalidated` never filled and the report said "on every instance"                                         | Strict variants report the outcome: `publishInvalidation` (each stamp), `publishTokenRevocation`; the command's invalidation throws per subject when either was not published; exit 5 names each subject and why                                                                                                                                                                                                                                                                                                         | r16 M2 ×2 (a cache that fails the publish, then answers the probe; one subject of two); `token-revocation-cache-misconfigured.test.ts`                                          |
+| L1                    | `--unverified-account X` was ignored when another pre-move account Y was verified                                                                                                        | Refused `account.unverified` naming Y                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | r16 L1                                                                                                                                                                          |
+| L2                    | `--skip-ambiguous` applied an address the dry run refused, once the data changed                                                                                                         | An address not `relink` in the preview stays refused in the locked plan (its preview reason; `account.changed` for one that was absent or linked)                                                                                                                                                                                                                                                                                                                                                                        | r16 L2                                                                                                                                                                          |
+| L3                    | The bound-in-pool check was skipped for a legacy row (no `cognito_sub`)                                                                                                                  | Asked by `cognito_sub ?? id`; a legacy row also holds a subject equal to its id; its old subject (its id) is voided                                                                                                                                                                                                                                                                                                                                                                                                      | r16 L3 ×2                                                                                                                                                                       |
+| L4                    | An unconfirmed or unverified squatter in the pool made the address `pool.many`                                                                                                           | When exactly one enabled, confirmed, verified (trusted) user has the address, the others are ignored; two that prove it, or the one disabled, still `pool.many`                                                                                                                                                                                                                                                                                                                                                          | unit (reviewer's proof + 3 cases)                                                                                                                                               |
+| L5                    | A dry run with `--skip-ambiguous` and a refusal exited 0                                                                                                                                 | Exit 1 for any dry run that refused anything (the safer reading); table, usage and runbook say so                                                                                                                                                                                                                                                                                                                                                                                                                        | r16 L5; command unit                                                                                                                                                            |
+| L6                    | A custom `TrajectoryStore` ignoring `{ from }` failed open                                                                                                                               | `TrajectoryStore.supportsStatusCas` (MUST be `true`): `resumeApprovedAction` refuses a store without it (`TrajectoryStoreCasError`); the conformance kit tests the declaration and the compare-and-set (incl. concurrent writers)                                                                                                                                                                                                                                                                                        | kit (memory + Postgres); `held-action-resume-budget-race.test.ts`                                                                                                               |
+| L7                    | A connection lost at a chunk's COMMIT printed "Nothing was changed"                                                                                                                      | Classified `indeterminate` (`isCommitOutcomeUnknown`): the chunk is reported "may have committed", its subjects voided, the run stops; exit 7 — run the verify command                                                                                                                                                                                                                                                                                                                                                   | r16 L7 (a commit killed at COMMIT by a deferred trigger); command unit                                                                                                          |
+| L8                    | The `pool.unverified` hint told operators to map any provider's `email_verified`; the TASK-176 sync believed any provider                                                                | Hint restricted to Google / Sign in with Apple, warns against Microsoft Entra ID (nOAuth); `AUTH_TRUSTED_EMAIL_IDPS` (default `Google`) governs the re-link, provisioning and the sync; `TokenPayload.identityProviders` (the platform's provider fills it from `identities`) — absent is never trusted                                                                                                                                                                                                                  | unit (rule, allow-list); `email-verification.db.test.ts` (Google marks; Entra, mixed, unsaid never; listed explicitly); identity-providers-claim unit                           |
+| L9                    | The hostile M3 test ran `--all-staff --apply` across the shared database                                                                                                                 | Scoped to its own tenants (`RelinkDeps.onlyTenants`, a test seam)                                                                                                                                                                                                                                                                                                                                                                                                                                                        | hostile M3                                                                                                                                                                      |
+
+### TASK-175 — Concurrent re-approvals of a workflow step could answer a loser with success
+
+| Field        | Detail                            |
+| ------------ | --------------------------------- |
+| **ID**       | TASK-175                          |
+| **Type**     | Concurrency, contract correctness |
+| **Severity** | Medium                            |
+| **Phase**    | Phase 5                           |
+| **Target**   | v6.0.0 (RC)                       |
+| **Status**   | Fixed on develop (v6.0.0 RC)      |
+| **Logged**   | 2026-10-25                        |
+
+**What:** `__tests__/db/held-action-retry.db.test.ts` "concurrent re-approvals resume it once"
+failed intermittently (once under `test:coverage`). `resumeApprovedAction` checked the proposal
+was `approved` and its step next, then handed off to the loop, which read the trajectory again. A
+call that passed the checks before another call's run and read the trajectory after it found the
+step committed and answered `completed` — success for work it did not do — instead of
+`HeldActionNotApprovedError`; with a step after it, it went on to run that step. The approved step
+itself ran once (the pipeline's claim, approved -> executing, is a compare-and-set). The same
+read-then-write shape moved trajectory statuses: `withdrawHeldAction` / `endHeldTrajectory` (open ->
+`failed`), `resolveUndecidedHeldAction` (`indeterminate` -> `awaiting_retry`), a continuation's
+move to a waiting status (TASK-173) and a resume's move back to `running` could each overwrite a
+status a concurrent run had just recorded (a completed workflow made `awaiting_retry` or `failed`).
+
+**Fix:** a resume is bound to the approval and step it checked (`ResumeBinding`): the loop refuses
+it (`HeldActionNotApprovedError`) unless that step is still next and still approved under that
+proposal when it runs, and a pipeline refusal of its approval is a refusal too — so a resume
+succeeds only by its own claim of the approval; the claim's compare-and-set decides, never an
+earlier read. `TrajectoryStore.updateStatus` takes `{ from }`, a compare-and-set (Postgres: under
+the row lock; memory: no await between check and write), used by every one of those status moves;
+one that finds the status moved leaves it (a continuation that saw a decision since acted on is
+refused). The approval-decision route needed no change (its decisions are the store's
+compare-and-sets; a lost claim is `approvals.decision_conflict`); `resumeFailure` maps
+`HeldActionNotApprovedError` to `in_use` for an authority that resumes a workflow. Tests, with the
+interleavings forced by hooks (`__tests__/helpers/interleave.ts`), memory
+(`platform/agents/__tests__/held-action-retry.test.ts`) and Postgres
+(`__tests__/db/held-action-retry.db.test.ts`): checked then overtaken — refused, with a step after
+it the next step not run; both at the claim — one runs, one refused; a withdrawal, a re-approval
+and a continuation overtaken by a run leave its status; the status compare-and-set under
+concurrent writers; the concurrent test 50 times in a loop. No migration.
+
+**Review 16:** the budget check (and an approval mismatch) wrote `paused` / `failed`
+unconditionally before the claim, so a resume that passed its checks and then lost to a
+concurrent resume overwrote the winner's `completed`. Every status a resume's own path writes —
+budget refusal, mismatch, hold, failure, completion — is now a compare-and-set from the open
+statuses (`settle`); one that does not apply refuses the call (`HeldActionNotApprovedError`; an
+approved run's own failure still reports its `ApprovedRunFailedError`). A store must declare
+`supportsStatusCas: true` or no held action is resumed on it (`TrajectoryStoreCasError`). Tests:
+`platform/agents/__tests__/held-action-resume-budget-race.test.ts` (the reviewer's interleaving;
+a budget pause of an open workflow; a mismatch over a settled workflow; a store without the
+declaration), the conformance kit's compare-and-set case.
+
+### TASK-176 — `users.email_verified` was never updated after the person confirmed their address
+
+| Field        | Detail                                 |
+| ------------ | -------------------------------------- |
+| **ID**       | TASK-176                               |
+| **Type**     | Data correctness, identity             |
+| **Severity** | Medium                                 |
+| **Phase**    | Phase 5                                |
+| **Target**   | v6.0.0 (RC)                            |
+| **Status**   | Fixed on develop (v6.0.0 RC)           |
+| **Logged**   | 2026-10-25 (review 15 fixes, TASK-174) |
+
+**What:** an account made through `/api/auth/sign-up` is provisioned before the person confirms
+the address, so it is stored `users.email_verified = false`; nothing updated it after they
+confirmed with Cognito and signed in. Most real accounts said "unverified": the re-link command
+(which since review 15 trusts only verified accounts) needed `--unverified-account` for nearly
+every legitimate staff account, and `makeTenantAdmin` refused a confirmed first administrator.
+
+**Fix:** `requireActor` reads the bound account's `email` / `email_verified` in the statement
+that resolves its binding (`resolveAccountRecord`) and hands them, with the provider's answer for
+the token, to `syncEmailVerification` (`platform/auth/email-verification.ts`): false → true when
+the claim's `emailVerified` is exactly `true` for the same stored address — one conditional
+update with its `profile_updated` (`field: email_verified`) record in one transaction; nothing
+otherwise, never a downgrade, never a write per request, a failure logged and retried next
+request. `users.email` is never rewritten (ban carry-over and re-link matching depend on it).
+The re-link rule: the current pool's verified user is the evidence for the address's one
+pre-move account, whatever its old flag (`accountUnverified` in the plan and record); the flag
+breaks ties; several unverified pre-move accounts need `--unverified-account`;
+`--accept-unverified` removed; post-move accounts still never counted or chosen. No migration;
+no backfill possible (a person's next sign-in marks them). Docs: ADR-012 amendment,
+TENANCY_OPERATIONS §6.6. Tests: `platform/auth/__tests__/email-verification.test.ts` (the rule,
+failures), `platform/auth/__tests__/actor-account.test.ts` (wiring; provider outage touches
+nothing), `__tests__/db/email-verification.db.test.ts` (sign-up → confirm → sign-in: verified,
+one record, no write on later requests; unverified claim, other address, outage, no downgrade,
+concurrent requests), `__tests__/db/identity-relink-hostile.db.test.ts` (unverified pre-move
+account re-linked without override, single and bulk; pool must verify; post-move unverified
+sign-up neither blocks, is chosen nor can be named; several unverified need naming; tie-break).
+
+**Review 16:** the re-link's tie to this flag is tightened (TASK-174 review 16 D4f): an account
+whose flag is false is re-linked only on the operator's confirmation for it. The sync, and
+provisioning's initial flag, believe a federated provider's `email_verified` only from
+`AUTH_TRUSTED_EMAIL_IDPS` (default `Google`; never Microsoft Entra ID — mutable email, nOAuth); a
+token that does not say who verified it (`identityProviders`) is not believed; the audit record
+says `verifiedBy`. Tests: `platform/auth/__tests__/email-verification.test.ts`,
+`__tests__/db/email-verification.db.test.ts`, `__tests__/identity-providers-claim.test.ts`.
+
+### TASK-177 — The platform's own Cognito provider named an identity by its username, not its sub
+
+| Field        | Detail                                    |
+| ------------ | ----------------------------------------- |
+| **ID**       | TASK-177                                  |
+| **Type**     | Defect, identity                          |
+| **Severity** | High                                      |
+| **Phase**    | Phase 5                                   |
+| **Target**   | v6.0.0 (RC)                               |
+| **Status**   | Fixed on develop (v6.0.0 RC)              |
+| **Logged**   | 2026-10-26 (found in the review 16 fixes) |
+
+**What:** `platform/auth/cognito-provider.ts` named a verified token by the pool's username (the
+token's `username` claim, GetUser's `Username` — `Google_1093…` for a federated user), while
+Playform's provider (`cognito-auth.ts` there) names it by the token's `sub`, and the platform's own
+sign-in, SSO and MFA sessions already used the `sub`. Consequences: (1) the re-link command needed
+review 16's `--subject username|sub`, which an operator could get wrong; (2) provisioning accepts
+only a UUID subject, so on the platform's own provider a brand-new Google user could never be
+provisioned (`account.not_provisioned` on every request); (3) a sign-out revoked the session's
+`sub` while a federated user's verifications were stamped by the username, so they were not voided.
+
+**Decision:** the subject is the Cognito `sub` (ADR-012 amendment TASK-177, D10) — stable, unique
+in the pool, a UUID, never reused, the same form for native and federated users.
+
+**Fix:** the provider names the token by its signed `sub` (`TokenPayload.sub`) and refuses a
+GetUser answer whose `sub` attribute differs; `getUserInfo`, `tokenSubject` (sign-out), the
+revocation after an address is verified (AdminGetUser's `sub`), refresh, MFA and SSO all name the
+`sub`. Administrative calls (`assignTenant`, `getUserTenant`) address the user by its pool
+username — Cognito accepts no federated user's `sub` there — learnt from the signature-checked
+`username` claim of the user's own token (and GetUser) in a bounded per-instance map; a subject not
+seen is addressed by its `sub` (every native user). The re-link binds the `sub` always:
+`IdentityDirectory` is `findByEmail` + `findBySub` (`subjectAttribute`, `SUBJECT_ATTRIBUTES`,
+`findBySubject`, `filterSafeUsername`, `DirectoryUser.subject` removed); the report and audit
+record drop `subjectAttribute`. `--subject` removed: `--subject sub` accepted for one release as a
+no-op with a deprecation note on stderr; `--subject username` (or anything else) refused, exit 2.
+`identityProvidersOf` (`@/platform/auth/identity-directory`) documented for consumers
+(MIGRATION_v5_to_v6 §1b example). No data migration: platform-foundation has no deployment with
+existing users; Playform's provider always bound the `sub`.
+
+**Tests:** `__tests__/db/subject-is-sub.db.test.ts` (the real provider over a Cognito stand-in,
+native and Google alike: the token names the sub, first-request provisioning, requireActor,
+permissions, account guard, requireAdmin; shared-mode identity tenant assigned by the pool
+username and read back; Cognito's federated-sub rule; re-link to the sub and reach afterwards),
+the conformance kit's new TASK-177 cases (`__tests__/contract/auth-token-verification-contract.ts`:
+a federated token is named by its sub; a revocation by the sub voids it, by the username nothing;
+a lookup for another sub), `__tests__/cognito-provider.test.ts`, `__tests__/cognito-tenancy.test.ts`
+(administrative calls by the learnt username), `__tests__/cognito-provider-extended.test.ts`
+(`getUserInfo`), `__tests__/token-verification.test.ts` (`tokenSubject`),
+`__tests__/db/identity-relink-r16.db.test.ts` (federated staff bound to the sub; native and Google
+re-link identically; bound-in-pool asked by sub), `__tests__/identity-relink.test.ts` (directory,
+`--subject` deprecation/refusal), `__tests__/relink-identity-script.test.ts`, and every
+`IdentityDirectory` fake (`identity-relink*.db.test.ts`). Docs: ADR-012, TENANCY_OPERATIONS §6,
+RELEASE_NOTES, MIGRATION_v5_to_v6 §1b.
+
+### TASK-178 — Review 17: sign-out trusted the refresh cookie's user id; the Cognito provider's evidence unchecked
+
+| Field        | Detail                             |
+| ------------ | ---------------------------------- |
+| **ID**       | TASK-178                           |
+| **Type**     | Defect, security (identity)        |
+| **Severity** | Medium                             |
+| **Phase**    | Phase 5                            |
+| **Target**   | v6.0.0 (RC)                        |
+| **Status**   | Fixed on develop (v6.0.0 RC)       |
+| **Logged**   | 2026-10-26 (review 17 of TASK-177) |
+
+**Review 17 (every finding fixed; the reviewer's proofs kept, asserting the fixed behaviour, in
+`__tests__/r17-hostile-signout.test.ts` and `__tests__/r17-hostile-cognito.test.ts`):**
+
+| Finding | What was wrong                                                                                                                                                                                                                                                                                                   | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Tests                                                                                                                                                                                                                                                                                                                                                                         |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1      | Sign-out took the subject to revoke and the `logout` actor from the unsigned refresh cookie (`<user id>.<refresh token>`): an attacker's own refresh token behind a victim's id voided the victim's remembered verifications and recorded the victim's `logout`; a bearer A with a cookie naming B voided B only | Sign-out revokes and records only a subject the provider proved: the bearer, verified (`verifyToken`) before its sign-out; else the cookie's user, proven by a refresh the provider issues for the cookie's id (its access token is then the one signed out everywhere). The cookie's id counts only when it equals a proven subject; `RevokeToken` proves nothing. The cookie is `<user id>.<mac>.<refresh token>`, HMAC-SHA256 under the new required `REFRESH_COOKIE_KEY` (rotation `REFRESH_COOKIE_KEY_PREVIOUS`, verify-only); refresh and sign-out refuse a cookie whose MAC fails | r17 sign-out ×10 (forgeries refused — unsigned, id swapped, made-up MAC; refresh route refuses them; an unproven refresh voids nobody; A+B voids and records A only; an unverified bearer; legitimate sign-out); `auth-sessions` (signed cookie, MAC refusals, rotation, cookie-only sign-out proven by refresh); `sso-flow`; environment contract (required, rotation rules) |
+| M2      | The conformance kit's last `subjectCases` case (`payload === null \|\| payload.sub === …`) could not fail                                                                                                                                                                                                        | Asserts `null` for a GetUser answer naming another user, and a new case for an answer without `sub`; verified the kit fails when the provider's check is removed (either half)                                                                                                                                                                                                                                                                                                                                                                                                           | kit (`auth-token-verification-conformance`)                                                                                                                                                                                                                                                                                                                                   |
+| L1      | A GetUser answer without `sub` was accepted and its `Username` remembered for administrative calls                                                                                                                                                                                                               | A missing `sub` is invalid; the username is remembered only after the `sub` check                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | r17 cognito (assignTenant still addressed by the sub); kit; every GetUser fixture now carries the `sub`                                                                                                                                                                                                                                                                       |
+| L2      | The native-user rule (`Username === sub`, no `identities`) assumed `identities` readable; nothing checked it                                                                                                                                                                                                     | `checkPoolShape` (DescribeUserPoolClient `ReadAttributes`, administrative credentials): hidden → the provider takes no user as native, and readiness probe `identity-pool` reports degraded; without credentials the operator's check is logged once and documented (ENV_REFERENCE "Cognito pool shape", SETUP §4d). A user whose `identities` lists any provider (a linked native user) is that provider's                                                                                                                                                                              | r17 cognito (rule with `identitiesReadable`; linked native; verifyToken after the check; checkPoolShape shapes; probe statuses, caching, budget)                                                                                                                                                                                                                              |
+| L3      | `AUTH_TRUSTED_EMAIL_IDPS` matched case-sensitively and refused spaces after commas (`google` trusted no Google user; `Google, SignInWithApple` trusted none)                                                                                                                                                     | Names trimmed and matched case-insensitively; the shape allows spaces around commas; a malformed value is refused by the contract and by the re-link command's `missingSettings` (exit 2, even with the pool given in code)                                                                                                                                                                                                                                                                                                                                                              | email-verification unit (table); environment contract; identity-relink (`missingSettings`, exit 2); r17 cognito                                                                                                                                                                                                                                                               |
+| L4      | A refresh's `SECRET_HASH` is always computed with the `sub`: wrong for a pool that signs in by username, and nothing said so                                                                                                                                                                                     | Required pool shape documented (sign in by email address); `checkPoolShape` reads `UsernameAttributes` and the required `identity-pool` probe makes a username-sign-in pool unready (detectable only with the administrative credentials; otherwise the documented operator check)                                                                                                                                                                                                                                                                                                       | r17 cognito (username pools, phone-only, alias)                                                                                                                                                                                                                                                                                                                               |
+
+Docs: ADR-012 amendment (review 17, D11), RELEASE_NOTES, MIGRATION_v5_to_v6 (review 17 row, §1
+step 3, §1b), ENV_REFERENCE (`REFRESH_COOKIE_KEY`, `REFRESH_COOKIE_KEY_PREVIOUS`, pool shape,
+`AUTH_TRUSTED_EMAIL_IDPS`), SETUP_AND_INTEGRATION §4d/§5, `.env.example`, CI workflows.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -4017,7 +4284,19 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: October 25, 2026 (gaps found adopting v6.0.0 in Playform — TASK-170–173 filed and fixed)_
+_Last updated: October 26, 2026 (review 17 — TASK-178 filed and fixed)_
+
+_Previously updated: October 26, 2026 (the subject is the Cognito sub — TASK-177 filed and fixed)_
+
+_Previously updated: October 26, 2026 (review 16 of TASK-174/175/176 — every finding fixed)_
+
+_Previously updated: October 25, 2026 (users.email_verified never updated — TASK-176 filed and fixed)_
+
+_Previously updated: October 25, 2026 (a flaky concurrent-resume test — TASK-175 filed and fixed)_
+
+_Previously updated: October 25, 2026 (found deploying Playform v0.9.0 — TASK-174 filed and fixed)_
+
+_Previously updated: October 25, 2026 (gaps found adopting v6.0.0 in Playform — TASK-170–173 filed and fixed)_
 
 _Previously updated: October 24, 2026 (review 14 of the v6.0.0 candidate — TASK-169 filed and fixed)_
 

@@ -100,6 +100,8 @@ const EXPECTED_EXPORTS = [
   "ApprovalMismatchError",
   "HeldActionNotApprovedError",
   "TrajectoryAccessError",
+  // Review 16 L6: a resume refused on a store that does not declare supportsStatusCas
+  "TrajectoryStoreCasError",
   "heldActionRefusal",
   "principalOf",
   "resumeApprovedAction",

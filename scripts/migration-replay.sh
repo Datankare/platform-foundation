@@ -1207,6 +1207,85 @@ if [ "$before" != "$after" ] || [ "$enum_before" != "$enum_after" ]; then
   exit 1
 fi
 
+step "054: an erasure remembers the identity it closed (user_deletions.cognito_sub); applied again changes nothing"
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'user_deletions'
+                    AND column_name = 'cognito_sub' AND data_type = 'text') THEN
+    RAISE EXCEPTION '054: user_deletions has no cognito_sub';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                  WHERE schemaname = 'public' AND indexname = 'user_deletions_cognito_sub_idx') THEN
+    RAISE EXCEPTION '054: user_deletions_cognito_sub_idx is missing';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.applied_migrations
+                  WHERE filename = '054_user_deletions_subject.sql') THEN
+    RAISE EXCEPTION '054 is not recorded in applied_migrations';
+  END IF;
+END $$;
+SQL
+# The backfill: a soft-deleted account's record is given its subject; one already set is kept.
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+DECLARE t uuid; a uuid := gen_random_uuid(); b uuid := gen_random_uuid(); got text;
+BEGIN
+  SELECT id INTO t FROM public.tenants ORDER BY id LIMIT 1;
+  INSERT INTO public.users (id, cognito_sub, role_id, tenant_id, deleted_at)
+  SELECT a, 'replay-054-sub', r.id, t, now() FROM public.roles r WHERE r.is_default LIMIT 1;
+  INSERT INTO public.user_deletions (tenant_id, user_id, requested_by) VALUES (t, a, 'replay-054');
+  INSERT INTO public.user_deletions (tenant_id, user_id, requested_by, cognito_sub)
+  VALUES (t, b, 'replay-054', 'replay-054-kept');
+  UPDATE public.user_deletions d SET cognito_sub = u.cognito_sub FROM public.users u
+   WHERE u.tenant_id = d.tenant_id AND u.id = d.user_id AND u.cognito_sub IS NOT NULL
+     AND d.cognito_sub IS NULL;
+  SELECT cognito_sub INTO got FROM public.user_deletions WHERE user_id = a;
+  IF got IS DISTINCT FROM 'replay-054-sub' THEN RAISE EXCEPTION '054 backfill: %', got; END IF;
+  SELECT cognito_sub INTO got FROM public.user_deletions WHERE user_id = b;
+  IF got IS DISTINCT FROM 'replay-054-kept' THEN RAISE EXCEPTION '054 backfill overwrote: %', got; END IF;
+  DELETE FROM public.user_deletions WHERE requested_by = 'replay-054';
+  DELETE FROM public.users WHERE id = a;
+END $$;
+SQL
+ud_sql="SELECT md5(coalesce(string_agg(to_jsonb(d)::text, '' ORDER BY d.tenant_id, d.user_id), '')) || '|' || (SELECT count(*) FROM pg_indexes WHERE tablename = 'user_deletions') FROM public.user_deletions d"
+before="$(snapshot)$("${PSQL[@]}" -At -c "$ud_sql")"
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/054_user_deletions_subject.sql" >/dev/null 2>&1 \
+  || { echo "✗ 054 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/054_user_deletions_subject.sql" >/dev/null; exit 1; }
+after="$(snapshot)$("${PSQL[@]}" -At -c "$ud_sql")"
+if [ "$before" != "$after" ]; then
+  echo "✗ applying 054 a second time changed the database:"
+  diff <(echo "$before") <(echo "$after") || true
+  exit 1
+fi
+
+step "055: accounts are found by their address with an index; applied again changes nothing"
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                  WHERE schemaname = 'public' AND tablename = 'users'
+                    AND indexname = 'users_tenant_email_lookup_idx'
+                    AND indexdef ILIKE '%(tenant_id, lower(btrim(email)))%') THEN
+    RAISE EXCEPTION '055: users_tenant_email_lookup_idx is missing or not on (tenant_id, lower(btrim(email)))';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.applied_migrations
+                  WHERE filename = '055_users_email_lookup.sql') THEN
+    RAISE EXCEPTION '055 is not recorded in applied_migrations';
+  END IF;
+END $$;
+SQL
+ix_sql="SELECT string_agg(indexname || ':' || indexdef, '|' ORDER BY indexname) FROM pg_indexes WHERE tablename = 'users'"
+before="$(snapshot)$("${PSQL[@]}" -At -c "$ix_sql")"
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/055_users_email_lookup.sql" >/dev/null 2>&1 \
+  || { echo "✗ 055 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/055_users_email_lookup.sql" >/dev/null; exit 1; }
+after="$(snapshot)$("${PSQL[@]}" -At -c "$ix_sql")"
+if [ "$before" != "$after" ]; then
+  echo "✗ applying 055 a second time changed the database:"
+  diff <(echo "$before") <(echo "$after") || true
+  exit 1
+fi
+
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —
 # given here for the check only, and taken away again.

@@ -96,12 +96,18 @@ export function register() {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createRealtimeServiceProbe } = require("@/platform/realtime/service-probe");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getSupabaseUrl } = require("@/platform/providers/environment-contract");
+    const contract = require("@/platform/providers/environment-contract");
+    const { getSupabaseUrl, getAuthProviderSetting } = contract;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createScheduleFreshnessProbe } = require("@/platform/jobs/schedule-probe");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createAuthPoolShapeProbe } = require("@/platform/auth/pool-shape-probe");
     const required: HealthProbe[] = [
       ...(hasDatabase() ? [new PostgresHealthProbe()] : []),
       createCacheReadinessProbe(getCache()),
+      // Review 17 L2/L4: a Cognito pool without the required shape (sign-in by email address)
+      // is refused at readiness; `identities` hidden from the app client only degrades.
+      ...(getAuthProviderSetting() === "cognito" ? [createAuthPoolShapeProbe()] : []),
     ];
     const degradedOnly: HealthProbe[] = [
       createRealtimeServiceProbe(

@@ -42,6 +42,7 @@ import {
 import type { ConfigScope } from "@/platform/admin/types";
 import { CONFIG_HOLD_TOOLS, proposalConfigKey } from "@/platform/admin/hold-keys";
 import { isStaleChangeFailure } from "@/platform/admin/stale-change";
+import { HeldActionNotApprovedError } from "@/platform/agents/workflow-loop";
 
 /** What running an approved hold did. */
 export type HoldResumeResult =
@@ -87,7 +88,11 @@ export interface HoldAuthority {
  * applied with its record not stored (applied — and said so).
  */
 export function resumeFailure(err: unknown): HoldResumeResult {
-  if (err instanceof PipelineRejectedError && err.reason === "approval-used") {
+  // A workflow resume that lost the approval's claim to another run (TASK-175) is in use too.
+  if (
+    (err instanceof PipelineRejectedError && err.reason === "approval-used") ||
+    err instanceof HeldActionNotApprovedError
+  ) {
     return { kind: "in_use", error: err.message };
   }
   if (err instanceof ApprovedRunFailedError) {

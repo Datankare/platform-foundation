@@ -321,40 +321,65 @@ export class TokenVerifier {
   }
 }
 
+/** Whether a revocation or an invalidation was published to every instance, and if not, why. */
+export type PublishOutcome =
+  { readonly published: true } | { readonly published: false; readonly error: string };
+
+/**
+ * Void every remembered verification of `sub`'s tokens, on every instance — and say whether it
+ * was published (review 16 M2): for a caller that must report the outcome truthfully (the
+ * identity re-link command). Never throws.
+ */
+export async function publishTokenRevocation(
+  sub: string,
+  cache?: CacheProvider
+): Promise<PublishOutcome> {
+  try {
+    // The cache is resolved inside the try (review 15 M2): a misconfigured shared cache is a
+    // revocation not published, never a throw to a caller that has already committed what made
+    // the revocation necessary.
+    await (cache ?? getCache()).set(stampKey(sub), randomUUID(), {
+      ttlSeconds: STAMP_TTL_SECONDS,
+    });
+    return { published: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error("Token revocation not published to other instances", {
+      error,
+      route: "platform/auth/token-verification",
+    });
+    return { published: false, error };
+  }
+}
+
 /**
  * Void every remembered verification of `sub`'s tokens, on every instance (sign-out, an account
  * disabled or deleted, a role or MFA change). A failure is logged; the fresh window still bounds
- * it.
+ * it. A caller that must know whether it was published uses publishTokenRevocation.
  */
 export async function revokeTokenVerification(
   sub: string,
-  cache: CacheProvider = getCache()
+  cache?: CacheProvider
 ): Promise<void> {
-  try {
-    await cache.set(stampKey(sub), randomUUID(), { ttlSeconds: STAMP_TTL_SECONDS });
-  } catch (err) {
-    logger.error("Token revocation not published to other instances", {
-      error: err instanceof Error ? err.message : String(err),
-      route: "platform/auth/token-verification",
-    });
-  }
+  await publishTokenRevocation(sub, cache);
 }
 
 /** Forget one token's remembered verification (its own sign-out), on every instance. */
 export async function forgetTokenVerification(
   token: string,
-  cache: CacheProvider = getCache()
+  cache?: CacheProvider
 ): Promise<void> {
   try {
-    await cache.delete(tokenKey(token));
+    await (cache ?? getCache()).delete(tokenKey(token));
   } catch {
     /* justified: the user's revocation stamp (revokeTokenVerification) voids it as well */
   }
 }
 
 /**
- * The subject an access token names (its username, else its sub), read without verifying it —
- * only to address a revocation after the provider accepted the sign-out.
+ * The subject an access token names (its `sub`, TASK-177 — never its `username`), read without
+ * verifying it: it proves nothing about who sent the token. Sign-out revokes and records only a
+ * subject the provider verified (review 17 M1, app/api/auth/sign-out/route.ts).
  */
 export function tokenSubject(token: string): string | undefined {
   const part = token.split(".")[1];
@@ -364,8 +389,8 @@ export function tokenSubject(token: string): string | undefined {
       string,
       unknown
     >;
-    const name = claims.username ?? claims.sub;
-    return typeof name === "string" && name ? name : undefined;
+    const sub = claims.sub;
+    return typeof sub === "string" && sub ? sub : undefined;
   } catch {
     return undefined;
   }

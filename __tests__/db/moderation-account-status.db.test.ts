@@ -443,6 +443,29 @@ dbDescribe("moderation account-status SQL", () => {
       expect((await account()).account_status).toBe("active");
     });
 
+    it("review 15 L1: a re-linked account's token verifications are revoked by its subject (users.cognito_sub), not its id", async () => {
+      const { getCache } = await import("@/platform/cache");
+      const subject = randomUUID();
+      // A re-linked account (TASK-174): its id stays, its subject is the new pool's.
+      await inT(() =>
+        withTenantTx((tx) =>
+          tx.query("update users set cognito_sub = $2 where id = $1::uuid", [
+            target,
+            subject,
+          ])
+        )
+      );
+      const stamp = (sub: string) => getCache().get<string>(`auth:token-revoked:${sub}`);
+      const before = await stamp(subject);
+      await block("r-relinked");
+      expect((await account()).account_status).toBe("warned");
+      const after = await stamp(subject);
+      expect(after).toEqual(expect.any(String));
+      expect(after).not.toBe(before);
+      // Nothing published under the id: no token names it.
+      await expect(stamp(target)).resolves.toBeFalsy();
+    });
+
     it("reads a user it cannot see as active", async () => {
       const res = await inT(() =>
         new Sentinel().processBlock(result(), randomUUID(), "r-unknown")

@@ -47,6 +47,7 @@ import type {
   TrajectoryStore,
 } from "@/platform/kernel";
 import { withModules, WORKFLOW_GOALS_FIXTURE } from "../helpers/modules";
+import { hooked, signal } from "../helpers/interleave";
 import {
   connectTestDatabase,
   createTestTenant,
@@ -306,6 +307,168 @@ dbDescribe("TASK-170 on Postgres: approving again retries a kept approval", () =
 });
 
 /** Held, approved, its run claimed — and the instance lost: the lease lapses with no end. */
+dbDescribe(
+  "TASK-175 on Postgres: concurrent resumes — the approval's claim decides",
+  () => {
+    beforeEach(() => {
+      registerWorkflow(
+        workflow("full-pipeline", [
+          ["gate", true],
+          ["after", false],
+        ])
+      );
+    });
+
+    /** Held, approved, its first run failed before taking effect: the approval kept. */
+    async function kept(goal: WorkflowDefinition["goal"]) {
+      const r = await t.run(() =>
+        runGoal({ goal, input: { text: "benign" }, actor: AGENT })
+      );
+      const proposalId = r.held!.proposalId;
+      await t.run(() => approveHeldAction({ proposalId, decidedBy: "user-1" }));
+      failNext = 1;
+      await t.run(() => resumeApprovedAction({ proposalId })).catch(() => undefined);
+      return { proposalId, trajectoryId: r.trajectory.trajectoryId };
+    }
+
+    /** B passes resumeApprovedAction's checks; A then claims, runs and completes; then B reads on. */
+    async function checkedThenOvertaken(goal: WorkflowDefinition["goal"]) {
+      const { proposalId, trajectoryId } = await kept(goal);
+      const bChecked = signal();
+      const aDone = signal();
+      let reads = 0;
+      const bTrajectories = hooked(trajectories, {
+        getById: async (id: string) => {
+          reads += 1;
+          if (reads > 1) await aDone.wait;
+          const record = await trajectories.getById(id);
+          if (reads === 1) bChecked.open();
+          return record;
+        },
+      });
+      const aProposals = hooked(proposals, {
+        claim: async (id: string, options?: { readonly atomic?: boolean }) => {
+          await bChecked.wait;
+          return proposals.claim(id, options);
+        },
+      });
+      const [ra, rb] = await t.run(() => {
+        const a = resumeApprovedAction({ proposalId, proposalStore: aProposals });
+        void a.finally(() => aDone.open()).catch(() => undefined);
+        const b = resumeApprovedAction({ proposalId, trajectoryStore: bTrajectories });
+        return Promise.allSettled([a, b]);
+      });
+      return { proposalId, trajectoryId, ra, rb };
+    }
+
+    it("checked, then overtaken before its run: refused, not answered with A's completion", async () => {
+      const { proposalId, trajectoryId, ra, rb } =
+        await checkedThenOvertaken("translate");
+      expect(ra).toMatchObject({ status: "fulfilled" });
+      expect((rb as PromiseRejectedResult).reason).toBeInstanceOf(
+        HeldActionNotApprovedError
+      );
+      expect(executed).toEqual(["publish:benign"]);
+      expect(await status(trajectoryId)).toBe("completed");
+      expect((await t.run(() => proposals.getById(proposalId)))?.status).toBe("executed");
+    });
+
+    it("with a step after it: the loser does not run the next step either", async () => {
+      const { trajectoryId, ra, rb } = await checkedThenOvertaken("full-pipeline");
+      expect(ra).toMatchObject({ status: "fulfilled" });
+      expect((rb as PromiseRejectedResult).reason).toBeInstanceOf(
+        HeldActionNotApprovedError
+      );
+      expect(executed).toEqual(["gate:benign"]);
+      expect(await status(trajectoryId)).toBe("running");
+    });
+
+    it("both reach the claim: the compare-and-set picks one, the other is refused", async () => {
+      const { proposalId, trajectoryId } = await kept("translate");
+      const bAtClaim = signal();
+      const aDone = signal();
+      const aProposals = hooked(proposals, {
+        claim: async (id: string, options?: { readonly atomic?: boolean }) => {
+          await bAtClaim.wait;
+          return proposals.claim(id, options);
+        },
+      });
+      const bProposals = hooked(proposals, {
+        claim: async (id: string, options?: { readonly atomic?: boolean }) => {
+          bAtClaim.open();
+          await aDone.wait;
+          return proposals.claim(id, options);
+        },
+      });
+      const [ra, rb] = await t.run(() => {
+        const a = resumeApprovedAction({ proposalId, proposalStore: aProposals });
+        void a.finally(() => aDone.open()).catch(() => undefined);
+        const b = resumeApprovedAction({ proposalId, proposalStore: bProposals });
+        return Promise.allSettled([a, b]);
+      });
+      expect(ra).toMatchObject({ status: "fulfilled" });
+      expect((rb as PromiseRejectedResult).reason).toBeInstanceOf(
+        HeldActionNotApprovedError
+      );
+      expect(executed).toEqual(["publish:benign"]);
+      expect(await status(trajectoryId)).toBe("completed");
+      expect((await t.run(() => proposals.getById(proposalId)))?.status).toBe("executed");
+    });
+
+    it("the concurrent test, 50 times: one runs, the others are refused, every time", async () => {
+      for (let n = 0; n < 50; n += 1) {
+        executed.length = 0;
+        const { proposalId, trajectoryId } = await kept("translate");
+        const results = await Promise.allSettled(
+          [1, 2, 3, 4].map(() => t.run(() => resumeApprovedAction({ proposalId })))
+        );
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        for (const r of results)
+          if (r.status === "rejected")
+            expect(r.reason).toBeInstanceOf(HeldActionNotApprovedError);
+        expect(executed).toEqual(["publish:benign"]);
+        expect(await status(trajectoryId)).toBe("completed");
+      }
+    }, 120_000);
+
+    it("a status compare-and-set: moved only from the statuses named, under the row lock", async () => {
+      const { trajectoryId } = await kept("translate");
+      expect(
+        await t.run(() =>
+          trajectories.updateStatus(trajectoryId, "failed", { from: ["indeterminate"] })
+        )
+      ).toBeUndefined();
+      expect(await status(trajectoryId)).toBe("awaiting_retry");
+      const moved = await t.run(() =>
+        Promise.all(
+          [1, 2, 3].map(() =>
+            trajectories.updateStatus(trajectoryId, "running", {
+              from: ["awaiting_retry"],
+            })
+          )
+        )
+      );
+      expect(moved.filter((m) => m !== undefined)).toHaveLength(1);
+      expect(await status(trajectoryId)).toBe("running");
+    });
+
+    it("withdrawn while a run finishes the workflow: the end is not written over it", async () => {
+      const { proposalId, trajectoryId } = await kept("translate");
+      const store = hooked(trajectories, {
+        addStep: async (...args: Parameters<PostgresTrajectoryStore["addStep"]>) => {
+          const added = await trajectories.addStep(...args);
+          await trajectories.updateStatus(trajectoryId, "completed");
+          return added;
+        },
+      });
+      await t.run(() =>
+        withdrawHeldAction({ proposalId, decidedBy: "user-1", trajectoryStore: store })
+      );
+      expect(await status(trajectoryId)).toBe("completed");
+    });
+  }
+);
+
 async function lostMidRun(atomic = false) {
   const h = await heldAndApproved();
   expect((await t.run(() => proposals.claim(h.proposalId, { atomic })))?.status).toBe(

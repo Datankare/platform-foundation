@@ -122,6 +122,7 @@ export {
   TrajectoryAccessError,
   ApprovalMismatchError,
   HeldActionNotApprovedError,
+  TrajectoryStoreCasError,
 } from "./workflow-loop";
 export type {
   WorkflowDefinition,

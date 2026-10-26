@@ -296,3 +296,304 @@ operators change them; a tenant's administrators assign them to their own users.
 | CI route checks                        | Every API route runs in a tenant scope (`tenantRoute`), is verified and rate limited                                                         |
 | Boot (environment contract)            | The tenancy, database and identity settings above are present and consistent                                                                 |
 | Operator console → readiness           | The live deployment: request role, owner connection, directory, Cognito attribute                                                            |
+| CI `__tests__/db/identity-relink`      | A re-linked account is reached by its new subject with its role, standing, tenant and data; every ambiguity is refused (§6)                  |
+
+---
+
+## 6. Moving to a new identity pool
+
+A new Cognito user pool (a replaced pool, or production moving to its own) gives every identity
+a **new subject**. Accounts are bound to their identity by `users.cognito_sub` (ADR-012 amendment
+TASK-174); until each is re-linked, a sign-in with the new subject finds no account and is given a
+new, ordinary one — staff included. Re-linking is an operator command, run from a trusted machine;
+nothing is changed by hand in the database. It changes only the account's subject — never its
+id, role, standing or data — and records who did it and why in the audit log, in the same
+transaction.
+
+It moves an account **once**, from an identity of the old pool to one of the current pool, and
+never again (review 15): an account already bound to an identity of the current pool — its
+subject is a user of the pool, or it was re-linked in this pool before — is refused, whoever
+holds its address now. An account made in the new pool (at or after the move time you give) is
+never a target. An account whose own address was never verified is moved only when you confirm
+it for that account (review 16, 6.6).
+
+### 6.1 Before
+
+| Do                                                                                                                                                                                      | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apply migrations 054 and 055 and deploy the release that has the command ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2)                                                     | The app must recognise an account by its subject (provisioning, the account guard) before any account is re-linked; the command reads `user_deletions.cognito_sub`; 055 makes bulk runs fast                                                                                                                                                                                                                                                                                                                                                          |
+| Nothing to decide about the subject (TASK-177): the command always binds the pool user's **`sub`**                                                                                      | It is what every token verifier names a signed-in identity by — the platform's own Cognito provider and Playform's alike, for a native and a federated (Google) user. A Google user's **User name** (`Google_1093…`) is never a subject. Review 16's `--subject` is gone: `--subject sub` still runs for one release (a deprecation note), `--subject username` is refused (exit 2) — drop the flag from any script. No data migration: platform-foundation has no deployment with existing users, and Playform's provider has always bound the `sub` |
+| Note **when the deployment moved to the new pool** (UTC): the time of the first deployment whose `NEXT_PUBLIC_COGNITO_USER_POOL_ID` is the new pool (the host's deployment list)        | The command's `--created-before`: accounts made since then are the new pool's (first sign-ins), never re-linked to. If unsure, take an **earlier** time — never a later one                                                                                                                                                                                                                                                                                                                                                                           |
+| In the new pool's Google identity provider, map Google's `email_verified` claim to the `email_verified` attribute (Attribute mapping) — for Google and Sign in with Apple **only**      | The command re-links only an address the pool says is verified, from a source it trusts (`AUTH_TRUSTED_EMAIL_IDPS`, default `Google`; add `SignInWithApple` if you use it). **Never map it for Microsoft Entra ID** (or any OIDC/SAML provider whose `email` the account's own tenant sets): its address is not verified by anyone (nOAuth) — such a user is refused `pool.unverified` whatever the mapping says                                                                                                                                      |
+| Create a key that may call **only** `cognito-idp:ListUsers` on the new pool (IAM → a user or role with an inline policy on `arn:aws:cognito-idp:<region>:<account>:userpool/<pool id>`) | The command only reads the pool (by address, and by subject to check an account is not already bound there). The app's own `COGNITO_ADMIN_*` key is not allowed `ListUsers`, and should not be                                                                                                                                                                                                                                                                                                                                                        |
+| Each person signs in once with the new pool (Google, or sign-up and confirm)                                                                                                            | Their identity then exists in the pool. A first sign-in may also create a stray ordinary account for the new subject — the command offers to merge it (6.3)                                                                                                                                                                                                                                                                                                                                                                                           |
+| Staff who sign in with Google: decide how they meet `auth.staff_mfa_required` (on by default)                                                                                           | Cognito applies no second factor to a federated sign-in, so GetUser reports none and `/admin` answers `auth.mfa_required` for them while the setting is on — after the re-link too (the account is reached; administration is refused). Either they sign in with a password and an authenticator, or the setting is turned off (a safety-tier change: a second operator approves it) with two-step verification enforced for them at Google                                                                                                           |
+
+The operator's key (an IAM user of its own; delete its access key when the move is done):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["cognito-idp:ListUsers"],
+      "Resource": "arn:aws:cognito-idp:REGION:ACCOUNT:userpool/POOL_ID"
+    }
+  ]
+}
+```
+
+### 6.2 The settings — in the shell, never in a file
+
+Open a new terminal in the repository at the deployed release (`npm ci` done). Each secret is
+read by a prompt that names it — paste the value it names, then Enter; nothing is shown, written
+to a file or kept in the shell's history (works in zsh and bash; every block below pastes as is):
+
+```bash
+printf 'DATABASE_OWNER_URL: '; read -rs DATABASE_OWNER_URL; echo; export DATABASE_OWNER_URL
+printf 'COGNITO_ADMIN_ACCESS_KEY_ID: '; read -rs COGNITO_ADMIN_ACCESS_KEY_ID; echo; export COGNITO_ADMIN_ACCESS_KEY_ID
+printf 'COGNITO_ADMIN_SECRET_ACCESS_KEY: '; read -rs COGNITO_ADMIN_SECRET_ACCESS_KEY; echo; export COGNITO_ADMIN_SECRET_ACCESS_KEY
+export DATABASE_SSL=verify-full
+export DATABASE_SSL_CA="$(cat ~/Downloads/prod-ca-2021.crt)"
+export COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
+export POOL_MOVED_AT=2026-10-20T14:00:00Z
+```
+
+Then the shared cache, so the change reaches every instance at once — the same way, from the
+host's secret store:
+
+```bash
+export CACHE_PROVIDER=upstash
+printf 'UPSTASH_REDIS_REST_URL: '; read -rs UPSTASH_REDIS_REST_URL; echo; export UPSTASH_REDIS_REST_URL
+printf 'UPSTASH_REDIS_REST_TOKEN: '; read -rs UPSTASH_REDIS_REST_TOKEN; echo; export UPSTASH_REDIS_REST_TOKEN
+```
+
+(or `export CACHE_PROVIDER=valkey` and `VALKEY_URL` by its own prompt).
+
+- `DATABASE_OWNER_URL` — the owner connection of 1.3 (copy it from the host's secret store, or
+  Supabase → Connect), **without** `?sslmode=…`: TLS is `DATABASE_SSL`, and the command refuses a
+  URL carrying TLS options (node-postgres would let them override it).
+- `DATABASE_SSL_CA` — the CA certificate of 1.3 (public; the downloaded file is fine). Required
+  with `verify-full`; `DATABASE_SSL=disable` is refused unless the database is on this machine.
+- `AUTH_TRUSTED_EMAIL_IDPS` — only if the deployment sets it (default `Google`): the same value.
+- The pool id is not secret; the region comes from it (GovCloud pools, `us-gov-west-1_…`, too).
+- Temporary credentials instead of a key: `eval "$(aws configure export-credentials --profile <p> --format env)"`,
+  then `export COGNITO_ADMIN_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" COGNITO_ADMIN_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" COGNITO_ADMIN_SESSION_TOKEN="$AWS_SESSION_TOKEN"`.
+- Check that each is set — names only, never a value:
+
+  ```bash
+  for v in DATABASE_OWNER_URL DATABASE_SSL_CA COGNITO_USER_POOL_ID COGNITO_ADMIN_ACCESS_KEY_ID COGNITO_ADMIN_SECRET_ACCESS_KEY CACHE_PROVIDER POOL_MOVED_AT; do [ -n "$(printenv "$v")" ] && echo "set: $v" || echo "MISSING: $v"; done
+  ```
+
+  A setting the command finds wrong is named when it starts (exit 2), never echoed.
+
+Close the terminal when done: the values go with it.
+
+### 6.3 One account
+
+```bash
+export STAFF_EMAIL=staff@example.com
+node scripts/relink-identity.mjs --email "$STAFF_EMAIL" --created-before "$POOL_MOVED_AT" --operator "Your Name" --reason "dev/staging pool replaced"; echo "exit $?"
+```
+
+A **dry run**: it prints what it would change and changes nothing. Read it:
+
+| It prints                                                                | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `relink` with account, role, subject                                     | Ready. Run the same command with `--apply`                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `refused … [account.needs_confirmation]` and `--confirm-unverified <id>` | The account's own address was never verified (`users.email_verified` false — made by sign-up, or by an administrator with an address nobody proved): whoever verifies that address in the new pool would get the account. Confirm with the account's person, out of band, that the address is theirs and that they are the one signing in with it now; then add `--confirm-unverified <id>` (the id it printed). The old pool, which could have said more, is gone (6.6) |
+| `refused … [subject.held]` and `--merge-from <id>`                       | The person's first sign-in made a stray account that holds only sign-in residue. Run again with `--merge-from <id>` (the id it printed), then `--apply`: the stray is removed and its subject moved to the staff account, in one transaction                                                                                                                                                                                                                             |
+| `refused … [subject.held]` without it                                    | The stray holds the person's data (or is not a plain first sign-in): it is not merged. Decide with the person; nothing is lost by waiting                                                                                                                                                                                                                                                                                                                                |
+| `refused … [pool.many]`                                                  | Two pool users can each prove the address (a password user and an unlinked Google user): link them (`AdminLinkProviderForUser`) or delete the extra one. An unconfirmed sign-up, or a user whose address is not verified (or verified only by an untrusted provider), beside the one that proves it is ignored (review 16 L4)                                                                                                                                            |
+| `refused … [pool.unverified]`                                            | The address is not verified in the pool, or only by a provider not in `AUTH_TRUSTED_EMAIL_IDPS` (for Google: map the claim, 6.1, and sign in again; never for Microsoft Entra ID)                                                                                                                                                                                                                                                                                        |
+| `relink` … "re-linked on the operator's confirmation"                    | Ready: an unverified account you confirmed with `--confirm-unverified`; the audit record says `unverifiedConfirmed`                                                                                                                                                                                                                                                                                                                                                      |
+| `refused … [account.many]`                                               | More than one account made before the move has the address verified, or none verified and more than one unverified (their ids printed: confirm with the person which is theirs, then `--unverified-account <id>`, which is also its confirmation). Across tenants: `--tenant <id>`                                                                                                                                                                                       |
+| `refused … [account.unverified]`                                         | The account named by `--unverified-account` is not the one this address re-links: not an unverified account of the address made before the move, or another account (its address verified) is the target (review 16 L1)                                                                                                                                                                                                                                                  |
+| `refused … [account.none]`                                               | No account made before `--created-before` has the address (it says how many newer ones it left out). Check the time; an earlier one only refuses more                                                                                                                                                                                                                                                                                                                    |
+| `refused … [account.bound_in_pool]` / `[account.relinked_in_pool]`       | The account is already bound to an identity of the current pool (asked by its `sub`; a legacy row without a subject by its id), or was re-linked in it before: it is never moved again — whoever holds the address now is not its person. A person who lost that identity is account recovery, not this command                                                                                                                                                          |
+| `refused … [address.unsupported]`                                        | A non-ASCII address: never matched to an ASCII one (lookalikes). Account recovery, with the person                                                                                                                                                                                                                                                                                                                                                                       |
+| `refused … [pool.other_tenant]` / `[subject.held_elsewhere]`             | The identity belongs to another tenant. Never re-linked across tenants                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `refused … [account.changed]`                                            | The account or the identity changed while the command ran. Run it again                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `linked`                                                                 | Already bound to the pool's identity: nothing to do                                                                                                                                                                                                                                                                                                                                                                                                                      |
+
+Then apply it (add `--merge-from "$STRAY_ID"` after `export STRAY_ID=<the id it printed>` when
+it offered a merge, and `--confirm-unverified "$ACCOUNT_ID"` when it asked for one):
+
+```bash
+node scripts/relink-identity.mjs --email "$STAFF_EMAIL" --created-before "$POOL_MOVED_AT" --operator "Your Name" --reason "dev/staging pool replaced" --apply; echo "exit $?"
+```
+
+Exit codes:
+
+| Exit | Meaning                                                                                                                                                                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Done: every change applied and voided on every instance — or a dry run with nothing refused, or nothing to do                                                                                                                                                   |
+| 1    | Refused: nothing changed — an applied run stopped by a refusal, or **a dry run that refused any address**, `--skip-ambiguous` or not (review 16 L5: a refusal is never 0; with `--skip-ambiguous`, `--apply` would re-link the rest)                            |
+| 2    | Usage, or a setting missing or wrong (named, never shown): nothing read                                                                                                                                                                                         |
+| 3    | The pool or the database unreachable before anything was committed: nothing changed                                                                                                                                                                             |
+| 4    | Applied, but some addresses were refused and skipped (bulk, `--skip-ambiguous`): resolve them and run again                                                                                                                                                     |
+| 5    | Applied, but not voided on every instance — each subject whose invalidation was not published is named, with why (review 16 M2), or the shared cache is not set in this shell: instances serve what they cached for at most 60 s more                           |
+| 6    | Partly applied (bulk): some chunks committed, then the run stopped — it says which. Run the same command again                                                                                                                                                  |
+| 7    | **Outcome unknown** (review 16 L7): the database connection failed while a chunk was committing — it may have committed. Do not assume either way: run the dry run (6.4 step 1) — what committed reads `linked` — then run it again with `--apply` for the rest |
+
+The address is matched trimmed, with its ASCII letters in any case, in the database; the pool is
+asked for it as typed and in lower case — if the pool holds it in another case, type it as the
+pool shows it.
+
+### 6.4 Check it took effect
+
+1. The same command again without `--apply` prints `linked` (exit 0):
+
+   ```bash
+   node scripts/relink-identity.mjs --email "$STAFF_EMAIL" --created-before "$POOL_MOVED_AT" --operator "Your Name" --reason "check"; echo "exit $?"
+   ```
+
+2. In the SQL Editor (read-only queries):
+
+   ```sql
+   select u.id, left(u.cognito_sub, 8) as subject, r.name as role, u.created_at
+     from users u join roles r on r.id = u.role_id
+    where lower(btrim(u.email)) = 'staff@example.com' and u.deleted_at is null;
+   select created_at, details->>'operator' as operator, details->>'reason' as reason,
+          details->>'pool' as pool,
+          details->>'unverifiedConfirmed' as confirmed, details->>'poolMovedAt' as moved_at
+     from audit_log where details->>'type' = 'identity_relinked'
+    order by created_at desc limit 5;
+   ```
+
+   One row before the move with the staff role, the subject's first 8 characters equal to the
+   user's `sub` in the pool (Cognito → Users → the user → its `sub` attribute — for a Google user
+   too, never its **User name** `Google_1…`, TASK-177); and the record, naming the current pool.
+
+3. Sign in with the new pool: `/admin` opens with the staff role (a Google user: see the MFA row
+   of 6.1).
+
+### 6.5 A whole pool
+
+```bash
+node scripts/relink-identity.mjs --all-staff --created-before "$POOL_MOVED_AT" --operator "Your Name" --reason "production moved to its own pool"; echo "exit $?"
+```
+
+Every staff account (a role holding an administrative, configuration, platform or moderation
+permission); `--all` for every account; `--tenant <id>` for one tenant. The same checks per
+address, then one summary. Each address is asked of the pool in lower case and as stored. An
+address with no pool user yet is `absent` (reported, not a refusal: re-link it after the person
+signs in). Any refusal stops the whole run — nothing is changed — unless `--skip-ambiguous`,
+which re-links the rest and reports the refused (exit 4). An address the dry run refused stays
+refused when it is applied, even if the data changed in between (review 16 L2): what is applied
+is only what the dry run showed. Two addresses that would bind one identity (one address in two
+tenants) are both refused, `subject.contested` — re-link the person's own one with `--email …
+--tenant <id>`. Strays are merged only with `--merge-strays`, and only those safe to merge.
+
+Accounts whose own address was never verified are refused and **listed** at the end of the dry
+run, each with the flag that confirms it:
+
+```text
+2 account(s) whose own address was never verified need the operator's confirmation — …
+  --confirm-unverified 3f1c…   (ann@example.com, tenant 0000…, role super_admin)
+```
+
+Confirm each with its person, then repeat the flag once per account
+(`--confirm-unverified "$ID1" --confirm-unverified "$ID2"`). A confirmation that matches no
+account needing one is reported (`⚠ … named no account`) — check the id.
+
+With `--apply`, it is applied in chunks of 500 addresses, each one transaction planned again
+under lock: a chunk commits whole or not at all, and the output lists each chunk's outcome. A run
+stopped after a chunk committed (exit 6) is completed by running the same command again: what was
+applied reads `linked`; a chunk whose commit's outcome is unknown (exit 7) is said so, never
+"nothing changed". Measured at 100,000 accounts (local Postgres 16, the pool stood in by a fake):
+dry run 7 s, apply 20 s, a rerun 6 s — with migration 055; without it the same run exceeded the
+statement timeout. Against Cognito, each address costs two or three `ListUsers` calls (by
+address, as stored, and the account's current subject), which dominate: plan for Cognito's
+`ListUsers` quota.
+
+### 6.6 Verified addresses (`users.email_verified`, TASK-176)
+
+Until TASK-176 every account made through `/api/auth/sign-up` was stored with
+`users.email_verified = false` — it is created before the person confirms the address — and
+nothing ever changed it. Now a signed-in request brings it up to date from the pool's own answer
+for the token: false → true, once, with a `profile_updated` audit record (`field:
+email_verified`, `verifiedBy`), only for the address the row already has. It is believed only
+from the pool's own verification (a native user's code) or a provider in
+`AUTH_TRUSTED_EMAIL_IDPS` (default `Google`): a user of any other provider — Microsoft Entra ID
+above all — never marks an address verified, whatever the pool's mapping says, and neither does a
+token whose provider does not say who verified it (`identityProviders`; Playform's provider must
+fill it — [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1b). It is never set back to false and
+`users.email` is never rewritten (the stored address is what a ban follows and what this command
+matches by).
+
+There is no backfill: whether an existing account's address was confirmed is known only to the
+pool, so no migration can say it. **A person's next sign-in to the current pool marks their
+account verified.** For a re-link that cannot work — the old pool is gone, and an old-pool account
+can never sign in again to be updated. The current pool's verification proves only that whoever
+signs in **now** holds the address: an address mistyped when the account was made (an
+administrator-created or phone-confirmed account), or one that changed hands, would give the
+account to a stranger. So an account whose own flag is false is re-linked only when the operator
+confirms it for that very account (`--confirm-unverified <id>`, recorded as `unverifiedConfirmed`
+in the audit record; review 16 D4f). While the old pool still exists, the check worth making
+before confirming is that pool's user for the address (Cognito → the old pool → Users: its
+`email_verified`); once it is deleted, only the person can confirm it. The old row's flag still
+breaks a tie (one verified account beside unverified ones is the target), and accounts made after
+the move are never counted or chosen (review 15 H1/M1, unchanged). Reasoning: ADR-012 amendment.
+
+Check it took effect (SQL Editor, read-only) — after the person signs in once:
+
+```sql
+select u.id, u.email_verified, a.created_at as marked_at, a.details->>'verifiedBy' as verified_by
+  from users u
+  left join audit_log a on a.target_id = u.id and a.action = 'profile_updated'
+       and a.details->>'field' = 'email_verified'
+ where lower(btrim(u.email)) = 'person@example.com' and u.deleted_at is null;
+```
+
+`email_verified` is `true`, with one record (none when the account was verified from the start).
+Still `false` after a sign-in: the pool's address is not this one (changed there), it is not
+verified in the pool (for Google: the mapping of 6.1), or its provider is not trusted.
+
+### 6.7 Worked example: one Google-federated staff account (Playform, pool `us-east-1_9pRbNsCbE`)
+
+Playform's provider, like the platform's, names an identity by the token's `sub`, and the command
+binds the `sub` — there is no subject flag (TASK-177). The staff member has signed in once with
+Google to the new pool. Every block pastes into zsh as is.
+
+```bash
+printf 'DATABASE_OWNER_URL: '; read -rs DATABASE_OWNER_URL; echo; export DATABASE_OWNER_URL
+printf 'COGNITO_ADMIN_ACCESS_KEY_ID: '; read -rs COGNITO_ADMIN_ACCESS_KEY_ID; echo; export COGNITO_ADMIN_ACCESS_KEY_ID
+printf 'COGNITO_ADMIN_SECRET_ACCESS_KEY: '; read -rs COGNITO_ADMIN_SECRET_ACCESS_KEY; echo; export COGNITO_ADMIN_SECRET_ACCESS_KEY
+printf 'UPSTASH_REDIS_REST_URL: '; read -rs UPSTASH_REDIS_REST_URL; echo; export UPSTASH_REDIS_REST_URL
+printf 'UPSTASH_REDIS_REST_TOKEN: '; read -rs UPSTASH_REDIS_REST_TOKEN; echo; export UPSTASH_REDIS_REST_TOKEN
+export CACHE_PROVIDER=upstash
+export DATABASE_SSL=verify-full
+export DATABASE_SSL_CA="$(cat ~/Downloads/prod-ca-2021.crt)"
+export COGNITO_USER_POOL_ID=us-east-1_9pRbNsCbE
+export POOL_MOVED_AT=2026-10-20T14:00:00Z
+export STAFF_EMAIL=staff@example.com
+```
+
+Dry run (expect `relink`; or `account.needs_confirmation` with the account id; or
+`subject.held` with a `--merge-from` id):
+
+```bash
+node scripts/relink-identity.mjs --email "$STAFF_EMAIL" --created-before "$POOL_MOVED_AT" --operator "Your Name" --reason "Playform moved to pool us-east-1_9pRbNsCbE"; echo "exit $?"
+```
+
+Only if it printed them (the ids are the ones it printed):
+
+```bash
+export ACCOUNT_ID=00000000-0000-4000-8000-000000000000
+export STRAY_ID=00000000-0000-4000-8000-000000000000
+```
+
+Apply — the dry run's command with `--apply`, and `--confirm-unverified "$ACCOUNT_ID"` /
+`--merge-from "$STRAY_ID"` only if it asked for them:
+
+```bash
+node scripts/relink-identity.mjs --email "$STAFF_EMAIL" --created-before "$POOL_MOVED_AT" --operator "Your Name" --reason "Playform moved to pool us-east-1_9pRbNsCbE" --apply; echo "exit $?"
+```
+
+Verify (expect `linked`, exit 0), then 6.4 step 2, then sign in with Google and open `/admin`:
+
+```bash
+node scripts/relink-identity.mjs --email "$STAFF_EMAIL" --created-before "$POOL_MOVED_AT" --operator "Your Name" --reason "check"; echo "exit $?"
+```

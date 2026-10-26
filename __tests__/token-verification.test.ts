@@ -230,8 +230,10 @@ describe("revocation reaches every instance at once", () => {
   it("reads the subject a revocation is addressed to from the token", () => {
     const jwt = (c: object) =>
       `h.${Buffer.from(JSON.stringify(c)).toString("base64url")}.s`;
-    expect(tokenSubject(jwt({ username: "u-name", sub: "u-sub" }))).toBe("u-name");
+    // TASK-177: the sub, never the username (a federated user's is Google_…).
+    expect(tokenSubject(jwt({ username: "Google_1093", sub: "u-sub" }))).toBe("u-sub");
     expect(tokenSubject(jwt({ sub: "u-sub" }))).toBe("u-sub");
+    expect(tokenSubject(jwt({ username: "u-name" }))).toBeUndefined();
     expect(tokenSubject("not a token")).toBeUndefined();
   });
 });

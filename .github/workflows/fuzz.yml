@@ -85,6 +85,7 @@ jobs:
           DEPLOYMENT_HOST=ci E2E_IN_MEMORY_STORES=true E2E_TEST_DOUBLE_AUTH=true \
           RATE_LIMIT_STORE=memory AI_PROVIDER=mock AUTH_PROVIDER=mock \
           GUEST_TOKEN_SECRET="$(openssl rand -base64 32)" ANTHROPIC_API_KEY="$canary" \
+          REFRESH_COOKIE_KEY="$(openssl rand -hex 32)" \
             nohup npx next start -p 3000 > server.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf -o /dev/null http://127.0.0.1:3000/api/health/ready && exit 0

@@ -119,6 +119,40 @@ export function runTrajectoryStoreContract(fx: TrajectoryStoreContractFixtures):
     });
   });
 
+  describe("updateStatus compare-and-set (TASK-175; review 16 L6 — a MUST for resumes)", () => {
+    it("declares supportsStatusCas: true (resumeApprovedAction refuses a store that does not)", () => {
+      expect(store.supportsStatusCas).toBe(true);
+    });
+
+    it("moves only from one of `from`; otherwise answers undefined and changes nothing", async () => {
+      const rec = await store.create({ kind: "agent", id: "a" }, "t", "platform");
+      const id = rec.trajectory.trajectoryId;
+      await store.updateStatus(id, "completed");
+      await expect(
+        store.updateStatus(id, "paused", { from: ["running", "paused"] })
+      ).resolves.toBeUndefined();
+      expect((await store.getById(id))?.trajectory.status).toBe("completed");
+      const moved = await store.updateStatus(id, "failed", { from: ["completed"] });
+      expect(moved?.trajectory.status).toBe("failed");
+      expect((await store.getById(id))?.trajectory.status).toBe("failed");
+    });
+
+    it("of concurrent moves from one status, exactly one applies", async () => {
+      const rec = await store.create({ kind: "agent", id: "a" }, "t", "platform");
+      const id = rec.trajectory.trajectoryId;
+      const results = await Promise.all(
+        (["completed", "paused", "failed", "awaiting_retry"] as const).map((to) =>
+          store.updateStatus(id, to, { from: ["running"] })
+        )
+      );
+      const applied = results.filter((r) => r !== undefined);
+      expect(applied).toHaveLength(1);
+      expect((await store.getById(id))?.trajectory.status).toBe(
+        applied[0]!.trajectory.status
+      );
+    });
+  });
+
   describe("query", () => {
     it("filters by subjectKind", async () => {
       await store.create({ kind: "agent", id: "guardian" }, "a", "platform");

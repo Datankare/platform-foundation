@@ -27,6 +27,7 @@ const realAuth = (): void => {
   process.env.COGNITO_CLIENT_SECRET = "s".repeat(52);
   process.env.GUEST_TOKEN_SECRET = "g".repeat(64);
   process.env.ERASURE_HASH_KEY = "e".repeat(64);
+  process.env.REFRESH_COOKIE_KEY = "r".repeat(64);
   process.env.CRON_SECRET = "c".repeat(64);
   // TASK-139: a deployment declares its cache — shared (review 8 L3).
   process.env.CACHE_PROVIDER = "upstash";

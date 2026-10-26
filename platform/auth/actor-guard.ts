@@ -20,6 +20,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { requireActor, type Actor, type ActorOptions } from "@/platform/auth/middleware";
 import { checkAccountStatus } from "@/platform/auth/account-status-guard";
+import { trustedVerifiedClaim } from "@/platform/auth/email-verification";
 import { checkCoppaGate } from "@/platform/auth/coppa-gate";
 import { NO_GUEST_STATUSES, markRestricted } from "@/platform/auth/restricted-marker";
 import { logger } from "@/lib/logger";
@@ -40,10 +41,11 @@ export async function requireActorWithStatus(
   const { actor } = result;
   if (actor.kind === "guest") return { actor };
 
-  // The token's email seeds the user's row on first use (TASK-117).
+  // The token's email seeds the user's row on first use (TASK-117) — stored verified only when
+  // a trusted source verified it (review 16 L8: never an untrusted provider's claim).
   const status = await checkAccountStatus(actor.id, feature, {
     email: actor.user.email,
-    emailVerified: actor.user.emailVerified,
+    emailVerified: trustedVerifiedClaim(actor.user),
   });
   if (!status.allowed && status.code === "account.not_provisioned") {
     return { error: apiError("account.not_provisioned", { request }) };

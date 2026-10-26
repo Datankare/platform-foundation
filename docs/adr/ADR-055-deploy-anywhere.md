@@ -83,8 +83,10 @@ Playform's own `instrumentation.ts` installs the handler the same way.
 replay job), the image built from the commit (`scripts/pull-base-image.sh`: Docker Hub with retries,
 then Google's Docker Hub mirror — TASK-122), run read-only with tmpfs on its two writable paths,
 ready on `/api/health/ready`, checked to run as `10001:10001`, the deploy smoke test against it
-(the commit included; the translation step only when the repository has `ANTHROPIC_API_KEY`, since
-Guardian classifies with the real model — `SMOKE_SKIP_TRANSLATE=1` otherwise, never on a
+(the commit included; the translation step always skipped with `SMOKE_SKIP_TRANSLATE=1` and a
+notice — the image runs `AI_PROVIDER=mock` with no translation key and is given no AI credential,
+since a real model screening the mock's output refuses it; the translation is proved on each
+deployment by the deploy smoke workflow with real providers — PF v6.0.0; never set on a
 deployment), the worker run once from the same image, then SIGTERM twice: readiness 503 and
 liveness 200 while it drains, exit 0 inside the bound, pools closed. The weekly load test now runs
 the image too (TASK-143). The repository has no image scanner; none was added.

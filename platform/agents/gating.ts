@@ -33,6 +33,7 @@ import type {
   ProposalRecord,
   ProposalStore,
   RiskLevel,
+  TrajectoryStatus,
   TrajectoryStore,
 } from "@/platform/kernel";
 import {
@@ -146,7 +147,12 @@ export async function rejectHeldAction(
 // ── An approved step whose run did not take effect (TASK-170) ─────────
 
 /** Workflow statuses a held step's end may still end; a finished trajectory stays as it is. */
-const OPEN_TRAJECTORY = new Set(["running", "paused", "awaiting_retry", "indeterminate"]);
+const OPEN_TRAJECTORY: readonly TrajectoryStatus[] = [
+  "running",
+  "paused",
+  "awaiting_retry",
+  "indeterminate",
+];
 
 /**
  * Record on a held action's trajectory how its step's decision ended — withdrawn, rejected,
@@ -159,7 +165,7 @@ export async function endHeldTrajectory(
   proposal: ProposalRecord
 ): Promise<void> {
   const record = await trajectoryStore.getById(proposal.trajectoryId);
-  if (!record || !OPEN_TRAJECTORY.has(record.trajectory.status)) return;
+  if (!record || !OPEN_TRAJECTORY.includes(record.trajectory.status)) return;
   await trajectoryStore
     .addStep(proposal.trajectoryId, {
       stepIndex: 0,
@@ -183,7 +189,11 @@ export async function endHeldTrajectory(
       effectiveRisk: proposal.effectiveRisk,
     })
     .catch(() => undefined);
-  await trajectoryStore.updateStatus(proposal.trajectoryId, "failed");
+  // Only from an open status, in one step with the check (TASK-175): a run that finished the
+  // workflow since it was read above is not overwritten.
+  await trajectoryStore.updateStatus(proposal.trajectoryId, "failed", {
+    from: OPEN_TRAJECTORY,
+  });
 }
 
 /**
@@ -241,10 +251,11 @@ export async function resolveUndecidedHeldAction(
   if (args.resolution === "executed") {
     await endHeldTrajectory(trajectoryStore, done);
   } else {
-    const record = await trajectoryStore.getById(done.trajectoryId);
-    if (record?.trajectory.status === "indeterminate") {
-      await trajectoryStore.updateStatus(done.trajectoryId, "awaiting_retry");
-    }
+    // Only from indeterminate, in one step with the check (TASK-175): approved again, the step
+    // may already be running (or have run) on a resume — never moved back to awaiting_retry.
+    await trajectoryStore.updateStatus(done.trajectoryId, "awaiting_retry", {
+      from: ["indeterminate"],
+    });
   }
   return done;
 }

@@ -245,6 +245,7 @@ jobs:
           cron="$(openssl rand -hex 32)"
           guest="$(openssl rand -base64 48 | tr -d '\n')"
           erasure="$(openssl rand -hex 32)"
+          refreshkey="$(openssl rand -hex 32)"
           # Throwaway values for this job's database and app. They are never printed: they go
           # only into an env file (umask 077) passed to the containers with --env-file — not into
           # $GITHUB_ENV, whose values each later step's log header shows.
@@ -260,6 +261,7 @@ jobs:
             echo "AI_PROVIDER=mock"
             echo "GUEST_TOKEN_SECRET=$guest"
             echo "ERASURE_HASH_KEY=$erasure"
+            echo "REFRESH_COOKIE_KEY=$refreshkey"
             echo "CRON_SECRET=$cron"
             echo "CACHE_PROVIDER=memory"
             echo "TENANCY_MODE=single"
@@ -292,13 +294,12 @@ jobs:
           docker image inspect "$IMAGE" --format 'size {{.Size}} bytes, user {{.Config.User}}'
 
       - name: Run it (read-only, non-root) and wait until it is ready
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -euo pipefail
-          # Guardian classifies every input with the real model: the translation step of the
-          # smoke test runs only when this repository has the key (never for a fork's PR).
-          [ -z "$ANTHROPIC_API_KEY" ] || echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> "$RUNNER_TEMP/container.env"
+          # No AI credential goes into the image: it runs AI_PROVIDER=mock with no translation
+          # key, and a real model's screening of the mock's output refuses it (422
+          # content.rejected — Playform's identical job failed that way). The translation step is
+          # proved on each deployment, with real providers, by the deploy smoke workflow.
           docker run -d --name app --network host --read-only \
             --tmpfs /tmp --tmpfs /app/.next/cache:uid=10001,gid=10001,mode=0700 \
             --env-file "$RUNNER_TEMP/container.env" "$IMAGE"
@@ -329,13 +330,10 @@ jobs:
           SMOKE_BASE_URL: http://localhost:3000
           SMOKE_EXPECTED_COMMIT: ${{ github.sha }}
           SMOKE_WAIT_SECONDS: "60"
-          HAS_AI_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          SMOKE_SKIP_TRANSLATE: "1"
         run: |
           set -euo pipefail
-          if [ "$HAS_AI_KEY" != "true" ]; then
-            echo "::notice::No ANTHROPIC_API_KEY in this run — the smoke test's translation step is skipped."
-            export SMOKE_SKIP_TRANSLATE=1
-          fi
+          echo "::notice::The image runs AI_PROVIDER=mock with no translation key, so the smoke test's translation step is skipped here; it is proved on each deployment by the deploy smoke workflow with real providers."
           node scripts/deploy-smoke.mjs
 
       - name: The job worker runs from the same image

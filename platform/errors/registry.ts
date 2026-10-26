@@ -54,6 +54,15 @@ export const PLATFORM_ERROR_CODES = {
     action:
       "Explain that the account holds more data than one export can carry and that nothing was cut off; contact support for the full copy.",
   },
+  // Review 15 L4: a verified identity whose account id (its subject) is held by an account bound
+  // to another identity — typically the old subject of an account re-linked to a new identity
+  // pool (TASK-174). Not retryable: waiting changes nothing (account.not_provisioned is retryable).
+  "account.identity_conflict": {
+    status: 403,
+    params: [],
+    action:
+      "Do not retry: sign the user out and show sign-in; if it persists after signing in again, contact support.",
+  },
   "account.not_found": {
     status: 403,
     params: [],

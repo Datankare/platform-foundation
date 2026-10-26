@@ -129,7 +129,9 @@ boot, naming every violation at once, when:
 - a declared setting is mis-shaped, set only under an alias, or set under two names that disagree (D2) —
   `AUTH_PROVIDER`, the Cognito ids, `SUPABASE_URL` (`https://<ref>.supabase.co`), and
   `SUPABASE_SERVICE_ROLE_KEY` (the legacy JWT), `GUEST_TOKEN_SECRET` (≥ 32 random bytes — required with a
-  real auth provider: guest tokens are signed, D4), the `DATABASE_*` connection settings, `TENANCY_MODE`,
+  real auth provider: guest tokens are signed, D4), `ERASURE_HASH_KEY` and `REFRESH_COOKIE_KEY` (each
+  ≥ 32 characters, required with a real auth provider — the refresh cookie is HMAC-signed, review 17
+  M1), the `DATABASE_*` connection settings, `TENANCY_MODE`,
   `TENANT_ID`, `TENANT_DIRECTORY_STORE`, `COGNITO_ADMIN_*`, `CACHE_PROVIDER`, `RATE_LIMIT_STORE`,
   `DEPLOYMENT_HOST` and `TRUSTED_PROXY_HOPS`;
 - a required setting is missing:

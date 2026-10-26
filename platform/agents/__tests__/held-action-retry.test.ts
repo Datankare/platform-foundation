@@ -41,6 +41,7 @@ import {
 import { ApprovedRunFailedError } from "@/platform/action-pipeline";
 import type { AgentIdentity, Tool } from "@/platform/kernel";
 import { withModules, WORKFLOW_GOALS_FIXTURE } from "@/__tests__/helpers/modules";
+import { hooked, signal } from "@/__tests__/helpers/interleave";
 
 withModules([WORKFLOW_GOALS_FIXTURE]);
 
@@ -248,6 +249,183 @@ describe("a kept approval: the workflow waits to be approved again", () => {
       HeldActionNotApprovedError
     );
     expect(executed).toEqual(["publish:benign"]);
+  });
+});
+
+describe("concurrent resumes: the approval's claim decides, whatever was read before (TASK-175)", () => {
+  /**
+   * B passes resumeApprovedAction's checks (approved, its step next); then A claims, runs and
+   * completes the step; then B reads the trajectory again. B used to answer with the workflow A
+   * completed — a success for work it did not do (the CI flake).
+   */
+  async function checkedThenOvertaken(goal: WorkflowDefinition["goal"]) {
+    const { proposalId, trajectoryId } = await keptApproval(goal);
+    const bChecked = signal();
+    const aDone = signal();
+    let reads = 0;
+    const bTrajectories = hooked(trajectories, {
+      getById: async (id: string) => {
+        reads += 1;
+        if (reads > 1) await aDone.wait;
+        const record = await trajectories.getById(id);
+        if (reads === 1) bChecked.open();
+        return record;
+      },
+    });
+    const aProposals = hooked(proposals, {
+      claim: async (id: string, options?: { readonly atomic?: boolean }) => {
+        await bChecked.wait;
+        return proposals.claim(id, options);
+      },
+    });
+    const a = resumeApprovedAction({ proposalId, proposalStore: aProposals });
+    void a.finally(() => aDone.open()).catch(() => undefined);
+    const b = resumeApprovedAction({ proposalId, trajectoryStore: bTrajectories });
+    const [ra, rb] = await Promise.allSettled([a, b]);
+    return { proposalId, trajectoryId, ra, rb };
+  }
+
+  it("checked, then overtaken before its run: refused, not answered with A's completion", async () => {
+    const { proposalId, trajectoryId, ra, rb } = await checkedThenOvertaken("translate");
+    expect(ra).toMatchObject({ status: "fulfilled" });
+    expect(rb.status).toBe("rejected");
+    expect((rb as PromiseRejectedResult).reason).toBeInstanceOf(
+      HeldActionNotApprovedError
+    );
+    expect(executed).toEqual(["publish:benign"]);
+    expect(await status(trajectoryId)).toBe("completed");
+    expect((await proposals.getById(proposalId))?.status).toBe("executed");
+  });
+
+  it("with a step after it: the loser does not run the next step either", async () => {
+    const { trajectoryId, ra, rb } = await checkedThenOvertaken("full-pipeline");
+    expect(ra).toMatchObject({ status: "fulfilled" });
+    expect((rb as PromiseRejectedResult).reason).toBeInstanceOf(
+      HeldActionNotApprovedError
+    );
+    expect(executed).toEqual(["gate:benign"]);
+    expect(await status(trajectoryId)).toBe("running");
+  });
+
+  it("both reach the claim: the compare-and-set picks one, the other is refused", async () => {
+    const { proposalId, trajectoryId } = await keptApproval();
+    const bAtClaim = signal();
+    const aDone = signal();
+    const aProposals = hooked(proposals, {
+      claim: async (id: string, options?: { readonly atomic?: boolean }) => {
+        await bAtClaim.wait;
+        return proposals.claim(id, options);
+      },
+    });
+    const bProposals = hooked(proposals, {
+      claim: async (id: string, options?: { readonly atomic?: boolean }) => {
+        bAtClaim.open();
+        await aDone.wait;
+        return proposals.claim(id, options);
+      },
+    });
+    const a = resumeApprovedAction({ proposalId, proposalStore: aProposals });
+    void a.finally(() => aDone.open()).catch(() => undefined);
+    const b = resumeApprovedAction({ proposalId, proposalStore: bProposals });
+    const [ra, rb] = await Promise.allSettled([a, b]);
+    expect(ra).toMatchObject({ status: "fulfilled" });
+    expect((rb as PromiseRejectedResult).reason).toBeInstanceOf(
+      HeldActionNotApprovedError
+    );
+    expect(executed).toEqual(["publish:benign"]);
+    expect(await status(trajectoryId)).toBe("completed");
+    expect((await proposals.getById(proposalId))?.status).toBe("executed");
+  });
+
+  it("the concurrent test, 50 times: one runs, the others are refused, every time", async () => {
+    for (let n = 0; n < 50; n += 1) {
+      executed.length = 0;
+      const { proposalId, trajectoryId } = await keptApproval();
+      const results = await Promise.allSettled(
+        [1, 2, 3, 4].map(() => resumeApprovedAction({ proposalId }))
+      );
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      for (const r of results)
+        if (r.status === "rejected")
+          expect(r.reason).toBeInstanceOf(HeldActionNotApprovedError);
+      expect(executed).toEqual(["publish:benign"]);
+      expect(await status(trajectoryId)).toBe("completed");
+    }
+  });
+});
+
+describe("a decision on a held step never overwrites what a concurrent run recorded (TASK-175)", () => {
+  it("withdrawn while a run finishes the workflow: the end is not written over it", async () => {
+    const { proposalId, trajectoryId } = await keptApproval();
+    // The workflow finishes between the withdrawal's look at it and its end.
+    const store = hooked(trajectories, {
+      addStep: async (...args: Parameters<InMemoryTrajectoryStore["addStep"]>) => {
+        const added = await trajectories.addStep(...args);
+        await trajectories.updateStatus(trajectoryId, "completed");
+        return added;
+      },
+    });
+    await withdrawHeldAction({ proposalId, decidedBy: "user-1", trajectoryStore: store });
+    expect(await status(trajectoryId)).toBe("completed");
+  });
+
+  it("approved again, and resumed before the trajectory is moved: not moved back to awaiting_retry", async () => {
+    const r = await runGoal({
+      goal: "translate",
+      input: { text: "benign" },
+      actor: AGENT,
+    });
+    const proposalId = r.held!.proposalId;
+    const trajectoryId = r.trajectory.trajectoryId;
+    await approveHeldAction({ proposalId, decidedBy: "user-1" });
+    failNext = 1;
+    jest.spyOn(proposals, "release").mockRejectedValueOnce(new Error("db down"));
+    await resumeApprovedAction({ proposalId }).catch(() => undefined);
+    proposals.recoverStaleRuns(Date.now() + 60_000);
+    expect(await status(trajectoryId)).toBe("indeterminate");
+    // A resume runs the step the moment the proposal is approved again, before the decision
+    // moves the trajectory.
+    const store = hooked(trajectories, {
+      updateStatus: async (
+        ...args: Parameters<InMemoryTrajectoryStore["updateStatus"]>
+      ) => {
+        await resumeApprovedAction({ proposalId });
+        return trajectories.updateStatus(...args);
+      },
+    });
+    const done = await resolveUndecidedHeldAction({
+      proposalId,
+      resolution: "approved",
+      decidedBy: "user-1",
+      trajectoryStore: store,
+    });
+    expect(done?.status).toBe("approved");
+    expect(executed).toEqual(["publish:benign"]);
+    expect(await status(trajectoryId)).toBe("completed");
+  });
+
+  it("a continuation that saw a kept approval, overtaken by its resume: refused, the completion kept", async () => {
+    const { proposalId, trajectoryId } = await keptApproval();
+    // Left running by another path (TASK-173): the continuation would move it to awaiting_retry.
+    await trajectories.updateStatus(trajectoryId, "running");
+    const props = hooked(proposals, {
+      query: async (...args: Parameters<InMemoryProposalStore["query"]>) => {
+        const found = await proposals.query(...args);
+        await resumeApprovedAction({ proposalId });
+        return found;
+      },
+    });
+    await expect(
+      advanceGoal({
+        goal: "translate",
+        input: {},
+        actor: AGENT,
+        trajectoryId,
+        proposalStore: props,
+      })
+    ).rejects.toBeInstanceOf(HeldActionNotApprovedError);
+    expect(executed).toEqual(["publish:benign"]);
+    expect(await status(trajectoryId)).toBe("completed");
   });
 });
 

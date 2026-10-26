@@ -69,6 +69,7 @@ jobs:
             -e PORT -e DEPLOYMENT_HOST=ci -e E2E_IN_MEMORY_STORES=true -e E2E_TEST_DOUBLE_AUTH=true \
             -e RATE_LIMIT_STORE=memory -e AI_PROVIDER=mock -e AUTH_PROVIDER=mock \
             -e GUEST_TOKEN_SECRET="$(openssl rand -base64 32)" \
+            -e REFRESH_COOKIE_KEY="$(openssl rand -hex 32)" \
             platform-foundation:load
           # /api/health/ready answers 200 only once boot completed and the required
           # dependencies answer (ADR-056 D4); before that it is 503 or refused.

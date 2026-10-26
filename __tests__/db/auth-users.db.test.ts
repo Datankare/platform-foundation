@@ -144,17 +144,28 @@ dbDescribe(`${SUITE} ensureUserProvisioned`, () => {
     expect(await userRow(t, sub)).toBeUndefined();
   });
 
-  it("records the failed outcome when the insert fails after the attempt", async () => {
-    // cognito_sub is unique: a second subject whose cognito_sub is already taken fails.
+  it("an account bound to the subject under another id (re-linked, TASK-174) is existing — no attempt, no second row", async () => {
+    // The insert's failure after its attempt (attempted, failed) is provisioning-race's: an
+    // account bound to another subject committing the subject's id meanwhile.
     const sub = uuid();
     const taken = await t.user("taken");
     await sql(t, "update users set cognito_sub = $2 where id = $1::uuid", [taken, sub]);
+    await expect(t.run(() => ensureUserProvisioned(sub))).resolves.toBe("existing");
+    expect(await userRow(t, sub)).toBeUndefined();
+    const audit = await t.run(() => withTenantTx((tx) => auditRowsForUser(tx, sub, 10)));
+    expect(audit).toEqual([]);
+  });
+
+  it("an account bound to another subject holding the subject's id: failed, before any attempt", async () => {
+    const sub = uuid();
+    await sql(
+      t,
+      "insert into users (id, cognito_sub, role_id, tenant_id) select $1::uuid, $2, r.id, $3::uuid from roles r where r.is_default",
+      [sub, uuid(), t.id]
+    );
     await expect(t.run(() => ensureUserProvisioned(sub))).resolves.toBe("failed");
     const audit = await t.run(() => withTenantTx((tx) => auditRowsForUser(tx, sub, 10)));
-    expect(audit.map((r) => (r.details as Row).outcome).sort()).toEqual([
-      "attempted",
-      "failed",
-    ]);
+    expect(audit).toEqual([]);
   });
 
   it("refuses a subject that is not a UUID, without a query", async () => {

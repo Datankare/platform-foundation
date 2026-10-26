@@ -514,8 +514,8 @@ async function updateUserStatus(
     const ban = consequence === "ban";
 
     // A field this consequence does not set keeps its value.
-    await withTenantTx((tx) =>
-      tx.query(
+    const updated = await withTenantTx((tx) =>
+      tx.query<{ cognito_sub: string | null }>(
         `update users set
             account_status = $2::account_status,
             status_changed_by = $3,
@@ -523,7 +523,8 @@ async function updateUserStatus(
             suspended_until = coalesce($4::timestamptz, suspended_until),
             banned_at = case when $5::boolean then now() else banned_at end,
             ban_reason = case when $5::boolean then $6 else ban_reason end
-          where id = $1::uuid`,
+          where id = $1::uuid
+          returning cognito_sub`,
         [
           userId,
           newStatus,
@@ -535,8 +536,11 @@ async function updateUserStatus(
       )
     );
     // A suspended or banned account's remembered token verifications go at once, everywhere
-    // (platform/auth/token-verification.ts; users.id is the token's subject).
-    await revokeTokenVerification(userId);
+    // (platform/auth/token-verification.ts). Keyed by the token's subject — the account's
+    // users.cognito_sub, which differs from its id for an account re-linked to a new identity
+    // pool (review 15 L1, TASK-174); a legacy row without one is keyed by its id.
+    for (const row of updated.rows)
+      await revokeTokenVerification(row.cognito_sub ?? userId);
   } catch (err) {
     logger.error("Sentinel: user status update failed", {
       userId,

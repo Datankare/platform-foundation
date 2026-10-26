@@ -25,6 +25,7 @@ import { getAuthProvider } from "@/platform/auth/config";
 import { initAuth } from "@/platform/auth/auth-init";
 import { GUEST_TOKEN_PREFIX } from "@/platform/auth/guest-token";
 import { isInGoodStanding } from "@/platform/auth/account-status-guard";
+import { resolveAccount } from "@/platform/auth/account-identity";
 import { isMarkedRestricted, markRestricted } from "@/platform/auth/restricted-marker";
 
 /**
@@ -41,7 +42,10 @@ async function restrictedUser(request: NextRequest): Promise<boolean> {
     initAuth();
     const user = await getAuthProvider().verifyToken(token);
     if (!user) return false;
-    return !(await isInGoodStanding(user.sub));
+    // The account the identity is bound to, not its subject (TASK-174).
+    const account = await resolveAccount(user.sub);
+    if (account.kind === "conflict") return true;
+    return !(await isInGoodStanding(account.accountId));
   } catch {
     return true;
   }

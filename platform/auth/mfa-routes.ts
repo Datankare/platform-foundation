@@ -22,7 +22,8 @@
 import { revokeTokenVerification } from "@/platform/auth/token-verification";
 import { NextRequest, NextResponse } from "next/server";
 import { callAuthProvider } from "@/platform/auth/auth-response";
-import { auditableUserId, recordAuthEvent } from "@/platform/auth/auth-events";
+import { recordAuthEvent } from "@/platform/auth/auth-events";
+import { auditableAccountId } from "@/platform/auth/account-identity";
 import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 
@@ -106,7 +107,7 @@ export async function mfaVerify(
   }
   // The token's remembered verification carries mfaEnabled: voided, so the change holds at once.
   await revokeTokenVerification(caller.sub);
-  const actorId = auditableUserId(caller.sub);
+  const actorId = await auditableAccountId(caller.sub);
   const recorded = await recordAuthEvent(
     { action: "mfa_enabled", actorId, targetId: actorId, details: { factor: "totp" } },
     request
@@ -134,7 +135,7 @@ export async function mfaDisable(
   }
   // A staff member who turned MFA off is not served as having it (audit A-9).
   await revokeTokenVerification(caller.sub);
-  const actorId = auditableUserId(caller.sub);
+  const actorId = await auditableAccountId(caller.sub);
   const recorded = await recordAuthEvent(
     { action: "mfa_disabled", actorId, targetId: actorId, details: { factor: "totp" } },
     request

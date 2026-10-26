@@ -29,7 +29,11 @@
  * not guessed at now. See ADR-012 for the abstraction pattern.
  */
 
-import { revokeTokenVerification } from "@/platform/auth/token-verification";
+import {
+  publishTokenRevocation,
+  revokeTokenVerification,
+  type PublishOutcome,
+} from "@/platform/auth/token-verification";
 import {
   resolvePermissions,
   type EffectivePermissions,
@@ -90,21 +94,29 @@ async function publishStamp(key: string): Promise<void> {
     typeof inTransaction === "function" &&
     inTransaction() &&
     typeof onCommit === "function" &&
-    onCommit(() => publishStampNow(key), { idempotent: true })
+    onCommit(
+      async () => {
+        await publishStampNow(key);
+      },
+      { idempotent: true }
+    )
   ) {
     return;
   }
   await publishStampNow(key);
 }
 
-async function publishStampNow(key: string): Promise<void> {
+async function publishStampNow(key: string): Promise<PublishOutcome> {
   try {
     await getCache().set(key, randomUUID(), { ttlSeconds: STAMP_TTL_SECONDS });
+    return { published: true };
   } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
     logger.error("Permissions invalidation not published to other instances", {
-      error: err instanceof Error ? err.message : String(err),
+      error,
       route: "platform/auth/permissions-cache",
     });
+    return { published: false, error };
   }
 }
 
@@ -174,6 +186,29 @@ export async function invalidatePermissions(cognitoSub: string): Promise<void> {
   // What changed the user's permissions (a role, an entitlement, the account's deletion) also
   // voids their remembered token verifications, so nothing about them is served from before.
   await revokeTokenVerification(cognitoSub);
+}
+
+/** What publishInvalidation reached: the permissions stamp, and the token revocation stamp. */
+export interface InvalidationOutcome {
+  readonly permissions: PublishOutcome;
+  readonly tokens: PublishOutcome;
+}
+
+/**
+ * invalidatePermissions, saying whether it reached every instance (review 16 M2): for a caller
+ * outside any transaction that must report the outcome truthfully — the identity re-link
+ * command, after its chunk committed. Published at once (never deferred to a commit); never
+ * throws: each stamp's outcome is answered, with why it was not published.
+ */
+export async function publishInvalidation(
+  cognitoSub: string
+): Promise<InvalidationOutcome> {
+  for (const [key, entry] of cache) {
+    if (entry.sub === cognitoSub) cache.delete(key);
+  }
+  const permissions = await publishStampNow(stampFor(cognitoSub));
+  const tokens = await publishTokenRevocation(cognitoSub);
+  return { permissions, tokens };
 }
 
 /**

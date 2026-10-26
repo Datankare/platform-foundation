@@ -203,10 +203,11 @@ export async function softDeleteUser(
         const recordError = await failure(() =>
           withTenantTx((tx) =>
             tx.query(
-              `insert into user_deletions (user_id, requested_by, modules, standing, email_hash, email_hash_key, email_hash_scheme)
-               values ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7)
+              `insert into user_deletions (user_id, requested_by, modules, standing, email_hash, email_hash_key, email_hash_scheme, cognito_sub)
+               values ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7, $8)
                on conflict (tenant_id, user_id) do update
                  set requested_by = excluded.requested_by, modules = excluded.modules,
+                     cognito_sub = coalesce(excluded.cognito_sub, user_deletions.cognito_sub),
                      soft_deleted_at = now(), purge_after = now() + interval '30 days',
                      purged_at = null,
                      standing = coalesce(excluded.standing, user_deletions.standing),
@@ -221,6 +222,9 @@ export async function softDeleteUser(
                 (addressHash as { hash: string } | null)?.hash ?? null,
                 (addressHash as { keyId: string | null } | null)?.keyId ?? null,
                 (addressHash as { scheme: string } | null)?.scheme ?? null,
+                // The identity, so it is never given a fresh account — kept for an account
+                // re-linked to a new pool, whose subject is not its id (TASK-174, migration 054).
+                subject,
               ]
             )
           )

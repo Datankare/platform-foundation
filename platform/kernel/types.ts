@@ -924,7 +924,24 @@ export interface AddStepOptions {
   readonly rollover?: boolean;
 }
 
+/** Options for TrajectoryStore.updateStatus. */
+export interface UpdateStatusOptions {
+  /** Update only from one of these statuses (compare-and-set); undefined otherwise. */
+  readonly from?: readonly TrajectoryStatus[];
+}
+
 export interface TrajectoryStore {
+  /**
+   * The store's updateStatus honours `options.from` atomically — moves the trajectory only when
+   * its status is one of them, and answers undefined otherwise (compare-and-set, TASK-175).
+   * MUST be `true` for any store a held action is resumed on: resumeApprovedAction refuses a
+   * store that does not declare it (review 16 L6) — a store that ignored `from` would let the
+   * loser of a resume race overwrite the winner's status. A consumer store declares it only once
+   * it passes the conformance kit's compare-and-set case
+   * (__tests__/contract/trajectory-store-contract.ts).
+   */
+  readonly supportsStatusCas?: boolean;
+
   /**
    * Create a new trajectory for an explicit subject. Returns the record.
    *
@@ -961,10 +978,15 @@ export interface TrajectoryStore {
     options?: AddStepOptions
   ): Promise<TrajectoryRecord | undefined>;
 
-  /** Update trajectory status. */
+  /**
+   * Update trajectory status. With `from` (TASK-175), a compare-and-set: only while the status is
+   * one of those, atomically with the check — undefined when it is not (it moved since the caller
+   * read it), so a decision on a held step never overwrites what a concurrent run recorded.
+   */
   updateStatus(
     trajectoryId: string,
-    status: TrajectoryStatus
+    status: TrajectoryStatus,
+    options?: UpdateStatusOptions
   ): Promise<TrajectoryRecord | undefined>;
 
   /** Get a trajectory by ID. */

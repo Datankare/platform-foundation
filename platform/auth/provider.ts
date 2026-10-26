@@ -83,9 +83,13 @@ export interface AuthProvider {
 
   /**
    * Refresh an expired access token using a refresh token.
-   * Returns a new session with fresh tokens.
+   * Returns a new session with fresh tokens. `subject` is the session's user (the `sub` its
+   * tokens name, TASK-177): a refreshed session for anyone else is not used.
    */
-  refreshToken(refreshToken: AuthToken, username?: string): Promise<AuthSession | null>;
+  refreshToken(
+    refreshToken: AuthToken,
+    subject?: AuthUserId
+  ): Promise<AuthSession | null>;
 
   // ── Password Management ────────────────────────────────────────────
 
@@ -251,7 +255,32 @@ export interface AuthProvider {
 
   /** Whether the provider holds tenants safely (shown to operators; checked at readiness). */
   checkTenantAttribute?(): Promise<TenantAttributeReadiness>;
+
+  /**
+   * Whether the identity pool has the shape the platform requires (review 17 L2/L4: users sign
+   * in by email address; the app client may read who verified an address). Checked at readiness
+   * (platform/auth/pool-shape-probe.ts). Optional: a provider without it is not checked.
+   */
+  checkPoolShape?(): Promise<PoolShapeReadiness>;
 }
+
+/**
+ * - `ready`   — the pool has the required shape;
+ * - `unsafe`  — it does not (`cause` says how: username sign-in, `identities` hidden);
+ * - `unknown` — it could not be checked (no credentials, or the provider did not answer).
+ */
+export type PoolShapeReadiness =
+  | { readonly state: "ready" }
+  | {
+      readonly state: "unsafe";
+      readonly reason: string;
+      readonly cause: "username_sign_in" | "identities_hidden";
+    }
+  | {
+      readonly state: "unknown";
+      readonly reason: string;
+      readonly cause: "no_credentials" | "unavailable";
+    };
 
 /**
  * - `ready`   — the attribute exists, users can read but not write it;

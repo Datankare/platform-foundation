@@ -5,6 +5,7 @@
       "age_unverified": "Confirm your date of birth to use {feature}.",
       "consent_required": "A parent or guardian needs to give consent before you can use {feature}.",
       "export_too_large": "Your account holds more than {limit, number} records, more than one download can carry. Nothing was cut off — contact support for your full copy.",
+      "identity_conflict": "This sign-in cannot be matched to your account. Sign out and sign in again; if that does not help, contact support.",
       "not_found": "Your account could not be found.",
       "not_provisioned": "Your account is still being set up. Try again in a moment.",
       "restricted": "Your account cannot use this feature right now."

@@ -284,8 +284,9 @@ describe("CognitoAuthProvider — userInfo and deleteUser", () => {
   it("getUserInfo returns user attributes", async () => {
     mockFetch.mockResolvedValueOnce(
       cognitoOk({
-        Username: "user-123",
+        Username: "Google_1093",
         UserAttributes: [
+          { Name: "sub", Value: "user-123" },
           { Name: "email", Value: "test@example.com" },
           { Name: "email_verified", Value: "true" },
         ],
@@ -296,6 +297,8 @@ describe("CognitoAuthProvider — userInfo and deleteUser", () => {
     const info = await provider.getUserInfo("token");
 
     expect(info).not.toBeNull();
+    // TASK-177: the subject is the sub, never the pool's username.
+    expect(info!.userId).toBe("user-123");
     expect(info!.email).toBe("test@example.com");
     expect(info!.emailVerified).toBe(true);
   });

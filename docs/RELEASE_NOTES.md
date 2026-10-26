@@ -11,9 +11,116 @@ Each entry names the capabilities a consumer inherits on sync, not every interna
 
 ## v6.0.0 (continued) — gaps found adopting the release candidate in Playform
 
-Four gaps Playform worked around in its own code (its `docs/APP_SECURITY_DEBT.md`), closed in the
-platform. Deploy: migration 053 in the SQL Editor ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md)
-§1 step 2), then the code. Consumer steps: §1b, the four "Release candidate" rows.
+Four gaps Playform worked around in its own code (its `docs/APP_SECURITY_DEBT.md`), one found
+deploying Playform v0.9.0, a race behind a flaky test (TASK-175), and an address flag never
+updated (TASK-176), closed in the platform — and review 16 of the last three, and the subject
+made the Cognito `sub` for every provider (TASK-177), and review 17 of sign-out and the Cognito
+provider (TASK-178). Deploy: migrations 053, 054 and 055 in the SQL Editor
+([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
+code. Consumer steps: §1b, the eight "Release candidate" rows.
+
+- **Moving to a new identity pool (TASK-174).** A replaced Cognito pool gives every identity a new
+  subject, and accounts were found by `id = cognito_sub = sub`: a sign-in with the new subject was
+  given a second, ordinary account and the staff accounts were unreachable (Playform's dev/staging
+  pool, deleted with its AWS account). An account is now bound to its identity by
+  `users.cognito_sub` and keeps its id (ADR-012 amendment): `requireActor`'s `actor.id` is the
+  bound account, provisioning recognises it by its subject, and an operator re-links accounts to
+  the new pool with `node scripts/relink-identity.mjs --email <addr> --operator <who> --reason
+<why> [--apply]` — a dry run by default; exactly one verified pool user and one live account
+  required; another tenant's identity, an erased one and ambiguity refused; the stray account a
+  first sign-in made merged only when named and safe; the subject changed with its audit record in
+  one owner transaction; both subjects' cached permissions and token verifications voided through
+  the shared cache. Bulk: `--all-staff` / `--all`. An erasure now remembers the identity it closed
+  (migration 054). Runbook: [TENANCY_OPERATIONS.md](TENANCY_OPERATIONS.md) §6.
+  Hardened by review 15: `--created-before <pool move time>` is required, and an account made in
+  the new pool is never a target; an account already bound to an identity of the current pool
+  (its subject a user there, or an `identity_relinked` record for this pool) is never moved — a
+  later run no longer hands a staff account to whoever now holds its stale address; accounts
+  never verified (`users.email_verified`) or made after the move no longer block a re-link
+  (`--unverified-account <id>` names one of several unverified targets — TASK-176, below);
+  non-ASCII addresses are refused and provisioning now stores an address with only its ASCII
+  letters lower-cased, so a Kelvin-sign lookalike is never stored as an ASCII staff address (a
+  ban still follows a lookalike); two accounts planned onto one identity are both refused
+  (`subject.contested`); bulk applies in chunks of 500, each one transaction, with set-based
+  lookups on migration 055's index (100,000 accounts: dry run 7 s, apply 20 s); a cache failure
+  after the commit is reported as applied with a warning (exit 5) — `revokeTokenVerification`
+  no longer throws on a misconfigured cache; exit codes 4 (applied, some skipped) and 6 (partly
+  applied); the workstation's database settings are checked as the environment contract checks
+  them. Also: Sentinel revokes token verifications by the account's subject; the old subject of a
+  re-linked account is refused `403 account.identity_conflict` (not the retryable
+  `account.not_provisioned`) and its sign-in events record no actor; GovCloud pool ids accepted.
+- **`users.email_verified` now follows the identity provider (TASK-176).** Every account made
+  through `/api/auth/sign-up` was stored unverified (it is made before the address is confirmed)
+  and nothing updated it. Now the first signed-in request after the person confirms (through
+  `requireActor`) marks it verified — false → true only, for the stored address only, once, with
+  a `profile_updated` audit record (`field: email_verified`); read in the binding's own statement,
+  so no extra read and no write per request. Never from an unverified claim, never downgraded,
+  and `users.email` is never rewritten. For Google users map the claim to `email_verified` in the
+  pool. No migration and no backfill: a person's next sign-in marks them. The re-link command
+  now takes the current pool's verification for an address's one pre-move account, whatever its
+  old flag — legitimate staff accounts need no `--unverified-account`; `--accept-unverified` is
+  removed (refused as unknown); accounts made after the move are still never counted or chosen.
+  [TENANCY_OPERATIONS.md](TENANCY_OPERATIONS.md) §6.6, ADR-012 amendment (TASK-176).
+- **The subject is the Cognito `sub` (TASK-177).** The platform's own `CognitoAuthProvider` named
+  a verified token by the pool's username (`Google_1093…` for a federated user) while its sessions
+  and Playform's provider used the `sub` — so on the platform's provider a brand-new Google user
+  could never be provisioned (provisioning takes only a UUID subject), and a sign-out missed a
+  federated user's remembered verifications. Every subject is now the token's `sub` — verified
+  payloads, `getUserInfo`, sessions, revocation stamps, provisioning, the identity tenant; the
+  tenant is assigned by the user's pool username (Cognito accepts no federated `sub` there),
+  learnt from its signed token. **MUST (scripts):** drop `--subject` from
+  `scripts/relink-identity.mjs` — it always binds the `sub`; `--subject sub` still runs for one
+  release with a deprecation note, `--subject username` is refused (exit 2). An
+  `IdentityDirectory` of your own: `findBySub(sub)` (review 15's shape) — `subjectAttribute`,
+  `findBySubject` and `DirectoryUser.subject` are gone. The token-verification kit gains federated
+  cases. No data migration (platform-foundation has no deployment with existing users; Playform's
+  provider always bound the `sub`). ADR-012 amendment (TASK-177), TENANCY_OPERATIONS §6,
+  MIGRATION_v5_to_v6 §1b.
+- **Review 17: whose sign-out it is, and the pool's shape (TASK-178).** Sign-out took the subject
+  to revoke and the `logout` actor from the unsigned refresh cookie: anyone could void another
+  user's remembered verifications and record their sign-out, and a bearer with another user's
+  cookie voided that user instead of itself. Now sign-out revokes and records only a subject the
+  provider proved (the bearer, verified before its sign-out; else the cookie's user, proven by a
+  refresh — whose token is then signed out everywhere), and the refresh cookie is
+  `<user id>.<mac>.<refresh token>`, an HMAC under the new **required** `REFRESH_COOKIE_KEY`
+  (rotation: `REFRESH_COOKIE_KEY_PREVIOUS`) — a forged, edited or pre-release cookie is refused by
+  refresh and ignored by sign-out (those users sign in again once). The Cognito provider refuses a
+  GetUser answer without a `sub` (and remembers its username only after the check); the
+  token-verification kit's mismatch case can now fail. Readiness gains a required `identity-pool`
+  probe: a pool that signs in by username (it cannot refresh sessions) is unready; `identities`
+  hidden from the app client is degraded and no user is then taken as native. A native user linked
+  to a federated identity is that provider's user. `AUTH_TRUSTED_EMAIL_IDPS` matches
+  case-insensitively, spaces around commas allowed; a malformed value is refused by boot and the
+  re-link command. **MUST:** set `REFRESH_COOKIE_KEY`; check the pool shape
+  ([ENV_REFERENCE.md](ENV_REFERENCE.md#cognito-pool-shape-review-17-l2l4)). ADR-012 amendment
+  (review 17), MIGRATION_v5_to_v6 (review 17 row, §1 step 3, §1b).
+- **Review 16 of the re-link (TASK-174/175/176).** _(Its `--subject username|sub` flag is
+  superseded by TASK-177, above.)_ **MUST:**
+  an account whose own `users.email_verified` is false is re-linked only with
+  `--confirm-unverified <its id>` (repeatable; the dry run lists each one, with why), recorded
+  `unverifiedConfirmed` — it no longer goes, with a note, to whoever verifies the address in the
+  new pool. **MUST:** a `TrajectoryStore` declares `supportsStatusCas: true` once it passes the
+  conformance kit's new compare-and-set case — `resumeApprovedAction` refuses a store that does not
+  (`TrajectoryStoreCasError`); the platform's stores declare it. New setting
+  `AUTH_TRUSTED_EMAIL_IDPS` (default `Google`): only those providers' `email_verified` is believed
+  by the re-link, provisioning and the TASK-176 sync — never Microsoft Entra ID's (mutable email,
+  nOAuth); `TokenPayload.identityProviders` says who verified the address (an app's own provider
+  fills it from GetUser's `identities`, or nothing it says marks an address verified). The
+  command's report is truthful: an invalidation not published is named per subject (exit 5); a
+  connection lost at a chunk's COMMIT is `indeterminate` — "may have committed, run the verify
+  command" (new exit 7), never "nothing was changed"; a dry run that refused anything exits 1. An
+  address the dry run refused stays refused when applied (`--skip-ambiguous`); a named
+  `--unverified-account` that is not the target is refused; a legacy row is checked by its id; an
+  unconfirmed or unverified pool user beside the one verified owner no longer blocks
+  (`pool.many`). On a resume, every status the run's own path writes is a compare-and-set: a
+  resume that lost the race no longer overwrites the winner's `completed` with `paused`. No
+  migration. ADR-012 amendment (review 16), TENANCY_OPERATIONS §6, MIGRATION_v5_to_v6 §1b.
+- **The CI image job no longer runs the smoke test's translation.** The image runs
+  `AI_PROVIDER=mock` with no translation key; when the repository had `ANTHROPIC_API_KEY` the job
+  passed it into the container and ran the translation step, where the real model screening the
+  mock's output refused it (422 `content.rejected` — Playform's identical job failed that way). The
+  job now passes no AI credential, always sets `SMOKE_SKIP_TRANSLATE=1` for the image smoke and
+  says so in a notice; the translation is proved on each deployment, with real providers, by the deploy smoke workflow (the app's `deploy-smoke.yml`, or `scripts/deploy-smoke.mjs` run after each deploy — §1 step 7 of the migration guide).
 
 - **Approve again to retry, for agent workflows (TASK-170).** An approved workflow step whose run
   fails before taking effect keeps its approval — and now its workflow too: the trajectory waits at
@@ -24,6 +131,15 @@ platform. Deploy: migration 053 in the SQL Editor ([MIGRATION_v5_to_v6.md](MIGRA
   `awaiting: "outcome"`) until a person decides it — `resolveUndecidedHeldAction`; a withdrawal
   (`withdrawHeldAction`, or the expiry job) ends it, recorded. Runbook
   [approvals-and-agents §1b](runbooks/approvals-and-agents.md#1b-a-workflow-waiting-to-be-approved-again).
+- **Concurrent re-approvals: the claim decides (TASK-175).** Of several concurrent
+  `resumeApprovedAction` calls on one approval, only the one whose claim of it succeeds runs and
+  answers; every other is refused (`HeldActionNotApprovedError`) — a call that passed the checks
+  before another's run could answer with the workflow that run completed, or run the step after
+  it. A resume is bound to the approval and step it checked. `TrajectoryStore.updateStatus` takes
+  `{ from }` (a compare-and-set), which the withdrawal, the decision on an undecided run and the
+  continuation's moves now use, so none overwrites a status a concurrent run recorded. A consumer
+  `TrajectoryStore` MUST honour `from` and declare `supportsStatusCas: true` (review 16, above).
+  No migration.
 - **A lost run's workflow waits with its approval (TASK-173).** When `config.expire-approvals`
   takes back a run that never ended (an instance lost mid-run), it now moves the run's trajectory
   too, in the same audited statement: `indeterminate` for an undecided run, `awaiting_retry` for an

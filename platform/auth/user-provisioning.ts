@@ -13,6 +13,13 @@
  * idempotent and race-safe on the identity, and it never changes an existing row (a banned user
  * stays banned): see "Concurrent first requests" below.
  *
+ * An existing account is found by its identity, not its id (TASK-174, ADR-012 amendment): the
+ * account bound to the subject (users.cognito_sub) is this identity's account whatever its id —
+ * an account re-linked to a new identity pool (scripts/relink-identity.mjs) keeps the id every
+ * record names, and its new subject finds it here; no second row is created. A row whose id is
+ * the subject but which is bound to another subject is never this identity's: `failed`.
+ * provisionAccount() answers the account's id with the outcome.
+ *
  * Concurrent first requests (PF v6.0.x — found adopting PF in Playform): the row has two unique
  * keys on the identity, its id (players_pkey) and its cognito_sub (players_cognito_sub_key; and
  * (tenant_id, id)). The insert used to say `on conflict (id) do nothing`, which arbitrates only
@@ -25,9 +32,10 @@
  * unique violation. Then, in the same transaction, a second statement (a fresh read-committed
  * snapshot, so the winner's committed row is visible) reads which row holds the identity:
  *
- *   - a row of this tenant with this id  → `existing` (the concurrent request created it);
- *   - a row of this tenant whose cognito_sub is this subject but whose id is not → `failed`
- *     (another account holds the subject — reported, never treated as this user's row);
+ *   - a row of this tenant bound to this subject → `existing` (the concurrent request created
+ *     it, or an operator re-linked an account to this identity meanwhile — its id is answered);
+ *   - a row of this tenant with this id bound to another subject → `failed` (another
+ *     identity's account — reported, never treated as this user's row);
  *   - no row visible → `failed` (the id or subject is held in another tenant: row-level
  *     security hides it, and it is never this tenant's account).
  *
@@ -59,6 +67,7 @@ import {
 import { hasDatabase, withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
+import { bindingOf } from "@/platform/auth/account-identity";
 
 /** The role every new account starts with (seeded by the schema baseline). */
 export const DEFAULT_USER_ROLE = "free";
@@ -92,6 +101,21 @@ const DEVELOPMENT_KEY =
 
 /** The address as it is hashed: trimmed, lower-case. */
 const normalised = (email: string): string => email.trim().toLowerCase();
+
+/**
+ * An address as it is stored in users.email (review 15 M1): trimmed, its ASCII letters in lower
+ * case — and nothing else changed. `toLowerCase()` folds non-ASCII lookalikes onto ASCII letters
+ * (the Kelvin sign U+212A becomes "k", U+0130 "i̇"), so a sign-up typed with one was stored as an
+ * ASCII staff address and counted as a second account of it. A non-ASCII character is kept as
+ * typed: such an address is never the ASCII one. The re-link compares the same way
+ * (platform/auth/identity-relink.ts normaliseEmail) and refuses non-ASCII addresses.
+ */
+export function storedEmail(email: string): string {
+  return email.trim().replace(/[A-Z]+/g, (letters) => letters.toLowerCase());
+}
+
+/** An address folded for the ban carry-over: compatibility-normalised, lower case (over-matches on purpose). */
+const folded = (email: string): string => email.normalize("NFKC").trim().toLowerCase();
 
 /**
  * How a kept hash was made (user_deletions.email_hash_scheme, review 9 M6). Recorded, never
@@ -261,26 +285,61 @@ function fail(userId: string, step: string, error: unknown): ProvisioningOutcome
   return "failed";
 }
 
+/** The outcome, and the account's id when there is one (`existing`, `created`). */
+export interface ProvisionedAccount {
+  readonly outcome: ProvisioningOutcome;
+  /** users.id: the subject for an account created by provisioning; another for a re-linked one. */
+  readonly accountId?: string;
+}
+
+/** Ensure the identity `userId` (the provider's subject) has its row; the outcome only. */
 export async function ensureUserProvisioned(
   userId: string,
   profile: ProvisioningProfile = {}
 ): Promise<ProvisioningOutcome> {
-  if (!hasDatabase()) return "skipped";
+  return (await provisionAccount(userId, profile)).outcome;
+}
+
+/** Which row holds the identity (see the header): its account, another's, or none. */
+function holderOf(
+  subject: string,
+  rows: readonly { id: string; cognito_sub: string | null }[]
+): { readonly accountId: string } | { readonly other: true } | null {
+  const binding = bindingOf(subject, rows);
+  if (binding.kind === "bound") return { accountId: binding.accountId };
+  return binding.kind === "conflict" ? { other: true } : null;
+}
+
+/**
+ * Ensure the identity `userId` (the provider's subject) has its account, and say which account
+ * that is: the one bound to the subject (found by users.cognito_sub, whatever its id), or a new
+ * row with `id = cognito_sub = subject`.
+ */
+export async function provisionAccount(
+  userId: string,
+  profile: ProvisioningProfile = {}
+): Promise<ProvisionedAccount> {
+  if (!hasDatabase()) return { outcome: "skipped" };
   if (!UUID_PATTERN.test(userId))
-    return fail(userId, "validate", "not a provider subject");
+    return { outcome: fail(userId, "validate", "not a provider subject") };
 
   try {
     let roleId: string;
     try {
       const found = await withTenantTx(async (tx) => {
-        const existing = await tx.query("select id from users where id = $1::uuid", [
-          userId,
-        ]);
-        if (existing.rows.length > 0) return { existing: true as const };
-        // An erased account stays erased: its identity does not get a fresh, clean row.
+        const existing = await tx.query<{ id: string; cognito_sub: string | null }>(
+          "select id, cognito_sub from users where id = $1::uuid or cognito_sub = $2",
+          [userId, userId]
+        );
+        const holder = holderOf(userId, existing.rows);
+        if (holder && "accountId" in holder)
+          return { existing: true as const, accountId: holder.accountId };
+        if (holder) return { existing: false as const, held: true as const };
+        // An erased account stays erased: its identity does not get a fresh, clean row — found
+        // by its id or, for an account that was re-linked, by its subject (migration 054).
         const erased = await tx.query(
-          "select 1 from user_deletions where user_id = $1::uuid",
-          [userId]
+          "select 1 from user_deletions where user_id = $1::uuid or cognito_sub = $2",
+          [userId, userId]
         );
         if (erased.rows.length > 0) return { existing: false as const, erased: true };
         // The role catalog is platform-owned and readable from any tenant.
@@ -290,18 +349,30 @@ export async function ensureUserProvisioned(
         );
         return { existing: false as const, roleId: role.rows[0]?.id };
       });
-      if (found.existing) return "existing";
-      if ("erased" in found) return "erased";
+      if (found.existing) return { outcome: "existing", accountId: found.accountId };
+      if ("held" in found)
+        return {
+          outcome: fail(
+            userId,
+            "read",
+            "the account id is held by an account bound to another subject"
+          ),
+        };
+      if ("erased" in found) return { outcome: "erased" };
       if (!found.roleId)
-        return fail(userId, "role", `default role "${DEFAULT_USER_ROLE}" is missing`);
+        return {
+          outcome: fail(userId, "role", `default role "${DEFAULT_USER_ROLE}" is missing`),
+        };
       roleId = found.roleId;
     } catch (err) {
-      return fail(userId, "read", err);
+      return { outcome: fail(userId, "read", err) };
     }
 
-    const email = profile.email?.trim() ? profile.email.trim().toLowerCase() : null;
+    const email = profile.email?.trim() ? storedEmail(profile.email) : null;
     // A ban follows the address to a new identity (A-11): another account of this tenant with
-    // it is banned, or one erased while banned left its hash.
+    // it is banned, or one erased while banned left its hash. Matched folded too (review 15 M1):
+    // a lookalike of a banned address (a Kelvin sign for its "k") still starts banned — the
+    // address is stored as typed, but a ban over-matches rather than lets one through.
     let carriedBan = false;
     if (email) {
       try {
@@ -310,9 +381,10 @@ export async function ensureUserProvisioned(
         carriedBan = await withTenantTx(async (tx) => {
           const { rows } = await tx.query(
             `select 1 from users
-              where email = $1 and account_status = 'banned' and id <> $2::uuid
+              where (email = $1 or lower(btrim(email)) = $3) and account_status = 'banned'
+                and id <> $2::uuid
              limit 1`,
-            [email, userId]
+            [email, userId, folded(email)]
           );
           if (rows.length > 0) return true;
           const erased = await tx.query<{
@@ -336,12 +408,12 @@ export async function ensureUserProvisioned(
           return erased.rows.length > 0;
         });
       } catch (err) {
-        return fail(userId, "ban-check", err);
+        return { outcome: fail(userId, "ban-check", err) };
       }
     }
     // Recorded before the account is created; no record, no account (Adversarial Validation, 6).
     // Two concurrent first requests each record an attempt; only one creates the row.
-    let inserted: { created: boolean; error?: string };
+    let inserted: { created: boolean; accountId?: string; error?: string };
     try {
       inserted = await audited(
         {
@@ -381,20 +453,21 @@ export async function ensureUserProvisioned(
                   carriedBan,
                 ]
               );
-              if (rows.length > 0) return { created: true };
+              if (rows.length > 0) return { created: true, accountId: userId };
               // Nothing inserted: which row holds the identity? A new statement, so a new
               // snapshot — the concurrent winner (the insert waited for it) is visible.
-              const held = await tx.query<{ id: string }>(
-                "select id from users where id = $1::uuid or cognito_sub = $2",
+              const held = await tx.query<{ id: string; cognito_sub: string | null }>(
+                "select id, cognito_sub from users where id = $1::uuid or cognito_sub = $2",
                 [userId, userId]
               );
-              if (held.rows.some((r) => r.id === userId)) return { created: false };
+              const holder = holderOf(userId, held.rows);
+              if (holder && "accountId" in holder)
+                return { created: false, accountId: holder.accountId };
               return {
                 created: false,
-                error:
-                  held.rows.length > 0
-                    ? "the subject is held by another account of this tenant"
-                    : "the identity is held outside this tenant",
+                error: holder
+                  ? "the account id is held by an account bound to another subject"
+                  : "the identity is held outside this tenant",
               };
             });
           } catch (err) {
@@ -406,22 +479,23 @@ export async function ensureUserProvisioned(
         }
       );
     } catch (err) {
-      if (err instanceof AuditWriteError) return fail(userId, "audit", err);
+      if (err instanceof AuditWriteError) return { outcome: fail(userId, "audit", err) };
       throw err;
     }
-    if (inserted.error !== undefined) return fail(userId, "insert", inserted.error);
+    if (inserted.error !== undefined)
+      return { outcome: fail(userId, "insert", inserted.error) };
 
-    // Nothing inserted, and the row with this id is this tenant's: another request created it
-    // between the read and the insert.
-    if (!inserted.created) return "existing";
+    // Nothing inserted, and the row bound to this identity is this tenant's: another request
+    // created it (or an operator re-linked an account to it) between the read and the insert.
+    if (!inserted.created) return { outcome: "existing", accountId: inserted.accountId };
 
     logger.info("User provisioned", {
       userId,
       role: DEFAULT_USER_ROLE,
       route: "platform/auth/user-provisioning",
     });
-    return "created";
+    return { outcome: "created", accountId: userId };
   } catch (err) {
-    return fail(userId, "exception", err);
+    return { outcome: fail(userId, "exception", err) };
   }
 }

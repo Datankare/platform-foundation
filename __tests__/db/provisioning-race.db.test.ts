@@ -29,6 +29,7 @@ import { auditRowsForUser } from "@/platform/auth/audit";
 import {
   DEFAULT_USER_ROLE,
   ensureUserProvisioned,
+  provisionAccount,
   type ProvisioningOutcome,
 } from "@/platform/auth/user-provisioning";
 import { withOwnerTx, withTenantTx, type Tx } from "@/platform/data";
@@ -172,7 +173,7 @@ dbDescribe("account provisioning against a concurrent first request (Postgres)",
     }
   });
 
-  it("hostile: another account commits the subject — failed, decided by the read, not a unique violation", async () => {
+  it("an account re-linked to the subject commits meanwhile (another id): existing — that account, never a second row (TASK-174)", async () => {
     const sub = randomUUID();
     const other = randomUUID();
     const outcome = await provisionAgainstHeldRow(
@@ -180,13 +181,28 @@ dbDescribe("account provisioning against a concurrent first request (Postgres)",
       (tx) => insertHeld(tx, other, sub),
       async () => undefined
     );
-    expect(outcome).toBe("failed");
+    expect(outcome).toBe("existing");
     expect(await rowsOf(sub)).toEqual([{ id: other, cognito_sub: sub }]);
+    expect(logger.error).not.toHaveBeenCalled();
+    await expect(t.run(() => provisionAccount(sub))).resolves.toEqual({
+      outcome: "existing",
+      accountId: other,
+    });
+  });
+
+  it("hostile: an account bound to another subject commits the subject's id — failed, decided by the read, not a unique violation", async () => {
+    const sub = randomUUID();
+    const outcome = await provisionAgainstHeldRow(
+      sub,
+      (tx) => insertHeld(tx, sub, randomUUID()),
+      async () => undefined
+    );
+    expect(outcome).toBe("failed");
     expect(logger.error).toHaveBeenCalledWith(
       "User provisioning failed",
       expect.objectContaining({
         step: "insert",
-        error: "the subject is held by another account of this tenant",
+        error: "the account id is held by an account bound to another subject",
       })
     );
     const audit = await t.run(() => withTenantTx((tx) => auditRowsForUser(tx, sub, 10)));

@@ -64,6 +64,14 @@ export interface TokenPayload {
    * without one are refused administrative access while `auth.staff_mfa_required` is on.
    */
   mfaEnabled?: boolean;
+  /**
+   * The federated identity providers the user signs in with, as the identity provider says
+   * (Cognito: the `identities` attribute's provider names, e.g. ["Google"]); [] for a user the
+   * pool itself verified (native). Undefined when the provider does not say — then nothing the
+   * token says about the address is trusted to mark it verified (review 16 L8,
+   * platform/auth/email-verification.ts).
+   */
+  identityProviders?: readonly string[];
   /** Additional claims from the provider (groups, roles, etc.) */
   [key: string]: unknown;
 }

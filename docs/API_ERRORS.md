@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**86 codes** in 14 areas.
+**87 codes** in 14 areas.
 
 ## Account
 
@@ -30,6 +30,7 @@ Every error the API returns has this body (ADR-051 D3):
 | `account.age_unverified`       | 403  | Confirm your date of birth to use {feature}.                                                                                                      | `feature` (id)                | Ask for the user's date of birth and send it once to POST /api/account/age, then retry.                                             |
 | `account.consent_required`     | 403  | A parent or guardian needs to give consent before you can use {feature}.                                                                          | `feature` (id)                | Explain that a parent or guardian must give consent before this feature can be used; do not retry.                                  |
 | `account.export_too_large`     | 413  | Your account holds more than {limit, number} records, more than one download can carry. Nothing was cut off — contact support for your full copy. | `limit` (number)              | Explain that the account holds more data than one export can carry and that nothing was cut off; contact support for the full copy. |
+| `account.identity_conflict`    | 403  | This sign-in cannot be matched to your account. Sign out and sign in again; if that does not help, contact support.                               | —                             | Do not retry: sign the user out and show sign-in; if it persists after signing in again, contact support.                           |
 | `account.not_found`            | 403  | Your account could not be found.                                                                                                                  | —                             | Show sign-in / contact support.                                                                                                     |
 | `account.not_provisioned`      | 503  | Your account is still being set up. Try again in a moment.                                                                                        | —                             | Retry shortly; the account's platform record could not be created. If it persists, contact support.                                 |
 | `account.restricted`           | 403  | Your account cannot use this feature right now.                                                                                                   | `feature` (id), `status` (id) | Show the restriction; offer appeal.                                                                                                 |

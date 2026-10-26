@@ -10,7 +10,9 @@
  * @module platform/auth
  */
 
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
 import {
   apiError,
   errorFromResult,
@@ -21,7 +23,13 @@ import { initAuth } from "./auth-init";
 import { getAuthProvider } from "./config";
 import { getGlobalPasswordPolicy, passwordRuleViolations } from "./password-policy";
 import type { AuthProvider } from "./provider";
-import { auditableUserId, recordAuthEvent } from "./auth-events";
+import { recordAuthEvent } from "./auth-events";
+import { auditableAccountId } from "./account-identity";
+import {
+  getPreviousRefreshCookieKey,
+  getRefreshCookieKey,
+  isProductionContext,
+} from "@/platform/providers/environment-contract";
 
 export interface ProviderResult extends CodedFailure {
   success: boolean;
@@ -96,7 +104,12 @@ export async function passwordPolicyRefusal(
  * The refresh token lives in this cookie, never in the browser's script-readable storage: httpOnly
  * (no script reads it, so a cross-site script cannot take a 30-day credential), Secure in
  * production, SameSite=Strict, and sent only to the auth routes. Its value is
- * `<user id>.<refresh token>`: a confidential client refreshes with the user's id.
+ * `<user id>.<mac>.<refresh token>`: a confidential client refreshes with the user's id, and the
+ * MAC — HMAC-SHA256 under REFRESH_COOKIE_KEY over the id and the token — binds the id to the token
+ * it was issued with (review 17 M1). A cookie whose MAC fails (forged, edited, or written before
+ * the MAC existed) is no cookie: every reader refuses it (refresh, sign-out). Rotation: the old
+ * key moves to REFRESH_COOKIE_KEY_PREVIOUS, which still verifies (never signs) until the
+ * refresh-token lifetime has passed.
  */
 export const REFRESH_COOKIE = "pf_refresh";
 export const REFRESH_COOKIE_PATH = "/api/auth";
@@ -107,7 +120,35 @@ export const SESSION_INDICATOR_COOKIE = "pf_has_session";
 
 /** A provider user id the cookie can carry: no dot (the separator), nothing to encode. */
 const COOKIE_USER_ID = /^[\w-]{1,128}$/;
-const ID_PREFIXED = /^([\w-]{1,128})\.(.+)$/;
+/** `<user id>.<mac: 43 base64url characters>.<refresh token>`. */
+const SIGNED_COOKIE = /^([\w-]{1,128})\.([\w-]{43})\.(.+)$/;
+/** Domain separation: this key signs nothing else. */
+const COOKIE_MAC_LABEL = "pf_refresh.v1";
+
+const EPHEMERAL_KEY = Symbol.for("datankare.platform.refreshCookie.ephemeralKey.v1");
+
+/**
+ * The keys a cookie may be verified with, the signing one first; none in production without
+ * REFRESH_COOKIE_KEY (the environment contract refuses that boot — this is the belt). Outside
+ * production an unset key is a random one per process, so a local run needs nothing.
+ */
+function cookieKeys(): string[] {
+  const current = getRefreshCookieKey();
+  if (current) {
+    const previous = getPreviousRefreshCookieKey();
+    return previous && previous !== current ? [current, previous] : [current];
+  }
+  if (isProductionContext()) return [];
+  const g = globalThis as unknown as Record<symbol, string | undefined>;
+  if (!g[EPHEMERAL_KEY]) g[EPHEMERAL_KEY] = randomBytes(32).toString("base64url");
+  return [g[EPHEMERAL_KEY] as string];
+}
+
+function cookieMac(key: string, userId: string, refreshToken: string): Buffer {
+  return createHmac("sha256", key)
+    .update(`${COOKIE_MAC_LABEL}\0${userId}\0${refreshToken}`)
+    .digest();
+}
 
 interface CookieWriter {
   readonly cookies: {
@@ -115,27 +156,58 @@ interface CookieWriter {
   };
 }
 
-/** The refresh cookie's user id and token, or null when it is absent or malformed. */
+/**
+ * The refresh cookie's value for a user and their refresh token (signed under the current key),
+ * or null when it cannot be signed (no key in production) or the id cannot be carried.
+ */
+export function refreshCookieValue(userId: string, refreshToken: string): string | null {
+  const [key] = cookieKeys();
+  if (!key || !COOKIE_USER_ID.test(userId) || !refreshToken) return null;
+  return `${userId}.${cookieMac(key, userId, refreshToken).toString("base64url")}.${refreshToken}`;
+}
+
+/**
+ * The refresh cookie's user id and token, or null when it is absent, malformed, or its MAC fails
+ * under every key (review 17 M1: the id is the one the token was issued with, or nothing).
+ */
 export function readRefreshCookie(
   value: string | undefined
 ): { readonly userId: string; readonly refreshToken: string } | null {
   if (!value || value.length > 8192) return null;
-  const m = ID_PREFIXED.exec(value);
-  return m ? { userId: m[1], refreshToken: m[2] } : null;
+  const m = SIGNED_COOKIE.exec(value);
+  if (!m) return null;
+  const [, userId, mac, refreshToken] = m;
+  const given = Buffer.from(mac, "base64url");
+  if (given.length !== 32) return null;
+  for (const key of cookieKeys()) {
+    if (timingSafeEqual(given, cookieMac(key, userId, refreshToken))) {
+      return { userId, refreshToken };
+    }
+  }
+  return null;
 }
 
+/** Set the refresh cookie; false (nothing set) when it cannot be signed. */
 export function setRefreshCookie(
   response: CookieWriter,
   userId: string,
   refreshToken: string
-): void {
-  response.cookies.set(REFRESH_COOKIE, `${userId}.${refreshToken}`, {
+): boolean {
+  const value = refreshCookieValue(userId, refreshToken);
+  if (value === null) {
+    logger.error("Refresh cookie not set: REFRESH_COOKIE_KEY is not configured", {
+      route: "platform/auth/auth-response",
+    });
+    return false;
+  }
+  response.cookies.set(REFRESH_COOKIE, value, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     path: REFRESH_COOKIE_PATH,
     maxAge: REFRESH_COOKIE_MAX_AGE,
   });
+  return true;
 }
 
 /** Set the page proxy's indicator for `maxAge` seconds (0 clears it). */
@@ -192,7 +264,8 @@ export async function sessionResponse(
 ): Promise<NextResponse> {
   const { request, method } = options;
   if (result.success && result.accessToken) {
-    const actorId = auditableUserId(result.userId);
+    // The account the identity is bound to (TASK-174), so the record is the account's.
+    const actorId = await auditableAccountId(result.userId);
     const recorded = await recordAuthEvent(
       { action: "login_success", actorId, targetId: actorId, details: { method } },
       request
@@ -213,8 +286,12 @@ export async function sessionResponse(
     } = result as SessionResult & Record<string, unknown>;
     const response = NextResponse.json({ ...rest, ...(options.extra ?? {}) });
     response.headers.set("Cache-Control", "no-store");
-    if (refreshToken && result.userId && COOKIE_USER_ID.test(result.userId)) {
-      setRefreshCookie(response, result.userId, refreshToken);
+    if (
+      refreshToken &&
+      result.userId &&
+      COOKIE_USER_ID.test(result.userId) &&
+      setRefreshCookie(response, result.userId, refreshToken)
+    ) {
       setSessionIndicator(response, REFRESH_COOKIE_MAX_AGE);
     } else {
       setSessionIndicator(response, result.expiresIn ?? 3600);
