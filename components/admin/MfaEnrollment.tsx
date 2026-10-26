@@ -7,13 +7,62 @@
  * with a second factor. Starts enrolment (POST /api/auth/mfa/setup — the authenticator app's
  * secret), confirms it with the first code (POST /api/auth/mfa/verify), then asks the user to
  * sign in again so the new session carries the factor.
+ *
+ * The otpauth:// URI is drawn as a QR code in the browser (TASK-180) — nothing about the secret
+ * leaves the page beyond the setup call. The key and the URI text are the "can't scan" fallback,
+ * hidden until asked for so the secret is not on screen by default.
  */
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
+import qrcode from "qrcode-generator";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { renderMessage } from "@/platform/errors/messages";
 
 const t = (key: string) => renderMessage(`screens.mfa.${key}`);
+
+/** One SVG path for a QR code's dark modules (no markup injection), or null if it cannot encode. */
+function qrPath(text: string): { size: number; d: string } | null {
+  try {
+    const qr = qrcode(0, "M");
+    qr.addData(text);
+    qr.make();
+    const n = qr.getModuleCount();
+    const quiet = 4;
+    let d = "";
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (qr.isDark(r, c)) d += `M${c + quiet} ${r + quiet}h1v1h-1z`;
+      }
+    }
+    return { size: n + 2 * quiet, d };
+  } catch {
+    return null;
+  }
+}
+
+function QrCode({ text }: { text: string }) {
+  const qr = useMemo(() => qrPath(text), [text]);
+  if (!qr) {
+    return (
+      <p role="alert" className="text-sm text-amber-400">
+        {t("qr_failed")}
+      </p>
+    );
+  }
+  return (
+    <svg
+      role="img"
+      aria-label={t("qr_label")}
+      viewBox={`0 0 ${qr.size} ${qr.size}`}
+      width={200}
+      height={200}
+      shapeRendering="crispEdges"
+      className="self-center rounded bg-white"
+    >
+      <path d={qr.d} fill="#000" />
+    </svg>
+  );
+}
 
 type Step =
   { kind: "start" } | { kind: "code"; secret: string; uri?: string } | { kind: "done" };
@@ -23,6 +72,7 @@ export default function MfaEnrollment({ onSignOut }: { onSignOut: () => void }) 
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showKey, setShowKey] = useState(false);
 
   const start = async () => {
     setBusy(true);
@@ -43,6 +93,9 @@ export default function MfaEnrollment({ onSignOut }: { onSignOut: () => void }) 
         secret: body.secretCode,
         ...(typeof body.qrCodeUri === "string" ? { uri: body.qrCodeUri } : {}),
       });
+      setShowKey(false);
+    } catch {
+      setError(t("setup_failed"));
     } finally {
       setBusy(false);
     }
@@ -94,14 +147,33 @@ export default function MfaEnrollment({ onSignOut }: { onSignOut: () => void }) 
       )}
       {step.kind === "code" && (
         <div className="flex flex-col gap-3">
-          <p className="text-sm">
-            {t("add_key")}{" "}
-            <code className="break-all rounded bg-gray-800 px-1">{step.secret}</code>
-          </p>
           {step.uri && (
-            <p className="text-xs text-gray-500 break-all">
-              {t("or_open")} <code>{step.uri}</code>
-            </p>
+            <>
+              <p className="text-sm">{t("scan")}</p>
+              <QrCode text={step.uri} />
+            </>
+          )}
+          <button
+            type="button"
+            aria-expanded={showKey}
+            aria-controls="mfa-key"
+            onClick={() => setShowKey((v) => !v)}
+            className="self-start text-sm text-blue-400 underline"
+          >
+            {showKey ? t("hide_key") : t("show_key")}
+          </button>
+          {showKey && (
+            <div id="mfa-key" className="flex flex-col gap-2">
+              <p className="text-sm">
+                {t("add_key")}{" "}
+                <code className="break-all rounded bg-gray-800 px-1">{step.secret}</code>
+              </p>
+              {step.uri && (
+                <p className="text-xs text-gray-500 break-all">
+                  {t("or_open")} <code>{step.uri}</code>
+                </p>
+              )}
+            </div>
           )}
           <label htmlFor="mfa-code" className="text-sm text-gray-400">
             {t("code_label")}

@@ -10,7 +10,7 @@ Datankare component rule:
 Each external dependency sits behind a provider interface with a conformance kit (ADR-027), which
 is what makes the exit paths below real rather than aspirational.
 
-_Last reviewed: 2026-10-24 (review 8: yaml added; jose now used — token signatures, M5)._
+_Last reviewed: 2026-10-26 (TASK-180: qrcode-generator added — no dependencies of its own)._
 
 ## Libraries and runtime
 
@@ -20,6 +20,7 @@ _Last reviewed: 2026-10-24 (review 8: yaml added; jose now used — token signat
 | Jest, Playwright, fast-check                | MIT / Apache-2.0 | Pass    |
 | jose, ajv, intl-messageformat, safe-regex2  | MIT              | Pass    |
 | yaml (tests: workflow hygiene, review 8 L4) | ISC              | Pass    |
+| qrcode-generator (MFA setup QR, TASK-180)   | MIT              | Pass    |
 | PostgreSQL, pgvector                        | PostgreSQL       | Pass    |
 | node-postgres (`pg`)                        | MIT              | Pass    |
 | Sentry JavaScript SDK                       | MIT              | Pass    |

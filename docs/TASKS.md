@@ -4316,7 +4316,39 @@ suffix, no or two version lines, an unquoted value, a malformed target version a
 fail closed with nothing on stdout; the template runs the guard before the sync and both later steps
 depend on it; the platform's own version is in the shape the guard reads.
 
-_Last updated: October 26, 2026 (TASK-179 filed and fixed)_
+### TASK-180 — Authenticator setup showed no QR code
+
+| Field        | Detail                                  |
+| ------------ | --------------------------------------- |
+| **ID**       | TASK-180                                |
+| **Type**     | Defect (UX)                             |
+| **Severity** | Low                                     |
+| **Phase**    | Phase 5                                 |
+| **Target**   | v6.0.0 (RC)                             |
+| **Status**   | Fixed on develop (v6.0.0 RC)            |
+| **Logged**   | 2026-10-26 (signing in to playform-dev) |
+
+**What was wrong.** `components/admin/MfaEnrollment.tsx` showed only the base32 key and the
+otpauth:// text, on screen by default: nothing to scan, and the secret visible to anyone nearby. A
+setup call that could not reach the server was an unhandled rejection with no message. Separately,
+the dev pool had software-token MFA off, so setup failed; the pool shape did not say it is needed.
+
+**Fix.** The URI is drawn as a QR code client-side — one SVG path built from the encoder's modules,
+no markup injection — with `qrcode-generator` 2.0.4 (MIT, no dependencies, pinned exactly; listed
+in COMPONENT_REGISTER). The key and the URI text are behind "Can't scan? Show key"; if the code
+cannot be drawn the screen says so and points to the key. Nothing leaves the page beyond the
+existing setup call. ENV_REFERENCE "Cognito pool shape" and SETUP §4d: software-token MFA,
+`OPTIONAL`, with the command to set it and the check.
+
+**Tests.** `__tests__/mfa-enrollment.test.tsx`: the drawn modules are the encoder's for exactly the
+URI setup returned; the secret is in neither the screen nor the markup until toggled, and hidden
+again on "Hide key"; one network call, no console output carrying the secret; an encoder failure
+falls back to the key; no URI draws nothing; a refused setup shows the server's message and an
+unreachable one "Setup failed.".
+
+_Last updated: October 26, 2026 (TASK-180 filed and fixed)_
+
+_Previously updated: October 26, 2026 (TASK-179 filed and fixed)_
 
 _Previously updated: October 26, 2026 (the subject is the Cognito sub — TASK-177 filed and fixed)_
 

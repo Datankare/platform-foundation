@@ -138,7 +138,13 @@ aws cognito-idp describe-user-pool --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POO
 aws cognito-idp describe-user-pool-client --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POOL_ID" \
   --client-id "$NEXT_PUBLIC_COGNITO_CLIENT_ID" \
   --query UserPoolClient.ReadAttributes        # null, or must include "identities"
+aws cognito-idp get-user-pool-mfa-config --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POOL_ID" \
+  --query '[MfaConfiguration, SoftwareTokenMfaConfiguration.Enabled]' --output text   # OPTIONAL True
 ```
+
+Staff need an authenticator app, so the pool must allow software-token MFA (`OPTIONAL`); set it
+with `set-user-pool-mfa-config` as in
+[`ENV_REFERENCE.md`](ENV_REFERENCE.md#cognito-pool-shape-review-17-l2l4).
 
 ### 4e. Agent delegation keys (if you use agents on-behalf-of users)
 

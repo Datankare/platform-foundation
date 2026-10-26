@@ -194,6 +194,10 @@ The platform's Cognito provider requires a pool of this shape — no setting car
 - A native user linked to a federated identity (`AdminLinkProviderForUser`) lists that provider
   in `identities`, and is treated as that provider's user (trusted only if listed in
   `AUTH_TRUSTED_EMAIL_IDPS`).
+- **Authenticator-app MFA enabled** — software-token MFA on, MFA `OPTIONAL` (`ON` would demand a
+  second factor from every user). Staff must set up an authenticator app (audit A-9, the admin
+  console's setup screen); with software tokens off the pool refuses that setup. Readiness does not
+  check this — set and check it by hand (below).
 
 Readiness checks it (probe `identity-pool`, `platform/auth/pool-shape-probe.ts`) with the
 administrative credentials (`DescribeUserPool`, `DescribeUserPoolClient` — already in their
@@ -208,6 +212,15 @@ aws cognito-idp describe-user-pool --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POO
 aws cognito-idp describe-user-pool-client --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POOL_ID" \
   --client-id "$NEXT_PUBLIC_COGNITO_CLIENT_ID" \
   --query UserPoolClient.ReadAttributes        # null, or must include "identities"
+```
+
+Authenticator-app MFA (not checked by readiness):
+
+```sh
+aws cognito-idp set-user-pool-mfa-config --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POOL_ID" \
+  --software-token-mfa-configuration Enabled=true --mfa-configuration OPTIONAL
+aws cognito-idp get-user-pool-mfa-config --user-pool-id "$NEXT_PUBLIC_COGNITO_USER_POOL_ID" \
+  --query '[MfaConfiguration, SoftwareTokenMfaConfiguration.Enabled]' --output text   # OPTIONAL True
 ```
 
 ---

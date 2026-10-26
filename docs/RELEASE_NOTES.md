@@ -19,6 +19,10 @@ provider (TASK-178). Deploy: migrations 053, 054 and 055 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
+- **A QR code for authenticator setup (TASK-180).** The admin console's two-step setup draws the
+  otpauth URI as a QR code in the browser (`qrcode-generator` 2.0.4, no dependencies of its own); the
+  key is behind "Can't scan? Show key". The pool must allow software-token MFA (ENV_REFERENCE,
+  "Cognito pool shape"). Consumer step: add `qrcode-generator` at `2.0.4` to the app's dependencies.
 - **The sync template's version guard (TASK-179).** `docs/templates/sync-from-foundation.yml`
   now syncs only a strictly newer platform (`docs/templates/sync-version-guard.sh`, copied to the
   app's `.github/scripts/`), so a scheduled pull request never syncs an older `main` over a
