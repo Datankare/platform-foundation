@@ -261,6 +261,13 @@ sync.
   step's `env:` and quoted (`"$SOURCE_REF"`), never written `${{ … }}` inside `run:`.
   `__tests__/workflow-hygiene.test.ts` checks both in your repository, and each failure names the
   file, the line and what to write instead.
+- **Copy the version guard too (TASK-179).** The template's **Version guard** step runs
+  `.github/scripts/sync-version-guard.sh` — copy it from
+  [`docs/templates/sync-version-guard.sh`](templates/sync-version-guard.sh). If you adopt the
+  platform from `develop` ahead of its release, the scheduled sync's source (`main`) can be older
+  than what you have; the guard lets the sync proceed only for a strictly newer
+  `PLATFORM_VERSION`, so the scheduled pull request never reverts your platform. Scheduled runs use
+  the workflow on your default branch, so the guard protects them once it is promoted there.
 - **Exclude only what you own or deliberately do not take** (learning 115). An excluded file must
   exist in the consumer, or be a platform file the consumer chose not to take. A file the consumer
   owns that is identical to the platform's should be inherited instead: excluding it silently stops

@@ -78,7 +78,14 @@ jobs:
           path: source
           persist-credentials: false
 
+      - name: Version guard
+        # An app may adopt the platform from develop ahead of its release: never sync an older or
+        # equal platform over a newer one (that pull request would revert work). Copy
+        # docs/templates/sync-version-guard.sh to .github/scripts/ in the app.
+        id: guard
+        run: bash target/.github/scripts/sync-version-guard.sh source target >> "$GITHUB_OUTPUT"
       - name: Sync files
+        if: steps.guard.outputs.proceed == 'true'
         id: sync
         env:
           RESOLVED_REF: ${{ steps.resolve.outputs.resolved_ref }}
@@ -94,6 +101,7 @@ jobs:
           echo "Synced $RESOLVED_REF @ $SHA"
 
       - name: Open the pull request
+        if: steps.guard.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ secrets.FOUNDATION_SYNC_TOKEN }}
           SOURCE: ${{ steps.config.outputs.source }}

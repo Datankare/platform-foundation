@@ -19,6 +19,13 @@ provider (TASK-178). Deploy: migrations 053, 054 and 055 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
+- **The sync template's version guard (TASK-179).** `docs/templates/sync-from-foundation.yml`
+  now syncs only a strictly newer platform (`docs/templates/sync-version-guard.sh`, copied to the
+  app's `.github/scripts/`), so a scheduled pull request never syncs an older `main` over a
+  platform the app adopted from `develop`. Consumer step: copy the script with the workflow
+  (SETUP_AND_INTEGRATION §6).
+- **GitHub security tooling recorded (ASSURANCE §6).** Every security check, when it runs, whether
+  it blocks, and where it runs or skips — including the repository settings a private app needs.
 - **Moving to a new identity pool (TASK-174).** A replaced Cognito pool gives every identity a new
   subject, and accounts were found by `id = cognito_sub = sub`: a sign-in with the new subject was
   given a second, ordinary account and the staff accounts were unreachable (Playform's dev/staging

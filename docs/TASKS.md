@@ -4284,7 +4284,39 @@ Sprint 3c. Flagged for awareness.
 
 ---
 
-_Last updated: October 26, 2026 (review 17 — TASK-178 filed and fixed)_
+### TASK-179 — The sync template could revert an app; the assurance record of GitHub security tooling
+
+| Field        | Detail                                    |
+| ------------ | ----------------------------------------- |
+| **ID**       | TASK-179                                  |
+| **Type**     | Defect (consumer template), documentation |
+| **Severity** | Medium                                    |
+| **Phase**    | Phase 5                                   |
+| **Target**   | v6.0.0 (RC)                               |
+| **Status**   | Fixed on develop (v6.0.0 RC)              |
+| **Logged**   | 2026-10-26 (found in Playform)            |
+
+**What was wrong.** `docs/templates/sync-from-foundation.yml` synced the configured ref (normally
+`main`) whatever the app already had. An app that adopts the platform from `develop` ahead of its
+release (Playform did) got a scheduled pull request syncing an older platform over a newer one, which
+would revert that work if merged; its branch also carried a test fixture into the app's history scan.
+
+**Fix.** A **Version guard** step and `docs/templates/sync-version-guard.sh`, which the app copies to
+`.github/scripts/`: the sync proceeds only when `PLATFORM_VERSION` in the source is strictly newer
+than the app's, compared field by field; a missing or malformed version fails the run, so the
+template's failure alert fires. SETUP_AND_INTEGRATION §6 says to copy it.
+
+**Also.** `docs/ASSURANCE.md` §6: every security check on GitHub (tool, when, whether it blocks,
+where it runs and where it skips, and the repository settings a private consuming app needs), and
+the Cadence row noting CodeQL runs on public repositories only.
+
+**Tests.** `__tests__/sync-version-guard-template.test.ts`: strictly newer proceeds; older and equal do not;
+numeric, not text, order (6.10.0 after 6.9.0) and leading zeros; a missing file, a pre-release
+suffix, no or two version lines, an unquoted value, a malformed target version and wrong arguments
+fail closed with nothing on stdout; the template runs the guard before the sync and both later steps
+depend on it; the platform's own version is in the shape the guard reads.
+
+_Last updated: October 26, 2026 (TASK-179 filed and fixed)_
 
 _Previously updated: October 26, 2026 (the subject is the Cognito sub — TASK-177 filed and fixed)_
 
