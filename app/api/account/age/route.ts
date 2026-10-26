@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
 import { parseDeclaredBirthDate, recordAgeVerification } from "@/platform/auth/coppa";
+import { isUnder13Unavailable } from "@/platform/auth/age";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -35,6 +36,11 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
       params: { field: "dateOfBirth", allowed: ["a past date of birth, YYYY-MM-DD"] },
       request,
     });
+  }
+
+  // TASK-181: an under-13 date is not recorded until parental consent ships (Batch 4).
+  if (isUnder13Unavailable(evaluation)) {
+    return apiError("account.child_accounts_unavailable", { request });
   }
 
   const recorded = await recordAgeVerification(guard.actor.id, dateOfBirth);

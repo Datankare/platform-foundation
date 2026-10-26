@@ -25,6 +25,13 @@
  *                                        of the image that has no AI credentials (Guardian
  *                                        classifies every input with the real model and fails
  *                                        closed without it); never on a deployment
+ *   6. session   POST session path, then POST dispatch path — as a second fresh guest (so it
+ *                holds when the allowance is 1), the screen's
+ *                own path when the app runs translation as a persisted session (TASK-181):
+ *                opens a session (200, a sessionId), dispatches one intent into it, and a real
+ *                translation must come back in the returned view's `state.translations[]`.
+ *                Only when SMOKE_SESSION_PATH and SMOKE_DISPATCH_PATH are set; skipped with
+ *                the translate step
  *
  * Settings (environment):
  *   SMOKE_BASE_URL         required — https://… (http only for localhost)
@@ -36,12 +43,22 @@
  *                          translate route answers in its own shape names its field here.
  *   SMOKE_TIMEOUT_MS       optional — per request (default 30000)
  *   SMOKE_SKIP_TRANSLATE   optional — "1": stop after the guest token (CI without AI credentials)
+ *   SMOKE_SESSION_PATH     optional — with SMOKE_DISPATCH_PATH: the session-open route (step 6)
+ *   SMOKE_DISPATCH_PATH    optional — with SMOKE_SESSION_PATH: the route an intent is sent to
+ *   SMOKE_DISPATCH_INTENT  optional — the intent, JSON; default
+ *                          {"type":"translate","text":"Good morning","additionalLanguages":[]}
  *
  * Read by the consumer's deployment workflow (Playform: .github/workflows/deploy-smoke.yml).
  * No dependencies; Node 20+.
  */
 
 import { fileURLToPath } from "node:url";
+
+const DEFAULT_DISPATCH_INTENT = Object.freeze({
+  type: "translate",
+  text: "Good morning",
+  additionalLanguages: [],
+});
 
 /** Parse and check the settings. Throws with every problem named. */
 export function readSettings(env) {
@@ -86,8 +103,39 @@ export function readSettings(env) {
   if (skip !== "" && skip !== "1") {
     problems.push('SMOKE_SKIP_TRANSLATE must be "1" or unset');
   }
+  const sessionPath = (env.SMOKE_SESSION_PATH ?? "").trim();
+  const dispatchPath = (env.SMOKE_DISPATCH_PATH ?? "").trim();
+  if (Boolean(sessionPath) !== Boolean(dispatchPath)) {
+    problems.push(
+      "SMOKE_SESSION_PATH and SMOKE_DISPATCH_PATH are set together or not at all"
+    );
+  }
+  for (const [name, path] of [
+    ["SMOKE_SESSION_PATH", sessionPath],
+    ["SMOKE_DISPATCH_PATH", dispatchPath],
+  ]) {
+    if (path && !/^\/[\w\-/]+$/.test(path)) {
+      problems.push(`${name} must be a path such as /api/translate/session`);
+    }
+  }
+  let dispatchIntent = DEFAULT_DISPATCH_INTENT;
+  if ((env.SMOKE_DISPATCH_INTENT ?? "").trim() !== "") {
+    try {
+      dispatchIntent = JSON.parse(env.SMOKE_DISPATCH_INTENT);
+    } catch {
+      dispatchIntent = null;
+    }
+    if (
+      !dispatchIntent ||
+      typeof dispatchIntent !== "object" ||
+      Array.isArray(dispatchIntent)
+    ) {
+      problems.push("SMOKE_DISPATCH_INTENT must be a JSON object");
+    }
+  }
   if (problems.length) throw new Error(problems.join("; "));
   return {
+    session: sessionPath ? { sessionPath, dispatchPath, intent: dispatchIntent } : null,
     skipTranslate: skip === "1",
     base: url.origin,
     expected: expected || null,
@@ -246,6 +294,50 @@ export async function runSmoke(settings, log = console.log) {
     );
   }
   log(`✓ translate: ${tr.json.translations.length} translation(s)`);
+
+  // 6 — the screen's own path: a session, then one intent dispatched into it (TASK-181)
+  if (settings.session) {
+    const { sessionPath, dispatchPath, intent } = settings.session;
+    // A fresh guest, so this step holds even when the governed allowance is 1.
+    const second = await call(settings, "POST", "/api/auth/guest");
+    const sessionToken = second.json?.token;
+    if (second.status !== 200 || typeof sessionToken !== "string") {
+      fail(`session: guest ${second.status}, no second guest token`);
+    }
+    const opened = await call(settings, "POST", sessionPath, {
+      token: sessionToken,
+      body: {},
+    });
+    const sessionId = opened.json?.sessionId;
+    if (opened.status !== 200 || typeof sessionId !== "string") {
+      fail(
+        `session: ${opened.status}${opened.json?.code ? ` ${opened.json.code}` : ""}, no session`
+      );
+    }
+    log(`✓ session opened (${sessionPath})`);
+    let sent = await call(settings, "POST", dispatchPath, {
+      token: sessionToken,
+      body: { sessionId, intent },
+    });
+    if (sent.status === 503 || sent.status === 429) {
+      await sleep(5_000);
+      sent = await call(settings, "POST", dispatchPath, {
+        token: sessionToken,
+        body: { sessionId, intent },
+      });
+    }
+    if (
+      sent.status !== 200 ||
+      !hasRealTranslation(sent.json?.state, settings.translationField)
+    ) {
+      fail(
+        `dispatch: ${sent.status}${sent.json?.code ? ` ${sent.json.code}` : ""}, no translation`
+      );
+    }
+    log(
+      `✓ dispatch: ${sent.json.state.translations.length} translation(s) in the session`
+    );
+  }
 
   log(`✓ smoke passed: ${settings.base} @ ${commit ?? "unknown commit"}`);
 }

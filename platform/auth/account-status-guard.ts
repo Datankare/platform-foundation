@@ -36,6 +36,7 @@ import {
   provisionAccount,
   type ProvisioningProfile,
 } from "@/platform/auth/user-provisioning";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -758,3 +759,19 @@ export async function isInGoodStanding(userId: string): Promise<boolean> {
       return false;
   }
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+
+/** What an account's status can refuse with, as the actor guard answers it. */
+export const ACCOUNT_STATUS_REFUSAL_CODES = [
+  "account.not_provisioned",
+  "account.not_found",
+  "account.restricted",
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  checkAccountStatus: ACCOUNT_STATUS_REFUSAL_CODES,
+};

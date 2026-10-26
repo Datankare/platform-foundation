@@ -1,7 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import { evaluateAge, type AgeVerificationResult } from "@/platform/auth/age";
+import {
+  evaluateAge,
+  isUnder13Unavailable,
+  type AgeVerificationResult,
+} from "@/platform/auth/age";
+import { renderMessage } from "@/platform/errors/messages";
 
 interface AgeGateProps {
   onVerified: (result: AgeVerificationResult, dateOfBirth: string) => void;
@@ -15,7 +20,9 @@ interface AgeGateProps {
  * Three outcomes:
  * 1. Adult (18+) → proceed to registration
  * 2. Teen (13-17) → proceed with restricted content rating
- * 3. Child (<13) → requires parental consent before proceeding
+ * 3. Child (<13) → requires parental consent before proceeding — until that flow ships (Batch 4)
+ *    the gate refuses the date with `account.child_accounts_unavailable` and nothing is created
+ *    (TASK-181, platform/auth/age.ts UNDER_13_ACCOUNTS_AVAILABLE).
  */
 export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
   const [month, setMonth] = useState("");
@@ -68,6 +75,11 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
           ? "Date of birth cannot be in the future"
           : "Please enter a valid date"
       );
+      return;
+    }
+
+    if (isUnder13Unavailable(result)) {
+      setError(renderMessage("errors.account.child_accounts_unavailable"));
       return;
     }
 

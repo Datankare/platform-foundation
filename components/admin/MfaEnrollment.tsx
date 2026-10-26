@@ -83,7 +83,13 @@ export default function MfaEnrollment({ onSignOut }: { onSignOut: () => void }) 
         secretCode?: unknown;
         qrCodeUri?: unknown;
         message?: unknown;
+        code?: unknown;
       };
+      // TASK-181: the identity pool has authenticator MFA off — say so, not "not available".
+      if (body.code === "feature.not_configured") {
+        setError(t("not_configured"));
+        return;
+      }
       if (!res.ok || typeof body.secretCode !== "string") {
         setError(typeof body.message === "string" ? body.message : t("setup_failed"));
         return;

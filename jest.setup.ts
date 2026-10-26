@@ -2,6 +2,7 @@
  * Jest setup — runs after the test framework is installed, before each suite
  * (setupFilesAfterEnv).
  *
+ * - Clears every platform setting the operator's shell exported (__tests__/helpers/isolate-env.ts).
  * - Silences the structured logger (tests that verify logging mock console
  *   explicitly).
  * - Clears Sentry's version-keyed global carrier after every test file. Sentry
@@ -14,6 +15,10 @@
  *   only green by luck. Sentry recreates the carrier lazily, so deleting it at
  *   end-of-file is safe and makes the gate deterministic.
  */
+// TASK-181: first, before any module reads a setting — no test inherits the operator's shell
+// (a deployment's settings exported in the terminal changed 46 results).
+import "@/__tests__/helpers/isolate-env";
+
 process.env.LOG_LEVEL = "silent";
 
 // ADR-039: agents are registered at init in production (registerPlatformAgents).

@@ -4346,7 +4346,66 @@ again on "Hide key"; one network call, no console output carrying the secret; an
 falls back to the key; no URI draws nothing; a refused setup shows the server's message and an
 unreachable one "Setup failed.".
 
-_Last updated: October 26, 2026 (TASK-180 filed and fixed)_
+### TASK-181 — Screens hid or misreported the API's refusals (user-facing gap audit, batch 2)
+
+| Field        | Detail                                      |
+| ------------ | ------------------------------------------- |
+| **ID**       | TASK-181                                    |
+| **Type**     | Defect (UX) + Test infrastructure           |
+| **Severity** | Medium                                      |
+| **Phase**    | Phase 5                                     |
+| **Target**   | v6.0.0 (RC)                                 |
+| **Status**   | Fixed on develop (v6.0.0 RC)                |
+| **Logged**   | 2026-10-26 (user-facing gap audit, batch 2) |
+
+**What was wrong.** (1) Password reset showed "Password Reset" when the server refused it (a wrong
+or expired code, the password policy, a rate limit), and "send code" advanced when refused —
+`ForgotPasswordForm` ignored the result. (2) An unconfirmed account's sign-in showed "Sign-in
+failed": `AuthPage` checked `success` before `emailVerificationRequired`; resending the code said
+nothing either way. (3) Every screen handled refusals its own way, mostly as one fixed text — the
+admin console showed "refused" for `auth.permission_denied`, `account.restricted` and a 503 alike.
+(4) An under-13 date of birth created an account that waited for a parental consent nobody can
+give yet. (5) Tests read the operator's shell: run in a terminal with a deployment's settings
+exported (DATABASE_SSL_CA, COGNITO__, UPSTASH__, CACHE_PROVIDER), 46 tests failed.
+
+**Fix.** (1, 2) Both reset steps advance only on the server's success and show its message; sign-in
+checks `emailVerificationRequired` first and opens verification; resend says a code was sent, or
+shows the refusal (no cooldown then). (3) **One shared handler**, `platform/errors/refusal.ts`:
+`REFUSAL_HANDLERS` decides every platform code's kind — age-gate, consent-wait, restricted,
+signed-out-erased, not-provisioned, tenant-unavailable, retry-after, service-unavailable, sign-in,
+message — exhaustively (tsc refuses a new code without one); `handleRefusal` / `readRefusal` give
+the screen its kind, message, retry delay and account status; `fetchWithProvisioningRetry`
+retries `account.not_provisioned` with backoff; `announceSessionEnd` + `useRefusalSessionEnd`
+end the session for an erased or unmatched account. `components/refusal/RefusalNotice.tsx`
+renders each kind (and `TenantUnavailable`, full page). The admin console, review dashboard,
+appeal form, SSO callback and guest sign-in use it. (4) **Under-13 switch**:
+`UNDER_13_ACCOUNTS_AVAILABLE = false` in `platform/auth/age.ts`; `isUnder13Unavailable` refuses the
+date at the age gate, `POST /api/auth/sign-up` and `POST /api/account/age` with the new
+`account.child_accounts_unavailable` (403) before anything is created or recorded. **Batch 4** (parental
+consent: a 7-day window, email plus) removes the constant, the function and its three checks. (5)
+`__tests__/helpers/isolate-env.ts`, imported first by `jest.setup.ts`, clears every setting the
+environment references document and the environment contract declares; `TEST_*` and `REQUIRE_*`
+(the DB and Valkey suites) and the runner's own are kept.
+
+**Standing check.** `__tests__/refusal-coverage.test.ts`: for each route, the codes it can return
+(its `apiError` literals and the codes of the guards it calls — each guard module exports
+`REFUSAL_GUARDS`, and the test checks the module's own literals are listed); for each UI caller
+of the route, every code must be handled by the shared handler or the caller's `HANDLED_CODES`.
+Today's gaps are in `refusal-coverage-baseline.json` (per repository, not synced), which may only
+shrink — 305 pairs, all in the staff consoles' panels, the reference SpikeApp, `useRealtimeStream`
+and `useSsoProviders`. The same file bans `if (!res.ok) return { error: "<literal>" }` in screens
+and hooks. The deployed smoke test can also open a session and dispatch into it as the guest
+(`SMOKE_SESSION_PATH`, `SMOKE_DISPATCH_PATH`, `SMOKE_DISPATCH_INTENT`) — an app whose screen
+translates through a session proves that path on every deploy.
+
+**Tests.** `refusal-handler` (every kind, the backoff, the components, the session end once),
+`refusal-coverage`, `env-isolation` (a real jest run started with a polluted shell sees none of
+it), `auth-page` / `forgot-password-form` / `age-gate` / `admin-console-refused` / `account-age`
+(the new cases), `deploy-smoke` (the session step).
+
+_Last updated: October 26, 2026 (TASK-181 filed and fixed)_
+
+_Previously updated: October 26, 2026 (TASK-180 filed and fixed)_
 
 _Previously updated: October 26, 2026 (TASK-179 filed and fixed)_
 

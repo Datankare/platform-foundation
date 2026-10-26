@@ -31,8 +31,9 @@ import { apiError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import { getRateLimiter } from "./factory";
 import { getClientBucket } from "./client-ip";
-import { ensureRequestTenant } from "@/platform/tenancy/request";
+import { ensureRequestTenant, TENANCY_REFUSAL_CODES } from "@/platform/tenancy/request";
 import type { RateLimitRule } from "./types";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 /** Who a limit is counted against. Omit (or pass {}) to count by network address. */
 export interface RateLimitSubject {
@@ -87,3 +88,22 @@ export async function enforceRateLimit(
     },
   });
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+// (`?? []`: a suite that jest.mocks a guard module without these lists still loads.)
+
+/** What a rate-limited route can be refused with: the limit, the limiter down, or its tenant. */
+export const RATE_LIMIT_REFUSAL_CODES = [
+  "rate.limited",
+  "service.unavailable",
+  ...(TENANCY_REFUSAL_CODES ?? []),
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  enforceRateLimit: RATE_LIMIT_REFUSAL_CODES,
+  // platform/rate-limit/daily-quota.ts counts through enforceRateLimit.
+  enforceDailyPaidQuota: RATE_LIMIT_REFUSAL_CODES,
+};

@@ -16,7 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/platform/auth/middleware";
+import { AUTH_REFUSAL_CODES, requireAuth } from "@/platform/auth/middleware";
 import { getCachedPermissions } from "@/platform/auth/permissions-cache";
 import { isInGoodStanding } from "@/platform/auth/account-status-guard";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
@@ -25,6 +25,7 @@ import { logger } from "@/lib/logger";
 import { getConfig } from "@/platform/auth/platform-config";
 import { withTenantTx } from "@/platform/data";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 export type { VerifiedAdmin } from "@/platform/auth/role-governance";
 
@@ -187,3 +188,23 @@ export async function verifiedAdminById(userId: string): Promise<VerifiedAdmin |
     return null;
   }
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+// (`?? []`: a suite that jest.mocks a guard module without these lists still loads.)
+
+/** Everything requireAdmin / adminGuard can refuse with. */
+export const ADMIN_GUARD_REFUSAL_CODES = [
+  ...(AUTH_REFUSAL_CODES ?? []),
+  "auth.permission_denied",
+  "account.restricted",
+  "auth.mfa_required",
+  "rate.limited",
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  requireAdmin: ADMIN_GUARD_REFUSAL_CODES,
+  adminGuard: ADMIN_GUARD_REFUSAL_CODES,
+};

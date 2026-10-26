@@ -129,12 +129,28 @@ describe("POST /api/auth/sign-up — date of birth", () => {
     expect(mockRecordAge).toHaveBeenCalledWith(USER, dob);
   });
 
-  it("records a child's age too (the account starts under the consent gate)", async () => {
-    const dob = yearsAgo(9);
+  it("records a teen's age too (the account starts with its content rating)", async () => {
+    const dob = yearsAgo(15);
     await signUp(
       post("/api/auth/sign-up", { email: "c@b.c", password: STRONG, dateOfBirth: dob })
     );
     expect(mockRecordAge).toHaveBeenCalledWith(USER, dob);
+  });
+
+  // TASK-181: parental consent ships in Batch 4; until then no under-13 account is created.
+  it("refuses an under-13 date of birth before any account or record exists", async () => {
+    const res = await signUp(
+      post("/api/auth/sign-up", {
+        email: "c@b.c",
+        password: STRONG,
+        dateOfBirth: yearsAgo(9),
+      })
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("account.child_accounts_unavailable");
+    expect(mockProvision).not.toHaveBeenCalled();
+    expect(provider.signUp).not.toHaveBeenCalled();
+    expect(mockRecordAge).not.toHaveBeenCalled();
   });
 
   it("still creates the account when the age cannot be recorded (it stays unverified)", async () => {
@@ -170,13 +186,21 @@ describe("POST /api/account/age", () => {
   });
 
   it("records the age once, and says whether consent is now needed", async () => {
-    const res = await declareAge(post("/api/account/age", { dateOfBirth: yearsAgo(10) }));
+    const res = await declareAge(post("/api/account/age", { dateOfBirth: yearsAgo(15) }));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       success: true,
-      requiresParentalConsent: true,
-      contentRatingLevel: 1,
+      requiresParentalConsent: false,
+      contentRatingLevel: 2,
     });
+  });
+
+  // TASK-181: an under-13 date is refused and not recorded until consent ships (Batch 4).
+  it("refuses an under-13 date of birth and records nothing", async () => {
+    const res = await declareAge(post("/api/account/age", { dateOfBirth: yearsAgo(10) }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("account.child_accounts_unavailable");
+    expect(mockRecordAge).not.toHaveBeenCalled();
   });
 
   it("refuses a second declaration — a child cannot re-declare as an adult", async () => {

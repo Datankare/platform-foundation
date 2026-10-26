@@ -11,6 +11,7 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
 import { isErrorCode } from "@/platform/errors/registry";
+import { handleRefusal } from "@/platform/errors/refusal";
 import { renderMessage } from "@/platform/errors/messages";
 
 export default function SsoCallbackClient() {
@@ -51,7 +52,9 @@ export default function SsoCallbackClient() {
           typeof data.accessToken !== "string" ||
           typeof data.userId !== "string"
         ) {
-          fail(data.code);
+          // Every refusal returns to sign-in with its code's message (the shared handler names
+          // it; an erased or unmatched account is no different here — there is no session yet).
+          fail(res.ok ? undefined : handleRefusal(data.code).code || undefined);
           return;
         }
         setSession({

@@ -20,6 +20,7 @@
 
 import { useCallback, useState } from "react";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { readRefusal } from "@/platform/errors/refusal";
 
 type Variant = "light" | "dark";
 
@@ -82,8 +83,8 @@ export default function AppealForm({
         body: JSON.stringify({ originalDecisionId, appealReason: reason.trim() }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Your appeal could not be submitted.");
+        // TASK-181: the refusal's own message (shared handler, platform/errors/refusal.ts).
+        setError((await readRefusal(res)).message);
         return;
       }
       const data = await res.json();

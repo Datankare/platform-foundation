@@ -3,8 +3,10 @@
 import React, { useState } from "react";
 
 interface ForgotPasswordFormProps {
-  onSendCode: (email: string) => Promise<void>;
-  onConfirmReset: (email: string, code: string, newPassword: string) => Promise<void>;
+  /** True when the code was sent; false keeps the email step (the error says why). */
+  onSendCode: (email: string) => Promise<boolean>;
+  /** True when the password was reset; false keeps the code step (the error says why). */
+  onConfirmReset: (email: string, code: string, newPassword: string) => Promise<boolean>;
   onBackToLogin: () => void;
   error?: string | null;
   isLoading?: boolean;
@@ -15,6 +17,10 @@ interface ForgotPasswordFormProps {
  * Two-step forgot password flow:
  * 1. Enter email → send reset code
  * 2. Enter code + new password → confirm reset
+ *
+ * Each step advances only on the server's success (TASK-181: a refused reset — a wrong or expired
+ * code, the password policy, a rate limit — showed "Password Reset" all the same); a refusal
+ * stays on its step with the server's message (the `error` prop).
  */
 export default function ForgotPasswordForm({
   onSendCode,
@@ -37,15 +43,13 @@ export default function ForgotPasswordForm({
   const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || isLoading) return;
-    await onSendCode(email.trim());
-    setStep("code");
+    if (await onSendCode(email.trim())) setStep("code");
   };
 
   const handleConfirmReset = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!code || !passwordsMatch || !passwordLongEnough || isLoading) return;
-    await onConfirmReset(email.trim(), code, newPassword);
-    setSuccess(true);
+    if (await onConfirmReset(email.trim(), code, newPassword)) setSuccess(true);
   };
 
   if (success) {

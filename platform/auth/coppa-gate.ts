@@ -35,6 +35,7 @@ import { getConfig } from "@/platform/auth/platform-config";
 import { logger } from "@/lib/logger";
 import { unionWithModules } from "@/platform/modules/compose";
 import type { CoppaGateResult, ContentRatingLevel } from "@/platform/moderation/types";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -336,3 +337,18 @@ export async function updateCoppaEnforcement(
 //    enforcement would hit the consent gate before the ban check. The
 //    account status check should run first in middleware. Order:
 //    auth → account status → COPPA gate → Guardian screening.
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+
+/** What the age and consent gate can refuse with (COPPA, audit X-16). */
+export const COPPA_REFUSAL_CODES = [
+  "account.age_unverified",
+  "account.consent_required",
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  checkCoppaGate: COPPA_REFUSAL_CODES,
+};

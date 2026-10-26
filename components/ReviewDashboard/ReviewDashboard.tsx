@@ -33,6 +33,7 @@ import type {
 import type { ModerationAction } from "@/platform/moderation/types";
 import type { ReviewRecommendation } from "@/platform/moderation/review-assist";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { readRefusal } from "@/platform/errors/refusal";
 
 // ── Theme ─────────────────────────────────────────────────────────────
 
@@ -136,9 +137,8 @@ async function fetchQueue(status: ReviewStatus | "all"): Promise<QueueResult> {
     const res = await apiFetch(`/api/moderation/review${qs}`, {
       headers: { "Content-Type": "application/json" },
     });
-    if (!res.ok) {
-      return { items: [], error: "Could not load the review queue. Please try again." };
-    }
+    // TASK-181: the refusal's own message (permission, restriction, rate limit, outage).
+    if (!res.ok) return { items: [], error: (await readRefusal(res)).message };
     const data = await res.json();
     return { items: Array.isArray(data.items) ? data.items : [], error: null };
   } catch {

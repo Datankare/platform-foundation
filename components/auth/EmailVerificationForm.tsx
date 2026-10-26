@@ -5,9 +5,12 @@ import React, { useState, useRef, useEffect } from "react";
 interface EmailVerificationFormProps {
   email: string;
   onSubmit: (code: string) => Promise<void>;
-  onResend: () => Promise<void>;
+  /** False when the code could not be resent (the error says why; no cooldown starts). */
+  onResend: () => Promise<boolean | void>;
   onBackToLogin: () => void;
   error?: string | null;
+  /** Informational (gray): e.g. that a new code was sent. */
+  notice?: string | null;
   isLoading?: boolean;
 }
 
@@ -21,6 +24,7 @@ export default function EmailVerificationForm({
   onResend,
   onBackToLogin,
   error = null,
+  notice = null,
   isLoading = false,
 }: EmailVerificationFormProps) {
   const [code, setCode] = useState("");
@@ -47,8 +51,7 @@ export default function EmailVerificationForm({
 
   const handleResend = async () => {
     if (resendCooldown > 0 || isLoading) return;
-    await onResend();
-    setResendCooldown(60);
+    if ((await onResend()) !== false) setResendCooldown(60);
   };
 
   return (
@@ -75,6 +78,15 @@ export default function EmailVerificationForm({
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-4 text-white text-2xl text-center tracking-[0.5em] font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
         </div>
+
+        {notice && !error && (
+          <div
+            role="status"
+            className="bg-gray-800/40 border border-gray-700 text-gray-300 rounded-xl px-4 py-3 text-sm"
+          >
+            {notice}
+          </div>
+        )}
 
         {error && (
           <div

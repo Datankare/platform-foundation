@@ -24,6 +24,10 @@ interface Deployment {
   anonymous: { status: number; body: unknown };
   guestToken: string | null;
   translations: unknown;
+  /** The session route's answer (step 6, TASK-181). */
+  sessionStatus: number;
+  dispatchStatus: number;
+  sessionTranslations: unknown;
 }
 
 const healthy = (): Deployment => ({
@@ -42,7 +46,12 @@ const healthy = (): Deployment => ({
   },
   guestToken: "guest.payload.sig",
   translations: [{ language: "French", text: "Bonjour" }],
+  sessionStatus: 200,
+  dispatchStatus: 200,
+  sessionTranslations: [{ code: "fr", translated: "Bonjour" }],
 });
+
+let dispatched: { auth?: string; body?: unknown } = {};
 
 let deployment = healthy();
 let translateAuth: string | undefined;
@@ -73,6 +82,28 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     translateAuth = req.headers.authorization;
     return send(res, 200, { translations: d.translations });
   }
+  if (req.method === "POST" && req.url === "/api/translate/session") {
+    req.resume();
+    return d.sessionStatus === 200
+      ? send(res, 200, { sessionId: "s-1", version: 1, state: { translations: [] } })
+      : send(res, d.sessionStatus, { code: "auth.required" });
+  }
+  if (req.method === "POST" && req.url === "/api/translate/dispatch") {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      dispatched = { auth: req.headers.authorization, body: JSON.parse(raw) };
+      if (d.dispatchStatus !== 200) {
+        return send(res, d.dispatchStatus, { code: "guest.allowance_exhausted" });
+      }
+      send(res, 200, {
+        sessionId: "s-1",
+        version: 2,
+        state: { translations: d.sessionTranslations },
+      });
+    });
+    return;
+  }
   send(res, 404, { code: "not_found" });
 });
 
@@ -85,6 +116,7 @@ afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   deployment = healthy();
   translateAuth = undefined;
+  dispatched = {};
 });
 
 function smoke(env: Record<string, string>): Promise<{ code: number; out: string }> {
@@ -258,6 +290,61 @@ describe("deploy smoke (TASK-102)", () => {
     expect(r.out).toContain("✗ ready: 503 (unready, boot completed, draining)");
   });
 
+  describe("the screen's own path: session, then dispatch (TASK-181)", () => {
+    const SESSION = {
+      SMOKE_SESSION_PATH: "/api/translate/session",
+      SMOKE_DISPATCH_PATH: "/api/translate/dispatch",
+      SMOKE_TRANSLATION_FIELD: "translated",
+    };
+
+    it("opens a session as a fresh guest and dispatches a translate intent into it", async () => {
+      deployment.translations = [{ language: "French", translated: "Bonjour" }];
+      const r = await smoke({ SMOKE_BASE_URL: base, ...SESSION });
+      expect(r.out).toContain("✓ session opened (/api/translate/session)");
+      expect(r.out).toContain("✓ dispatch: 1 translation(s) in the session");
+      expect(r.code).toBe(0);
+      expect(dispatched).toEqual({
+        auth: "Bearer guest.payload.sig",
+        body: {
+          sessionId: "s-1",
+          intent: { type: "translate", text: "Good morning", additionalLanguages: [] },
+        },
+      });
+    });
+
+    it("fails, naming the step, when the session or the dispatch is refused or empty", async () => {
+      deployment.translations = [{ language: "French", translated: "Bonjour" }];
+      deployment.sessionStatus = 401;
+      let r = await smoke({ SMOKE_BASE_URL: base, ...SESSION });
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("session: 401 auth.required, no session");
+
+      deployment = { ...healthy(), translations: deployment.translations };
+      deployment.dispatchStatus = 403;
+      r = await smoke({ SMOKE_BASE_URL: base, ...SESSION });
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("dispatch: 403 guest.allowance_exhausted, no translation");
+
+      deployment = { ...healthy(), translations: deployment.translations };
+      deployment.sessionTranslations = [];
+      r = await smoke({ SMOKE_BASE_URL: base, ...SESSION });
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("dispatch: 200, no translation");
+    });
+
+    it("sends the intent the app names (SMOKE_DISPATCH_INTENT)", async () => {
+      deployment.translations = [{ language: "French", translated: "Bonjour" }];
+      const intent = { type: "translate", text: "Hi", additionalLanguages: ["fr"] };
+      const r = await smoke({
+        SMOKE_BASE_URL: base,
+        ...SESSION,
+        SMOKE_DISPATCH_INTENT: JSON.stringify(intent),
+      });
+      expect(r.code).toBe(0);
+      expect((dispatched.body as { intent: unknown }).intent).toEqual(intent);
+    });
+  });
+
   it("refuses bad settings before calling anything (exit 2)", async () => {
     for (const env of [
       {},
@@ -267,6 +354,14 @@ describe("deploy smoke (TASK-102)", () => {
       { SMOKE_BASE_URL: base, SMOKE_TRANSLATE_PATH: "process" },
       { SMOKE_BASE_URL: base, SMOKE_TRANSLATION_FIELD: "a.b" },
       { SMOKE_BASE_URL: base, SMOKE_SKIP_TRANSLATE: "true" },
+      { SMOKE_BASE_URL: base, SMOKE_SESSION_PATH: "/api/translate/session" },
+      { SMOKE_BASE_URL: base, SMOKE_SESSION_PATH: "x", SMOKE_DISPATCH_PATH: "/api/d" },
+      {
+        SMOKE_BASE_URL: base,
+        SMOKE_SESSION_PATH: "/api/s",
+        SMOKE_DISPATCH_PATH: "/api/d",
+        SMOKE_DISPATCH_INTENT: "[1]",
+      },
     ]) {
       const r = await smoke(env as Record<string, string>);
       expect({ env, code: r.code }).toEqual({ env, code: 2 });

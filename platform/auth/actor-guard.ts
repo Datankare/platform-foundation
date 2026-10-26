@@ -18,13 +18,22 @@
 
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { requireActor, type Actor, type ActorOptions } from "@/platform/auth/middleware";
-import { checkAccountStatus } from "@/platform/auth/account-status-guard";
+import {
+  AUTH_REFUSAL_CODES,
+  requireActor,
+  type Actor,
+  type ActorOptions,
+} from "@/platform/auth/middleware";
+import {
+  ACCOUNT_STATUS_REFUSAL_CODES,
+  checkAccountStatus,
+} from "@/platform/auth/account-status-guard";
 import { trustedVerifiedClaim } from "@/platform/auth/email-verification";
-import { checkCoppaGate } from "@/platform/auth/coppa-gate";
+import { checkCoppaGate, COPPA_REFUSAL_CODES } from "@/platform/auth/coppa-gate";
 import { NO_GUEST_STATUSES, markRestricted } from "@/platform/auth/restricted-marker";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/platform/errors";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 export type ActorGuardResult =
   | { readonly actor: Actor; readonly error?: never }
@@ -86,3 +95,20 @@ export async function requireActorWithStatus(
   }
   return { actor };
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+// (`?? []`: a suite that jest.mocks a guard module without these lists still loads.)
+
+/** Everything requireActorWithStatus can refuse with: the caller, its account, its age. */
+export const ACTOR_GUARD_REFUSAL_CODES = [
+  ...(AUTH_REFUSAL_CODES ?? []),
+  ...(ACCOUNT_STATUS_REFUSAL_CODES ?? []),
+  ...(COPPA_REFUSAL_CODES ?? []),
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  requireActorWithStatus: ACTOR_GUARD_REFUSAL_CODES,
+};

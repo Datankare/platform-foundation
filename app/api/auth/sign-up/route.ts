@@ -29,6 +29,7 @@ import {
   signupsOpen,
 } from "@/platform/tenancy/identity";
 import { parseDeclaredBirthDate, recordAgeVerification } from "@/platform/auth/coppa";
+import { isUnder13Unavailable } from "@/platform/auth/age";
 import { ensureUserProvisioned } from "@/platform/auth/user-provisioning";
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
@@ -43,11 +44,16 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
 
   const invalid = requireTextFields(body, ["email", "password", "dateOfBirth"], request);
   if (invalid) return invalid;
-  if (!parseDeclaredBirthDate(body.dateOfBirth)) {
+  const declared = parseDeclaredBirthDate(body.dateOfBirth);
+  if (!declared) {
     return apiError("request.invalid_value", {
       params: { field: "dateOfBirth", allowed: ["a past date of birth, YYYY-MM-DD"] },
       request,
     });
+  }
+  // TASK-181: no under-13 account until parental consent ships (Batch 4) — nothing is created.
+  if (isUnder13Unavailable(declared)) {
+    return apiError("account.child_accounts_unavailable", { request });
   }
 
   if (!(await signupsOpen())) return apiError("auth.signups_closed", { request });

@@ -7,8 +7,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ForgotPasswordForm from "@/components/auth/ForgotPasswordForm";
 
 const mockProps = {
-  onSendCode: jest.fn().mockResolvedValue(undefined),
-  onConfirmReset: jest.fn().mockResolvedValue(undefined),
+  onSendCode: jest.fn().mockResolvedValue(true),
+  onConfirmReset: jest.fn().mockResolvedValue(true),
   onBackToLogin: jest.fn(),
 };
 
@@ -84,5 +84,39 @@ describe("ForgotPasswordForm", () => {
   it("has correct autocomplete on email field", () => {
     render(<ForgotPasswordForm {...mockProps} />);
     expect(screen.getByLabelText("Email").getAttribute("autocomplete")).toBe("username");
+  });
+
+  // TASK-181: each step advances only on the server's success.
+  it("stays on the email step when the code was not sent", async () => {
+    const onSendCode = jest.fn().mockResolvedValue(false);
+    render(<ForgotPasswordForm {...mockProps} onSendCode={onSendCode} />);
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.click(screen.getByText("Send Reset Code"));
+    await waitFor(() => expect(onSendCode).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Verification Code")).toBeNull();
+  });
+
+  it("shows no success when the reset was refused", async () => {
+    const onConfirmReset = jest.fn().mockResolvedValue(false);
+    render(<ForgotPasswordForm {...mockProps} onConfirmReset={onConfirmReset} />);
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.click(screen.getByText("Send Reset Code"));
+    fireEvent.change(await screen.findByLabelText("Verification Code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.change(screen.getByLabelText("New Password"), {
+      target: { value: "a-long-password-1" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm New Password"), {
+      target: { value: "a-long-password-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reset Password" }));
+    await waitFor(() => expect(onConfirmReset).toHaveBeenCalled());
+    expect(screen.queryByText("Password Reset")).toBeNull();
+    expect(screen.getByLabelText("Verification Code")).toBeDefined();
   });
 });

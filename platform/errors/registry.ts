@@ -82,6 +82,14 @@ export const PLATFORM_ERROR_CODES = {
     ],
     action: "Show the restriction; offer appeal.",
   },
+  // TASK-181: until parental consent is built (Batch 4), an under-13 date of birth is refused
+  // before any account or record exists (platform/auth/age.ts UNDER_13_ACCOUNTS_AVAILABLE).
+  "account.child_accounts_unavailable": {
+    status: 403,
+    params: [],
+    action:
+      "Explain that accounts for children under 13 are not available yet; nothing was created or recorded. Do not retry.",
+  },
   "admin.config_invalid_value": {
     status: 422,
     params: [{ name: "key", kind: "id" }],
@@ -523,6 +531,9 @@ export const PLATFORM_ERROR_CODES = {
 export const ERROR_CODES = { ...PLATFORM_ERROR_CODES, ...APP_ERROR_CODES } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
+
+/** The platform's own codes (an app's `app.*` codes excluded). */
+export type PlatformErrorCode = keyof typeof PLATFORM_ERROR_CODES;
 
 /** Codes the consuming app declared (app-codes.ts). */
 export function isAppErrorCode(code: string): boolean {

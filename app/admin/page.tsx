@@ -36,13 +36,38 @@ import {
   PANEL_UNAVAILABLE,
   PanelUnavailable,
 } from "@/components/admin/PanelUnavailable";
+import { RefusalNotice } from "@/components/refusal/RefusalNotice";
+import { useRefusalSessionEnd } from "@/components/refusal/useRefusalSessionEnd";
+import {
+  announceSessionEnd,
+  handleRefusal,
+  networkRefusal,
+  type Refusal,
+} from "@/platform/errors/refusal";
 
 /** The console's own user (GET /api/admin/session), or why it cannot open. */
 type ConsoleSession =
   | { kind: "loading" }
   | { kind: "admin"; roleName: string; permissions: readonly string[] }
   | { kind: "mfa_required" }
-  | { kind: "refused" };
+  | { kind: "refused" }
+  /** Refused for a reason other than access (TASK-181): restricted, unavailable, … */
+  | { kind: "refusal"; refusal: Refusal };
+
+/**
+ * What the console does with a refused GET /api/admin/session (TASK-181 — it showed one "refused"
+ * text for every refusal): no administrative access (`auth.permission_denied`, or not signed in)
+ * is the access page; staff without a second factor enrol; an erased account's session ends;
+ * anything else — a restricted account, a service that is down — is shown as itself.
+ */
+function sessionRefused(refusal: Refusal): ConsoleSession {
+  if (refusal.code === "auth.mfa_required") return { kind: "mfa_required" };
+  if (refusal.code === "auth.permission_denied" || refusal.kind === "sign-in") {
+    return { kind: "refused" };
+  }
+  if (refusal.kind === "signed-out-erased") announceSessionEnd(refusal.code);
+  return { kind: "refusal", refusal };
+}
 
 interface ActionPlan {
   message: string;
@@ -139,7 +164,9 @@ export default function AdminPage() {
   const [activePanel, setActivePanel] = useState<AdminSection>("roles");
   const router = useRouter();
   const [session, setSession] = useState<ConsoleSession>({ kind: "loading" });
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const { signOut } = useAuth();
+  useRefusalSessionEnd();
 
   // Which sections to show: the admin's own permissions (audit B-14 — every section was shown
   // to every admin). Display only: each section's route checks its own permission.
@@ -149,6 +176,8 @@ export default function AdminPage() {
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as {
           code?: unknown;
+          message?: unknown;
+          params?: unknown;
           roleName?: unknown;
           permissions?: unknown;
         };
@@ -162,18 +191,24 @@ export default function AdminPage() {
             ),
           });
         } else {
-          setSession({
-            kind: body.code === "auth.mfa_required" ? "mfa_required" : "refused",
-          });
+          setSession(
+            sessionRefused(
+              handleRefusal(body.code, {
+                message: body.message,
+                params: body.params,
+                status: res.status,
+              })
+            )
+          );
         }
       })
       .catch(() => {
-        if (current) setSession({ kind: "refused" });
+        if (current) setSession({ kind: "refusal", refusal: networkRefusal() });
       });
     return () => {
       current = false;
     };
-  }, []);
+  }, [sessionAttempt]);
 
   const showPanelData = useCallback((panel: AdminSection, data: unknown) => {
     if (data !== undefined) setPanelData((prev) => ({ ...prev, [panel]: data }));
@@ -304,6 +339,20 @@ export default function AdminPage() {
         >
           {renderMessage("screens.admin_console.sign_in")}
         </button>
+      </main>
+    );
+  }
+
+  if (session.kind === "refusal") {
+    return (
+      <main className="mx-auto max-w-md p-8 text-center">
+        <RefusalNotice
+          refusal={session.refusal}
+          onRetry={() => setSessionAttempt((n) => n + 1)}
+          onSignOut={() => {
+            void signOut().then(() => router.push("/auth"));
+          }}
+        />
       </main>
     );
   }

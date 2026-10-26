@@ -22,6 +22,7 @@ import { apiError } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import { enterTenant, peekTenant, type TenantContext } from "./context";
 import { resolveAnonymous, resolveForIdentity, type ResolveOptions } from "./resolve";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 interface RequestLike {
   readonly headers: Headers;
@@ -96,3 +97,22 @@ export async function bindIdentityTenant(
   }
   return { tenant: present ?? enterTenant(resolution.context) };
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+
+/** What establishing a request's tenant can refuse with (ensureRequestTenant, bindIdentityTenant). */
+export const TENANCY_REFUSAL_CODES = [
+  "tenant.mismatch",
+  "tenant.missing",
+  "tenant.suspended",
+  "tenant.unknown_host",
+  "service.unavailable",
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  ensureRequestTenant: TENANCY_REFUSAL_CODES,
+  bindIdentityTenant: TENANCY_REFUSAL_CODES,
+};

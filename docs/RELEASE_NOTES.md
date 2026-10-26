@@ -19,6 +19,21 @@ provider (TASK-178). Deploy: migrations 053, 054 and 055 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
+- **Refusals handled the same way on every screen (TASK-181).** `platform/errors/refusal.ts`:
+  `REFUSAL_HANDLERS` (every platform code → its kind), `handleRefusal` / `readRefusal`,
+  `fetchWithProvisioningRetry`, `announceSessionEnd`; components in `components/refusal/`
+  (`RefusalNotice`, `TenantUnavailable`, `useRefusalSessionEnd`). Password reset and sign-in of an
+  unconfirmed account now follow the server's answer. **Under-13 accounts are refused**
+  (`account.child_accounts_unavailable`) until parental consent ships — one switch,
+  `UNDER_13_ACCOUNTS_AVAILABLE` in `platform/auth/age.ts`. **Refusal coverage**
+  (`__tests__/refusal-coverage.test.ts`) checks every (screen, route, code) pair against a
+  shrink-only `refusal-coverage-baseline.json`; guards declare their codes as `REFUSAL_GUARDS`.
+  **Tests no longer read the operator's shell** (`__tests__/helpers/isolate-env.ts`). The deployed
+  smoke test can exercise a session route (`SMOKE_SESSION_PATH` / `SMOKE_DISPATCH_PATH`). Consumer
+  steps: add `import "@/__tests__/helpers/isolate-env";` as the first import of the app's own
+  `jest.setup.ts`; sync-exclude `/refusal-coverage-baseline.json` and keep the app's own (create it
+  with `{"gaps": []}`, then list the app's gaps); route the app's screens through
+  `handleRefusal` or declare `HANDLED_CODES` for its own codes.
 - **A QR code for authenticator setup (TASK-180).** The admin console's two-step setup draws the
   otpauth URI as a QR code in the browser (`qrcode-generator` 2.0.4, no dependencies of its own); the
   key is behind "Can't scan? Show key". The pool must allow software-token MFA (ENV_REFERENCE,

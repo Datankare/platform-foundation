@@ -33,10 +33,15 @@ import {
 } from "@/platform/auth/guest-token";
 import { logger, generateRequestId } from "@/lib/logger";
 import { apiError } from "@/platform/errors";
-import { bindIdentityTenant, ensureRequestTenant } from "@/platform/tenancy/request";
+import {
+  bindIdentityTenant,
+  ensureRequestTenant,
+  TENANCY_REFUSAL_CODES,
+} from "@/platform/tenancy/request";
 import type { TenantContext } from "@/platform/tenancy/context";
 import { resolveAccountRecord } from "@/platform/auth/account-identity";
 import { syncEmailVerification } from "@/platform/auth/email-verification";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 export interface AuthContext {
   user: TokenPayload;
@@ -325,3 +330,27 @@ export async function requirePermission(
 
   return { granted: true };
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+// (`?? []`: a suite that jest.mocks a guard module without these lists still loads.)
+
+/** What verifying the caller can refuse with (requireAuth, requireActor, optionalAuth). */
+export const AUTH_REFUSAL_CODES = [
+  "auth.required",
+  "auth.token_invalid",
+  "auth.sign_in_required",
+  "auth.guest_invalid",
+  "account.identity_conflict",
+  "service.unavailable",
+  ...(TENANCY_REFUSAL_CODES ?? []),
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  requireAuth: AUTH_REFUSAL_CODES,
+  requireActor: AUTH_REFUSAL_CODES,
+  optionalAuth: AUTH_REFUSAL_CODES,
+  requirePermission: [...(AUTH_REFUSAL_CODES ?? []), "auth.permission_denied"],
+};

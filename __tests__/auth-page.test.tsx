@@ -293,3 +293,120 @@ describe("AuthPage", () => {
     });
   });
 });
+
+// ── TASK-181 ─────────────────────────────────────────────────────────────────────────────────
+describe("AuthPage — following the server's answer (TASK-181)", () => {
+  const declareBirthDate = (month: string, day: string, year: string) => {
+    fireEvent.change(screen.getByLabelText("Month"), { target: { value: month } });
+    fireEvent.change(screen.getByLabelText("Day"), { target: { value: day } });
+    fireEvent.change(screen.getByLabelText("Year"), { target: { value: year } });
+    fireEvent.click(screen.getByText("Continue"));
+  };
+  const signInAs = (email: string, password = "pw") => {
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: email } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: password } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+  };
+
+  it("an unconfirmed account's sign-in shows email verification, not 'Sign-in failed'", async () => {
+    registerAuthProvider(
+      createMockAuthProvider({
+        signIn: jest.fn().mockResolvedValue({
+          success: false,
+          errorCode: "auth.email_not_verified",
+          emailVerificationRequired: true,
+        }),
+      })
+    );
+    render(<AuthPage />);
+    signInAs("new@example.com");
+    expect(await screen.findByText("Verify Your Email")).toBeDefined();
+    expect(screen.queryByText("Sign-in failed")).toBeNull();
+  });
+
+  const toVerification = async (resend: jest.Mock) => {
+    registerAuthProvider(
+      createMockAuthProvider({
+        signIn: jest.fn().mockResolvedValue({
+          success: false,
+          emailVerificationRequired: true,
+        }),
+        resendEmailVerification: resend,
+      })
+    );
+    render(<AuthPage />);
+    signInAs("new@example.com");
+    await screen.findByText("Verify Your Email");
+    fireEvent.click(screen.getByText("Resend verification code"));
+  };
+
+  it("says when a new verification code was sent", async () => {
+    const resend = jest.fn().mockResolvedValue({ success: true });
+    await toVerification(resend);
+    expect(await screen.findByText(/A new code is on its way/)).toBeDefined();
+    expect(resend).toHaveBeenCalledWith("new@example.com");
+    expect(screen.getByText(/Resend code in/)).toBeDefined();
+  });
+
+  it("shows the server's message when the code cannot be resent, and no cooldown", async () => {
+    await toVerification(
+      jest.fn().mockResolvedValue({ success: false, error: "Too many attempts." })
+    );
+    expect(await screen.findByText("Too many attempts.")).toBeDefined();
+    expect(screen.getByText("Resend verification code")).toBeDefined();
+  });
+
+  const toResetCode = async (forgot: jest.Mock, confirm?: jest.Mock) => {
+    registerAuthProvider(
+      createMockAuthProvider({
+        forgotPassword: forgot,
+        ...(confirm ? { confirmForgotPassword: confirm } : {}),
+      })
+    );
+    render(<AuthPage />);
+    fireEvent.click(screen.getByText("Forgot password?"));
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "a@example.com" },
+    });
+    fireEvent.click(screen.getByText("Send Reset Code"));
+  };
+
+  it("stays on the email step with the server's message when the code is refused", async () => {
+    await toResetCode(
+      jest.fn().mockResolvedValue({ success: false, error: "Too many requests." })
+    );
+    expect(await screen.findByText("Too many requests.")).toBeDefined();
+    expect(screen.queryByLabelText("Verification Code")).toBeNull();
+  });
+
+  it("does not show 'Password Reset' when the reset is refused (wrong code, policy)", async () => {
+    await toResetCode(
+      jest.fn().mockResolvedValue({ success: true }),
+      jest.fn().mockResolvedValue({
+        success: false,
+        error: "The code is wrong or has expired.",
+      })
+    );
+    fireEvent.change(await screen.findByLabelText("Verification Code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.change(screen.getByLabelText("New Password"), {
+      target: { value: "a-long-password-1" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm New Password"), {
+      target: { value: "a-long-password-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reset Password" }));
+    expect(await screen.findByText("The code is wrong or has expired.")).toBeDefined();
+    expect(screen.queryByText("Password Reset")).toBeNull();
+  });
+
+  it("refuses an under-13 date of birth at the age gate (no account form)", () => {
+    render(<AuthPage />);
+    fireEvent.click(screen.getByText("Create one"));
+    const year = String(new Date().getFullYear() - 9);
+    declareBirthDate("01", "15", year);
+    expect(screen.getByText(/not available yet/)).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Create Account" })).toBeNull();
+  });
+});

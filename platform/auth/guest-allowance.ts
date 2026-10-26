@@ -30,6 +30,7 @@ import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { withTenantTx } from "@/platform/data";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 export const GUEST_ALLOWANCE_KEY = "guest.translate_allowance";
 export const GUEST_ALLOWANCE_MIN = 1;
@@ -203,3 +204,19 @@ export async function enforceGuestAllowance(
     };
   }
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+
+/** What counting a guest's paid turn can refuse with. */
+export const GUEST_ALLOWANCE_REFUSAL_CODES = [
+  "auth.guest_invalid",
+  "guest.allowance_exhausted",
+  "internal.error",
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  enforceGuestAllowance: GUEST_ALLOWANCE_REFUSAL_CODES,
+};

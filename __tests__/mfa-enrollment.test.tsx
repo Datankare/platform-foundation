@@ -165,4 +165,20 @@ describe("MfaEnrollment", () => {
     );
     expect(screen.getByText("Set up two-step verification")).not.toBeDisabled();
   });
+
+  // TASK-181: a pool with authenticator MFA off answers feature.not_configured (501).
+  it("says authenticator setup is off for the pool when the feature is not configured", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 501,
+      json: async () => ({ code: "feature.not_configured", message: "Not available." }),
+    });
+    render(<MfaEnrollment onSignOut={jest.fn()} />);
+    fireEvent.click(screen.getByText("Set up two-step verification"));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /turned off for this sign-in service/
+      )
+    );
+  });
 });

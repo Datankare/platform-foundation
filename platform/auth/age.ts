@@ -98,3 +98,21 @@ export function evaluateAge(
     contentRatingLevel: 3,
   };
 }
+
+/**
+ * TASK-181 — the one switch for under-13 accounts. Parental consent (a 7-day window, consent by
+ * email link and confirmation — "email plus") is not built yet; it is planned as Batch 4. Until
+ * then an under-13 date of birth is refused everywhere it is declared — the sign-up age gate
+ * (components/auth/AgeGate.tsx), POST /api/auth/sign-up and POST /api/account/age — with
+ * `account.child_accounts_unavailable`, before any account or record exists, instead of creating an
+ * account that waits for a consent nobody can give.
+ *
+ * Batch 4 removes this constant and `isUnder13Unavailable` together with their three callers'
+ * checks (search for the function's name), when the consent flow ships.
+ */
+export const UNDER_13_ACCOUNTS_AVAILABLE = false;
+
+/** Whether this evaluated age is refused because under-13 accounts are not available yet. */
+export function isUnder13Unavailable(evaluation: AgeVerificationResult): boolean {
+  return !UNDER_13_ACCOUNTS_AVAILABLE && evaluation.age < MINOR_AGE_THRESHOLD;
+}

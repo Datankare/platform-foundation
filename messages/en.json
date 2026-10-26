@@ -8,7 +8,8 @@
       "identity_conflict": "This sign-in cannot be matched to your account. Sign out and sign in again; if that does not help, contact support.",
       "not_found": "Your account could not be found.",
       "not_provisioned": "Your account is still being set up. Try again in a moment.",
-      "restricted": "Your account cannot use this feature right now."
+      "restricted": "Your account cannot use this feature right now.",
+      "child_accounts_unavailable": "Accounts for children under 13 are not available yet. Nothing was created or saved."
     },
     "admin": {
       "config_invalid_value": "That value is not allowed for {key}.",
@@ -118,7 +119,8 @@
   },
   "screens": {
     "auth": {
-      "signing_in": "Signing you in…"
+      "signing_in": "Signing you in…",
+      "code_resent": "A new code is on its way. Check your email."
     },
     "tenancy": {
       "loading": "Loading…",
@@ -315,7 +317,8 @@
       "done": "Two-step verification is on. Sign in again to continue.",
       "sign_in_again": "Sign in again",
       "setup_failed": "Setup failed.",
-      "code_refused": "That code was not accepted."
+      "code_refused": "That code was not accepted.",
+      "not_configured": "Authenticator setup is turned off for this sign-in service. An operator must allow authenticator apps (software-token MFA) for its user pool; then try again."
     },
     "admin_console": {
       "refused": "This page is for administrators. Sign in with an account that has administrative access.",
@@ -356,6 +359,17 @@
       "unavailable": "The kill switch could not be reached just now (unavailable). Nothing was suspended; try again.",
       "failed": "Not suspended: {reason}",
       "refused": "The request was refused."
+    },
+    "refusal": {
+      "generic": "Something went wrong. Please try again.",
+      "network": "Unable to reach the server. Please check your connection.",
+      "account_status": "Account status: {status}",
+      "sign_out": "Sign out",
+      "retry_after": "You can try again in {seconds, plural, one {# second} other {# seconds}}.",
+      "retry": "Try again",
+      "sign_in": "Sign in",
+      "create_account": "Create an account",
+      "tenant_title": "This service is not available here"
     }
   }
 }

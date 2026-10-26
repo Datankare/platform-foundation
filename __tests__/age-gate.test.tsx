@@ -167,7 +167,8 @@ describe("AgeGate", () => {
     );
   });
 
-  it("calls onVerified with minor result for 10-year-old", () => {
+  // TASK-181: until parental consent ships (Batch 4) an under-13 date is refused here.
+  it("refuses a 10-year-old's date with the not-available-yet message", () => {
     const year = new Date().getFullYear() - 10;
     render(<AgeGate {...mockProps} />);
     fireEvent.change(screen.getByLabelText("Month"), {
@@ -181,13 +182,9 @@ describe("AgeGate", () => {
     });
     fireEvent.click(screen.getByText("Continue"));
 
-    expect(mockProps.onVerified).toHaveBeenCalledWith(
-      expect.objectContaining({
-        isMinor: true,
-        requiresParentalConsent: true,
-        contentRatingLevel: 1,
-      }),
-      `${year}-01-15`
+    expect(mockProps.onVerified).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /children under 13 are not available yet/
     );
   });
 

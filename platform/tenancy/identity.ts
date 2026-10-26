@@ -33,6 +33,7 @@ import {
   revokeTokenVerification,
 } from "@/platform/auth/token-verification";
 import { peekTenant } from "./context";
+import type { ErrorCode } from "@/platform/errors/registry";
 
 export type IdentityTenantRefusal =
   "tenant.mismatch" | "auth.signups_closed" | "service.unavailable";
@@ -178,3 +179,19 @@ export async function sessionTenantRefusal(
     ? apiError("service.unavailable", { params: { service: "tenants" }, request })
     : apiError(joined.code, { request });
 }
+
+// ── TASK-181: the refusals this guard can return ─────────────────────────────────────────────
+// Read by __tests__/refusal-coverage.test.ts: each route that calls a guard named here can
+// return its codes, and every screen calling that route must handle each one. The test also
+// checks this module's own apiError literals are all listed.
+
+/** What sessionTenantRefusal can answer (a session for an identity of another tenant). */
+export const SESSION_TENANT_REFUSAL_CODES = [
+  "tenant.mismatch",
+  "auth.signups_closed",
+  "service.unavailable",
+] as const satisfies readonly ErrorCode[];
+
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly ErrorCode[]>> = {
+  sessionTenantRefusal: SESSION_TENANT_REFUSAL_CODES,
+};

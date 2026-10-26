@@ -14,6 +14,8 @@ import { useAuth } from "@/platform/auth/context";
 import type { SsoProvider } from "@/platform/auth/types";
 import { useSsoProviders } from "@/components/auth/useSsoProviders";
 import { useReturnError } from "@/components/auth/useReturnError";
+import { renderMessage } from "@/platform/errors/messages";
+import { readRefusal } from "@/platform/errors/refusal";
 
 type AuthView =
   | "login"
@@ -22,6 +24,37 @@ type AuthView =
   | "mfa-challenge"
   | "new-password"
   | "email-verification";
+
+/**
+ * A guest session (ADR-050 D4): guest tokens are the platform's, minted and signed on the server —
+ * never by an auth provider in the browser, which has no signing secret. A refusal answers its
+ * own message (TASK-181: a rate limit, an unavailable service or tenant).
+ */
+async function startGuestSession(): Promise<
+  { session: Parameters<ReturnType<typeof useAuth>["setSession"]>[0] } | { error: string }
+> {
+  const res = await fetch("/api/auth/guest", {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!res.ok) return { error: (await readRefusal(res)).message };
+  const result = (await res.json().catch(() => ({}))) as {
+    token?: unknown;
+    guestId?: unknown;
+  };
+  if (typeof result.token !== "string" || typeof result.guestId !== "string") {
+    return { error: "Guest access failed" };
+  }
+  return {
+    session: {
+      accessToken: result.token,
+      userId: result.guestId,
+      email: "",
+      emailVerified: false,
+      isGuest: true,
+    },
+  };
+}
 
 /**
  * Auth page — single-page flow that switches between views.
@@ -37,6 +70,7 @@ type AuthView =
 export default function AuthPage() {
   const [view, setView] = useState<AuthView>("login");
   const [actionError, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [mfaSession, setMfaSession] = useState<string | null>(null);
   const [challengeSession, setChallengeSession] = useState<string | null>(null);
@@ -62,6 +96,7 @@ export default function AuthPage() {
 
   const clearError = () => {
     setError(null);
+    setNotice(null);
     dismissReturnError();
   };
 
@@ -87,14 +122,16 @@ export default function AuthPage() {
         return;
       }
 
-      if (!result.success) {
-        setError(result.error || "Sign-in failed");
-        return;
-      }
-
+      // An unconfirmed account answers success: false WITH emailVerificationRequired — the next
+      // step, not a failure (TASK-181: it showed "Sign-in failed").
       if (result.emailVerificationRequired) {
         setPendingEmail(email);
         setView("email-verification");
+        return;
+      }
+
+      if (!result.success) {
+        setError(result.error || "Sign-in failed");
         return;
       }
 
@@ -158,22 +195,29 @@ export default function AuthPage() {
     }
   };
 
-  const handleResendVerification = async () => {
+  const handleResendVerification = async (): Promise<boolean> => {
     clearError();
     setIsLoading(true);
     try {
       const auth = getAuthProvider();
-      await auth.resendEmailVerification(pendingEmail);
+      const result = await auth.resendEmailVerification(pendingEmail);
+      if (!result.success) {
+        setError(result.error || "Could not resend verification code.");
+        return false;
+      }
+      setNotice(renderMessage("screens.auth.code_resent"));
+      return true;
     } catch {
       /* justified */
       // Auth errors shown to user via setError
       setError("Could not resend verification code.");
+      return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleForgotPasswordSend = async (email: string) => {
+  const handleForgotPasswordSend = async (email: string): Promise<boolean> => {
     clearError();
     setIsLoading(true);
     try {
@@ -182,12 +226,15 @@ export default function AuthPage() {
 
       if (!result.success) {
         setError(result.error || "Could not send reset code");
+        return false;
       }
       setPendingEmail(email);
+      return true;
     } catch {
       /* justified */
       // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -197,7 +244,7 @@ export default function AuthPage() {
     email: string,
     code: string,
     newPassword: string
-  ) => {
+  ): Promise<boolean> => {
     clearError();
     setIsLoading(true);
     try {
@@ -205,12 +252,16 @@ export default function AuthPage() {
       const result = await auth.confirmForgotPassword(email, code, newPassword);
 
       if (!result.success) {
+        // The server's words: a wrong or expired code, the password policy, a rate limit.
         setError(result.error || "Password reset failed");
+        return false;
       }
+      return true;
     } catch {
       /* justified */
       // Auth errors shown to user via setError
       setError("An unexpected error occurred. Please try again.");
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -257,36 +308,9 @@ export default function AuthPage() {
     clearError();
     setIsLoading(true);
     try {
-      // ADR-050 D4: guest tokens are the platform's, minted and signed on the server — never by
-      // an auth provider in the browser, which has no signing secret.
-      const res = await fetch("/api/auth/guest", {
-        method: "POST",
-        credentials: "same-origin",
-      });
-      const result = (await res.json().catch(() => ({}))) as {
-        token?: unknown;
-        guestId?: unknown;
-        message?: unknown;
-      };
-
-      if (
-        !res.ok ||
-        typeof result.token !== "string" ||
-        typeof result.guestId !== "string"
-      ) {
-        setError(
-          typeof result.message === "string" ? result.message : "Guest access failed"
-        );
-        return;
-      }
-
-      setSession({
-        accessToken: result.token,
-        userId: result.guestId,
-        email: "",
-        emailVerified: false,
-        isGuest: true,
-      });
+      const guest = await startGuestSession();
+      if ("error" in guest) setError(guest.error);
+      else setSession(guest.session);
     } catch {
       /* justified */
       // Auth errors shown to user via setError
@@ -393,6 +417,7 @@ export default function AuthPage() {
           onResend={handleResendVerification}
           onBackToLogin={() => switchView("login")}
           error={error}
+          notice={notice}
           isLoading={isLoading}
         />
       )}
