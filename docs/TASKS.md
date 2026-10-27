@@ -4403,7 +4403,26 @@ translates through a session proves that path on every deploy.
 it), `auth-page` / `forgot-password-form` / `age-gate` / `admin-console-refused` / `account-age`
 (the new cases), `deploy-smoke` (the session step).
 
-_Last updated: October 26, 2026 (TASK-181 filed and fixed)_
+### TASK-182 — Formal verification of the job queue, dual control, tenant isolation and sessions
+
+| Field        | Detail                                                           |
+| ------------ | ---------------------------------------------------------------- |
+| **ID**       | TASK-182                                                         |
+| **Type**     | Assurance                                                        |
+| **Severity** | —                                                                |
+| **Phase**    | Phase 5                                                          |
+| **Target**   | After the real-user journey check and the account page (batch 5) |
+| **Status**   | Planned                                                          |
+| **Logged**   | 2026-10-26                                                       |
+
+Following Anthropic's _LLMs are making formal software verification feasible at a much larger
+scale_ (Frontier Red Team with Theorem, 2026-10-22; [ASSURANCE](ASSURANCE.md) §7 has the full
+acknowledgement): machine-checked specifications, kept in CI, for the job queue's claim protocol,
+held-action dual control, row-level tenant isolation (a model generated from `pg_policies`, checked
+with an SMT solver) and the refresh-cookie and sign-out protocol. The job queue first. Each new
+concurrent or security-critical state machine gets a specification as part of being done.
+
+_Last updated: October 26, 2026 (TASK-182 planned)_
 
 _Previously updated: October 26, 2026 (TASK-180 filed and fixed)_
 

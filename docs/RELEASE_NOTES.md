@@ -38,6 +38,10 @@ code. Consumer steps: §1b, the eight "Release candidate" rows.
   otpauth URI as a QR code in the browser (`qrcode-generator` 2.0.4, no dependencies of its own); the
   key is behind "Can't scan? Show key". The pool must allow software-token MFA (ENV_REFERENCE,
   "Cognito pool shape"). Consumer step: add `qrcode-generator` at `2.0.4` to the app's dependencies.
+- **Formal verification planned (TASK-182, ASSURANCE §7).** Following Anthropic's research on
+  LLM-written formal proofs (Frontier Red Team with Theorem, 2026-10-22), with the authors
+  acknowledged: specifications checked in CI for the job queue, dual control, tenant isolation and
+  sessions. Nothing is formally verified yet; §7 says so.
 - **The sync template's version guard (TASK-179).** `docs/templates/sync-from-foundation.yml`
   now syncs only a strictly newer platform (`docs/templates/sync-version-guard.sh`, copied to the
   app's `.github/scripts/`), so a scheduled pull request never syncs an older `main` over a

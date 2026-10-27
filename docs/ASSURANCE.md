@@ -150,3 +150,39 @@ app" below means a private one such as Playform. Repository settings were read o
 Every workflow also runs with least privilege (`permissions: contents: read` unless a job needs
 more), pins each third-party action to a commit SHA, and checks out with
 `persist-credentials: false`, so no later step can reuse the token.
+
+## 7. Formal verification — planned (TASK-182)
+
+**Acknowledgement.** This plan follows _LLMs are making formal software verification feasible at
+a much larger scale_ (Anthropic, Frontier Red Team, in collaboration with Theorem, 22 October 2026 —
+<https://www.anthropic.com/research/formal-verification>), by Keane Lucas, Aengus Lynch, Luna Tong,
+Luke Champine, Zygi Straznickas, Dino Distefano, Harshikaa Agrawal, Evyatar Ben Asher, Ava Howell,
+Sami Jawhar, Chris Rohlf, Nickolai Zeldovich, Nicholas Carlini, Rajashree Agrawal and Jason Gross.
+The article shows a model writing machine-checked proofs (in Rocq) at a scale that used to take
+years of expert effort — starting from existing fuzz tests and proving that compiled C and Rust
+libraries never crash for any input under a bound — and is explicit that a proof is only as good as
+its specification and its model of the machine.
+
+**Where the platform stands.** Nothing here is formally verified today. Every check in §1–§2 is a
+test: hostile cases, property tests (5,000 generated cases each), fuzz and monkey runs, migration
+replay, and independent adversarial reviews. Tests find bugs; they do not prove their absence.
+
+**What transfers.** The article's own target — crash-freedom of compiled native code — is not this
+platform's risk: it is TypeScript on Node and SQL on Postgres. Its lesson does transfer: proofs and
+exhaustive model checking are now cheap enough to write for the properties that matter most, and to
+keep in CI like tests. The planned targets, each a specification checked on every commit:
+
+| Target                                                    | Property                                                                                     | Method                                                                                                                                                              |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Job queue — claim, lease, retry, cancel (`platform/jobs`) | A job never runs on two workers at once; no job is lost; no claim deadlocks                  | A TLA+ or Quint model of the claim protocol, every interleaving model-checked                                                                                       |
+| Held actions — dual control (ADR-040)                     | Nothing executes without two distinct approvers; no approval or run token is used twice      | TLA+ / Quint state machine                                                                                                                                          |
+| Tenant isolation — row-level security (ADR-053)           | No request under `app_tenant` reads or writes another tenant's row, for any table and policy | A model generated from the live `pg_policies` and table grants, checked with an SMT solver; the generator runs in CI and on each database in `migration-parity.yml` |
+| Session — refresh cookie and sign-out (ADR-012 D11)       | A forged, swapped or replayed cookie is never accepted; only a proven subject is revoked     | A small protocol model                                                                                                                                              |
+
+**How it runs.** Each specification lives in the repository beside the code it describes and is
+checked in CI. A change to one of these state machines keeps its specification passing, and a new
+concurrent or security-critical state machine gets a specification as part of being done — not as
+a separate effort afterwards. Each specification states its assumptions (what is trusted: Postgres
+isolation semantics, the cache, the identity provider), as the article insists. The job queue comes
+first: the claim deadlock and claim-cost failures CI found in October 2026 are the kind exhaustive
+model checking finds before a test does.
