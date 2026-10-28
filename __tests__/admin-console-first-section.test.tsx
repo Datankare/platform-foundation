@@ -144,7 +144,15 @@ describe("the console's first panel (TASK-184)", () => {
     render(<AdminPage />);
     await waitFor(() => expect(panelReads()).toEqual(["/api/admin/approvals"]));
     await settle();
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("approvals");
+    // TASK-185: a proper title from the one source (it read the raw id, "approvals").
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/^Approvals$/);
+    // No example command it cannot run: Approvals has none, so the generic prompt, and no
+    // second, fixed hint line under the command bar.
+    expect(screen.getByRole("textbox")).toHaveAttribute(
+      "placeholder",
+      renderMessage("screens.admin_console.hints.generic")
+    );
+    expect(screen.queryByText(/Try:/)).toBeNull();
     expect(requested()).not.toContain("/api/admin/roles");
     expect(requested()).not.toContain("/api/admin/users");
     expect(panelReads()).toEqual(["/api/admin/approvals"]);

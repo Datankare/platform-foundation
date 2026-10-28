@@ -120,6 +120,16 @@ export async function tokenSettings(): Promise<TokenSettings> {
   }
 }
 
+/**
+ * A payload as remembered, or as answered from memory: never marked as the provider's fresh
+ * answer, whatever the stored value or the provider said (types.ts addressFresh, TASK-185).
+ */
+function asRemembered(payload: TokenPayload): TokenPayload {
+  if (!("addressFresh" in payload)) return payload;
+  const { addressFresh: _fresh, ...rest } = payload;
+  return rest as TokenPayload;
+}
+
 /** The cache key of a token: a hash of it, never the token. */
 export function tokenKey(token: string): string {
   return `auth:token:v1:${createHash("sha256").update(token).digest("hex")}`;
@@ -181,7 +191,8 @@ export class TokenVerifier {
       remembered.payload.sub === subject
         ? remembered
         : undefined;
-    if (usable && now < usable.verifiedAt + freshSeconds * 1000) return usable.payload;
+    if (usable && now < usable.verifiedAt + freshSeconds * 1000)
+      return asRemembered(usable.payload);
 
     let asked = stamp;
     let answered = await this.flight(key, asked, ask);
@@ -205,12 +216,14 @@ export class TokenVerifier {
       )
         await this.remember(
           key,
-          answered.payload,
+          asRemembered(answered.payload),
           asked,
           exp,
           freshSeconds + graceSeconds
         );
-      return answered.payload;
+      // The provider's answer to this request (TASK-185): the only kind that may move an
+      // account's address to another (types.ts addressFresh).
+      return { ...answered.payload, addressFresh: true };
     }
     if (answered.kind === "invalid") {
       if (remembered) await this.forget(key);
@@ -234,7 +247,7 @@ export class TokenVerifier {
           route: "platform/auth/token-verification",
         }
       );
-      return standIn.payload;
+      return asRemembered(standIn.payload);
     }
     throw new TokenVerificationUnavailableError(answered.reason);
   }

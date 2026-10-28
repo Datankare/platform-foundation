@@ -34,12 +34,71 @@ describe("paging", () => {
     );
   });
 
-  it("property: a like term carries no wildcard or control character", () => {
+  it("property: a like term carries no control character and at most 100 characters of the term", () => {
     fc.assert(
       fc.property(fc.string({ maxLength: 300 }), (raw) => {
         const t = likeTerm(raw);
-        return t.length <= 100 && !/[%_*\\\p{Cc}]/u.test(t);
+        return !/\p{Cc}/u.test(t) && [...unescape(t)].length <= 100;
       })
     );
   });
+
+  // TASK-185 (pre-existing): the wildcards were stripped, so `john_doe` could not be found.
+  it("property: as the pattern `%term%`, a term matches exactly the texts that contain it", () => {
+    fc.assert(
+      fc.property(
+        fc.string({
+          maxLength: 20,
+          unit: fc.constantFrom("a", "b", "%", "_", "\\", " ", "x"),
+        }),
+        fc.string({
+          maxLength: 30,
+          unit: fc.constantFrom("a", "b", "%", "_", "\\", " ", "x"),
+        }),
+        (raw, text) => {
+          const term = likeTerm(raw);
+          if (!term) return true;
+          const literal = raw.trim();
+          return like(`%${term}%`, text) === text.includes(literal);
+        }
+      )
+    );
+  });
+
+  it.each([
+    ["john_doe", "john\\_doe"],
+    ["50%", "50\\%"],
+    ["a\\b", "a\\\\b"],
+    ["  spaced  ", "spaced"],
+    ["x\u0000y\u001f", "xy"],
+    ["*", "*"],
+  ])("likeTerm(%p) is %p", (raw, expected) => {
+    expect(likeTerm(raw)).toBe(expected);
+  });
+
+  it("matches john_doe, not johnXdoe; 50% not 500", () => {
+    expect(like(`%${likeTerm("john_doe")}%`, "john_doe")).toBe(true);
+    expect(like(`%${likeTerm("john_doe")}%`, "johnXdoe")).toBe(false);
+    expect(like(`%${likeTerm("50%")}%`, "save 50% now")).toBe(true);
+    expect(like(`%${likeTerm("50%")}%`, "500")).toBe(false);
+  });
 });
+
+/** Postgres LIKE with the default escape character (backslash), as a test oracle. */
+function like(pattern: string, text: string): boolean {
+  let re = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === "\\" && i + 1 < pattern.length) {
+      re += pattern[++i]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    } else if (c === "%") re += "[\\s\\S]*";
+    else if (c === "_") re += "[\\s\\S]";
+    else re += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`, "u").test(text);
+}
+
+/** A term with its escapes removed: the text it matches. */
+function unescape(term: string): string {
+  return term.replace(/\\([\\%_])/g, "$1");
+}

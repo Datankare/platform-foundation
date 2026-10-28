@@ -23,7 +23,7 @@ import { initAuth } from "./auth-init";
 import { getAuthProvider } from "./config";
 import { getGlobalPasswordPolicy, passwordRuleViolations } from "./password-policy";
 import type { AuthProvider } from "./provider";
-import { recordAuthEvent } from "./auth-events";
+import { recordAuthEvent, recordLastSignIn } from "./auth-events";
 import { auditableAccountId } from "./account-identity";
 import {
   getPreviousRefreshCookieKey,
@@ -278,6 +278,8 @@ export async function sessionResponse(
       }
       return apiError("service.unavailable", { params: { service: "audit" }, request });
     }
+    // The account's last sign-in (TASK-185), best effort: never a reason to refuse the session.
+    await recordLastSignIn(actorId, method);
     const {
       error: _error,
       refreshToken,

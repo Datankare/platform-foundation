@@ -34,6 +34,9 @@ interface AdminShellProps {
   onSectionChange?: (section: AdminSection) => void;
 }
 
+/** A section's title from the catalog (screens.admin_console.sections). */
+const section = (id: string) => renderMessage(`screens.admin_console.sections.${id}`);
+
 const NAV_ITEMS: {
   section: AdminSection;
   label: string;
@@ -42,55 +45,55 @@ const NAV_ITEMS: {
 }[] = [
   {
     section: "users",
-    label: "Users",
+    label: section("users"),
     icon: "👥",
     permission: "admin_manage_users",
   },
   {
     section: "roles",
-    label: "Roles",
+    label: section("roles"),
     icon: "🛡️",
     permission: "admin_manage_roles",
   },
   {
     section: "entitlements",
-    label: "Entitlements",
+    label: section("entitlements"),
     icon: "🎫",
     permission: "admin_manage_entitlements",
   },
   {
     section: "audit",
-    label: "Audit Log",
+    label: section("audit"),
     icon: "📋",
     permission: "admin_view_audit",
   },
   {
     section: "approvals",
-    label: "Approvals",
+    label: section("approvals"),
     icon: "✅",
     permission: "can_access_admin",
   },
   {
     section: "dual-control",
-    label: "Dual-Control",
+    label: section("dual-control"),
     icon: "🔒",
     permission: "config_view",
   },
   {
     section: "password-policy",
-    label: "Password Policy",
+    label: section("password-policy"),
     icon: "🔑",
     permission: "admin_manage_config",
   },
   {
     section: "platform-config",
-    label: "Platform Config",
+    label: section("platform-config"),
     icon: "⚡",
     permission: "admin_manage_config",
   },
   {
     section: "agent-registry",
-    label: "Trusted Agents",
+    label: section("agent-registry"),
     icon: "🤖",
     permission: "admin_manage_agents",
   },
@@ -103,37 +106,37 @@ const NAV_ITEMS: {
   },
   {
     section: "per-account",
-    label: "Per-Account",
+    label: section("per-account"),
     icon: "🔒",
     permission: "admin_manage_account_restrictions",
   },
   {
     section: "approval-policy",
-    label: "Approval Policy",
+    label: section("approval-policy"),
     icon: "🤝",
     permission: "admin_manage_approval_policy",
   },
   {
     section: "capabilities",
-    label: "Capabilities",
+    label: section("capabilities"),
     icon: "🧩",
     permission: "admin_view_audit",
   },
   {
     section: "capability-mapping",
-    label: "Capability Map",
+    label: section("capability-mapping"),
     icon: "🗺️",
     permission: "admin_manage_config",
   },
   {
     section: "tenant",
-    label: "Tenant",
+    label: section("tenant"),
     icon: "🏢",
     permission: "can_access_admin",
   },
   {
     section: "tenants",
-    label: "Tenants (operators)",
+    label: section("tenants"),
     icon: "🌐",
     permission: "platform_operate",
   },
@@ -144,6 +147,15 @@ const NAV_ITEMS: {
     permission: "platform_operate",
   },
 ];
+
+/**
+ * A section's title: the one source for the shell's navigation and the section's heading
+ * (TASK-185 — the heading fell back to the raw section id, "approvals", for every section the
+ * page's own title table did not list).
+ */
+export function sectionTitle(id: AdminSection): string {
+  return NAV_ITEMS.find((item) => item.section === id)?.label ?? id;
+}
 
 /**
  * The sections `hasPermission` allows, in the console's order: the one mapping from section to

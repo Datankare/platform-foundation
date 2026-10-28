@@ -35,10 +35,18 @@ export function pageParams(params: URLSearchParams, options: PageOptions = {}): 
   };
 }
 
-/** A search term safe to use as a LIKE pattern value: wildcards and control characters removed. */
+/**
+ * A search term to use as a LIKE pattern value (`ilike '%' || $1 || '%'`, bound): control
+ * characters removed, trimmed, at most `maxLength` characters of the term itself, then each LIKE
+ * metacharacter — `%`, `_` and the escape character `\` (Postgres's default) — escaped with a
+ * backslash, so it matches itself and nothing else. It used to strip them instead (TASK-185,
+ * pre-existing): `john_doe` searched for `johndoe` and found neither account. `*` was stripped
+ * too, a leftover of the PostgREST filter syntax (audit B-16); it is ordinary text in LIKE.
+ * '' means no search.
+ */
 export function likeTerm(raw: string | null, maxLength = 100): string {
-  return (raw ?? "")
-    .replace(/[\p{Cc}%_*\\]/gu, "")
-    .trim()
-    .slice(0, maxLength);
+  return [...(raw ?? "").replace(/\p{Cc}/gu, "").trim()]
+    .slice(0, maxLength)
+    .join("")
+    .replace(/[\\%_]/g, (c) => "\\" + c);
 }

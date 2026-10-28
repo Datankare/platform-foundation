@@ -14,11 +14,19 @@
  * No email address or password is ever recorded: the actor is the account's id, when known.
  * Without a database (mock and CI runs) nothing persists, and nothing is refused for it.
  *
+ * The last sign-in (TASK-185): each sign-in that hands out a session (password, MFA, new
+ * password, SSO — not a refresh, which is the same session going on) also sets the account's
+ * users.last_login_at, best effort — one indexed update per sign-in; a failure is logged and the
+ * session stands. A first sign-in comes before the account's row exists: provisioning takes the
+ * time from this event's record (user-provisioning.ts). Migration 057 fills the column from the
+ * records kept before this.
+ *
  * @module platform/auth
  */
 
 import { isIP } from "node:net";
-import { hasDatabase } from "@/platform/data";
+import { hasDatabase, withTenantTx } from "@/platform/data";
+import { logger } from "@/lib/logger";
 import { recordAudit, type AuditEntry } from "@/platform/auth/audit";
 import { getClientIp } from "@/platform/rate-limit/client-ip";
 
@@ -60,5 +68,37 @@ export async function recordAuthEvent(
     return true;
   } catch {
     return false;
+  }
+}
+
+/** How a session was obtained that counts as signing in (a refresh does not). */
+const SIGN_IN_METHODS: ReadonlySet<string> = new Set([
+  "password",
+  "mfa",
+  "new_password",
+  "sso",
+]);
+
+/**
+ * Set the account's last sign-in (users.last_login_at) to now, for a sign-in by `method`. Best
+ * effort, never throws; nothing for a refresh, an unknown account, or no database.
+ */
+export async function recordLastSignIn(
+  accountId: string | undefined,
+  method: string
+): Promise<void> {
+  if (!accountId || !SIGN_IN_METHODS.has(method) || !hasDatabase()) return;
+  try {
+    await withTenantTx((tx) =>
+      tx.query(
+        "update users set last_login_at = now() where id = $1::uuid and deleted_at is null",
+        [accountId]
+      )
+    );
+  } catch (err) {
+    logger.warn("The account's last sign-in could not be recorded", {
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/auth/auth-events",
+    });
   }
 }

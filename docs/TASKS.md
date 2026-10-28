@@ -4135,7 +4135,8 @@ the token, to `syncEmailVerification` (`platform/auth/email-verification.ts`): f
 the claim's `emailVerified` is exactly `true` for the same stored address — one conditional
 update with its `profile_updated` (`field: email_verified`) record in one transaction; nothing
 otherwise, never a downgrade, never a write per request, a failure logged and retried next
-request. `users.email` is never rewritten (ban carry-over and re-link matching depend on it).
+request. `users.email` is never rewritten (ban carry-over and re-link matching depend on it;
+superseded by TASK-185: a missing or changed address is now recorded from the same trusted claim).
 The re-link rule: the current pool's verified user is the evidence for the address's one
 pre-move account, whatever its old flag (`accountUnverified` in the plan and record); the flag
 breaks ties; several unverified pre-move accounts need `--unverified-account`;
@@ -4523,7 +4524,142 @@ context: Sign Out posts `/api/auth/sign-out` with the bearer token, clears the s
 legacy refresh token and session cookie, and only then leaves for `/auth`; with the server's
 sign-out unreachable or answering 500 the session still ends and the console still leaves.
 
-_Last updated: October 27, 2026 (TASK-184 filed and fixed)_
+### TASK-185 — The admin console's Users screen: addresses never recorded, and a list to act on
+
+| Field        | Detail                                                       |
+| ------------ | ------------------------------------------------------------ |
+| **ID**       | TASK-185                                                     |
+| **Type**     | Defect (auth — the recorded identity) and feature (admin UI) |
+| **Severity** | High (auth, admin)                                           |
+| **Phase**    | Phase 5                                                      |
+| **Target**   | v6.0.0 (RC)                                                  |
+| **Status**   | Fixed on develop (v6.0.0 RC); migrations 056 and 057         |
+| **Logged**   | 2026-10-28 (the owner's live test of Users, playform-dev)    |
+
+**What was wrong.** (1) **Addresses never recorded.** `users.email` was written only when
+provisioning created the row, from the profile its caller passed; nothing filled it afterwards.
+The TASK-176 sync (`platform/auth/email-verification.ts`) wrote only `email_verified` and, by
+design, never `email` — "not when the row has none". A row provisioned without an address (a
+first request whose caller passed no profile — `isInGoodStanding` from `/api/auth/guest`, a
+consumer's own `checkAccountStatus(userId, feature)` — or a token whose address was empty, such
+as a federated sign-in before the pool mapped its address) kept `email` NULL for good, and also
+escaped the ban carry-over (A-11), which matches by address. On playform-dev every account made by
+a first sign-in on the new pool and every Google sign-in listed "—". Review eval case 19.
+(2) **The Users screen** showed only email, name, raw role and a locale date: no standing, no
+verification, no last sign-in (`users.last_login_at` existed and nothing wrote it), no way to open
+an account or act on it, no server sort. (3) **Hints and headings.** The command bar showed a
+second, fixed hint line ("Create a moderator role with can_play and admin_view_audit") under every
+section, to roles that cannot create a role, and a section the page's own title table did not
+list was headed by its raw id ("approvals"). (4) **Pre-existing, found in review:**
+`lib/pagination.ts likeTerm` stripped `%`, `_` and `\` from a search instead of escaping them, so
+`john_doe` searched for `johndoe` and found neither.
+
+**Fix.**
+
+- **The address follows the provider** (`email-verification.ts`, ADR-012 amendment TASK-185,
+  superseding D5a): from a trusted verified claim only (`emailVerified` exactly true; the pool
+  itself or providers all in `AUTH_TRUSTED_EMAIL_IDPS`, default Google — never Microsoft Entra ID
+  or a token that does not say), a missing address is recorded, verified; a changed one too, but
+  only on an active or warned account and only from the provider's own answer to that request
+  (`TokenPayload.addressFresh`, set by `token-verification.ts` on a GetUser answered now, never on
+  a remembered verification or an outage stand-in — two devices whose remembered answers differ
+  would otherwise flip the address between them for the cache window). A banned account's address
+  is never moved (the ban follows it), a restricted or suspended one waits, an erased one is never
+  written. The ban carry-over applies to the recorded address (`banFollowsAddress`, shared with
+  provisioning). One conditional update naming the value read, with its `profile_updated` record
+  (`field: email`, `change: absent | changed`, never the address) in one transaction; best effort.
+  It runs on every request through `requireActor` and on the admin console's
+  `GET /api/admin/session` (staff requests otherwise go through `requireAdmin`).
+  `isInGoodStanding` takes the token's profile and the guest route passes it, so a row it first
+  provisions has its address. No administrative backfill: an account whose person signs in again
+  through a trusted, verifying provider fills itself; one that never signs in again keeps none.
+- **The last sign-in is recorded** — cheap and exact: each sign-in that hands out a session
+  (password, MFA, new password, SSO; not a refresh) sets `last_login_at`, best effort
+  (`auth-events.ts recordLastSignIn`); provisioning takes a first sign-in's time from its
+  `login_success` record (written before the row existed); migration 057 fills the column once
+  from the sign-ins the audit log already holds.
+- **`GET /api/admin/users`**: `status` (the guard's reading: an expired restriction or suspension
+  is active; `deleted` for an erased account awaiting its purge) with `statusUntil`,
+  `emailVerified`, `lastSignInAt`, `roleId`, `roleDisplayName` and the page's current
+  `entitlements` (unrevoked, unexpired, of an active group; one bounded query); `sort=created|
+last_sign_in`, `dir=desc|asc` — one of four fixed statements chosen by name, anything else
+  `request.invalid_value`; `page: { limit, offset, hasMore }` from one row of look-ahead (no
+  count). Migration 056 indexes both orders, `(tenant_id, created_at desc, id)` and `(tenant_id,
+last_login_at desc nulls last, id)`; the ascending statements break ties by `id desc`, so a
+  backward index scan serves them with no sort. **Search is a bounded scan of one tenant**, not
+  indexed: as the request role, under row-level security, `ilike` (not leakproof) is applied
+  after the tenant policy, so a trigram index is never used (measured: used only by the owner
+  role); it is bounded by the statement timeout (`DATABASE_STATEMENT_TIMEOUT_MS`), the page size
+  and the offset cap (900). `likeTerm` now escapes `%`, `_` and `\`.
+- **The Users screen** (`components/admin/UsersPanel.tsx`, replacing `UsersDataView`): search,
+  sort and paging on the server (paging off while a page is read; a refused re-read hides the rows
+  read before); status, verified, created and last sign-in columns; a display name falls back to
+  the address, then "—"; a missing address reads "Unknown (never signed in since <created>)" only
+  when no sign-in is recorded — an account that signs in without one reads "Unknown: address not
+  received from the sign-in provider (last sign-in <date>)"; roles are readable ("Super admin")
+  with the stored name in a tooltip and the detail panel; dates "26 Oct 2026". A row opens a
+  detail panel (focus moves to its heading; the row is `aria-current`; closing returns focus to the
+  row) with id, address, name, role, stored role name, status, verified, created, last sign-in,
+  entitlements, and the actions the admin's permissions allow, from `USER_ROW_ACTION_PERMISSIONS`
+  (`tool-permissions.ts` — the matrix test checks each against its route's guard): change role
+  (`PATCH /api/admin/users`; a 202 `held` is shown as "Held for approval", never as done) and erase
+  account data (`POST /api/admin/gdpr`, after an `alertdialog` confirmation that takes focus and
+  returns it to Erase). Neither is offered on the admin's own row or a `super_admin` row (the
+  routes refuse both); the panel says why. Every refusal is shown by its code through the shared
+  handler.
+- **Hints and headings.** The second hint line is gone; each section's examples are derived from
+  the server's permission map (`components/admin/section-hints.ts`: `toolPermission`, and a
+  search's table permission) and an example the role cannot run is not offered — the moderator
+  sees the generic prompt. Every section's heading and navigation label come from one source,
+  `sectionTitle` in `AdminShell` (`screens.admin_console.sections`).
+
+**Left out, and why.** Suspend / restore: no route changes an account's standing outside
+moderation decisions, so no action is shown (the panel says so). Authenticator enrolled: the
+platform does not record it (`users.mfa_enabled` is never written; the pool holds it) — not shown
+rather than faked. "Identity from a previous pool": not determinable — `users.cognito_sub` does not
+say which pool issued it, and only the pool can answer, with operator credentials
+(`identity-directory.ts findBySub`) — so not shown.
+
+**Review round 1 (two independent reviewers).** Important: trigram indexes unusable under RLS —
+dropped, search documented as a bounded scan; 056's index locks held through the audit-log
+backfill — the backfill is 057, its own transaction (measured: 056 0.19 s at 100,000 accounts; 057
+4.5 s at 2,000,000 `login_success` rows and 100,000 accounts (about 1 s per 440,000 rows; 2 vCPU, Postgres 16)); the address could flip between two cached answers — the `addressFresh` flag;
+"never signed in" could be false — the two texts above; focus management — as above. Nits fixed:
+ascending tie-breaks, the re-link refusal's stale text, a search test that could not fail, the
+role choice following a re-read, the same-role answer neutral, loading and stale rows, test
+titles, actions hidden where refused, an unused catalog key, the live check made to compare with
+the permission map. Pre-existing: `likeTerm` (above). Playform's Journey C added (an `admin` test
+account, read-only).
+
+**Owner steps.** Migrations 056, then 057, in the SQL Editor
+([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), before the code. The two old-pool
+staff accounts (created 2026-06-07) can never sign in again: change the `admin` one's role in the
+console (held for a second admin's approval); the `super_admin` one can change only in the
+database (ADR-013) — the owner's decision.
+
+**Tests.** `__tests__/token-verification.test.ts` (only an answer asked now is `addressFresh`; never
+stored, never from memory or a stand-in); `platform/auth/__tests__/email-verification.test.ts` (the
+rule: absent, changed per status and freshness, banned kept, untrusted and unverified never, not
+an address, erased never, the update's own checks, ban carried, failures);
+`__tests__/db/email-verification.db.test.ts` (on Postgres: filled once and audited without the
+address, never from an unverified or untrusted claim, two devices never flip it, a banned holder's
+address bans the account, concurrent requests write once, an erased account untouched; a first
+sign-in becomes the new account's last sign-in, a refresh does not count);
+`__tests__/db/admin-tenant-data.db.test.ts` (status, verification, sign-in and active entitlements
+per row; both sorts and directions; look-ahead paging; limit and offset bounds; a hostile
+`sort`/`dir` refused by name; a hostile term bound as text; `_` and `%` match themselves; a
+moderator's role change and an admin's erasure refused by the routes);
+`__tests__/admin-list-search.test.ts` (`likeTerm` against a LIKE oracle);
+`__tests__/admin-users-panel.test.tsx` (display and the two Unknown texts, search/sort/paging,
+loading, stale rows, the detail panel, focus, `aria-current`, the alertdialog, actions only with
+their permission and never on the own or a super_admin row, held shown as held, every platform
+refusal code for the list, the role change and the erasure); `__tests__/admin-section-hints.test.ts`;
+`__tests__/admin-authorization-matrix.test.ts`; `__tests__/admin-session.test.ts`,
+`__tests__/guest-continuation.test.ts`; the replay checks 056 and 057.
+
+_Last updated: October 28, 2026 (TASK-185 filed and fixed)_
+
+_Previously updated: October 27, 2026 (TASK-184 filed and fixed)_
 
 _Previously updated: October 27, 2026 (TASK-183 — the AI-engineering review process)_
 

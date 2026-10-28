@@ -16,6 +16,11 @@ jest.mock("@/platform/auth/account-status-guard", () =>
 jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
+const mockSync = jest.fn(async (..._args: unknown[]) => "unchanged");
+jest.mock("@/platform/auth/email-verification", () => ({
+  ...jest.requireActual("@/platform/auth/email-verification"),
+  syncAccountAddress: (...a: unknown[]) => mockSync(...a),
+}));
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req",
@@ -57,5 +62,33 @@ describe("GET /api/admin/session", () => {
     const res = await get(caller);
     expect(res.status).toBe(status);
     expect((await res.json()).code).toBe(code);
+  });
+
+  // TASK-185: opening the console keeps the admin's own address in step with the provider.
+  it("keeps the admin's address in step: the sync gets the verified identity, once", async () => {
+    mockSync.mockClear();
+    const res = await get("admin");
+    expect(res.status).toBe(200);
+    expect(mockSync).toHaveBeenCalledTimes(1);
+    const [subject, claim] = mockSync.mock.calls[0]!;
+    expect(subject).toBe(CALLERS.admin.sub);
+    expect(claim).toMatchObject({ sub: CALLERS.admin.sub });
+  });
+
+  it("a sync that fails never refuses the console", async () => {
+    mockSync.mockClear();
+    mockSync.mockResolvedValueOnce("failed");
+    expect((await get("moderator")).status).toBe(200);
+  });
+
+  it.each([
+    "anonymous",
+    "free",
+    "suspended_super_admin",
+    "password_only_super_admin",
+  ] as const)("a refused caller (%s) writes nothing", async (caller) => {
+    mockSync.mockClear();
+    await get(caller);
+    expect(mockSync).not.toHaveBeenCalled();
   });
 });

@@ -248,8 +248,10 @@ export async function requireActor(
     // Not retryable (review 15 L4): account.not_provisioned told the client to retry.
     return { error: apiError("account.identity_conflict", { request }) };
   }
-  // The address the provider verified (TASK-176): users.email_verified brought up to date —
-  // false → true for the same address only, written once (compared against the row just read).
+  // The address the provider verified (TASK-176, TASK-185): users.email_verified brought up to
+  // date, and a missing or changed address recorded — from a trusted verified claim only, never
+  // moving a banned account's address; written once per change (compared against the row just
+  // read).
   if (account.kind === "bound" && address)
     await syncEmailVerification(account.accountId, address, auth.user);
   return {

@@ -1286,6 +1286,90 @@ if [ "$before" != "$after" ]; then
   exit 1
 fi
 
+step "056: the Users list's sort indexes (no search index); applied again changes nothing"
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'users'
+                  AND indexname = 'users_tenant_created_idx'
+                  AND indexdef ILIKE '%(tenant_id, created_at DESC, id)%') THEN
+    RAISE EXCEPTION '056: users_tenant_created_idx is missing or not on (tenant_id, created_at desc, id)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'users'
+                  AND indexname = 'users_tenant_last_login_idx'
+                  AND indexdef ILIKE '%(tenant_id, last_login_at DESC NULLS LAST, id)%') THEN
+    RAISE EXCEPTION '056: users_tenant_last_login_idx is missing or not on (tenant_id, last_login_at desc nulls last, id)';
+  END IF;
+  -- No trigram index: under row-level security the request role cannot use one (see 056).
+  IF EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'users'
+              AND indexdef ILIKE '%gin_trgm_ops%') THEN
+    RAISE EXCEPTION '056: a trigram index on users is not expected';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.applied_migrations
+                  WHERE filename = '056_users_list_indexes.sql') THEN
+    RAISE EXCEPTION '056 is not recorded in applied_migrations';
+  END IF;
+END $$;
+SQL
+ix_sql="SELECT string_agg(indexname || ':' || indexdef, '|' ORDER BY indexname) FROM pg_indexes WHERE tablename = 'users'"
+before="$(snapshot)$("${PSQL[@]}" -At -c "$ix_sql")"
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/056_users_list_indexes.sql" >/dev/null 2>&1 \
+  || { echo "✗ 056 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/056_users_list_indexes.sql" >/dev/null; exit 1; }
+after="$(snapshot)$("${PSQL[@]}" -At -c "$ix_sql")"
+if [ "$before" != "$after" ]; then
+  echo "✗ applying 056 a second time changed the database:"
+  diff <(echo "$before") <(echo "$after") || true
+  exit 1
+fi
+
+step "057: last sign-in filled from the record (latest non-refresh, never lowered); applied again changes nothing"
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+DECLARE t uuid; a uuid := gen_random_uuid(); b uuid := gen_random_uuid();
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.applied_migrations
+                  WHERE filename = '057_users_last_login_backfill.sql') THEN
+    RAISE EXCEPTION '057 is not recorded in applied_migrations';
+  END IF;
+  SELECT id INTO t FROM public.tenants ORDER BY id LIMIT 1;
+  INSERT INTO public.users (id, cognito_sub, role_id, tenant_id, last_login_at)
+  SELECT a, 'replay-057-a', r.id, t, NULL FROM public.roles r WHERE r.is_default LIMIT 1;
+  INSERT INTO public.users (id, cognito_sub, role_id, tenant_id, last_login_at)
+  SELECT b, 'replay-057-b', r.id, t, now() FROM public.roles r WHERE r.is_default LIMIT 1;
+  INSERT INTO public.audit_log (tenant_id, action, actor_id, details, created_at) VALUES
+    (t, 'login_success', a, '{"method":"password"}', now() - interval '2 days'),
+    (t, 'login_success', a, '{"method":"refresh"}', now() - interval '1 day'),
+    (t, 'login_success', b, '{"method":"sso"}', now() - interval '3 days');
+END $$;
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/057_users_last_login_backfill.sql" >/dev/null
+"${PSQL[@]}" -At <<'SQL' >/dev/null
+DO $$
+DECLARE a_at timestamptz; b_at timestamptz;
+BEGIN
+  SELECT last_login_at INTO a_at FROM public.users WHERE cognito_sub = 'replay-057-a';
+  SELECT last_login_at INTO b_at FROM public.users WHERE cognito_sub = 'replay-057-b';
+  IF a_at IS NULL OR a_at > now() - interval '47 hours' THEN
+    RAISE EXCEPTION '057: last_login_at is not the latest non-refresh sign-in (got %)', a_at;
+  END IF;
+  IF b_at < now() - interval '1 hour' THEN
+    RAISE EXCEPTION '057: a later last_login_at was lowered (got %)', b_at;
+  END IF;
+END $$;
+SQL
+ll_sql="SELECT string_agg(id::text || ':' || coalesce(last_login_at::text, '-') || ':' || updated_at::text, ',' ORDER BY id) FROM public.users"
+before="$(snapshot)$("${PSQL[@]}" -At -c "$ll_sql")"
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/057_users_last_login_backfill.sql" >/dev/null 2>&1 \
+  || { echo "✗ 057 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/057_users_last_login_backfill.sql" >/dev/null; exit 1; }
+after="$(snapshot)$("${PSQL[@]}" -At -c "$ll_sql")"
+if [ "$before" != "$after" ]; then
+  echo "✗ applying 057 a second time changed the database:"
+  diff <(echo "$before") <(echo "$after") || true
+  exit 1
+fi
+"${PSQL[@]}" -At -c "DELETE FROM public.audit_log WHERE actor_id IN (SELECT id FROM public.users WHERE cognito_sub LIKE 'replay-057-%')" \
+  -c "DELETE FROM public.users WHERE cognito_sub LIKE 'replay-057-%'" >/dev/null
+
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —
 # given here for the check only, and taken away again.

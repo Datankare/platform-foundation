@@ -25,6 +25,7 @@ import { logger } from "@/lib/logger";
 import { getConfig } from "@/platform/auth/platform-config";
 import { withTenantTx } from "@/platform/data";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import type { TokenPayload } from "@/platform/auth/types";
 import type { ErrorCode } from "@/platform/errors/registry";
 
 export type { VerifiedAdmin } from "@/platform/auth/role-governance";
@@ -56,7 +57,16 @@ export async function staffMfaRequired(): Promise<boolean> {
 }
 
 export type AdminResult =
-  | { readonly admin: VerifiedAdmin; readonly error?: never }
+  | {
+      readonly admin: VerifiedAdmin;
+      /**
+       * What verified the request (the identity provider's answer for the token); absent for the
+       * development bypass. The console's session read keeps the account's address in step from
+       * it (TASK-185).
+       */
+      readonly user?: TokenPayload;
+      readonly error?: never;
+    }
   | { readonly admin?: never; readonly error: NextResponse };
 
 function unavailable(request: NextRequest, err: unknown): NextResponse {
@@ -136,6 +146,7 @@ export async function requireAdmin(
       roleName: effective.roleName,
       permissions: effective.permissions,
     },
+    user: auth.user,
   };
 }
 

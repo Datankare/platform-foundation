@@ -83,6 +83,36 @@ until it is built: 0.15 s at 100,000 accounts. On a much larger `users`, first r
 on its own (not in a transaction), then the migration, which then changes nothing but its record.
 Apply it before re-linking a whole pool (§6.5 of the runbook); the code works without it, slowly.
 
+**Release candidate (TASK-185):** `056_users_list_indexes.sql`, then
+`057_users_last_login_backfill.sql` — the same way, after 055, each on its own (one query, one
+run, then the next):
+
+```bash
+pbcopy < supabase/migrations/056_users_list_indexes.sql
+```
+
+```bash
+pbcopy < supabase/migrations/057_users_last_login_backfill.sql
+```
+
+Then
+`select filename, confidence from public.applied_migrations where filename in ('056_users_list_indexes.sql', '057_users_last_login_backfill.sql');`
+lists both `verified`;
+`select count(*) from pg_indexes where tablename = 'users' and indexname in ('users_tenant_created_idx', 'users_tenant_last_login_idx');`
+answers 2; and `select count(*) filter (where last_login_at is not null) from public.users;` is the
+number of accounts with a recorded sign-in. **056** adds the admin Users list's two sort indexes
+(no search index: under row-level security the request role cannot use one — a search is a scan
+of one tenant, bounded by the statement timeout and the offset cap). **Lock:** as 055, each build
+holds a SHARE lock on `users` until 056 commits — writes to `users` wait; both together took 0.19 s
+at 100,000 accounts. On a much larger `users`, build them first with
+`create index concurrently if not exists` and the same definitions. **057** fills
+`users.last_login_at` once from the sign-ins the audit log holds; it is its own transaction so it
+holds none of 056's locks. It takes row locks on the accounts it fills (their sign-ins wait until
+it commits), and its time grows with the audit log: first run
+`select count(*) from public.audit_log where action = 'login_success';` — measured 4.5 s at 2,000,000 `login_success` rows and 100,000 accounts (about 1 s per 440,000 rows; 2 vCPU, Postgres 16);
+past a few million, run it in a quiet period. Apply both before the code: the list sorts by the
+column.
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 

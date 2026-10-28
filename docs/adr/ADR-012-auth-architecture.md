@@ -306,7 +306,8 @@ also holds:
 - **D4a — a target is unbound in the current pool.** The account's current subject must not be a
   user of the current pool (ListUsers `sub = "…"`, `IdentityDirectory.findBySub`), and no
   `identity_relinked` record may name the account and this pool. `users.email` is not kept in
-  step with the pool: once an account is moved, the person may change their address there and
+  step with the pool (since TASK-185 it follows the pool only when the account's own person signs
+  in, D5b): once an account is moved, the person may change their address there and
   someone else may take it — without D4a the next routine run moved the staff account to that
   stranger. Replacing an identity of the current pool is account recovery, never this command
   (refused with that guidance; no flag).
@@ -356,7 +357,7 @@ real accounts said "unverified". D4b then made almost every legitimate staff re-
   true → false (a pending address change, a provider that stopped sending the claim, a provider
   outage — the request is refused before, or verified from a remembered verified answer — all
   leave it), and a failure is logged and retried on the next request, never a refused request.
-- **D5a — `users.email` is not rewritten.** When the pool's verified address differs from the
+- **D5a — `users.email` is not rewritten.** _Superseded by D5b–D5d (TASK-185, below)._ When the pool's verified address differs from the
   stored one (changed there) or the row has none, nothing changes. The stored address is what a
   ban follows to a new identity (A-11: rewriting a banned account's address would free the old
   address of its ban) and what D4 matches accounts by, and an address change of an existing
@@ -521,6 +522,43 @@ either; `AUTH_TRUSTED_EMAIL_IDPS` matched case-sensitively and refused spaces af
   a native user linked with `AdminLinkProviderForUser` included — is that provider's user.
 - `AUTH_TRUSTED_EMAIL_IDPS` names match case-insensitively, trimmed around commas; a malformed
   value is refused by the environment contract and by the re-link command (exit 2).
+
+### Amendment (TASK-185, 2026-10-28) — `users.email` follows the pool too; supersedes D5a
+
+**Problem.** D5a kept `users.email` as provisioning first wrote it. An account provisioned
+without an address — a first request whose caller passed no profile (`isInGoodStanding`), a
+federated sign-in whose provider sent none at first — kept `email` NULL for good: the admin
+console listed it as "—", and the ban carry-over (A-11), which matches by address, never saw it.
+On playform-dev that was every account made by a first sign-in on the new pool and every Google
+sign-in.
+
+- **D5b — the address is recorded from the same trusted claim as the flag.** The sync
+  (`platform/auth/email-verification.ts`) now also writes `users.email`, verified, when the claim
+  is a trusted verified one (D5, review 16 L8: `emailVerified` exactly true; the pool itself, or
+  federated providers all in `AUTH_TRUSTED_EMAIL_IDPS`) and the row has **no address**, or a
+  **different** one on an **active or warned** account — a different one only from the provider's
+  own answer to this request (`TokenPayload.addressFresh`, set by the token verifier, never on a
+  remembered verification or an outage stand-in: two devices whose remembered answers differ
+  would otherwise flip it between them for the cache window). Never from an unverified, untrusted or
+  unsaid claim, and never a value that is not an address (one `@`, printable, ≤ 254 characters).
+  One conditional update names the value it read (`email is not distinct from <read>`) and, for a
+  change, re-checks the status; its `profile_updated` record (`field: email`, `change`) is in the
+  same transaction and never holds the address.
+- **D5c — a ban is never loosened by it.** A banned account's address is never moved (D5a's
+  reason stands: the ban follows the stored address); a restricted or suspended account's waits
+  until it is active again. The recorded address goes through the ban carry-over
+  (`banFollowsAddress`, shared with provisioning): an address that a banned account of the tenant
+  holds, or that an account erased while banned left as a hash, bans this account too
+  (`platform:ban-carry-over`, recorded `banCarriedOver`).
+- **D5d — where it runs.** Every request through `requireActor`, as D5, and the admin console's
+  session read (`GET /api/admin/session`), since staff requests go through `requireAdmin`.
+  Provisioning's callers pass the token's profile where they hold it (`isInGoodStanding(id,
+profile)`, the guest route). No backfill: only the pool knows the address; an account whose
+  person never signs in again keeps none, and the console says so.
+
+D4a is unaffected and still needed: the re-link chooses its target from the pool's user for the
+address and never moves an account bound in the current pool; an address kept in step with the
+pool only makes the stored one more current.
 
 ## References
 

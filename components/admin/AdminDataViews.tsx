@@ -200,33 +200,6 @@ export function RolesDataView({ data }: { data: any }) {
   );
 }
 
-// ── Users Data View ───────────────────────────────────────────────────
-
-export function UsersDataView({ data }: { data: any }) {
-  const users = data?.users || [];
-  const highlighted = useHighlight(users.map((p: any) => p.id));
-
-  return (
-    <DataTable
-      headers={["Email", "Display Name", "Role", "Created"]}
-      isEmpty={users.length === 0}
-      emptyMessage="No users found."
-    >
-      {users.map((p: any) => (
-        <tr
-          key={p.id}
-          className={highlighted.has(p.id) ? "bg-green-900/30 transition-colors" : ""}
-        >
-          <td className={tdClass}>{p.email || "—"}</td>
-          <td className={tdClass}>{p.displayName || "—"}</td>
-          <td className={tdClass}>{p.roleName}</td>
-          <td className={tdClass}>{new Date(p.createdAt).toLocaleDateString()}</td>
-        </tr>
-      ))}
-    </DataTable>
-  );
-}
-
 // ── Entitlements Data View ──────────────────────────────────────────────
 
 export function EntitlementsDataView({ data }: { data: any }) {

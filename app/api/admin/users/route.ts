@@ -1,12 +1,46 @@
 /**
  * app/api/admin/users/route.ts — Admin user management
  *
- * GET: List users (search, pagination)
+ * GET: List users — searched, sorted and paged on the server (TASK-185)
  * PATCH: Update user role
  *
  * Users are the tenant's own data (ADR-053 D5): both run in the tenant's transaction, so a
  * tenant's administrator lists and changes only that tenant's users. The roles are the shared
  * catalog; assigning one to a user is a tenant change, under the role rules.
+ *
+ * GET ?q=&sort=created|last_sign_in&dir=desc|asc&limit=&offset= →
+ *   { users: [{ id, email, displayName, roleId, roleName, roleDisplayName, status, statusUntil,
+ *               emailVerified, createdAt, lastSignInAt, entitlements: [{ code, name, expiresAt }] }],
+ *     roles: [{ id, name, displayName }],
+ *     page: { limit, offset, hasMore, sort, dir } }
+ *
+ *   - search (`q`): a substring of the address or the display name, a bound parameter matched as
+ *     text — never filter syntax built from input (audit B-16); likeTerm escapes the LIKE
+ *     metacharacters (`john_doe` finds john_doe, not johnXdoe), drops control characters and
+ *     bounds the term to 100 characters. Not indexed: as the request role, under row-level
+ *     security, `ilike` (not leakproof) is applied after the tenant policy, so a search reads the
+ *     tenant's accounts (users_tenant_idx) — bounded by the statement timeout
+ *     (DATABASE_STATEMENT_TIMEOUT_MS), the page size and the offset cap (900 with a search);
+ *   - sort and direction: one of four fixed statements, chosen by name — an unknown name is
+ *     refused (request.invalid_value), never written into SQL. Each is served by one index of
+ *     migration 056, read forwards or backwards: the ascending orders break ties by `id desc` so
+ *     the backward scan needs no sort;
+ *   - paging: at most 100 a page, an offset of at most 10,000 (900 with a search); one row more is
+ *     read to say whether there is a next page — no count of the table;
+ *   - status: the account's standing as the status guard reads it — an expired restriction or
+ *     suspension is "active" — or "deleted" for an account erased and awaiting its purge;
+ *   - email: NULL for an account whose address was never recorded — it is recorded from a
+ *     trusted, verified claim at a later sign-in (TASK-185); an account that signs in through a
+ *     provider that is not allow-listed, or does not verify the address, keeps NULL.
+ *     lastSignInAt: users.last_login_at, NULL when no sign-in was recorded — the screen tells the
+ *     two apart;
+ *   - entitlements: the page's accounts' current grants — unrevoked, unexpired, of an active
+ *     group, as platform/auth/entitlements.ts counts them (one bounded query for the page).
+ *
+ * What it does not show, and why: whether an authenticator is enrolled (the platform does not
+ * record it — users.mfa_enabled is never written; the identity provider holds it), and whether an
+ * identity belongs to a previous identity pool (users.cognito_sub does not say which pool issued
+ * it; only the pool can answer, with operator credentials).
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -26,6 +60,13 @@ import {
   runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
 import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import {
+  USER_SORTS,
+  USER_SORT_DIRECTIONS,
+  listedStatus,
+  type SortDirection,
+  type UserSort,
+} from "@/app/api/admin/users/listing";
 
 type UserRow = {
   id: string;
@@ -34,42 +75,95 @@ type UserRow = {
   role_id: string;
   created_at: Date;
   deleted_at: Date | null;
+  account_status: string;
+  restricted_until: Date | null;
+  suspended_until: Date | null;
+  email_verified: boolean;
+  last_login_at: Date | null;
 };
 type RoleRow = { id: string; name: string; display_name: string };
+type GrantRow = {
+  user_id: string;
+  code: string;
+  display_name: string;
+  expires_at: Date | null;
+};
+
+const COLUMNS = `id, email, display_name, role_id, created_at, deleted_at, account_status,
+                 restricted_until, suspended_until, email_verified, last_login_at`;
+/** $1: the search term ('' for none), $2: limit + 1, $3: offset. */
+const FILTER = `where ($1 = '' or email ilike '%' || $1 || '%' or display_name ilike '%' || $1 || '%')`;
+
+/** One fixed statement per order — chosen by name, never assembled from the request. */
+const PAGE_SQL: Readonly<Record<`${UserSort}:${SortDirection}`, string>> = {
+  "created:desc": `select ${COLUMNS} from users ${FILTER}
+                    order by created_at desc, id limit $2 offset $3`,
+  "created:asc": `select ${COLUMNS} from users ${FILTER}
+                   order by created_at asc, id desc limit $2 offset $3`,
+  "last_sign_in:desc": `select ${COLUMNS} from users ${FILTER}
+                         order by last_login_at desc nulls last, id limit $2 offset $3`,
+  "last_sign_in:asc": `select ${COLUMNS} from users ${FILTER}
+                        order by last_login_at asc nulls first, id desc limit $2 offset $3`,
+};
+
+const GRANTS_SQL = `select ue.user_id, g.code, g.display_name, ue.expires_at
+                      from user_entitlements ue
+                      join entitlement_groups g on g.id = ue.entitlement_group_id
+                     where ue.user_id = any($1::uuid[]) and ue.revoked_at is null
+                       and (ue.expires_at is null or ue.expires_at > now())
+                     and g.is_active
+                     order by g.code`;
+
+function choice<T extends string>(
+  raw: string | null,
+  allowed: readonly T[],
+  fallback: T
+): T | null {
+  if (raw === null || raw === "") return fallback;
+  return (allowed as readonly string[]).includes(raw) ? (raw as T) : null;
+}
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_users");
   if (denied) return denied;
 
   const params = new URL(request.url).searchParams;
+  const sort = choice(params.get("sort"), USER_SORTS, "created");
+  if (!sort) {
+    return apiError("request.invalid_value", {
+      params: { field: "sort", allowed: [...USER_SORTS] },
+      request,
+    });
+  }
+  const dir = choice(params.get("dir"), USER_SORT_DIRECTIONS, "desc");
+  if (!dir) {
+    return apiError("request.invalid_value", {
+      params: { field: "dir", allowed: [...USER_SORT_DIRECTIONS] },
+      request,
+    });
+  }
   const term = likeTerm(params.get("q"));
   const { limit, offset } = pageParams(params, {
     maxLimit: 100,
     maxOffset: term ? 900 : 10_000,
   });
 
-  // Search is a bound parameter matched as text — never filter syntax built from input
-  // (audit B-16: `q` was spliced into .or()). likeTerm strips the LIKE wildcards.
   let users: UserRow[];
   let roles: RoleRow[];
+  let grants: GrantRow[];
   try {
-    ({ users, roles } = await withTenantTx(async (tx) => {
-      const page = term
-        ? await tx.query<UserRow>(
-            `select id, email, display_name, role_id, created_at, deleted_at from users
-              where email ilike '%' || $1 || '%' or display_name ilike '%' || $1 || '%'
-              order by created_at desc, id
-              limit $2 offset $3`,
-            [term, limit, offset]
-          )
-        : await tx.query<UserRow>(
-            `select id, email, display_name, role_id, created_at, deleted_at from users
-              order by created_at desc, id
-              limit $1 offset $2`,
-            [limit, offset]
-          );
+    ({ users, roles, grants } = await withTenantTx(async (tx) => {
+      const page = await tx.query<UserRow>(PAGE_SQL[`${sort}:${dir}`], [
+        term,
+        limit + 1,
+        offset,
+      ]);
+      const ids = page.rows.slice(0, limit).map((u) => u.id);
+      const granted = ids.length
+        ? (await tx.query<GrantRow>(GRANTS_SQL, [ids])).rows
+        : [];
       const catalog = await tx.query<RoleRow>("select id, name, display_name from roles");
-      return { users: page.rows, roles: catalog.rows };
+      return { users: page.rows, roles: catalog.rows, grants: granted };
     }));
   } catch (error) {
     logger.error("Admin users list failed", {
@@ -79,23 +173,45 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     return internalError(error, { request, context: "Admin users query failed" });
   }
 
-  const roleMap = new Map(roles.map((r) => [r.id, r.name]));
+  const roleMap = new Map(roles.map((r) => [r.id, r]));
+  const grantsOf = new Map<string, GrantRow[]>();
+  for (const g of grants)
+    grantsOf.set(g.user_id, [...(grantsOf.get(g.user_id) ?? []), g]);
+  const shown = users.slice(0, limit);
 
-  return NextResponse.json({
-    users: users.map((p) => ({
-      id: p.id,
-      email: p.email,
-      displayName: p.display_name,
-      roleName: roleMap.get(p.role_id) || "unknown",
-      createdAt: p.created_at.toISOString(),
-      isDeleted: !!p.deleted_at,
-    })),
+  const response = NextResponse.json({
+    users: shown.map((p) => {
+      const role = roleMap.get(p.role_id);
+      const { status, until } = listedStatus(p);
+      return {
+        id: p.id,
+        email: p.email,
+        displayName: p.display_name,
+        roleId: p.role_id,
+        roleName: role?.name ?? "unknown",
+        roleDisplayName: role?.display_name ?? null,
+        status,
+        statusUntil: until,
+        emailVerified: p.email_verified === true,
+        createdAt: p.created_at.toISOString(),
+        lastSignInAt: p.last_login_at ? p.last_login_at.toISOString() : null,
+        isDeleted: !!p.deleted_at,
+        entitlements: (grantsOf.get(p.id) ?? []).map((g) => ({
+          code: g.code,
+          name: g.display_name,
+          expiresAt: g.expires_at ? g.expires_at.toISOString() : null,
+        })),
+      };
+    }),
     roles: roles.map((r) => ({
       id: r.id,
       name: r.name,
       displayName: r.display_name,
     })),
+    page: { limit, offset, hasMore: users.length > limit, sort, dir },
   });
+  response.headers.set("Cache-Control", "no-store");
+  return response;
 });
 
 export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {

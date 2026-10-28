@@ -212,4 +212,13 @@ describe("POST /api/auth/guest — a restricted account (X-20)", () => {
     const res = await guest({ authorization: "Bearer mock-access-token" });
     expect(res.status).toBe(200);
   });
+
+  it("TASK-185: the standing check carries the token's address, so an account it first provisions has one", async () => {
+    await guest({ authorization: "Bearer mock-access-token" });
+    expect(mockStanding).toHaveBeenCalledWith(expect.any(String), {
+      email: expect.stringContaining("@"),
+      // The mock pool verified it itself (a native user): a trusted verified claim.
+      emailVerified: true,
+    });
+  });
 });

@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { renderMessage } from "@/platform/errors/messages";
 
 interface AdminPromptBarProps {
   panel: string;
@@ -21,7 +22,9 @@ export default function AdminPromptBar({
   panel,
   onPlanReceived,
   disabled = false,
-  placeholder = "What would you like to do?",
+  // The section's own examples come from section-hints.ts (only commands the admin can run);
+  // there is no second, fixed hint line (TASK-185).
+  placeholder = renderMessage("screens.admin_console.hints.generic"),
 }: AdminPromptBarProps) {
   const [prompt, setPrompt] = useState("");
   const [isThinking, setIsThinking] = useState(false);
@@ -123,10 +126,6 @@ export default function AdminPromptBar({
           Run
         </button>
       </div>
-      <p className="text-xs text-gray-400 mt-1.5 ml-1">
-        Try: &quot;Create a moderator role with can_play and admin_view_audit&quot; or
-        &quot;Show all roles&quot;
-      </p>
     </div>
   );
 }

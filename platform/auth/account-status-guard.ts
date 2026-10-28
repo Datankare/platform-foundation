@@ -743,9 +743,14 @@ export async function expireLapsedAccountStatuses(
  * account — or one whose state cannot be read — may not administer, moderate or approve anything.
  * Fails closed: an unreadable state is "banned" (loadAccountState).
  */
-export async function isInGoodStanding(userId: string): Promise<boolean> {
+export async function isInGoodStanding(
+  userId: string,
+  profile: ProvisioningProfile = {}
+): Promise<boolean> {
   if (!userId || !UUID_PATTERN.test(userId)) return false;
-  const state = await loadAccountState(userId);
+  // A caller that holds the verified token passes its profile: an account first provisioned
+  // here is created with its address (TASK-185 — it was created without one).
+  const state = await loadAccountState(userId, profile);
   if (state.notProvisioned || state.deleted) return false;
   switch (state.accountStatus) {
     case "active":

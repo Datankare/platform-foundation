@@ -894,7 +894,7 @@ async function planAddress(
       return refusal(
         email,
         "account.bound_in_pool",
-        `the account is already bound to an identity of the current pool (${partial(bound)}): it is never moved to another — the address in the database is not kept in step with the pool, and whoever holds it now is not the account's person. If the person really lost that identity, that is account recovery, not a pool move`
+        `the account is already bound to an identity of the current pool (${partial(bound)}): it is never moved to another — the address in the database follows the pool only when the account's own person signs in (TASK-185), so it can be behind the pool's, and whoever holds that address now is not the account's person. If the person really lost that identity, that is account recovery, not a pool move`
       );
   }
   if (found.relinked.has(target.id.toLowerCase()))

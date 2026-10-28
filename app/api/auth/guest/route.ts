@@ -26,6 +26,7 @@ import { initAuth } from "@/platform/auth/auth-init";
 import { GUEST_TOKEN_PREFIX } from "@/platform/auth/guest-token";
 import { isInGoodStanding } from "@/platform/auth/account-status-guard";
 import { resolveAccount } from "@/platform/auth/account-identity";
+import { trustedVerifiedClaim } from "@/platform/auth/email-verification";
 import { isMarkedRestricted, markRestricted } from "@/platform/auth/restricted-marker";
 
 /**
@@ -45,7 +46,12 @@ async function restrictedUser(request: NextRequest): Promise<boolean> {
     // The account the identity is bound to, not its subject (TASK-174).
     const account = await resolveAccount(user.sub);
     if (account.kind === "conflict") return true;
-    return !(await isInGoodStanding(account.accountId));
+    // With the token's profile (TASK-185): an account first provisioned by this check gets its
+    // address, stored verified only from a trusted source — never created without one.
+    return !(await isInGoodStanding(account.accountId, {
+      email: user.email,
+      emailVerified: trustedVerifiedClaim(user),
+    }));
   } catch {
     return true;
   }

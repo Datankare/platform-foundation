@@ -2,7 +2,12 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import AdminShell, { permittedSections } from "@/components/admin/AdminShell";
+import AdminShell, {
+  permittedSections,
+  sectionTitle,
+} from "@/components/admin/AdminShell";
+import { UsersPanel } from "@/components/admin/UsersPanel";
+import { sectionPlaceholder } from "@/components/admin/section-hints";
 import type { AdminSection } from "@/components/admin/AdminShell";
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
@@ -11,7 +16,6 @@ import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import { DualControlKeysPanel } from "@/components/admin/DualControlKeysPanel";
 import {
   RolesDataView,
-  UsersDataView,
   EntitlementsDataView,
   AuditDataView,
   PasswordPolicyDataView,
@@ -49,7 +53,13 @@ import {
 /** The console's own user (GET /api/admin/session), or why it cannot open. */
 type ConsoleSession =
   | { kind: "loading" }
-  | { kind: "admin"; roleName: string; permissions: readonly string[] }
+  | {
+      kind: "admin";
+      roleName: string;
+      permissions: readonly string[];
+      /** The admin's own account id (the Users panel offers no change to it). */
+      userId?: string;
+    }
   | { kind: "mfa_required" }
   | { kind: "refused" }
   /** Refused for a reason other than access (TASK-181): restricted, unavailable, … */
@@ -88,28 +98,8 @@ interface ExecutionResult {
   error?: string;
 }
 
-const PANEL_TITLES: Record<string, string> = {
-  users: "Users",
-  roles: "Roles",
-  entitlements: "Entitlements",
-  audit: "Audit Trail",
-  "password-policy": "Password Policy",
-  tenant: "Tenant",
-  tenants: "Tenants",
-  jobs: renderMessage("screens.jobs.title"),
-  "kill-switch": renderMessage("screens.kill_switch.title"),
-};
-
-const PANEL_HINTS: Record<string, string> = {
-  users: 'Try: "Show all users" or "Change alice@example.com to admin role"',
-  roles: 'Try: "Create a moderator role with can_play and admin_view_audit"',
-  entitlements: 'Try: "Create beta_access entitlement with can_translate"',
-  audit: 'Try: "Show role changes from the last 7 days"',
-  "password-policy": 'Try: "Set minimum length to 16"',
-};
-
 const ENDPOINTS: Record<string, string> = {
-  users: "/api/admin/users",
+  // users: the Users panel reads its own pages (search, sort, paging — TASK-185).
   roles: "/api/admin/roles",
   entitlements: "/api/admin/entitlements",
   audit: "/api/admin/audit?offset=0",
@@ -141,7 +131,6 @@ async function fetchPanelData(panel: AdminSection): Promise<unknown> {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
-  users: UsersDataView,
   roles: RolesDataView,
   entitlements: EntitlementsDataView,
   audit: AuditDataView,
@@ -190,12 +179,14 @@ export default function AdminPage() {
           params?: unknown;
           roleName?: unknown;
           permissions?: unknown;
+          userId?: unknown;
         };
         if (!current) return;
         if (res.ok && Array.isArray(body.permissions)) {
           setSession({
             kind: "admin",
             roleName: typeof body.roleName === "string" ? body.roleName : "",
+            ...(typeof body.userId === "string" ? { userId: body.userId } : {}),
             permissions: body.permissions.filter(
               (p): p is string => typeof p === "string"
             ),
@@ -225,8 +216,13 @@ export default function AdminPage() {
   }, []);
 
   /** Reloads a panel's data (after an action). */
+  // The Users panel reads its own pages; a change made from the command bar re-reads them.
+  const [usersRefresh, setUsersRefresh] = useState(0);
   const refreshData = useCallback(
-    async (panel: AdminSection) => showPanelData(panel, await fetchPanelData(panel)),
+    async (panel: AdminSection) => {
+      if (panel === "users") setUsersRefresh((n) => n + 1);
+      showPanelData(panel, await fetchPanelData(panel));
+    },
     [showPanelData]
   );
 
@@ -310,17 +306,18 @@ export default function AdminPage() {
 
   function renderSection(section: AdminSection): React.ReactNode {
     const DataView = DATA_VIEWS[section];
+    const title = sectionTitle(section);
+    const allowed =
+      session.kind === "admin" ? permissionCheck(session.permissions) : () => false;
 
     return (
       <div>
-        <h2 className="text-xl font-bold text-white mb-4">
-          {PANEL_TITLES[section] || section}
-        </h2>
+        <h2 className="text-xl font-bold text-white mb-4">{title}</h2>
 
         {!NO_PROMPT_BAR.has(section) && (
           <AdminPromptBar
             panel={section}
-            placeholder={PANEL_HINTS[section]}
+            placeholder={sectionPlaceholder(section, allowed)}
             onPlanReceived={(plan) => {
               setCurrentPlan(plan);
               setResults(null);
@@ -341,12 +338,17 @@ export default function AdminPage() {
           <ExecutionResultsPanel results={results} onDismiss={() => setResults(null)} />
         )}
 
+        {section === "users" && (
+          <UsersPanel
+            hasPermission={allowed}
+            refreshKey={usersRefresh}
+            selfId={session.kind === "admin" ? session.userId : undefined}
+          />
+        )}
+
         {DataView &&
           (isPanelUnavailable(panelData[section]) ? (
-            <PanelUnavailable
-              panel={PANEL_TITLES[section] || section}
-              onRetry={() => void refreshData(section)}
-            />
+            <PanelUnavailable panel={title} onRetry={() => void refreshData(section)} />
           ) : (
             <DataView data={panelData[section]} />
           ))}

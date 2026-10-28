@@ -103,6 +103,44 @@ const row = async (id: string): Promise<Row> =>
     )
   ).rows[0]!;
 
+const addressAudit = async (id: string): Promise<Row[]> =>
+  (
+    await withOwnerTx("operator", (tx) =>
+      tx.query(
+        `select actor_id, target_id, details from audit_log
+          where target_id = $1::uuid and action = 'profile_updated'::audit_action
+            and details->>'field' = 'email'`,
+        [id]
+      )
+    )
+  ).rows;
+
+const setStatus = (id: string, status: string) =>
+  withOwnerTx("operator", (tx) =>
+    tx.query("update users set account_status = $2::account_status where id = $1::uuid", [
+      id,
+      status,
+    ])
+  );
+
+const statusOf = async (id: string): Promise<Row> =>
+  (
+    await withOwnerTx("operator", (tx) =>
+      tx.query(
+        "select account_status, ban_reason, status_changed_by from users where id = $1::uuid",
+        [id]
+      )
+    )
+  ).rows[0]!;
+
+/** An account provisioned by a first request that carried no address (TASK-185's defect). */
+async function provisionedWithoutAddress(): Promise<string> {
+  const sub = randomUUID();
+  await expect(a.run(() => ensureUserProvisioned(sub))).resolves.toBe("created");
+  expect(await row(sub)).toMatchObject({ email: null, email_verified: false });
+  return sub;
+}
+
 const verificationAudit = async (id: string): Promise<Row[]> =>
   (
     await withOwnerTx("operator", (tx) =>
@@ -195,13 +233,78 @@ dbDescribe("TASK-176: users.email_verified follows the provider's verified claim
     expect(await verificationAudit(sub)).toEqual([]);
   });
 
-  it("a verified claim of ANOTHER address changes nothing — users.email is never rewritten", async () => {
+  it("TASK-185: a verified claim of ANOTHER address on an active account is recorded, verified, once", async () => {
     const email = address("old");
     const sub = await signUp(email);
+    const moved = address("new");
+    const token = signInAs(sub, {
+      email: moved,
+      emailVerified: true,
+      addressFresh: true,
+    });
+    await request(token);
+    const after = await row(sub);
+    expect(after).toMatchObject({ email: moved, email_verified: true });
+    expect(await addressAudit(sub)).toEqual([
+      expect.objectContaining({
+        details: expect.objectContaining({ field: "email", change: "changed" }),
+      }),
+    ]);
+    // The address itself is never in the record.
+    expect(JSON.stringify(await addressAudit(sub))).not.toContain(moved);
+    await request(token);
+    expect(await row(sub)).toEqual(after);
+  });
+
+  it("TASK-185: two devices with different remembered answers never flip it — only a fresh answer moves it", async () => {
+    const x = address("device-x");
+    const y = address("device-y");
+    const sub = await signUp(x);
+    // Device A: the provider's own answer now, address x (the stored one): marked verified.
+    await request(signInAs(sub, { email: x, emailVerified: true, addressFresh: true }));
+    expect(await row(sub)).toMatchObject({ email: x, email_verified: true });
+    // Device B: a remembered answer from before the change, address y: nothing moves.
     const before = await row(sub);
-    await request(signInAs(sub, { email: address("new"), emailVerified: true }));
+    for (let i = 0; i < 3; i++) {
+      await request(signInAs(sub, { email: y, emailVerified: true }));
+      await request(signInAs(sub, { email: x, emailVerified: true }));
+    }
     expect(await row(sub)).toEqual(before);
-    expect(await verificationAudit(sub)).toEqual([]);
+    expect(await addressAudit(sub)).toEqual([]);
+    // The provider's own answer says y: it moves, once.
+    await request(signInAs(sub, { email: y, emailVerified: true, addressFresh: true }));
+    expect(await row(sub)).toMatchObject({ email: y });
+    // And device A's remembered x does not move it back.
+    await request(signInAs(sub, { email: x, emailVerified: true }));
+    expect(await row(sub)).toMatchObject({ email: y });
+    expect(await addressAudit(sub)).toHaveLength(1);
+  });
+
+  it("TASK-185: a banned account's address is never moved — the ban stays with it", async () => {
+    const email = address("banned-old");
+    const sub = await signUp(email);
+    await setStatus(sub, "banned");
+    const before = await row(sub);
+    await request(
+      signInAs(sub, { email: address("escape"), emailVerified: true, addressFresh: true })
+    );
+    expect(await row(sub)).toEqual(before);
+    expect(await addressAudit(sub)).toEqual([]);
+  });
+
+  it("TASK-185: a suspended account keeps its address until it is active again", async () => {
+    const email = address("suspended");
+    const sub = await signUp(email);
+    await setStatus(sub, "suspended");
+    const before = await row(sub);
+    await request(
+      signInAs(sub, {
+        email: address("elsewhere"),
+        emailVerified: true,
+        addressFresh: true,
+      })
+    );
+    expect(await row(sub)).toEqual(before);
   });
 
   it("a provider that cannot answer: the request is refused (503) and the row is unchanged", async () => {
@@ -291,5 +394,158 @@ dbDescribe("TASK-176: users.email_verified follows the provider's verified claim
     await request(signInAs(sub, { email, emailVerified: true }));
     expect(await row(sub)).toMatchObject({ email_verified: true });
     expect(await verificationAudit(sub)).toEqual([]);
+  });
+});
+
+dbDescribe("TASK-185: users.email recorded from the provider's verified claim", () => {
+  it("an account with no address gets the verified one on its next request — once, audited, as stored", async () => {
+    const sub = await provisionedWithoutAddress();
+    const email = address("filled");
+    const token = signInAs(sub, {
+      email: `  ${email.toUpperCase()} `,
+      emailVerified: true,
+    });
+    expect((await request(token)).actor).toMatchObject({ kind: "user", id: sub });
+    const after = await row(sub);
+    expect(after).toMatchObject({ email, email_verified: true });
+    expect(await addressAudit(sub)).toEqual([
+      expect.objectContaining({
+        actor_id: sub,
+        target_id: sub,
+        details: expect.objectContaining({
+          field: "email",
+          change: "absent",
+          source: "identity_provider",
+          verifiedBy: "pool",
+        }),
+      }),
+    ]);
+    for (let i = 0; i < 3; i++) await request(token);
+    expect(await row(sub)).toEqual(after);
+    expect(await addressAudit(sub)).toHaveLength(1);
+  });
+
+  it("never from an unverified claim, an untrusted provider, or a token that does not say", async () => {
+    for (const over of [
+      { emailVerified: false, identityProviders: [] },
+      { emailVerified: true, identityProviders: ["EntraID"] },
+      { emailVerified: true, identityProviders: ["Google", "Facebook"] },
+      { emailVerified: true, identityProviders: undefined },
+    ]) {
+      const sub = await provisionedWithoutAddress();
+      const before = await row(sub);
+      const r = await request(signInAs(sub, { email: address("nope"), ...over }));
+      expect(r.actor).toBeDefined();
+      expect(await row(sub)).toEqual(before);
+      expect(await addressAudit(sub)).toEqual([]);
+    }
+  });
+
+  it("an unverified or untrusted provider never overwrites a stored address", async () => {
+    const email = address("kept");
+    const sub = await signUp(email);
+    await request(signInAs(sub, { email, emailVerified: true }));
+    const verified = await row(sub);
+    for (const over of [
+      { emailVerified: false, identityProviders: [], addressFresh: true },
+      { emailVerified: true, identityProviders: ["EntraID"], addressFresh: true },
+    ])
+      await request(signInAs(sub, { email: address("attacker"), ...over }));
+    expect(await row(sub)).toEqual(verified);
+    expect(await addressAudit(sub)).toEqual([]);
+  });
+
+  it("a Google sign-in (allow-listed) fills it, and says who verified it", async () => {
+    const sub = await provisionedWithoutAddress();
+    const email = address("google-fill");
+    await request(
+      signInAs(sub, { email, emailVerified: true, identityProviders: ["Google"] })
+    );
+    expect(await row(sub)).toMatchObject({ email, email_verified: true });
+    expect((await addressAudit(sub))[0]).toMatchObject({
+      details: { verifiedBy: "Google" },
+    });
+  });
+
+  it("A-11: a recorded address that a banned account holds bans this one too", async () => {
+    const bannedAddress = address("banned-holder");
+    const holder = await signUp(bannedAddress);
+    await setStatus(holder, "banned");
+    const sub = await provisionedWithoutAddress();
+    await request(signInAs(sub, { email: bannedAddress, emailVerified: true }));
+    expect(await row(sub)).toMatchObject({ email: bannedAddress, email_verified: true });
+    expect(await statusOf(sub)).toMatchObject({
+      account_status: "banned",
+      status_changed_by: "platform:ban-carry-over",
+    });
+    expect((await addressAudit(sub))[0]).toMatchObject({
+      details: { banCarriedOver: true },
+    });
+  });
+
+  it("concurrent first requests: one change, one audit record", async () => {
+    const sub = await provisionedWithoutAddress();
+    const token = signInAs(sub, { email: address("race-fill"), emailVerified: true });
+    const results = await Promise.all(Array.from({ length: 6 }, () => request(token)));
+    for (const r of results) expect(r.actor).toBeDefined();
+    expect(await addressAudit(sub)).toHaveLength(1);
+  });
+
+  it("an erased (soft-deleted) account is never written", async () => {
+    const sub = await provisionedWithoutAddress();
+    await withOwnerTx("operator", (tx) =>
+      tx.query("update users set deleted_at = now() where id = $1::uuid", [sub])
+    );
+    const before = await row(sub);
+    await request(signInAs(sub, { email: address("erased"), emailVerified: true }));
+    expect(await row(sub)).toEqual(before);
+  });
+});
+
+dbDescribe("TASK-185: the last sign-in", () => {
+  const lastLogin = async (id: string) =>
+    (
+      await withOwnerTx("operator", (tx) =>
+        tx.query<{ last_login_at: Date | null }>(
+          "select last_login_at from users where id = $1::uuid",
+          [id]
+        )
+      )
+    ).rows[0]!.last_login_at;
+
+  it("a first sign-in, recorded before the row existed, is the new account's last sign-in", async () => {
+    const sub = randomUUID();
+    const at = "2026-10-20T08:30:00Z";
+    await withOwnerTx("operator", (tx) =>
+      tx.query(
+        `insert into audit_log (tenant_id, action, actor_id, details, created_at) values
+           ($1::uuid, 'login_success', $2::uuid, '{"method":"password"}', $3::timestamptz),
+           ($1::uuid, 'login_success', $2::uuid, '{"method":"refresh"}', now())`,
+        [a.id, sub, at]
+      )
+    );
+    await a.run(() => ensureUserProvisioned(sub, { email: address("first-login") }));
+    expect((await lastLogin(sub))?.toISOString()).toBe("2026-10-20T08:30:00.000Z");
+  });
+
+  it("each sign-in sets it; a refresh, an unknown account and a deleted one do not", async () => {
+    const { recordLastSignIn } = await import("@/platform/auth/auth-events");
+    const sub = await signUp(address("signs-in"));
+    expect(await lastLogin(sub)).toBeNull();
+    await a.run(() => recordLastSignIn(sub, "refresh"));
+    expect(await lastLogin(sub)).toBeNull();
+    await a.run(() => recordLastSignIn(sub, "password"));
+    const first = await lastLogin(sub);
+    expect(first).not.toBeNull();
+    await a.run(() => recordLastSignIn(undefined, "password"));
+    await a.run(() => recordLastSignIn(randomUUID(), "sso"));
+    await withOwnerTx("operator", (tx) =>
+      tx.query(
+        "update users set deleted_at = now(), last_login_at = null where id = $1::uuid",
+        [sub]
+      )
+    );
+    await a.run(() => recordLastSignIn(sub, "mfa"));
+    expect(await lastLogin(sub)).toBeNull();
   });
 });

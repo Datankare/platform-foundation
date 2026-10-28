@@ -22,6 +22,8 @@ import {
   CLIENT_ROUTED_TOOLS,
   PANEL_CONTEXT_PERMISSIONS,
   SEARCHABLE_TABLES,
+  USER_ROW_ACTION_PERMISSIONS,
+  USER_ROW_ACTION_ROUTES,
   toolPermission,
 } from "@/app/api/admin/ai/tool-permissions";
 import { PANEL_TOOL_SCHEMAS, SHARED_TOOLS } from "@/app/api/admin/ai/tool-schemas";
@@ -73,6 +75,9 @@ const REQUIRED: [string, string][] = [
   ),
   ...Object.entries(SEARCHABLE_TABLES).map(
     ([table, p]) => [p, `command-bar search of ${table}`] as [string, string]
+  ),
+  ...Object.entries(USER_ROW_ACTION_PERMISSIONS).map(
+    ([action, p]) => [p, `Users screen action ${action}`] as [string, string]
   ),
   ...Object.entries(PANEL_CONTEXT_PERMISSIONS).map(
     ([panel, p]) => [p, `planner context for ${panel}`] as [string, string]
@@ -179,6 +184,18 @@ describe("admin authorization matrix", () => {
       const pagePermissions = new Set(guardsIn(page).guards.map((g) => g.permission));
       expect(pagePermissions).toContain(
         ADMIN_TOOL_PERMISSIONS[tool as keyof typeof ADMIN_TOOL_PERMISSIONS]
+      );
+    }
+  );
+
+  // TASK-185: the Users screen shows an action only with the permission its route requires —
+  // the same map, so a screen that hides an action and a route that refuses it agree.
+  it.each(Object.entries(USER_ROW_ACTION_ROUTES))(
+    "Users screen action %s requires the permission its route requires",
+    (action, route) => {
+      const routePermissions = new Set(guardsIn(route).guards.map((g) => g.permission));
+      expect(routePermissions).toContain(
+        USER_ROW_ACTION_PERMISSIONS[action as keyof typeof USER_ROW_ACTION_PERMISSIONS]
       );
     }
   );

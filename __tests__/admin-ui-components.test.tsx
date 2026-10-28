@@ -232,7 +232,6 @@ describe("AdminPromptBar", () => {
 
 import {
   RolesDataView,
-  UsersDataView,
   EntitlementsDataView,
   PasswordPolicyDataView,
 } from "@/components/admin/AdminDataViews";
@@ -293,32 +292,7 @@ describe("RolesDataView", () => {
   });
 });
 
-describe("UsersDataView", () => {
-  it("renders users table", () => {
-    render(
-      <UsersDataView
-        data={{
-          users: [
-            {
-              id: "p1",
-              email: "alice@test.com",
-              displayName: "Alice",
-              roleName: "admin",
-              createdAt: "2026-01-01T00:00:00Z",
-            },
-          ],
-        }}
-      />
-    );
-    expect(screen.getByText("alice@test.com")).toBeDefined();
-    expect(screen.getByText("Alice")).toBeDefined();
-  });
-
-  it("shows empty message when no users", () => {
-    render(<UsersDataView data={{ users: [] }} />);
-    expect(screen.getByText(/No users found/)).toBeDefined();
-  });
-});
+// UsersDataView became the Users panel (TASK-185): __tests__/admin-users-panel.test.tsx.
 
 describe("EntitlementsDataView", () => {
   it("renders entitlements with status badges", () => {

@@ -56,6 +56,8 @@
     "052_audit_wave2.sql",
     "053_trajectory_awaiting_retry.sql",
     "054_user_deletions_subject.sql",
-    "055_users_email_lookup.sql"
+    "055_users_email_lookup.sql",
+    "056_users_list_indexes.sql",
+    "057_users_last_login_backfill.sql"
   ]
 }

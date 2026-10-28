@@ -72,6 +72,15 @@ export interface TokenPayload {
    * platform/auth/email-verification.ts).
    */
   identityProviders?: readonly string[];
+  /**
+   * True only when this payload is the identity provider's own answer to this very request (a
+   * GetUser call made now) — never for a remembered verification, a stand-in during an outage,
+   * or a provider that does not verify through platform/auth/token-verification.ts. Set by the
+   * token verifier, never by a provider. The account's address is moved to a *different* one only
+   * from such an answer (TASK-185): two devices whose remembered answers differ would otherwise
+   * flip it between them for the cache window.
+   */
+  addressFresh?: boolean;
   /** Additional claims from the provider (groups, roles, etc.) */
   [key: string]: unknown;
 }

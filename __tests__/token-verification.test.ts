@@ -412,3 +412,47 @@ describe("the request guard", () => {
     jest.dontMock("@/platform/auth/auth-init");
   });
 });
+
+// TASK-185: the account's address moves to a different one only from the provider's own answer
+// to this request — so the verifier marks exactly that answer, and nothing it remembers.
+describe("addressFresh: only the provider's own answer to this request", () => {
+  it("a GetUser answer is marked fresh; the same token answered from memory is not", async () => {
+    const v = instance();
+    const ask = valid();
+    expect(await v.verify("tok", claims(), ask)).toMatchObject({ addressFresh: true });
+    clock += 1_000;
+    const again = await v.verify("tok", claims(), ask);
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(again).not.toHaveProperty("addressFresh");
+  });
+
+  it("the flag is never stored, even when the provider itself set one", async () => {
+    await instance().verify("tok", claims(), valid(payload({ addressFresh: true })));
+    const stored = await shared.get<{ payload: TokenPayload }>(tokenKey("tok"));
+    expect(stored?.payload).not.toHaveProperty("addressFresh");
+    // Another instance, sharing the cache, answers from memory: not fresh.
+    expect(await instance().verify("tok", claims(), valid())).not.toHaveProperty(
+      "addressFresh"
+    );
+  });
+
+  it("a stand-in while the provider cannot answer is not fresh", async () => {
+    const v = instance();
+    await v.verify("tok", claims(), valid());
+    clock += 60_000; // past fresh, within grace
+    const standIn = await v.verify("tok", claims(), unavailable());
+    expect(standIn).toMatchObject({ sub: SUB });
+    expect(standIn).not.toHaveProperty("addressFresh");
+  });
+
+  it("with remembering off, every answer is the provider's own: fresh", async () => {
+    settings.freshSeconds = 0;
+    const v = instance();
+    expect(await v.verify("tok", claims(), valid())).toMatchObject({
+      addressFresh: true,
+    });
+    expect(await v.verify("tok", claims(), valid())).toMatchObject({
+      addressFresh: true,
+    });
+  });
+});

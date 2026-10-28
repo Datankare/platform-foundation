@@ -519,9 +519,16 @@ from the pool's own verification (a native user's code) or a provider in
 `AUTH_TRUSTED_EMAIL_IDPS` (default `Google`): a user of any other provider — Microsoft Entra ID
 above all — never marks an address verified, whatever the pool's mapping says, and neither does a
 token whose provider does not say who verified it (`identityProviders`; Playform's provider must
-fill it — [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1b). It is never set back to false and
-`users.email` is never rewritten (the stored address is what a ban follows and what this command
-matches by).
+fill it — [MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1b). It is never set back to false.
+Since TASK-185 the same trusted claim also records `users.email` when the row has none, or when
+it changed on an active account and the pool answered that very request (`addressFresh` — a
+remembered answer never moves it) — never a banned account's (the stored address is what a ban
+follows), and the recorded address carries a ban like a new sign-up's (ADR-012 D5b–D5d). An
+account whose person never signs in again keeps what it has. So after a pool move, the re-linked
+accounts' addresses are what the command matched them by until each person signs in. Each sign-in
+also sets `users.last_login_at`; migrations 056 (the Users list's sort indexes) and then 057 (the
+column filled from the audit log's sign-ins, its own transaction — its time grows with
+`audit_log`) apply before that code ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2).
 
 There is no backfill: whether an existing account's address was confirmed is known only to the
 pool, so no migration can say it. **A person's next sign-in to the current pool marks their

@@ -15,7 +15,8 @@ Four gaps Playform worked around in its own code (its `docs/APP_SECURITY_DEBT.md
 deploying Playform v0.9.0, a race behind a flaky test (TASK-175), and an address flag never
 updated (TASK-176), closed in the platform — and review 16 of the last three, and the subject
 made the Cognito `sub` for every provider (TASK-177), and review 17 of sign-out and the Cognito
-provider (TASK-178). Deploy: migrations 053, 054 and 055 in the SQL Editor
+provider (TASK-178), and the admin Users screen with the address kept in step (TASK-185). Deploy:
+migrations 053, 054, 055, 056 and 057 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
@@ -34,6 +35,35 @@ code. Consumer steps: §1b, the eight "Release candidate" rows.
   `jest.setup.ts`; sync-exclude `/refusal-coverage-baseline.json` and keep the app's own (create it
   with `{"gaps": []}`, then list the app's gaps); route the app's screens through
   `handleRefusal` or declare `HANDLED_CODES` for its own codes.
+- **The admin console's Users screen, and addresses that follow the provider (TASK-185).**
+  `users.email` was written only when provisioning made the row, so an account provisioned without
+  one kept `NULL` for good (listed "—"; missed by the ban carry-over). The TASK-176 sync now also
+  records the address from the same trusted verified claim — when the row has none, or when it
+  changed on an active account and the provider answered that very request (`addressFresh`, set
+  by the token verifier; never from a remembered answer, so two devices cannot flip it); never a
+  banned account's, never from an unverified or un-allow-listed provider; the ban carry-over
+  applies to it (ADR-012 D5b–D5d). It runs on `requireActor` and on `GET /api/admin/session`. The
+  last sign-in is recorded (`users.last_login_at`, each sign-in but a refresh; migration 057 fills
+  it from the audit log). `GET /api/admin/users` adds `status`, `statusUntil`, `emailVerified`,
+  `lastSignInAt`, `roleDisplayName`, `entitlements`, `sort` / `dir` (fixed choices, else
+  `request.invalid_value`) and `page.hasMore`; migration 056 indexes both orders. Search is a
+  bounded scan of one tenant (under row-level security no trigram index is used), and
+  `likeTerm` now escapes `%` and `_` (it stripped them: `john_doe` could not be found). The screen
+  (`components/admin/UsersPanel.tsx`): server search, sort and paging; readable roles and "26 Oct
+  2026" dates; a missing address reads "never signed in since <created>" only when no sign-in is
+  recorded, else "address not received from the sign-in provider"; a detail panel (focus managed,
+  `aria-current` row) with the actions the admin's permissions allow (`USER_ROW_ACTION_PERMISSIONS`:
+  change role — "Held for approval" under dual control — and erase account data, behind an
+  `alertdialog`), none on the admin's own or a `super_admin` row. The command bar's examples are
+  only commands the role can run (`components/admin/section-hints.ts`), with no second fixed hint
+  line, and every section has a proper title from one source (`sectionTitle`). Not shown, because
+  the platform cannot say it truthfully: authenticator enrolment, and whether an identity is from a
+  previous pool; no suspend / restore (no route does it). Consumer steps: apply 056, then 057; a
+  provider that verifies tokens without `TokenVerifier` never sets `addressFresh` (a changed
+  address is then never recorded — a missing one still is); a consumer's own call of
+  `checkAccountStatus` or `isInGoodStanding` that holds the token passes its profile
+  (`{ email, emailVerified: trustedVerifiedClaim(user) }`); an app's screen literal baseline drops
+  by one (the removed hint line); `UsersDataView` is gone (use `UsersPanel`).
 - **The admin console opens on a section the admin may open (TASK-184).** It reads no panel
   until `GET /api/admin/session` has answered, then opens the first section the admin's
   permissions allow — from `permittedSections` in `components/admin/AdminShell.tsx`, the shell's

@@ -34,6 +34,30 @@ export const ADMIN_TOOL_PERMISSIONS = {
 
 export type AdminToolId = keyof typeof ADMIN_TOOL_PERMISSIONS;
 
+/**
+ * The actions the Users screen offers on one account (TASK-185), each with the permission of the
+ * route that performs it — the screen shows an action only to an admin who holds it, and the
+ * route refuses anyone else whatever the screen shows. `__tests__/admin-authorization-matrix.test.ts`
+ * fails when an entry differs from its route's guard.
+ *
+ *   change_role    PATCH /api/admin/users (the command bar's change_user_role; held for a second
+ *                  admin under dual control)
+ *   erase_account  POST /api/admin/gdpr (an irreversible erasure, super_admin only by default)
+ *
+ * Suspending or restoring an account is not here: no route does it (an account's standing is
+ * changed by moderation decisions, platform/moderation).
+ */
+export const USER_ROW_ACTION_PERMISSIONS = {
+  change_role: ADMIN_TOOL_PERMISSIONS.change_user_role,
+  erase_account: "admin_purge_user_data",
+} as const satisfies Record<string, string>;
+
+/** The route each Users-screen action calls (the matrix test reads its guard). */
+export const USER_ROW_ACTION_ROUTES = {
+  change_role: "app/api/admin/users/route.ts",
+  erase_account: "app/api/admin/gdpr/route.ts",
+} as const satisfies Record<keyof typeof USER_ROW_ACTION_PERMISSIONS, string>;
+
 /** The tables `search` may read, each with the permission its admin page requires. */
 export const SEARCHABLE_TABLES = {
   users: "admin_manage_users",

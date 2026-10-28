@@ -34,8 +34,8 @@ describe("AdminShell", () => {
     expect(screen.getByText("Users")).toBeDefined();
     expect(screen.getByText("Roles")).toBeDefined();
     expect(screen.getByText("Entitlements")).toBeDefined();
-    expect(screen.getByText("Audit Log")).toBeDefined();
-    expect(screen.getByText("Password Policy")).toBeDefined();
+    expect(screen.getByText("Audit log")).toBeDefined();
+    expect(screen.getByText("Password policy")).toBeDefined();
   });
 
   it("hides nav items when permission denied", () => {

@@ -64,7 +64,7 @@ import {
   getPreviousErasureHashKey,
   isProductionContext,
 } from "@/platform/providers/environment-contract";
-import { hasDatabase, withTenantTx } from "@/platform/data";
+import { hasDatabase, withTenantTx, type Tx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { bindingOf } from "@/platform/auth/account-identity";
@@ -275,6 +275,52 @@ export async function upgradeLegacyErasureHashes(limit = 500): Promise<number> {
   });
 }
 
+/** The ban reason recorded when a ban follows an address to another account (A-11; the
+ * provisioning insert writes the same text). */
+export const CARRIED_BAN_REASON = "A ban on this address carried over to a new account.";
+
+/**
+ * Whether a ban follows `email` (as stored: storedEmail) to the account `accountId` (A-11): another
+ * account of the tenant with the address is banned, or one erased while banned left its hash.
+ * Matched folded too (review 15 M1): a lookalike of a banned address still matches — a ban
+ * over-matches rather than lets one through. A kept hash a previous key or an earlier form made is
+ * rehashed under the current key on a match (review 8 L6, review 9 M6). Runs in the caller's
+ * transaction: provisioning's, and the address recorded from the identity provider's
+ * (email-verification.ts, TASK-185).
+ */
+export async function banFollowsAddress(
+  tx: Tx,
+  email: string,
+  accountId: string
+): Promise<boolean> {
+  const candidates = erasureHashCandidates(email);
+  const [current] = candidates;
+  const { rows } = await tx.query(
+    `select 1 from users
+      where (email = $1 or lower(btrim(email)) = $3) and account_status = 'banned'
+        and id <> $2::uuid
+     limit 1`,
+    [email, accountId, folded(email)]
+  );
+  if (rows.length > 0) return true;
+  const erased = await tx.query<{
+    user_id: string;
+    hash: string;
+    key: string | null;
+  }>(
+    `select user_id, email_hash as hash, email_hash_key as key from user_deletions
+      where email_hash = any($1::text[]) and standing = 'banned'`,
+    [candidates.map((c) => c.hash)]
+  );
+  for (const row of erased.rows)
+    if (row.hash !== current.hash || row.key !== current.keyId)
+      await tx.query(
+        "update user_deletions set email_hash = $2, email_hash_key = $3, email_hash_scheme = $4 where user_id = $1::uuid",
+        [row.user_id, current.hash, current.keyId, current.scheme]
+      );
+  return erased.rows.length > 0;
+}
+
 function fail(userId: string, step: string, error: unknown): ProvisioningOutcome {
   logger.error("User provisioning failed", {
     userId,
@@ -376,37 +422,7 @@ export async function provisionAccount(
     let carriedBan = false;
     if (email) {
       try {
-        const candidates = erasureHashCandidates(email);
-        const [current] = candidates;
-        carriedBan = await withTenantTx(async (tx) => {
-          const { rows } = await tx.query(
-            `select 1 from users
-              where (email = $1 or lower(btrim(email)) = $3) and account_status = 'banned'
-                and id <> $2::uuid
-             limit 1`,
-            [email, userId, folded(email)]
-          );
-          if (rows.length > 0) return true;
-          const erased = await tx.query<{
-            user_id: string;
-            hash: string;
-            key: string | null;
-          }>(
-            `select user_id, email_hash as hash, email_hash_key as key from user_deletions
-              where email_hash = any($1::text[]) and standing = 'banned'`,
-            [candidates.map((c) => c.hash)]
-          );
-          // Rehashed on a match (review 8 L6): a row the previous key or an earlier form made
-          // is rewritten under the current key — from the address, known now, so the match is
-          // the identification (review 9 M6) — and the previous key can be retired.
-          for (const row of erased.rows)
-            if (row.hash !== current.hash || row.key !== current.keyId)
-              await tx.query(
-                "update user_deletions set email_hash = $2, email_hash_key = $3, email_hash_scheme = $4 where user_id = $1::uuid",
-                [row.user_id, current.hash, current.keyId, current.scheme]
-              );
-          return erased.rows.length > 0;
-        });
+        carriedBan = await withTenantTx((tx) => banFollowsAddress(tx, email, userId));
       } catch (err) {
         return { outcome: fail(userId, "ban-check", err) };
       }
@@ -433,15 +449,20 @@ export async function provisionAccount(
               // (tenant_id, id)) is an arbiter, so a concurrent first request that holds either
               // makes this insert nothing — never a unique violation (see the header).
               const { rows } = await tx.query(
+                // last_login_at: the sign-in that gave this identity its token was recorded
+                // before the row existed, under the subject (auth-events, TASK-185).
                 `insert into users (id, cognito_sub, email, email_verified, role_id,
                                     account_status, banned_at, ban_reason, status_changed_by,
-                                    status_changed_at)
+                                    status_changed_at, last_login_at)
                  select $1::uuid, $2, $3, $4, $5::uuid,
                         case when $6 then 'banned' else 'active' end::account_status,
                         case when $6 then now() end,
                         case when $6 then 'A ban on this address carried over to a new account.' end,
                         case when $6 then 'platform:ban-carry-over' end,
-                        case when $6 then now() end
+                        case when $6 then now() end,
+                        (select max(created_at) from audit_log
+                          where actor_id = $1::uuid and action = 'login_success'
+                            and coalesce(details->>'method', '') <> 'refresh')
                  on conflict do nothing
                  returning id`,
                 [

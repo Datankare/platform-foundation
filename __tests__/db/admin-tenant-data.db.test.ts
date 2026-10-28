@@ -1169,3 +1169,244 @@ dbDescribe(
     });
   }
 );
+
+// ── TASK-185: the Users screen's list — status, sign-in, search, sort and paging bounds ─────────
+
+dbDescribe(`${SUITE} GET /api/admin/users — the Users screen (TASK-185)`, () => {
+  const list = async (path: string, caller: TestIdentity = superAdmin) => {
+    const res = await usersGET(req(path, caller));
+    return { status: res.status, body: await res.json() };
+  };
+  const userOf = (body: { users: { id: string }[] }, id: string) =>
+    body.users.find((u) => u.id === id) as Record<string, unknown> | undefined;
+
+  let dana: string; // A: no address, suspended until a past date, signed in long ago
+  let erin: string; // A: banned, signed in recently, one entitlement
+  let group: string;
+
+  beforeAll(async () => {
+    dana = await insertUser(a, {
+      roleId: freeRole,
+      email: null,
+      createdAt: "2026-06-07T12:00:00Z",
+    });
+    erin = await insertUser(a, {
+      roleId: freeRole,
+      email: email("erin"),
+      displayName: "Erin",
+      createdAt: "2026-02-01T00:00:00Z",
+      emailVerified: true,
+    });
+    await q(
+      `update users set account_status = 'suspended', suspended_until = now() - interval '1 day',
+              last_login_at = '2026-06-08T09:00:00Z' where id = $1::uuid`,
+      [dana]
+    );
+    await q(
+      `update users set account_status = 'banned', banned_at = now(),
+              last_login_at = now() where id = $1::uuid`,
+      [erin]
+    );
+    group = (
+      await q<{ id: string }>(
+        `insert into entitlement_groups (code, display_name) values ($1, $2) returning id`,
+        [`beta-${RUN}`, "Beta access"]
+      )
+    )[0]!.id;
+    await q(
+      `insert into user_entitlements (user_id, entitlement_group_id, tenant_id)
+       values ($1::uuid, $2::uuid, $3::uuid)`,
+      [erin, group, a.id]
+    );
+    // A grant of an inactive group is not current either (platform/auth/entitlements.ts).
+    const inactive = (
+      await q<{ id: string }>(
+        `insert into entitlement_groups (code, display_name, is_active) values ($1, $2, false)
+         returning id`,
+        [`off-${RUN}`, "Switched off"]
+      )
+    )[0]!.id;
+    await q(
+      `insert into user_entitlements (user_id, entitlement_group_id, tenant_id)
+       values ($1::uuid, $2::uuid, $3::uuid)`,
+      [erin, inactive, a.id]
+    );
+    // An expired and a revoked grant are not current: never listed.
+    await q(
+      `insert into user_entitlements (user_id, entitlement_group_id, tenant_id, expires_at)
+       select $1::uuid, $2::uuid, $3::uuid, now() - interval '1 day'`,
+      [dana, group, a.id]
+    );
+  });
+  afterAll(async () => {
+    const codes = [`beta-${RUN}`, `off-${RUN}`];
+    await q(
+      `delete from user_entitlements where entitlement_group_id in
+         (select id from entitlement_groups where code = any($1::text[]))`,
+      [codes]
+    );
+    await q("delete from entitlement_groups where code = any($1::text[])", [codes]);
+  });
+
+  it("each row carries its standing, verification, last sign-in and current entitlements", async () => {
+    const { status, body } = await list("/api/admin/users?limit=100");
+    expect(status).toBe(200);
+    expect(userOf(body, dana)).toMatchObject({
+      email: null,
+      // An expired suspension is over, as the status guard reads it.
+      status: "active",
+      statusUntil: null,
+      emailVerified: false,
+      lastSignInAt: "2026-06-08T09:00:00.000Z",
+      entitlements: [],
+      roleName: "free",
+    });
+    expect(userOf(body, erin)).toMatchObject({
+      status: "banned",
+      emailVerified: true,
+      entitlements: [{ code: `beta-${RUN}`, name: "Beta access", expiresAt: null }],
+    });
+    expect(userOf(body, gone)).toMatchObject({ status: "deleted", isDeleted: true });
+    expect(userOf(body, alice)).toMatchObject({ lastSignInAt: null });
+    expect(userOf(body, peerSuper)).toMatchObject({
+      roleName: "super_admin",
+      roleDisplayName: "Super Admin",
+    });
+    expect(body.page).toMatchObject({
+      limit: 100,
+      offset: 0,
+      sort: "created",
+      dir: "desc",
+    });
+  });
+
+  it("sorts by last sign-in, never-signed-in last (desc) or first (asc)", async () => {
+    const desc = (
+      await list("/api/admin/users?limit=100&sort=last_sign_in")
+    ).body.users.map((u: { id: string }) => u.id);
+    expect(desc.indexOf(erin)).toBeLessThan(desc.indexOf(dana));
+    expect(desc.indexOf(dana)).toBeLessThan(desc.indexOf(alice));
+    const asc = (
+      await list("/api/admin/users?limit=100&sort=last_sign_in&dir=asc")
+    ).body.users.map((u: { id: string }) => u.id);
+    expect(asc.indexOf(alice)).toBeLessThan(asc.indexOf(dana));
+    expect(asc.indexOf(dana)).toBeLessThan(asc.indexOf(erin));
+  });
+
+  it("sorts by created, oldest first", async () => {
+    const asc = (await list("/api/admin/users?limit=100&dir=asc")).body.users.map(
+      (u: { id: string }) => u.id
+    );
+    expect(asc.indexOf(bob)).toBeLessThan(asc.indexOf(alice));
+    expect(asc.indexOf(alice)).toBeLessThan(asc.indexOf(carol));
+  });
+
+  it("pages with one row of look-ahead: hasMore, then the next page", async () => {
+    const first = (await list("/api/admin/users?q=ali&limit=1")).body;
+    expect(first.users.map((u: { id: string }) => u.id)).toEqual([alice]);
+    expect(first.page.hasMore).toBe(true);
+    const second = (await list("/api/admin/users?q=ali&limit=1&offset=1")).body;
+    expect(second.users.map((u: { id: string }) => u.id)).toEqual([bob]);
+    expect(second.page.hasMore).toBe(false);
+  });
+
+  it.each([
+    ["limit=1000", { limit: 100, offset: 0 }],
+    ["limit=0", { limit: 50, offset: 0 }],
+    ["offset=999999999", { limit: 50, offset: 10_000 }],
+    ["q=ali&offset=5000", { limit: 50, offset: 900 }],
+  ])("bounds %s → %p", async (qs, page) => {
+    const { status, body } = await list(`/api/admin/users?${qs}`);
+    expect(status).toBe(200);
+    expect(body.page).toMatchObject(page);
+    expect(body.users.length).toBeLessThanOrEqual(100);
+  });
+
+  it.each([
+    ["sort", "created_at desc; drop table users --"],
+    ["sort", "email"],
+    ["sort", "CREATED"],
+    ["dir", "desc nulls first"],
+    ["dir", "up"],
+  ])(
+    "refuses %s=%p by name, never as SQL (request.invalid_value)",
+    async (field, value) => {
+      const { status, body } = await list(
+        `/api/admin/users?${field}=${encodeURIComponent(value)}`
+      );
+      expect(status).toBe(400);
+      expect(body).toMatchObject({ code: "request.invalid_value", params: { field } });
+      // The table is still there, and still lists.
+      expect((await list("/api/admin/users")).status).toBe(200);
+    }
+  );
+
+  it("a hostile term is text: the payload first, then past the 100-character bound", async () => {
+    // Spliced into SQL this would fail (500) or match every row (`or 1=1`); bound, it is text.
+    const term = `%' or 1=1 -- ${"a".repeat(150)}`;
+    const { status, body } = await list(`/api/admin/users?q=${encodeURIComponent(term)}`);
+    expect(status).toBe(200);
+    expect(body.users).toEqual([]);
+  });
+
+  it("_ and % match themselves (likeTerm escapes them): john_doe, not johnXdoe; 50% not 500", async () => {
+    const underscore = await insertUser(a, {
+      roleId: freeRole,
+      displayName: `john_doe ${RUN}`,
+    });
+    const lookalike = await insertUser(a, {
+      roleId: freeRole,
+      displayName: `johnXdoe ${RUN}`,
+    });
+    const percent = await insertUser(a, { roleId: freeRole, displayName: `50% ${RUN}` });
+    const fivehundred = await insertUser(a, {
+      roleId: freeRole,
+      displayName: `500 ${RUN}`,
+    });
+    const found = async (q: string) =>
+      (
+        await list(`/api/admin/users?limit=100&q=${encodeURIComponent(`${q} ${RUN}`)}`)
+      ).body.users.map((u: { id: string }) => u.id);
+    // Stripped (the old likeTerm), "john_doe" searched "johndoe": neither was found. As a
+    // wildcard, `_` found both.
+    expect(await found("john_doe")).toEqual([underscore]);
+    expect(await found("john%doe")).toEqual([]);
+    expect(await found("50%")).toEqual([percent]);
+    expect(await found("5_0")).toEqual([]);
+    // The look-alikes are there to be found: a plain search finds them, so their absence above
+    // is the escaping, not an account missing.
+    const all = (
+      await list(`/api/admin/users?limit=100&q=${encodeURIComponent(RUN)}`)
+    ).body.users.map((u: { id: string }) => u.id);
+    expect(all).toEqual(
+      expect.arrayContaining([underscore, lookalike, percent, fivehundred])
+    );
+  });
+
+  it("an action the screen hides is refused by its route anyway (the same permission map)", async () => {
+    const moderator = suiteCaller("moderator", RUN);
+    expect(
+      (
+        await usersPATCH(
+          req("/api/admin/users", moderator, {
+            method: "PATCH",
+            body: { userId: carol, roleId: moderatorRole },
+          })
+        )
+      ).status
+    ).toBe(403);
+    // The admin role has no admin_purge_user_data: the screen offers no erase, the route refuses.
+    expect(
+      (
+        await gdprPOST(
+          req("/api/admin/gdpr", admin, {
+            method: "POST",
+            body: { userId: carol, reason: "admin-action" },
+          })
+        )
+      ).status
+    ).toBe(403);
+    expect(createPlatformPurgePipeline).not.toHaveBeenCalledWith(admin.userId);
+    expect(await roleOf(carol)).toBe(freeRole);
+  });
+});

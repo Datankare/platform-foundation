@@ -62,6 +62,17 @@ export function bindingOf(
 export interface StoredAddress {
   readonly email: string | null;
   readonly verified: boolean;
+  /**
+   * The account's status (users.account_status), read in the same statement: a banned
+   * account's address is never moved (TASK-185 — the ban follows the address). Absent: unknown,
+   * and treated as not active.
+   */
+  readonly status?: string;
+  /**
+   * The account is erased and awaiting its purge (users.deleted_at): nothing is written to it
+   * (TASK-185 — every request would otherwise try a write that matches nothing).
+   */
+  readonly deleted?: boolean;
 }
 
 /** The binding, and — for a bound account — its stored address. */
@@ -85,8 +96,10 @@ export async function resolveAccountRecord(subject: string): Promise<AccountReco
       cognito_sub: string | null;
       email: string | null;
       email_verified: boolean | null;
+      account_status: string | null;
+      deleted: boolean | null;
     }>(
-      "select id, cognito_sub, email, email_verified from users where cognito_sub = $1 or id = $2::uuid",
+      "select id, cognito_sub, email, email_verified, account_status, deleted_at is not null as deleted from users where cognito_sub = $1 or id = $2::uuid",
       [subject, UUID.test(subject) ? subject : null]
     )
   );
@@ -95,7 +108,12 @@ export async function resolveAccountRecord(subject: string): Promise<AccountReco
   const row = rows.find((r) => r.id === resolution.accountId)!;
   return {
     resolution,
-    address: { email: row.email, verified: row.email_verified === true },
+    address: {
+      email: row.email,
+      verified: row.email_verified === true,
+      ...(row.account_status ? { status: row.account_status } : {}),
+      ...(row.deleted ? { deleted: true } : {}),
+    },
   };
 }
 
