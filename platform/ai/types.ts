@@ -27,12 +27,14 @@ export const MODEL_REGISTRY: Record<ModelTier, ModelConfig> = {
   fast: {
     modelId: "claude-haiku-4-5-20251001",
     label: "Haiku 4.5",
-    inputCostPer1M: 0.8,
-    outputCostPer1M: 4.0,
+    inputCostPer1M: 1.0,
+    outputCostPer1M: 5.0,
   },
   standard: {
-    modelId: "claude-sonnet-4-20250514",
-    label: "Sonnet 4",
+    // Sonnet 4 (claude-sonnet-4-20250514) was retired 2026-06-15. Sonnet 4.6 keeps the
+    // request surface (temperature, no thinking unless asked) and the same price.
+    modelId: "claude-sonnet-4-6",
+    label: "Sonnet 4.6",
     inputCostPer1M: 3.0,
     outputCostPer1M: 15.0,
   },

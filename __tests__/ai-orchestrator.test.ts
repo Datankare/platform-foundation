@@ -217,7 +217,7 @@ describe("createOrchestrator", () => {
   it("passes tier to provider", async () => {
     const completeFn = jest.fn().mockResolvedValue({
       content: [{ type: "text", text: "ok" }],
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       usage: { inputTokens: 200, outputTokens: 100 },
       stopReason: "end_turn",
     });
@@ -234,7 +234,7 @@ describe("createOrchestrator", () => {
   it("applies tierOverride from options", async () => {
     const completeFn = jest.fn().mockResolvedValue({
       content: [{ type: "text", text: "ok" }],
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       usage: { inputTokens: 200, outputTokens: 100 },
       stopReason: "end_turn",
     });

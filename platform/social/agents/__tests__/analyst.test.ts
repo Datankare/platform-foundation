@@ -30,7 +30,7 @@ function makeContext(overrides: Partial<WorkflowContext> = {}): WorkflowContext 
 function makeMockOrchestrator(responseText: string): Orchestrator {
   const response: AIResponse = {
     content: [{ type: "text", text: responseText }],
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6",
     usage: { inputTokens: 120, outputTokens: 100 },
     stopReason: "end_turn",
   };
