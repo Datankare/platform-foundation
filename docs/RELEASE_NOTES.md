@@ -34,6 +34,15 @@ code. Consumer steps: §1b, the eight "Release candidate" rows.
   `jest.setup.ts`; sync-exclude `/refusal-coverage-baseline.json` and keep the app's own (create it
   with `{"gaps": []}`, then list the app's gaps); route the app's screens through
   `handleRefusal` or declare `HANDLED_CODES` for its own codes.
+- **The admin console opens on a section the admin may open (TASK-184).** It reads no panel
+  until `GET /api/admin/session` has answered, then opens the first section the admin's
+  permissions allow — from `permittedSections` in `components/admin/AdminShell.tsx`, the shell's
+  own mapping — so a moderator opens on Approvals and is refused no read. A "no sections
+  available for your role" screen (`screens.admin_console.no_sections`) is kept as a safety net;
+  the platform's session route cannot produce it today (`can_access_admin` always opens Approvals
+  and Tenant). It read `/api/admin/roles` and `/api/admin/users` at load, a 403 for anyone without
+  those permissions. The console's own **Sign Out now signs out** (the server's sign-out, the
+  stored session cleared, then `/auth`); it only left for `/`, still signed in. No consumer step.
 - **A QR code for authenticator setup (TASK-180).** The admin console's two-step setup draws the
   otpauth URI as a QR code in the browser (`qrcode-generator` 2.0.4, no dependencies of its own); the
   key is behind "Can't scan? Show key". The pool must allow software-token MFA (ENV_REFERENCE,

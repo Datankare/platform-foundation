@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import AdminShell from "@/components/admin/AdminShell";
+import AdminShell, { permittedSections } from "@/components/admin/AdminShell";
 import type { AdminSection } from "@/components/admin/AdminShell";
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
@@ -31,6 +31,7 @@ import { renderMessage } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { useAuth } from "@/platform/auth/context";
 import MfaEnrollment from "@/components/admin/MfaEnrollment";
+import { leaveConsole } from "@/components/admin/leave-console";
 import {
   isPanelUnavailable,
   PANEL_UNAVAILABLE,
@@ -67,6 +68,11 @@ function sessionRefused(refusal: Refusal): ConsoleSession {
   }
   if (refusal.kind === "signed-out-erased") announceSessionEnd(refusal.code);
   return { kind: "refusal", refusal };
+}
+
+/** What a permission list allows: "*" (the development bypass admin) allows everything. */
+function permissionCheck(granted: readonly string[]): (code: string) => boolean {
+  return (code) => granted.includes("*") || granted.includes(code);
 }
 
 interface ActionPlan {
@@ -161,7 +167,11 @@ export default function AdminPage() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [results, setResults] = useState<ExecutionResult[] | null>(null);
   const [panelData, setPanelData] = useState<Record<string, unknown>>({});
-  const [activePanel, setActivePanel] = useState<AdminSection>("roles");
+  // The section chosen in the shell; none at first. What is open and read is `openPanel`, which
+  // waits for the session (TASK-184: the console opened "roles" at once and read it before the
+  // session answered — a 403 for anyone without admin_manage_roles, and for every admin before
+  // the second-factor check).
+  const [activePanel, setActivePanel] = useState<AdminSection | null>(null);
   const router = useRouter();
   const [session, setSession] = useState<ConsoleSession>({ kind: "loading" });
   const [sessionAttempt, setSessionAttempt] = useState(0);
@@ -220,16 +230,35 @@ export default function AdminPage() {
     [showPanelData]
   );
 
-  // The open panel's data; a response for a panel since left is dropped.
+  // The sections this admin may open, in the shell's order (AdminShell's one mapping); none until
+  // the session has answered "admin".
+  const permitted = useMemo(
+    () =>
+      session.kind === "admin"
+        ? permittedSections(permissionCheck(session.permissions))
+        : [],
+    [session]
+  );
+
+  // The open panel: the one chosen, while the session permits it, else the first permitted
+  // section; none while nothing is permitted.
+  const openPanel =
+    activePanel !== null && permitted.includes(activePanel)
+      ? activePanel
+      : (permitted[0] ?? null);
+
+  // The open panel's data — so only ever a section the session permits; a response for a panel
+  // since left is dropped.
   useEffect(() => {
+    if (openPanel === null) return;
     let current = true;
-    void fetchPanelData(activePanel).then((data) => {
-      if (current) showPanelData(activePanel, data);
+    void fetchPanelData(openPanel).then((data) => {
+      if (current) showPanelData(openPanel, data);
     });
     return () => {
       current = false;
     };
-  }, [activePanel, showPanelData]);
+  }, [openPanel, showPanelData]);
 
   const handleConfirm = async (actions: ActionPlan["actions"]) => {
     setIsExecuting(true);
@@ -260,7 +289,7 @@ export default function AdminPage() {
           },
         ]);
         setCurrentPlan(null);
-        await refreshData(activePanel);
+        if (openPanel !== null) await refreshData(openPanel);
         return;
       }
       const res = await apiFetch("/api/admin/ai/execute", {
@@ -272,7 +301,7 @@ export default function AdminPage() {
         const { results: execResults } = await res.json();
         setResults(execResults);
         setCurrentPlan(null);
-        await refreshData(activePanel);
+        if (openPanel !== null) await refreshData(openPanel);
       }
     } finally {
       setIsExecuting(false);
@@ -367,17 +396,53 @@ export default function AdminPage() {
     );
   }
 
-  const granted = session.kind === "admin" ? session.permissions : [];
+  // Nothing is shown, and nothing read, until the session has answered.
+  if (session.kind === "loading") {
+    return (
+      <main
+        role="status"
+        className="mx-auto max-w-md p-8 text-center text-sm text-gray-300"
+      >
+        {renderMessage("screens.admin_console.loading")}
+      </main>
+    );
+  }
+
+  // Administrative access, but no section this role may open: say so, never a refused read. A
+  // safety net, not a state the platform's server produces: /api/admin/session requires
+  // can_access_admin, which always opens Approvals and Tenant. It holds if a section's permission
+  // or the session route changes.
+  if (permitted.length === 0) {
+    return (
+      <main className="mx-auto max-w-md p-8 text-center">
+        <RefusalNotice
+          refusal={handleRefusal("auth.permission_denied", {
+            message: renderMessage("screens.admin_console.no_sections"),
+          })}
+        />
+        <button
+          type="button"
+          className="mt-4 rounded bg-blue-600 px-4 py-2 text-sm text-white"
+          onClick={() => {
+            void signOut().then(() => router.push("/auth"));
+          }}
+        >
+          {renderMessage("screens.refusal.sign_out")}
+        </button>
+      </main>
+    );
+  }
+
   return (
     <AdminShell
-      adminName={
-        session.kind === "admin" ? session.roleName || "Administrator" : "Administrator"
-      }
-      hasPermission={(code) => granted.includes("*") || granted.includes(code)}
+      adminName={session.roleName || "Administrator"}
+      hasPermission={permissionCheck(session.permissions)}
       onSignOut={() => {
-        // A full load, not client navigation: leaving the console keeps no in-memory state.
-        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-        window.location.assign("/");
+        // The session ends — the server revokes it and this browser forgets its tokens — then a
+        // full load to sign-in (TASK-184: it only left for "/", still signed in).
+        void signOut()
+          .catch(() => undefined)
+          .then(() => leaveConsole("/auth"));
       }}
       onSectionChange={(section) => setActivePanel(section)}
     >

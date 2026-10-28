@@ -27,7 +27,7 @@ interface AdminShellProps {
   adminName: string;
   /** Callback to verify admin has required permission */
   hasPermission: (code: string) => boolean;
-  /** Sign out callback */
+  /** "Sign Out": must end the session, not only leave the console (the page signs out first). */
   onSignOut: () => void;
   /** Render the active section's content */
   children: (activeSection: AdminSection) => React.ReactNode;
@@ -146,6 +146,19 @@ const NAV_ITEMS: {
 ];
 
 /**
+ * The sections `hasPermission` allows, in the console's order: the one mapping from section to
+ * permission (audit B-14). The shell shows these; the page opens the first and reads no other
+ * (TASK-184). Display only — each section's route checks its own permission.
+ */
+export function permittedSections(
+  hasPermission: (code: string) => boolean
+): AdminSection[] {
+  return NAV_ITEMS.filter((item) => hasPermission(item.permission)).map(
+    (item) => item.section
+  );
+}
+
+/**
  * Admin shell — extensible layout with sidebar navigation.
  * Role-gated: only renders sections the admin has permission for.
  * The children render prop receives the active section.
@@ -157,10 +170,13 @@ export default function AdminShell({
   onSectionChange,
   children,
 }: AdminShellProps) {
-  const visibleItems = NAV_ITEMS.filter((item) => hasPermission(item.permission));
+  const permitted = permittedSections(hasPermission);
+  const visibleItems = NAV_ITEMS.filter((item) => permitted.includes(item.section));
 
-  const [activeSection, setActiveSection] = useState<AdminSection>(
-    visibleItems[0]?.section || "users"
+  // The first permitted section, or none: never a section the admin may not open (TASK-184 — it
+  // fell back to "users", whose data read is refused to anyone without admin_manage_users).
+  const [activeSection, setActiveSection] = useState<AdminSection | null>(
+    permitted[0] ?? null
   );
 
   // The section shown first is reported too (review 14 L-1): the page loads the data of the
@@ -168,7 +184,7 @@ export default function AdminShell({
   // then shown with no data read, as if empty.
   const reported = useRef(false);
   useEffect(() => {
-    if (reported.current) return;
+    if (reported.current || activeSection === null) return;
     reported.current = true;
     onSectionChange?.(activeSection);
   }, [activeSection, onSectionChange]);
@@ -213,7 +229,9 @@ export default function AdminShell({
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 p-8">{children(activeSection)}</main>
+      <main className="flex-1 p-8">
+        {activeSection !== null && children(activeSection)}
+      </main>
     </div>
   );
 }

@@ -4474,7 +4474,58 @@ key; `security-review` and `review-tier` as required checks in branch protection
 (owner settings); the first scored run of the eval set; the first milestone's metrics; circuit
 breakers (declined for now, AI_ENGINEERING §8).
 
-_Last updated: October 27, 2026 (TASK-183 — the AI-engineering review process)_
+### TASK-184 — The admin console read a panel before it knew the admin could open it
+
+| Field        | Detail                                                   |
+| ------------ | -------------------------------------------------------- |
+| **ID**       | TASK-184                                                 |
+| **Type**     | Defect (UX, access shown)                                |
+| **Severity** | Medium                                                   |
+| **Phase**    | Phase 5                                                  |
+| **Target**   | v6.0.0 (RC)                                              |
+| **Status**   | Fixed on develop (v6.0.0 RC)                             |
+| **Logged**   | 2026-10-27 (Playform's live staff journey, playform-dev) |
+
+**What was wrong.** `app/admin/page.tsx` opened the console on `"roles"` and read
+`/api/admin/roles` in an effect that did not wait for `GET /api/admin/session`; while the session
+loaded, `AdminShell` was rendered with no permissions, fell back to `"users"` and reported it, so
+`/api/admin/users` was read too. A moderator (`can_access_admin`, `can_moderate`) was refused both
+(403) and shown a section heading over data it could not load; an admin without a second factor
+saw all three reads refused (the session, roles and users). Found by Playform's Journey B, which asserts the first section's
+data read is 200. Review eval case 18.
+
+**Fix.** `AdminShell` exports `permittedSections(hasPermission)` — its own section-to-permission
+mapping, in its order, the one source for both the shell and the page; the shell no longer falls
+back to a section the admin may not open. The page opens no panel and reads nothing until the
+session answers "admin", then opens the first permitted section (a moderator: Approvals; `*`:
+Users), and reads only a permitted one. While the session loads it shows "Loading…", not the
+shell. A "no sections available for your role" screen (`screens.admin_console.no_sections`,
+through `RefusalNotice`, with sign-out) is kept as a safety net: the platform's server cannot
+produce it today, since `/api/admin/session` requires `can_access_admin`, which always opens
+Approvals and Tenant. The server's permission checks are unchanged.
+
+**Also fixed (pre-existing, found in review).** The console's own "Sign Out" only left for `/`
+with a full load: the access token and user stayed in storage and the refresh cookie stayed live,
+so the next page was still signed in. It now awaits the auth context's `signOut()` (the server's
+sign-out with the access token, then the stored session forgotten) and then loads `/auth`
+(`components/admin/leave-console.ts`). Playform's Journey B signs out with that button.
+
+**Tests.** `__tests__/admin-console-first-section.test.tsx`, against a mock server that answers
+each panel route 403 without its permission: a moderator opens on Approvals, reads only
+`/api/admin/approvals` (then `/api/admin/tenant` on click), never `roles` or `users`, and no read
+is refused; no panel read starts before the session answers; the dev-bypass admin (`*`) opens on
+Users, read once; a role whose first section is Roles opens there; non-string permissions are
+dropped; a loading session reads no panel; `auth.mfa_required` and a refused session each reach
+their own screen (so a session that never answered fails them) and read no panel; no permissions,
+or only ones no section uses, show the no-sections message and sign out; the shell with no section
+renders and reports nothing. `__tests__/admin-console-sign-out.test.tsx`, with the real auth
+context: Sign Out posts `/api/auth/sign-out` with the bearer token, clears the stored token, user,
+legacy refresh token and session cookie, and only then leaves for `/auth`; with the server's
+sign-out unreachable or answering 500 the session still ends and the console still leaves.
+
+_Last updated: October 27, 2026 (TASK-184 filed and fixed)_
+
+_Previously updated: October 27, 2026 (TASK-183 — the AI-engineering review process)_
 
 _Previously updated: October 26, 2026 (TASK-182 planned)_
 

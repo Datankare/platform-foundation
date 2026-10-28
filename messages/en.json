@@ -324,6 +324,7 @@
       "refused": "This page is for administrators. Sign in with an account that has administrative access.",
       "sign_in": "Sign in",
       "loading": "Loading…",
+      "no_sections": "No sections of the admin console are available for your role. Ask a super administrator for the permission a section needs, or sign out.",
       "unavailable_title": "Unavailable — could not read",
       "unavailable_body": "{panel} could not be read just now, so nothing is shown: this is not an empty list. Nothing was changed. Try again in a moment; if it keeps failing, the service behind it needs a look.",
       "retry": "Try again",

@@ -7,7 +7,7 @@ model or tools — is scored against every case before it is kept. Each new inci
 late finding adds a case.
 
 Commit references are public develop commits. As of: a public develop commit at which the defect stands (the file:line is given there).
-Of the 17 cases, 14 reproduce from public history. Cases 02, 04 and 08 do not: their pre-fix code
+Of the 18 cases, 15 reproduce from public history. Cases 02, 04 and 08 do not: their pre-fix code
 was never public, so their review input is a patch in [`inputs/`](inputs/), reconstructed from
 pre-release history, and their lines are the patch's.
 
@@ -34,6 +34,7 @@ A consuming app keeps its own cases in a folder of its own (Playform: `playform/
 | [15-pool-software-token-mfa-was-off.md](15-pool-software-token-mfa-was-off.md)                                                 | The identity pool had software-token MFA off; nothing said it was needed                  | Low (docs); a configuration miss outside the repository — config "misroutes" |
 | [16-task-181-password-reset-reported-success-on-refusal.md](16-task-181-password-reset-reported-success-on-refusal.md)         | Password reset showed "Password Reset" when the server refused it                         | UI — dead-ends or hides the reason (Medium)                                  |
 | [17-task-181-screens-hid-the-refusal.md](17-task-181-screens-hid-the-refusal.md)                                               | Screens hid or misreported the API's refusals                                             | UI (Medium); the sign-up route is auth (High)                                |
+| [18-task-184-the-console-read-a-panel-it-could-not-open.md](18-task-184-the-console-read-a-panel-it-could-not-open.md)         | The admin console read a panel before the session said the admin could open it            | UI (Medium)                                                                  |
 
 ## How to run a case
 
