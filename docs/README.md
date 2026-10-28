@@ -127,16 +127,18 @@ graph TD
 
 ### Principles & Standards
 
-| Doc                                                                | What it is                                                                   |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [GENAI_MANIFESTO.md](GENAI_MANIFESTO.md)                           | The GenAI-native principles the platform is built on.                        |
-| [ASSURANCE.md](ASSURANCE.md)                                       | Adversarial Validation: what runs, when, what it proves; what is not done.   |
-| [audits/](audits/)                                                 | The independent-review brief and each review's finding register.             |
-| [OWASP_CONTROLS.md](OWASP_CONTROLS.md)                             | OWASP Top 10 control mapping.                                                |
-| [COMPONENT_REGISTER.md](COMPONENT_REGISTER.md)                     | Every dependency and hosted service, with its licence verdict and exit path. |
-| [SUSTAINABILITY_CHECKLIST.md](SUSTAINABILITY_CHECKLIST.md)         | Sustainability review checklist.                                             |
-| [SUSTAINABILITY_REVIEW_PROMPT.md](SUSTAINABILITY_REVIEW_PROMPT.md) | The prompt used for sustainability reviews.                                  |
-| [LIGHTHOUSE.md](LIGHTHOUSE.md)                                     | Lighthouse performance/accessibility guidance.                               |
+| Doc                                                                | What it is                                                                                                               |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| [GENAI_MANIFESTO.md](GENAI_MANIFESTO.md)                           | The GenAI-native principles the platform is built on.                                                                    |
+| [ASSURANCE.md](ASSURANCE.md)                                       | Adversarial Validation: what runs, when, what it proves; what is not done.                                               |
+| [AI_ENGINEERING.md](AI_ENGINEERING.md)                             | How a change is reviewed before the owner sees it: the article it follows, risk tiers, the evidence, metrics (TASK-183). |
+| [review-evals/](review-evals/README.md)                            | The reviewer's eval set: one case per real miss, and the scoring rubric.                                                 |
+| [audits/](audits/)                                                 | The independent-review brief and each review's finding register.                                                         |
+| [OWASP_CONTROLS.md](OWASP_CONTROLS.md)                             | OWASP Top 10 control mapping.                                                                                            |
+| [COMPONENT_REGISTER.md](COMPONENT_REGISTER.md)                     | Every dependency and hosted service, with its licence verdict and exit path.                                             |
+| [SUSTAINABILITY_CHECKLIST.md](SUSTAINABILITY_CHECKLIST.md)         | Sustainability review checklist.                                                                                         |
+| [SUSTAINABILITY_REVIEW_PROMPT.md](SUSTAINABILITY_REVIEW_PROMPT.md) | The prompt used for sustainability reviews.                                                                              |
+| [LIGHTHOUSE.md](LIGHTHOUSE.md)                                     | Lighthouse performance/accessibility guidance.                                                                           |
 
 ### Planning & Tracking
 

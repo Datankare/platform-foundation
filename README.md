@@ -51,7 +51,8 @@ holds itself — and any app built on it — to this:
 
 Cadence — every commit: CI; every change: threat model and hostile tests; every release: independent
 review plus fuzz and monkey testing on staging; weekly: dependency audit, ZAP scan, migration parity.
-See [ASSURANCE.md](docs/ASSURANCE.md).
+See [ASSURANCE.md](docs/ASSURANCE.md). How each change is reviewed before the owner promotes it — following the Claude Code team's
+published code-review practice, acknowledged there — is [AI_ENGINEERING.md](docs/AI_ENGINEERING.md).
 
 ### Identity & Access (Phase 1 — complete)
 
@@ -150,25 +151,27 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Documentation
 
-| Document                                      | Purpose                                                                            |
-| --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `docs/adr/ADR-001–056`                        | 56 Architecture Decision Records                                                   |
-| `docs/TAD.md`                                 | Technical Architecture Document                                                    |
-| `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                  |
-| `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                         |
-| `docs/SPRINT3C_UX_GOVERNANCE_ADMIN_DESIGN.md` | GenAI-native governance admin — the reusable governance-panel capability (ADR-035) |
-| `docs/RELEASE_NOTES.md`                       | Release notes — new platform capabilities per release                              |
-| `docs/GENAI_MANIFESTO.md`                     | The 18 GenAI-native principles — what "GenAI-native" means                         |
-| `docs/ENGINEERING_LEARNINGS.md`               | Adopted engineering principles (L1–L21) and learning log                           |
-| `docs/PHASE4_PLAN.md`                         | Phase 4 sprint plan — Content Safety + Social + Agent Runtime                      |
-| `docs/RAMPS_PHASE4_ASSESSMENT.md`             | Phase 4 RAMPS assessment (all 5 pillars GREEN)                                     |
-| `docs/RAMPS_PHASE1–3_ASSESSMENT.md`           | Earlier phase baselines                                                            |
-| `docs/SECURITY_DEBT.md`                       | Tracked deferrals with phase assignments                                           |
-| `docs/OWASP_CONTROLS.md`                      | Verified OWASP Top 10 controls                                                     |
-| `docs/COMPONENT_REGISTER.md`                  | Dependencies and hosted services — licence verdicts and exit paths                 |
-| `SECURITY.md`                                 | How to report a vulnerability privately; supported versions                        |
-| `docs/SUSTAINABILITY_CHECKLIST.md`            | 22-point gate + 8-point accessibility gate + phase boundary protocol               |
-| `CONTRIBUTING.md`                             | Branch workflow, seed separation, standing rules                                   |
+| Document                                      | Purpose                                                                                   |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `docs/adr/ADR-001–056`                        | 56 Architecture Decision Records                                                          |
+| `docs/TAD.md`                                 | Technical Architecture Document                                                           |
+| `docs/ROADMAP.md`                             | 10-phase product roadmap with versioned changelog                                         |
+| `docs/GENAI_ROADMAP.md`                       | GenAI-native capability map — accomplished and forthcoming                                |
+| `docs/SPRINT3C_UX_GOVERNANCE_ADMIN_DESIGN.md` | GenAI-native governance admin — the reusable governance-panel capability (ADR-035)        |
+| `docs/RELEASE_NOTES.md`                       | Release notes — new platform capabilities per release                                     |
+| `docs/GENAI_MANIFESTO.md`                     | The 18 GenAI-native principles — what "GenAI-native" means                                |
+| `docs/ENGINEERING_LEARNINGS.md`               | Adopted engineering principles (L1–L21) and learning log                                  |
+| `docs/PHASE4_PLAN.md`                         | Phase 4 sprint plan — Content Safety + Social + Agent Runtime                             |
+| `docs/RAMPS_PHASE4_ASSESSMENT.md`             | Phase 4 RAMPS assessment (all 5 pillars GREEN)                                            |
+| `docs/RAMPS_PHASE1–3_ASSESSMENT.md`           | Earlier phase baselines                                                                   |
+| `docs/SECURITY_DEBT.md`                       | Tracked deferrals with phase assignments                                                  |
+| `docs/OWASP_CONTROLS.md`                      | Verified OWASP Top 10 controls                                                            |
+| `docs/COMPONENT_REGISTER.md`                  | Dependencies and hosted services — licence verdicts and exit paths                        |
+| `SECURITY.md`                                 | How to report a vulnerability privately; supported versions                               |
+| `docs/SUSTAINABILITY_CHECKLIST.md`            | 22-point gate + 8-point accessibility gate + phase boundary protocol                      |
+| `CONTRIBUTING.md`                             | Branch workflow, seed separation, standing rules                                          |
+| `docs/AI_ENGINEERING.md`                      | How an AI-written change is reviewed and handed over — risk tiers, evidence, the eval set |
+| `CLAUDE.md`, `REVIEW.md`                      | What every agent and reviewer loads: the standing rules, and what failure looks like here |
 
 ### Consumer Inheritance
 

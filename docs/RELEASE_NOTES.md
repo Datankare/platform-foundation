@@ -38,6 +38,19 @@ code. Consumer steps: §1b, the eight "Release candidate" rows.
   otpauth URI as a QR code in the browser (`qrcode-generator` 2.0.4, no dependencies of its own); the
   key is behind "Can't scan? Show key". The pool must allow software-token MFA (ENV_REFERENCE,
   "Cognito pool shape"). Consumer step: add `qrcode-generator` at `2.0.4` to the app's dependencies.
+- **The AI-engineering review process (TASK-183, `docs/AI_ENGINEERING.md`).** Following _How the
+  Claude Code team does code review_ (Osmani, Westlee Lunt and Wang, 2026-10-15), acknowledged in
+  §1: a short `CLAUDE.md` and a `REVIEW.md` per repository; the per-change review protocol the AI
+  engineer runs before handover (independent finders, a verifier, Important / Nit / Pre-existing,
+  at most three rounds); risk tiers set from the change (`scripts/risk-tier.mjs`, patterns in
+  `scripts/risk-tiers.json`, the `review-tier` job); the Claude Code security review on every PR
+  (`security-review.yml`, failing while findings are open, skipped without `ANTHROPIC_API_KEY` —
+  failing instead for a fork's PR, or when the variable `SECURITY_REVIEW_REQUIRED` is `true`);
+  the reviewer eval set `docs/review-evals/`. Consumer steps: copy `review-tier.yml`,
+  `security-review.yml` and the PR template into the app's `.github/`; sync-exclude `/CLAUDE.md`,
+  `/REVIEW.md`, `scripts/risk-tiers.app.json` and the app's own eval folder; write the app's own
+  `CLAUDE.md` and `REVIEW.md` (the test `review-process` holds them); once the app has the
+  `ANTHROPIC_API_KEY` secret, set the repository variable `SECURITY_REVIEW_REQUIRED` to `true`.
 - **Formal verification planned (TASK-182, ASSURANCE §7).** Following Anthropic's research on
   LLM-written formal proofs (Frontier Red Team with Theorem, 2026-10-22), with the authors
   acknowledged: specifications checked in CI for the job queue, dual control, tenant isolation and

@@ -1,0 +1,686 @@
+# Case 04 review input — reconstructed from pre-release history (the diff that added the re-link, TASK-174, before review 15). Never public: platform-foundation's public develop has only the fixed file (3994dcf).
+diff --git a/platform/auth/identity-relink.ts b/platform/auth/identity-relink.ts
+new file mode 100644
+index 0000000..e9d80f6
+--- /dev/null
++++ b/platform/auth/identity-relink.ts
+@@ -0,0 +1,679 @@
++/**
++ * platform/auth/identity-relink.ts — Re-link existing accounts to their identity in a new user
++ * pool (TASK-174, ADR-012 amendment "Moving to a new identity pool")
++ *
++ * An account is bound to its identity by users.cognito_sub (platform/auth/account-identity.ts).
++ * A new user pool gives every identity a new subject, so after a move every existing account —
++ * staff included — is unreachable: a sign-in with the new subject finds no account and is given a
++ * new, ordinary one, and nobody can sign in as an administrator to repair it. This is the repair,
++ * run by an operator from a trusted machine with the owner connection (scripts/relink-identity.mjs;
++ * runbook: docs/TENANCY_OPERATIONS.md §6). No hand-made data change is ever needed.
++ *
++ * For an address it finds the identity in the CURRENT pool (IdentityDirectory) and the address's
++ * account in the database, checks that they are unambiguously the same person, and changes only
++ * the account's subject (users.cognito_sub) — never its id, which every foreign key, audit record,
++ * trajectory, proposal and erasure record names. Provisioning and every lookup find an account by
++ * its subject, so the next sign-in reaches the account with its role, standing and data.
++ *
++ * The checks (each refusal is reported with what to do; nothing is changed):
++ *
++ *   - exactly one user of the pool has the address, enabled, confirmed (or federated), with
++ *     `email_verified` true — for a federated user, the provider's claim mapped into it;
++ *   - exactly one live account of the tenant (or, without --tenant, of any tenant) has it;
++ *   - the pool does not hold the identity in another tenant (custom:tenant_id);
++ *   - the new subject is not an erased account's (it is never given an account again);
++ *   - no other account holds the new subject — or, explicitly (`mergeFrom`, the holder's id), it
++ *     is the stray account the person's first sign-in created and nothing is lost by removing it:
++ *     the same tenant, provisioned for this subject (id = subject), active, on the default role,
++ *     the same address or none, and holding nothing but sign-in residue (its row, audit records,
++ *     rate-limit counters, metrics, devices). The stray is then removed and its subject moved, in
++ *     the same transaction; its audit records stay, the record of its sign-ins.
++ *
++ * Everything is decided and done in one owner transaction (`for update` on the rows read), with
++ * the audit record (admin_action / identity_relinked: the operator, the machine's user, the
++ * reason, both subjects as hashes) written in it — the change and its record commit together or
++ * not at all. A dry run reads in a read-only transaction: it cannot change anything. The pool is
++ * read before the transaction (no network call inside one). After the commit, cached permissions
++ * and remembered token verifications of both subjects are voided, on every instance when the
++ * shared cache is reachable (the caller's `invalidate`).
++ *
++ * Bulk (`scope`: every staff account, or every account): the same checks for each address, in
++ * one transaction; any refusal other than "not in the pool yet" stops the whole run unless
++ * `skipAmbiguous`, and strays are merged only with `mergeStrays`.
++ *
++ * GenAI Principles: P11 (fail-closed — ambiguity refuses), P3 (every change recorded with its
++ * reason and operator)
++ *
++ * @module platform/auth
++ */
++
++import { createHash, randomUUID } from "node:crypto";
++import { withOwnerTx, type Tx } from "@/platform/data";
++import { eraseUserData, USER_DATA_TABLES } from "@/platform/auth/user-data";
++import { isStaffPermission } from "@/platform/auth/role-governance";
++import { assertStorableJson } from "@/platform/errors/json-limits";
++import { isTenantId } from "@/platform/providers/environment-contract";
++import {
++  filterSafeEmail,
++  type DirectoryUser,
++  type IdentityDirectory,
++} from "@/platform/auth/identity-directory";
++
++const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
++
++/** The pool statuses an identity may be re-linked in: signed up and confirmed, or federated. */
++const LINKABLE_STATUSES: ReadonlySet<string> = new Set([
++  "CONFIRMED",
++  "EXTERNAL_PROVIDER",
++]);
++
++/** What a stray first-sign-in account may hold and still be merged (register entry names). */
++export const STRAY_RESIDUE: ReadonlySet<string> = new Set([
++  "profile",
++  "auditLog",
++  "auditMentions",
++  "rateLimitBuckets",
++  "aiMetrics",
++  "devices",
++]);
++/** Of the residue, what is removed with the stray (audit records stay: the record of its sign-ins). */
++const STRAY_REMOVED = ["rateLimitBuckets", "aiMetrics", "devices"] as const;
++
++/** The agent named on the audit record. */
++export const RELINK_AGENT = "operator:relink-identity";
++
++export type RefusalCode =
++  | "pool.none"
++  | "pool.many"
++  | "pool.disabled"
++  | "pool.unconfirmed"
++  | "pool.unverified"
++  | "pool.other_tenant"
++  | "account.none"
++  | "account.many"
++  | "subject.erased"
++  | "subject.held"
++  | "subject.held_elsewhere"
++  | "merge.mismatch"
++  | "merge.unsafe";
++
++/** An address as compared: trimmed, lower case. */
++export function normaliseEmail(email: string): string {
++  return email.trim().toLowerCase();
++}
++
++/** Whether `email` (normalised) is an address the re-link accepts. */
++export function acceptableEmail(email: string): boolean {
++  if (!filterSafeEmail(email) || /[\s,;<>]/.test(email)) return false;
++  const parts = email.split("@");
++  if (parts.length !== 2) return false;
++  const [local, domain] = parts as [string, string];
++  const labels = domain.split(".");
++  return local.length > 0 && labels.length >= 2 && labels.every((l) => l.length > 0);
++}
++
++/** A subject (or id) as recorded: a short keyed-free hash — enough to match, never the value. */
++export function subjectHint(subject: string | null): string | null {
++  return subject
++    ? `sha256:${createHash("sha256").update(subject.toLowerCase()).digest("hex").slice(0, 16)}`
++    : null;
++}
++
++/** A subject as printed for the operator: its first 8 characters. */
++export function partial(subject: string | null): string {
++  return subject ? `${subject.slice(0, 8)}…` : "(none)";
++}
++
++interface AccountRow {
++  readonly id: string;
++  readonly tenant_id: string;
++  readonly cognito_sub: string | null;
++  readonly email: string | null;
++  readonly status: string;
++  readonly role: string;
++  readonly role_default: boolean;
++  readonly deleted: boolean;
++}
++
++/** One account's plan: what would be (or was) done, or why not. */
++export type AccountPlan =
++  | {
++      readonly status: "relink";
++      readonly email: string;
++      readonly tenantId: string;
++      readonly accountId: string;
++      readonly role: string;
++      readonly accountStatus: string;
++      readonly previousSubject: string | null;
++      readonly newSubject: string;
++      readonly signsInWith: readonly string[];
++      /** The stray account removed in the same transaction. */
++      readonly merge?: { readonly accountId: string };
++    }
++  | {
++      readonly status: "linked";
++      readonly email: string;
++      readonly tenantId: string;
++      readonly accountId: string;
++    }
++  | { readonly status: "absent"; readonly email: string }
++  | {
++      readonly status: "refused";
++      readonly email: string;
++      readonly code: RefusalCode;
++      readonly detail: string;
++      /** subject.held: the stray's account id, when merging it would be safe. */
++      readonly mergeCandidate?: string;
++    };
++
++export interface RelinkRequest {
++  /** One address; or `scope` for a bulk run. */
++  readonly email?: string;
++  readonly scope?: "all-staff" | "all";
++  readonly tenantId?: string;
++  /** Single: the stray account (holding the new subject) to merge. */
++  readonly mergeFrom?: string;
++  /** Bulk: merge every stray that is safe to merge. */
++  readonly mergeStrays?: boolean;
++  /** Bulk: skip refused addresses instead of stopping the run. */
++  readonly skipAmbiguous?: boolean;
++  /** Perform it; otherwise a dry run (read-only). */
++  readonly apply: boolean;
++  readonly operator: string;
++  readonly osUser: string;
++  readonly host: string;
++  readonly reason: string;
++}
++
++export interface RelinkDeps {
++  readonly directory: IdentityDirectory;
++  /** Void cached permissions and token verifications of a subject (after the commit). */
++  readonly invalidate: (subject: string) => Promise<void>;
++}
++
++export interface RelinkReport {
++  readonly runId: string;
++  readonly applied: boolean;
++  readonly plans: readonly AccountPlan[];
++  /** Why nothing was applied although asked: a refusal stopped the run. */
++  readonly stoppedBy?: "refusal";
++  /** The subjects whose caches were voided after the commit. */
++  readonly invalidated: readonly string[];
++}
++
++/** The request is malformed: nothing was read. */
++export class RelinkUsageError extends Error {
++  constructor(message: string) {
++    super(message);
++    this.name = "RelinkUsageError";
++  }
++}
++
++const refusal = (
++  email: string,
++  code: RefusalCode,
++  detail: string,
++  extra: { mergeCandidate?: string } = {}
++): AccountPlan => ({ status: "refused", email, code, detail, ...extra });
++
++/** The pool's answer for an address: its one usable identity, or why there is none. */
++export function poolIdentity(
++  email: string,
++  users: readonly DirectoryUser[]
++): { readonly user: DirectoryUser } | { readonly plan: AccountPlan } {
++  const matching = users.filter((u) => normaliseEmail(u.email) === email);
++  const bySub = new Map<string, DirectoryUser>();
++  for (const u of matching) if (!bySub.has(u.sub)) bySub.set(u.sub, u);
++  const found = [...bySub.values()];
++  if (found.length === 0)
++    return {
++      plan: refusal(email, "pool.none", "no user of the current pool has this address"),
++    };
++  if (found.length > 1)
++    return {
++      plan: refusal(
++        email,
++        "pool.many",
++        `${found.length} users of the current pool have this address (${found
++          .map((u) => (u.providers.length ? u.providers.join("+") : "password"))
++          .join(
++            ", "
++          )}) — link them into one user (AdminLinkProviderForUser) or delete the extra one, then run again`
++      ),
++    };
++  const user = found[0]!;
++  if (!user.enabled)
++    return { plan: refusal(email, "pool.disabled", "the pool's user is disabled") };
++  if (!LINKABLE_STATUSES.has(user.status))
++    return {
++      plan: refusal(
++        email,
++        "pool.unconfirmed",
++        `the pool's user is ${user.status}, not confirmed — they finish signing up first`
++      ),
++    };
++  if (!user.emailVerified)
++    return {
++      plan: refusal(
++        email,
++        "pool.unverified",
++        user.providers.length
++          ? `the address is not verified in the pool: map ${user.providers.join("+")}'s email_verified claim to email_verified (the pool's attribute mapping), then sign in once more`
++          : "the address is not verified in the pool: the person verifies it (or confirms it with the code), then run again"
++      ),
++    };
++  return { user };
++}
++
++async function accountsWithEmail(
++  tx: Tx,
++  email: string,
++  tenantId: string | null,
++  lock: boolean
++): Promise<AccountRow[]> {
++  const { rows } = await tx.query<AccountRow>(
++    lock
++      ? `select u.id, u.tenant_id, u.cognito_sub, u.email, u.account_status::text as status,
++                r.name as role, r.is_default as role_default, false as deleted
++           from users u join roles r on r.id = u.role_id
++          where lower(btrim(u.email)) = $1 and u.deleted_at is null
++            and ($2::uuid is null or u.tenant_id = $2::uuid)
++          order by u.tenant_id, u.id
++          for update of u`
++      : `select u.id, u.tenant_id, u.cognito_sub, u.email, u.account_status::text as status,
++                r.name as role, r.is_default as role_default, false as deleted
++           from users u join roles r on r.id = u.role_id
++          where lower(btrim(u.email)) = $1 and u.deleted_at is null
++            and ($2::uuid is null or u.tenant_id = $2::uuid)
++          order by u.tenant_id, u.id`,
++    [email, tenantId]
++  );
++  return rows;
++}
++
++async function holderOf(
++  tx: Tx,
++  subject: string,
++  lock: boolean
++): Promise<AccountRow | null> {
++  const { rows } = await tx.query<AccountRow>(
++    lock
++      ? `select u.id, u.tenant_id, u.cognito_sub, u.email, u.account_status::text as status,
++                r.name as role, r.is_default as role_default, u.deleted_at is not null as deleted
++           from users u join roles r on r.id = u.role_id
++          where u.cognito_sub = $1
++          for update of u`
++      : `select u.id, u.tenant_id, u.cognito_sub, u.email, u.account_status::text as status,
++                r.name as role, r.is_default as role_default, u.deleted_at is not null as deleted
++           from users u join roles r on r.id = u.role_id
++          where u.cognito_sub = $1`,
++    [subject]
++  );
++  return rows[0] ?? null;
++}
++
++/** Why the stray `holder` may not be merged (empty: it may), for the address `email`. */
++async function strayProblems(
++  tx: Tx,
++  holder: AccountRow,
++  email: string
++): Promise<string[]> {
++  const problems: string[] = [];
++  if (holder.id.toLowerCase() !== (holder.cognito_sub ?? "").toLowerCase())
++    problems.push("it is not a first-sign-in account (its id is not its subject)");
++  if (holder.status !== "active") problems.push(`its standing is ${holder.status}`);
++  if (!holder.role_default) problems.push(`its role is ${holder.role}, not the default`);
++  if (holder.email !== null && normaliseEmail(holder.email) !== email)
++    problems.push("it has another address");
++  const held = (await eraseUserData(tx, holder.id, { dryRun: true })).filter(
++    (s) => s.rows > 0 && !STRAY_RESIDUE.has(s.name)
++  );
++  if (held.length > 0)
++    problems.push(
++      `it holds data (${held.map((s) => `${s.name}: ${s.rows}`).join(", ")})`
++    );
++  return problems;
++}
++
++/**
++ * Plan one address in `tx`, given the pool's answer for it. `lock`: the rows read are locked
++ * (the apply transaction). An address with no pool user is refused in a single run and reported
++ * absent in a bulk one (`bulk`).
++ */
++async function planAddress(
++  tx: Tx,
++  email: string,
++  pool: readonly DirectoryUser[],
++  options: {
++    readonly tenantId: string | null;
++    readonly mergeFrom?: string;
++    readonly mergeStrays?: boolean;
++    readonly lock: boolean;
++    readonly bulk: boolean;
++  }
++): Promise<AccountPlan> {
++  const identity = poolIdentity(email, pool);
++  if ("plan" in identity) {
++    return options.bulk &&
++      identity.plan.status === "refused" &&
++      identity.plan.code === "pool.none"
++      ? { status: "absent", email }
++      : identity.plan;
++  }
++  const user = identity.user;
++  const sub = user.sub;
++
++  const holder = await holderOf(tx, sub, options.lock);
++  const candidates = (
++    await accountsWithEmail(tx, email, options.tenantId, options.lock)
++  ).filter((a) => a.cognito_sub !== sub);
++
++  if (candidates.length === 0) {
++    if (
++      holder &&
++      !holder.deleted &&
++      (options.tenantId === null || holder.tenant_id === options.tenantId)
++    )
++      return {
++        status: "linked",
++        email,
++        tenantId: holder.tenant_id,
++        accountId: holder.id,
++      };
++    return refusal(
++      email,
++      "account.none",
++      options.tenantId
++        ? "no live account of this tenant has this address"
++        : "no live account has this address"
++    );
++  }
++  if (candidates.length > 1) {
++    const tenants = new Set(candidates.map((c) => c.tenant_id));
++    return refusal(
++      email,
++      "account.many",
++      tenants.size > 1 && options.tenantId === null
++        ? `${candidates.length} live accounts in ${tenants.size} tenants have this address — name the tenant (--tenant)`
++        : `${candidates.length} live accounts of the tenant have this address — the address does not say which one is the person's`
++    );
++  }
++  const target = candidates[0]!;
++
++  if (user.tenantId !== null && user.tenantId !== target.tenant_id)
++    return refusal(
++      email,
++      "pool.other_tenant",
++      "the pool holds this identity in another tenant (custom:tenant_id) — it is never moved by a re-link"
++    );
++
++  const erased = await tx.query(
++    "select 1 from user_deletions where cognito_sub = $1 or user_id = $2::uuid limit 1",
++    [sub, UUID.test(sub) ? sub : null]
++  );
++  if (erased.rows.length > 0)
++    return refusal(
++      email,
++      "subject.erased",
++      "the pool's identity belongs to an erased account — it is never given an account again"
++    );
++
++  let merge: { accountId: string } | undefined;
++  if (holder) {
++    if (holder.tenant_id !== target.tenant_id)
++      return refusal(
++        email,
++        "subject.held_elsewhere",
++        "the new identity already has an account in another tenant — never merged across tenants"
++      );
++    if (holder.deleted)
++      return refusal(
++        email,
++        "subject.erased",
++        "the new identity's account was erased — it is never given an account again"
++      );
++    const problems = await strayProblems(tx, holder, email);
++    const asked =
++      options.mergeFrom !== undefined
++        ? options.mergeFrom.toLowerCase() === holder.id.toLowerCase()
++        : options.mergeStrays === true;
++    if (options.mergeFrom !== undefined && !asked)
++      return refusal(
++        email,
++        "merge.mismatch",
++        "the account named to merge is not the one holding the new identity"
++      );
++    if (!asked)
++      return refusal(
++        email,
++        "subject.held",
++        problems.length === 0
++          ? `the new identity already has its own account (made at its first sign-in): it holds only sign-in residue and may be merged — run again with --merge-from ${holder.id}`
++          : `the new identity already has its own account, which cannot be merged: ${problems.join("; ")} — the person's data there would be lost`,
++        problems.length === 0 ? { mergeCandidate: holder.id } : {}
++      );
++    if (problems.length > 0)
++      return refusal(
++        email,
++        "merge.unsafe",
++        `the account holding the new identity cannot be merged: ${problems.join("; ")}`
++      );
++    merge = { accountId: holder.id };
++  } else if (options.mergeFrom !== undefined) {
++    return refusal(
++      email,
++      "merge.mismatch",
++      "no account holds the new identity — there is nothing to merge"
++    );
++  }
++
++  return {
++    status: "relink",
++    email,
++    tenantId: target.tenant_id,
++    accountId: target.id,
++    role: target.role,
++    accountStatus: target.status,
++    previousSubject: target.cognito_sub,
++    newSubject: sub,
++    signsInWith: user.providers.length ? user.providers : ["password"],
++    ...(merge ? { merge } : {}),
++  };
++}
++
++/** Carry out one plan in the apply transaction: the merge, the re-link, its record. */
++async function applyPlan(
++  tx: Tx,
++  plan: Extract<AccountPlan, { status: "relink" }>,
++  request: RelinkRequest,
++  context: { readonly runId: string; readonly poolId: string; readonly mode: string }
++): Promise<void> {
++  if (plan.merge) {
++    for (const name of STRAY_REMOVED) {
++      const entry = USER_DATA_TABLES.find((e) => e.name === name)!;
++      await tx.query(entry.erase, [plan.merge.accountId.toLowerCase()]);
++    }
++    const removed = await tx.query(
++      "delete from users where id = $1::uuid and cognito_sub = $2 and tenant_id = $3::uuid",
++      [plan.merge.accountId, plan.newSubject, plan.tenantId]
++    );
++    if (removed.rowCount !== 1) throw new Error("the stray account changed meanwhile");
++  }
++  const changed = await tx.query(
++    `update users set cognito_sub = $2, updated_at = now()
++      where id = $1::uuid and tenant_id = $3::uuid and deleted_at is null
++        and cognito_sub is not distinct from $4`,
++    [plan.accountId, plan.newSubject, plan.tenantId, plan.previousSubject]
++  );
++  if (changed.rowCount !== 1) throw new Error("the account changed meanwhile");
++  const details = {
++    type: "identity_relinked",
++    agent: RELINK_AGENT,
++    operator: request.operator,
++    osUser: request.osUser,
++    host: request.host,
++    reason: request.reason,
++    pool: context.poolId,
++    mode: context.mode,
++    runId: context.runId,
++    previousSubject: subjectHint(plan.previousSubject),
++    newSubject: subjectHint(plan.newSubject),
++    signsInWith: plan.signsInWith,
++    ...(plan.merge ? { mergedAccount: subjectHint(plan.merge.accountId) } : {}),
++    outcome: "succeeded",
++  };
++  assertStorableJson(details, "audit_log.details");
++  await tx.query(
++    `insert into audit_log (tenant_id, action, target_id, details)
++     values ($1::uuid, 'admin_action'::audit_action, $2::uuid, $3::jsonb)`,
++    [plan.tenantId, plan.accountId, JSON.stringify(details)]
++  );
++}
++
++/** The staff roles: those that hold a staff permission, directly or inherited. */
++async function staffRoleIds(tx: Tx): Promise<Set<string>> {
++  const { rows } = await tx.query<{ role_id: string; code: string }>(
++    `select x.role_id, p.code from (
++       select rp.role_id, rp.permission_id from role_permissions rp
++       union
++       select ri.role_id, rp.permission_id from role_inheritance ri
++         join role_permissions rp on rp.role_id = ri.inherits_from_id
++     ) x join permissions p on p.id = x.permission_id`
++  );
++  return new Set(rows.filter((r) => isStaffPermission(r.code)).map((r) => r.role_id));
++}
++
++/** The addresses a bulk run covers: (tenant, address) of each live account in scope. */
++async function bulkAddresses(
++  tx: Tx,
++  scope: "all-staff" | "all",
++  tenantId: string | null
++): Promise<{ tenantId: string; email: string }[]> {
++  const { rows } = await tx.query<{ tenant_id: string; email: string; role_id: string }>(
++    `select u.tenant_id, lower(btrim(u.email)) as email, u.role_id
++       from users u
++      where u.deleted_at is null and u.email is not null and btrim(u.email) <> ''
++        and ($1::uuid is null or u.tenant_id = $1::uuid)
++      order by u.tenant_id, lower(btrim(u.email))`,
++    [tenantId]
++  );
++  const staff = scope === "all-staff" ? await staffRoleIds(tx) : null;
++  const seen = new Set<string>();
++  const out: { tenantId: string; email: string }[] = [];
++  for (const r of rows) {
++    if (staff && !staff.has(r.role_id)) continue;
++    const key = `${r.tenant_id}\u0000${r.email}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    out.push({ tenantId: r.tenant_id, email: r.email });
++  }
++  return out;
++}
++
++/** Whether `text` holds a control character (C0 or DEL): nothing printed may move the cursor. */
++function hasControlCharacter(text: string): boolean {
++  for (const ch of text) {
++    const code = ch.charCodeAt(0);
++    if (code < 0x20 || code === 0x7f) return true;
++  }
++  return false;
++}
++
++function validate(request: RelinkRequest): void {
++  const single = request.email !== undefined;
++  if (single === (request.scope !== undefined))
++    throw new RelinkUsageError("Give either --email <address> or --all-staff / --all");
++  if (request.tenantId !== undefined && !isTenantId(request.tenantId))
++    throw new RelinkUsageError("--tenant is not a tenant id");
++  if (single && !acceptableEmail(normaliseEmail(request.email!)))
++    throw new RelinkUsageError("--email is not an address the re-link accepts");
++  if (request.mergeFrom !== undefined && (!single || !UUID.test(request.mergeFrom)))
++    throw new RelinkUsageError("--merge-from takes an account id, with --email only");
++  if (single && (request.mergeStrays || request.skipAmbiguous))
++    throw new RelinkUsageError("--merge-strays and --skip-ambiguous are for bulk runs");
++  if (!request.operator.trim() || request.operator.length > 200)
++    throw new RelinkUsageError(
++      "--operator (who runs this) is required, at most 200 characters"
++    );
++  if (request.reason.trim().length < 5 || request.reason.length > 500)
++    throw new RelinkUsageError("--reason is required: 5–500 characters");
++  if (hasControlCharacter(request.operator + request.reason))
++    throw new RelinkUsageError("--operator and --reason take no control characters");
++}
++
++/**
++ * Run a re-link: plan it (a dry run), or plan and apply it in one owner transaction. Throws
++ * RelinkUsageError for a malformed request; the pool's or the database's unavailability
++ * propagates (nothing is changed then).
++ */
++export async function relinkIdentities(
++  request: RelinkRequest,
++  deps: RelinkDeps
++): Promise<RelinkReport> {
++  validate(request);
++  const runId = randomUUID();
++  const tenantId = request.tenantId ?? null;
++  const bulk = request.scope !== undefined;
++
++  // Which addresses: one, or every one in scope (read without a lock; re-read locked below).
++  const addresses = bulk
++    ? await withOwnerTx("operator", async (tx) => {
++        await tx.query("set transaction read only");
++        return bulkAddresses(tx, request.scope!, tenantId);
++      })
++    : [{ tenantId, email: normaliseEmail(request.email!) }];
++
++  // The pool first, outside any transaction: no network call inside one.
++  const pool = new Map<string, readonly DirectoryUser[]>();
++  for (const a of addresses) {
++    if (pool.has(a.email)) continue;
++    const variants = new Set([a.email]);
++    if (!bulk && request.email!.trim() !== a.email) variants.add(request.email!.trim());
++    const found: DirectoryUser[] = [];
++    for (const v of variants) found.push(...(await deps.directory.findByEmail(v)));
++    pool.set(a.email, found);
++  }
++
++  const mode = bulk ? request.scope! : "single";
++  const blocking = (p: AccountPlan) => p.status === "refused";
++  const result = await withOwnerTx("operator", async (tx) => {
++    if (!request.apply) await tx.query("set transaction read only");
++    const plans: AccountPlan[] = [];
++    for (const a of addresses) {
++      plans.push(
++        await planAddress(tx, a.email, pool.get(a.email) ?? [], {
++          tenantId: bulk ? a.tenantId : tenantId,
++          mergeFrom: request.mergeFrom,
++          mergeStrays: request.mergeStrays,
++          lock: request.apply,
++          bulk,
++        })
++      );
++    }
++    const stopped = plans.some(blocking) && !(bulk && request.skipAmbiguous);
++    if (!request.apply || stopped) return { plans, applied: false, stopped };
++    for (const p of plans)
++      if (p.status === "relink")
++        await applyPlan(tx, p, request, { runId, poolId: deps.directory.poolId, mode });
++    return { plans, applied: true, stopped: false };
++  });
++
++  const invalidated: string[] = [];
++  if (result.applied) {
++    for (const p of result.plans) {
++      if (p.status !== "relink") continue;
++      for (const s of [p.previousSubject, p.newSubject])
++        if (s && !invalidated.includes(s)) {
++          await deps.invalidate(s);
++          invalidated.push(s);
++        }
++    }
++  }
++  return {
++    runId,
++    applied: result.applied,
++    plans: result.plans,
++    ...(result.stopped ? { stoppedBy: "refusal" as const } : {}),
++    invalidated,
++  };
++}

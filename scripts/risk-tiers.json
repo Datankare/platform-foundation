@@ -1,0 +1,134 @@
+{
+  "$comment": "The review risk tiers' patterns (TASK-183, docs/AI_ENGINEERING.md §4). The one source: scripts/risk-tier.mjs reads this file and REVIEW.md points to it. A consuming app adds its own areas in scripts/risk-tiers.app.json (sync-excluded), merged by area name. Path patterns: ** any depth, * within one segment, matched against the whole path. Content patterns are regular expressions, case-sensitive unless the area sets flags to i, matched against changed lines of files that are not markdown and not tests. Order of evaluation: the hard rule in scripts/risk-tier.mjs (.github/**, scripts/risk-tier*, REVIEW.md, CLAUDE.md and any .gitattributes are always High), then high (any match makes the change High), then low (every file must match for Low), else Medium.",
+  "generated": [
+    "platform/modules/platform-paths.json",
+    "docs/API_ERRORS.md",
+    "docs/APP_API_ERRORS.md"
+  ],
+  "low": ["**/*.md", "docs/**", "messages/**", "LICENSE", "NOTICE"],
+  "contentSkip": ["**/*.md", "__tests__/**", "**/__tests__/**", "e2e/**"],
+  "high": [
+    {
+      "area": "auth",
+      "failure": "lets the wrong person in or locks the right one out",
+      "paths": [
+        "platform/auth/**",
+        "platform/admin/**",
+        "platform/agents/**",
+        "platform/action-pipeline/**",
+        "platform/route-policy/**",
+        "platform/security/**",
+        "app/api/auth/**",
+        "app/api/admin/**",
+        "app/api/operator/**",
+        "app/auth/**",
+        "proxy.ts",
+        "scripts/role-catalog.cjs",
+        "scripts/relink-identity.mjs"
+      ],
+      "content": [
+        "\\b(requireAuth|requireActor|requireAdmin|requireAuthWithStatus|requireActorWithStatus|verifyToken)\\b"
+      ]
+    },
+    {
+      "area": "tenancy",
+      "failure": "leaks across tenants",
+      "paths": ["platform/tenancy/**", "platform/data/**"],
+      "flags": "i",
+      "content": [
+        "\\b(create|alter|drop) policy\\b",
+        "row level security",
+        "security definer",
+        "set_config\\('app\\.tenant_id'",
+        "\\bwithOwnerTx\\(",
+        "\\bbypassrls\\b",
+        "\\btenantRoute\\b"
+      ]
+    },
+    {
+      "area": "migrations",
+      "failure": "can't be replayed or loses data",
+      "paths": [
+        "supabase/migrations/**",
+        "supabase/optional/**",
+        "supabase/baseline/**",
+        "supabase/platform-migrations.json",
+        "scripts/migration-replay.sh",
+        "scripts/migration-parity.mjs"
+      ],
+      "content": []
+    },
+    {
+      "area": "jobs",
+      "failure": "runs twice, never, or deadlocks",
+      "paths": [
+        "platform/jobs/**",
+        "app/api/internal/jobs/**",
+        "scripts/jobs-worker.mjs",
+        "vercel.json"
+      ],
+      "content": []
+    },
+    {
+      "area": "workflows",
+      "failure": "misroutes or weakens a gate",
+      "paths": [
+        ".github/workflows/**",
+        ".github/actions/**",
+        ".github/scripts/**",
+        ".github/sync-config.json",
+        ".github/dependabot.yml",
+        "docs/templates/**",
+        "REVIEW.md",
+        "CLAUDE.md",
+        "scripts/risk-tier.mjs",
+        "scripts/risk-tiers.json",
+        "scripts/risk-tiers.app.json",
+        "scripts/coverage-ratchet.mjs",
+        "scripts/override-audit.mjs",
+        "scripts/override-reaudit.mjs",
+        "scripts/module-manifest.cjs",
+        "scripts/sustainability-gate.sh",
+        "eslint.config.mjs"
+      ],
+      "content": ["\\bpull_request_target\\b"]
+    },
+    {
+      "area": "secrets-config",
+      "failure": "misroutes, or exposes a secret",
+      "paths": [
+        "platform/providers/environment-contract.ts",
+        ".env.example",
+        ".gitleaks.toml",
+        ".gitleaksignore",
+        "instrumentation.ts",
+        "next.config.ts",
+        "Dockerfile"
+      ],
+      "content": ["SERVICE_ROLE", "PRIVATE KEY", "\\bprocess\\.env\\.[A-Z][A-Z0-9_]*"]
+    },
+    {
+      "area": "billing-consent",
+      "failure": "charges, or uses a child's data, without the right to",
+      "paths": [
+        "platform/monetization/**",
+        "platform/gdpr/**",
+        "app/api/account/**",
+        "platform/auth/age.ts",
+        "platform/auth/consent.ts",
+        "platform/auth/coppa.ts",
+        "platform/auth/coppa-gate.ts",
+        "platform/rate-limit/daily-quota.ts"
+      ],
+      "content": [
+        "\\b(checkCoppaGate|UNDER_13_ACCOUNTS_AVAILABLE|paidCalls|enforceGuestAllowance|enforceDailyPaidQuota)\\b"
+      ]
+    },
+    {
+      "area": "moderation",
+      "failure": "shows unscreened content, or withholds content without saying why",
+      "paths": ["platform/moderation/**", "app/api/moderation/**"],
+      "content": []
+    }
+  ]
+}

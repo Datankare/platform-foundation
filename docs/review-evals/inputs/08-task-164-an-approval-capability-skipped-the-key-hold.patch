@@ -1,0 +1,275 @@
+# Case 08 review input — reconstructed from pre-release history (review 9's fix, before review 10: the capability, its canonical JSON and the pipeline's use of it). Never public: platform-foundation's public develop has the capability already removed (908d64a).
+diff --git a/platform/action-pipeline/approval-capability.ts b/platform/action-pipeline/approval-capability.ts
+new file mode 100644
+index 0000000..c343340
+--- /dev/null
++++ b/platform/action-pipeline/approval-capability.ts
+@@ -0,0 +1,144 @@
++/**
++ * platform/action-pipeline/approval-capability.ts — The proof that a write is the execution of an
++ * approved hold (review 9 H1)
++ *
++ * An approved command-bar action (register_agent, set_agent_scope, set_capability_mapping) writes
++ * a config key that is itself under dual control. Before, that write was held a second time and
++ * the hold was reported as success: the approved action said "applied" and nothing changed.
++ *
++ * A boolean ("already approved") would let any caller skip the hold. Instead:
++ *
++ *   1. claimApproval — called by the pipeline in the one step that uses the approval
++ *      (approved -> executed, atomically, ProposalStore.consume) — mints an ApprovalClaim. At most
++ *      one claim exists per approval: a used approval cannot be consumed again.
++ *   2. bindApprovedWrite turns a claim into a capability for ONE config key and ONE value
++ *      (a digest of its canonical JSON), for the requester the hold was made for. A claim binds
++ *      each key once.
++ *   3. redeemApprovedWrite, called by the config writer before it decides to hold, accepts a
++ *      capability only if this module minted it, it is unused, and the key and value are exactly
++ *      the ones it was bound to; it is then spent. Anything else is refused — never held, never
++ *      applied.
++ *
++ * Every object is frozen and registered in a module-private WeakMap, so a structurally equal
++ * object — built from a request body, a stored payload, a spread copy — is not a capability.
++ *
++ * @module platform/action-pipeline
++ */
++
++import { createHash } from "node:crypto";
++import type { ApprovalClaim, ProposalStore } from "@/platform/kernel/types";
++import { canonicalJson } from "@/platform/action-pipeline/canonical-json";
++
++export type { ApprovalClaim };
++
++interface ClaimState {
++  readonly boundKeys: Set<string>;
++}
++
++const CLAIMS = new WeakMap<ApprovalClaim, ClaimState>();
++
++/** A capability to write one config key with one value, as an approved hold's execution. */
++export interface ApprovedWrite {
++  readonly approvalId: string;
++  readonly label: string;
++  readonly key: string;
++  readonly requesterId?: string;
++}
++
++interface WriteState {
++  readonly valueDigest: string;
++  used: boolean;
++}
++
++const WRITES = new WeakMap<ApprovedWrite, WriteState>();
++
++function digest(value: unknown): string {
++  return createHash("sha256")
++    .update(canonicalJson(value) ?? "undefined")
++    .digest("hex");
++}
++
++/**
++ * Use the approval `proposalId` (approved -> executed, atomically) and mint its claim. Undefined
++ * when it was not approved — never approved, or already used — so a second claim cannot exist.
++ */
++export async function claimApproval(
++  store: ProposalStore,
++  proposalId: string
++): Promise<ApprovalClaim | undefined> {
++  const used = await store.consume(proposalId);
++  if (!used) return undefined;
++  const claim: ApprovalClaim = Object.freeze({
++    proposalId: used.proposalId,
++    label: used.label,
++    operationId: used.operationId,
++    ...(used.actor.onBehalfOf ? { requesterId: used.actor.onBehalfOf } : {}),
++  });
++  CLAIMS.set(claim, { boundKeys: new Set() });
++  return claim;
++}
++
++/** Whether `claim` was minted by claimApproval (not merely shaped like one). */
++export function isApprovalClaim(claim: unknown): claim is ApprovalClaim {
++  return (
++    typeof claim === "object" && claim !== null && CLAIMS.has(claim as ApprovalClaim)
++  );
++}
++
++export type BindRefusal =
++  "not_a_claim" | "key_already_bound" | "requester_mismatch" | "key_not_covered";
++
++/**
++ * A capability for writing `key` = `value` as the execution of `claim`'s approved action, by
++ * `actorId` (who must be the requester the hold was made for). `allowedKeys` are the keys the
++ * approved action writes (its owner's table); a key outside it is refused.
++ */
++export function bindApprovedWrite(
++  claim: ApprovalClaim,
++  key: string,
++  value: unknown,
++  actorId: string,
++  allowedKeys: readonly string[]
++): { ok: true; write: ApprovedWrite } | { ok: false; reason: BindRefusal } {
++  const state = CLAIMS.get(claim);
++  if (!state) return { ok: false, reason: "not_a_claim" };
++  if (!allowedKeys.includes(key)) return { ok: false, reason: "key_not_covered" };
++  if (claim.requesterId !== undefined && claim.requesterId !== actorId) {
++    return { ok: false, reason: "requester_mismatch" };
++  }
++  if (state.boundKeys.has(key)) return { ok: false, reason: "key_already_bound" };
++  state.boundKeys.add(key);
++  const write: ApprovedWrite = Object.freeze({
++    approvalId: claim.proposalId,
++    label: claim.label,
++    key,
++    ...(claim.requesterId !== undefined ? { requesterId: claim.requesterId } : {}),
++  });
++  WRITES.set(write, { valueDigest: digest(value), used: false });
++  return { ok: true, write };
++}
++
++export type RedeemRefusal = "forged" | "reused" | "key_mismatch" | "value_mismatch";
++
++/**
++ * Spend `write` for writing `key` = `value`: its approval id when it is genuine, unused and bound
++ * to exactly this key and value; otherwise the refusal. Spent on success only — a mismatch does
++ * not burn it, but it can never authorize anything but its own key and value.
++ */
++export function redeemApprovedWrite(
++  write: unknown,
++  key: string,
++  value: unknown
++): { ok: true; approvalId: string } | { ok: false; reason: RedeemRefusal } {
++  const state =
++    typeof write === "object" && write !== null
++      ? WRITES.get(write as ApprovedWrite)
++      : undefined;
++  if (!state) return { ok: false, reason: "forged" };
++  if (state.used) return { ok: false, reason: "reused" };
++  const w = write as ApprovedWrite;
++  if (w.key !== key) return { ok: false, reason: "key_mismatch" };
++  if (state.valueDigest !== digest(value)) return { ok: false, reason: "value_mismatch" };
++  state.used = true;
++  return { ok: true, approvalId: w.approvalId };
++}
+diff --git a/platform/action-pipeline/canonical-json.ts b/platform/action-pipeline/canonical-json.ts
+new file mode 100644
+index 0000000..8878913
+--- /dev/null
++++ b/platform/action-pipeline/canonical-json.ts
+@@ -0,0 +1,27 @@
++/**
++ * platform/action-pipeline/canonical-json.ts — canonical JSON text for comparing values (PF v5.1.0)
++ *
++ * @module platform/action-pipeline
++ */
++
++/**
++ * JSON with object keys sorted at every depth, so equal values compare equal as text. The value
++ * is first taken through JSON itself (toJSON, dropped undefined, NaN to null), so the comparison
++ * is of what a durable store keeps — two Dates differ by their time, not both become `{}`.
++ */
++export function canonicalJson(value: unknown): string {
++  const text = JSON.stringify(value);
++  if (text === undefined) return "undefined";
++  const sort = (v: unknown): unknown => {
++    if (Array.isArray(v)) return v.map(sort);
++    if (v && typeof v === "object") {
++      return Object.fromEntries(
++        Object.keys(v as Record<string, unknown>)
++          .sort()
++          .map((k) => [k, sort((v as Record<string, unknown>)[k])])
++      );
++    }
++    return v;
++  };
++  return JSON.stringify(sort(JSON.parse(text)));
++}
+diff --git a/platform/action-pipeline/index.ts b/platform/action-pipeline/index.ts
+index 257300c..5865591 100644
+--- a/platform/action-pipeline/index.ts
++++ b/platform/action-pipeline/index.ts
+@@ -27,6 +27,7 @@
+ 
+ import type {
+   ActionContext,
++  ApprovalClaim,
+   ActionSpec,
+   ActivityStateStore,
+   AgentIdentity,
+@@ -42,6 +43,8 @@ import type {
+ } from "@/platform/kernel";
+ import { generateSecureId } from "@/platform/agents/utils";
+ import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk";
++import { canonicalJson } from "./canonical-json";
++import { claimApproval } from "./approval-capability";
+ 
+ // ── Rejection ─────────────────────────────────────────────────────────
+ 
+@@ -121,7 +124,11 @@ export interface PipelineRequest<TState> {
+    * A session action has none — its effect IS the state transition. A tool call has one,
+    * and its return value becomes part of the trajectory step's output.
+    */
+-  readonly perform?: () => Promise<Record<string, unknown>>;
++  /**
++   * The action's own work. Receives the action context; when the action runs as an approved
++   * hold's execution, the context carries the approval claim (review 9 H1).
++   */
++  readonly perform?: (context: ActionContext) => Promise<Record<string, unknown>>;
+ 
+   /** Session or agent ceiling in USD; absent = unbounded. Shorthand for a single ceiling. */
+   readonly budgetCeiling?: number;
+@@ -183,27 +190,8 @@ export function isPipelineConflict<TState>(
+   return (outcome as PipelineConflict<TState>).conflict === true;
+ }
+ 
+-/**
+- * JSON with object keys sorted at every depth, so equal values compare equal as text. The value
+- * is first taken through JSON itself (toJSON, dropped undefined, NaN to null), so the comparison
+- * is of what a durable store keeps — two Dates differ by their time, not both become `{}`.
+- */
+-export function canonicalJson(value: unknown): string {
+-  const text = JSON.stringify(value);
+-  if (text === undefined) return "undefined";
+-  const sort = (v: unknown): unknown => {
+-    if (Array.isArray(v)) return v.map(sort);
+-    if (v && typeof v === "object") {
+-      return Object.fromEntries(
+-        Object.keys(v as Record<string, unknown>)
+-          .sort()
+-          .map((k) => [k, sort((v as Record<string, unknown>)[k])])
+-      );
+-    }
+-    return v;
+-  };
+-  return JSON.stringify(sort(JSON.parse(text)));
+-}
++/** JSON with object keys sorted at every depth (canonical-json.ts). */
++export { canonicalJson };
+ 
+ // ── The pipeline ──────────────────────────────────────────────────────
+ 
+@@ -305,9 +293,13 @@ export async function executeActionPipeline<TState>(
+   // read-then-act; two concurrent commits could both pass them. Only the one whose claim
+   // matches the still-approved row proceeds (PF v5.1.0 review: one approval ran its step three
+   // times under concurrent resumes).
++  let approval: ApprovalClaim | undefined;
+   if (tier === "two-phase" && req.approvedProposalId && req.proposalStore) {
+-    const claimed = await req.proposalStore.consume(req.approvedProposalId);
+-    if (!claimed) {
++    // The claim is minted by the same atomic use, so it exists at most once per approval; the
++    // action receives it and may present it for a write the approval already covers (review 9
++    // H1), so that write is not held a second time.
++    approval = await claimApproval(req.proposalStore, req.approvedProposalId);
++    if (!approval) {
+       throw new PipelineRejectedError(
+         `${req.label}: approval ${req.approvedProposalId} was already used (ADR-031 D2)`,
+         "approval-used"
+@@ -318,7 +310,9 @@ export async function executeActionPipeline<TState>(
+   // 6. Execute, for adapters whose action does something other than transition state.
+   // Runs after gating so a refused call never executes, and before commit so a failing
+   // execution leaves no committed state behind it.
+-  const performed = req.perform ? await req.perform() : undefined;
++  const performed = req.perform
++    ? await req.perform(approval ? { ...context, approval } : context)
++    : undefined;
+ 
+   // 7. Commit managed state, if this action writes any.
+   let committed: VersionedState<TState> | null = null;

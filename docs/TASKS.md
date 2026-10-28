@@ -3948,7 +3948,7 @@ tenant) — a required reason, an explicit confirmation step (inline; never `win
 | **Status**   | Fixed on develop (v6.0.0 RC)      |
 | **Logged**   | 2026-10-25                        |
 
-**What:** found adopting `050219d` in Playform. When an approved workflow step's run never ended
+**What:** found adopting `908d64a` in Playform. When an approved workflow step's run never ended
 (an instance lost mid-run), `config.expire-approvals` (`recoverStaleRuns`) moved its approval to
 `indeterminate` — or, for an atomic run, back to `approved` — but left its trajectory `running`.
 The agent's own continuation then re-proposed the step, and the proposal store's one-live rule
@@ -4422,7 +4422,61 @@ held-action dual control, row-level tenant isolation (a model generated from `pg
 with an SMT solver) and the refresh-cookie and sign-out protocol. The job queue first. Each new
 concurrent or security-critical state machine gets a specification as part of being done.
 
-_Last updated: October 26, 2026 (TASK-182 planned)_
+### TASK-183 — A documented, acknowledged AI-engineering review process
+
+| Field        | Detail                                                          |
+| ------------ | --------------------------------------------------------------- |
+| **ID**       | TASK-183                                                        |
+| **Type**     | Assurance, process                                              |
+| **Severity** | —                                                               |
+| **Phase**    | Phase 5                                                         |
+| **Target**   | Phase 5, with the next promotion                                |
+| **Status**   | In place on develop; the parts listed under "Not done" are open |
+| **Logged**   | 2026-10-27                                                      |
+
+Following _How the Claude Code team does code review_ (Addy Osmani, Morgan Westlee Lunt and Qing
+Wang, claude.dev Blog, 2026-10-15; [AI_ENGINEERING](AI_ENGINEERING.md) §1 has the full
+acknowledgement). **Why:** in October 2026 server-side tests passed while real users could not
+finish (TASK-180, TASK-181, Playform's date-of-birth screen), and the identity re-link (TASK-174)
+ran three review rounds before its approach was questioned.
+
+**Done.** `CLAUDE.md` and `REVIEW.md` (each repository's own); `docs/AI_ENGINEERING.md` — the
+article's practices adopted, adapted or declined, the per-change review protocol the AI engineer
+runs before handover, risk tiers set from the change, the evidence a change carries, metrics;
+`scripts/risk-tier.mjs` with its patterns in `scripts/risk-tiers.json` (an app adds
+`scripts/risk-tiers.app.json`); the `review-tier` job (`.github/workflows/review-tier.yml`,
+running the base branch's classifier and patterns; `.github/`, `scripts/risk-tier*`, `REVIEW.md`,
+`CLAUDE.md` and any `.gitattributes` always High; a refusal labelled `risk:high`); the
+Claude Code security review (`.github/workflows/security-review.yml`, the action pinned to a
+commit, failing its check while findings are reported, skipped with a notice without
+`ANTHROPIC_API_KEY` — failing instead for a fork's PR, or when the repository variable
+`SECURITY_REVIEW_REQUIRED` is `true`); the PR template's Risk tier, Testing, Security, Performance,
+How to revert
+and Review rounds; the reviewer eval set `docs/review-evals/` (17 cases from this register and
+the October 2026 CI failures, with a scoring rubric: 14 reproduce from public history; cases 02,
+04 and 08 have their input reconstructed from pre-release history, in `docs/review-evals/inputs/`). ASSURANCE §1, §3 and §6 updated.
+
+**Tests.** `__tests__/risk-tier.test.ts` (tiers by path and by changed lines; a removed line and a
+removed SQL comment count; tests' content does not raise a tier; renames keep the old path; an
+app's areas merge; the hard rule; `--patterns`; upper-case tenancy SQL; names with spaces, quotes
+or glob characters; a `.gitattributes` cannot hide content; output over 64 KB through a pipe; unsafe, quoted paths and refs refused; in an app, its real paths classify High); `__tests__/review-process.test.ts` (CLAUDE.md's
+standing rules, REVIEW.md's failures and rules, every eval case indexed and complete, the review
+workflows on `pull_request` only, pinned, without credentials and least-privileged, the tier
+from the base's classifier, a skipped security review failing for a fork or when required, the PR
+template's sections, the acknowledgements).
+
+**Not done.** A PR that changes a workflow runs its own copy of it, so its tier and security
+result are not trustworthy (ASSURANCE §3): the owner runs the base classifier locally
+(AI_ENGINEERING §4.2); the `pull_request_target` job that would read the head only as data is
+planned. The `ANTHROPIC_API_KEY` secret in platform-foundation (the security review skips
+until it is set), and then `SECURITY_REVIEW_REQUIRED=true` there and in Playform, which has the
+key; `security-review` and `review-tier` as required checks in branch protection
+(owner settings); the first scored run of the eval set; the first milestone's metrics; circuit
+breakers (declined for now, AI_ENGINEERING §8).
+
+_Last updated: October 27, 2026 (TASK-183 — the AI-engineering review process)_
+
+_Previously updated: October 26, 2026 (TASK-182 planned)_
 
 _Previously updated: October 26, 2026 (TASK-180 filed and fixed)_
 

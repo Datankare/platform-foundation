@@ -1,0 +1,116 @@
+name: Review tier
+
+# TASK-183 (docs/AI_ENGINEERING.md §4): the review risk tier of a pull request, set from what it
+# changes, never from who wrote it. scripts/risk-tier.mjs reads the patterns from
+# scripts/risk-tiers.json (and an app's scripts/risk-tiers.app.json). The tier goes to the job
+# summary, and to one label (risk:low, risk:medium, risk:high) when the token allows it. The job
+# classifies; it never fails on a tier. A fork's pull request gets a read-only token: the label
+# step then writes a notice instead.
+#
+# The classifier and its patterns come from the PR's base: the base SHA is checked out into a
+# second path and its scripts/risk-tier.mjs runs with --patterns pointing there, against the PR
+# workspace's diff, so a PR that edits the script or the pattern files cannot lower its tier
+# through them. If the base has no classifier yet, the tier is High.
+#
+# Not a guarantee: under pull_request, GitHub runs the PR's own copy of this file (and of
+# security-review.yml). A PR that changes a workflow can change what runs here, so its tier and its
+# security result are not trustworthy. Any PR touching .github/ is High by definition (the
+# script's hard rule), and the owner takes its tier from the base classifier run locally
+# (docs/AI_ENGINEERING.md §4.2). The structural fix, a pull_request_target job that reads the head
+# only as data, is planned, not built (ASSURANCE §3).
+#
+# A classifier refusal (exit 2, such as a path in git's quoted form) is never a missing tier: the
+# summary says "tier: High (unreadable path: classification refused)" and the label is risk:high.
+
+on:
+  pull_request:
+    branches: [main, staging, develop]
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: review-tier-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-tier:
+    name: review-tier
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout (history, no credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout the base (the classifier and patterns that apply)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .risk-tier-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Classify the change
+        id: tier
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_DIR: ${{ github.workspace }}/.risk-tier-base
+        run: |
+          set -euo pipefail
+          if [ ! -f "$BASE_DIR/scripts/risk-tier.mjs" ] || [ ! -f "$BASE_DIR/scripts/risk-tiers.json" ]; then
+            echo "::notice::The base has no classifier yet; the tier is High."
+            printf '## Review risk tier: High\n\nThe base branch has no scripts/risk-tier.mjs or scripts/risk-tiers.json yet.\n' >> "$GITHUB_STEP_SUMMARY"
+            echo "tier=High" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=0
+          node "$BASE_DIR/scripts/risk-tier.mjs" --patterns "$BASE_DIR" --base "$BASE_SHA" --head "$HEAD_SHA" --format json > "$RUNNER_TEMP/tier.json" 2> "$RUNNER_TEMP/tier.err" || code=$?
+          if [ "$code" -eq 2 ]; then
+            echo "::warning::The classifier refused the change ($(head -c 300 "$RUNNER_TEMP/tier.err")); the tier is High."
+            printf '## Review risk tier: High\n\ntier: High (unreadable path: classification refused)\n' >> "$GITHUB_STEP_SUMMARY"
+            echo "tier=High" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ "$code" -ne 0 ]; then
+            echo "::error::risk-tier exited $code: $(head -c 300 "$RUNNER_TEMP/tier.err")"
+            exit 1
+          fi
+          node "$BASE_DIR/scripts/risk-tier.mjs" --patterns "$BASE_DIR" --base "$BASE_SHA" --head "$HEAD_SHA" --format markdown >> "$GITHUB_STEP_SUMMARY"
+          tier=$(jq -r '.tier' "$RUNNER_TEMP/tier.json")
+          case "$tier" in
+            Low | Medium | High) ;;
+            *) echo "::error::risk-tier printed no tier"; exit 1 ;;
+          esac
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          echo "Review risk tier: $tier"
+
+      - name: Label the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TIER: ${{ steps.tier.outputs.tier }}
+        run: |
+          set -uo pipefail
+          want="risk:$(printf '%s' "$TIER" | tr '[:upper:]' '[:lower:]')"
+          if ! gh api -X POST "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=$want" --silent 2> "$RUNNER_TEMP/label.err"; then
+            echo "::notice::Could not set the label $want (a fork's read-only token, or labels not allowed): $(head -c 300 "$RUNNER_TEMP/label.err")"
+            exit 0
+          fi
+          for other in risk:low risk:medium risk:high; do
+            if [ "$other" != "$want" ]; then
+              gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/$other" --silent 2> /dev/null || true
+            fi
+          done
+          echo "Labelled $want"

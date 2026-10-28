@@ -1,0 +1,124 @@
+name: Security review
+
+# TASK-183 (docs/AI_ENGINEERING.md §4.3): Anthropic's open-source Claude Code security review on
+# every pull request; its findings are posted on the PR, and the check fails while it reports any.
+#
+#   - The action: anthropics/claude-code-security-review, pinned to the commit of its main branch
+#     merged on 2026-02-11 (the repository publishes no release tags). It never fails on findings
+#     itself; it reports a count, and the "Open findings block" step below fails on it.
+#   - pull_request, never pull_request_target: GitHub gives a fork's pull request no secrets and a
+#     read-only token, so a fork can neither reach the key nor post as the repository. The scan
+#     also runs only when the PR's head is a branch of this repository — the action's README says
+#     it is not hardened against prompt injection and should review trusted PRs only.
+#   - A skipped scan never reads as a passed one. It always writes a notice and a summary, and:
+#       - a fork's PR fails (no scan can run there);
+#       - without the ANTHROPIC_API_KEY secret it passes, unless the repository variable
+#         SECURITY_REVIEW_REQUIRED is 'true' — then it fails. Set the variable once the key is set.
+#       - a Dependabot PR does not receive repository (Actions) secrets; it is treated as having
+#         no key, so it fails when the review is required. A required check must not pass
+#         without a scan: the owner re-runs it after adding the key as a Dependabot secret, or
+#         merges past it knowingly.
+#     The variable reaches the shell through env, never as an expression inside run.
+#   - run-every-commit: each push is scanned again, so a commit that fixes a finding clears the
+#     check (the default scans a PR once and would leave the first result standing).
+#   - The action installs Claude Code (npm) and its Python requirements unpinned at run time;
+#     pinning its commit does not pin those (ASSURANCE §3).
+
+on:
+  pull_request:
+    branches: [main, staging, develop]
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: security-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  security-review:
+    name: security-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      IS_DEPENDABOT: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+      SECURITY_REVIEW_REQUIRED: ${{ vars.SECURITY_REVIEW_REQUIRED }}
+    steps:
+      - name: Skip without the key, or for a fork
+        if: env.HAS_KEY != 'true' || env.SAME_REPO != 'true'
+        run: |
+          set -u
+          fail=0
+          if [ "$SAME_REPO" != "true" ]; then
+            why="the pull request comes from a fork, which is never given the key"
+            fail=1
+          elif [ "$IS_DEPENDABOT" = "true" ]; then
+            why="Dependabot PRs do not receive repository secrets"
+          else
+            why="the ANTHROPIC_API_KEY secret is not set in this repository"
+          fi
+          if [ "$SECURITY_REVIEW_REQUIRED" = "true" ]; then
+            fail=1
+          fi
+          echo "::notice::Security review skipped: $why."
+          {
+            echo "## Security review: skipped"
+            echo
+            echo "No scan ran: $why (required: ${SECURITY_REVIEW_REQUIRED:-unset}). See docs/AI_ENGINEERING.md §4.3."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Security review skipped, so this check fails: a skipped scan is not a passed one ($why)."
+            exit 1
+          fi
+
+      - name: Checkout (no credentials)
+        if: env.HAS_KEY == 'true' && env.SAME_REPO == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Claude Code security review
+        id: review
+        if: env.HAS_KEY == 'true' && env.SAME_REPO == 'true'
+        uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda # main, 2026-02-11 (no release tags)
+        with:
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment-pr: "true"
+          upload-results: "true"
+          run-every-commit: "true"
+
+      - name: Open findings block
+        if: env.HAS_KEY == 'true' && env.SAME_REPO == 'true'
+        env:
+          FINDINGS: ${{ steps.review.outputs.findings-count }}
+        run: |
+          set -uo pipefail
+          results="$GITHUB_WORKSPACE/claudecode-results.json"
+          if [ ! -s "$results" ] || ! jq -e '(.error | not) and (.findings | type == "array")' "$results" > /dev/null 2>&1; then
+            echo "::error::The security review ran but left no readable result (see the job log and the security-review-results artifact). Re-run the job; nothing was reviewed."
+            exit 1
+          fi
+          case "$FINDINGS" in
+            '' | *[!0-9]*) echo "::error::The security review reported no finding count."; exit 1 ;;
+          esac
+          {
+            echo "## Security review: $FINDINGS finding(s)"
+            echo
+            if [ "$FINDINGS" -eq 0 ]; then
+              echo "Nothing to fix."
+            else
+              jq -r '.findings[] | "- **\(.severity // "?")** `\(.file // "?"):\(.line // "?")` \(.description // .title // "" | tostring | .[0:300])"' "$results"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$FINDINGS" -ne 0 ]; then
+            echo "::error::$FINDINGS open security finding(s). Fix each, or answer it with its reason in the PR's Review rounds section (docs/AI_ENGINEERING.md §4.3)."
+            exit 1
+          fi
+          echo "Security review: no findings."
