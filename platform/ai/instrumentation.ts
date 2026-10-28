@@ -19,13 +19,26 @@ import { tryGetObservability } from "@/platform/observability";
 // Cost calculation
 // ---------------------------------------------------------------------------
 
+/** Anthropic bills prompt-cache reads at 0.1x and 5-minute cache writes at 1.25x the input rate. */
+const CACHE_READ_MULTIPLIER = 0.1;
+const CACHE_WRITE_MULTIPLIER = 1.25;
+
+/**
+ * Cost of one call. `inputTokens` is the uncached remainder, as the API reports it; cached
+ * tokens are counted separately in `cache`.
+ */
 export function estimateCost(
   tier: ModelTier,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  cache: { readTokens?: number; writeTokens?: number } = {}
 ): number {
   const config = MODEL_REGISTRY[tier];
-  const inputCost = (inputTokens / 1_000_000) * config.inputCostPer1M;
+  const promptTokens =
+    inputTokens +
+    (cache.readTokens ?? 0) * CACHE_READ_MULTIPLIER +
+    (cache.writeTokens ?? 0) * CACHE_WRITE_MULTIPLIER;
+  const inputCost = (promptTokens / 1_000_000) * config.inputCostPer1M;
   const outputCost = (outputTokens / 1_000_000) * config.outputCostPer1M;
   return parseFloat((inputCost + outputCost).toFixed(6));
 }

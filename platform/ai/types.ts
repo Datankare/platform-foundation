@@ -117,6 +117,14 @@ export interface AIRequest {
   tools?: AITool[];
   /** Temperature (0–1) */
   temperature?: number;
+  /**
+   * Mark the system prompt (or, without one, the tools) for Anthropic's prompt cache. Off by
+   * default, and the request is then sent exactly as before. A cache write bills that prefix at
+   * 1.25x and a read at 0.1x, so it pays only where the same prefix is re-sent within the
+   * cache's 5 minutes; a route sent less often than that pays 25% more on the prefix. Turn it
+   * on per route only once its call rate shows the reuse.
+   */
+  promptCache?: boolean;
 }
 
 /** Response from the LLM provider */
@@ -129,6 +137,10 @@ export interface AIResponse {
   usage: {
     inputTokens: number;
     outputTokens: number;
+    /** Prompt tokens served from Anthropic's prompt cache (billed at 0.1x input) */
+    cacheReadTokens?: number;
+    /** Prompt tokens written to the prompt cache (billed at 1.25x input) */
+    cacheWriteTokens?: number;
   };
   /** Stop reason */
   stopReason: string;
@@ -148,6 +160,8 @@ export interface AIStreamChunk {
   usage?: {
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
     cost?: number;
   };
 }
@@ -224,6 +238,10 @@ export interface AICallMetrics {
   inputTokens: number;
   /** Output tokens */
   outputTokens: number;
+  /** Prompt tokens served from Anthropic's prompt cache */
+  cacheReadTokens?: number;
+  /** Prompt tokens written to Anthropic's prompt cache */
+  cacheWriteTokens?: number;
   /** Estimated cost in USD */
   estimatedCostUsd: number;
   /** Latency in milliseconds */
