@@ -37,7 +37,7 @@ const response = await getOrchestrator().complete(
 | Tier       | Model      | Use Case                                    |
 | ---------- | ---------- | ------------------------------------------- |
 | `fast`     | Haiku 4.5  | Safety classification, simple extraction    |
-| `standard` | Sonnet 4.6 | Admin command bar, complex reasoning, tools |
+| `standard` | Sonnet 5.5 | Admin command bar, complex reasoning, tools |
 
 ## Circuit Breaker
 

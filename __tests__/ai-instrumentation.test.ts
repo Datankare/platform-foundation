@@ -31,9 +31,9 @@ describe("estimateCost", () => {
   });
 
   it("calculates cost for standard tier (Sonnet)", () => {
-    // Sonnet: $3.00/1M input, $15.00/1M output
+    // Sonnet 5.5: $2.00/1M input, $10.00/1M output
     const cost = estimateCost("standard", 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(18.0, 2);
+    expect(cost).toBeCloseTo(12.0, 2);
   });
 
   it("handles small token counts", () => {

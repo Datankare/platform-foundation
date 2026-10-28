@@ -69,6 +69,7 @@
     "__tests__/ai-orchestrator.test.ts",
     "__tests__/ai-provider.test.ts",
     "__tests__/anthropic-provider-contract.test.ts",
+    "__tests__/anthropic-provider-model-settings.test.ts",
     "__tests__/api-error-free-text-ratchet.test.ts",
     "__tests__/api-errors-doc.test.ts",
     "__tests__/api-route-auth.test.ts",
