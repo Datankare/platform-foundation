@@ -78,8 +78,12 @@ export class AnthropicProvider implements AIProvider {
       }));
     }
 
-    if (request.temperature !== undefined) {
+    if (request.temperature !== undefined && modelConfig.acceptsTemperature) {
       body.temperature = request.temperature;
+    }
+
+    if (modelConfig.thinking) {
+      body.thinking = modelConfig.thinking;
     }
 
     const response = await fetchWithTimeout(`${this.baseUrl}/v1/messages`, {
@@ -108,24 +112,39 @@ export class AnthropicProvider implements AIProvider {
 
     const data = await response.json();
 
-    const content: AIContentBlock[] = (data.content || []).map(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (block: any): AIContentBlock => {
-        if (block.type === "text") {
-          return { type: "text", text: block.text };
+    // A safety decline is an HTTP 200 with no usable content; surface it, not an empty reply.
+    if (data.stop_reason === "refusal") {
+      throw new AIProviderError(
+        "Anthropic declined the request (stop_reason: refusal)",
+        "permanent"
+      );
+    }
+
+    const content: AIContentBlock[] = (data.content || [])
+      // Thinking blocks are the model's working, not its reply; calls here are single-turn,
+      // so nothing needs them passed back.
+      .filter(
+        (block: { type: string }) =>
+          block.type !== "thinking" && block.type !== "redacted_thinking"
+      )
+      .map(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (block: any): AIContentBlock => {
+          if (block.type === "text") {
+            return { type: "text", text: block.text };
+          }
+          if (block.type === "tool_use") {
+            return {
+              type: "tool_use",
+              id: block.id,
+              name: block.name,
+              input: block.input,
+            };
+          }
+          // Fallback: treat unknown blocks as text
+          return { type: "text", text: JSON.stringify(block) };
         }
-        if (block.type === "tool_use") {
-          return {
-            type: "tool_use",
-            id: block.id,
-            name: block.name,
-            input: block.input,
-          };
-        }
-        // Fallback: treat unknown blocks as text
-        return { type: "text", text: JSON.stringify(block) };
-      }
-    );
+      );
 
     return {
       content,
@@ -176,8 +195,13 @@ export class AnthropicProvider implements AIProvider {
       }));
     }
 
-    if (options?.temperature ?? request.temperature !== undefined) {
-      body.temperature = options?.temperature ?? request.temperature;
+    const temperature = options?.temperature ?? request.temperature;
+    if (temperature !== undefined && modelConfig.acceptsTemperature) {
+      body.temperature = temperature;
+    }
+
+    if (modelConfig.thinking) {
+      body.thinking = modelConfig.thinking;
     }
 
     const response = await fetchWithTimeout(`${this.baseUrl}/v1/messages`, {
@@ -215,6 +239,7 @@ export class AnthropicProvider implements AIProvider {
     let buffer = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    let refused = false;
 
     try {
       while (true) {
@@ -236,11 +261,14 @@ export class AnthropicProvider implements AIProvider {
             if (event.type === "message_start") {
               inputTokens = event.message?.usage?.input_tokens ?? 0;
             } else if (event.type === "content_block_delta") {
-              const text = event.delta?.text ?? "";
+              // Only the reply streams to the caller; thinking deltas are skipped.
+              const text =
+                event.delta?.type === "text_delta" ? (event.delta.text ?? "") : "";
               if (text) {
                 yield { text, done: false };
               }
             } else if (event.type === "message_delta") {
+              refused = event.delta?.stop_reason === "refusal";
               outputTokens = event.usage?.output_tokens ?? 0;
             } else if (event.type === "message_stop") {
               yield {
@@ -258,6 +286,14 @@ export class AnthropicProvider implements AIProvider {
             }
           } catch {
             // Skip unparseable lines
+          }
+
+          // Thrown outside the parse guard above, which would swallow it.
+          if (refused) {
+            throw new AIProviderError(
+              "Anthropic declined the request (stop_reason: refusal)",
+              "permanent"
+            );
           }
         }
       }

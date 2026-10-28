@@ -12,6 +12,7 @@ import {
   clearMetrics,
   summarizeMetrics,
 } from "@/platform/ai/instrumentation";
+import { MODEL_REGISTRY } from "@/platform/ai/types";
 import type { AICallMetrics } from "@/platform/ai/types";
 
 beforeEach(() => {
@@ -24,15 +25,15 @@ beforeEach(() => {
 
 describe("estimateCost", () => {
   it("calculates cost for fast tier (Haiku)", () => {
-    // Haiku: $0.80/1M input, $4.00/1M output
+    // Haiku 4.5: $1.00/1M input, $5.00/1M output
     const cost = estimateCost("fast", 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(4.8, 2);
+    expect(cost).toBeCloseTo(6.0, 2);
   });
 
   it("calculates cost for standard tier (Sonnet)", () => {
-    // Sonnet: $3.00/1M input, $15.00/1M output
+    // Sonnet 5.5: $2.00/1M input, $10.00/1M output
     const cost = estimateCost("standard", 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(18.0, 2);
+    expect(cost).toBeCloseTo(12.0, 2);
   });
 
   it("handles small token counts", () => {
@@ -166,4 +167,21 @@ describe("summarizeMetrics", () => {
     expect(summary.byUseCase["admin"].calls).toBe(1);
     expect(summary.byUseCase["admin"].costUsd).toBeCloseTo(0.01, 4);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Model registry — no tier may point at a retired model
+// ---------------------------------------------------------------------------
+
+describe("MODEL_REGISTRY", () => {
+  // Anthropic returns an error for every call to a retired model, so a tier left on one
+  // fails every request routed to it. Add IDs here as Anthropic retires them.
+  const RETIRED_MODEL_IDS = ["claude-sonnet-4-20250514", "claude-opus-4-20250514"];
+
+  it.each(Object.entries(MODEL_REGISTRY))(
+    "tier %s uses a model still served",
+    (_tier, config) => {
+      expect(RETIRED_MODEL_IDS).not.toContain(config.modelId);
+    }
+  );
 });

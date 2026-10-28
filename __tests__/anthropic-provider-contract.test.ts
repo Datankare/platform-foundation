@@ -30,7 +30,7 @@ function completeResponse() {
 function sseResponse() {
   const events = [
     { type: "message_start", message: { usage: { input_tokens: 5 } } },
-    { type: "content_block_delta", delta: { text: "Hello" } },
+    { type: "content_block_delta", delta: { type: "text_delta", text: "Hello" } },
     { type: "message_delta", usage: { output_tokens: 3 } },
     { type: "message_stop" },
   ];

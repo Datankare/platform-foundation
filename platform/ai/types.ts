@@ -20,6 +20,10 @@ export interface ModelConfig {
   inputCostPer1M: number;
   /** Cost per 1M output tokens (USD) — for instrumentation */
   outputCostPer1M: number;
+  /** Whether the model accepts `temperature`; Sonnet 5.5 answers a request carrying it with a 400 */
+  acceptsTemperature: boolean;
+  /** The `thinking` setting sent on every request to this model, when it needs one */
+  thinking?: { type: "between_tools" };
 }
 
 /** Model registry — maps tiers to concrete models */
@@ -27,14 +31,21 @@ export const MODEL_REGISTRY: Record<ModelTier, ModelConfig> = {
   fast: {
     modelId: "claude-haiku-4-5-20251001",
     label: "Haiku 4.5",
-    inputCostPer1M: 0.8,
-    outputCostPer1M: 4.0,
+    inputCostPer1M: 1.0,
+    outputCostPer1M: 5.0,
+    acceptsTemperature: true,
   },
   standard: {
-    modelId: "claude-sonnet-4-20250514",
-    label: "Sonnet 4",
-    inputCostPer1M: 3.0,
-    outputCostPer1M: 15.0,
+    // Sonnet 4 (claude-sonnet-4-20250514) was retired 2026-06-15. Sonnet 5.5 thinks by default,
+    // and thinking counts against max_tokens; our prompts budget 256-1024 tokens for the reply
+    // alone, so "between_tools" turns extended thinking off. It rejects temperature, so the
+    // prompts' low temperatures apply on the fast tier only.
+    modelId: "claude-sonnet-5-5",
+    label: "Sonnet 5.5",
+    inputCostPer1M: 2.0,
+    outputCostPer1M: 10.0,
+    acceptsTemperature: false,
+    thinking: { type: "between_tools" },
   },
 };
 
