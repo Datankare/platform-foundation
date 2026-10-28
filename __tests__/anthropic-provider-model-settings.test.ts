@@ -3,7 +3,8 @@
  *
  * The standard tier (Sonnet 5.5) rejects `temperature` and thinks by default; the fast tier
  * (Haiku 4.5) takes `temperature` and no `thinking`. Covers what the provider sends to each,
- * that thinking blocks never reach the caller, and that a safety decline surfaces as an error.
+ * that thinking blocks never reach the caller, that a safety decline surfaces as an error, and
+ * that prompt caching is opt-in and never marks the per-call messages.
  */
 
 jest.mock("@/lib/logger", () => ({
@@ -153,5 +154,76 @@ describe("response handling", () => {
     await expect(
       drain(new AnthropicProvider("k").stream(request("standard")))
     ).rejects.toMatchObject({ kind: "permanent" });
+  });
+});
+
+describe("prompt caching (opt-in)", () => {
+  const TOOLS = [
+    { name: "a", description: "A", input_schema: { type: "object" } },
+    { name: "b", description: "B", input_schema: { type: "object" } },
+  ];
+
+  beforeEach(() => mockFetch(() => jsonResponse(REPLY)));
+
+  it("off by default: system and tools are sent exactly as before, with no cache marker", async () => {
+    await new AnthropicProvider("k").complete({
+      ...request("standard"),
+      system: "rules",
+      tools: TOOLS,
+    });
+    expect(sentBodies[0].system).toBe("rules");
+    expect(JSON.stringify(sentBodies[0])).not.toContain("cache_control");
+  });
+
+  it("stream is off by default too", async () => {
+    mockFetch(() =>
+      sseResponse([{ type: "message_start", message: { usage: { input_tokens: 1 } } }])
+    );
+    await drain(
+      new AnthropicProvider("k").stream({ ...request("standard"), system: "rules" })
+    );
+    expect(sentBodies[0].system).toBe("rules");
+    expect(JSON.stringify(sentBodies[0])).not.toContain("cache_control");
+  });
+
+  it("on: marks the end of the system prompt, never the tools or messages", async () => {
+    await new AnthropicProvider("k").complete({
+      ...request("standard"),
+      system: "rules",
+      tools: TOOLS,
+      promptCache: true,
+    });
+    expect(sentBodies[0].system).toEqual([
+      { type: "text", text: "rules", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(JSON.stringify(sentBodies[0].tools)).not.toContain("cache_control");
+    expect(JSON.stringify(sentBodies[0].messages)).not.toContain("cache_control");
+  });
+
+  it("on without a system prompt: marks the last tool only", async () => {
+    await new AnthropicProvider("k").complete({
+      ...request("standard"),
+      tools: TOOLS,
+      promptCache: true,
+    });
+    const tools = sentBodies[0].tools as Record<string, unknown>[];
+    expect(tools[0]).not.toHaveProperty("cache_control");
+    expect(tools[1].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("reports cache reads and writes from the API's usage", async () => {
+    mockFetch(() =>
+      jsonResponse({
+        ...REPLY,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 1,
+          cache_read_input_tokens: 600,
+          cache_creation_input_tokens: 0,
+        },
+      })
+    );
+    const res = await new AnthropicProvider("k").complete(request("standard"));
+    expect(res.usage).toMatchObject({ cacheReadTokens: 600, cacheWriteTokens: 0 });
   });
 });

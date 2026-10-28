@@ -16,6 +16,7 @@ import {
   MODEL_REGISTRY,
 } from "./types";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import { estimateCost } from "./instrumentation";
 import { logger } from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
@@ -66,17 +67,7 @@ export class AnthropicProvider implements AIProvider {
       })),
     };
 
-    if (request.system) {
-      body.system = request.system;
-    }
-
-    if (request.tools && request.tools.length > 0) {
-      body.tools = request.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.input_schema,
-      }));
-    }
+    Object.assign(body, cachedPrefix(request.system, request.tools, request.promptCache));
 
     if (request.temperature !== undefined && modelConfig.acceptsTemperature) {
       body.temperature = request.temperature;
@@ -152,6 +143,8 @@ export class AnthropicProvider implements AIProvider {
       usage: {
         inputTokens: data.usage?.input_tokens ?? 0,
         outputTokens: data.usage?.output_tokens ?? 0,
+        cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
       },
       stopReason: data.stop_reason || "end_turn",
     };
@@ -183,17 +176,10 @@ export class AnthropicProvider implements AIProvider {
       })),
     };
 
-    if (options?.system ?? request.system) {
-      body.system = options?.system ?? request.system;
-    }
-
-    if (request.tools && request.tools.length > 0) {
-      body.tools = request.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.input_schema,
-      }));
-    }
+    Object.assign(
+      body,
+      cachedPrefix(options?.system ?? request.system, request.tools, request.promptCache)
+    );
 
     const temperature = options?.temperature ?? request.temperature;
     if (temperature !== undefined && modelConfig.acceptsTemperature) {
@@ -239,6 +225,8 @@ export class AnthropicProvider implements AIProvider {
     let buffer = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
     let refused = false;
 
     try {
@@ -260,6 +248,8 @@ export class AnthropicProvider implements AIProvider {
 
             if (event.type === "message_start") {
               inputTokens = event.message?.usage?.input_tokens ?? 0;
+              cacheReadTokens = event.message?.usage?.cache_read_input_tokens ?? 0;
+              cacheWriteTokens = event.message?.usage?.cache_creation_input_tokens ?? 0;
             } else if (event.type === "content_block_delta") {
               // Only the reply streams to the caller; thinking deltas are skipped.
               const text =
@@ -277,10 +267,12 @@ export class AnthropicProvider implements AIProvider {
                 usage: {
                   inputTokens,
                   outputTokens,
-                  cost:
-                    (inputTokens * modelConfig.inputCostPer1M +
-                      outputTokens * modelConfig.outputCostPer1M) /
-                    1_000_000,
+                  cacheReadTokens,
+                  cacheWriteTokens,
+                  cost: estimateCost(request.tier, inputTokens, outputTokens, {
+                    readTokens: cacheReadTokens,
+                    writeTokens: cacheWriteTokens,
+                  }),
                 },
               };
             }
@@ -301,6 +293,41 @@ export class AnthropicProvider implements AIProvider {
       reader.releaseLock();
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Prompt caching
+// ---------------------------------------------------------------------------
+
+/**
+ * `system` and `tools` for a request. With `promptCache` off (the default) they are sent
+ * exactly as before. With it on, a cache breakpoint goes at the end of the fixed prefix: the
+ * system prompt when there is one (the cached prefix then covers the tools too, which render
+ * first), else the last tool. Never on the messages, which change every call: a breakpoint
+ * there would pay the 1.25x write on every request and never be read back. A prefix under the
+ * model's minimum (512 tokens on Sonnet 5.5, 4096 on Haiku 4.5) is not cached and not charged.
+ */
+function cachedPrefix(
+  system: string | undefined,
+  tools: AIRequest["tools"],
+  promptCache: boolean | undefined
+): { system?: unknown; tools?: unknown[] } {
+  const breakpoint = { cache_control: { type: "ephemeral" } };
+  const prefix: { system?: unknown; tools?: unknown[] } = {};
+  if (tools && tools.length > 0) {
+    prefix.tools = tools.map((t, i) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.input_schema,
+      ...(promptCache && !system && i === tools.length - 1 ? breakpoint : {}),
+    }));
+  }
+  if (system) {
+    prefix.system = promptCache
+      ? [{ type: "text", text: system, ...breakpoint }]
+      : system;
+  }
+  return prefix;
 }
 
 // ---------------------------------------------------------------------------

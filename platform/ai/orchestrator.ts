@@ -229,10 +229,16 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           tier: effectiveRequest.tier,
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
+          cacheReadTokens: response.usage.cacheReadTokens,
+          cacheWriteTokens: response.usage.cacheWriteTokens,
           estimatedCostUsd: estimateCost(
             effectiveRequest.tier,
             response.usage.inputTokens,
-            response.usage.outputTokens
+            response.usage.outputTokens,
+            {
+              readTokens: response.usage.cacheReadTokens,
+              writeTokens: response.usage.cacheWriteTokens,
+            }
           ),
           latencyMs,
           cached: false,
@@ -336,10 +342,16 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           tier: effectiveRequest.tier,
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
+          cacheReadTokens: response.usage.cacheReadTokens,
+          cacheWriteTokens: response.usage.cacheWriteTokens,
           estimatedCostUsd: estimateCost(
             effectiveRequest.tier,
             response.usage.inputTokens,
-            response.usage.outputTokens
+            response.usage.outputTokens,
+            {
+              readTokens: response.usage.cacheReadTokens,
+              writeTokens: response.usage.cacheWriteTokens,
+            }
           ),
           latencyMs,
           cached: false,
@@ -355,10 +367,16 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           usage: {
             inputTokens: response.usage.inputTokens,
             outputTokens: response.usage.outputTokens,
+            cacheReadTokens: response.usage.cacheReadTokens,
+            cacheWriteTokens: response.usage.cacheWriteTokens,
             cost: estimateCost(
               effectiveRequest.tier,
               response.usage.inputTokens,
-              response.usage.outputTokens
+              response.usage.outputTokens,
+              {
+                readTokens: response.usage.cacheReadTokens,
+                writeTokens: response.usage.cacheWriteTokens,
+              }
             ),
           },
         };
@@ -395,6 +413,8 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
               tier: effectiveRequest.tier,
               inputTokens: chunk.usage?.inputTokens ?? 0,
               outputTokens: chunk.usage?.outputTokens ?? 0,
+              cacheReadTokens: chunk.usage?.cacheReadTokens,
+              cacheWriteTokens: chunk.usage?.cacheWriteTokens,
               estimatedCostUsd: chunk.usage?.cost ?? 0,
               latencyMs,
               cached: false,

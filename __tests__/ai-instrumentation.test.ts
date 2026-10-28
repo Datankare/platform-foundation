@@ -36,6 +36,15 @@ describe("estimateCost", () => {
     expect(cost).toBeCloseTo(12.0, 2);
   });
 
+  it("bills cache reads at 0.1x and cache writes at 1.25x the input rate", () => {
+    // Sonnet 5.5 input $2.00/1M: 1M read = $0.20, 1M written = $2.50
+    expect(estimateCost("standard", 0, 0, { readTokens: 1_000_000 })).toBeCloseTo(0.2, 4);
+    expect(estimateCost("standard", 0, 0, { writeTokens: 1_000_000 })).toBeCloseTo(
+      2.5,
+      4
+    );
+  });
+
   it("handles small token counts", () => {
     const cost = estimateCost("fast", 100, 50);
     expect(cost).toBeGreaterThan(0);
