@@ -13,6 +13,7 @@ import {
   STREAM_MAX_PROMPT_CHARACTERS,
   STREAM_MAX_TOKENS,
 } from "@/platform/ai/stream-policy";
+import { AIRefusalError } from "@/platform/ai/provider";
 
 jest.mock("@/lib/safety", () => ({
   checkSafety: jest.fn().mockResolvedValue({ safe: true }),
@@ -190,6 +191,17 @@ describe("/api/stream — screening and streaming", () => {
     const text = await res.text();
     expect(text).toContain('"code":"internal.error"');
     expect(text).not.toContain("upstream secret detail");
+  });
+
+  it("a model refusal ends the stream as ai.request_declined, not internal.error (TASK-186)", async () => {
+    streamMock.mockImplementation(async function* () {
+      yield { text: "", done: false };
+      throw new AIRefusalError();
+    });
+    const text = await (await POST(req({ prompt: "hi" }))).text();
+    expect(text).toContain('"code":"ai.request_declined"');
+    expect(text).not.toContain("stop_reason");
+    expect(text).not.toContain("[DONE]");
   });
 
   it("withholds output the screen refuses, ending with a coded content.rejected", async () => {

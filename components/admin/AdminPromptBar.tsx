@@ -3,6 +3,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { renderMessage } from "@/platform/errors/messages";
+import { announceSessionEnd, readRefusal, type Refusal } from "@/platform/errors/refusal";
+import { RefusalNotice } from "@/components/refusal/RefusalNotice";
 
 interface AdminPromptBarProps {
   panel: string;
@@ -30,6 +32,9 @@ export default function AdminPromptBar({
   const [isThinking, setIsThinking] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  // A refusal that needs more than its message (sign-in, a restricted account, a wait): shown by
+  // the shared notice. A plain "message" refusal is shown as the plan's message, as before.
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -40,6 +45,7 @@ export default function AdminPromptBar({
     if (!prompt.trim() || isThinking) return;
 
     setIsThinking(true);
+    setRefusal(null);
     setHistory((prev) => [prompt, ...prev.slice(0, 19)]);
 
     try {
@@ -49,12 +55,15 @@ export default function AdminPromptBar({
         body: JSON.stringify({ prompt: prompt.trim(), panel }),
       });
 
+      // Every refusal through the shared handler, by its kind (TASK-181, TASK-186).
       if (!res.ok) {
-        const err = await res.json();
-        onPlanReceived({
-          message: err.error || "Failed to process command",
-          actions: [],
-        });
+        const refused = await readRefusal(res);
+        if (refused.kind === "message") {
+          onPlanReceived({ message: refused.message, actions: [] });
+        } else {
+          if (refused.kind === "signed-out-erased") announceSessionEnd(refused.code);
+          setRefusal(refused);
+        }
         return;
       }
 
@@ -126,6 +135,11 @@ export default function AdminPromptBar({
           Run
         </button>
       </div>
+      {refusal && (
+        <div className="mt-3">
+          <RefusalNotice refusal={refusal} />
+        </div>
+      )}
     </div>
   );
 }

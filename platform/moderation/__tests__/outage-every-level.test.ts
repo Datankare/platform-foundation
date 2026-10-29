@@ -60,6 +60,8 @@ jest.mock("@/platform/moderation/review-service", () => ({
 }));
 
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
+import { AIRefusalError } from "@/platform/ai/provider";
+import { estimateCost } from "@/platform/ai/instrumentation";
 import type { AIResponse, Orchestrator, CircuitState } from "@/platform/ai";
 import { screenContent } from "@/platform/moderation/middleware";
 import { resetGuardian } from "@/platform/moderation/guardian";
@@ -117,6 +119,57 @@ const noTextBlock = () =>
     usage: { inputTokens: 1, outputTokens: 1 },
     stopReason: "end_turn",
   } as unknown as AIResponse);
+
+describe("TASK-186: a classifier that declines the text is withheld for review, with no strike", () => {
+  const declined = () =>
+    mockComplete.mockRejectedValue(
+      new AIRefusalError(
+        { inputTokens: 500, outputTokens: 1 },
+        "claude-haiku-4-5-20251001"
+      )
+    );
+  for (const level of LEVELS) {
+    for (const direction of DIRECTIONS) {
+      for (const contentType of KINDS) {
+        it(`level ${level}, ${direction}, ${contentType} (lenient reductions included)`, async () => {
+          declined();
+          const r = await screenContent("anything at all", {
+            direction,
+            requestId: `req-d-${level}-${direction}-${contentType}`,
+            context: { userId: "user-d", contentType, contentRatingLevel: level },
+          });
+          // Withheld (escalate is never shown, ADR-041), never allowed.
+          expect(r.action).toBe("escalate");
+          expect(["allow", "warn"]).not.toContain(r.action);
+          expect(r.screeningUnavailable).toBeFalsy();
+          expect(r.reasoning).toMatch(/declined/);
+          expect((r.classifierOutput as { declined?: true }).declined).toBe(true);
+          // Queued for a human, and no strike: the Sentinel never runs.
+          expect(mockSubmitForReview).toHaveBeenCalledTimes(1);
+          expect(mockSubmitForReview.mock.calls[0][0]).toMatchObject({
+            source: "escalation",
+            targetUserId: "user-d",
+          });
+          expect(mockProcessBlock).not.toHaveBeenCalled();
+        });
+      }
+    }
+  }
+
+  it("the declined call's cost is the classifier's, not 0", async () => {
+    declined();
+    const { classify } = await import("@/platform/moderation/classifier");
+    const out = await classify("x", "req-cost");
+    expect(out).toMatchObject({ safe: false, reason: "declined", declined: true });
+    expect(out.unavailable).toBeUndefined();
+    expect(out.unjudged).toBeUndefined();
+    expect(out.costUsd).toBeCloseTo(
+      estimateCost("fast", { inputTokens: 500, outputTokens: 1 }),
+      9
+    );
+    expect(out.costUsd).toBeGreaterThan(0);
+  });
+});
 
 describe("review 7 H1: a classifier outage is withheld at every level, direction and kind", () => {
   for (const level of LEVELS) {

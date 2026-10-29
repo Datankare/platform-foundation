@@ -54,11 +54,7 @@ export async function runAdaptive<TInput, TDecision>(
         useCase: `adaptive:${behavior.name}`,
         requestId: ctx.trajectoryId,
       });
-      costUsd = estimateCost(
-        request.tier,
-        response.usage?.inputTokens ?? 0,
-        response.usage?.outputTokens ?? 0
-      );
+      costUsd = estimateCost(request.tier, response.usage);
       const block = response.content.find((b) => b.type === "text");
       if (!block || block.type !== "text") {
         throw new Error("adaptive: no text block in response");

@@ -13,6 +13,8 @@ import { registerAgent } from "@/platform/agents/registry";
 import { generateContent } from "@/platform/content/loop";
 import type { ContentType } from "@/platform/content";
 import type { AIRequest } from "@/platform/ai/types";
+import { estimateCost } from "@/platform/ai/instrumentation";
+import { AIRefusalError } from "@/platform/ai/provider";
 
 const AGENT = "content-test-host";
 
@@ -109,6 +111,30 @@ describe("content generation loop (ADR-037 D2/D3/D4)", () => {
     expect(r.fallbackReason).toBe("orchestrator-error");
     expect(r.content).toEqual(FALLBACK);
     expect(screen).not.toHaveBeenCalled();
+  });
+
+  it("charges the paid call's cost to the run, not 0 — a refused call's too (TASK-186)", async () => {
+    const { getTrajectoryStore } = jest.requireActual(
+      "@/platform/agents/trajectory-store"
+    );
+    const charged = async (trajectoryId: string) =>
+      (await getTrajectoryStore().getById(trajectoryId)).trajectory.steps.reduce(
+        (sum: number, step: { cost: number }) => sum + step.cost,
+        0
+      );
+    const usage = { inputTokens: 200_000, outputTokens: 10_000 };
+    complete.mockResolvedValue({ ...textResponse('{"headline":"Ship it"}'), usage });
+    screen.mockResolvedValue({ action: "allow" });
+    const ok = await generateContent(ct, { topic: "x" }, scope);
+    expect(await charged(ok.trajectoryId)).toBeCloseTo(estimateCost("fast", usage), 9);
+
+    complete.mockRejectedValue(new AIRefusalError(usage));
+    const refused = await generateContent(ct, { topic: "x" }, scope);
+    expect(refused.fallbackReason).toBe("orchestrator-error");
+    expect(await charged(refused.trajectoryId)).toBeCloseTo(
+      estimateCost("fast", usage),
+      9
+    );
   });
 
   it("falls back on a parse failure", async () => {

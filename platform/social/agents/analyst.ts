@@ -94,11 +94,7 @@ export function createAnalystWorkflow(
             .join("") || "{}";
 
         report = parseAnalystResponse(raw);
-        const cost = estimateCost(
-          ANALYST_V1.tier,
-          response.usage.inputTokens,
-          response.usage.outputTokens
-        );
+        const cost = estimateCost(ANALYST_V1.tier, response.usage);
 
         return {
           action: "analyze-health",

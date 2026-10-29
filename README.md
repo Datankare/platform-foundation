@@ -144,7 +144,7 @@ See [GenAI-Native Roadmap](docs/GENAI_ROADMAP.md) for the complete capability ma
 
 ### Database (Supabase)
 
-- ✅ 58 migrations (001–057), tracked in `applied_migrations`; new databases start from the schema baseline
+- ✅ 59 migrations (001–058), tracked in `applied_migrations`; new databases start from the schema baseline
 - ✅ Social (groups/memberships/invites), pgvector embeddings, review queue + appeals tables
 - ✅ Forced row-level security on every tenant-owned table; every server query runs through `platform/data` as `app_tenant`, which cannot bypass it (ADR-053)
 - ✅ Generic roles: guest, registered, admin, super_admin (inheritance chain)
@@ -215,7 +215,7 @@ platform-foundation/
 ├── hooks/                  ← React hooks (realtime stream, channel, profile)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
-├── supabase/migrations/    ← 58 database migrations
+├── supabase/migrations/    ← 59 database migrations
 ├── docs/adr/               ← 56 ADRs
 ├── k6/                     ← Load test scripts
 └── shared/                 ← Shared components, types, utils

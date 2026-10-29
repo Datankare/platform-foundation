@@ -95,11 +95,7 @@ export function createGatekeeperWorkflow(
             .join("") || "{}";
 
         evaluation = parseGatekeeperResponse(raw);
-        const cost = estimateCost(
-          GATEKEEPER_V1.tier,
-          response.usage.inputTokens,
-          response.usage.outputTokens
-        );
+        const cost = estimateCost(GATEKEEPER_V1.tier, response.usage);
 
         return {
           action: "evaluate-fit",

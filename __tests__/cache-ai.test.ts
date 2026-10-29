@@ -14,6 +14,7 @@ import { InMemoryCacheProvider } from "../platform/cache/memory-cache";
 import type { AICacheMetricsCallback } from "../platform/cache/ai-cache";
 import type { AIRequest, AIResponse } from "@/platform/ai";
 import { runWithTenant } from "@/platform/tenancy/context";
+import { estimateCost } from "@/platform/ai/instrumentation";
 
 const makeRequest = (overrides?: Partial<AIRequest>): AIRequest => ({
   maxTokens: 1024,
@@ -163,9 +164,10 @@ describe("AICache", () => {
     await aiCache.set(req, resp, "test");
     await aiCache.get(req, "test");
 
-    // Cost should be > 0 (actual tokens were saved)
+    // The original call's cost at its tier's prices (it used fixed old Haiku prices).
     const savedCost = (metrics.onCacheHit as jest.Mock).mock.calls[0][2];
     expect(savedCost).toBeGreaterThan(0);
+    expect(savedCost).toBeCloseTo(estimateCost(req.tier, resp.usage), 9);
   });
 
   it("respects TTL by use case", async () => {

@@ -58,6 +58,7 @@
     "054_user_deletions_subject.sql",
     "055_users_email_lookup.sql",
     "056_users_list_indexes.sql",
-    "057_users_last_login_backfill.sql"
+    "057_users_last_login_backfill.sql",
+    "058_ai_prompt_cache_setting.sql"
   ]
 }

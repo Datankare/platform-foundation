@@ -99,6 +99,27 @@ function unjudgedFields(
   return {};
 }
 
+/**
+ * Whether the classifier model declined to classify the text (stop_reason "refusal", TASK-186).
+ * The owner's decision: withheld for human review at every rating level, before any threshold or
+ * context reduction is read — never allowed, and no strike (escalate never runs the Sentinel; a
+ * strike follows only if a reviewer decides it was a violation). Not an outage: it is queued.
+ */
+function isDeclined(output: object): boolean {
+  return (output as { declined?: unknown }).declined === true;
+}
+/** A declined text's decision: escalated (withheld, queued for review), with its reason. */
+function markDeclined(
+  acc: { action: ModerationAction; triggeredBy: ModerationResult["triggeredBy"] },
+  reasonParts: string[]
+): void {
+  acc.action = "escalate";
+  acc.triggeredBy = "content-rating";
+  reasonParts.push(
+    "Classifier declined to assess the content (declined) — withheld for human review."
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Trajectory helpers
 // ---------------------------------------------------------------------------
@@ -314,6 +335,8 @@ export class Guardian {
                 ? "Classifier unavailable — content withheld at every rating level (fail-closed)."
                 : "Classifier answer unreadable — withheld for human review at every rating level (fail-closed)."
             );
+          } else if (isDeclined(classifierOutput)) {
+            markDeclined(acc, reasonParts);
           } else if (classifierOutput.safe) {
             acc.action = acc.blocklistResult.matched ? "warn" : "allow";
             acc.triggeredBy = acc.blocklistResult.matched ? "blocklist" : "none";

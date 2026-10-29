@@ -86,11 +86,7 @@ export function createCuratorWorkflow(
             .join("") || "[]";
 
         digest = parseCuratorResponse(raw);
-        const cost = estimateCost(
-          CURATOR_V1.tier,
-          response.usage.inputTokens,
-          response.usage.outputTokens
-        );
+        const cost = estimateCost(CURATOR_V1.tier, response.usage);
 
         return {
           action: "curate-digest",

@@ -9,7 +9,8 @@
  */
 
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { renderMessage } from "@/platform/errors/messages";
 
 // ── ActionConfirmPanel ──────────────────────────────────────────────────
 
@@ -225,6 +226,48 @@ describe("AdminPromptBar", () => {
     fireEvent.change(input, { target: { value: "Create a role" } });
     const button = screen.getByText("Run");
     expect(button.hasAttribute("disabled")).toBe(false);
+  });
+
+  it.each([
+    [429, "rate.limited", { retryAfterSeconds: 30 }],
+    [401, "auth.required", {}],
+    [403, "account.restricted", { feature: "admin" }],
+  ])(
+    "a %s %s refusal is shown by the shared notice, not as a plan",
+    async (status, code, params) => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: false,
+        status,
+        json: async () => ({ code, params }),
+      });
+      const onPlan = jest.fn();
+      const { container } = render(
+        <AdminPromptBar panel="roles" onPlanReceived={onPlan} />
+      );
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "do it" } });
+      fireEvent.click(screen.getByText("Run"));
+      await waitFor(() =>
+        expect(container.querySelector('[role="alert"], [role="status"]')).not.toBeNull()
+      );
+      expect(onPlan).not.toHaveBeenCalled();
+    }
+  );
+
+  it("shows a declined request's catalog message, through the shared refusal handler (TASK-186)", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({ code: "ai.request_declined", params: {} }),
+    });
+    const onPlan = jest.fn();
+    render(<AdminPromptBar panel="roles" onPlanReceived={onPlan} />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "do it" } });
+    fireEvent.click(screen.getByText("Run"));
+    await waitFor(() => expect(onPlan).toHaveBeenCalled());
+    expect(onPlan).toHaveBeenCalledWith({
+      message: renderMessage("errors.ai.request_declined"),
+      actions: [],
+    });
   });
 });
 

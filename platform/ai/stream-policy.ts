@@ -28,6 +28,12 @@ export interface StreamRequestInput {
   readonly prompt: string;
   readonly tier: StreamTier;
   readonly maxTokens: number;
+  /**
+   * 0–1. Applied only on a tier whose model accepts it (ModelConfig.acceptsTemperature): the
+   * standard tier (Sonnet 5.5) answers a request carrying one with a 400, so the provider drops
+   * it there and the stream runs at the model's own sampling. Accepted, never refused, so a
+   * client that sends one keeps working on either tier.
+   */
   readonly temperature?: number;
 }
 

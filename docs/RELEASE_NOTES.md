@@ -15,11 +15,39 @@ Four gaps Playform worked around in its own code (its `docs/APP_SECURITY_DEBT.md
 deploying Playform v0.9.0, a race behind a flaky test (TASK-175), and an address flag never
 updated (TASK-176), closed in the platform — and review 16 of the last three, and the subject
 made the Cognito `sub` for every provider (TASK-177), and review 17 of sign-out and the Cognito
-provider (TASK-178), and the admin Users screen with the address kept in step (TASK-185). Deploy:
-migrations 053, 054, 055, 056 and 057 in the SQL Editor
+provider (TASK-178), and the admin Users screen with the address kept in step (TASK-185), and the
+standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186). Deploy:
+migrations 053, 054, 055, 056, 057 and 058 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
+- **The standard tier on Sonnet 5.5; prompt caching, governed (#461, #462, TASK-186).** Sonnet 4
+  was retired on 2026-06-15; `standard` is now `claude-sonnet-5-5` ($2 / $10 per 1M). It rejects
+  `temperature` (dropped for it: `ModelConfig.acceptsTemperature`, now **required** on every
+  registry entry) and is sent `thinking: { type: "between_tools" }`, which turns off up-front
+  thinking only; thinking blocks are now kept as an opaque `{ type: "thinking", raw }` content
+  block, passed back unmodified in a tool loop and never rendered. A forced `tool_choice` (`any`
+  or a named tool) is answered with a 400 on Sonnet 5.5. A model refusal (`stop_reason:
+"refusal"`) now **throws** `AIRefusalError` (permanent, carrying the `usage` it was billed for —
+  recorded in the failure metrics) instead of returning an empty reply; test for it with
+  **`isAIRefusalError(err)`**, which holds across bundled module copies. The admin command bar and
+  `/api/stream` answer it with the new code **`ai.request_declined`** (422), and a refusal by the
+  safety classifier (`declined: true`) is withheld for human review at every level — escalated to the review queue, never allowed, and no strike unless a reviewer decides it was a violation — not an outage. The held-actions panel now says what each Approve / Reject did, in an announced status above the refreshed list. **Prompt
+  caching** is opt-in twice over: the request's `promptCache` and the governed setting
+  `ai.prompt_cache_enabled` (migration 058, default off), and only an explicit `cacheablePrefix` —
+  fixed, tenant-free text — is ever cached. **Cost:** `ModelConfig` has `cacheReadCostPer1M` and
+  `cacheWriteCostPer1M` (both **required**), and `estimateCost(tier, usage)` takes the response's
+  whole usage (**signature changed** from `(tier, input, output)`); `ai.call` metrics and
+  `MetricsSummary` carry cache reads and writes and the prompt's total. A weekly workflow,
+  `model-registry-check.yml` (also on a PR changing the registry), fails when a registry model ID
+  stops resolving or is retired, warns when it is deprecated, and sends each tier one
+  `max_tokens: 1` request with its real settings; set `MODEL_CHECK_REQUIRED` = `true` once the key
+  is set, so a keyless run fails. The response cache's key now includes `cacheablePrefix`. Consumer steps: add
+  `acceptsTemperature`, `cacheReadCostPer1M` and `cacheWriteCostPer1M` to any `ModelConfig` of the
+  app's own; call `estimateCost(tier, response.usage)`; catch a refusal (`isAIRefusalError`) where an empty
+  reply was expected; route the app's own model calls through the orchestrator (no `claude-`
+  literal outside the registry — a test holds it); run migration 058. Haiku 4.5 (the fast tier) is past its earliest
+  retirement date: TASK-187.
 - **Refusals handled the same way on every screen (TASK-181).** `platform/errors/refusal.ts`:
   `REFUSAL_HANDLERS` (every platform code → its kind), `handleRefusal` / `readRefusal`,
   `fetchWithProvisioningRetry`, `announceSessionEnd`; components in `components/refusal/`

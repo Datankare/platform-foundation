@@ -77,11 +77,7 @@ export class AgentClassifier implements InputClassifier {
           .join("") || "{}";
 
       const parsed = parseClassifyAudioResponse(raw);
-      const cost = estimateCost(
-        CLASSIFY_AUDIO_V1.tier,
-        response.usage.inputTokens,
-        response.usage.outputTokens
-      );
+      const cost = estimateCost(CLASSIFY_AUDIO_V1.tier, response.usage);
 
       const features: AudioFeatures = {
         rhythmRegularity: parsed.rhythmRegularity,

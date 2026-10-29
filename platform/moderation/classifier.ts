@@ -14,6 +14,7 @@ import { buildSafetyPrompt, parseClassifierResponse } from "@/prompts/safety/cla
 import type { ClassifierOutput } from "@/prompts/safety/classify-v1";
 import { logger } from "@/lib/logger";
 import { estimateCost } from "@/platform/ai/instrumentation";
+import { isAIRefusalError, refusalUsage } from "@/platform/ai/provider";
 
 /**
  * The classifier's output with what it cost (audit D-20: every screening recorded a cost of 0),
@@ -24,6 +25,12 @@ export type ClassifierResult = ClassifierOutput & {
   readonly costUsd: number;
   /** True when the classifier was unavailable or unreadable: the text was not judged. */
   readonly unavailable?: true;
+  /**
+   * True when the model declined to classify the text (stop_reason "refusal"): the guardian
+   * withholds it for human review at every rating level, whatever the thresholds and context
+   * reductions — never allowed, no strike unless a reviewer decides it was a violation (TASK-186).
+   */
+  readonly declined?: true;
 };
 
 /**
@@ -52,11 +59,7 @@ export async function classify(
       }
     );
 
-    const costUsd = estimateCost(
-      config.tier,
-      response.usage?.inputTokens ?? 0,
-      response.usage?.outputTokens ?? 0
-    );
+    const costUsd = estimateCost(config.tier, response.usage);
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
       return failClosedResult("Classifier returned unexpected response type", costUsd);
@@ -64,6 +67,22 @@ export async function classify(
 
     return { ...parseClassifierResponse(textBlock.text), costUsd };
   } catch (err) {
+    // The model declined to classify the text: a rejection, not an outage. Still billed.
+    if (isAIRefusalError(err)) {
+      logger.warn("Classifier declined the text — withheld", {
+        requestId,
+        route: "platform/moderation/classifier",
+      });
+      return {
+        safe: false,
+        categories: [],
+        confidence: 1,
+        severity: "critical",
+        reason: "declined",
+        costUsd: estimateCost(config.tier, refusalUsage(err)),
+        declined: true,
+      };
+    }
     // Fail closed — any error means unsafe
     logger.error("Classifier error — fail closed", {
       requestId,

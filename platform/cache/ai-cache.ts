@@ -29,6 +29,7 @@ import type { CacheProvider } from "./types";
 import { memoryPartition } from "@/platform/tenancy/partition";
 import type { AIRequest, AIResponse } from "@/platform/ai";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
+import { estimateCost } from "@/platform/ai/instrumentation";
 
 // ---------------------------------------------------------------------------
 // Cache key generation
@@ -37,7 +38,8 @@ import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 /**
  * Build a deterministic cache key from an AI request, within the current tenant (ADR-053 D6).
  *
- * Key components: tenant + model tier + system prompt + messages + parameters + tools, hashed
+ * Key components: tenant + model tier + cacheable prefix + system prompt + messages + parameters +
+ * tools — every AIRequest field that shapes the response (a guard test holds the list), hashed
  * with SHA-256 over an unambiguous encoding. A cache hit serves one request's response to
  * another, so the key must not collide: it was a 32-bit FNV hash, where unrelated prompts share a
  * key after a few tens of thousands of entries, and it named no tenant.
@@ -51,6 +53,7 @@ export function buildAICacheKey(request: AIRequest, scope?: string): string {
   const material = JSON.stringify([
     scope ?? null,
     request.tier,
+    request.cacheablePrefix ?? "",
     request.system ?? "",
     request.messages.map((m: { role: string; content: string | unknown }) => [
       m.role,
@@ -133,7 +136,7 @@ export class AICache {
       if (cached) {
         this._hits++;
         // Estimate cost savings from the cached response
-        const savedCost = this.estimateSavedCost(cached);
+        const savedCost = this.estimateSavedCost(request, cached);
         this.metrics?.onCacheHit(key, useCase, savedCost);
         return cached;
       }
@@ -212,15 +215,11 @@ export class AICache {
   }
 
   /**
-   * Estimate the cost that was saved by serving from cache.
-   * Uses the token counts from the original response.
+   * The cost saved by serving from cache: what the original call cost, at its tier's prices
+   * (estimateCost, from the response's whole usage). It used fixed old Haiku prices.
    */
-  private estimateSavedCost(response: AIResponse): number {
-    // Rough cost estimate: $0.25/MTok input, $1.25/MTok output (Haiku)
-    // Actual cost comes from estimateCost() in instrumentation.ts
-    const inputCost = (response.usage.inputTokens / 1_000_000) * 0.25;
-    const outputCost = (response.usage.outputTokens / 1_000_000) * 1.25;
-    return parseFloat((inputCost + outputCost).toFixed(6));
+  private estimateSavedCost(request: AIRequest, response: AIResponse): number {
+    return estimateCost(request.tier, response.usage);
   }
 }
 

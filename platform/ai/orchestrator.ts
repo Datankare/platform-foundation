@@ -29,7 +29,12 @@ import {
   OrchestratorOptions,
   AICallMetrics,
 } from "./types";
-import { AnthropicProvider, AIProviderError } from "./provider";
+import {
+  AnthropicProvider,
+  AIProviderError,
+  isAIRefusalError,
+  refusalUsage,
+} from "./provider";
 import { degradeToSupported } from "./multimodal";
 import { screenMultimodalInput, detectMultimodalInput } from "./screen-input";
 import { estimateCost, recordMetrics } from "./instrumentation";
@@ -166,9 +171,9 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
   return {
     async complete(request: AIRequest, opts: OrchestratorOptions): Promise<AIResponse> {
       // Apply tier override if specified
-      const tieredRequest = opts.tierOverride
-        ? { ...request, tier: opts.tierOverride }
-        : request;
+      const tieredRequest = await gatePromptCache(
+        opts.tierOverride ? { ...request, tier: opts.tierOverride } : request
+      );
       // ADR-044 D3: degrade unsupported modalities to text before dispatch (fail-closed).
       const { request: effectiveRequest, dropped: droppedModalities } =
         degradeToSupported(tieredRequest, provider.capabilities);
@@ -231,15 +236,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           outputTokens: response.usage.outputTokens,
           cacheReadTokens: response.usage.cacheReadTokens,
           cacheWriteTokens: response.usage.cacheWriteTokens,
-          estimatedCostUsd: estimateCost(
-            effectiveRequest.tier,
-            response.usage.inputTokens,
-            response.usage.outputTokens,
-            {
-              readTokens: response.usage.cacheReadTokens,
-              writeTokens: response.usage.cacheWriteTokens,
-            }
-          ),
+          estimatedCostUsd: estimateCost(effectiveRequest.tier, response.usage),
           latencyMs,
           cached: false,
           success: true,
@@ -258,7 +255,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           circuitBreaker.recordFailure();
         }
 
-        recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage);
+        recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage, err);
         throw err;
       }
     },
@@ -268,9 +265,9 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
       opts: OrchestratorOptions,
       streamOptions?: AIStreamOptions
     ): AsyncIterable<AIStreamChunk> {
-      const tieredRequest = opts.tierOverride
-        ? { ...request, tier: opts.tierOverride }
-        : request;
+      const tieredRequest = await gatePromptCache(
+        opts.tierOverride ? { ...request, tier: opts.tierOverride } : request
+      );
       // ADR-044 D3: degrade unsupported modalities to text before dispatch (fail-closed).
       const { request: effectiveRequest, dropped: droppedModalities } =
         degradeToSupported(tieredRequest, provider.capabilities);
@@ -344,15 +341,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           outputTokens: response.usage.outputTokens,
           cacheReadTokens: response.usage.cacheReadTokens,
           cacheWriteTokens: response.usage.cacheWriteTokens,
-          estimatedCostUsd: estimateCost(
-            effectiveRequest.tier,
-            response.usage.inputTokens,
-            response.usage.outputTokens,
-            {
-              readTokens: response.usage.cacheReadTokens,
-              writeTokens: response.usage.cacheWriteTokens,
-            }
-          ),
+          estimatedCostUsd: estimateCost(effectiveRequest.tier, response.usage),
           latencyMs,
           cached: false,
           success: true,
@@ -369,15 +358,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
             outputTokens: response.usage.outputTokens,
             cacheReadTokens: response.usage.cacheReadTokens,
             cacheWriteTokens: response.usage.cacheWriteTokens,
-            cost: estimateCost(
-              effectiveRequest.tier,
-              response.usage.inputTokens,
-              response.usage.outputTokens,
-              {
-                readTokens: response.usage.cacheReadTokens,
-                writeTokens: response.usage.cacheWriteTokens,
-              }
-            ),
+            cost: estimateCost(effectiveRequest.tier, response.usage),
           },
         };
         return;
@@ -436,7 +417,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           circuitBreaker.recordFailure();
         }
 
-        recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage);
+        recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage, err);
 
         // No second, non-streamed call after a failed stream (audit C-20): the failed stream may
         // already have been billed, and a fallback made every failure two paid calls — one an
@@ -460,20 +441,54 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
   };
 }
 
+/** The governed setting that must be on, with the request's own flag, for prompt caching. */
+export const PROMPT_CACHE_SETTING = "ai.prompt_cache_enabled";
+
+/**
+ * A request's `promptCache` survives only while `ai.prompt_cache_enabled` is on (default off;
+ * a setting that cannot be read is off): both must be true. Read only when a request asks, so
+ * a request that does not is never held by a config read.
+ */
+async function gatePromptCache(request: AIRequest): Promise<AIRequest> {
+  if (request.promptCache !== true) return request;
+  let enabled = false;
+  try {
+    const { getConfigBoolean } = await import("@/platform/auth/platform-config");
+    enabled = await getConfigBoolean(PROMPT_CACHE_SETTING, false);
+  } catch {
+    /* justified */
+    // An unreadable setting is off: the request is sent without the cache.
+    enabled = false;
+  }
+  return enabled === true ? request : { ...request, promptCache: false };
+}
+
+/**
+ * A failed call's metrics. A refusal was still billed: its usage (carried on the error) is
+ * recorded with its cost; any other failure has none.
+ */
 function recordFailureMetrics(
   request: AIRequest,
   opts: OrchestratorOptions,
   latencyMs: number,
-  error: string
+  error: string,
+  cause?: unknown
 ): void {
+  const usage = refusalUsage(cause);
   const metrics: AICallMetrics = {
     useCase: opts.useCase,
     requestId: opts.requestId,
-    model: "unknown",
+    model: (isAIRefusalError(cause) && cause.model) || "unknown",
     tier: request.tier,
-    inputTokens: 0,
-    outputTokens: 0,
-    estimatedCostUsd: 0,
+    inputTokens: usage?.inputTokens ?? 0,
+    outputTokens: usage?.outputTokens ?? 0,
+    ...(usage
+      ? {
+          cacheReadTokens: usage.cacheReadTokens,
+          cacheWriteTokens: usage.cacheWriteTokens,
+        }
+      : {}),
+    estimatedCostUsd: usage ? estimateCost(request.tier, usage) : 0,
     latencyMs,
     cached: false,
     success: false,

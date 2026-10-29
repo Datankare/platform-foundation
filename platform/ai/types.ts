@@ -20,6 +20,13 @@ export interface ModelConfig {
   inputCostPer1M: number;
   /** Cost per 1M output tokens (USD) — for instrumentation */
   outputCostPer1M: number;
+  /**
+   * Cost per 1M prompt tokens read from the prompt cache (USD). Per model, not a fixed multiple
+   * of the input price: Sonnet 5.5 bills reads at 0.05x, Haiku 4.5 at 0.1x.
+   */
+  cacheReadCostPer1M: number;
+  /** Cost per 1M prompt tokens written to the prompt cache, 5-minute TTL (USD) */
+  cacheWriteCostPer1M: number;
   /** Whether the model accepts `temperature`; Sonnet 5.5 answers a request carrying it with a 400 */
   acceptsTemperature: boolean;
   /** The `thinking` setting sent on every request to this model, when it needs one */
@@ -33,17 +40,26 @@ export const MODEL_REGISTRY: Record<ModelTier, ModelConfig> = {
     label: "Haiku 4.5",
     inputCostPer1M: 1.0,
     outputCostPer1M: 5.0,
+    // platform.claude.com/docs/en/about-claude/pricing, 2026-10-28: hits $0.10, 5m writes $1.25
+    cacheReadCostPer1M: 0.1,
+    cacheWriteCostPer1M: 1.25,
     acceptsTemperature: true,
   },
   standard: {
     // Sonnet 4 (claude-sonnet-4-20250514) was retired 2026-06-15. Sonnet 5.5 thinks by default,
     // and thinking counts against max_tokens; our prompts budget 256-1024 tokens for the reply
-    // alone, so "between_tools" turns extended thinking off. It rejects temperature, so the
-    // prompts' low temperatures apply on the fast tier only.
+    // alone, so "between_tools" turns off up-front thinking (Sonnet 5.5 cannot disable thinking:
+    // it may still think between tool calls, and those thinking blocks are passed back — see
+    // AIThinkingBlock). It rejects temperature, so the prompts' low temperatures apply on the
+    // fast tier only.
     modelId: "claude-sonnet-5-5",
     label: "Sonnet 5.5",
     inputCostPer1M: 2.0,
     outputCostPer1M: 10.0,
+    // platform.claude.com/docs/en/about-claude/pricing, 2026-10-28: hits $0.10 (0.05x input),
+    // 5m writes $2.50
+    cacheReadCostPer1M: 0.1,
+    cacheWriteCostPer1M: 2.5,
     acceptsTemperature: false,
     thinking: { type: "between_tools" },
   },
@@ -61,7 +77,23 @@ export interface AIMessage {
 
 /** Content block — text or tool use */
 export type AIContentBlock =
-  AITextBlock | AIToolUseBlock | AIToolResultBlock | AIImageBlock | AIAudioBlock;
+  | AITextBlock
+  | AIToolUseBlock
+  | AIToolResultBlock
+  | AIImageBlock
+  | AIAudioBlock
+  | AIThinkingBlock;
+
+/**
+ * The model's thinking (`thinking` or `redacted_thinking`), opaque. Kept in a response's content
+ * so a tool loop can pass the assistant turn back: Sonnet 5.5 may think between tool calls, and
+ * the API needs those blocks, unmodified and signed, in the next request. Never rendered, never
+ * read: `raw` is the provider's block exactly as it arrived, and goes back exactly so.
+ */
+export interface AIThinkingBlock {
+  type: "thinking";
+  raw: Readonly<Record<string, unknown>>;
+}
 
 /** Input/output modalities a provider may support (ADR-044). */
 export type Modality = "text" | "image" | "audio";
@@ -118,13 +150,40 @@ export interface AIRequest {
   /** Temperature (0–1) */
   temperature?: number;
   /**
-   * Mark the system prompt (or, without one, the tools) for Anthropic's prompt cache. Off by
-   * default, and the request is then sent exactly as before. A cache write bills that prefix at
-   * 1.25x and a read at 0.1x, so it pays only where the same prefix is re-sent within the
-   * cache's 5 minutes; a route sent less often than that pays 25% more on the prefix. Turn it
-   * on per route only once its call rate shows the reuse.
+   * A fixed opening of the system prompt that may be cached: sent before `system`, as its own
+   * block. **Fixed, tenant-free text only** — the same bytes for every tenant and user (a
+   * prompt template's static instructions), never a tenant's name, settings, data or a user's
+   * input. `system` (sent after it) is where anything per-tenant goes, and is never cached.
+   */
+  cacheablePrefix?: string;
+  /**
+   * Ask for Anthropic's prompt cache on `cacheablePrefix` (and the tools, which render before
+   * it). **Fixed, tenant-free prefixes only.** Both this flag and the governed setting
+   * `ai.prompt_cache_enabled` (default off) must be true, and the request must carry a
+   * `cacheablePrefix`: the orchestrator drops the flag while the setting is off, and the
+   * provider puts a cache breakpoint only after `cacheablePrefix` — never on `system`, the tools
+   * alone or the messages. Otherwise the request is sent exactly as before.
+   *
+   * Cost: a cache write bills the prefix at the model's cacheWriteCostPer1M (1.25x input), a
+   * read at its cacheReadCostPer1M (0.05x on Sonnet 5.5, 0.1x on Haiku 4.5), so it pays only
+   * where the same prefix is re-sent within the cache's 5 minutes; a route sent less often pays
+   * 25% more on the prefix. A prefix under the model's minimum (512 tokens on Sonnet 5.5, 4096
+   * on Haiku 4.5) is not cached: its tokens are billed as ordinary input, with no write premium.
    */
   promptCache?: boolean;
+}
+
+/**
+ * Token usage of one call, as the API reports it. `inputTokens` is the uncached remainder of
+ * the prompt: the prompt's total is inputTokens + cacheReadTokens + cacheWriteTokens.
+ */
+export interface AIUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Prompt tokens served from Anthropic's prompt cache (ModelConfig.cacheReadCostPer1M) */
+  cacheReadTokens?: number;
+  /** Prompt tokens written to the prompt cache (ModelConfig.cacheWriteCostPer1M) */
+  cacheWriteTokens?: number;
 }
 
 /** Response from the LLM provider */
@@ -134,14 +193,7 @@ export interface AIResponse {
   /** Model that was used */
   model: string;
   /** Token usage */
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-    /** Prompt tokens served from Anthropic's prompt cache (billed at 0.1x input) */
-    cacheReadTokens?: number;
-    /** Prompt tokens written to the prompt cache (billed at 1.25x input) */
-    cacheWriteTokens?: number;
-  };
+  usage: AIUsage;
   /** Stop reason */
   stopReason: string;
 }
@@ -157,13 +209,7 @@ export interface AIStreamChunk {
   /** Whether this is the final chunk */
   done: boolean;
   /** Token usage (only present on final chunk) */
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens?: number;
-    cacheWriteTokens?: number;
-    cost?: number;
-  };
+  usage?: AIUsage & { cost?: number };
 }
 
 /** Options for AI streaming */

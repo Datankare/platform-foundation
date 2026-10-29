@@ -44,6 +44,7 @@ import { NextRequest } from "next/server";
 import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
 import { fakeData } from "./helpers/fake-data";
 import { getOrchestrator } from "@/platform/ai";
+import { AIProviderError, AIRefusalError } from "@/platform/ai/provider";
 import { invokeTool } from "@/platform/agents/tool-invoker";
 
 import { POST as planPOST } from "@/app/api/admin/ai/route";
@@ -118,6 +119,29 @@ describe("ai plan route", () => {
   it("500s when the orchestrator fails", async () => {
     mockOrchestrator.mockReturnValue({
       complete: jest.fn().mockRejectedValue(new Error("down")),
+    });
+    const res = await planPOST(jsonReq({ prompt: "x", panel: "roles" }));
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("service.unavailable");
+  });
+
+  it("a model refusal is ai.request_declined (422), not service.unavailable (TASK-186)", async () => {
+    mockOrchestrator.mockReturnValue({
+      complete: jest.fn().mockRejectedValue(new AIRefusalError()),
+    });
+    const res = await planPOST(jsonReq({ prompt: "x", panel: "roles" }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.code).toBe("ai.request_declined");
+    // The provider's own wording never reaches the caller.
+    expect(JSON.stringify(body)).not.toMatch(/stop_reason|Anthropic/);
+  });
+
+  it("a permanent provider error that is not a refusal is still service.unavailable", async () => {
+    mockOrchestrator.mockReturnValue({
+      complete: jest
+        .fn()
+        .mockRejectedValue(new AIProviderError("bad request", "permanent")),
     });
     const res = await planPOST(jsonReq({ prompt: "x", panel: "roles" }));
     expect(res.status).toBe(503);

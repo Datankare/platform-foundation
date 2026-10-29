@@ -24,36 +24,76 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("estimateCost", () => {
+  const M = 1_000_000;
+
   it("calculates cost for fast tier (Haiku)", () => {
     // Haiku 4.5: $1.00/1M input, $5.00/1M output
-    const cost = estimateCost("fast", 1_000_000, 1_000_000);
+    const cost = estimateCost("fast", { inputTokens: M, outputTokens: M });
     expect(cost).toBeCloseTo(6.0, 2);
   });
 
   it("calculates cost for standard tier (Sonnet)", () => {
     // Sonnet 5.5: $2.00/1M input, $10.00/1M output
-    const cost = estimateCost("standard", 1_000_000, 1_000_000);
+    const cost = estimateCost("standard", { inputTokens: M, outputTokens: M });
     expect(cost).toBeCloseTo(12.0, 2);
   });
 
-  it("bills cache reads at 0.1x and cache writes at 1.25x the input rate", () => {
-    // Sonnet 5.5 input $2.00/1M: 1M read = $0.20, 1M written = $2.50
-    expect(estimateCost("standard", 0, 0, { readTokens: 1_000_000 })).toBeCloseTo(0.2, 4);
-    expect(estimateCost("standard", 0, 0, { writeTokens: 1_000_000 })).toBeCloseTo(
-      2.5,
-      4
-    );
+  it.each(["fast", "standard"] as const)(
+    "bills %s-tier cache reads and writes at the model's own prices, from the table",
+    (tier) => {
+      const c = MODEL_REGISTRY[tier];
+      expect(
+        estimateCost(tier, { inputTokens: 0, outputTokens: 0, cacheReadTokens: M })
+      ).toBeCloseTo(c.cacheReadCostPer1M, 6);
+      expect(
+        estimateCost(tier, { inputTokens: 0, outputTokens: 0, cacheWriteTokens: M })
+      ).toBeCloseTo(c.cacheWriteCostPer1M, 6);
+      // Every part of the usage counts: uncached input, reads, writes, output.
+      expect(
+        estimateCost(tier, {
+          inputTokens: 3 * M,
+          outputTokens: 2 * M,
+          cacheReadTokens: 5 * M,
+          cacheWriteTokens: 7 * M,
+        })
+      ).toBeCloseTo(
+        3 * c.inputCostPer1M +
+          2 * c.outputCostPer1M +
+          5 * c.cacheReadCostPer1M +
+          7 * c.cacheWriteCostPer1M,
+        6
+      );
+    }
+  );
+
+  it("holds the published prices (platform.claude.com pricing, 2026-10-28)", () => {
+    // Sonnet 5.5's cache hit is 0.05x its input price, not the generic 0.1x (the defect #462
+    // shipped: it billed reads at $0.20/1M).
+    expect(MODEL_REGISTRY.standard).toMatchObject({
+      modelId: "claude-sonnet-5-5",
+      inputCostPer1M: 2,
+      outputCostPer1M: 10,
+      cacheReadCostPer1M: 0.1,
+      cacheWriteCostPer1M: 2.5,
+    });
+    expect(MODEL_REGISTRY.fast).toMatchObject({
+      modelId: "claude-haiku-4-5-20251001",
+      inputCostPer1M: 1,
+      outputCostPer1M: 5,
+      cacheReadCostPer1M: 0.1,
+      cacheWriteCostPer1M: 1.25,
+    });
   });
 
   it("handles small token counts", () => {
-    const cost = estimateCost("fast", 100, 50);
+    const cost = estimateCost("fast", { inputTokens: 100, outputTokens: 50 });
     expect(cost).toBeGreaterThan(0);
     expect(cost).toBeLessThan(0.001);
   });
 
-  it("handles zero tokens", () => {
-    const cost = estimateCost("fast", 0, 0);
-    expect(cost).toBe(0);
+  it("handles zero tokens, and a missing usage", () => {
+    expect(estimateCost("fast", { inputTokens: 0, outputTokens: 0 })).toBe(0);
+    expect(estimateCost("fast", undefined)).toBe(0);
   });
 });
 

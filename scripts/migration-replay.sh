@@ -1370,6 +1370,23 @@ fi
 "${PSQL[@]}" -At -c "DELETE FROM public.audit_log WHERE actor_id IN (SELECT id FROM public.users WHERE cognito_sub LIKE 'replay-057-%')" \
   -c "DELETE FROM public.users WHERE cognito_sub LIKE 'replay-057-%'" >/dev/null
 
+step "058: ai.prompt_cache_enabled seeded off, operator-only; applied again keeps an operator's value"
+"${PSQL[@]}" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.platform_config
+                  WHERE key = 'ai.prompt_cache_enabled' AND value = 'false'::jsonb
+                    AND value_type = 'boolean' AND tenant_overridable = false) THEN
+    RAISE EXCEPTION '058: ai.prompt_cache_enabled is not seeded off and operator-only';
+  END IF;
+END $$;
+UPDATE public.platform_config SET value = 'true'::jsonb WHERE key = 'ai.prompt_cache_enabled';
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/058_ai_prompt_cache_setting.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'ai.prompt_cache_enabled'")" = "true" ] \
+  || { echo "✗ applying 058 a second time overwrote an operator's value"; exit 1; }
+"${PSQL[@]}" -c "UPDATE public.platform_config SET value = 'false'::jsonb WHERE key = 'ai.prompt_cache_enabled'" >/dev/null
+
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —
 # given here for the check only, and taken away again.

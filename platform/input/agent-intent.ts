@@ -77,11 +77,7 @@ export class AgentIntentResolver implements IntentResolver {
           .join("") || "{}";
 
       const parsed = parseResolveIntentResponse(raw);
-      const cost = estimateCost(
-        RESOLVE_INTENT_V1.tier,
-        response.usage.inputTokens,
-        response.usage.outputTokens
-      );
+      const cost = estimateCost(RESOLVE_INTENT_V1.tier, response.usage);
 
       const actions: readonly ActionItem[] = parsed.actions.map((a) => ({
         id: a.id,

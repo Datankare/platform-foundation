@@ -76,7 +76,7 @@ The reasoning field contains metadata only — severity levels, confidence score
 ## Gotchas
 
 1. **`collectCoverageFrom` must include `platform/moderation/**/\*.ts`\*\* — gotcha #24.
-2. **Fail closed everywhere** — unknown rating = strictest. DB unavailable = block at low severity. Classifier error = unsafe.
+2. **Fail closed everywhere** — unknown rating = strictest. DB unavailable = block at low severity. Classifier error = unsafe. Classifier **declined** (the model refused to judge the text, `declined: true`, TASK-186) = withheld for human review at every rating level (escalate: never shown, submitted to the review queue), never allowed, and **no strike** — the Sentinel runs only on a block; a strike follows only if a reviewer decides it was a violation. Its billed cost is recorded.
 3. **`triggeredBy: "content-rating"`** — when Layer 3 adjusts the decision. **`"context"`** — when content-type adjustment changed the outcome.
 4. **AI-output never penalizes users** — `attributeToUser: false` for `contentType: "ai-output"`.
 5. **Config reads are cached 60s** — threshold changes take up to 60s to propagate.

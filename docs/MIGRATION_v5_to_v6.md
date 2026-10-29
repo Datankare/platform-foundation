@@ -113,6 +113,18 @@ it commits), and its time grows with the audit log: first run
 past a few million, run it in a quiet period. Apply both before the code: the list sorts by the
 column.
 
+**Release candidate (TASK-186):** `058_ai_prompt_cache_setting.sql`, after 057, on its own:
+
+```bash
+pbcopy < supabase/migrations/058_ai_prompt_cache_setting.sql
+```
+
+Then
+`select value, tenant_overridable from public.platform_config where key = 'ai.prompt_cache_enabled';`
+answers `false` and `f`. It inserts one row of `platform_config` (the governed switch above
+`AIRequest.promptCache`, off) and takes no lock beyond it; run again, it keeps an operator's value.
+The code works without it: an absent setting reads as off.
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 

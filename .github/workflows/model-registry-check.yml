@@ -1,0 +1,59 @@
+name: Model registry check
+
+# TASK-186: every model in MODEL_REGISTRY (platform/ai/types.ts) still resolves on the Anthropic
+# Models API, is not retired, and accepts the request the provider sends it (one max_tokens-1
+# Messages call per tier, with the registry's thinking and temperature settings). Sonnet 4 was
+# retired on 2026-06-15 and nothing noticed until calls failed (PR #461).
+#
+#   - Weekly, by hand (workflow_dispatch), and on a pull request that changes the registry or the
+#     check. Reads the repository only; no install, no build: scripts/check-model-ids.mjs uses
+#     Node's own fetch. Costs a few tokens per tier per run.
+#   - pull_request, never pull_request_target: a fork's (or Dependabot's) PR gets no secrets, so
+#     it skips the probe with a notice and a step summary — and, once MODEL_CHECK_REQUIRED is
+#     'true', fails instead. That is intended, as with the security review: a required check
+#     never passes without having run.
+#   - A skip is visible, and is a failure where it matters: with the repository variable
+#     MODEL_CHECK_REQUIRED set to 'true', a run without the key fails (as SECURITY_REVIEW_REQUIRED
+#     does for the security review). The variable reaches the shell through env.
+#   - The key (ANTHROPIC_API_KEY secret) reaches the script through env and is sent only as a
+#     header; the script prints no key and no response body, only HTTP statuses.
+#   - Least permissions: contents: read, nothing else; the checkout keeps no credentials.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - platform/ai/types.ts
+      - scripts/check-model-ids.mjs
+
+permissions: {}
+
+concurrency:
+  group: model-registry-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  model-ids:
+    name: model-ids
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Every registry model ID resolves
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL_CHECK_REQUIRED: ${{ vars.MODEL_CHECK_REQUIRED }}
+        run: node scripts/check-model-ids.mjs

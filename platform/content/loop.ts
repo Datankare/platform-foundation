@@ -10,6 +10,8 @@
  * safe-by-construction content and is never re-screened. Content is generated fresh — no memory (D7).
  */
 import { getOrchestrator } from "@/platform/ai";
+import { estimateCost } from "@/platform/ai/instrumentation";
+import { refusalUsage } from "@/platform/ai/provider";
 import { executeAgent } from "@/platform/agents/runtime";
 import type { WorkflowFn, StepOutcome, WorkflowContext } from "@/platform/agents/runtime";
 import { isValidSchema } from "@/platform/agents/schema";
@@ -46,14 +48,24 @@ export async function generateContent<TInput, TContent>(
 
   const workflow: WorkflowFn = async (ctx: WorkflowContext): Promise<StepOutcome> => {
     let text: string | undefined;
+    // What the model call cost (it was reported as 0): the response's usage, or a refusal's.
+    let costUsd = 0;
 
     // Stage 1 — orchestration. Any throw here is an orchestrator error or an open breaker.
     try {
       const request = contentType.build(input);
-      const response = await getOrchestrator().complete(request, {
-        useCase: `content:${contentType.name}`,
-        requestId: ctx.trajectoryId,
-      });
+      let response;
+      try {
+        response = await getOrchestrator().complete(request, {
+          useCase: `content:${contentType.name}`,
+          requestId: ctx.trajectoryId,
+        });
+      } catch (err) {
+        const billed = refusalUsage(err);
+        if (billed) costUsd = estimateCost(request.tier, billed);
+        throw err;
+      }
+      costUsd = estimateCost(request.tier, response.usage);
       const block = response.content.find((b) => b.type === "text");
       if (!block || block.type !== "text") {
         throw new Error("content: no text block in response");
@@ -85,7 +97,7 @@ export async function generateContent<TInput, TContent>(
         produced: candidate !== undefined,
         fallbackReason: fallbackReason ?? null,
       },
-      costUsd: 0,
+      costUsd,
       continueExecution: false,
     };
   };

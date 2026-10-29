@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**88 codes** in 14 areas.
+**89 codes** in 15 areas.
 
 ## Account
 
@@ -46,6 +46,12 @@ Every error the API returns has this body (ADR-051 D3):
 | `admin.operator_only`        | 403  | Only a platform operator can change this: it is shared by every tenant. | —             | Explain that this changes what every tenant shares, so only a platform operator can do it; do not retry.                 |
 | `admin.self_target`          | 403  | You cannot take this action on your own account.                        | —             | Another administrator must take this action on your account.                                                             |
 | `admin.target_not_found`     | 404  | No {target} matches that request.                                       | `target` (id) | Refresh the list and pick an existing item.                                                                              |
+
+## Ai
+
+| Code                  | HTTP | Message (en)                                                   | Params | What the caller should do                                                                                    |
+| --------------------- | ---- | -------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| `ai.request_declined` | 422  | The AI model declined this request. Rephrase it and try again. | —      | Explain that the AI model declined this request; ask the user to rephrase it. Do not retry the same request. |
 
 ## Approvals
 

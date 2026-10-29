@@ -2,8 +2,9 @@
  * @jest-environment jsdom
  */
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { HeldActionsPanel, RESULT_MS } from "@/components/admin/HeldActionsPanel";
+import { renderMessage } from "@/platform/errors/messages";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
 
 const holds: PendingApproval[] = [
@@ -63,7 +64,78 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
       "/api/admin/approvals/p1",
       expect.objectContaining({ method: "POST" })
     );
-    await waitFor(() => expect(screen.queryByText(/strike_ban_threshold/)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: approveBtn })).toBeNull()
+    );
+  });
+
+  it("an approval says it took effect, announced, then shows the empty list (TASK-186)", async () => {
+    resolveFetch(200, { decision: "approve", outcome: "approved", applied: true });
+    render(<HeldActionsPanel data={{ approvals: [holds[0]] }} />);
+    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    const status = await screen.findByRole("status");
+    await waitFor(() =>
+      expect(status.textContent).toContain(
+        "Approved: config.set moderation.strike_ban_threshold took effect."
+      )
+    );
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(screen.getByText(/No pending approvals/)).toBeDefined();
+    // Dismissed at once on request.
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("the result goes by itself after a few seconds", async () => {
+    jest.useFakeTimers();
+    try {
+      resolveFetch(200, { decision: "reject" });
+      render(<HeldActionsPanel data={{ approvals: [holds[0]] }} />);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Reject config.set moderation.strike_ban_threshold",
+        })
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("status").textContent).toContain("Rejected: config.set")
+      );
+      act(() => {
+        jest.advanceTimersByTime(RESULT_MS + 10);
+      });
+      expect(screen.getByRole("status").textContent).toBe("");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("a held change now waiting for a second approval says so, not 'took effect'", async () => {
+    resolveFetch(200, {
+      decision: "approve",
+      outcome: "approved",
+      applied: false,
+      pendingApproval: { id: "x" },
+    });
+    render(<HeldActionsPanel data={{ approvals: holds }} />);
+    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toMatch(
+        /waits for a second approval/
+      )
+    );
+  });
+
+  it("approved but the run failed: the reason, through the refusal handler; the row stays", async () => {
+    resolveFetch(502, { code: "approvals.run_failed", params: {} });
+    render(<HeldActionsPanel data={{ approvals: holds }} />);
+    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    const reason = renderMessage("errors.approvals.run_failed");
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        `${holds[0].label}: ${reason}`
+      )
+    );
+    expect(screen.getByRole("alert").textContent).toBe(reason);
+    expect(screen.getByRole("button", { name: approveBtn })).toBeDefined();
   });
 
   it("surfaces the server error when approval is refused (e.g. self-approval 409)", async () => {

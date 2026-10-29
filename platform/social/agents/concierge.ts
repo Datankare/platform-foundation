@@ -88,11 +88,7 @@ export function createConciergeWorkflow(
             .join("") || "[]";
 
         actions = parseConciergeResponse(raw);
-        const cost = estimateCost(
-          CONCIERGE_V1.tier,
-          response.usage.inputTokens,
-          response.usage.outputTokens
-        );
+        const cost = estimateCost(CONCIERGE_V1.tier, response.usage);
 
         return {
           action: "generate-onboarding",

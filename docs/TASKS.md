@@ -4240,6 +4240,69 @@ Docs: ADR-012 amendment (review 17, D11), RELEASE_NOTES, MIGRATION_v5_to_v6 (rev
 step 3, §1b), ENV_REFERENCE (`REFRESH_COOKIE_KEY`, `REFRESH_COOKIE_KEY_PREVIOUS`, pool shape,
 `AUTH_TRUSTED_EMAIL_IDPS`), SETUP_AND_INTEGRATION §4d/§5, `.env.example`, CI workflows.
 
+### TASK-187 — Haiku 4.5 (the fast tier) may be retired at any time: move to Haiku 5.5
+
+| Field        | Detail                                               |
+| ------------ | ---------------------------------------------------- |
+| **ID**       | TASK-187                                             |
+| **Type**     | Maintenance (model lifecycle)                        |
+| **Severity** | High — every fast-tier call fails the day it retires |
+| **Phase**    | Phase 5                                              |
+| **Target**   | Before Haiku 4.5 retires (v6.x)                      |
+| **Status**   | Open — the owner's decision; not switched            |
+| **Logged**   | 2026-10-28 (TASK-186, the review of #461/#462)       |
+
+**What.** `MODEL_REGISTRY.fast` is `claude-haiku-4-5-20251001`. Anthropic's model-deprecations
+page (platform.claude.com/docs/en/about-claude/model-deprecations, read 2026-10-28) lists it
+Active with a tentative retirement "not sooner than October 15, 2026" — a date already passed, so
+it can be retired at any time, as Sonnet 4 was (#461). The weekly model registry check
+(`.github/workflows/model-registry-check.yml`, TASK-186) fails once it stops resolving; this task
+is to move before that.
+
+**Proposed (verified, not applied).** `claude-haiku-5-5` (platform.claude.com/docs/en/models and
+its Haiku 5.5 migration guide: "a fixed model ID with no date suffix and no separate alias";
+deprecations page: retirement not sooner than October 7, 2027). Prices (pricing page,
+2026-10-28), per 1M tokens: prompts up to 100,000 tokens — input $0.10, output $0.50, 5-minute
+cache write $0.125, cache hit $0.01; over 100,000 — $0.50, $2.50, $0.625, $0.05 (the threshold
+counts cache reads and writes). What the switch needs, from the migration guide:
+
+- `acceptsTemperature: false` — Haiku 5.5 takes no `temperature`, `top_p` or `top_k`; the fast
+  tier's prompts lean on low temperatures (moderation, classification), so their outputs need a
+  re-check (`prompts/`, the moderation suites).
+- **Long-prompt pricing:** `ModelConfig` has one price per kind; either add the >100k tier or
+  document that the fast tier's prompts stay far below it (they do today).
+- No assistant prefill (a 400); a forced `tool_choice` returns the tool call with no thinking.
+  Whether it takes `thinking: { type: "between_tools" }` is not stated: query
+  `GET /v1/models/claude-haiku-5-5` (`thinking.types`) before deciding the `thinking` setting.
+- The prompt-cache minimum drops from 4,096 tokens to 512.
+
+**Done when** the fast tier names a model the registry check resolves, its prompts pass their
+suites on it, and the README's tier table and prices are updated.
+
+### TASK-188 — A fallback when a tier's model is retired or unavailable (planned, not built)
+
+| Field        | Detail                                           |
+| ------------ | ------------------------------------------------ |
+| **ID**       | TASK-188                                         |
+| **Type**     | Feature (resilience) — planned                   |
+| **Severity** | Medium                                           |
+| **Phase**    | Phase 5                                          |
+| **Target**   | After launch (v6.x)                              |
+| **Status**   | Planned — not built; decide after launch traffic |
+| **Logged**   | 2026-10-28 (TASK-186)                            |
+
+**What happens today.** A tier whose model is retired fails every call routed to it: the API
+answers 404 / `not_found_error`, the provider classes it permanent, the circuit breaker does not
+open (it counts only transient errors), and each route answers `service.unavailable`. Detection is
+the weekly registry check (TASK-186); recovery is a code change of `MODEL_REGISTRY`.
+
+**What a fallback would be.** A per-tier ordered list of model IDs; on a model-not-found answer
+(not a refusal, not a 400 of our own making) the orchestrator retries once on the next, records
+`ai.model_fallback` in metrics and raises an alert. Open questions: per-model request settings
+differ (temperature, thinking, prefill), so the fallback must carry its own `ModelConfig`; cost
+and quality change silently unless the alert is acted on. Not built now: pre-launch, the weekly
+check plus a one-line registry change is the proportionate path.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -4657,7 +4720,117 @@ refusal code for the list, the role change and the erasure); `__tests__/admin-se
 `__tests__/admin-authorization-matrix.test.ts`; `__tests__/admin-session.test.ts`,
 `__tests__/guest-continuation.test.ts`; the replay checks 056 and 057.
 
-_Last updated: October 28, 2026 (TASK-185 filed and fixed)_
+### TASK-186 — PRs #461 and #462 reviewed after merge: cache pricing, the cache gate, thinking blocks, refusals
+
+| Field        | Detail                                                                 |
+| ------------ | ---------------------------------------------------------------------- |
+| **ID**       | TASK-186                                                               |
+| **Type**     | Defect (AI cost and governance) — a review after merge                 |
+| **Severity** | Medium (cost misreported; an ungoverned cache flag; a tool-loop break) |
+| **Phase**    | Phase 5                                                                |
+| **Target**   | v6.0.0 (RC)                                                            |
+| **Status**   | Fixed on develop (v6.0.0 RC); migration 058                            |
+| **Logged**   | 2026-10-28 (an independent review of #461 and #462, merged unreviewed) |
+
+**What was wrong.** #461 (standard tier on Sonnet 5.5) and #462 (opt-in prompt caching) were
+merged without the review protocol. An independent review found:
+
+1. **Cache reads mispriced.** `estimateCost` billed reads at a fixed 0.1x of input
+   (`platform/ai/instrumentation.ts:23` at `6540699`); Sonnet 5.5 bills them at 0.05x ($0.10/1M,
+   not $0.20). The test asserted the multiplier, not the price. And nine callers priced their own
+   calls from input and output alone, dropping cache tokens entirely: the five social agents, the
+   moderation classifier, `agent-intent`, `agent-classifier` and the adaptive loop. Review eval
+   case 20.
+2. **Cache tokens never reached persistent metrics:** `obs.metrics.record` and `MetricsSummary`
+   carried input and output only, and `input_tokens` excludes cached tokens, so a cached call's
+   prompt looked small.
+3. **No gate on prompt caching:** a per-request flag only, and it cached the whole system prompt —
+   which on the admin command bar carries the tenant's context.
+4. **Thinking blocks dropped:** the provider filtered them out under a comment that calls were
+   "single-turn"; Sonnet 5.5 thinks between tool calls, and a tool loop must pass the signed
+   blocks back unmodified.
+5. **Model retirement undetected:** nothing noticed Sonnet 4's retirement until calls failed.
+6. **Pre-existing:** the admin command bar answered a model refusal with `service.unavailable`
+   (`app/api/admin/ai/route.ts:184-191`), which reads as an outage and invites a retry.
+7. **Nit:** the registry comment said `between_tools` "turns extended thinking off"; it turns off
+   up-front thinking only (Sonnet 5.5 cannot disable thinking).
+
+**Fix.**
+
+- **Prices per model.** `ModelConfig` gains `cacheReadCostPer1M` and `cacheWriteCostPer1M`
+  (5-minute TTL): Sonnet 5.5 $0.10 / $2.50, Haiku 4.5 $0.10 / $1.25 (platform.claude.com pricing
+  and prompt-caching pages, read 2026-10-28). `estimateCost(tier, usage)` takes the whole
+  `AIUsage`; every caller passes `response.usage`, so leaving the cache out is a type error, and
+  `__tests__/ai-cache-governance.test.ts` holds each call site to it.
+- **Metrics.** `ai.call` values carry `cacheReadTokens` and `cacheWriteTokens` (0 when none);
+  `MetricsSummary` adds `totalCacheReadTokens`, `totalCacheWriteTokens` and `totalPromptTokens`
+  (input + reads + writes). `ai_metrics.values` is `jsonb`: no column, no migration.
+- **The gate.** Migration 058 seeds `ai.prompt_cache_enabled` (boolean, default false,
+  operator-only). The orchestrator drops a request's `promptCache` unless the setting is true
+  (read only when a request asks; unreadable is off). The provider caches only an explicit
+  `cacheablePrefix` — fixed, tenant-free text sent as its own block before `system` — never
+  `system`, the tools alone or the messages. Without a prefix nothing is cached, so a system
+  prompt carrying a tenant's context cannot enable it.
+- **Thinking blocks** are kept as an opaque `AIContentBlock` (`{ type: "thinking", raw }`), passed
+  back exactly as they arrived (complete and stream) and never rendered.
+- **Retirement detection.** `.github/workflows/model-registry-check.yml` (weekly, and by hand)
+  runs `scripts/check-model-ids.mjs`: `GET /v1/models/{id}` for every registry ID with the
+  `ANTHROPIC_API_KEY` secret; fails on any that does not resolve, prints a reported `retires_at`,
+  skips with a notice without the key, never prints the key or a response body. Haiku 4.5's
+  retirement: TASK-187; a fallback: TASK-188 (planned).
+- **Refusals** throw `AIRefusalError` (an `AIProviderError`, permanent); the command bar answers
+  it with the new code `ai.request_declined` (422, kind `message`), and `AdminPromptBar` shows
+  refusals through the shared handler (`readRefusal`), which removed its 16 refusal-coverage gaps.
+
+**Review round 1 (two independent reviewers; every finding fixed).**
+
+| Finding                                                                                                                       | Tag          | Fix                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A refusal lost its billed usage: thrown before usage was read; failure metrics and the classifier recorded 0                  | Important    | `AIRefusalError` carries `usage` and `model`; `recordFailureMetrics` records a refusal's tokens and cost (complete and stream); the classifier's and the content loop's results carry it                                                                                                                                                                                     |
+| `instanceof AIRefusalError` fails across bundle copies (ADR-032)                                                              | Important    | `isAIRefusalError` (also by `name` and `kind: "permanent"`, as `isJsonLimitError`) and `refusalUsage` (numbers or 0); used everywhere; a test holds that no source uses `instanceof`                                                                                                                                                                                         |
+| The model check passed a retired model; a missing key was silent                                                              | Important    | `lifecycle: "retired"` fails, `deprecated` / `deprecated_at` warns, `retires_at` printed only when an ISO date; a step summary; `MODEL_CHECK_REQUIRED` = `true` fails a keyless run; a `pull_request` trigger on the registry and the script (fork-safe)                                                                                                                     |
+| The response cache's key omitted `cacheablePrefix`                                                                            | Important    | In the key; a guard test lists every `AIRequest` field and fails on one neither in the key nor listed out (`promptCache`, billing only)                                                                                                                                                                                                                                      |
+| A thinking block's `raw` was sent unchecked                                                                                   | Important    | Sent only as `thinking` / `redacted_thinking` in an assistant turn; anything else (an image in `raw`, a user turn) refuses the request before it is sent                                                                                                                                                                                                                     |
+| (Playform) the classify model test could not fail                                                                             | Important    | A sentinel `fast.modelId` through the real orchestrator and provider; a source check that no file outside `platform/ai/types.ts` names a `claude-` model ID, in both repositories                                                                                                                                                                                            |
+| No live check of the request shape Sonnet 5.5 takes                                                                           | Important    | The check sends one `max_tokens: 1` Messages call per tier with the registry's `thinking` and `temperature` settings; only HTTP statuses are printed                                                                                                                                                                                                                         |
+| `estimateSavedCost` used fixed old prices; the content loop reported a paid call as `costUsd: 0`; the caller list was by hand | Pre-existing | `estimateCost(tier, usage)` in both; the caller test finds every `estimateCost` call with the TypeScript parser and refuses a hand-built usage without both cache counts                                                                                                                                                                                                     |
+| A refusal from the safety classifier was treated as an outage                                                                 | Pre-existing | The owner's decision (round 3): `declined: true`, **withheld for human review** at every rating level before thresholds or context reductions — escalated (never shown, ADR-041; submitted to the review queue), never allowed, and no strike: the Sentinel runs only on a block, so a strike follows only if a reviewer decides it was a violation. The billed cost is kept |
+| (Playform) `lib/classify.ts` called the SDK directly                                                                          | Pre-existing | Through the orchestrator, fast tier: cost, metrics, the breaker and typed refusals (a refusal is `TYPED`)                                                                                                                                                                                                                                                                    |
+| `AdminPromptBar` ignored the refusal's kind; "not charged" was wrong; `/api/stream` dropped `temperature` silently            | Nit          | Kinds other than `message` shown by `RefusalNotice` (an erased session ends); "billed as ordinary input, no write premium"; documented on `StreamRequestInput` and in the README                                                                                                                                                                                             |
+
+**Review rounds 2 and 3.** Round 2's verifier passed every round-1 answer. Round 3 (the last):
+a classifier refusal is withheld for review with no strike (above, the owner's decision);
+`refusalUsage` caps each count at 10,000,000 so a recorded cost stays finite; the registry
+workflow says a fork's PR skips the probe and fails once `MODEL_CHECK_REQUIRED` is `true`; and,
+asked by the owner, the held-actions panel (`components/admin/HeldActionsPanel.tsx`) says what a
+decision did — "Approved: <label> took effect", "… now waits for a second approval", "<label>: <reason>"
+(the reason itself says it was approved and could not be applied), "Rejected: <label>" — in an announced status region above the
+refreshed list (or its empty message), for six seconds or until dismissed; refusals go through the
+shared handler (its 15 refusal-coverage gaps went). Tests: `outage-every-level` (withheld at every
+level, direction and kind; queued; no Sentinel run; never allowed), `ai-cache-governance` (the
+cap), `held-actions-panel` (confirmation then the empty list, auto-dismiss, a pending second
+approval, the run-failed reason with the row kept).
+
+**Owner steps.** Migration 058 in the SQL Editor (one row; no lock beyond it). The setting stays
+off: nothing uses `cacheablePrefix` yet. Run the new workflow once by hand (Actions → Model
+registry check → Run workflow) to see both IDs resolve and both tiers accept their request; then
+set the repository variable `MODEL_CHECK_REQUIRED` to `true`. After the deploy, one admin
+command-bar prompt on playform-dev must return a plan (the standard tier's live request shape).
+
+**Tests.** `__tests__/ai-instrumentation.test.ts` (cost from the price table, each part of the
+usage; the published prices pinned); `__tests__/ai-cache-governance.test.ts` (the gate: off by
+default, both needed, unreadable off, a non-boolean off; metrics values and summary totals; every
+caller passes the usage); `__tests__/anthropic-provider-model-settings.test.ts` (only the prefix
+is marked; a tenant-context system prompt cannot enable it; thinking kept opaque and passed back
+unmodified in a tool loop and a stream; refusals are `AIRefusalError`);
+`__tests__/admin-ai-command-bar.test.ts` (refusal → 422 `ai.request_declined`, other permanent
+errors still 503); `__tests__/admin-ui-components.test.tsx` (the declined message shown);
+`__tests__/check-model-ids.test.ts` (against a local stand-in API: pass, a missing ID fails naming
+it, unreachable fails, no key skips; the key is never printed); the replay check of 058.
+
+_Last updated: October 28, 2026 (TASK-186 filed and fixed; TASK-187 and TASK-188 filed)_
+
+_Previously updated: October 28, 2026 (TASK-185 filed and fixed)_
 
 _Previously updated: October 27, 2026 (TASK-184 filed and fixed)_
 

@@ -11,7 +11,7 @@
  * Errors are forwarded to the ErrorReporter when observability is initialized.
  */
 
-import { AICallMetrics, ModelTier, MODEL_REGISTRY } from "./types";
+import { AICallMetrics, AIUsage, ModelTier, MODEL_REGISTRY } from "./types";
 import { logger } from "@/lib/logger";
 import { tryGetObservability } from "@/platform/observability";
 
@@ -19,28 +19,21 @@ import { tryGetObservability } from "@/platform/observability";
 // Cost calculation
 // ---------------------------------------------------------------------------
 
-/** Anthropic bills prompt-cache reads at 0.1x and 5-minute cache writes at 1.25x the input rate. */
-const CACHE_READ_MULTIPLIER = 0.1;
-const CACHE_WRITE_MULTIPLIER = 1.25;
-
 /**
- * Cost of one call. `inputTokens` is the uncached remainder, as the API reports it; cached
- * tokens are counted separately in `cache`.
+ * Cost of one call, from its whole usage as the response reports it — pass `response.usage`, so
+ * the cache tokens are never left out. `inputTokens` is the uncached remainder; cache reads and
+ * writes are billed at the model's own prices (ModelConfig), not a multiple of the input price.
+ * A missing usage costs 0.
  */
-export function estimateCost(
-  tier: ModelTier,
-  inputTokens: number,
-  outputTokens: number,
-  cache: { readTokens?: number; writeTokens?: number } = {}
-): number {
+export function estimateCost(tier: ModelTier, usage: AIUsage | undefined): number {
+  if (!usage) return 0;
   const config = MODEL_REGISTRY[tier];
-  const promptTokens =
-    inputTokens +
-    (cache.readTokens ?? 0) * CACHE_READ_MULTIPLIER +
-    (cache.writeTokens ?? 0) * CACHE_WRITE_MULTIPLIER;
-  const inputCost = (promptTokens / 1_000_000) * config.inputCostPer1M;
-  const outputCost = (outputTokens / 1_000_000) * config.outputCostPer1M;
-  return parseFloat((inputCost + outputCost).toFixed(6));
+  const cost =
+    usage.inputTokens * config.inputCostPer1M +
+    (usage.cacheReadTokens ?? 0) * config.cacheReadCostPer1M +
+    (usage.cacheWriteTokens ?? 0) * config.cacheWriteCostPer1M +
+    usage.outputTokens * config.outputCostPer1M;
+  return parseFloat((cost / 1_000_000).toFixed(6));
 }
 
 // ---------------------------------------------------------------------------
@@ -72,8 +65,11 @@ export function recordMetrics(metrics: AICallMetrics): void {
       timestamp: new Date().toISOString(),
       traceId: metrics.traceId,
       values: {
+        // inputTokens is the uncached remainder; the prompt's total adds the two cache counts.
         inputTokens: metrics.inputTokens,
         outputTokens: metrics.outputTokens,
+        cacheReadTokens: metrics.cacheReadTokens ?? 0,
+        cacheWriteTokens: metrics.cacheWriteTokens ?? 0,
         latencyMs: metrics.latencyMs,
         estimatedCostUsd: metrics.estimatedCostUsd,
         success: metrics.success ? 1 : 0,
@@ -117,7 +113,14 @@ export function clearMetrics(): void {
 
 export interface MetricsSummary {
   totalCalls: number;
+  /** Uncached prompt tokens (the API's input_tokens) */
   totalInputTokens: number;
+  /** Prompt tokens read from the prompt cache */
+  totalCacheReadTokens: number;
+  /** Prompt tokens written to the prompt cache */
+  totalCacheWriteTokens: number;
+  /** Every prompt token: input + cache reads + cache writes */
+  totalPromptTokens: number;
   totalOutputTokens: number;
   totalCostUsd: number;
   averageLatencyMs: number;
@@ -137,6 +140,9 @@ export function summarizeMetrics(metrics: readonly AICallMetrics[]): MetricsSumm
     return {
       totalCalls: 0,
       totalInputTokens: 0,
+      totalCacheReadTokens: 0,
+      totalCacheWriteTokens: 0,
+      totalPromptTokens: 0,
       totalOutputTokens: 0,
       totalCostUsd: 0,
       averageLatencyMs: 0,
@@ -147,6 +153,8 @@ export function summarizeMetrics(metrics: readonly AICallMetrics[]): MetricsSumm
 
   const byUseCase: MetricsSummary["byUseCase"] = {};
   let totalInput = 0;
+  let totalCacheRead = 0;
+  let totalCacheWrite = 0;
   let totalOutput = 0;
   let totalCost = 0;
   let totalLatency = 0;
@@ -154,6 +162,8 @@ export function summarizeMetrics(metrics: readonly AICallMetrics[]): MetricsSumm
 
   for (const m of metrics) {
     totalInput += m.inputTokens;
+    totalCacheRead += m.cacheReadTokens ?? 0;
+    totalCacheWrite += m.cacheWriteTokens ?? 0;
     totalOutput += m.outputTokens;
     totalCost += m.estimatedCostUsd;
     totalLatency += m.latencyMs;
@@ -171,6 +181,9 @@ export function summarizeMetrics(metrics: readonly AICallMetrics[]): MetricsSumm
   return {
     totalCalls: metrics.length,
     totalInputTokens: totalInput,
+    totalCacheReadTokens: totalCacheRead,
+    totalCacheWriteTokens: totalCacheWrite,
+    totalPromptTokens: totalInput + totalCacheRead + totalCacheWrite,
     totalOutputTokens: totalOutput,
     totalCostUsd: parseFloat(totalCost.toFixed(6)),
     averageLatencyMs: Math.round(totalLatency / metrics.length),

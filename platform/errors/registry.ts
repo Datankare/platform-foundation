@@ -125,6 +125,14 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "target", kind: "id" }],
     action: "Refresh the list and pick an existing item.",
   },
+  // The model declined the request (stop_reason "refusal", AIRefusalError): not an outage, so not
+  // service.unavailable — the same request is declined again (TASK-186).
+  "ai.request_declined": {
+    status: 422,
+    params: [],
+    action:
+      "Explain that the AI model declined this request; ask the user to rephrase it. Do not retry the same request.",
+  },
   "approvals.approver_not_allowed": {
     status: 403,
     params: [],

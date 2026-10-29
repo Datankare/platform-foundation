@@ -70,6 +70,7 @@ export const REFUSAL_HANDLERS = {
   "admin.operator_only": "message",
   "admin.self_target": "message",
   "admin.target_not_found": "message",
+  "ai.request_declined": "message",
   "approvals.approver_not_allowed": "message",
   "approvals.decision_conflict": "message",
   "approvals.expired": "message",

@@ -24,6 +24,7 @@ import { PANEL_CONTEXT_PERMISSIONS, toolPermission } from "./tool-permissions";
 import { withTenantTx, type Tx } from "@/platform/data";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getOrchestrator } from "@/platform/ai";
+import { isAIRefusalError } from "@/platform/ai/provider";
 import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS, type AdminTool } from "./tool-schemas";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
@@ -183,6 +184,14 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
 
     return NextResponse.json({ plan });
   } catch (err) {
+    // The model declining the request is not an outage: retrying it is declined again.
+    if (isAIRefusalError(err)) {
+      logger.warn("Admin AI request declined by the model", {
+        requestId,
+        route: "api/admin/ai",
+      });
+      return apiError("ai.request_declined", { request });
+    }
     logger.error("Admin AI orchestrator error", {
       error: err instanceof Error ? err.message : "Unknown",
       requestId,

@@ -24,6 +24,7 @@
 
 import { NextRequest } from "next/server";
 import { getOrchestrator } from "@/platform/ai/orchestrator";
+import { isAIRefusalError } from "@/platform/ai/provider";
 import { STREAM_FEATURE, validateStreamRequest } from "@/platform/ai/stream-policy";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
 import {
@@ -89,7 +90,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   // A terminal event carrying a coded, catalog-rendered message only.
   const codedEnd = (
     controller: ReadableStreamDefaultController,
-    code: "internal.error" | "content.rejected"
+    code: "internal.error" | "content.rejected" | "ai.request_declined"
   ) => {
     const coded = apiErrorBody(code, { request });
     send(controller, {
@@ -127,6 +128,13 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
           } else if (event.kind === "rejected") {
             logger.info("Stream output withheld by content screening", { requestId });
             codedEnd(controller, "content.rejected");
+          } else if (isAIRefusalError(event.error)) {
+            // The model declined: not an outage, and retrying the same prompt is declined again.
+            logger.warn("Stream declined by the model", {
+              requestId,
+              route: "/api/stream",
+            });
+            codedEnd(controller, "ai.request_declined");
           } else {
             logger.error("Stream error", {
               requestId,

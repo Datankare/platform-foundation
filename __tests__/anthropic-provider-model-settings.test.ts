@@ -3,15 +3,20 @@
  *
  * The standard tier (Sonnet 5.5) rejects `temperature` and thinks by default; the fast tier
  * (Haiku 4.5) takes `temperature` and no `thinking`. Covers what the provider sends to each,
- * that thinking blocks never reach the caller, that a safety decline surfaces as an error, and
- * that prompt caching is opt-in and never marks the per-call messages.
+ * that thinking blocks are kept opaque and passed back unmodified in a tool loop (TASK-186), that
+ * a safety decline surfaces as an AIRefusalError, and that prompt caching marks only a fixed
+ * `cacheablePrefix` — never `system`, which may carry a tenant's context, or the messages.
  */
 
 jest.mock("@/lib/logger", () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { AnthropicProvider, AIProviderError } from "@/platform/ai/provider";
+import {
+  AnthropicProvider,
+  AIProviderError,
+  AIRefusalError,
+} from "@/platform/ai/provider";
 import type { AIRequest, AIStreamChunk } from "@/platform/ai/types";
 
 const originalFetch = global.fetch;
@@ -96,24 +101,176 @@ describe("request settings per tier", () => {
 });
 
 describe("response handling", () => {
-  it("complete() leaves thinking blocks out of the content", async () => {
+  it("complete() keeps thinking blocks opaque, apart from the reply text", async () => {
+    const thinking = { type: "thinking", thinking: "", signature: "sig" };
+    const redacted = { type: "redacted_thinking", data: "x" };
     mockFetch(() =>
       jsonResponse({
         ...REPLY,
-        content: [
-          { type: "thinking", thinking: "", signature: "sig" },
-          { type: "redacted_thinking", data: "x" },
-          { type: "text", text: "answer" },
-        ],
+        content: [thinking, redacted, { type: "text", text: "answer" }],
       })
     );
     const res = await new AnthropicProvider("k").complete(request("standard"));
-    expect(res.content).toEqual([{ type: "text", text: "answer" }]);
+    expect(res.content).toEqual([
+      { type: "thinking", raw: thinking },
+      { type: "thinking", raw: redacted },
+      { type: "text", text: "answer" },
+    ]);
+    // Never rendered: the reply text a caller reads is the text blocks alone.
+    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+    expect(text).toBe("answer");
+  });
+
+  it("a tool loop passes the assistant turn's thinking back unmodified, before its tool_use", async () => {
+    // Sonnet 5.5 thinks between tools: the API needs the signed blocks back, byte for byte.
+    const thinking = {
+      type: "thinking",
+      thinking: "check the table",
+      signature: "c2ln/+=",
+    };
+    const redacted = { type: "redacted_thinking", data: "ENCRYPTED==" };
+    const toolUse = { type: "tool_use", id: "tu_1", name: "lookup", input: { q: "x" } };
+    let call = 0;
+    mockFetch(() =>
+      jsonResponse(
+        call++ === 0
+          ? { ...REPLY, content: [thinking, redacted, toolUse], stop_reason: "tool_use" }
+          : REPLY
+      )
+    );
+    const provider = new AnthropicProvider("k");
+    const first = await provider.complete(request("standard"));
+    await provider.complete({
+      ...request("standard"),
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: first.content },
+        {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu_1", content: "42" }],
+        },
+      ],
+    });
+    const sent = sentBodies[1].messages as { role: string; content: unknown }[];
+    expect(sent[1]).toEqual({
+      role: "assistant",
+      content: [thinking, redacted, toolUse],
+    });
+  });
+
+  it.each([
+    [
+      "an image smuggled in raw",
+      "assistant",
+      { type: "image", source: { type: "url", url: "x" } },
+    ],
+    [
+      "a tool_result in raw",
+      "assistant",
+      { type: "tool_result", tool_use_id: "t", content: "x" },
+    ],
+    ["no type", "assistant", { thinking: "t" }],
+    ["not an object", "assistant", "thinking"],
+    [
+      "a thinking block in a user turn",
+      "user",
+      { type: "thinking", thinking: "t", signature: "s" },
+    ],
+  ])(
+    "refuses a thinking block carrying %s — nothing is sent",
+    async (_what, role, raw) => {
+      mockFetch(() => jsonResponse(REPLY));
+      const call = new AnthropicProvider("k").complete({
+        ...request("standard"),
+        messages: [
+          { role: "user", content: "hi" },
+          {
+            role: role as "user" | "assistant",
+            content: [{ type: "thinking", raw: raw as Record<string, unknown> }],
+          },
+          { role: "user", content: "go on" },
+        ],
+      });
+      await expect(call).rejects.toBeInstanceOf(AIProviderError);
+      expect(sentBodies).toHaveLength(0);
+    }
+  );
+
+  it("stream() passes thinking blocks back unmodified too", async () => {
+    const thinking = { type: "thinking", thinking: "t", signature: "s" };
+    mockFetch(() =>
+      sseResponse([{ type: "message_start", message: { usage: { input_tokens: 1 } } }])
+    );
+    await drain(
+      new AnthropicProvider("k").stream({
+        ...request("standard"),
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: [{ type: "thinking", raw: thinking }] },
+          { role: "user", content: "go on" },
+        ],
+      })
+    );
+    const sent = sentBodies[0].messages as { content: unknown }[];
+    expect(sent[1].content).toEqual([thinking]);
+  });
+
+  it("a refusal carries what it was billed for (complete and stream)", async () => {
+    mockFetch(() =>
+      jsonResponse({
+        ...REPLY,
+        content: [],
+        stop_reason: "refusal",
+        usage: {
+          input_tokens: 812,
+          output_tokens: 2,
+          cache_read_input_tokens: 50,
+          cache_creation_input_tokens: 7,
+        },
+      })
+    );
+    const err = await new AnthropicProvider("k")
+      .complete(request("standard"))
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(AIRefusalError);
+    expect(err.usage).toEqual({
+      inputTokens: 812,
+      outputTokens: 2,
+      cacheReadTokens: 50,
+      cacheWriteTokens: 7,
+    });
+    expect(err.model).toBe("claude-sonnet-5-5");
+
+    mockFetch(() =>
+      sseResponse([
+        {
+          type: "message_start",
+          message: { usage: { input_tokens: 40, cache_read_input_tokens: 9 } },
+        },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "refusal" },
+          usage: { output_tokens: 1 },
+        },
+        { type: "message_stop" },
+      ])
+    );
+    const serr = await drain(
+      new AnthropicProvider("k").stream(request("standard"))
+    ).catch((e) => e);
+    expect(serr).toBeInstanceOf(AIRefusalError);
+    expect(serr.usage).toEqual({
+      inputTokens: 40,
+      outputTokens: 1,
+      cacheReadTokens: 9,
+      cacheWriteTokens: 0,
+    });
   });
 
   it("complete() throws a permanent error on a refusal", async () => {
     mockFetch(() => jsonResponse({ ...REPLY, content: [], stop_reason: "refusal" }));
     const call = new AnthropicProvider("k").complete(request("standard"));
+    await expect(call).rejects.toBeInstanceOf(AIRefusalError);
     await expect(call).rejects.toBeInstanceOf(AIProviderError);
     await expect(call).rejects.toMatchObject({ kind: "permanent" });
   });
@@ -153,7 +310,7 @@ describe("response handling", () => {
     );
     await expect(
       drain(new AnthropicProvider("k").stream(request("standard")))
-    ).rejects.toMatchObject({ kind: "permanent" });
+    ).rejects.toBeInstanceOf(AIRefusalError);
   });
 });
 
@@ -186,29 +343,72 @@ describe("prompt caching (opt-in)", () => {
     expect(JSON.stringify(sentBodies[0])).not.toContain("cache_control");
   });
 
-  it("on: marks the end of the system prompt, never the tools or messages", async () => {
+  it("on: marks the end of the fixed prefix only — never system, the tools or the messages", async () => {
     await new AnthropicProvider("k").complete({
       ...request("standard"),
-      system: "rules",
+      cacheablePrefix: "fixed rules",
+      system: "per-request part",
       tools: TOOLS,
       promptCache: true,
     });
     expect(sentBodies[0].system).toEqual([
-      { type: "text", text: "rules", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "fixed rules", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "per-request part" },
     ]);
     expect(JSON.stringify(sentBodies[0].tools)).not.toContain("cache_control");
     expect(JSON.stringify(sentBodies[0].messages)).not.toContain("cache_control");
   });
 
-  it("on without a system prompt: marks the last tool only", async () => {
+  it("a system prompt carrying tenant context cannot enable it: no prefix, nothing cached", async () => {
+    // The admin command bar's shape: the system prompt is built per tenant and panel.
+    const tenantSystem =
+      "You are the admin assistant for tenant acme-corp (id 7f3c…). Users: 1,204.";
+    await new AnthropicProvider("k").complete({
+      ...request("standard"),
+      system: tenantSystem,
+      tools: TOOLS,
+      promptCache: true,
+    });
+    expect(sentBodies[0].system).toBe(tenantSystem);
+    expect(JSON.stringify(sentBodies[0])).not.toContain("cache_control");
+  });
+
+  it("…nor with a prefix: the tenant's part is sent after the breakpoint, uncached", async () => {
+    const tenantSystem = "Tenant: acme-corp. Plan: enterprise.";
+    await new AnthropicProvider("k").complete({
+      ...request("standard"),
+      cacheablePrefix: "fixed rules",
+      system: tenantSystem,
+      promptCache: true,
+    });
+    const blocks = sentBodies[0].system as Record<string, unknown>[];
+    const cached = blocks.filter((b) => "cache_control" in b);
+    expect(cached).toEqual([
+      { type: "text", text: "fixed rules", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(blocks[blocks.length - 1]).toEqual({ type: "text", text: tenantSystem });
+  });
+
+  it("without a system prompt or prefix: tools alone are never marked", async () => {
     await new AnthropicProvider("k").complete({
       ...request("standard"),
       tools: TOOLS,
       promptCache: true,
     });
-    const tools = sentBodies[0].tools as Record<string, unknown>[];
-    expect(tools[0]).not.toHaveProperty("cache_control");
-    expect(tools[1].cache_control).toEqual({ type: "ephemeral" });
+    expect(JSON.stringify(sentBodies[0])).not.toContain("cache_control");
+  });
+
+  it("a prefix with the flag off is sent uncached", async () => {
+    await new AnthropicProvider("k").complete({
+      ...request("standard"),
+      cacheablePrefix: "fixed rules",
+      system: "rest",
+    });
+    expect(sentBodies[0].system).toEqual([
+      { type: "text", text: "fixed rules" },
+      { type: "text", text: "rest" },
+    ]);
+    expect(JSON.stringify(sentBodies[0])).not.toContain("cache_control");
   });
 
   it("reports cache reads and writes from the API's usage", async () => {

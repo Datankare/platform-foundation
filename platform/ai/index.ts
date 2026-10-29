@@ -30,7 +30,13 @@ export type {
 export { MODEL_REGISTRY, DEFAULT_CIRCUIT_BREAKER_CONFIG } from "./types";
 
 // Provider
-export { AnthropicProvider, AIProviderError } from "./provider";
+export {
+  AnthropicProvider,
+  AIProviderError,
+  AIRefusalError,
+  isAIRefusalError,
+  refusalUsage,
+} from "./provider";
 export type { AIErrorKind } from "./provider";
 
 // Orchestrator
@@ -57,7 +63,14 @@ export {
   blockModality,
   supportsInput,
 } from "./multimodal";
-export type { Modality, AIImageBlock, AIAudioBlock, ProviderCapabilities } from "./types";
+export type {
+  Modality,
+  AIImageBlock,
+  AIAudioBlock,
+  AIThinkingBlock,
+  AIUsage,
+  ProviderCapabilities,
+} from "./types";
 export { screenMultimodalInput, detectMultimodalInput } from "./screen-input";
 export {
   screenStream,

@@ -135,6 +135,9 @@ describe("adaptive loop (ADR-036 D2/D3)", () => {
       0
     );
     expect(charged).toBeGreaterThan(0);
-    expect(charged).toBeCloseTo(estimateCost("fast", 100_000, 50_000), 9);
+    expect(charged).toBeCloseTo(
+      estimateCost("fast", { inputTokens: 100_000, outputTokens: 50_000 }),
+      9
+    );
   });
 });

@@ -92,11 +92,7 @@ export function createMatchmakerWorkflow(
             .join("") || "[]";
 
         recommendations = parseMatchmakerResponse(raw);
-        const cost = estimateCost(
-          MATCHMAKER_V1.tier,
-          response.usage.inputTokens,
-          response.usage.outputTokens
-        );
+        const cost = estimateCost(MATCHMAKER_V1.tier, response.usage);
 
         return {
           action: "recommend-groups",
