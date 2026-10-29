@@ -436,7 +436,18 @@
         "no_actions": "Your role cannot change this account.",
         "self_row": "This is your own account: another administrator changes its role or erases it.",
         "protected_row": "A super admin’s role is set in the database only, and the account cannot be erased here.",
-        "not_shown": "Suspending or restoring an account is not offered here: it is a moderation decision (the review queue)."
+        "not_shown": "Suspending or restoring an account is not offered here: it is a moderation decision (the review queue).",
+        "col_id": "Id",
+        "filters_label": "Filters from the command bar",
+        "filter_remove": "Remove filter: {filter}",
+        "filters_clear_all": "Clear all",
+        "chip_role": "Role: {role}",
+        "chip_role_pending": "Role: …",
+        "chip_status": "Status: {status}",
+        "chip_signed_in_within_days": "Signed in within {days, plural, one {# day} other {# days}}",
+        "chip_created_within_days": "Created within {days, plural, one {# day} other {# days}}",
+        "chip_text": "Contains “{text}”",
+        "empty_filtered": "No users match these filters."
       },
       "search": {
         "not_shown": "{count, plural, one {# row} other {# rows}} left out{which}: the result is limited to {kib} KiB.",
@@ -491,7 +502,14 @@
           "invalid": "{name} (an invalid value: the search will be refused)",
           "text_and_query": "both text and query (the search will be refused: give one)"
         },
-        "redacted_key": "[redacted key]"
+        "users_in_list": "The matching users are shown in the list below.",
+        "users_earlier": "{matched, plural, one {# user matched} other {# users matched}} (an earlier search in this plan).",
+        "users_kept_filters": "The list still shows the previous filters.",
+        "users_kept_earlier": "The list shows the filters of the earlier search in this plan."
+      },
+      "details": {
+        "show": "Show details",
+        "hide": "Hide details"
       }
     },
     "kill_switch": {

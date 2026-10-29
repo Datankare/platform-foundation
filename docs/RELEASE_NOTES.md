@@ -17,11 +17,31 @@ updated (TASK-176), closed in the platform — and review 16 of the last three, 
 made the Cognito `sub` for every provider (TASK-177), and review 17 of sign-out and the Cognito
 provider (TASK-178), and the admin Users screen with the address kept in step (TASK-185), and the
 standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186), and the
-command bar's search limited to what the admin pages show (TASK-189). Deploy:
+command bar's search limited to what the admin pages show (TASK-189), and one list on the Users
+screen (TASK-190). Deploy:
 migrations 053, 054, 055, 056, 057 and 058 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
+- **One list on the Users screen; ids behind "Show details" (TASK-190).** A command-bar search
+  of `users` run on the Users screen now filters the screen's own list — removable chips ("Role:
+  Moderator ✕", "Clear all") — and its results row says "The matching users are shown in the
+  list below." instead of drawing a second table (the panel's own search box is cleared; a chip
+  removed or "Clear all" dismisses the row). `GET /api/admin/users` takes the users filters
+  (`text`, `role`, `status`, `signed_in_within_days`, `created_within_days`), checked by the
+  search's own check, now shared and client-safe in `app/api/admin/ai/search-filters.ts`
+  (`checkSearchFilter`, `parseUserListFilters`); a search's `ActionResult.table.filters` carries the
+  filters as validated, which the console applies — never the planner's input. Ids are hidden
+  unless "Show details" is on, offered only to the `admin` and `super_admin` roles (the session's
+  `roleName`) — and a search's `id` column is now sent only to those roles: for any other role the
+  execute response leaves it out (`searchResultFor`; the recorded step keeps the ids). An audit
+  entry's actor and target ids stay, as 8-character prefixes. Tooltip timestamps are in UTC. Dates read "29 Oct 2026" with the full timestamp on hover, a users
+  row's role is its display name, the standing capitalised. The confirm panel shows a value the
+  server will refuse as invalid; the recorded step keeps `ignored_key_count`, not the ignored keys'
+  names (**`ignored_keys` is gone**). `AUDIT_ACTIONS` now lives in `platform/auth/audit-actions.ts`
+  (re-exported by `audit.ts`). No migration. Consumer steps: none, unless an app reads
+  `ignored_keys` from a recorded search step, copies `SEARCH_FILTERS`, or reads a search
+  result's `id` column for a non-admin role. TASKS TASK-190.
 - **The command bar's search shows what the admin pages show, and reads its filters
   (TASK-189).** It selected whole rows (`to_jsonb`) — a user's date of birth, identity-provider
   subject, real name, ban reason, parental consent address — and showed and recorded them; and it

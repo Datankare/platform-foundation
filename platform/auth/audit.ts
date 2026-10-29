@@ -29,45 +29,13 @@ import { randomUUID } from "node:crypto";
 import { assertStorableJson } from "@/platform/errors/json-limits";
 import { ExportTooLargeError } from "@/platform/auth/user-data";
 import { logger } from "@/lib/logger";
+import { AUDIT_ACTIONS, type AuditAction } from "@/platform/auth/audit-actions";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Must match the audit_action enum in the database */
-/** Every action an audit record may carry; each must be accepted by the audit_action enum
- *  (checked by scripts/migration-replay.sh). */
-export const AUDIT_ACTIONS = [
-  "role_changed",
-  "permission_granted",
-  "permission_revoked",
-  "entitlement_granted",
-  "entitlement_revoked",
-  "entitlement_expired",
-  "profile_updated",
-  "profile_viewed_by_admin",
-  "password_changed",
-  "password_reset",
-  "mfa_enabled",
-  "mfa_disabled",
-  "device_registered",
-  "device_removed",
-  "account_created",
-  "account_deleted",
-  "account_converted_from_guest",
-  "consent_granted",
-  "consent_revoked",
-  "admin_action",
-  "login_success",
-  "login_failed",
-  "guest_nudge_shown",
-  "guest_locked_out",
-  "gdpr_purge_executed",
-  "gdpr_purge_dry_run",
-  "data_exported",
-  "consent_denied",
-  "logout",
-] as const;
-
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+// The action names live in ./audit-actions (client-safe, TASK-190: the command bar's confirm
+// panel validates a search's `action` filter with the server's own check).
+export { AUDIT_ACTIONS, type AuditAction };
 
 export interface AuditEntry {
   action: AuditAction;

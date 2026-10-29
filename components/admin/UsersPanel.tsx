@@ -41,7 +41,19 @@ import { PanelUnavailable } from "@/components/admin/PanelUnavailable";
 import { sectionTitle } from "@/components/admin/AdminShell";
 import { USER_ROW_ACTION_PERMISSIONS } from "@/app/api/admin/ai/tool-permissions";
 import type { SortDirection, UserSort } from "@/app/api/admin/users/listing";
+import {
+  USER_LIST_FILTERS,
+  type UserListFilter,
+} from "@/app/api/admin/ai/search-filters";
 import { PROTECTED_ROLES } from "@/platform/auth/role-governance";
+import {
+  formatDate,
+  formatDateTime,
+  fullTimestamp,
+  readableRole,
+  readableStatus,
+  shownStatus,
+} from "@/components/admin/admin-format";
 
 const t = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.users.${key}`, values);
@@ -87,48 +99,9 @@ const SORT_OPTIONS: readonly { sort: UserSort; dir: SortDirection; key: string }
   { sort: "last_sign_in", dir: "asc", key: "sort_last_sign_in_asc" },
 ];
 
-const DATE = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-const DATE_TIME = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-/** "26 Oct 2026" — day, month name, year: never read as another date. */
-export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return t("dash");
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? t("dash") : DATE.format(d);
-}
-
-function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return t("never");
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? t("dash") : DATE_TIME.format(d);
-}
-
-/**
- * A role's readable name: its catalog display name in sentence case ("Super Admin" → "Super
- * admin"; an all-capitals word such as "QA" is kept), else the stored name with spaces ("qa_lead"
- * → "Qa lead").
- */
-export function readableRole(name: string, displayName: string | null): string {
-  const source = displayName?.trim() || name.replace(/_/g, " ");
-  const words = source.split(/\s+/).filter(Boolean);
-  return words
-    .map((w, i) => {
-      if (/^[A-Z0-9]{2,}$/.test(w)) return w;
-      const lower = w.toLowerCase();
-      return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
-    })
-    .join(" ");
-}
+// The console's formats (TASK-190: shared with the command bar's results): re-exported here, where
+// the Users screen's tests and callers have always found them.
+export { formatDate, readableRole, shownStatus } from "@/components/admin/admin-format";
 
 /** What the name column shows: the display name, else the address, else "—". */
 export function shownName(user: Pick<ListedUser, "displayName" | "email">): string {
@@ -154,15 +127,6 @@ export function shownEmail(
   return user.lastSignInAt
     ? t("unknown_not_received", { date: formatDate(user.lastSignInAt) })
     : t("unknown_email", { date: formatDate(user.createdAt) });
-}
-
-/** The account's standing, readable, with the date a restriction or suspension ends. */
-export function shownStatus(user: Pick<ListedUser, "status" | "statusUntil">): string {
-  const known = ["active", "warned", "restricted", "suspended", "banned", "deleted"];
-  const status = known.includes(user.status) ? t(`status_${user.status}`) : user.status;
-  return user.statusUntil
-    ? t("status_until", { status, date: formatDate(user.statusUntil) })
-    : status;
 }
 
 function shownRefusal(refusal: Refusal): Refusal {
@@ -197,6 +161,61 @@ const th =
   "text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800";
 const td = "py-3 px-4 text-gray-300 border-b border-gray-800/50";
 
+/**
+ * The command bar's users-search filters, as the server validated them (TASK-190): the list
+ * applies them and shows each as a removable chip. Only USER_LIST_FILTERS.
+ */
+export type UserListFilters = Partial<Record<UserListFilter, string | number>>;
+
+/** The filters in the list's order (USER_LIST_FILTERS), each a string or a number. */
+export function listFilters(
+  filters: UserListFilters | undefined
+): [UserListFilter, string | number][] {
+  if (!filters) return [];
+  return USER_LIST_FILTERS.flatMap((name) => {
+    const value = filters[name];
+    return typeof value === "string" || typeof value === "number"
+      ? [[name, value] as [UserListFilter, string | number]]
+      : [];
+  });
+}
+
+/**
+ * A filter chip's words: "Role: Moderator" (the role's readable name when the catalog has it —
+ * matched as the server matches it, by name or display name in any case), "Status: Active",
+ * "Signed in within 7 days", "Created within 30 days", "Contains “jane”".
+ */
+export function filterChip(
+  name: UserListFilter,
+  value: string | number,
+  roles: readonly { name: string; displayName: string }[] = []
+): string {
+  switch (name) {
+    case "role": {
+      const v = String(value).toLowerCase();
+      const role = roles.find(
+        (r) => r.name.toLowerCase() === v || r.displayName?.toLowerCase() === v
+      );
+      // A role not in the catalog, or before the roles are read, as readableRole writes a stored
+      // name — lower-cased first, as the server matches it ("qa_lead" → "Qa lead", "MODERATOR"
+      // → "Moderator"): the chip does not change its words when they load (round 1, item 9).
+      return t("chip_role", {
+        role: role
+          ? readableRole(role.name, role.displayName)
+          : readableRole(String(value).toLowerCase(), null),
+      });
+    }
+    case "status":
+      return t("chip_status", { status: readableStatus(String(value)) });
+    case "signed_in_within_days":
+      return t("chip_signed_in_within_days", { days: Number(value) });
+    case "created_within_days":
+      return t("chip_created_within_days", { days: Number(value) });
+    case "text":
+      return t("chip_text", { text: String(value) });
+  }
+}
+
 export interface UsersPanelProps {
   /** The admin's permissions (from GET /api/admin/session): which actions are shown. */
   readonly hasPermission: (code: string) => boolean;
@@ -204,11 +223,49 @@ export interface UsersPanelProps {
   readonly refreshKey?: number;
   /** The signed-in admin's own account id: its row offers no change (the server refuses one). */
   readonly selfId?: string;
+  /** The command bar's users-search filters (TASK-190): applied to this list, shown as chips. */
+  readonly filters?: UserListFilters;
+  /** A chip removed, or "Clear all": the filters the list should apply now. */
+  readonly onFiltersChange?: (next: UserListFilters) => void;
+  // Also called, with the filters unchanged, when the panel's own search box is applied (round 2,
+  // N-2): the list then no longer shows exactly the search's matches, so its row is dismissed.
+  /** "Show details" (admins only, TASK-190): the Id column and the detail panel's account id. */
+  readonly showIds?: boolean;
+  /**
+   * Bumped each time a command-bar users search hands its filters to the list (round 1, item 2):
+   * the panel's own search box is cleared, so the list shows exactly the search's filters, from
+   * its first page with nothing open (round 2, N-1 — also for a hand-off of the same filters).
+   */
+  readonly handoff?: number;
 }
 
-export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanelProps) {
+/**
+ * A hand-off from the command bar (round 1, item 2) clears the panel's own search box — its draft
+ * and its applied query — so the list shows exactly the search's filters, nothing more.
+ */
+function useClearedOnHandoff(
+  handoff: number,
+  ...clear: readonly ((value: string) => void)[]
+): void {
+  const [shown, setShown] = useState(handoff);
+  if (shown !== handoff) {
+    setShown(handoff);
+    for (const set of clear) set("");
+  }
+}
+
+export function UsersPanel({
+  hasPermission,
+  refreshKey = 0,
+  selfId,
+  filters,
+  onFiltersChange,
+  showIds = false,
+  handoff,
+}: UsersPanelProps) {
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
+  useClearedOnHandoff(handoff ?? 0, setDraft, setQuery);
   const [order, setOrder] = useState(0);
   const [offset, setOffset] = useState(0);
   const [reads, setReads] = useState(0);
@@ -221,8 +278,19 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
   const returnTo = useRef<string | null>(null);
 
   const { sort, dir } = SORT_OPTIONS[order]!;
+  const applied = listFilters(filters);
+  const filterKey = JSON.stringify(applied);
+  // New filters from the command bar (or a chip removed), or any hand-off — even of the same
+  // filters (round 2, N-1): back to the first page, nothing open.
+  const resetKey = `${handoff ?? 0}\u0000${filterKey}`;
+  const [shownFilterKey, setShownFilterKey] = useState(resetKey);
+  if (shownFilterKey !== resetKey) {
+    setShownFilterKey(resetKey);
+    setOffset(0);
+    setSelectedId(null);
+  }
   // The read the screen asks for now, and the last one answered: loading while they differ.
-  const want = [sort, dir, offset, query, reads, refreshKey].join("\u0000");
+  const want = [sort, dir, offset, query, reads, refreshKey, filterKey].join("\u0000");
   const [answered, setAnswered] = useState<string | null>(null);
   const loading = answered !== want;
 
@@ -240,6 +308,12 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
       limit: String(USERS_PAGE_SIZE),
       offset: String(offset),
       ...(query ? { q: query } : {}),
+      ...Object.fromEntries(
+        (JSON.parse(filterKey) as [string, string | number][]).map(([k, v]) => [
+          k,
+          String(v),
+        ])
+      ),
     }).toString();
     void apiFetch(`/api/admin/users?${qs}`)
       .then(async (res) => {
@@ -285,7 +359,7 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
     return () => {
       current = false;
     };
-  }, [sort, dir, offset, query, reads, refreshKey, want]);
+  }, [sort, dir, offset, query, reads, refreshKey, filterKey, want]);
 
   const reload = useCallback(() => setReads((n) => n + 1), []);
 
@@ -306,6 +380,7 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
           setOffset(0);
           setSelectedId(null);
           setQuery(draft.trim());
+          onFiltersChange?.({ ...filters });
         }}
       >
         <label className="flex flex-1 flex-col text-xs text-gray-400">
@@ -354,6 +429,18 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
         </label>
       </form>
 
+      <FilterChips
+        applied={applied}
+        // Undefined only while the first page is read: a role chip waits for the roles (round 2, 9).
+        roles={page?.roles ?? (loading ? undefined : [])}
+        onRemove={(name) => {
+          const next: UserListFilters = { ...filters };
+          delete next[name];
+          onFiltersChange?.(next);
+        }}
+        onClear={() => onFiltersChange?.({})}
+      />
+
       {refusal && <RefusalNotice refusal={refusal} onRetry={reload} />}
 
       {loading && !refusal && (
@@ -367,6 +454,7 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr>
+                {showIds && <th className={th}>{t("col_id")}</th>}
                 <th className={th}>{t("col_email")}</th>
                 <th className={th}>{t("col_name")}</th>
                 <th className={th}>{t("col_role")}</th>
@@ -386,6 +474,11 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
                     u.id === selectedId ? "bg-blue-900/20" : ""
                   }`}
                 >
+                  {showIds && (
+                    <td className={td}>
+                      <code className="text-xs">{u.id}</code>
+                    </td>
+                  )}
                   <td className={td}>
                     <button
                       type="button"
@@ -409,8 +502,13 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
                   </td>
                   <td className={td}>{shownStatus(u)}</td>
                   <td className={td}>{u.emailVerified ? t("yes") : t("no")}</td>
-                  <td className={td}>{formatDate(u.createdAt)}</td>
-                  <td className={td}>
+                  <td className={td} title={fullTimestamp(u.createdAt)}>
+                    {formatDate(u.createdAt)}
+                  </td>
+                  <td
+                    className={td}
+                    title={u.lastSignInAt ? fullTimestamp(u.lastSignInAt) : undefined}
+                  >
                     {u.lastSignInAt ? formatDate(u.lastSignInAt) : t("never")}
                   </td>
                 </tr>
@@ -419,7 +517,11 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
           </table>
           {users.length === 0 && (
             <p className="py-8 text-center text-sm text-gray-400">
-              {query ? t("empty_search", { query }) : t("empty")}
+              {applied.length > 0
+                ? t("empty_filtered")
+                : query
+                  ? t("empty_search", { query })
+                  : t("empty")}
             </p>
           )}
         </div>
@@ -459,6 +561,7 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
           roles={page.roles}
           hasPermission={hasPermission}
           isSelf={selected.id === selfId}
+          showId={showIds}
           onClose={(changed) => {
             returnTo.current = selected.id;
             setSelectedId(null);
@@ -467,6 +570,58 @@ export function UsersPanel({ hasPermission, refreshKey = 0, selfId }: UsersPanel
           onChanged={reload}
         />
       )}
+    </div>
+  );
+}
+
+/** The command bar's filters on the list, each removable, and "Clear all" (TASK-190). */
+function FilterChips({
+  applied,
+  roles,
+  onRemove,
+  onClear,
+}: {
+  readonly applied: readonly [UserListFilter, string | number][];
+  /** The catalog's roles; undefined while the first page is being read. */
+  readonly roles: readonly ListedRole[] | undefined;
+  readonly onRemove: (name: UserListFilter) => void;
+  readonly onClear: () => void;
+}) {
+  if (applied.length === 0) return null;
+  return (
+    <div
+      role="group"
+      aria-label={t("filters_label")}
+      className="flex flex-wrap items-center gap-2"
+    >
+      <span className="text-xs text-gray-400">{t("filters_label")}</span>
+      {applied.map(([name, value]) => {
+        // A role chip is named once the roles are read — "Role: …" until then — so its words
+        // never change on screen (round 2, item 9); a read that failed names it from the value.
+        const label =
+          name === "role" && roles === undefined
+            ? t("chip_role_pending")
+            : filterChip(name, value, roles);
+        return (
+          <button
+            key={name}
+            type="button"
+            aria-label={t("filter_remove", { filter: label })}
+            className="inline-flex items-center gap-1 rounded-full border border-blue-700 bg-blue-900/30 px-3 py-1 text-xs text-blue-200 hover:bg-blue-900/50"
+            onClick={() => onRemove(name)}
+          >
+            <span>{label}</span>
+            <span aria-hidden="true">✕</span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        className="text-xs text-gray-400 underline hover:text-gray-200"
+        onClick={onClear}
+      >
+        {t("filters_clear_all")}
+      </button>
     </div>
   );
 }
@@ -483,6 +638,7 @@ function UserDetail({
   roles,
   hasPermission,
   isSelf,
+  showId,
   onClose,
   onChanged,
 }: {
@@ -491,6 +647,8 @@ function UserDetail({
   readonly hasPermission: (code: string) => boolean;
   /** The admin's own account: no role change or erasure (the routes refuse both). */
   readonly isSelf: boolean;
+  /** "Show details" is on: the account id is shown (TASK-190 — ids are hidden by default). */
+  readonly showId: boolean;
   /** `changed`: an erasure ran — the list is read again once the panel is closed. */
   readonly onClose: (changed: boolean) => void;
   readonly onChanged: () => void;
@@ -599,7 +757,12 @@ function UserDetail({
   }
 
   const rows: [string, React.ReactNode][] = [
-    [t("field_identity"), <code key="id">{user.id}</code>],
+    ...(showId
+      ? ([[t("field_identity"), <code key="id">{user.id}</code>]] as [
+          string,
+          React.ReactNode,
+        ][])
+      : []),
     [t("field_email"), shownEmail(user)],
     [t("field_name"), shownName(user)],
     [t("field_role"), readableRole(user.roleName, user.roleDisplayName)],

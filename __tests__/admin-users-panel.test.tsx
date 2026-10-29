@@ -276,7 +276,8 @@ describe("the detail panel", () => {
       });
     await shown();
     const panel = openRow("Ann");
-    expect(within(panel).getByText(user().id)).toBeDefined();
+    // TASK-190: the account id is hidden by default, shown with "Show details" (UsersPanel showIds).
+    expect(within(panel).queryByText(user().id)).toBeNull();
     expect(within(panel).getAllByText("Free").length).toBeGreaterThan(0);
     expect(within(panel).getByText("free")).toBeDefined();
     expect(within(panel).getByText(/26 Oct 2026/)).toBeDefined();

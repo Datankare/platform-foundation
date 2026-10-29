@@ -2,9 +2,9 @@
   "_comment": "TASK-080 coverage ratchet. Auto-raised by scripts/coverage-ratchet.mjs when actuals exceed baseline+margin; never lowered automatically (a fall below baseline fails CI). Do not hand-edit the figures.",
   "margin": 1,
   "baseline": {
-    "statements": 94.39,
-    "lines": 95.61,
+    "statements": 94.41,
+    "lines": 95.63,
     "functions": 93.97,
-    "branches": 88.01
+    "branches": 88.1
   }
 }

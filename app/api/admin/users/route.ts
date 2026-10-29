@@ -8,7 +8,8 @@
  * tenant's administrator lists and changes only that tenant's users. The roles are the shared
  * catalog; assigning one to a user is a tenant change, under the role rules.
  *
- * GET ?q=&sort=created|last_sign_in&dir=desc|asc&limit=&offset= →
+ * GET ?q=&sort=created|last_sign_in&dir=desc|asc&limit=&offset=
+ *     &text=&role=&status=&signed_in_within_days=&created_within_days= →
  *   { users: [{ id, email, displayName, roleId, roleName, roleDisplayName, status, statusUntil,
  *               emailVerified, createdAt, lastSignInAt, entitlements: [{ code, name, expiresAt }] }],
  *     roles: [{ id, name, displayName }],
@@ -25,7 +26,14 @@
  *     refused (request.invalid_value), never written into SQL. Each is served by one index of
  *     migration 056, read forwards or backwards: the ascending orders break ties by `id desc` so
  *     the backward scan needs no sort;
- *   - paging: at most 100 a page, an offset of at most 10,000 (900 with a search); one row more is
+ *   - filters (TASK-190 — one list, not two): the command bar's users-search filters, so the
+ *     Users screen applies a search's filters to this list instead of drawing a second table.
+ *     Each is checked by the search's own check (app/api/admin/ai/search-filters.ts
+ *     parseUserListFilters): role ≤64 characters, matched on the role's name or display name in
+ *     any case; status one of the standings; day windows 1–3650; text ≤100 characters, escaped by
+ *     likeTerm as the search's. A bad value, or a filter given twice, is refused
+ *     (request.invalid_value). Bound parameters only; the same bounded scan as a search;
+ *   - paging: at most 100 a page, an offset of at most 10,000 (900 with a search or a filter); one row more is
  *     read to say whether there is a next page — no count of the table;
  *   - status: the account's standing as the status guard reads it — an expired restriction or
  *     suspension is "active" — or "deleted" for an account erased and awaiting its purge;
@@ -60,10 +68,12 @@ import {
   runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
 import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { parseUserListFilters, SEARCH_TEXT_MAX } from "@/app/api/admin/ai/search-filters";
 import {
   USER_SORTS,
   USER_SORT_DIRECTIONS,
   listedStatus,
+  USER_STATUS_SQL,
   type SortDirection,
   type UserSort,
 } from "@/app/api/admin/users/listing";
@@ -89,21 +99,34 @@ type GrantRow = {
   expires_at: Date | null;
 };
 
-const COLUMNS = `id, email, display_name, role_id, created_at, deleted_at, account_status,
-                 restricted_until, suspended_until, email_verified, last_login_at`;
-/** $1: the search term ('' for none), $2: limit + 1, $3: offset. */
-const FILTER = `where ($1 = '' or email ilike '%' || $1 || '%' or display_name ilike '%' || $1 || '%')`;
+const COLUMNS = `u.id, u.email, u.display_name, u.role_id, u.created_at, u.deleted_at,
+                 u.account_status, u.restricted_until, u.suspended_until, u.email_verified,
+                 u.last_login_at`;
+/**
+ * $1: the search term ('' for none), $2: limit + 1, $3: offset; the command bar's users filters
+ * (TASK-190), each null when absent — $4 text ('' for none; the search box's term and this both
+ * apply), $5 role (its name or display name, any case), $6 status (as listedStatus reads it:
+ * USER_STATUS_SQL), $7 signed in within days, $8 created within days. The same conditions as the
+ * command bar's users search (handlers/search.ts usersSql), so the list shows what it matched.
+ */
+const FILTER = `where ($1 = '' or u.email ilike '%' || $1 || '%' or u.display_name ilike '%' || $1 || '%')
+    and ($4 = '' or u.email ilike '%' || $4 || '%' or u.display_name ilike '%' || $4 || '%')
+    and ($5::text is null or exists (select 1 from roles r where r.id = u.role_id
+          and (lower(r.name) = lower($5::text) or lower(r.display_name) = lower($5::text))))
+    and ($6::text is null or ${USER_STATUS_SQL} = $6::text)
+    and ($7::int is null or u.last_login_at >= now() - make_interval(days => $7::int))
+    and ($8::int is null or u.created_at >= now() - make_interval(days => $8::int))`;
 
 /** One fixed statement per order — chosen by name, never assembled from the request. */
 const PAGE_SQL: Readonly<Record<`${UserSort}:${SortDirection}`, string>> = {
-  "created:desc": `select ${COLUMNS} from users ${FILTER}
-                    order by created_at desc, id limit $2 offset $3`,
-  "created:asc": `select ${COLUMNS} from users ${FILTER}
-                   order by created_at asc, id desc limit $2 offset $3`,
-  "last_sign_in:desc": `select ${COLUMNS} from users ${FILTER}
-                         order by last_login_at desc nulls last, id limit $2 offset $3`,
-  "last_sign_in:asc": `select ${COLUMNS} from users ${FILTER}
-                        order by last_login_at asc nulls first, id desc limit $2 offset $3`,
+  "created:desc": `select ${COLUMNS} from users u ${FILTER}
+                    order by u.created_at desc, u.id limit $2 offset $3`,
+  "created:asc": `select ${COLUMNS} from users u ${FILTER}
+                   order by u.created_at asc, u.id desc limit $2 offset $3`,
+  "last_sign_in:desc": `select ${COLUMNS} from users u ${FILTER}
+                         order by u.last_login_at desc nulls last, u.id limit $2 offset $3`,
+  "last_sign_in:asc": `select ${COLUMNS} from users u ${FILTER}
+                        order by u.last_login_at asc nulls first, u.id desc limit $2 offset $3`,
 };
 
 const GRANTS_SQL = `select ue.user_id, g.code, g.display_name, ue.expires_at
@@ -143,9 +166,20 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     });
   }
   const term = likeTerm(params.get("q"));
+  // The command bar's users filters (TASK-190), checked exactly as its search checks them
+  // (app/api/admin/ai/search-filters.ts): a bad value is refused, never ignored.
+  const parsed = parseUserListFilters(params);
+  if (!parsed.ok) {
+    return apiError("request.invalid_value", {
+      params: { field: parsed.field, allowed: parsed.allowed },
+      request,
+    });
+  }
+  const f = parsed.filters;
+  const filtered = term !== "" || Object.keys(f).length > 0;
   const { limit, offset } = pageParams(params, {
     maxLimit: 100,
-    maxOffset: term ? 900 : 10_000,
+    maxOffset: filtered ? 900 : 10_000,
   });
 
   let users: UserRow[];
@@ -157,6 +191,11 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
         term,
         limit + 1,
         offset,
+        typeof f.text === "string" ? likeTerm(f.text, SEARCH_TEXT_MAX) : "",
+        f.role ?? null,
+        f.status ?? null,
+        f.signed_in_within_days ?? null,
+        f.created_within_days ?? null,
       ]);
       const ids = page.rows.slice(0, limit).map((u) => u.id);
       const granted = ids.length

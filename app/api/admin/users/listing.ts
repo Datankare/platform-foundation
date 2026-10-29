@@ -35,3 +35,13 @@ export function listedStatus(
   if (until && until.getTime() <= now) return { status: "active", until: null };
   return { status: row.account_status, until: until ? until.toISOString() : null };
 }
+
+/**
+ * The same reading in SQL, of a users row aliased `u` — so a list or a search can filter on the
+ * standing before its limit (TASK-189 search, TASK-190 Users list): erased → deleted; a
+ * restriction or suspension whose end has passed → active; otherwise the stored standing.
+ */
+export const USER_STATUS_SQL = `(case when u.deleted_at is not null then 'deleted'
+         when u.account_status = 'restricted' and u.restricted_until <= now() then 'active'
+         when u.account_status = 'suspended' and u.suspended_until <= now() then 'active'
+         else u.account_status::text end)`;

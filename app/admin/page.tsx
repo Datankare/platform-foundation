@@ -6,7 +6,13 @@ import AdminShell, {
   permittedSections,
   sectionTitle,
 } from "@/components/admin/AdminShell";
-import { UsersPanel } from "@/components/admin/UsersPanel";
+import { UsersPanel, type UserListFilters } from "@/components/admin/UsersPanel";
+import {
+  afterFiltersChanged,
+  applyUsersSearch,
+  resultsFor,
+} from "@/components/admin/users-search-handoff";
+import { mayShowDetails, ShowDetailsToggle } from "@/components/admin/ShowDetailsToggle";
 import { sectionPlaceholder } from "@/components/admin/section-hints";
 import type { AdminSection } from "@/components/admin/AdminShell";
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
@@ -100,6 +106,12 @@ interface ExecutionResult {
   /** A search's rows (TASK-189), shown as a table by ExecutionResultsPanel. */
   table?: SearchResultTable;
   error?: string;
+  /** A users search applied to the Users screen's list (TASK-190): no second table. */
+  listed?: boolean;
+  /** An earlier users search of the plan (TASK-190 round 1): one line. */
+  earlier?: boolean;
+  /** A refused users search; the list kept its filters (TASK-190 rounds 1 and 2). */
+  keptFilters?: "previous" | "earlier";
 }
 
 const ENDPOINTS: Record<string, string> = {
@@ -222,6 +234,12 @@ export default function AdminPage() {
   /** Reloads a panel's data (after an action). */
   // The Users panel reads its own pages; a change made from the command bar re-reads them.
   const [usersRefresh, setUsersRefresh] = useState(0);
+  // The command bar's users-search filters, applied to the Users list (TASK-190).
+  const [userFilters, setUserFilters] = useState<UserListFilters>({});
+  // Bumped on each hand-off: the Users panel clears its own search box (TASK-190 round 1).
+  const [usersHandoff, setUsersHandoff] = useState(0);
+  // "Show details" (admins and super-admins only): in memory for this console session.
+  const [showDetails, setShowDetails] = useState(false);
   const refreshData = useCallback(
     async (panel: AdminSection) => {
       if (panel === "users") setUsersRefresh((n) => n + 1);
@@ -298,8 +316,20 @@ export default function AdminPage() {
         body: JSON.stringify({ actions }),
       });
       if (res.ok) {
-        const { results: execResults } = await res.json();
-        setResults(execResults);
+        const { results: execResults } = (await res.json()) as {
+          results: ExecutionResult[];
+        };
+        const applied = applyUsersSearch(
+          openPanel,
+          execResults ?? [],
+          actions,
+          userFilters
+        );
+        setResults(applied.results);
+        if (applied.filters) {
+          setUserFilters(applied.filters);
+          setUsersHandoff((n) => n + 1);
+        }
         setCurrentPlan(null);
         if (openPanel !== null) await refreshData(openPanel);
       }
@@ -313,10 +343,23 @@ export default function AdminPage() {
     const title = sectionTitle(section);
     const allowed =
       session.kind === "admin" ? permissionCheck(session.permissions) : () => false;
+    // "Show details" only where it changes something (TASK-190 round 1, item 5): the Users screen,
+    // and a section showing a search table with an id column.
+    const detailsOffered =
+      session.kind === "admin" &&
+      mayShowDetails(session.roleName) &&
+      (section === "users" ||
+        (results ?? []).some((r) => r.success && r.table?.columns.includes("id")));
+    const showIds = detailsOffered && showDetails;
 
     return (
       <div>
-        <h2 className="text-xl font-bold text-white mb-4">{title}</h2>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="text-xl font-bold text-white">{title}</h2>
+          {detailsOffered && (
+            <ShowDetailsToggle pressed={showDetails} onChange={setShowDetails} />
+          )}
+        </div>
 
         {!NO_PROMPT_BAR.has(section) && (
           <AdminPromptBar
@@ -339,7 +382,12 @@ export default function AdminPage() {
         )}
 
         {results && (
-          <ExecutionResultsPanel results={results} onDismiss={() => setResults(null)} />
+          <ExecutionResultsPanel
+            // A users search is "in the list below" only on the Users screen.
+            results={resultsFor(section, results)}
+            showIds={showIds}
+            onDismiss={() => setResults(null)}
+          />
         )}
 
         {section === "users" && (
@@ -347,6 +395,14 @@ export default function AdminPage() {
             hasPermission={allowed}
             refreshKey={usersRefresh}
             selfId={session.kind === "admin" ? session.userId : undefined}
+            filters={userFilters}
+            onFiltersChange={(next) => {
+              // The search's row no longer describes the list: dismissed (round 1, item 1).
+              setUserFilters(next);
+              setResults((current) => afterFiltersChanged(current));
+            }}
+            showIds={showIds}
+            handoff={usersHandoff}
           />
         )}
 

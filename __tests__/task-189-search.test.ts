@@ -226,7 +226,7 @@ describe("TASK-189: each filter is a bound parameter", () => {
     const { st } = await run({ table: "users", role: "  Support Lead " });
     expect(st[0].values[1]).toBe("Support Lead");
     expect(st[0].sql).toMatch(
-      /lower\(s\.role\) = lower\(\$2::text\) or lower\(s\.role_display_name\) = lower\(\$2::text\)/
+      /lower\(s\.role_name\) = lower\(\$2::text\) or lower\(s\.role_display_name\) = lower\(\$2::text\)/
     );
     const quoted = await run({ table: "users", role: "x'; drop" });
     expect(quoted.st[0].values[1]).toBe("x'; drop");
@@ -519,14 +519,15 @@ describe("TASK-189 round 2: the step records an allowlist, never a value it was 
       success: false,
       error: "email must be one of: text, role.",
       filters: { table: "users" },
-      ignored_keys: ["email", "display_name", "role", "text", "extra", "[redacted key]"],
+      // TASK-190: the number of keys, never their names (a name is data too).
+      ignored_key_count: 6,
     });
   });
 
   it("an unknown table is recorded by key name only", () => {
     const step = searchStepRecord(refused, { table: "users_secret_kid@example.com" });
     expect(JSON.stringify(step)).not.toMatch(/kid@example/);
-    expect(step).toMatchObject({ filters: {}, ignored_keys: ["table"] });
+    expect(step).toMatchObject({ filters: {}, ignored_key_count: 1 });
   });
 
   it("a search that ran records only its validated filters, the free-text ones as their length", () => {
@@ -548,7 +549,7 @@ describe("TASK-189 round 2: the step records an allowlist, never a value it was 
         status: "active",
         created_within_days: 30,
       },
-      ignored_keys: ["signed_in_within_days", "email"],
+      ignored_key_count: 2,
     });
   });
 
@@ -574,7 +575,7 @@ describe("TASK-189 round 2: the step records an allowlist, never a value it was 
     });
     expect(outcome.kind).toBe("ran");
     const stored = JSON.stringify(await store.getById(id));
-    expect(stored).toContain("ignored_keys");
+    expect(stored).toContain("ignored_key_count");
     expect(stored).not.toMatch(/kid@example|Kid Person|Secret Club|nested/);
   });
 

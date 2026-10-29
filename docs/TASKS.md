@@ -4937,25 +4937,207 @@ length; text with query refused; a non-numeric or out-of-range day count and a f
 does not take described without a value or a template;
 `r10-search-truncation`, `rv11-hostile` L-3, `admin-ai-handlers`, `admin-tenant-data.db` updated.
 
-### TASK-190 — Search follow-ups: the confirm panel and ignored key names
+### TASK-190 — One list on the Users screen; ids behind "Show details"; the confirm panel and ignored key names
+
+| Field        | Detail                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-190                                                                                   |
+| **Type**     | Defect (admin UX) and hardening (personal data)                                            |
+| **Severity** | Medium (two lists that disagree); Low (residuals of TASK-189)                              |
+| **Phase**    | Phase 5                                                                                    |
+| **Target**   | v6.0.0 (RC)                                                                                |
+| **Status**   | Fixed on develop (v6.0.0 RC); no migration                                                 |
+| **Logged**   | 2026-10-29 (TASK-189 review round 3, accepted residuals; the owner's live check, same day) |
+
+**What was wrong.** (1) **Two lists.** In the owner's live check of /admin → Users, the command
+bar's "show moderators" drew its own table in the results box — with an Id column, raw ISO dates
+and the role as its stored name, "moderator" — while the Users screen's list below it still showed
+every account. (2) **Ids shown to everyone** who could run a search. (3) **Values not readable**:
+dates as ISO text, the role by its code, the standing in lower case. (4) **Residual (a) of TASK-189
+round 3**: the confirm panel (`components/admin/search-description.ts`) showed a string value the
+server will refuse — an unknown status, a non-UUID id, text over 100 characters, a role over 64 —
+as if the search would run. (5) **Residual (b)**: `searchStepRecord` kept an unknown key's name in
+`ignored_keys` when it was identifier-shaped (`jane_doe`), so a name could outlive an erasure.
+
+**The owner's decisions.**
+
+1. **One list, not two.** On the Users screen, a command-bar `search` of `users` that succeeds
+   filters the Users screen's own list with the same filters (role, status, signed in within,
+   created within, text), shown as removable chips ("Role: Moderator ✕", "Signed in within 7 days
+   ✕", "Clear all"); the search's results row says "1 user matches — shown in the list below." and
+   draws no second table. A search of any other table — or of users from another section — keeps
+   the compact results table.
+2. **Ids hidden by default**, behind a "Show details" toggle offered only to admins and
+   super-admins (roles `admin` and `super_admin`); moderators and every other role never see it.
+   The id stays in the recorded step.
+3. **Readable values** in search results and chips: dates as the Users screen writes them ("29 Oct
+   2026", the whole timestamp in a tooltip), the role by its display name ("Moderator"), the
+   standing capitalised ("Active").
+4. Residual (a): the confirm panel mirrors the server's checks — by sharing them.
+5. Residual (b): the step records only the number of ignored keys.
+
+**Fix.**
+
+- **One check, three callers** (`app/api/admin/ai/search-filters.ts`, new, client-safe):
+  `SEARCH_FILTERS`, the limits (role ≤64 characters, no control characters, trimmed; status one of
+  the six standings; day windows whole numbers 1–3650; text ≤100 after control characters are
+  dropped and it is trimmed; category a code; action an audit action; ids UUIDs) and
+  `checkSearchFilter`, which returns the value as it is used — text unescaped (the binder escapes
+  it with `likeTerm`). The command bar's search (`handlers/search.ts`, which re-exports them), the
+  Users list and the confirm panel all call it, so none can accept what another refuses
+  (`__tests__/task-190-filters.test.ts` runs the same values through all three). The audit action
+  names moved to `platform/auth/audit-actions.ts` (client-safe; re-exported by `audit.ts`;
+  `scripts/migration-replay.sh` reads them there).
+- **The Users list takes the users filters** (`GET /api/admin/users?text=&role=&status=
+&signed_in_within_days=&created_within_days=`, `parseUserListFilters`): checked as the search
+  checks them (a day count from its digits; anything else stays text and is refused; an empty
+  parameter is absent, as `q=`; a repeated one is refused), each a bound parameter of the four fixed
+  statements, with the same conditions as the search's users statement — the role matched on its
+  name or display name in any case, the standing as `listedStatus` reads it (now also in SQL,
+  `USER_STATUS_SQL` in `listing.ts`, shared by both). Its own search box (`q`), sort, paging and
+  look-ahead are unchanged; with any filter the offset cap is the search's (900). Same permission
+  (`admin_manage_users`) and tenant scope; refused values `request.invalid_value`, already handled
+  by the screen.
+- **How the page learns the filters.** From the execute response, never the planner's input: a
+  search's `table.filters` carries the filters as the server validated and applied them (trimmed,
+  the text unescaped). On the Users screen the console (`app/admin/page.tsx` through
+  `components/admin/users-search-handoff.ts applyUsersSearch`) takes the last users search that
+  succeeded, keeps only the users filters, applies them to the list (`UsersPanel filters`) and
+  marks that row `listed`. The list re-reads them through the route, which checks them again. The
+  filters stay until a chip is removed, "Clear all" or a newer users search; elsewhere nothing is
+  handed over. `searchStepRecord` never records `table.filters`.
+- **"Show details"** (`components/admin/ShowDetailsToggle.tsx`): offered when the console's
+  session says the caller's role is `admin` or `super_admin` — `GET /api/admin/session`'s
+  `roleName`, the verified admin's role as `requireAdmin` reads it, which the page already holds
+  (the development bypass, `dev-bypass`, is not offered it). An `aria-pressed` button beside each
+  section's heading; its state is the console page's, in memory for the session (no storage: a
+  reload hides the ids again). It reveals the id columns of a search's table (`id` and every
+  `*_id`: an audit entry's actor and target), an Id column on the Users list, and the detail
+  panel's account id (also hidden by default now). Round 1 narrowed and hardened this: only `id`
+  is hidden (an actor or target id shows its first 8 characters, as on the Audit log page), and a
+  search's `id` column is sent only to admins and super-admins (S-L1 below).
+- **Readable values** (`components/admin/admin-format.ts`, shared with the Users screen):
+  `created_at`, `last_sign_in_at`, `status_until` and `updated_at` as "29 Oct 2026" with the whole
+  timestamp ("29 Oct 2026, 09:15:00 UTC") in the tooltip; a users row's role cell is now the
+  role's display name (else its name; the statement's `role` column) in sentence case, the stored
+  value in the tooltip; the standing capitalised. A JSON config value is still its JSON text. The
+  Users list's dates gain the same tooltip.
+- **Residual (a).** `describeSearch` shows a filter's value only when the table takes the filter
+  and `checkSearchFilter` accepts the value — and then as the server will use it (trimmed, an id
+  lower-cased); otherwise "<name> (an invalid value: the search will be refused)". A text of only
+  spaces is no filter, to both. The panel's copy of the filters is gone: it reads `SEARCH_FILTERS`.
+- **Residual (b).** The step records `ignored_key_count` (absent when none), never a key's name;
+  the "[redacted key]" text is gone from the catalog.
+
+**Review round 1** (two independent finders, correctness and security; no Critical or High). The
+coordinator's decisions, implemented as stated:
+
+| Finding                                                                                                                                             | Severity        | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S-L1: ids hidden on the screen only — a moderator's browser still received every row's id                                                           | Low (security)  | A data control: `searchResultFor` (handlers/search.ts) leaves a search's `id` column out of the execute response unless the caller's verified role (`requireAdmin`'s `roleName`, the source of GET /api/admin/session) is admin or super_admin (`maySeeIds`, `ID_DETAIL_ROLES` in search-filters.ts — the console's "Show details" roles are the same list); the result line never names a row left out for size by an id the caller may not see. The step still records the rows' ids. The Users list keeps its ids (its row actions need them; under admin_manage_users) |
+| 1: removing a chip or "Clear all" left the search's row saying "shown in the list below"                                                            | Medium          | Dismissed: any change of the list's filters from its chips removes that row (`afterFiltersChanged`), and a "kept the previous filters" note with it                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2: the panel's own search box stayed applied after a hand-off, so the list showed less than the search; the row's count was the planner's `matched` | Medium (+ S-L2) | A hand-off clears the box (draft and query; the `handoff` prop). The row has no count of its own: "The matching users are shown in the list below." — the list (which reads no total, by design) is the one answer, and its "No users match these filters." stays accurate                                                                                                                                                                                                                                                                                                 |
+| 3: a role with no display name read "Qa_lead" in the results grid                                                                                   | Low             | `readableRole(value, null)`: "Qa lead", as the Users list writes it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 4: `actor_id` and `target_id` were hidden with `id`                                                                                                 | Low             | Only `id` is behind "Show details"; a `*_id` reference shows its first 8 characters with the whole id in the tooltip, as on the Audit log page                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 5: "Show details" was shown on every section                                                                                                        | Low             | Only where it changes something: the Users screen, and a section showing a search table with an `id` column                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 6: every users search of a multi-step plan drew its table; only the last drives the list                                                            | Low             | Earlier users searches are one line: "3 users matched (an earlier search in this plan)."                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 7: a refused users search left the list's filters with nothing saying so                                                                            | Low             | The list keeps them, and the row adds "The list still shows the previous filters." (when the list shows any; the refused action is known by its index in the plan, the execute route's order)                                                                                                                                                                                                                                                                                                                                                                              |
+| 8: the tooltip's comment said UTC; the timestamp was in the browser's zone                                                                          | Nit             | `timeZone: "UTC"`: "29 Oct 2026, 09:15:00 UTC" everywhere                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 9: a role chip read "moderator" until the roles loaded, then "Moderator"                                                                            | Nit             | An unmatched role is written `readableRole(value lower-cased, null)`: the same words before and after the roles load                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+Noted, not changed (security finder's nits): development steps recorded before this change may
+still hold `ignored_keys` names (no production steps exist; nothing reads them); an empty filter
+parameter on the Users list counts as absent, as the search treats a null filter — kept as the
+designed semantics.
+
+**Review round 2** (an independent verifier of the round-1 diff): **SHIP**; every round-1 item
+verified (item 9 partially). Applied:
+
+| Finding                                                                                                     | Severity | Resolution                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| N-1: a hand-off of the same filters, from page 2 or with a row open, stayed there                           | Low      | The hand-off is part of the panel's reset key with the filters: any hand-off goes back to page 1 with nothing open                                                                                                                                    |
+| N-2: searching the panel's own box after a hand-off left the row saying the list shows the search's matches | Low      | Applying the box reports through `onFiltersChange` (filters unchanged), so the row is dismissed on the same path as a chip (`afterFiltersChanged`)                                                                                                    |
+| N-3: "the previous filters" was wrong when an earlier users search of the same plan had run                 | Nit      | `keptFilters` says which: "previous" (as before the plan) or "earlier" — "The list shows the filters of the earlier search in this plan." Round 3: correct only when the refused search comes after the successful one; the reverse order is TASK-192 |
+| 9 (partial): a role chip named from its value could still change once the catalog's display name arrived    | Nit      | Choice: a role chip reads "Role: …" until the first page (and its roles) is read, then its catalog name; a first read that fails names it from the value. The value-only form is no longer shown before the roles                                     |
+
+**Review round 3** (final; an independent verifier of the round-2 diff). N-1, N-2, item 9 and the coverage baselines verified; verdict SHIP. One residual, accepted and filed in **TASK-192**: when a refused users search comes _before_ a successful one in the same plan, its row says "the filters of the earlier search" though the list shows a later search's filters (Low; the later search's own row is correct).
+
+The coverage baselines' small steps (+0.01, +0.02) are what `npm run coverage:ratchet` writes: when
+an axis is above `baseline + margin` it sets that axis to `actual − margin`, so an actual just over
+the band raises it by a hundredth. Never hand-edited; each committed value is the tool's output
+from the final full run.
+
+**Tests.** `__tests__/task-190-filters.test.ts` (one check: 25 values through the search, the list
+and the panel, accepted or refused alike and with the same refusal; the list's filters as bound
+values of an unchanged statement, the text escaped; empty and repeated parameters; the offset cap;
+every sort; a moderator refused before any read; `table.filters` validated and unescaped, never in
+the step; residual (b) with `jane_doe`; residual (a) for every filter of every table against the
+server); `__tests__/task-190-one-list.test.tsx` (chips sent and named, a chip removed, Clear all,
+the filtered empty text, dates with their tooltip, ids only with showIds; the results row's one
+line, plural and none; another section's table readable with ids hidden, shown with Show details;
+the hand-off; the toggle per role on the console; end to end, "show moderators" → confirm → the
+list re-read with the validated filter, not the planner's); `__tests__/db/task-190-users-filters.db.test.ts`
+(on Postgres: the list and the search find the same accounts for each filter and combination, every
+sort, the search box with a text filter, another tenant never listed, a hostile role bound as text,
+the hand-off filters taken by the list as they are). Round 1 added `__tests__/task-190-search-ids.test.ts`
+(through `runCommandBarAction` and the real handler: admin and super_admin get `id`; moderator,
+safety_approver and free do not, anywhere in the response, while the step keeps every id; an audit
+entry's actor and target stay; the result line names no hidden id) and, in the files above: the box
+cleared on a hand-off (panel and end to end), the row dismissed on Clear all and on the last chip,
+earlier searches as one line, the kept-filters note, "Qa lead" in the grid and the chip, actor and
+target as 8-character prefixes, the toggle absent from Approvals, the UTC tooltip, a chip's words
+unchanged when the roles load (round 2: "Role: …" until then, the value's form after a failed
+read), a same-filter hand-off back to page 1 with nothing open, the panel's own box dismissing the
+row, the "earlier search" wording; on Postgres, a role with a blank display name read by its name in
+both and written alike, and a user with no role refused by the schema (NOT NULL, foreign key).
+Updated: `task-189-search` (`ignored_key_count`;
+the role's display-name column), `db/task-189-search` (the role shown as "Moderator"),
+`admin-users-panel` (the detail id hidden by default).
+
+### TASK-191 — Playform CI: "Layer 1 — Core without modules" failed once on `5435623`
 
 | Field        | Detail                                                   |
 | ------------ | -------------------------------------------------------- |
-| **ID**       | TASK-190                                                 |
-| **Type**     | Defect (admin AI, UX) and hardening (personal data)      |
+| **ID**       | TASK-191                                                 |
+| **Type**     | Defect (CI — an intermittent test)                       |
 | **Severity** | Low                                                      |
 | **Phase**    | Phase 5                                                  |
 | **Target**   | v6.0.0 (RC)                                              |
-| **Status**   | Open                                                     |
-| **Logged**   | 2026-10-29 (TASK-189 review round 3, accepted residuals) |
+| **Status**   | Open — the test is not yet identified                    |
+| **Logged**   | 2026-10-29 (Playform CI on `5435623`, the TASK-189 sync) |
 
-(a) `components/admin/search-description.ts` shows a string value the server will refuse (an
-unknown status, a non-UUID id, text over 100 characters, a role over 64) as if the search will run:
-mirror the server's checks or show "an invalid value". (b) `searchStepRecord` keeps an unknown key's
-name in `ignored_keys` when it is identifier-shaped (`jane_doe`), so a name could outlive an
-erasure: record only the number of ignored keys.
+Playform's CI step "Layer 1 — Core without modules (ADR-054)" (`npm run test:core`, with the
+database) failed once on `5435623` and passed on a re-run of the same commit. The failed run's logs
+are no longer available, so the failing test is not known. Next: when it recurs, keep the run's log
+(the failing test's name and its assertion), then run that suite repeatedly under the core config
+(`PF_TEST_MODULES=none npx jest -c jest.core.config.cjs <suite>`, and the database suites at
+`--maxWorkers=4`, as PLAYFORM_SYNC step 4) to reproduce it. Not to be fixed by guessing.
 
-_Last updated: October 29, 2026 (TASK-189 review round 3)_
+### TASK-192 — Admin screens: a logical order for roles and permissions; one wording residual
+
+| Field        | Detail                                                                 |
+| ------------ | ---------------------------------------------------------------------- |
+| **ID**       | TASK-192                                                               |
+| **Type**     | Defect (admin UX)                                                      |
+| **Severity** | Low                                                                    |
+| **Phase**    | Phase 5                                                                |
+| **Target**   | v6.0.0 (RC)                                                            |
+| **Status**   | Open                                                                   |
+| **Logged**   | 2026-10-29 (owner, a live check of the Roles screen; TASK-190 round 3) |
+
+(1) **Roles** are listed by `sort_order, name`, but the seeded `sort_order` values never lined up
+across migrations, so the list reads as arbitrary. Owner decision: staff roles first (Super Admin,
+Admin, Moderator, Safety Approver), then plans smallest to largest (Guest, Free, Daily, Monthly,
+Annual, Lifetime), then the rest; a migration corrects the values and a new role gets a sensible
+default. (2) **A role's permissions** are shown in the order the database returns
+`role_permissions`: group them by category with a heading, sorted by display name. (3) The Roles
+screen's dates in the admin format ("29 Oct 2026"). (4) TASK-190 round 3 residual: in
+`components/admin/users-search-handoff.ts`, say "the filters of the earlier search" only when the
+refused search comes after the last successful one; test the reverse order.
+
+_Last updated: October 29, 2026 (TASK-190 fixed, review rounds 1 and 2 applied; TASK-191 filed; round 3, TASK-192 filed)_
+
+_Previously updated: October 29, 2026 (TASK-189 review round 3)_
 
 _Previously updated: October 28, 2026 (TASK-189 filed and fixed)_
 

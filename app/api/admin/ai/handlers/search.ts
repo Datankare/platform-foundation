@@ -24,14 +24,25 @@
  *     (`request.invalid_value`), never ignored;
  *   - the rows come back as a table (columns and rows) the command bar shows as one; the
  *     recorded step keeps only the rows' ids and counts, the validated filters with the free
- *     text reduced to its length, and any other key by name only (searchStepRecord — the step
- *     outlives an account's erasure).
+ *     text reduced to its length, and only the number of any other keys (searchStepRecord — the
+ *     step outlives an account's erasure).
  *
  * Review round 1 (TASK-189): text over 100 characters refused, not cut; a database error logged,
  * never returned; a role matched by name or display name; the match count reported ("Showing 20
  * of N"); users who signed in within a period ordered by their last sign-in; a null filter is
  * absent; a config value shown as JSON. Round 2: the step records an allowlist (no value of a
  * refused or unknown key, the role as its length); `text` with `query` refused.
+ *
+ * TASK-190 (the owner's live check of Users with "show moderators"): the filters and their one
+ * check moved to ../search-filters.ts, shared with the Users list (which now takes the users
+ * filters, so the Users screen shows one list, not two) and the confirm panel; the result carries
+ * the filters as validated (`table.filters`) for the Users screen to apply; a users row's role is
+ * its display name; and the step keeps the number of ignored keys, not their names.
+ *
+ * Round 1 (TASK-190, S-L1): a result's `id` column is returned only to a caller whose verified
+ * role may see it (maySeeIds — admin, super_admin): searchResultFor leaves it out of the execute
+ * response for any other role, and the result line never names a row by it. The step still
+ * records the rows' ids (searchStepRecord reads the whole result).
  *
  * `query` (the old free-text field): read as the `text` filter, so an older plan that searched for
  * a name still finds it; given with `text`, refused. It is no longer in the tool's schema.
@@ -40,15 +51,38 @@
 import { withTenantTx } from "@/platform/data";
 import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
 import { AUDIT_ACTIONS } from "@/platform/auth/audit";
+import {
+  checkSearchFilter,
+  maySeeIds,
+  parseSearchFilterInput,
+  SEARCH_FILTERS,
+  SEARCH_TEXT_MAX,
+  type Filters,
+  type SearchableTable,
+  type SearchFilter,
+} from "../search-filters";
 import { renderMessage } from "@/platform/errors/messages";
 import { likeTerm } from "@/lib/pagination";
 import { logger } from "@/lib/logger";
 import { SEARCHABLE_TABLES } from "../tool-permissions";
+import { USER_STATUS_SQL } from "@/app/api/admin/users/listing";
 import { refusal, type ActionResult, type SearchCell, type SearchTable } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export type SearchableTable = keyof typeof SEARCHABLE_TABLES;
+// The filters, their limits and their one check are shared with the Users list and the confirm
+// panel (TASK-190: ../search-filters.ts); re-exported here for the handler's callers.
+export {
+  SEARCH_FILTER_NAMES,
+  SEARCH_FILTERS,
+  SEARCH_MAX_DAYS,
+  SEARCH_ROLE_MAX,
+  SEARCH_TEXT_MAX,
+  SEARCH_USER_STATUSES,
+  type Filters,
+  type SearchableTable,
+  type SearchFilter,
+} from "../search-filters";
 
 /** The most rows a search returns (review 11 L-3: the newest, in a stable order). */
 export const SEARCH_ROW_LIMIT = 20;
@@ -58,7 +92,7 @@ export const SEARCH_ROW_LIMIT = 20;
  * mirrors the admin page that requires the same permission (SEARCHABLE_TABLES):
  *
  *   users              The Users screen's list (GET /api/admin/users): id, address, display
- *                      name, role name, standing (as the status guard reads it — an expired
+ *                      name, role (its display name, else its name — TASK-190), standing (as the status guard reads it — an expired
  *                      restriction is "active", an erased account "deleted") and until when,
  *                      whether the address is verified, created, last sign-in. Never the date of
  *                      birth, the identity provider's subject, the guest token, the real name, the
@@ -112,63 +146,6 @@ export const SEARCH_COLUMNS: Readonly<Record<SearchableTable, readonly string[]>
   ],
 };
 
-/** Every filter a search may take; each table takes only those in SEARCH_FILTERS. */
-export const SEARCH_FILTER_NAMES = [
-  "text",
-  "role",
-  "status",
-  "signed_in_within_days",
-  "created_within_days",
-  "action",
-  "actor_id",
-  "target_id",
-  "within_days",
-  "category",
-] as const;
-export type SearchFilter = (typeof SEARCH_FILTER_NAMES)[number];
-
-/**
- * The filters each table takes. `text` is a substring, case-insensitive, matched as text (the
- * LIKE metacharacters escaped — likeTerm, as the Users screen's search, TASK-185):
- *
- *   users              text: address or display name; role: the role's name; status: the
- *                      standing as shown; signed_in_within_days / created_within_days: 1–3650
- *                      days back
- *   roles              text: name or display name
- *   permissions        text: code, display name or category
- *   role_permissions   text: role name or permission code
- *   entitlement_groups text: code or display name
- *   audit_log          action: one action name; text: the action names that contain it (as the
- *                      Audit log page's search); actor_id / target_id: an account id; within_days
- *   platform_config    text: key or description; category: one category
- *
- * Periods are counted back from now in days, not given as dates: the planner has no clock, so
- * "this week" is 7 days where a date would be a guess.
- */
-export const SEARCH_FILTERS: Readonly<Record<SearchableTable, readonly SearchFilter[]>> =
-  {
-    users: ["text", "role", "status", "signed_in_within_days", "created_within_days"],
-    roles: ["text"],
-    permissions: ["text"],
-    role_permissions: ["text"],
-    entitlement_groups: ["text"],
-    audit_log: ["action", "text", "actor_id", "target_id", "within_days"],
-    platform_config: ["text", "category"],
-  };
-
-/** The standings a user search may filter by — what the Users screen shows (listing.ts). */
-export const SEARCH_USER_STATUSES = [
-  "active",
-  "warned",
-  "restricted",
-  "suspended",
-  "banned",
-  "deleted",
-] as const;
-
-/** The longest period a search reaches back, in days (ten years). */
-export const SEARCH_MAX_DAYS = 3650;
-
 /** A substring match of a bound, escaped term (likeTerm); `$1 = ''` turns it off. */
 const CONTAINS = (column: string, param: string) =>
   `${column} ilike '%' || ${param} || '%'`;
@@ -184,10 +161,7 @@ const TOTAL = "count(*) over () as total";
  * filtered on before the limit: erased → deleted; a restriction or suspension whose end has
  * passed → active; otherwise the stored standing.
  */
-const USER_STATUS = `case when u.deleted_at is not null then 'deleted'
-         when u.account_status = 'restricted' and u.restricted_until <= now() then 'active'
-         when u.account_status = 'suspended' and u.suspended_until <= now() then 'active'
-         else u.account_status::text end`;
+const USER_STATUS = USER_STATUS_SQL;
 const USER_STATUS_UNTIL = `case when u.deleted_at is not null then null
          when u.account_status = 'restricted' and u.restricted_until > now() then u.restricted_until
          when u.account_status = 'suspended' and u.suspended_until > now() then u.suspended_until
@@ -201,13 +175,14 @@ const usersSql = (
   order: string
 ) => `select s.id, s.email, s.display_name, s.role, s.status,
                  s.status_until, s.email_verified, s.created_at, s.last_sign_in_at, ${TOTAL}
-            from (select u.id, u.email, u.display_name, r.name as role,
+            from (select u.id, u.email, u.display_name, r.name as role_name,
                          r.display_name as role_display_name,
+                         coalesce(nullif(btrim(r.display_name), ''), r.name) as role,
                          ${USER_STATUS} as status, ${USER_STATUS_UNTIL} as status_until,
                          u.email_verified, u.created_at, u.last_login_at as last_sign_in_at
                     from users u left join roles r on r.id = u.role_id) s
            where ($1 = '' or ${CONTAINS("s.email", "$1")} or ${CONTAINS("s.display_name", "$1")})
-             and ($2::text is null or lower(s.role) = lower($2::text)
+             and ($2::text is null or lower(s.role_name) = lower($2::text)
                   or lower(s.role_display_name) = lower($2::text))
              and ($3::text is null or s.status = $3::text)
              and ($4::int is null or s.last_sign_in_at >= now() - make_interval(days => $4::int))
@@ -279,137 +254,32 @@ export function searchSql(table: SearchableTable, f: Filters): string {
     : SEARCH_SQL[table];
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** A category: what the catalog holds (codes), nothing else. */
-const CODE = /^[\w.-]{1,64}$/;
-/** A control character: never part of a name or a search term. */
-const CONTROL = /\p{Cc}/u;
-
-/** The longest search text, in characters — longer is refused, never cut (round 1). */
-export const SEARCH_TEXT_MAX = 100;
-/** The longest role name or display name a role filter may give. */
-export const SEARCH_ROLE_MAX = 64;
-
-export type Filters = Partial<Record<SearchFilter, string | number>>;
 type Refused = { ok: false; result: ActionResult };
 type Parsed = { ok: true; filters: Filters } | Refused;
 
-const invalid = (field: string, allowed: string): Refused => ({
-  ok: false,
-  result: refusal({ code: "request.invalid_value", params: { field, allowed } }),
-});
-
-/** One filter's value, validated: the value to bind, null for none, or the refusal. */
-function parseFilter(name: SearchFilter, raw: unknown): Refused | string | number | null {
-  if (raw === undefined || raw === null) return null;
-  switch (name) {
-    case "text": {
-      const allowed = `a text of up to ${SEARCH_TEXT_MAX} characters`;
-      if (typeof raw !== "string") return invalid(name, allowed);
-      // Counted as likeTerm reads it (control characters dropped, trimmed); longer is refused.
-      if ([...raw.replace(/\p{Cc}/gu, "").trim()].length > SEARCH_TEXT_MAX) {
-        return invalid(name, allowed);
-      }
-      const term = likeTerm(raw, SEARCH_TEXT_MAX);
-      return term === "" ? null : term;
-    }
-    case "role": {
-      const allowed = `a role's name or display name, up to ${SEARCH_ROLE_MAX} characters`;
-      if (typeof raw !== "string" || CONTROL.test(raw)) return invalid(name, allowed);
-      const value = raw.trim();
-      if (value === "" || [...value].length > SEARCH_ROLE_MAX)
-        return invalid(name, allowed);
-      return value;
-    }
-    case "category":
-      if (typeof raw !== "string" || !CODE.test(raw)) {
-        return invalid(name, "a category of letters, digits, _ . or - (up to 64)");
-      }
-      return raw;
-    case "status":
-      if (
-        typeof raw !== "string" ||
-        !(SEARCH_USER_STATUSES as readonly string[]).includes(raw)
-      ) {
-        return invalid(name, SEARCH_USER_STATUSES.join(", "));
-      }
-      return raw;
-    case "action":
-      if (
-        typeof raw !== "string" ||
-        !(AUDIT_ACTIONS as readonly string[]).includes(raw)
-      ) {
-        return invalid(name, AUDIT_ACTIONS.join(", "));
-      }
-      return raw;
-    case "actor_id":
-    case "target_id":
-      if (typeof raw !== "string" || !UUID.test(raw))
-        return invalid(name, "an account id");
-      return raw.toLowerCase();
-    case "signed_in_within_days":
-    case "created_within_days":
-    case "within_days":
-      if (
-        typeof raw !== "number" ||
-        !Number.isInteger(raw) ||
-        raw < 1 ||
-        raw > SEARCH_MAX_DAYS
-      ) {
-        return invalid(name, `a whole number of days from 1 to ${SEARCH_MAX_DAYS}`);
-      }
-      return raw;
-  }
-}
-
-const isRefused = (v: unknown): v is Refused =>
-  typeof v === "object" && v !== null && (v as Refused).ok === false;
-
 /**
- * The input's filters for `table`, each validated; anything else in the input is refused. A key
- * given as null (or undefined) is absent, whatever its name (round 1: a planner that sends every
- * schema field, unused ones null, was refused).
+ * The input's filters for `table`, each checked by the shared check (../search-filters.ts);
+ * anything else in the input is refused (`request.invalid_value`), never ignored.
  */
 export function parseSearchFilters(
   table: SearchableTable,
   input: Readonly<Record<string, unknown>>
 ): Parsed {
-  const allowed = SEARCH_FILTERS[table];
-  const filters: Filters = {};
-  for (const [key, raw] of Object.entries(input)) {
-    if (key === "table" || key === "query") continue;
-    if (raw === null || raw === undefined) continue;
-    if (!(allowed as readonly string[]).includes(key)) {
-      return invalid("filters", allowed.join(", "));
-    }
-    const parsed = parseFilter(key as SearchFilter, raw);
-    if (isRefused(parsed)) return parsed;
-    if (parsed !== null) filters[key as SearchFilter] = parsed;
-  }
-  // The old free-text field, read as `text` (see the header). Every table takes `text` (a test
-  // holds this). Both given is refused, never one silently dropped (round 2).
-  const hasQuery = input.query !== undefined && input.query !== null;
-  if (hasQuery && input.text !== undefined && input.text !== null) {
-    return invalid("query", "give one of text or query, not both");
-  }
-  if (filters.text === undefined && hasQuery) {
-    const parsed = parseFilter("text", input.query);
-    if (isRefused(parsed)) {
-      return invalid("query", `a text of up to ${SEARCH_TEXT_MAX} characters`);
-    }
-    if (parsed !== null) filters.text = parsed;
-  }
-  return { ok: true, filters };
-}
-
-/** likeTerm's escaping undone, for a term matched in code rather than by LIKE. */
-function unescapeLike(term: string): string {
-  return term.replace(/\\([\\%_])/g, "$1");
+  const parsed = parseSearchFilterInput(table, input);
+  if (parsed.ok) return parsed;
+  return {
+    ok: false,
+    result: refusal({
+      code: "request.invalid_value",
+      params: { field: parsed.field, allowed: parsed.allowed },
+    }),
+  };
 }
 
 /** The bound parameters of the table's statement, from its validated filters. */
 export function searchParams(table: SearchableTable, f: Filters): unknown[] {
-  const text = f.text ?? "";
+  // The validated text is the admin's own; it is escaped for LIKE here, where it is bound.
+  const text = typeof f.text === "string" ? likeTerm(f.text, SEARCH_TEXT_MAX) : "";
   switch (table) {
     case "users":
       return [
@@ -421,8 +291,7 @@ export function searchParams(table: SearchableTable, f: Filters): unknown[] {
       ];
     case "audit_log": {
       // As the Audit log page searches: the text matches the action names that contain it.
-      const term =
-        typeof f.text === "string" ? unescapeLike(f.text).toLowerCase() : undefined;
+      const term = typeof f.text === "string" ? f.text.toLowerCase() : undefined;
       let actions: string[] | null =
         term === undefined ? null : AUDIT_ACTIONS.filter((a) => a.includes(term));
       if (typeof f.action === "string") {
@@ -517,11 +386,48 @@ export async function handleSearch(
     columns: [...columns],
     rows: fitted.shown,
     matched: Math.max(matched, rows.length),
+    // The filters as validated and applied — what the Users screen applies to its own list
+    // (TASK-190), never the planner's raw input. The admin's screen only: the step records
+    // searchStepRecord's form, which does not carry them.
+    filters: { ...parsed.filters },
   };
   return {
     success: true,
-    result: searchSummary(searched, shown.matched ?? rows.length, fitted),
+    // A row left out for size is named by its first column — never by an id the caller may not
+    // see (round 1, S-L1).
+    result: searchSummary(
+      searched,
+      shown.matched ?? rows.length,
+      fitted,
+      SEARCH_RESULT_MAX_BYTES,
+      columns[0] !== "id" || maySeeIds(admin.roleName)
+    ),
     table: shown,
+  };
+}
+
+/**
+ * A search's result as the caller's screen gets it (TASK-190 round 1, S-L1 — ids were hidden on
+ * the screen only): the `id` column is left out unless the caller's verified role may see it
+ * (maySeeIds: admin, super_admin). Only `id` — an audit entry's actor_id and target_id stay, as
+ * on the Audit log page. Any other result is returned as it is.
+ */
+export function searchResultFor(
+  result: ActionResult,
+  admin: Pick<VerifiedAdmin, "roleName">
+): ActionResult {
+  const table = result.table;
+  if (!table || maySeeIds(admin.roleName)) return result;
+  const at = table.columns.indexOf("id");
+  if (at < 0) return result;
+  const keep = (_: unknown, i: number) => i !== at;
+  return {
+    ...result,
+    table: {
+      ...table,
+      columns: table.columns.filter(keep),
+      rows: table.rows.map((row) => row.filter(keep)),
+    },
   };
 }
 
@@ -534,11 +440,6 @@ export function redactedText(value: unknown): string {
     : renderMessage("screens.admin_console.search.redacted", { length: 0 });
 }
 
-/** A key name as a step may record it: a plain identifier, or a placeholder (a key is data too). */
-const KEY_NAME = /^[a-z][a-z0-9_]{0,39}$/;
-const recordedKey = (key: string): string =>
-  KEY_NAME.test(key) ? key : renderMessage("screens.admin_console.search.redacted_key");
-
 /** The filters a step records as their length, never their words: the free-text ones. */
 const FREE_TEXT_FILTERS: ReadonlySet<string> = new Set(["text", "query", "role"]);
 
@@ -550,8 +451,9 @@ const FREE_TEXT_FILTERS: ReadonlySet<string> = new Set(["text", "query", "role"]
  *   - `table`, only when it is a searchable table;
  *   - for a search that ran, each filter of SEARCH_FILTERS[table] as parsed and validated, with
  *     the free-text ones (`text`, `query`, `role`) reduced to their length;
- *   - every other key — unknown, invalid, or any key of a refused search — by name only
- *     (`ignored_keys`), never its value;
+ *   - how many other keys there were — unknown, invalid, or any key of a refused search —
+ *     (`ignored_key_count`), never their names or values: a key's name is data too (TASK-190,
+ *     residual b of TASK-189 round 3 — an identifier-shaped name such as `jane_doe` was kept);
  *   - the rows' ids (the first column), how many were shown and matched, and the columns.
  * The admin's screen still gets the whole allowlisted table (command-bar.ts records this form and
  * returns the other).
@@ -567,30 +469,33 @@ export function searchStepRecord(
       ? (rawTable as SearchableTable)
       : undefined;
   const filters: Record<string, unknown> = table ? { table } : {};
-  const ignored: string[] = [];
+  let ignored = 0;
   const allowed: readonly string[] = table ? [...SEARCH_FILTERS[table], "query"] : [];
   for (const [key, raw] of Object.entries(input)) {
     if (key === "table") {
-      if (table === undefined && raw !== undefined && raw !== null) ignored.push(key);
+      if (table === undefined && raw !== undefined && raw !== null) ignored += 1;
       continue;
     }
     if (raw === null || raw === undefined) continue;
     if (!result.success || !allowed.includes(key)) {
-      ignored.push(recordedKey(key));
+      ignored += 1;
       continue;
     }
-    const parsed = parseFilter(key === "query" ? "text" : (key as SearchFilter), raw);
-    if (isRefused(parsed)) {
-      ignored.push(key);
-    } else if (parsed !== null) {
-      filters[key] = FREE_TEXT_FILTERS.has(key) ? redactedText(raw) : parsed;
+    const checked = checkSearchFilter(
+      key === "query" ? "text" : (key as SearchFilter),
+      raw
+    );
+    if (!checked.ok) {
+      ignored += 1;
+    } else if (checked.value !== null) {
+      filters[key] = FREE_TEXT_FILTERS.has(key) ? redactedText(raw) : checked.value;
     }
   }
   const { table: shown, ...rest } = result;
   return {
     ...rest,
     filters,
-    ...(ignored.length ? { ignored_keys: ignored } : {}),
+    ...(ignored ? { ignored_key_count: ignored } : {}),
     ...(shown
       ? {
           table: {
@@ -655,7 +560,9 @@ export function searchSummary(
   table: SearchableTable,
   matched: number,
   fitted: FittedRows,
-  maxBytes: number = SEARCH_RESULT_MAX_BYTES
+  maxBytes: number = SEARCH_RESULT_MAX_BYTES,
+  /** Name the rows left out (by their first column); false when that is an id the caller may not see. */
+  nameRows: boolean = true
 ): string {
   const shown = fitted.shown.length;
   const key =
@@ -666,7 +573,9 @@ export function searchSummary(
     table,
   });
   if (fitted.omitted.length === 0) return line;
-  const named = fitted.omitted.filter((id): id is string => id !== undefined);
+  const named = nameRows
+    ? fitted.omitted.filter((id): id is string => id !== undefined)
+    : [];
   const which = named.length
     ? ` (${named.slice(0, 20).join(", ")}${named.length > 20 ? ", …" : ""})`
     : "";

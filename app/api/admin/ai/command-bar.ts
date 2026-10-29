@@ -57,7 +57,7 @@ import {
   handleSetCapabilityMapping,
   type ActionResult,
 } from "./handlers";
-import { searchStepRecord } from "./handlers/search";
+import { searchResultFor, searchStepRecord } from "./handlers/search";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -188,7 +188,8 @@ export const ATOMIC_ACTIONS: ReadonlySet<AdminToolId> = new Set<AdminToolId>([
  * What the tool returns is what its step records. A search records searchStepRecord — the rows'
  * ids and counts, its text filters reduced to their length — because the step outlives an
  * account's erasure (TASK-189 round 1); the admin's screen gets the whole result through
- * `onResult`.
+ * `onResult` — a search's `id` column only for a caller whose verified role may see it
+ * (searchResultFor, TASK-190 round 1).
  */
 export function runtimeToolFor(
   tool: AdminToolId,
@@ -208,7 +209,9 @@ export function runtimeToolFor(
     declaredRisk: isRead ? "ordinary" : held ? "restricted" : "consequential",
     execute: async () => {
       const result = await COMMAND_BAR_HANDLERS[tool](input, admin);
-      onResult?.(result);
+      // The admin's screen: a search's `id` column only for the roles that may see it (TASK-190
+      // round 1, S-L1); the step records the whole search's form either way.
+      onResult?.(tool === "search" ? searchResultFor(result, admin) : result);
       return (tool === "search"
         ? searchStepRecord(result, input)
         : result) as unknown as Record<string, unknown>;

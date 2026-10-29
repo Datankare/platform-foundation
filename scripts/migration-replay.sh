@@ -184,11 +184,11 @@ claimed=$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.applied_migrations WH
 [ "$claimed" = "0" ] || { echo "✗ 007_seed_separation recorded as applied, but no registered role exists"; exit 1; }
 
 step "every audit action the code records is accepted by the database"
-# platform/auth/audit.ts AUDIT_ACTIONS is the list the code may write; an action the enum rejects
+# platform/auth/audit-actions.ts AUDIT_ACTIONS (re-exported by audit.ts) is the list the code may write; an action the enum rejects
 # means that record is never written (audit X-8).
-code_actions=$(sed -n '/^export const AUDIT_ACTIONS = \[/,/^\] as const;/p' "$ROOT/platform/auth/audit.ts" \
+code_actions=$(sed -n '/^export const AUDIT_ACTIONS = \[/,/^\] as const;/p' "$ROOT/platform/auth/audit-actions.ts" \
   | grep -oE '"[a-z_]+"' | tr -d '"' | LC_ALL=C sort -u)
-[ -n "$code_actions" ] || { echo "✗ could not read AUDIT_ACTIONS from platform/auth/audit.ts"; exit 1; }
+[ -n "$code_actions" ] || { echo "✗ could not read AUDIT_ACTIONS from platform/auth/audit-actions.ts"; exit 1; }
 db_actions=$("${PSQL[@]}" -At -c "SELECT unnest(enum_range(NULL::public.audit_action))::text" | LC_ALL=C sort -u)
 missing=$(comm -23 <(echo "$code_actions") <(echo "$db_actions"))
 [ -z "$missing" ] || { echo "✗ audit actions the database rejects: $missing"; exit 1; }

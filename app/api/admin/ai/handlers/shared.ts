@@ -32,6 +32,11 @@ export interface SearchTable {
   readonly rows: readonly (readonly SearchCell[])[];
   /** How many rows matched before the 20-row limit (and the size cut). */
   readonly matched?: number;
+  /**
+   * The filters as the server validated and applied them (TASK-190): the Users screen applies a
+   * users search's to its own list. Shown to the admin only — the recorded step never holds them.
+   */
+  readonly filters?: Readonly<Record<string, string | number>>;
 }
 
 export type ActionResult = {

@@ -276,9 +276,9 @@ dbDescribe("TASK-189 search: users filters", () => {
     expect(recent).not.toContain(lee);
   });
 
-  it("the role is shown by name, the address verification as yes/no", async () => {
+  it("the role is shown by its display name (TASK-190), the address verification as yes/no", async () => {
     const t = await search({ table: "users", text: `Kim ${RUN}` });
-    expect(column(t, "role")).toEqual(["moderator"]);
+    expect(column(t, "role")).toEqual(["Moderator"]);
     expect(column(t, "email_verified")).toEqual([true]);
     expect(typeof column(t, "last_sign_in_at")[0]).toBe("string");
   });
