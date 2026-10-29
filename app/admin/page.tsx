@@ -11,7 +11,9 @@ import { sectionPlaceholder } from "@/components/admin/section-hints";
 import type { AdminSection } from "@/components/admin/AdminShell";
 import AdminPromptBar from "@/components/admin/AdminPromptBar";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
-import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
+import ExecutionResultsPanel, {
+  type SearchResultTable,
+} from "@/components/admin/ExecutionResultsPanel";
 import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import { DualControlKeysPanel } from "@/components/admin/DualControlKeysPanel";
 import {
@@ -95,6 +97,8 @@ interface ExecutionResult {
   success: boolean;
   held?: boolean;
   result?: string;
+  /** A search's rows (TASK-189), shown as a table by ExecutionResultsPanel. */
+  table?: SearchResultTable;
   error?: string;
 }
 

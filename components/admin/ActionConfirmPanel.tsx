@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { describeSearch } from "./search-description";
 
 interface ActionPlan {
   message: string;
@@ -78,7 +79,7 @@ function describeAction(action: { tool: string; input: Record<string, any> }): s
         ? `Remove capability mapping "${input.capability}"`
         : `Map capability "${input.capability}" to features: ${(input.features || []).join(", ") || "none"}`;
     case "search":
-      return `Search ${input.table} table`;
+      return describeSearch(input);
     default:
       return `${tool}: ${JSON.stringify(input)}`;
   }

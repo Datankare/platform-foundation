@@ -4828,7 +4828,136 @@ errors still 503); `__tests__/admin-ui-components.test.tsx` (the declined messag
 `__tests__/check-model-ids.test.ts` (against a local stand-in API: pass, a missing ID fails naming
 it, unreachable fails, no key skips; the key is never printed); the replay check of 058.
 
-_Last updated: October 28, 2026 (TASK-186 filed and fixed; TASK-187 and TASK-188 filed)_
+### TASK-189 — The command bar's search showed and recorded every column, and ignored its query
+
+| Field        | Detail                                                           |
+| ------------ | ---------------------------------------------------------------- |
+| **ID**       | TASK-189                                                         |
+| **Type**     | Defect (personal data — data minimisation) and defect (admin AI) |
+| **Severity** | High (over-exposure); Medium (the query ignored)                 |
+| **Phase**    | Phase 5                                                          |
+| **Target**   | v6.0.0 (RC)                                                      |
+| **Status**   | Fixed on develop (v6.0.0 RC); no migration                       |
+| **Logged**   | 2026-10-28 (a live check of the admin command bar, playform-dev) |
+
+**What was wrong.** (1) **Over-exposure.** `app/api/admin/ai/handlers/search.ts` read every
+searchable table with `select to_jsonb(t) … from <table> t`: every column of every row. A search
+of `users` returned each account's date of birth, identity-provider subject, real name, ban reason,
+who changed its standing and the parental consent address — none of which the Users screen shows
+under the same permission (`admin_manage_users`) — as one JSON text in the results panel, and
+recorded it in the action's step (agent_trajectories), a second copy outside the account's own
+retention and erasure. `audit_log` returned the IP address and user agent the Audit log page does
+not show; a column added by a later migration would have been exposed unreviewed. (2) **The query
+was ignored.** The tool's schema required `query`; the handler never read it, so "show users who
+signed in this week" listed every user. (3) **The panel** showed the result as one JSON string.
+Review eval case 22.
+
+**Fix.**
+
+- **A column allowlist per table** (`SEARCH_COLUMNS`), each mirroring the admin page that requires
+  the same permission, the reason for each in the file: `users` — id, email, display name, role
+  name, status (as the Users screen reads it: an expired restriction is active, an erased account
+  deleted) and until when, email verified, created, last sign-in; `roles` — id, name, display
+  name, description, created; `permissions` — id, code, display name, category;
+  `role_permissions` — id, role name, permission code, created (not `granted_by`);
+  `entitlement_groups` — id, code, display name, active (not `created_by`); `audit_log` — id,
+  action, actor, target, when (not the IP address or user agent; **not `details`**: free-form, up
+  to 1 MiB, may carry personal data — the Audit log page shows it under the same permission, but a
+  search records its result, so a search names the entry and the page shows the rest);
+  `platform_config` — key, the value in effect for the tenant, category, description, tier,
+  overridden, updated (retired settings left out, not `updated_by`, as the Platform config page).
+  Each statement selects exactly those columns by name, and the result is built from the list.
+- **Typed filters, bound** (`SEARCH_FILTERS`): `text` (a substring, LIKE-escaped by `likeTerm`,
+  the Users screen's helper) on every table; `users` also `role`, `status`,
+  `signed_in_within_days`, `created_within_days`; `audit_log` `action`, `actor_id`, `target_id`,
+  `within_days` (and `text` as the action names containing it, as the Audit log page);
+  `platform_config` `category`. One fixed statement per table; each filter is a bound parameter
+  that is null when absent. Each value is validated and a bad one refused
+  (`request.invalid_value`), as is a filter the table does not take — never ignored. Periods are
+  days back from now, not dates: the planner has no clock. The 20-row limit and the stable order
+  are kept. The old `query` is read as `text` (an older plan that searched for a name still
+  works); both given is refused (round 2); it is gone from the schema, which now lists the filters, requires only
+  `table` (an enum of the allowlist) and allows nothing else.
+- **A table, not a JSON text.** The action returns `table: { table, columns, rows }` and a one-line
+  `result` from the catalog ("3 rows of users.", "Showing 20 of 57 matching rows of users."); the
+  recorded step holds less (round 1, below). The 256 KiB
+  cut is kept (`fitSearchRows`: whole rows, an oversized one skipped and named). The results panel
+  shows the rows as a compact, scrolling table (`SearchResultGrid`), headings and yes/no from
+  `messages/en.json` (`screens.admin_console.search`); other actions are unchanged.
+
+**Left as it was (the owner's decision).** Steps recorded by searches before this change still
+hold the whole rows wherever trajectories are stored (`agent_trajectories`, tool `search`). This
+change does not rewrite or purge them; whether to, per environment, is the owner's call.
+
+**Review round 1** (two independent finders; no Critical or High; the owner decided each answer).
+
+| Finding                                                                                                                                           | Tag    | Resolution                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The recorded step outlives erasure: display names, addresses and the admin's free text kept in `agent_trajectories`, which erasure does not scrub | Medium | The admin's screen gets the whole table; the step records `searchStepRecord` — the table, its columns, the shown rows' ids (first column), shown and matched counts, and the filters with `text` / `query` as "[redacted: N chars]" (`command-bar.ts` `runtimeToolFor`: the tool's return is the step) |
+| Role filter took codes only                                                                                                                       | Medium | Any name up to 64 characters, no control characters, trimmed; matched case-insensitively on the role's name or display name ("Support Lead", "Moderator")                                                                                                                                              |
+| A capped result read as every match                                                                                                               | Medium | `count(*) over ()` in every statement; "Showing 20 of 57 matching rows of users." (ICU plural, catalog)                                                                                                                                                                                                |
+| `text` over 100 characters was cut silently                                                                                                       | Low    | Refused (`request.invalid_value`)                                                                                                                                                                                                                                                                      |
+| The database's error message was returned and recorded                                                                                            | Low    | Logged (`logger.error`, "Admin command search failed"); the admin sees a plain failure from the catalog                                                                                                                                                                                                |
+| Every row over the size cut said "No rows match"                                                                                                  | Low    | The line counts matches, then says which rows were left out for size                                                                                                                                                                                                                                   |
+| Signed-in-within searches listed by account age                                                                                                   | Low    | A second fixed statement: `last_login_at desc nulls last, id` when `signed_in_within_days` is given                                                                                                                                                                                                    |
+| The confirm panel said only "Search users table"                                                                                                  | Low    | `describeSearch` (catalog): "Search users where role is Moderator, signed in within the last 7 days"                                                                                                                                                                                                   |
+| A null for a key the table does not take was refused                                                                                              | Low    | A null (or undefined) key is absent, before the allowlist check                                                                                                                                                                                                                                        |
+| Long cells were not cut (a table cell ignores max-width)                                                                                          | Low    | An inner block with `max-w-xs truncate`, the whole value in its `title`                                                                                                                                                                                                                                |
+| A config `true` was shown as "Yes"                                                                                                                | Low    | A JSON column is sent as its JSON text (`true`, `5`, `"true"`); yes/no only for a true boolean column                                                                                                                                                                                                  |
+| `.every` over a possibly empty list; restricted and suspended not covered                                                                         | Low    | Non-empty asserted first; accounts with an active restriction and suspension seeded, with their ends                                                                                                                                                                                                   |
+
+**Review round 2** (an independent verifier of the round-1 diff; tier High — personal data of
+minors, `billing-consent`). Items 2–13 verified; item 1 partial:
+
+| Finding                                                                                                                                                                   | Tag       | Resolution                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| N1: `searchStepRecord` copied every input key but `text` / `query` verbatim — a refused `email: "kid@example.com"`, a free-text `role` and any object value were recorded | Important | An allowlist: `table` only when searchable; for a search that ran, each filter of `SEARCH_FILTERS[table]` as parsed and validated, `text` / `query` / `role` as "[redacted: N chars]"; any other key — unknown, invalid, or every key of a refused search — by name only (`ignored_keys`; a name that is not a plain identifier as "[redacted key]"), never its value                                        |
+| `text` and `query` together: `query` silently dropped                                                                                                                     | Nit       | Refused (`request.invalid_value`, field `query`, "give one of text or query, not both"); the confirm panel says so                                                                                                                                                                                                                                                                                           |
+| `describeSearch` rendered the raw ICU template for a non-numeric day count                                                                                                | Nit       | No raw template: a day count is shown only as a whole number 1–3650, and a key the table does not take is named as "an invalid value: the search will be refused", never with its value (the panel's copy of the filters held equal to `SEARCH_FILTERS` by a test). Round 3: a string the server will refuse (an unknown status, a non-UUID id, over-long text) is still shown as given — follow-up TASK-190 |
+
+**Review round 3** (final; an independent verifier of the round-2 diff, with the TASK-189 database suites run in both repos: 371 passed each). N1 and the text-and-query refusal verified; verdict SHIP. Two residuals, accepted and filed as **TASK-190**: (a) the confirm panel shows a string value the server will refuse as if valid (Nit; the admin's own panel, nothing recorded); (b) an unknown filter key whose name is itself identifier-shaped (e.g. `jane_doe`, ≤40 characters of `[a-z0-9_]`) is kept by name in `ignored_keys` and would outlive an erasure (Low; the planner's schema allows no extra keys) — TASK-190 records only their count.
+
+**Tests.** `__tests__/task-189-search.test.ts` (no statement reads a whole row, each selects
+exactly its allowlist, the users and audit allowlists hold no sensitive column, a row carrying
+them puts none in the result or the step; each filter's bound values; LIKE escaping, the 100-
+character bound, injection attempts as bound values; 20 malformed or hostile inputs refused before
+any statement; the permission per table, before the filters; the schema);
+`__tests__/db/task-189-search.db.test.ts` (on Postgres: each statement's row keys are the
+allowlist; stored sensitive values never returned; each filter; `_` and `%` as themselves; another
+tenant never read; the config value in effect and no retired setting);
+`__tests__/task-189-search-panel.test.tsx` (the table, headings, yes/no and none, no empty table;
+round 1: long values cut with the whole in the title, JSON values as JSON, the confirm panel's
+filters). Round 1 adds: the recorded step through the governed runtime holds no address, name or
+text; a database error logged, never returned; "Showing 20 of N"; 101 characters refused; a role by
+display name; null keys absent; on Postgres, the match count, an active restriction and suspension,
+sign-ins ordered by the last, a boolean setting as `false`. Round 2 adds: a refused search
+with `email`, `display_name`, a role and an object, through the governed runtime, leaves no value
+in the stored trajectory; a search that ran records only validated filters, the role as its
+length; text with query refused; a non-numeric or out-of-range day count and a filter the table
+does not take described without a value or a template;
+`r10-search-truncation`, `rv11-hostile` L-3, `admin-ai-handlers`, `admin-tenant-data.db` updated.
+
+### TASK-190 — Search follow-ups: the confirm panel and ignored key names
+
+| Field        | Detail                                                   |
+| ------------ | -------------------------------------------------------- |
+| **ID**       | TASK-190                                                 |
+| **Type**     | Defect (admin AI, UX) and hardening (personal data)      |
+| **Severity** | Low                                                      |
+| **Phase**    | Phase 5                                                  |
+| **Target**   | v6.0.0 (RC)                                              |
+| **Status**   | Open                                                     |
+| **Logged**   | 2026-10-29 (TASK-189 review round 3, accepted residuals) |
+
+(a) `components/admin/search-description.ts` shows a string value the server will refuse (an
+unknown status, a non-UUID id, text over 100 characters, a role over 64) as if the search will run:
+mirror the server's checks or show "an invalid value". (b) `searchStepRecord` keeps an unknown key's
+name in `ignored_keys` when it is identifier-shaped (`jane_doe`), so a name could outlive an
+erasure: record only the number of ignored keys.
+
+_Last updated: October 29, 2026 (TASK-189 review round 3)_
+
+_Previously updated: October 28, 2026 (TASK-189 filed and fixed)_
 
 _Previously updated: October 28, 2026 (TASK-185 filed and fixed)_
 

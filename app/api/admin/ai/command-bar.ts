@@ -57,6 +57,7 @@ import {
   handleSetCapabilityMapping,
   type ActionResult,
 } from "./handlers";
+import { searchStepRecord } from "./handlers/search";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -181,12 +182,20 @@ export const ATOMIC_ACTIONS: ReadonlySet<AdminToolId> = new Set<AdminToolId>([
   "set_approval_policy",
 ]);
 
-/** The command-bar action as a governed runtime tool; `held` raises it over the gating line. */
+/**
+ * The command-bar action as a governed runtime tool; `held` raises it over the gating line.
+ *
+ * What the tool returns is what its step records. A search records searchStepRecord — the rows'
+ * ids and counts, its text filters reduced to their length — because the step outlives an
+ * account's erasure (TASK-189 round 1); the admin's screen gets the whole result through
+ * `onResult`.
+ */
 export function runtimeToolFor(
   tool: AdminToolId,
   input: Record<string, unknown>,
   admin: VerifiedAdmin,
-  held: boolean
+  held: boolean,
+  onResult?: (result: ActionResult) => void
 ): Tool {
   const isRead = tool === "search";
   return {
@@ -197,11 +206,13 @@ export function runtimeToolFor(
     outputSchema: { type: "object" },
     effects: isRead ? [] : ["stateWrite"],
     declaredRisk: isRead ? "ordinary" : held ? "restricted" : "consequential",
-    execute: async () =>
-      (await COMMAND_BAR_HANDLERS[tool](input, admin)) as unknown as Record<
-        string,
-        unknown
-      >,
+    execute: async () => {
+      const result = await COMMAND_BAR_HANDLERS[tool](input, admin);
+      onResult?.(result);
+      return (tool === "search"
+        ? searchStepRecord(result, input)
+        : result) as unknown as Record<string, unknown>;
+    },
     ...(ATOMIC_ACTIONS.has(tool) ? { atomic: true } : {}),
     // An approved run that reports failure did not take effect: its approval is kept for a retry
     // (review 10 H2).
@@ -231,7 +242,11 @@ export async function runCommandBarAction(args: {
 }): Promise<CommandBarOutcome> {
   const { tool, input, admin, trajectoryId, stepIndex } = args;
   const held = await isDualControlledAction(tool);
-  const runtimeTool = runtimeToolFor(tool, input, admin, held);
+  // The handler's whole result, for the admin; the step records the tool's (runtimeToolFor).
+  let full: ActionResult | undefined;
+  const runtimeTool = runtimeToolFor(tool, input, admin, held, (r) => {
+    full = r;
+  });
   const actor = commandBarActor(admin);
   const trajectoryStore = getTrajectoryStore();
   const proposalStore = getProposalStore();
@@ -248,7 +263,7 @@ export async function runCommandBarAction(args: {
       trajectoryStore,
       proposalStore,
     });
-    const result = invoked.output as unknown as ActionResult;
+    const result = full ?? (invoked.output as unknown as ActionResult);
     return {
       kind: "ran",
       result:

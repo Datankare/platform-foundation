@@ -379,23 +379,33 @@ describe("restrictions handlers", () => {
 });
 
 describe("search handler", () => {
-  it("returns the rows read", async () => {
-    fakeData().answer = () => [{ r: { id: "00000000-0000-4000-8000-00000000b001" } }];
+  it("returns the rows read, as a table of the allowlisted columns (TASK-189)", async () => {
+    fakeData().answer = () => [
+      {
+        id: "00000000-0000-4000-8000-00000000b001",
+        email: "a@x.test",
+        date_of_birth: "x",
+      },
+    ];
     const res = await handleSearch({ table: "users" }, admin);
     expect(res.success).toBe(true);
-    expect(res.result).toMatch(/00000000-0000-4000-8000-00000000b001/);
+    expect(res.result).toBe("1 row of users.");
+    expect(res.table?.rows[0][0]).toBe("00000000-0000-4000-8000-00000000b001");
+    expect(JSON.stringify(res)).not.toMatch(/date_of_birth|"x"/);
     // The 20 newest rows, in a stable order (review 11 L-3).
-    expect(fakeData().statements[0].sql).toBe(
-      "select to_jsonb(t) as r from users t order by t.created_at desc, t.id limit 20"
+    expect(fakeData().statements[0].sql).toMatch(
+      /order by s\.created_at desc, s\.id limit 20$/
     );
   });
 
-  it("surfaces a query error", async () => {
+  it("reports a query error without the database's message (TASK-189 round 1)", async () => {
     fakeData().answer = () => {
       throw new Error("bad");
     };
     const res = await handleSearch({ table: "users" }, admin);
-    expect(res).toMatchObject({ success: false, error: "bad" });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/^The search could not be run/);
+    expect(res.error).not.toMatch(/bad/);
   });
 });
 

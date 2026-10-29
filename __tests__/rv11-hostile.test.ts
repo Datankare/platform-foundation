@@ -58,7 +58,7 @@ import {
   storedJsonViolation,
   TRAJECTORY_MAX_STEPS,
 } from "@/platform/errors/json-limits";
-import { searchResultText } from "@/app/api/admin/ai/handlers/search";
+import { fitSearchRows, searchSummary } from "@/app/api/admin/ai/handlers/search";
 import { createSession, dispatch, loadSession } from "@/platform/app-framework/session";
 import { resetActivityStateStore } from "@/platform/app-framework";
 import type { AgentIdentity, Step, Tool } from "@/platform/kernel";
@@ -541,17 +541,17 @@ describe("rv11 L-1: strings count by their length", () => {
 
 describe("rv11 L-3: an oversized row hides no other row", () => {
   it("the oversized row is skipped and named; every later row that fits is shown", () => {
+    // TASK-189: rows are a table's cells (id first), no longer whole JSON rows.
     const rows = [
-      { id: "big-1", details: "x".repeat(300 * 1024) },
-      ...Array.from({ length: 19 }, (_, i) => ({ id: `r${i}` })),
+      ["big-1", "x".repeat(300 * 1024)],
+      ...Array.from({ length: 19 }, (_, i) => [`r${i}`, "ok"]),
     ];
-    const text = searchResultText(rows);
-    const shown = JSON.parse(text.slice(0, text.lastIndexOf("]") + 1)) as {
-      id: string;
-    }[];
-    expect(shown.map((r) => r.id)).toEqual(rows.slice(1).map((r) => r.id));
-    expect(text).toContain("1 row not shown (big-1)");
-    expect(text).toContain("showing 19 of 20");
+    const fitted = fitSearchRows(rows, ["id", "description"]);
+    expect(fitted.shown.map((r) => r[0])).toEqual(rows.slice(1).map((r) => r[0]));
+    const text = searchSummary("roles", rows.length, fitted);
+    expect(text).toBe(
+      "Showing 19 of 20 matching rows of roles. 1 row left out (big-1): the result is limited to 256 KiB."
+    );
   });
 });
 

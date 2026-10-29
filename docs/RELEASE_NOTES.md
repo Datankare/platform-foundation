@@ -16,11 +16,24 @@ deploying Playform v0.9.0, a race behind a flaky test (TASK-175), and an address
 updated (TASK-176), closed in the platform — and review 16 of the last three, and the subject
 made the Cognito `sub` for every provider (TASK-177), and review 17 of sign-out and the Cognito
 provider (TASK-178), and the admin Users screen with the address kept in step (TASK-185), and the
-standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186). Deploy:
+standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186), and the
+command bar's search limited to what the admin pages show (TASK-189). Deploy:
 migrations 053, 054, 055, 056, 057 and 058 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
+- **The command bar's search shows what the admin pages show, and reads its filters
+  (TASK-189).** It selected whole rows (`to_jsonb`) — a user's date of birth, identity-provider
+  subject, real name, ban reason, parental consent address — and showed and recorded them; and it
+  ignored its `query`. Each table now has a column allowlist mirroring its page (audit `details`
+  stays on the Audit log page), and typed, bound filters (`text`, and per table `role`, `status`,
+  `signed_in_within_days`, `created_within_days`, `action`, `actor_id`, `target_id`,
+  `within_days`, `category`); a bad value or an unknown filter is refused. The result is a table
+  (`ActionResult.table`), shown as one in the results panel, with "Showing 20 of N" when capped;
+  the confirm panel names the filters. The recorded step keeps only the rows' ids and counts, the
+  validated filters with free text (text, role) as its length, and any other key by name only. A
+  role matches its name or display name. `query` is still read as `text`; both together are
+  refused. No migration. TASKS TASK-189; review eval case 22.
 - **The standard tier on Sonnet 5.5; prompt caching, governed (#461, #462, TASK-186).** Sonnet 4
   was retired on 2026-06-15; `standard` is now `claude-sonnet-5-5` ($2 / $10 per 1M). It rejects
   `temperature` (dropped for it: `ModelConfig.acceptsTemperature`, now **required** on every

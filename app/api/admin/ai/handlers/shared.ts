@@ -19,6 +19,21 @@ import {
   type GovernedConfigOutcome,
 } from "@/platform/admin/governed-config";
 
+/** One value of a search result's table: text, a number, yes/no, or none. */
+export type SearchCell = string | number | boolean | null;
+
+/**
+ * A search's rows as a table (TASK-189): the table read, its allowlisted columns, and each row's
+ * cells in that order. What the command bar shows, and all the recorded step holds of the rows.
+ */
+export interface SearchTable {
+  readonly table: string;
+  readonly columns: readonly string[];
+  readonly rows: readonly (readonly SearchCell[])[];
+  /** How many rows matched before the 20-row limit (and the size cut). */
+  readonly matched?: number;
+}
+
 export type ActionResult = {
   /** True only when the action took effect. A held action is never a success (review 9 H1). */
   success: boolean;
@@ -30,6 +45,8 @@ export type ActionResult = {
   held?: boolean;
   proposalId?: string;
   result?: string;
+  /** A search's rows, for the command bar to show as a table (TASK-189); `result` says how many. */
+  table?: SearchTable;
   error?: string;
   /** The coded refusal, when an authorization rule refused the action (ADR-051). */
   code?: string;

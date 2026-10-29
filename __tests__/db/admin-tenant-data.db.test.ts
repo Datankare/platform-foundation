@@ -838,15 +838,29 @@ dbDescribe(`${SUITE} handleSearch (command bar)`, () => {
   it("reads users — this tenant's only", async () => {
     const res = await a.run(() => handleSearch({ table: "users" }, barAdmin));
     expect(res.success).toBe(true);
-    const rows = JSON.parse(res.result!);
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((r: { tenant_id: string }) => r.tenant_id === a.id)).toBe(true);
+    const ids = res.table!.rows.map((r) => r[0]);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids).not.toContain(outsider);
+    const inA = await q<{ id: string }>(
+      "select id from users where tenant_id = $1::uuid and id = any($2::uuid[])",
+      [a.id, ids]
+    );
+    expect(inA.length).toBe(ids.length);
+  });
+
+  it("a text search never finds another tenant's user (TASK-189)", async () => {
+    // "Alice Elsewhere" is B's: a text search from A never finds her.
+    const res = await a.run(() =>
+      handleSearch({ table: "users", text: "Elsewhere" }, barAdmin)
+    );
+    expect(res.success).toBe(true);
+    expect(res.table!.rows).toEqual([]);
   });
 
   it("reads the shared catalog", async () => {
     const res = await a.run(() => handleSearch({ table: "roles" }, barAdmin));
     expect(res.success).toBe(true);
-    expect(JSON.parse(res.result!).length).toBeGreaterThan(0);
+    expect(res.table!.rows.length).toBeGreaterThan(0);
   });
 
   it("refuses a table outside the allowlist", async () => {
