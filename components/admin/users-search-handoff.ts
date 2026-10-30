@@ -26,7 +26,8 @@ export interface ExecutedResult {
   /**
    * A refused or failed users search; the list keeps the filters it shows (round 1, item 7):
    * "previous" — those it had before the plan; "earlier" — an earlier users search of the same
-   * plan's (round 2, N-3: the row says which).
+   * plan's (round 2, N-3: the row says which). Not set when the search the list shows came later
+   * in the plan (TASK-192): that search's own row says it is shown.
    */
   keptFilters?: KeptFilters;
 }
@@ -53,8 +54,9 @@ const isUsersSearch = (action: SentAction | undefined): boolean =>
  * Round 1: an earlier users search of the same plan is marked `earlier` (one line, no table —
  * item 6); a users search that was refused or failed (known by the action sent at its index: the
  * execute route answers in the plan's order) hands nothing over, and when the list still shows
- * filters its row is marked `keptFilters` so it says so (item 7). `current` is the list's filters
- * now.
+ * filters its row is marked `keptFilters` so it says so (item 7): "earlier" only when the users
+ * search the list shows ran before it (TASK-192); one that ran after it says so on its own row.
+ * `current` is the list's filters now.
  */
 export function applyUsersSearch(
   section: AdminSection | null,
@@ -81,6 +83,9 @@ export function applyUsersSearch(
       }
       if (r.tool === "search" && !r.success && !r.held && isUsersSearch(actions[i])) {
         if (!shownAfter) return r;
+        // A users search succeeded after this one (TASK-192): the list shows that later search's
+        // filters and its own row says so ("shown in the list below") — nothing to add here.
+        if (last > i) return r;
         return { ...r, keptFilters: last < 0 ? "previous" : "earlier" };
       }
       return r;

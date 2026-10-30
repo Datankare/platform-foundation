@@ -62,6 +62,7 @@ import { logger } from "@/lib/logger";
 import { likeTerm, pageParams } from "@/lib/pagination";
 import { apiError, internalError, readJsonObject } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { roleOrderSql } from "@/platform/auth/catalog-order";
 import {
   COMMAND_BAR_ACTOR_ID,
   isDualControlledAction,
@@ -146,6 +147,9 @@ function choice<T extends string>(
   return (allowed as readonly string[]).includes(raw) ? (raw as T) : null;
 }
 
+/** The roles for the role picker, in the catalog's order (TASK-192, catalog-order.ts). */
+const ROLE_CATALOG_SQL = `select id, name, display_name from roles order by ${roleOrderSql()}`;
+
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_users");
   if (denied) return denied;
@@ -201,7 +205,8 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       const granted = ids.length
         ? (await tx.query<GrantRow>(GRANTS_SQL, [ids])).rows
         : [];
-      const catalog = await tx.query<RoleRow>("select id, name, display_name from roles");
+      // The role picker's order: the catalog's (TASK-192).
+      const catalog = await tx.query<RoleRow>(ROLE_CATALOG_SQL);
       return { users: page.rows, roles: catalog.rows, grants: granted };
     }));
   } catch (error) {

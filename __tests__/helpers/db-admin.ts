@@ -215,7 +215,8 @@ export async function createCatalog(
     for (const [label, perms] of Object.entries(spec.roles)) {
       const name = catalogName(run, label);
       const { rows } = await tx.query<{ id: string }>(
-        "insert into roles (name, display_name, description, sort_order) values ($1, $1, $2, 98) returning id",
+        // The column's default place: after the seeded roles, as a new role (TASK-192).
+        "insert into roles (name, display_name, description) values ($1, $1, $2) returning id",
         [name, `Test role ${label}`]
       );
       out.roles[label] = rows[0].id;

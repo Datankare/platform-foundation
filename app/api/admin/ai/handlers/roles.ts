@@ -31,6 +31,7 @@ import {
   type UserRef,
 } from "@/platform/auth/role-lookup";
 import { mayChangePlatformCatalog } from "@/platform/admin/config-scope";
+import { NEW_ROLE_SORT_ORDER } from "@/platform/auth/catalog-order";
 import {
   catalogTx,
   failedAsResult,
@@ -90,9 +91,10 @@ export async function handleCreateRole(
         catalogTx(async (tx) => {
           const { rows } = await tx.query<{ id: string }>(
             `insert into roles (name, display_name, description, is_default, sort_order)
-             values ($1, $2, $3, false, 99)
+             values ($1, $2, $3, false, $4::int)
              returning id`,
-            [name ?? null, display_name ?? null, description || ""]
+            // After the seeded roles, with the rest by name (TASK-192; the column's default too).
+            [name ?? null, display_name ?? null, description || "", NEW_ROLE_SORT_ORDER]
           );
           if (granted.length > 0) {
             await tx.query(
@@ -218,10 +220,16 @@ export async function handleDuplicateRole(
           const { rows } = await tx.query<{ id: string }>(
             `insert into roles (name, display_name, description, is_default, sort_order)
              select $1, $2, 'Duplicated from ' || $3 || '. ' || coalesce(s.description, ''),
-                    false, 99
+                    false, $5::int
                from roles s where s.id = $4::uuid
              returning id`,
-            [new_name ?? null, new_display_name ?? null, String(source_role), source.id]
+            [
+              new_name ?? null,
+              new_display_name ?? null,
+              String(source_role),
+              source.id,
+              NEW_ROLE_SORT_ORDER,
+            ]
           );
           const copied = await tx.query(
             `insert into role_permissions (role_id, permission_id)

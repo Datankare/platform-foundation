@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useId, useRef } from "react";
 import {
   ADMIN_HIGHLIGHT_DURATION_SECONDS,
   ADMIN_HIGHLIGHT_MIN_SECONDS,
@@ -11,6 +11,13 @@ import {
   isPanelUnavailable,
   PanelUnavailable,
 } from "@/components/admin/PanelUnavailable";
+import {
+  formatDate,
+  formatDateTime,
+  fullTimestamp,
+  permissionCategoryLabel,
+} from "@/components/admin/admin-format";
+import { groupPermissions } from "@/platform/auth/catalog-order";
 
 const thClass =
   "text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800";
@@ -99,10 +106,30 @@ interface RolePermission {
   category: string;
 }
 
+/**
+ * A date as the admin console writes it (TASK-192, as TASK-190's Users screen): "29 Oct 2026" — or
+ * with its time, "29 Oct 2026, 14:05" — and the whole timestamp in UTC in the tooltip.
+ */
+function AdminDate({
+  iso,
+  withTime = false,
+}: {
+  iso?: string | null;
+  withTime?: boolean;
+}) {
+  if (!iso) return <>{formatDate(null)}</>;
+  return (
+    <time dateTime={iso} title={fullTimestamp(iso)}>
+      {withTime ? formatDateTime(iso) : formatDate(iso)}
+    </time>
+  );
+}
+
 export function RolesDataView({ data }: { data: any }) {
   const roles = data?.roles || [];
   const [expandedRole, setExpandedRole] = useState<string | null>(null);
   const highlighted = useHighlight(roles.map((r: any) => r.id));
+  const uid = useId();
 
   if (roles.length === 0) {
     return (
@@ -125,13 +152,16 @@ export function RolesDataView({ data }: { data: any }) {
           </tr>
         </thead>
         <tbody>
-          {roles.map((r: any) => {
+          {roles.map((r: any, i: number) => {
             const isExpanded = expandedRole === r.id;
             const isHighlighted = highlighted.has(r.id);
+            const toggle = () => setExpandedRole(isExpanded ? null : r.id);
+            const detailId = `${uid}-role-${i}`;
             return (
               <React.Fragment key={r.id}>
                 <tr
-                  onClick={() => setExpandedRole(isExpanded ? null : r.id)}
+                  // A pointer's shortcut; the disclosure button below is the control (TASK-192).
+                  onClick={toggle}
                   className={`cursor-pointer transition-colors ${
                     isHighlighted
                       ? "bg-green-900/30"
@@ -145,47 +175,85 @@ export function RolesDataView({ data }: { data: any }) {
                   </td>
                   <td className={tdClass}>{r.displayName}</td>
                   <td className={tdClass}>
-                    <span className="text-blue-400 cursor-pointer">
+                    {/* Keyboard and screen readers: a disclosure button (TASK-192 round 1). */}
+                    <button
+                      type="button"
+                      className="text-blue-400 cursor-pointer"
+                      aria-expanded={isExpanded}
+                      aria-controls={isExpanded ? detailId : undefined}
+                      aria-label={renderMessage(
+                        "screens.admin_console.roles.permissions_toggle",
+                        {
+                          count: Number(r.permissionCount) || 0,
+                          role: String(r.displayName ?? r.name),
+                        }
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggle();
+                      }}
+                    >
                       {r.permissionCount}{" "}
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-gray-400" aria-hidden="true">
                         {isExpanded ? "▲" : "▼"}
                       </span>
-                    </span>
+                    </button>
                   </td>
                   <td className={`${tdClass} text-xs text-gray-400`}>
-                    {r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "—"}
+                    <AdminDate iso={r.createdAt} />
                   </td>
                   <td className={`${tdClass} text-xs text-gray-400`}>
-                    {r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : "—"}
+                    <AdminDate iso={r.updatedAt} />
                   </td>
                 </tr>
                 {isExpanded && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-3 bg-[#0d1320]">
+                    <td id={detailId} colSpan={5} className="px-4 py-3 bg-[#0d1320]">
                       {r.description && (
                         <p className="text-xs text-gray-400 mb-3">{r.description}</p>
                       )}
                       {r.permissions && r.permissions.length > 0 ? (
-                        <div className="grid grid-cols-2 gap-2">
-                          {r.permissions.map((p: RolePermission) => (
-                            <div key={p.code} className="flex items-center gap-2 text-xs">
-                              <span className="text-green-400">✓</span>
-                              <code className="text-gray-400">{p.code}</code>
-                              <span className="text-gray-400">{p.displayName}</span>
-                            </div>
-                          ))}
+                        // By category, each under its heading, by display name within it (TASK-192).
+                        <div className="space-y-3">
+                          {groupPermissions(r.permissions as RolePermission[]).map(
+                            (g, j) => (
+                              <section
+                                key={g.category}
+                                aria-labelledby={`${detailId}-group-${j}`}
+                              >
+                                <h3
+                                  id={`${detailId}-group-${j}`}
+                                  className="text-xs font-semibold text-gray-300 mb-1"
+                                >
+                                  {permissionCategoryLabel(g.category)}
+                                </h3>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {g.permissions.map((p) => (
+                                    <div
+                                      key={p.code}
+                                      className="flex items-center gap-2 text-xs"
+                                    >
+                                      <span className="text-green-400">✓</span>
+                                      <code className="text-gray-400">{p.code}</code>
+                                      <span className="text-gray-400">
+                                        {p.displayName}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </section>
+                            )
+                          )}
                         </div>
                       ) : (
                         <p className="text-xs text-gray-400">No permissions assigned.</p>
                       )}
                       <div className="mt-3 text-xs text-gray-400 flex gap-4">
                         <span>
-                          Created:{" "}
-                          {r.createdAt ? new Date(r.createdAt).toLocaleString() : "—"}
+                          Created: <AdminDate iso={r.createdAt} withTime />
                         </span>
                         <span>
-                          Modified:{" "}
-                          {r.updatedAt ? new Date(r.updatedAt).toLocaleString() : "—"}
+                          Modified: <AdminDate iso={r.updatedAt} withTime />
                         </span>
                       </div>
                     </td>
@@ -252,7 +320,7 @@ export function AuditDataView({ data }: { data: any }) {
       {entries.map((e: any) => (
         <tr key={e.id}>
           <td className={`${tdClass} text-xs`}>
-            {new Date(e.createdAt).toLocaleString()}
+            <AdminDate iso={e.createdAt} withTime />
           </td>
           <td className={tdClass}>
             <code className="text-xs">{e.action}</code>

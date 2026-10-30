@@ -510,6 +510,15 @@
       "details": {
         "show": "Show details",
         "hide": "Hide details"
+      },
+      "roles": {
+        "category_admin": "Administration",
+        "category_moderation": "Moderation",
+        "category_gameplay": "Gameplay",
+        "category_social": "Social",
+        "category_profile": "Profile",
+        "category_privacy": "Privacy",
+        "permissions_toggle": "{count, plural, one {# permission} other {# permissions}} of {role}"
       }
     },
     "kill_switch": {

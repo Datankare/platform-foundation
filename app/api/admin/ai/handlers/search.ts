@@ -52,6 +52,11 @@ import { withTenantTx } from "@/platform/data";
 import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
 import { AUDIT_ACTIONS } from "@/platform/auth/audit";
 import {
+  PERMISSION_CATEGORY_ORDER,
+  permissionOrderSql,
+  roleOrderSql,
+} from "@/platform/auth/catalog-order";
+import {
   checkSearchFilter,
   maySeeIds,
   parseSearchFilterInput,
@@ -191,27 +196,32 @@ const usersSql = (
 
 /**
  * The statement each table is read with — fixed text, its filters bound parameters in the order
- * searchParams gives them, the 20 newest rows, ties broken by the key so the order is stable.
+ * searchParams gives them, the 20 newest rows (roles, permissions and role permissions: the first
+ * 20 in the Roles screen's order, TASK-192), ties broken by the key so the order is stable.
  * Each selects exactly SEARCH_COLUMNS[table], by name, then the match count.
  */
 export const SEARCH_SQL: Readonly<Record<SearchableTable, string>> = {
   users: usersSql("s.created_at desc, s.id"),
-  // $1 text
+  // $1 text. In the Roles screen's order (TASK-192): sort_order, then name.
   roles: `select id, name, display_name, description, created_at, ${TOTAL} from roles
            where ($1 = '' or ${CONTAINS("name", "$1")} or ${CONTAINS("display_name", "$1")})
-           order by created_at desc, id limit ${SEARCH_ROW_LIMIT}`,
-  // $1 text
+           order by ${roleOrderSql()}, id limit ${SEARCH_ROW_LIMIT}`,
+  // $1 text, $2 the category order (PERMISSION_CATEGORY_ORDER). As the Roles screen orders them
+  // (TASK-192 round 1): category, then display name, then code.
   permissions: `select id, code, display_name, category, ${TOTAL} from permissions
                  where ($1 = '' or ${CONTAINS("code", "$1")} or ${CONTAINS("display_name", "$1")}
                         or ${CONTAINS("category", "$1")})
-                 order by created_at desc, id limit ${SEARCH_ROW_LIMIT}`,
-  // $1 text
+                 order by ${permissionOrderSql("$2")}, id limit ${SEARCH_ROW_LIMIT}`,
+  // $1 text, $2 the category order (PERMISSION_CATEGORY_ORDER). As the Roles screen lists them
+  // (TASK-192): by role (sort_order, name), then category — those in $2 in its order, any other
+  // after them by name, case ignored — then the permission's display name and code.
   role_permissions: `select rp.id, r.name as role, p.code as permission, rp.created_at, ${TOTAL}
                        from role_permissions rp
                        join roles r on r.id = rp.role_id
                        join permissions p on p.id = rp.permission_id
                       where ($1 = '' or ${CONTAINS("r.name", "$1")} or ${CONTAINS("p.code", "$1")})
-                      order by rp.created_at desc, rp.id limit ${SEARCH_ROW_LIMIT}`,
+                      order by ${roleOrderSql("r")}, ${permissionOrderSql("$2", "p")}, rp.id
+                      limit ${SEARCH_ROW_LIMIT}`,
   // $1 text
   entitlement_groups: `select id, code, display_name, is_active, ${TOTAL} from entitlement_groups
                         where ($1 = '' or ${CONTAINS("code", "$1")}
@@ -302,6 +312,9 @@ export function searchParams(table: SearchableTable, f: Filters): unknown[] {
     }
     case "platform_config":
       return [text, f.category ?? null];
+    case "permissions":
+    case "role_permissions":
+      return [text, [...PERMISSION_CATEGORY_ORDER]];
     default:
       return [text];
   }

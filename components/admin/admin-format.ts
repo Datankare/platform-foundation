@@ -11,6 +11,7 @@
  */
 
 import { renderMessage } from "@/platform/errors/messages";
+import { PERMISSION_CATEGORY_ORDER, normalCategory } from "@/platform/auth/catalog-order";
 
 const t = (key: string, values?: Record<string, string | number>) =>
   renderMessage(`screens.admin_console.users.${key}`, values);
@@ -106,4 +107,18 @@ export function shownStatus(user: {
   return user.statusUntil
     ? t("status_until", { status, date: formatDate(user.statusUntil) })
     : status;
+}
+
+/**
+ * A permission category's heading on the Roles screen (TASK-192): its catalog name
+ * ("Administration") for the categories the platform defines, in any case ("Admin" too), else the
+ * category in lower case with spaces and a capital ("Data_Export" → "Data export") — the group
+ * key (normalCategory).
+ */
+export function permissionCategoryLabel(category: string): string {
+  const key = normalCategory(category);
+  if (PERMISSION_CATEGORY_ORDER.includes(key))
+    return renderMessage(`screens.admin_console.roles.category_${key}`);
+  const words = key.replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : t("dash");
 }

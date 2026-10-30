@@ -5122,7 +5122,7 @@ are no longer available, so the failing test is not known. Next: when it recurs,
 | **Severity** | Low                                                                    |
 | **Phase**    | Phase 5                                                                |
 | **Target**   | v6.0.0 (RC)                                                            |
-| **Status**   | Open                                                                   |
+| **Status**   | Fixed on develop (v6.0.0 RC); migration 059                            |
 | **Logged**   | 2026-10-29 (owner, a live check of the Roles screen; TASK-190 round 3) |
 
 (1) **Roles** are listed by `sort_order, name`, but the seeded `sort_order` values never lined up
@@ -5135,7 +5135,108 @@ screen's dates in the admin format ("29 Oct 2026"). (4) TASK-190 round 3 residua
 `components/admin/users-search-handoff.ts`, say "the filters of the earlier search" only when the
 refused search comes after the last successful one; test the reverse order.
 
-_Last updated: October 29, 2026 (TASK-190 fixed, review rounds 1 and 2 applied; TASK-191 filed; round 3, TASK-192 filed)_
+**Fix.**
+
+- **One definition of the order** (`platform/auth/catalog-order.ts`, new, client-safe):
+  `SEEDED_ROLE_SORT_ORDER` (super_admin 10, admin 20, moderator 30, safety_approver 40, guest 50,
+  free 60, daily 70, monthly 80, annual 90, lifetime 100 — gaps of 10 leave room for a role between
+  two), `NEW_ROLE_SORT_ORDER` (1000) and `roleSortOrder(name)`; `PERMISSION_CATEGORY_ORDER`
+  (admin, moderation, gameplay, social, profile, privacy — staff capabilities first, as the roles
+  are, then what a player does; any other category after them, alphabetically),
+  `compareCategories`, `comparePermissions` (category, then display name ignoring case, then code:
+  a total order), `compareRoles` and `groupPermissions`; round 1 added `compareNames`
+  (case-insensitively, then exactly — round 2: by code point), `normalCategory` (a category's case
+  and surrounding whitespace ignored) and the SQL each statement orders by, `roleOrderSql` and `permissionOrderSql`
+  (`lower(x) collate "C", x collate "C"`, so Postgres's linguistic collation — Supabase's
+  en_US.UTF-8 — cannot order names otherwise than the browser).
+- **Migration 059** (`059_roles_sort_order.sql`): one `update … where name = '<role>' and
+sort_order <> <value>` per seeded role (a role a database lacks matches no row), any other role
+  still at an old default — 0 or 99 (dev's `tester`; a console-made role) — to 1000, a value a
+  consumer chose kept (round 1), and, first, `alter column sort_order set default 1000`, under
+  `set local lock_timeout = '5s'` (round 1).
+  Idempotent: an update touches only a row whose value differs, so a re-run changes no row and no
+  `updated_at` (the roles trigger sets it on every update). The first run moves each reordered
+  role's Modified date to that day — accepted, said in the migration guide. The replay
+  (`scripts/migration-replay.sh`, step "059") reads both constants from `catalog-order.ts` and
+  checks the database against them, runs 059 over a database with roles of its own at 55 (kept),
+  99 and 0 (moved), one inserted with the default, `lifetime` missing and `admin` out of place
+  (rolled back), and applies it again expecting no change.
+- **A new role's place.** The column default and the command bar's `create_role` and
+  `duplicate_role` (`handlers/roles.ts`, a bound `NEW_ROLE_SORT_ORDER`; they wrote 99) both give
+  1000, so a new role follows the seeded ones and sorts among the rest by name — the owner's "then
+  the rest by name", which a computed max+10 would not give (it orders by creation). The value is
+  written by the code as well as defaulted, so it holds even before 059 is applied. There is no
+  other create path (`/api/admin/roles` is GET only).
+- **Every list of roles by `sort_order`, then name** (round 1: `roleOrderSql`): the Roles screen (`GET /api/admin/roles`,
+  already), the Users screen's role picker (`GET /api/admin/users` `roles`, unordered before), the
+  command bar's search of `roles` (was newest first) and the planner's context for the Roles and
+  Users panels (`app/api/admin/ai/route.ts`; round 1: the Roles and Entitlements contexts'
+  permissions in the screen's category order). The search's `permissions` (round 1) and
+  `role_permissions` follow the Roles screen: role (`sort_order, name`), then category in
+  `PERMISSION_CATEGORY_ORDER` — bound as `$2`, never SQL text — then display name and code.
+  Entitlements list no roles; the users search's `role` column is a value, not a list.
+- **A role's permissions, grouped.** `GET /api/admin/roles` sorts each role's permissions (read
+  from `role_permissions` in no order) and `availablePermissions` with `comparePermissions`. The
+  Roles screen's expanded row (`components/admin/AdminDataViews.tsx`) shows one section per
+  category (round 1: a `<section aria-labelledby>` named by its `<h3>`), headed by its catalog name (`screens.admin_console.roles.category_*`: Administration,
+  Moderation, Gameplay, Social, Profile, Privacy; any other category by its stored name, readable:
+  `permissionCategoryLabel` in `admin-format.ts`), its permissions by display name. No other
+  screen lists a role's permissions.
+- **Dates.** The Roles screen's Created and Modified columns read "29 Oct 2026", the expanded
+  "Created: … Modified: …" "29 Oct 2026, 14:05" (it showed the time), each a `<time>` with the
+  whole UTC timestamp in its tooltip (`formatDate`, `formatDateTime`, `fullTimestamp`, as TASK-190).
+  Also converted, the same way: the Audit log view's Time (`AuditDataView`, the console's `audit`
+  section). Not converted: `components/admin/AdminDataPanels.tsx` and `AdminConfigPanels.tsx`
+  (imported by nothing — dead in both repositories) and `components/auth/ProfilePage.tsx` (not an
+  admin screen).
+- **Residual (4).** `applyUsersSearch`: a refused users search that comes before the last
+  successful one gets no kept-filters note — the list shows the later search's filters and that
+  search's own row says so ("shown in the list below"). After it, still "the filters of the
+  earlier search in this plan"; with none, "the previous filters".
+- **Tests.** `__tests__/task-192-order.test.tsx` (the seeded order and its gaps, `roleSortOrder`
+  for an unknown or inherited name, categories and permissions in a total order whatever the input
+  order, the groups, the headings; the Roles screen's dates and tooltips, the groups under their
+  headings by name, a missing or unreadable date, the roles in the server's order, the Audit log's
+  time; the search statements' order and the bound category order; the hand-off before, between
+  and after successful searches, and on screen). `__tests__/db/task-192-catalog-order.db.test.ts`
+  (on Postgres: each seeded role's value and the column default against the code; a role created
+  and one duplicated through the command bar at 1000; `GET /api/admin/roles` in the owner's order
+  then the rest by name, each role's permissions by category then name, an unknown category last,
+  `availablePermissions` in order; the Users route's roles; the search's roles and role
+  permissions). `__tests__/helpers/db-admin.ts` creates its test roles with the column's default
+  (was 98, between annual and lifetime). Playform's live admin journey checks the Users route's
+  roles order on playform-dev, which also shows whether 059 was applied there.
+
+**Review round 1** (two independent finders: SHIP, nothing Medium or above). Every finding fixed. Tags are REVIEW.md's (Important: a defect this change introduced, its severity in brackets; Nit; Pre-existing):
+
+| Finding                                                                                                           | Tag                      | Resolution                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1: 059's `alter … set default` took ACCESS EXCLUSIVE after the row updates, with no bound on the wait             | Important (Low)          | `set local lock_timeout = '5s'` first, then the default, then the updates; the migration guide says a timeout changed nothing and to run it again                                                                                                                            |
+| 2: 059 moved every non-seeded role to 1000, clobbering a consumer's chosen values                                 | Important (Low)          | Only a value at an old default (0, 99, or null) moves to 1000; any other is kept. Replay step and DB test: a role at 55 kept, at 99 and 0 moved. Release notes' consumer step reworded                                                                                       |
+| 3: journey C ordered every role by name-derived places, and its role-picker check could pass by finding no picker | Important (Low)          | It checks the seeded roles present are in catalog order and before every other role (the API has no `sort_order`, so the rest's order is not asserted); the picker check opens a row that is neither the admin's own nor a protected role and requires the picker (Playform) |
+| 4: the command bar's `permissions` search was newest first                                                        | Nit                      | Category order, then display name, then code (`permissionOrderSql`, the category order bound as `$2`)                                                                                                                                                                        |
+| 5 + B-3: name tie-breaks in SQL followed the database's collation, the comparator `localeCompare`                 | Nit                      | Both compare case-insensitively, then exactly, by code unit: `lower(x) collate "C", x collate "C"` in every statement ordered here, `compareNames` in the code. DB test with mixed-case names (`a_b`, `AB`, `Ab`, `ab`) through both routes and the search                   |
+| B-1: each category group was an `aria-label` region beside an `<h4>`: duplicate landmark names                    | Nit                      | `<section aria-labelledby>` named by its own `<h3>`; RTL test                                                                                                                                                                                                                |
+| B-2: the planner's context listed permissions by category name                                                    | Nit                      | The screen's category order (Roles and Entitlements contexts)                                                                                                                                                                                                                |
+| Pre-existing: a role's row opened only by a pointer click                                                         | Pre-existing (fixed now) | A disclosure button in the Permissions cell (`aria-expanded`, `aria-controls` when open, named "5 permissions of Moderator"); the row click stays as a pointer shortcut, the button's click not also toggling it; RTL test from the keyboard's focus                         |
+| B: runbook's `column_default` query had no `table_schema`                                                         | Nit                      | `table_schema = 'public'` added (here and in Playform's runbook)                                                                                                                                                                                                             |
+| B: a category stored in another case ("Admin") was its own group                                                  | Nit                      | `normalCategory`: grouped, ordered and headed as the known category, in the code and in SQL (`lower(btrim(category))`)                                                                                                                                                       |
+
+**Review round 2** (a verifier of round 1's diff: SHIP; every item verified but #5, partial — its
+wording). Every finding fixed:
+
+| Finding                                                                                                                             | Tag             | Resolution                                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R2-1: journey C required every seeded role before every other role, so a role an app placed among them (at 55) would fail it        | Important (Low) | It checks only that the seeded roles present are in catalog order relative to each other; the picker check stays. Spec header and LIVE_JOURNEY_CHECK updated (Playform)                                                                                           |
+| R2-2: the consumer step did not say a role an app placed at 1–9 now sorts ahead of super_admin                                      | Nit             | Release notes and migration guide: the seeded roles use 10–100 in steps of 10; a value below 10 now sorts first — move it                                                                                                                                         |
+| R2-3 / #5: "matches the database" was stated without its limits; the code compared by UTF-16 code unit, `collate "C"` by code point | Nit             | `compareNames` compares by code point (an astral "😀" after "～", as the database); the comment and release notes state the residual — case mapping (`toLowerCase` against the database's `lower()`, e.g. "İ", final sigma). Unit and DB tests with "😀" and "～" |
+| R2-category: SQL `btrim(category)` trimmed spaces only, `normalCategory` all whitespace                                             | Nit             | Both trim the same six (space, `\t`, `\n`, `\r`, `\f`, vertical tab): `btrim(category, E' \t\n\r\f\x0B')` — Postgres has no `\v` escape — and the same set in the code. Unit and DB tests with "admin\t"                                                          |
+| R2-4: the planner context's new constants sat between `contextRows` and its JSDoc                                                   | Nit             | The JSDoc is back on `contextRows`                                                                                                                                                                                                                                |
+| R2-5: the guide did not say `set local lock_timeout` needs 059 to run in one transaction                                            | Nit             | Migration guide: one batch in the SQL Editor (or `psql --single-transaction -f`); outside a transaction `set local` has no effect                                                                                                                                 |
+
+_Last updated: October 29, 2026 (TASK-192 fixed; review rounds 1 and 2 applied)_
+
+_Previously updated: October 29, 2026 (TASK-190 fixed, review rounds 1 and 2 applied; TASK-191 filed; round 3, TASK-192 filed)_
 
 _Previously updated: October 29, 2026 (TASK-189 review round 3)_
 

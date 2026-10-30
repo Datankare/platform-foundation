@@ -32,6 +32,11 @@ import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { enforceDailyPaidQuota } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import {
+  PERMISSION_CATEGORY_ORDER,
+  permissionOrderSql,
+  roleOrderSql,
+} from "@/platform/auth/catalog-order";
 
 /** The longest command an admin may send to the planner. */
 const MAX_PROMPT_CHARS = 4000;
@@ -45,6 +50,15 @@ function getToolsForPanel(panel: string, admin: VerifiedAdmin): AdminTool[] {
     return permission !== undefined && holds(admin, permission);
   });
 }
+
+/** The planner's context reads, in the screens' order (TASK-192, catalog-order.ts). Fixed text. */
+const CONTEXT_ROLES_SQL = `select name, display_name from roles order by ${roleOrderSql()}`;
+/** $1 the category order (PERMISSION_CATEGORY_ORDER). */
+const CONTEXT_PERMISSIONS_SQL = `select code, display_name, category from permissions
+                                  order by ${permissionOrderSql("$1")}`;
+/** $1 the category order (PERMISSION_CATEGORY_ORDER). */
+const CONTEXT_PERMISSION_NAMES_SQL = `select code, display_name from permissions
+                                       order by ${permissionOrderSql("$1")}`;
 
 /** Rows of a context read; an unreadable table reads as none, as before (context is advisory). */
 async function contextRows<R extends Record<string, unknown>>(
@@ -66,19 +80,15 @@ async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<
   if (!permission || !holds(admin, permission)) return "";
 
   if (panel === "roles") {
-    const roles = await contextRows((tx) =>
-      tx.query("select name, display_name from roles order by sort_order")
-    );
+    const roles = await contextRows((tx) => tx.query(CONTEXT_ROLES_SQL));
     const perms = await contextRows((tx) =>
-      tx.query("select code, display_name, category from permissions order by category")
+      tx.query(CONTEXT_PERMISSIONS_SQL, [[...PERMISSION_CATEGORY_ORDER]])
     );
     return `Current roles: ${JSON.stringify(roles)}\nAvailable permissions: ${JSON.stringify(perms)}`;
   }
 
   if (panel === "users") {
-    const roles = await contextRows((tx) =>
-      tx.query("select name, display_name from roles")
-    );
+    const roles = await contextRows((tx) => tx.query(CONTEXT_ROLES_SQL));
     const [counted] = await contextRows((tx) =>
       tx.query<{ n: number }>(
         "select count(*)::int as n from users where deleted_at is null"
@@ -92,7 +102,7 @@ async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<
       tx.query("select code, display_name, is_active from entitlement_groups")
     );
     const perms = await contextRows((tx) =>
-      tx.query("select code, display_name from permissions")
+      tx.query(CONTEXT_PERMISSION_NAMES_SQL, [[...PERMISSION_CATEGORY_ORDER]])
     );
     return `Current entitlement groups: ${JSON.stringify(groups)}\nAvailable permissions: ${JSON.stringify(perms)}`;
   }

@@ -1387,6 +1387,55 @@ SQL
   || { echo "✗ applying 058 a second time overwrote an operator's value"; exit 1; }
 "${PSQL[@]}" -c "UPDATE public.platform_config SET value = 'false'::jsonb WHERE key = 'ai.prompt_cache_enabled'" >/dev/null
 
+step "059: roles in the owner's order (platform/auth/catalog-order.ts), old defaults to 1000, a consumer's values kept; a missing role skipped; applied again changes nothing"
+# The values are read from the code, so the migration and the lists' order cannot drift apart.
+order_ts="$ROOT/platform/auth/catalog-order.ts"
+seeded=$(sed -n '/^export const SEEDED_ROLE_SORT_ORDER/,/^};/p' "$order_ts" \
+  | sed -nE 's/^  ([a-z_]+): ([0-9]+),$/\1|\2/p' | sort -t'|' -k2,2n | paste -sd, -)
+new_order=$(sed -nE 's/^export const NEW_ROLE_SORT_ORDER = ([0-9]+);$/\1/p' "$order_ts")
+[ -n "$seeded" ] && [ -n "$new_order" ] \
+  || { echo "✗ could not read SEEDED_ROLE_SORT_ORDER / NEW_ROLE_SORT_ORDER from platform/auth/catalog-order.ts"; exit 1; }
+db_seeded=$("${PSQL[@]}" -At -c "SELECT string_agg(name || '|' || sort_order, ',' ORDER BY sort_order, name) FROM public.roles WHERE sort_order < $new_order")
+[ "$db_seeded" = "$seeded" ] \
+  || { echo "✗ 059: seeded roles' order is '$db_seeded', the code's is '$seeded'"; exit 1; }
+db_default=$("${PSQL[@]}" -At -c "SELECT column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'roles' AND column_name = 'sort_order'")
+[ "$db_default" = "$new_order" ] \
+  || { echo "✗ 059: roles.sort_order defaults to '$db_default', the code writes $new_order"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.applied_migrations WHERE filename = '059_roles_sort_order.sql'")" = "1" ] \
+  || { echo "✗ 059 is not recorded in applied_migrations"; exit 1; }
+# A database with roles of its own — one a consumer placed (55), two at an old default (99, the
+# command bar's; 0, the column's), one inserted with the new default — and without one of the
+# seeded roles, admin out of place: the placed role stays, the old defaults move to the rest,
+# nothing else fails (TASK-192 round 1). Rolled back.
+odd=$("${PSQL[@]}" -At 2>&1 <<SQL
+BEGIN;
+INSERT INTO public.roles (name, display_name, sort_order) VALUES
+  ('replay_059_placed', 'Replay 059 placed', 55),
+  ('replay_059_old99', 'Replay 059 old 99', 99),
+  ('replay_059_old0', 'Replay 059 old 0', 0);
+INSERT INTO public.roles (name, display_name) VALUES ('replay_059_defaulted', 'Replay 059 default');
+DELETE FROM public.role_permissions WHERE role_id = (SELECT id FROM public.roles WHERE name = 'lifetime');
+DELETE FROM public.roles WHERE name = 'lifetime';
+UPDATE public.roles SET sort_order = 0 WHERE name = 'admin';
+\i $ROOT/supabase/migrations/059_roles_sort_order.sql
+SELECT string_agg(name || '|' || sort_order, ',' ORDER BY sort_order, name) FROM public.roles
+ WHERE name LIKE 'replay_059_%' OR name IN ('admin', 'lifetime');
+ROLLBACK;
+SQL
+)
+[ "$odd" = "admin|20,replay_059_placed|55,replay_059_defaulted|$new_order,replay_059_old0|$new_order,replay_059_old99|$new_order" ] \
+  || { echo "✗ 059 over roles of a consumer's own and a missing seeded role: $odd"; exit 1; }
+roles_sql="SELECT string_agg(id::text || ':' || sort_order || ':' || updated_at::text, ',' ORDER BY id) FROM public.roles"
+before="$(snapshot)$("${PSQL[@]}" -At -c "$roles_sql")$db_default"
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/059_roles_sort_order.sql" >/dev/null 2>&1 \
+  || { echo "✗ 059 failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/059_roles_sort_order.sql" >/dev/null; exit 1; }
+after="$(snapshot)$("${PSQL[@]}" -At -c "$roles_sql")$("${PSQL[@]}" -At -c "SELECT column_default FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'roles' AND column_name = 'sort_order'")"
+if [ "$before" != "$after" ]; then
+  echo "✗ applying 059 a second time changed the database:"
+  diff <(echo "$before") <(echo "$after") || true
+  exit 1
+fi
+
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —
 # given here for the check only, and taken away again.

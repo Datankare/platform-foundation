@@ -125,6 +125,29 @@ answers `false` and `f`. It inserts one row of `platform_config` (the governed s
 `AIRequest.promptCache`, off) and takes no lock beyond it; run again, it keeps an operator's value.
 The code works without it: an absent setting reads as off.
 
+**Release candidate (TASK-192):** `059_roles_sort_order.sql`, after 058, on its own:
+
+```bash
+pbcopy < supabase/migrations/059_roles_sort_order.sql
+```
+
+Then
+`select name, sort_order from public.roles order by sort_order, name;`
+answers super_admin 10, admin 20, moderator 30, safety_approver 40, guest 50, free 60, daily 70,
+monthly 80, annual 90, lifetime 100, then any other role — at 1000 if it was at an old default (0
+or 99: dev's `tester`), else at the value it had; and
+`select column_default from information_schema.columns where table_schema = 'public' and table_name = 'roles' and column_name = 'sort_order';`
+answers `1000`. It updates `sort_order` on the roles whose value differs (each such role's
+Modified date becomes the day it ran) and, first, sets the column's default; a seeded role a
+database lacks is skipped. It waits at most 5 s for its lock (`lock_timeout`): if it stops with
+"canceling statement due to lock timeout", nothing changed — run it again. Run it as one batch — the whole
+file in one SQL Editor query, which runs it in one transaction (or `psql --single-transaction
+-f`): `set local` has no effect outside a transaction, and the timeout would not apply. The
+seeded roles use 10–100 in steps of 10; a role of your own below 10 (not an old default, so kept)
+now sorts ahead of super_admin: move it — to 1000 to follow the seeded roles by name, or between
+two of them. Run again, it changes nothing. The code works without it: the lists are only
+in the old order.
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 

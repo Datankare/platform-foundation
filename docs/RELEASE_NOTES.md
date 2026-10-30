@@ -18,11 +18,40 @@ made the Cognito `sub` for every provider (TASK-177), and review 17 of sign-out 
 provider (TASK-178), and the admin Users screen with the address kept in step (TASK-185), and the
 standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186), and the
 command bar's search limited to what the admin pages show (TASK-189), and one list on the Users
-screen (TASK-190). Deploy:
-migrations 053, 054, 055, 056, 057 and 058 in the SQL Editor
+screen (TASK-190), and roles and permissions in a logical order (TASK-192). Deploy:
+migrations 053, 054, 055, 056, 057, 058 and 059 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the eight "Release candidate" rows.
 
+- **Roles and permissions in a logical order (TASK-192).** Migration 059 sets the roles'
+  `sort_order`: staff first (super_admin 10, admin 20, moderator 30, safety_approver 40), then the
+  plans from smallest to largest (guest 50 … lifetime 100); any other role still at an old default
+  (0 or 99) moves to 1000, so it follows them by name, and a value an app chose is kept; the
+  column's default is now 1000, and the command bar's create and duplicate write it
+  (`NEW_ROLE_SORT_ORDER`, they wrote 99). Every list of roles — the Roles screen, the Users
+  screen's role picker (`GET /api/admin/users` `roles`), the command bar's search and its planner
+  context — is ordered by `sort_order`, then name (case-insensitively, then exactly, by code
+  point: `collate "C"`, as the browser compares — identical for ASCII and for any name whose
+  lower case JavaScript and the database agree on; a few case mappings, such as "İ" or a final
+  sigma, can differ, acceptable for role and permission names). A role's permissions are grouped by category under a
+  heading (Administration, Moderation, Gameplay, Social, Profile, Privacy, then any other
+  category alphabetically) and sorted by display name: `GET /api/admin/roles` returns each role's
+  `permissions`, and `availablePermissions`, in that order; the search's `permissions` the same,
+  its `role_permissions` by role, then category, then name. A category matches in any case
+  ("Admin" is Administration). On the Roles screen a row's permissions open with a disclosure
+  button (keyboard and screen readers: `aria-expanded`, `aria-controls`); each group is a region
+  named by its `<h3>`. The order lives in `platform/auth/catalog-order.ts`
+  (client-safe: `SEEDED_ROLE_SORT_ORDER`, `NEW_ROLE_SORT_ORDER`, `PERMISSION_CATEGORY_ORDER`,
+  `comparePermissions`, `compareRoles`, `groupPermissions`, and the SQL `roleOrderSql`,
+  `permissionOrderSql`). The Roles screen's and the Audit log view's dates read
+  "29 Oct 2026" (with the time where it showed one), the whole UTC timestamp on hover. A refused
+  users search that came before a successful one no longer says the list shows "the filters of
+  the earlier search". Consumer steps: apply 059. The seeded roles use 10–100 in steps of 10. An
+  app's own roles keep the `sort_order` it gave them, unless it is 0 or 99 (the old defaults,
+  which become 1000) — so a role an app placed below 10 (1–9, or a negative value; 0 is an old default and moves to 1000) now sorts ahead of super_admin
+  (10): move it (to 1000 to follow the seeded roles by name, or between two of them — 55 sits
+  between guest and free). An app's own category of permissions is listed after the platform's,
+  headed by its name. TASKS TASK-192.
 - **One list on the Users screen; ids behind "Show details" (TASK-190).** A command-bar search
   of `users` run on the Users screen now filters the screen's own list — removable chips ("Role:
   Moderator ✕", "Clear all") — and its results row says "The matching users are shown in the
