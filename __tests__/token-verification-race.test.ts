@@ -161,7 +161,9 @@ describe("a request after a revocation never takes a pre-revocation answer (H-A)
     await tick();
     expect(provider.asked()).toBe(1);
     provider.release(0, { kind: "valid", payload: p() });
-    expect((await all).every((r) => r?.sub === SUB)).toBe(true);
+    const verified = await all;
+    expect(verified).toHaveLength(3);
+    expect(verified.every((r) => r?.sub === SUB)).toBe(true);
   });
 
   it("an outage on the re-ask never falls back to the entry the revocation voided", async () => {

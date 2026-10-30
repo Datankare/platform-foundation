@@ -10,6 +10,9 @@ import { createRequire } from "node:module";
 const { lintBoundaryConfigs } = createRequire(import.meta.url)(
   "./scripts/module-manifest.cjs"
 );
+const everyNeedsNonempty = createRequire(import.meta.url)(
+  "./eslint-rules/every-needs-nonempty.cjs"
+);
 
 // The import plugin instance next's config registers: a config object may only use a plugin
 // rule where it names the plugin, and naming a second instance under the same key is an error.
@@ -49,6 +52,20 @@ const eslintConfig = [
     // so can only load through require (jest.setup.ts, ADR-054).
     files: ["**/__tests__/**/*.ts", "**/*.test.ts", "jest.setup.ts"],
     rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
+  {
+    // TASK-198 D-19: `expect(xs.every(…)).toBe(true)` passes on an empty list — every test asserts
+    // the list is non-empty first (eslint-rules/every-needs-nonempty.cjs).
+    files: [
+      "**/__tests__/**/*.ts",
+      "**/__tests__/**/*.tsx",
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "e2e/**/*.ts",
+      "e2e-live/**/*.ts",
+    ],
+    plugins: { "pf-tests": { rules: { "every-needs-nonempty": everyNeedsNonempty } } },
+    rules: { "pf-tests/every-needs-nonempty": "error" },
   },
   // ADR-054 D3 — import/no-restricted-paths, one zone per product module: the core may import
   // no module; a module may import the core, itself and the modules it declares in dependsOn.

@@ -418,7 +418,9 @@ function signingKeyCases(k: Kit): void {
         [1, 2, 3, 4].map(() => k.check(signJwt(accessClaims()), keys))
       );
       release();
-      expect((await all).every((r) => r.ok)).toBe(true);
+      const answers = await all;
+      expect(answers).toHaveLength(4);
+      expect(answers.every((r) => r.ok)).toBe(true);
       await k.check(signJwt(accessClaims()), keys);
       expect(fetcher).toHaveBeenCalledTimes(1);
     });

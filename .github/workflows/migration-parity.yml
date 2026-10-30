@@ -41,12 +41,19 @@ jobs:
         with:
           node-version: "24"
       - name: Compare
+        # TASK-198 D-20: with MIGRATION_PARITY_REQUIRED set to 'true' (a repository variable), missing
+        # credentials fail the check instead of skipping it.
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MIGRATION_PARITY_REQUIRED: ${{ vars.MIGRATION_PARITY_REQUIRED }}
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
-            echo "::notice::No ${{ matrix.environment }} database credentials in this repository — skipped."
+            if [ "$MIGRATION_PARITY_REQUIRED" = "true" ]; then
+              echo "::error::No ${{ matrix.environment }} database credentials in this repository, and MIGRATION_PARITY_REQUIRED is true."
+              exit 1
+            fi
+            echo "::notice::No ${{ matrix.environment }} database credentials in this repository — skipped (MIGRATION_PARITY_REQUIRED is not true)."
             exit 0
           fi
           node scripts/migration-parity.mjs "${{ matrix.environment }}"

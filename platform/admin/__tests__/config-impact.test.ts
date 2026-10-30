@@ -124,6 +124,7 @@ describe("generateImpactReport", () => {
     await generateImpactReport(change, "2026-04-22T12:00:00Z");
 
     // No level: the level parameter is null, which the query reads as "any level"
+    expect(mockQuery).toHaveBeenCalled();
     expect(mockQuery.mock.calls.every((c) => c[1][2] === null)).toBe(true);
   });
 

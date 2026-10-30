@@ -84,7 +84,9 @@ describe("module migrations (ADR-054 D5)", () => {
     const order: string[] = mm.replayOrder(MANIFEST, FILES);
     expect([...order].sort()).toEqual(FILES);
     const firstModule = order.findIndex((f) => listedBy(f) !== undefined);
-    expect(order.slice(firstModule).every((f) => listedBy(f) !== undefined)).toBe(true);
+    const moduleFiles = order.slice(firstModule);
+    expect(moduleFiles.length).toBeGreaterThan(0);
+    expect(moduleFiles.every((f) => listedBy(f) !== undefined)).toBe(true);
     expect(order.slice(0, firstModule)).toEqual(
       FILES.filter((f) => listedBy(f) === undefined)
     );
@@ -98,6 +100,7 @@ describe("module migrations (ADR-054 D5)", () => {
     expect(social).toContain("015_social_data_model.sql");
     expect(social).not.toContain("013_song_id_config.sql");
     const core: string[] = mm.replayOrder(MANIFEST, FILES, []);
+    expect(core.length).toBeGreaterThan(0);
     expect(core.every((f) => listedBy(f) === undefined)).toBe(true);
     expect(() => mm.replayOrder(MANIFEST, FILES, ["voice"])).toThrow(
       /module "voice" depends on "translation", which is not selected/

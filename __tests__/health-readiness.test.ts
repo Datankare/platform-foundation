@@ -380,6 +380,7 @@ describe("the health routes under load", () => {
     });
     recordBootCompleted();
     const answers = await Promise.all(Array.from({ length: 50 }, () => ready()));
+    expect(answers).toHaveLength(50);
     expect(answers.every((r) => r.status === 200)).toBe(true);
     expect(db.calls.n).toBe(1);
     // /api/health shares the registry; its own bound is a separate run, once for its burst.

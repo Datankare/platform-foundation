@@ -221,6 +221,7 @@ describe("migration naming (TASK-158)", () => {
   it("in platform-foundation, the list is exactly the migration files", () => {
     if (MANIFEST.app !== null) return;
     expect([...PLATFORM].sort()).toEqual(FILES);
+    expect(FILES.length).toBeGreaterThan(0);
     expect(FILES.every((f) => /^\d{3}_/.test(f))).toBe(true);
   });
 

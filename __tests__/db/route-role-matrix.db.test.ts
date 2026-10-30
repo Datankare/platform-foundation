@@ -794,7 +794,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
       if (route.method !== "GET") {
         it.each(PROPERTY_PARTS)(
           `property (part %i of ${PROPERTY_PARTS.length}): any generated body is answered without a 500, for every caller let through (TASK-147)`,
-          async () => {
+          async (part) => {
             const through = CALLERS.filter((c) => allowed(route, c));
             await fc.assert(
               fc.asyncProperty(
@@ -805,7 +805,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
                   return res.status !== 500 && res.status !== 401 && res.status !== 403;
                 }
               ),
-              fuzzParamsPart(PROPERTY_PARTS.length)
+              fuzzParamsPart(PROPERTY_PARTS.length, part)
             );
           }
         );
@@ -814,7 +814,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
           const valid = route.valid;
           it.each(PROPERTY_PARTS)(
             `property (part %i of ${PROPERTY_PARTS.length}): a valid body reaches the handler past its shape checks, for every caller let through (review 7 L5)`,
-            async () => {
+            async (part) => {
               const through = CALLERS.filter((c) => allowed(route, c));
               await fc.assert(
                 fc.asyncProperty(
@@ -844,7 +844,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
                     );
                   }
                 ),
-                fuzzParamsPart(PROPERTY_PARTS.length)
+                fuzzParamsPart(PROPERTY_PARTS.length, part)
               );
             }
           );

@@ -556,8 +556,11 @@ describe("addresses, hints and arguments", () => {
     fc.assert(
       fc.property(fc.string(), (text) => {
         const n = normaliseEmail(text);
-        // Never a character that was not there: only A-Z become a-z.
-        expect([...n].every((ch) => text.includes(ch) || /[a-z]/.test(ch))).toBe(true);
+        // Never a character that was not there: only A-Z become a-z. (An empty text is fine: the
+        // characters that break the rule are listed, and there are none.)
+        expect([...n].filter((ch) => !text.includes(ch) && !/[a-z]/.test(ch))).toEqual(
+          []
+        );
         expect(storedEmail(text)).toBe(n);
       })
     );

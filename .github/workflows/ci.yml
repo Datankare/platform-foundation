@@ -20,6 +20,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # The history, for the journey exemptions' base (TASK-198 round 1).
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -27,8 +29,17 @@ jobs:
           node-version: "24"
           cache: "npm"
 
+      # TASK-198 (TASK-191): an install that fails on the network is tried again, so a registry
+      # or mirror blip is not read as a failed layer; a third failure fails the job.
       - name: Install dependencies
-        run: npm ci
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
 
       # Layer 0d — Dependency audit (TASK-058)
       # Production deps are the real runtime attack surface — audited strictly, hard gate.
@@ -58,12 +69,12 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+          sudo curl -fsSL --retry 5 --retry-all-errors -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
           # The runner image turns off automatic cluster creation (create_main_cluster = false),
           # so the package installs without one: create it when missing, start it if stopped.
           if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
@@ -83,7 +94,7 @@ jobs:
       - name: Install Valkey/Redis server (the Valkey cache tests)
         run: |
           set -euo pipefail
-          sudo apt-get install -y -qq redis-server >/dev/null
+          sudo apt-get -o Acquire::Retries=5 install -y -qq redis-server >/dev/null
           redis-server --version
 
       # ADR-053 D8: the suites under __tests__/db (platform/data, every Postgres store, the
@@ -105,8 +116,51 @@ jobs:
           PGPASSWORD: postgres
           PGDATABASE: replay
 
+      # TASK-198 round 1 (L6): journey-exemptions.json only shrinks, checked against the base
+      # (a pull request's base branch, a push's `before`) by __tests__/journey-coverage.test.ts.
+      - name: Layer 1 — The base branch's journey exemptions
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          # A push's own base (round 2): the branch's commit before the push, not HEAD's parent —
+          # a push of several commits is compared as a whole. All zeros: a new branch.
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BASE_REF" ]; then
+            base="origin/$BASE_REF"
+          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            base="$PUSH_BEFORE"
+          else
+            base="HEAD^1"
+          fi
+          git rev-parse --verify -q "$base^{commit}" >/dev/null || { echo "::error::no base commit $base to compare the journey exemptions with"; exit 1; }
+          dir="$RUNNER_TEMP/journey-base"
+          mkdir -p "$dir"
+          git ls-tree -r --name-only "$base" -- app > "$dir/app-files.txt"
+          if git cat-file -e "$base:journey-exemptions.json" 2>/dev/null; then
+            git show "$base:journey-exemptions.json" > "$dir/exemptions.json"
+          else
+            echo "The base has no journey-exemptions.json yet: no list to compare with."
+          fi
+          echo "JOURNEY_BASE=$dir" >> "$GITHUB_ENV"
+          echo "journey exemptions compared with $base ($(git rev-parse --short "$base"))"
+
+      # TASK-198 D-16: one fast-check seed per commit, from its SHA, in every pass — printed here
+      # and in the step summary, so a property that failed once replays with
+      # `FC_SEED=<seed> npx jest <file>` (TASK-191's seed was lost with its log).
+      - name: Layer 1 — The property tests' seed for this commit
+        run: |
+          set -euo pipefail
+          seed=$((16#${GITHUB_SHA:0:7}))
+          echo "FC_SEED=$seed" >> "$GITHUB_ENV"
+          # Each pass its own (round 1): coverage +0, core +1, time zone +2.
+          echo "fast-check seeds (from ${GITHUB_SHA:0:7}): coverage $seed, core $((seed + 1)), time zone $((seed + 2)); replay a property failure with FC_SEED=<the pass's seed> npx jest <file>"
+          echo "**fast-check seeds** (from \`${GITHUB_SHA:0:7}\`): coverage \`$seed\`, core \`$((seed + 1))\`, time zone \`$((seed + 2))\` — replay a property failure with \`FC_SEED=<the pass's seed> npx jest <file>\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # Each pass writes its results as JSON (uploaded below when a pass fails): which test failed,
+      # and how, outlives the log (TASK-191).
       - name: Layer 1 — Unit tests
-        run: npm run test:coverage
+        run: npm run test:coverage -- --json --outputFile=jest-results-coverage.json
         env:
           REQUIRE_DB_TESTS: "1"
           REQUIRE_VALKEY_TESTS: "1"
@@ -115,9 +169,12 @@ jobs:
       # consumer that opts into none inherits and must pass. Module tests and the app's own
       # module-list tests are left out (jest.core.config.cjs, from platform/modules/manifest.json).
       - name: Layer 1 — Core without modules (ADR-054)
-        run: npm run test:core
+        run: |
+          set -euo pipefail
+          FC_SEED=$((FC_SEED + 1)) npm run test:core -- --json --outputFile=jest-results-core.json
         env:
           REQUIRE_DB_TESTS: "1"
+          REQUIRE_VALKEY_TESTS: "1"
 
       # TASK-159: a 30-day purge check failed under TZ=America/New_York across a DST change. The
       # suite runs again in a zone with DST, and the database suites with the session's time zone
@@ -127,12 +184,21 @@ jobs:
           set -euo pipefail
           tz="options=-c%20TimeZone%3DAmerica%2FNew_York"
           TEST_DATABASE_URL="$TEST_DATABASE_URL?$tz" \
-            TEST_DATABASE_OWNER_URL="$TEST_DATABASE_OWNER_URL?$tz" \
-            npx jest --silent
+            TEST_DATABASE_OWNER_URL="$TEST_DATABASE_OWNER_URL?$tz" FC_SEED=$((FC_SEED + 2)) \
+            npx jest --silent --json --outputFile=jest-results-tz.json
         env:
           TZ: America/New_York
           REQUIRE_DB_TESTS: "1"
           REQUIRE_VALKEY_TESTS: "1"
+
+      - name: Layer 1 — Test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jest-results
+          path: jest-results-*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Layer 1b — Coverage ratchet (TASK-080)
         run: npm run coverage:ratchet
@@ -164,12 +230,12 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+          sudo curl -fsSL --retry 5 --retry-all-errors -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
           # The runner image turns off automatic cluster creation (create_main_cluster = false),
           # so the package installs without one: create it when missing, start it if stopped.
           if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
@@ -221,12 +287,12 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+          sudo curl -fsSL --retry 5 --retry-all-errors -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
           if ! pg_lsclusters --no-header | awk '$1 == 17 && $2 == "main"' | grep -q .; then
             sudo pg_createcluster 17 main --start >/dev/null
           fi

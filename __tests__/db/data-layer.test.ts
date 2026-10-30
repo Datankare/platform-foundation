@@ -15,6 +15,7 @@ import {
   DataUnavailableError,
   closeDataPools,
   setDataPoolFactory,
+  withOwnerSnapshot,
   withOwnerTx,
   withPlatformTx,
   withTenantTx,
@@ -57,7 +58,11 @@ d("platform/data on Postgres", () => {
       DATABASE_OWNER_URL: OWNER,
       DATABASE_SSL: "disable",
       DATABASE_POOL_MAX: "2",
-      DATABASE_STATEMENT_TIMEOUT_MS: "500",
+      // The DB suites' bound (helpers/db.ts), not a short one (TASK-198, D-14): the data layer
+      // sets idle_in_transaction_session_timeout to the same value, so 500 ms here killed a
+      // session whose worker stalled for half a second on the shared database while jobs.db
+      // and rv9 loaded it. The timeout itself is proved below, in one test, with a short value.
+      DATABASE_STATEMENT_TIMEOUT_MS: "10000",
     };
     await setDataPoolFactory((role) => new Pool(poolConfig(role)));
     await withOwnerTx("tenant-lifecycle", async (tx) => {
@@ -201,13 +206,45 @@ d("platform/data on Postgres", () => {
   });
 
   it("bounds every statement by the timeout", async () => {
-    await expect(
-      asA(() => withTenantTx((tx) => tx.query("select pg_sleep(2)")))
-    ).rejects.toMatchObject({ code: "57014" });
-    // The connection is usable afterwards.
+    const settings = (run: <T>(fn: () => Promise<T>) => Promise<T>) =>
+      run(() =>
+        withTenantTx((tx) =>
+          tx.query<{ s: string; i: string }>(
+            "select current_setting('statement_timeout') as s, current_setting('idle_in_transaction_session_timeout') as i"
+          )
+        )
+      );
+    // Every tenant transaction carries the configured bound, for statements and for idling.
+    expect((await settings(asA)).rows[0]).toEqual({ s: "10s", i: "10s" });
+    // A short statement bound for this test only (TASK-198, D-14), proved with ONE statement, in
+    // a transaction whose idle bound is its own and long (round 1, L2): a worker stalled between
+    // two statements on the loaded database can then never be killed for idling — only the
+    // statement's own 300 ms decides. The same run() sets statement_timeout for every kind of
+    // transaction; the tenant kind's setting is read back above.
+    const saved = process.env.DATABASE_STATEMENT_TIMEOUT_MS;
+    process.env.DATABASE_STATEMENT_TIMEOUT_MS = "300";
+    try {
+      await expect(
+        withOwnerSnapshot(
+          "operator",
+          async (tx) => {
+            const { rows } = await tx.query<{ s: string; i: string }>(
+              "select current_setting('statement_timeout') as s, current_setting('idle_in_transaction_session_timeout') as i"
+            );
+            expect(rows[0]).toEqual({ s: "300ms", i: "10s" });
+            await tx.query("select pg_sleep(2)");
+          },
+          { idleTimeoutMs: 10_000 }
+        )
+      ).rejects.toMatchObject({ code: "57014" });
+    } finally {
+      process.env.DATABASE_STATEMENT_TIMEOUT_MS = saved;
+    }
+    // The connection is usable afterwards, under the suite's bound again.
     await expect(
       asA(() => withTenantTx((tx) => tx.query("select 1")))
     ).resolves.toBeTruthy();
+    expect((await settings(asA)).rows[0]).toEqual({ s: "10s", i: "10s" });
   });
 
   it("takes values only as parameters — a value is never SQL", async () => {

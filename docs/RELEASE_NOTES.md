@@ -52,6 +52,20 @@ code. Consumer steps: §1b, the eight "Release candidate" rows.
   (10): move it (to 1000 to follow the seeded roles by name, or between two of them — 55 sits
   between guest and free). An app's own category of permissions is listed after the platform's,
   headed by its name. TASKS TASK-192.
+- **Tests a loaded runner cannot fail, and failures that can be replayed (TASK-198).** The
+  stamp reader's breaker tests run on jest's fake clock (the real-clock proofs in the fuzz job's
+  soak step, `__tests__/soak/`); DB suites keep the 10 s statement timeout, plan on fixed
+  statistics, and never write a seeded config key; the Valkey test server is verified as its own.
+  CI fixes the fast-check seed per commit (`FC_SEED`, in the step summary), keeps each pass's
+  results as an artifact on failure, requires the Valkey suites in every pass, and retries its
+  installs. New guards a consumer inherits: `real-clock-bounds`, `db-suite-hygiene`,
+  `valkey-server-helper`, the ESLint rule `pf-tests/every-needs-nonempty`, more of
+  `workflow-hygiene` (fail on absence) and `journey-coverage` — every page and API route has an
+  e2e or live journey, or an entry with its reason in the consumer's own `journey-exemptions.json`
+  (a ratchet; not synced). Consumer step: create `journey-exemptions.json` (the test prints what
+  is missing), and mirror the `ci.yml` changes — the seed step, `--json --outputFile`, the upload,
+  `REQUIRE_VALKEY_TESTS` in every pass and the install retries — which `workflow-hygiene` now
+  checks.
 - **One list on the Users screen; ids behind "Show details" (TASK-190).** A command-bar search
   of `users` run on the Users screen now filters the screen's own list — removable chips ("Role:
   Moderator ✕", "Clear all") — and its results row says "The matching users are shown in the

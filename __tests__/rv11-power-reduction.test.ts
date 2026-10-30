@@ -378,11 +378,9 @@ describe("rv11 M-2: the operator's kill switch", () => {
     expect(writes).toHaveLength(1);
     expect(writes[0].options).toEqual({ expectPrevious: { value: REGISTRY() } });
     expect(writes[0].comment).toContain("incident 42");
-    expect(
-      (store.get("agent.trusted_agents") as [string, { status: string }][]).every(
-        ([, r]) => r.status === "suspended"
-      )
-    ).toBe(true);
+    const registry = store.get("agent.trusted_agents") as [string, { status: string }][];
+    expect(registry.length).toBeGreaterThan(0);
+    expect(registry.every(([, r]) => r.status === "suspended")).toBe(true);
     expect(auditTypes()).toContain("agents_emergency_suspended");
     // Nothing active: nothing written, the invalidation published again (review 13 L2).
     expect(await suspendAllAgents(operator as never, "again")).toEqual({

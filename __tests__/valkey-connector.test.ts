@@ -85,6 +85,7 @@ valkeyDescribe("clients that cannot verify the server, reconnecting, then closed
       );
     }
     const health = await Promise.all(providers.map((p) => p.health()));
+    expect(health.length).toBeGreaterThan(0);
     expect(health.every((h) => !h.connected)).toBe(true);
     // Let them reconnect a few times, then close them mid-handshake.
     await new Promise((r) => setTimeout(r, 1_500));

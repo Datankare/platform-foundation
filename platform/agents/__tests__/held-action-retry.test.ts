@@ -351,7 +351,9 @@ describe("concurrent resumes: the approval's claim decides, whatever was read be
       expect(executed).toEqual(["publish:benign"]);
       expect(await status(trajectoryId)).toBe("completed");
     }
-  });
+    // 50 rounds in memory: about a second idle, several on a loaded runner — a bound for the work,
+    // not jest's 5 s default (TASK-198: it timed out under CPU load).
+  }, 30_000);
 });
 
 describe("a decision on a held step never overwrites what a concurrent run recorded (TASK-175)", () => {

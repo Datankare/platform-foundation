@@ -5,7 +5,11 @@
  *   M2  a stamped key's read never waits on a hanging shared cache: each stamp read is bounded
  *       (200 ms) and, after 5 failures in a row, a circuit breaker stops asking (alerted) until a
  *       half-open probe answers — every such read is served from the database, never the cache.
- *       The permissions cache likewise.
+ *       The permissions cache likewise. On jest's fake clock (TASK-198, D-13): the reader's own
+ *       heartbeat decides whether a timeout was event-loop lag, so on a real clock a loaded runner
+ *       (a GC pause, another worker) turned these "failures" into lag and the breaker never
+ *       opened — reproduced 1 in 8 runs under two CPU burners, the likeliest cause of TASK-191.
+ *       The fake clock runs every timer on time: a responsive loop, exactly.
  *   M1  a held reset applies only onto the platform default it was requested to inherit; one that
  *       recorded none is stale (fail closed).
  *   L1  a hold's scope: a reset is the tenant's; an update its named scope, else the deployment's.
@@ -83,40 +87,69 @@ describe("R13-M2 a hanging shared cache never holds a read of a stamped key", ()
   });
   const dbReads = () =>
     fakeData().statements.filter((s) => /from platform_config/.test(s.sql)).length;
+  // The fake clock (see the header). Promises and nextTick stay real: only timers and Date move.
+  beforeEach(() => jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask"] }));
+  afterEach(() => jest.useRealTimers());
+  /**
+   * Runs `read` with the fake clock moved 1 ms at a time until it settles, and returns how long
+   * it took on that clock and its value. A read still pending after `limitMs` of fake time fails
+   * the test at once (it would otherwise wait for jest's own timeout).
+   */
+  async function timed<T>(read: () => Promise<T>, limitMs = 5_000) {
+    const started = Date.now();
+    let out: { value: T } | undefined;
+    const p = read().then((value) => (out = { value }));
+    while (!out && Date.now() - started <= limitMs)
+      await jest.advanceTimersByTimeAsync(1);
+    if (!out)
+      throw new Error(`the read did not settle within ${limitMs} ms of fake time`);
+    await p;
+    return { tookMs: Date.now() - started, value: out!.value };
+  }
+  /** Whether `read` settles with the clock standing still: it waited on nothing. */
+  async function settlesAtOnce<T>(read: () => Promise<T>): Promise<boolean> {
+    let done = false;
+    const p = read().then(() => (done = true));
+    for (let i = 0; i < 20 && !done; i++) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(0);
+    await p;
+    return done;
+  }
 
-  it("each read returns within the bound, from the database — never the cached value", async () => {
+  it("each read returns at the bound, from the database — never the cached value", async () => {
     // Warm the cache while the shared cache answers.
     expect(await getConfig(KEY)).toEqual(dbValue);
     expect(dbReads()).toBe(1);
     // The shared cache hangs; the database moved on.
     cacheGet = jest.fn(hang);
     dbValue = [["agent:a", { status: "suspended" }]];
-    const started = Date.now();
-    expect(await getConfig(KEY)).toEqual(dbValue);
-    const took = Date.now() - started;
-    expect(took).toBeGreaterThanOrEqual(STAMP_READ_TIMEOUT_MS - 20);
-    expect(took).toBeLessThan(STAMP_READ_TIMEOUT_MS + 250);
+    const read = await timed(() => getConfig(KEY));
+    expect(read.value).toEqual(dbValue);
+    // The bound, and the one turn of the loop the reader yields at it (review 14 M-2).
+    expect(read.tookMs).toBeGreaterThanOrEqual(STAMP_READ_TIMEOUT_MS);
+    expect(read.tookMs).toBeLessThanOrEqual(STAMP_READ_TIMEOUT_MS + 1);
     expect(dbReads()).toBe(2);
     // getConfigOrThrow too.
-    expect(await getConfigOrThrow(KEY)).toEqual(dbValue);
+    expect((await timed(() => getConfigOrThrow(KEY))).value).toEqual(dbValue);
     expect(dbReads()).toBe(3);
   });
 
   it(`opens after ${STAMP_BREAKER_FAILURES} failures (alerted): no more waiting, still from the database`, async () => {
     cacheGet = jest.fn(hang);
-    for (let i = 0; i < STAMP_BREAKER_FAILURES; i++) await getConfig(KEY);
+    for (let i = 0; i < STAMP_BREAKER_FAILURES; i++) await timed(() => getConfig(KEY));
     expect(cacheGet).toHaveBeenCalledTimes(STAMP_BREAKER_FAILURES);
     expect(stampBreakerState()).toBe("open");
     expect(raiseAlert).toHaveBeenCalledTimes(1);
     expect(raiseAlert.mock.calls[0][0]).toMatchObject({
       name: "cache.stamp_breaker_open",
     });
-    // Open: answered from the database at once, the shared cache not asked.
-    const started = Date.now();
-    for (let i = 0; i < 20; i++) expect(await getConfig(KEY)).toEqual(dbValue);
-    expect(Date.now() - started).toBeLessThan(STAMP_READ_TIMEOUT_MS);
+    // Open: answered from the database at once (the clock standing still), the shared cache not
+    // asked.
+    for (let i = 0; i < 20; i++)
+      expect(await settlesAtOnce(() => getConfig(KEY))).toBe(true);
+    expect(await getConfig(KEY)).toEqual(dbValue);
     expect(cacheGet).toHaveBeenCalledTimes(STAMP_BREAKER_FAILURES);
-    expect(dbReads()).toBe(STAMP_BREAKER_FAILURES + 20);
+    expect(dbReads()).toBe(STAMP_BREAKER_FAILURES + 21);
     expect(raiseAlert).toHaveBeenCalledTimes(1); // once per opening
   });
 
@@ -160,12 +193,12 @@ describe("R13-M2 a hanging shared cache never holds a read of a stamped key", ()
   it("the permissions cache: a hanging shared cache bounds the check, resolved from the database", async () => {
     const { getCachedPermissions } = await import("@/platform/auth/permissions-cache");
     cacheGet = jest.fn(hang);
-    const started = Date.now();
-    expect(await getCachedPermissions("sub-r13")).toMatchObject({ userId: "sub-r13" });
-    expect(Date.now() - started).toBeLessThan(STAMP_READ_TIMEOUT_MS + 250);
+    const check = await timed(() => getCachedPermissions("sub-r13"));
+    expect(check.value).toMatchObject({ userId: "sub-r13" });
+    expect(check.tookMs).toBeLessThanOrEqual(STAMP_READ_TIMEOUT_MS + 1);
     expect(resolvePermissions).toHaveBeenCalledTimes(1);
     // Unreadable stamps: the next check resolves again — nothing cached is trusted.
-    await getCachedPermissions("sub-r13");
+    await timed(() => getCachedPermissions("sub-r13"));
     expect(resolvePermissions).toHaveBeenCalledTimes(2);
   });
 });

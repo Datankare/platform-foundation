@@ -5096,15 +5096,15 @@ the role's display-name column), `db/task-189-search` (the role shown as "Modera
 
 ### TASK-191 — Playform CI: "Layer 1 — Core without modules" failed once on `5435623`
 
-| Field        | Detail                                                   |
-| ------------ | -------------------------------------------------------- |
-| **ID**       | TASK-191                                                 |
-| **Type**     | Defect (CI — an intermittent test)                       |
-| **Severity** | Low                                                      |
-| **Phase**    | Phase 5                                                  |
-| **Target**   | v6.0.0 (RC)                                              |
-| **Status**   | Open — the test is not yet identified                    |
-| **Logged**   | 2026-10-29 (Playform CI on `5435623`, the TASK-189 sync) |
+| Field        | Detail                                                    |
+| ------------ | --------------------------------------------------------- |
+| **ID**       | TASK-191                                                  |
+| **Type**     | Defect (CI — an intermittent test)                        |
+| **Severity** | Low                                                       |
+| **Phase**    | Phase 5                                                   |
+| **Target**   | v6.0.0 (RC)                                               |
+| **Status**   | Closed by TASK-198 (likeliest cause reproduced and fixed) |
+| **Logged**   | 2026-10-29 (Playform CI on `5435623`, the TASK-189 sync)  |
 
 Playform's CI step "Layer 1 — Core without modules (ADR-054)" (`npm run test:core`, with the
 database) failed once on `5435623` and passed on a re-run of the same commit. The failed run's logs
@@ -5112,6 +5112,13 @@ are no longer available, so the failing test is not known. Next: when it recurs,
 (the failing test's name and its assertion), then run that suite repeatedly under the core config
 (`PF_TEST_MODULES=none npx jest -c jest.core.config.cjs <suite>`, and the database suites at
 `--maxWorkers=4`, as PLAYFORM_SYNC step 4) to reproduce it. Not to be fixed by guessing.
+
+**Closed by TASK-198.** The audit's suspects (D-failure-tests.md) were run as TASK-198 describes:
+under two CPU burners on a 2-vCPU machine, `r13-hostile` "opens after 5 failures" failed 1 run in 8
+(`Expected: "open"`, `Received: "closed"`) — a heartbeat more than 100 ms late made a cache failure
+read as event-loop lag. That suite is in the core pass, so it is the likeliest cause; the log being
+gone, it cannot be proved the same failure. Fixed with the other suspects' root causes (TASK-198);
+the next failure keeps its seed and results (the step summary and the `jest-results-*` artifact).
 
 ### TASK-192 — Admin screens: a logical order for roles and permissions; one wording residual
 
@@ -5234,7 +5241,89 @@ wording). Every finding fixed:
 | R2-4: the planner context's new constants sat between `contextRows` and its JSDoc                                                   | Nit             | The JSDoc is back on `contextRows`                                                                                                                                                                                                                                |
 | R2-5: the guide did not say `set local lock_timeout` needs 059 to run in one transaction                                            | Nit             | Migration guide: one batch in the SQL Editor (or `psql --single-transaction -f`); outside a transaction `set local` has no effect                                                                                                                                 |
 
-_Last updated: October 29, 2026 (TASK-192 fixed; review rounds 1 and 2 applied)_
+### TASK-198 — Test reliability and coverage: the D-13…D-21 audit findings; TASK-191 closed
+
+| Field        | Detail                                                                 |
+| ------------ | ---------------------------------------------------------------------- |
+| **ID**       | TASK-198                                                               |
+| **Type**     | Defect (test quality, CI) and coverage                                 |
+| **Severity** | Medium                                                                 |
+| **Phase**    | Phase 5                                                                |
+| **Target**   | v6.0.0 (RC)                                                            |
+| **Status**   | Fixed (one residual allowance, below)                                  |
+| **Logged**   | 2026-10-29 (whole-codebase sweep, audit D: failure handling and tests) |
+
+Each class has a repository-wide guard, shown failing on the code before the fix:
+
+| Finding | What was wrong                                                                                                                                         | Fixed                                                                                                                                                                                                                                                   | Guard                                                                                                                                                 |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-13    | r13/r14 breaker verdicts and elapsed bounds on a real clock (reproduced 1 in 8 under load: TASK-191)                                                   | The breaker and bound cases on jest's fake clock; the "answer during the stall" case with the answer queued behind the bound's timer (deterministic); the child-process and responsive-real-loop proofs moved to `__tests__/soak/`, run by the fuzz job | `real-clock-bounds.test.ts`: no real elapsed upper bound outside the fake clock; busy loops only where listed with a reason                           |
+| D-14    | `data-layer` ran the whole suite with a 500 ms statement (and idle-in-transaction) timeout on the shared database                                      | The suites' 10 s; the timeout proved in one test (`300ms`, restored in `finally`), and every transaction's settings read back                                                                                                                           | `db-suite-hygiene.test.ts`: no DB suite shortens the timeout outside one test's `finally`                                                             |
+| D-15    | the claim's row bound depended on a sampled `analyze` (and autovacuum mid-test)                                                                        | Measured after `analyze` with a sample larger than the table, in the measuring transaction (holds the analyze lock; rolled back)                                                                                                                        | `db-suite-hygiene`: a suite that reads plans sets `default_statistics_target`                                                                         |
+| D-16    | a fresh fast-check seed each pass, known only from the log                                                                                             | `FC_SEED` from the commit SHA in every CI pass, in the step summary; `fuzzParamsPart(parts, part)` gives each part its own; every pass writes `jest-results-<pass>.json`, uploaded on failure                                                           | `property-tests-configured.test.ts` (no own seed, parts named); `workflow-hygiene.test.ts` (every CI jest pass seeded, keeps and uploads its results) |
+| D-17    | the Valkey helper's port race; readiness only "something listens"                                                                                      | A start whose port is taken retries on another; ready only when its server answers AUTH with its own password over TLS with its own CA; the child's exit watched                                                                                        | `valkey-server-helper.test.ts`: a squatter and another worker's server on the port are never handed back                                              |
+| D-18    | `r13.db` rewrote the seeded `agent.trusted_agents` row                                                                                                 | Not fixed: the kill switch's platform scope acts only on that key (fixed in agent-kill-switch.ts and power-reduction.ts); allowed with its reason, restored in `finally`. Needs a serial DB pass to leave the list                                      | `db-suite-hygiene`: no DB suite writes a key the migrations seed (the list may only shrink)                                                           |
+| D-19    | `expect(xs.every(…)).toBe(true)` on lists that could be empty (40 sites); pending-approvals fixtures expired                                           | A non-empty assertion at each site; fixtures expire in 2099                                                                                                                                                                                             | ESLint `pf-tests/every-needs-nonempty` (`eslint-rules/`), with its RuleTester suite                                                                   |
+| D-20    | the promotion-guard test skipped when the file was missing; the core pass without `REQUIRE_VALKEY_TESTS`; skipped checks without a `*_REQUIRED` switch | The guard required; `REQUIRE_VALKEY_TESTS` in every pass; `MIGRATION_PARITY_REQUIRED` (and Playform's `JOURNEY_REQUIRED`)                                                                                                                               | `workflow-hygiene`: every CI jest pass requires both, every skip notice has a switch (one by-design skip listed)                                      |
+| D-21    | no record of which screens and routes no journey covers                                                                                                | `journey-coverage.test.ts` + `journey-exemptions.json` (per repository, a ratchet that only shrinks); Playform's Journey C adds the command bar's plan (POST `/api/admin/ai`, cancelled, never run) and every read section                              | The manifest test itself                                                                                                                              |
+
+A full run without the database (the commit scripts' path) under two CPU burners found two more
+load-sensitive tests, fixed the same way: `ai-orchestrator` "closes from half-open" (a 10 ms
+recovery time on the real clock: now on the fake clock) and `held-action-retry` "the concurrent
+test, 50 times" (jest's 5 s default for 50 rounds: now 30 s — its timeout also failed the next test,
+which shared its `executed` list); 0 failures in 6 runs of both under the same load afterwards.
+No static guard catches that class (a real timer in a test's own wait); the burner run is the
+check, and TASK-191's method in PLAYFORM_SYNC step 4.
+
+**Review round 1** (two independent finders, test integrity and CI; both SHIP, no Medium or
+higher). Every finding applied:
+
+| Finding                                                                                                                       | Tag          | Resolution                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L1: the soak step ran only when the property step passed; nothing noticed a scheduled failure                                 | Nit          | `if: !cancelled()`; the scheduled run's failure opens or comments on a `fuzz-failure` issue (sync-from-foundation's pattern); `workflow-hygiene` requires both                                                                                        |
+| L2: the short timeout was proved with two statements, the idle bound as short as the statement's                              | Nit          | One statement, in `withOwnerSnapshot` with its own 10 s idle bound (the settings read back: `300ms` / `10s`)                                                                                                                                          |
+| L3: the plan comment overstated what exact statistics prove, and claimed the rollback restores `reltuples`                    | Nit          | The comment says what it proves and does not; `pg_class` is written in place and stays                                                                                                                                                                |
+| L4: one seed for every pass and every file                                                                                    | Nit          | Each pass its own (+0, +1, +2, in the step summary); each file adds a hash of its path (`seedOffsetFor`)                                                                                                                                              |
+| L5: the seeded-write allowance covered a whole file; writes through `setConfigWithHistory` were not seen                      | Nit          | Allowed by file and key; platform-scope `setConfigWithHistory` on a seeded key is caught                                                                                                                                                              |
+| L6: "may only shrink" was a convention                                                                                        | Nit          | CI writes the base branch's exemptions and app files to `$JOURNEY_BASE`; a unit that had a journey there may not be exempted now. `journey-exemptions.json` and `eslint-rules/**` are High in `scripts/risk-tiers.json`                               |
+| L7: any path literal counted, comments and prefix checks included                                                             | Nit          | Only paths inside a request call (`goto`, `waitForResponse`, `fetch`, `page.on("response")`, …) and the constants and lists those calls use, parsed as TypeScript                                                                                     |
+| L8: Journey C passed over sections silently                                                                                   | Nit          | It derives the expected sections from the session's permissions, requires each present and read and every other absent; Playform's `e2e-live-admin-sections` test holds its list equal to the nav's permissions and the page's reads                  |
+| Command-bar step: a mock provider would pass                                                                                  | Nit          | It refuses the mock's `[MOCK]` mark and an echo of the question; with no proposal, the plan's message must be on the screen                                                                                                                           |
+| Nits: `timed()` doc; the "read again once idle" proof; two exemption reasons; `toBeGreaterThan(-1)` passed the lint rule      | Nit          | `timed()` fails at its limit; r14 reads the same cache again (a few tries, no clock bound); `/api/stream`, `/api/profile` (and `/api/features`, `/api/process`, `/api/identify`) say why; the rule requires `> n ≥ 0`, `≥ n ≥ 1`, literal lengths ≥ 1 |
+| The fuzz job's DB property suite ran with no database; `jestPassProblems` saw only `ci.yml`                                   | Pre-existing | The deep job leaves `__tests__/db` out (said so; it runs with the database in CI's passes) and sets `REQUIRE_DB_TESTS`; every workflow's jest steps are checked                                                                                       |
+| CI 1: the container smoke's translation skip was reworded to pass, and `silentSkips` saw only "skipped" in notices            | Nit          | The honest wording back, listed in `SKIPS_BY_DESIGN` with its reason; the pattern takes skip/skipping/not run/does not run, in notices and warnings                                                                                                   |
+| CI 2: retries checked in `ci.yml` only                                                                                        | Nit          | Every workflow (and template): Playform's fuzz and deploy-smoke `npm ci`, dependency-audit `npm ci`, secret-scan `curl`, load-test `apt-get`                                                                                                          |
+| CI 3: no seed or results in the fuzz job                                                                                      | Nit          | A fresh seed from the commit and the run, in the summary; results uploaded on failure                                                                                                                                                                 |
+| CI 4: the seed was not required to come from the SHA, the upload not required after the passes, jest through scripts not seen | Nit          | All three required; `npm run <script>` resolved through package.json                                                                                                                                                                                  |
+
+**Review round 2** (an independent verifier of round 1; SHIP, no Medium or higher). Applied:
+
+| Finding                                                                                                                                     | Tag | Resolution                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | --- | ------------------------------------------------------------------------------------------------------------------ |
+| L5: `setConfigWithHistory` with its target left out, `undefined` or `PLATFORM_DEFAULT_TARGET` writes the platform scope too                 | Nit | Each counts as the platform scope (`db-suite-hygiene`, with self-test cases); the guard names only the real writer |
+| The base comparison passed silently when CI did not set `JOURNEY_BASE`                                                                      | Nit | It fails in CI (`CI` set) or with `JOURNEY_BASE_REQUIRED=1` when the base is missing                               |
+| Playform's section test checked one direction                                                                                               | Nit | It also requires the page's `ENDPOINTS` (but Users, Tenants and Jobs) to be exactly Journey C's sections           |
+| An allowed skip was required in every repository                                                                                            | Nit | Checked only where this repository has the step                                                                    |
+| A push was compared with HEAD's parent                                                                                                      | Nit | With the push's `before` (`github.event.before`), HEAD's parent only for a new branch                              |
+| Nits: a mention of a writer that does not exist; Playform's seed comment above the wrong step; the command-bar message compared as raw text | Nit | Removed; moved back; compared as plain text (Markdown marks and whitespace aside)                                  |
+
+**Review round 3** (final; an independent verifier of round 2): **SHIP**, 0 Important. Accepted
+residuals (Nit): a force-push to a protected branch leaves `github.event.before` unreachable, so the
+journey-base step fails closed until the next ordinary push (main and staging refuse force-pushes);
+the seeded-key guard matches writers and platform targets by text, so a variable or spread target
+or an aliased call is not seen; `CI=false` is read as CI by the base comparison.
+
+Infrastructure (TASK-191 suspect 7): `npm ci` in a three-try loop, `curl --retry`, apt
+`Acquire::Retries` in every CI job (held by `workflow-hygiene`). Not done here: live journeys on
+staging or production (they run on dev only), and the S7/S8 journeys the exemptions name.
+
+_Last updated: October 30, 2026 (TASK-198 review round 3: SHIP)_
+
+_Previously updated: October 30, 2026 (TASK-198 review round 1 applied)_
+
+_Previously updated: October 29, 2026 (TASK-198: the D-13…D-21 findings; TASK-191 closed)_
+
+_Previously updated: October 29, 2026 (TASK-192 fixed; review rounds 1 and 2 applied)_
 
 _Previously updated: October 29, 2026 (TASK-190 fixed, review rounds 1 and 2 applied; TASK-191 filed; round 3, TASK-192 filed)_
 

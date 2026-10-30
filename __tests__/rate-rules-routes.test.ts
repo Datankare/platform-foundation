@@ -58,8 +58,8 @@ describe("rate rules per route", () => {
   it("the inventory has every rule once: the core's, then the modules'", () => {
     const all = listRateRules();
     expect(new Set(all.map((r) => r.value.id)).size).toBe(all.length);
-    expect(
-      all.slice(0, Object.keys(DEFAULT_RULES).length).every((r) => r.moduleId === "core")
-    ).toBe(true);
+    const core = all.slice(0, Object.keys(DEFAULT_RULES).length);
+    expect(core.length).toBeGreaterThan(0);
+    expect(core.every((r) => r.moduleId === "core")).toBe(true);
   });
 });

@@ -92,9 +92,9 @@ dbDescribe("PostgresRateLimiter", () => {
       Array.from({ length: 25 }, () => limiter.check("ip:race", rule))
     );
     expect(results.filter((r) => r.allowed)).toHaveLength(7);
-    expect(results.filter((r) => !r.allowed).every((r) => r.retryAfterSeconds >= 1)).toBe(
-      true
-    );
+    const refused = results.filter((r) => !r.allowed);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused.every((r) => r.retryAfterSeconds >= 1)).toBe(true);
     await expect(limiter.peek("ip:race", rule)).resolves.toMatchObject({
       allowed: false,
       remaining: 0,

@@ -43,8 +43,8 @@ definition, and the owner takes its tier from the base classifier run locally
 7. **CLAUDE.md:** flag code that breaks a convention in it, and any line in it that is out of date.
 8. **Skip generated paths:** `platform/modules/platform-paths.json`, `package-lock.json`, the
    baselines (`coverage-baseline.json`, `refusal-coverage-baseline.json`,
-   `screen-literal-baseline.json`) and the generated error docs (`docs/API_ERRORS.md`,
-   `docs/APP_API_ERRORS.md`). One exception: a baseline that loosens (a gap added, a floor
-   lowered) weakens a gate and is a finding.
+   `screen-literal-baseline.json`, `journey-exemptions.json`) and the generated error docs
+   (`docs/API_ERRORS.md`, `docs/APP_API_ERRORS.md`). One exception: a baseline that loosens (a
+   gap added, a floor lowered, an exemption added) weakens a gate and is a finding.
 9. **The summary opens with a count** — "2 Important, 1 Nit, 0 Pre-existing." — and when there
    is nothing to fix it says so plainly: "Nothing to fix."

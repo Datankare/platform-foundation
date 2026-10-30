@@ -73,6 +73,12 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("CircuitBreaker", () => {
+  // The breaker's recovery time is measured on Date.now: on the fake clock, so a loaded runner
+  // (more than 10 ms between two statements) cannot turn "open" into "half-open" (TASK-198 —
+  // seen failing under CPU load).
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
   it("starts in closed state", () => {
     const cb = new CircuitBreaker();
     expect(cb.getState()).toBe("closed");
@@ -118,13 +124,11 @@ describe("CircuitBreaker", () => {
     expect(cb.getState()).toBe("open");
 
     // Wait for recovery
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        expect(cb.getState()).toBe("half-open");
-        expect(cb.canExecute()).toBe(true);
-        resolve();
-      }, 60);
-    });
+    jest.advanceTimersByTime(49);
+    expect(cb.getState()).toBe("open");
+    jest.advanceTimersByTime(11);
+    expect(cb.getState()).toBe("half-open");
+    expect(cb.canExecute()).toBe(true);
   });
 
   it("closes from half-open after success threshold", () => {
@@ -136,17 +140,13 @@ describe("CircuitBreaker", () => {
     cb.recordFailure();
     expect(cb.getState()).toBe("open");
 
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        expect(cb.canExecute()).toBe(true); // triggers half-open
-        cb.recordSuccess();
-        // Still half-open — need 2 successes
-        expect(cb.getState()).toBe("half-open");
-        cb.recordSuccess();
-        expect(cb.getState()).toBe("closed");
-        resolve();
-      }, 20);
-    });
+    jest.advanceTimersByTime(20);
+    expect(cb.canExecute()).toBe(true); // triggers half-open
+    cb.recordSuccess();
+    // Still half-open — need 2 successes
+    expect(cb.getState()).toBe("half-open");
+    cb.recordSuccess();
+    expect(cb.getState()).toBe("closed");
   });
 
   it("reopens from half-open on failure", () => {
@@ -157,14 +157,10 @@ describe("CircuitBreaker", () => {
     });
     cb.recordFailure();
 
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        cb.canExecute(); // triggers half-open transition
-        cb.recordFailure(); // fail in half-open → reopen
-        expect(cb.getState()).toBe("open");
-        resolve();
-      }, 20);
-    });
+    jest.advanceTimersByTime(20);
+    cb.canExecute(); // triggers half-open transition
+    cb.recordFailure(); // fail in half-open → reopen
+    expect(cb.getState()).toBe("open");
   });
 
   it("reset restores closed state", () => {

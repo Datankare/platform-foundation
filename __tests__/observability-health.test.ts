@@ -246,6 +246,7 @@ describe("CachedHealthProbe (audit X-13)", () => {
     release(result("degraded"));
     const results = await Promise.all(checks);
     expect(inner.check).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(20);
     expect(results.every((r: { status: string }) => r.status === "degraded")).toBe(true);
   });
 

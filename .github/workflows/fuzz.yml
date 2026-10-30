@@ -1,7 +1,8 @@
 name: "Fuzz and monkey"
 
 # Adversarial Validation, run deeper than a commit can afford (docs/ASSURANCE.md):
-#   1. every property test (fast-check) with FC_NUM_RUNS generated cases and a fresh seed;
+#   1. every property test (fast-check) with FC_NUM_RUNS generated cases and a fresh seed, then
+#      the soak suites (__tests__/soak: real-clock, real-stall proofs kept out of the commit passes);
 #   2. the monkey run (scripts/monkey/monkey.mjs): a production build started on the E2E harness
 #      (mock auth and AI, in-memory stores — DEPLOYMENT_HOST=ci), hit on every route and handler
 #      as every kind of caller with hostile bodies, headers and random sequences, checking that
@@ -34,6 +35,10 @@ jobs:
   properties:
     name: Property tests (deep)
     runs-on: ubuntu-latest
+    # The scheduled run's failure alert opens or comments on an issue (TASK-198), as the sync's does.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,14 +50,72 @@ jobs:
           node-version: "24"
           cache: "npm"
       - name: Install dependencies
-        run: npm ci
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+      # A fresh seed each run (the depth this job is for), from the commit and the run — printed,
+      # so a counterexample replays with `FC_SEED=<seed> npx jest <file>` (TASK-198, D-16).
+      - name: The property tests' seed for this run
+        run: |
+          set -euo pipefail
+          seed=$(( (16#${GITHUB_SHA:0:7} + GITHUB_RUN_ID) % 2147483647 ))
+          echo "FC_SEED=$seed" >> "$GITHUB_ENV"
+          echo "fast-check seed $seed (from ${GITHUB_SHA:0:7} and run $GITHUB_RUN_ID); replay with FC_SEED=$seed npx jest <file>"
+          echo "**fast-check seed:** \`$seed\` — replay a property failure with \`FC_SEED=$seed npx jest <file>\`" >> "$GITHUB_STEP_SUMMARY"
+      # The database's property tests (__tests__/db) are left out: this job has no database, and
+      # they run with one, at the commit's depth, in CI's three Layer 1 passes. REQUIRE_DB_TESTS
+      # makes a database suite that slipped in a failure, not a skip.
       - name: Property tests, 5,000 cases each
         run: |
-          files=$(grep -rlE "from [\"']fast-check[\"']" __tests__ platform lib app --include='*.test.ts' --include='*.test.tsx')
+          set -euo pipefail
+          files=$(grep -rlE "from [\"']fast-check[\"']" __tests__ platform lib app --include='*.test.ts' --include='*.test.tsx' | grep -v '^__tests__/db/')
           echo "property test files: $files"
-          npx jest $files
+          npx jest $files --json --outputFile=jest-results-properties.json
         env:
           FC_NUM_RUNS: "5000"
+          REQUIRE_DB_TESTS: "1"
+          REQUIRE_VALKEY_TESTS: "1"
+      # TASK-198 D-13: the stamp reader's proofs on a real clock, real sockets and a real CPU
+      # stall — kept out of the per-commit passes, whose verdicts a loaded runner must not decide.
+      # It runs whether or not the property step passed.
+      - name: Soak — timing-sensitive proofs on a real clock (__tests__/soak)
+        if: ${{ !cancelled() }}
+        run: npx jest --testMatch '<rootDir>/__tests__/soak/**/*.soak.ts' --runInBand --json --outputFile=jest-results-soak.json
+        env:
+          REQUIRE_DB_TESTS: "1"
+          REQUIRE_VALKEY_TESTS: "1"
+      - name: Test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jest-results-fuzz
+          path: jest-results-*.json
+          if-no-files-found: ignore
+          retention-days: 14
+      # A scheduled run has no one watching it: its failure opens an issue (one per outage, then
+      # comments), as sync-from-foundation's does (TASK-052).
+      - name: Alert on a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create fuzz-failure --color B60205 \
+            --description "the scheduled fuzz and soak job is failing" --force >/dev/null
+          existing=$(gh issue list --label fuzz-failure --state open --limit 1 --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Failed again — [run]($RUN_URL) ($(date -u +%Y-%m-%dT%H:%MZ))."
+          else
+            gh issue create --title "The scheduled fuzz and soak job is failing" --label fuzz-failure \
+              --body "The scheduled \`fuzz.yml\` run failed: $RUN_URL — a property counterexample (the seed is in the step summary; the results are the \`jest-results-fuzz\` artifact) or a soak proof on a real clock. Replay as the run's summary says; close this when it passes again."
+          fi
 
   monkey:
     name: Monkey run
@@ -69,7 +132,14 @@ jobs:
           node-version: "24"
           cache: "npm"
       - name: Install dependencies
-        run: npm ci
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
 
       - name: Build
         if: ${{ !inputs.target_url }}

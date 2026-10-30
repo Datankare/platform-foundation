@@ -89,7 +89,9 @@
         "scripts/override-reaudit.mjs",
         "scripts/module-manifest.cjs",
         "scripts/sustainability-gate.sh",
-        "eslint.config.mjs"
+        "eslint.config.mjs",
+        "eslint-rules/**",
+        "journey-exemptions.json"
       ],
       "content": ["\\bpull_request_target\\b"]
     },

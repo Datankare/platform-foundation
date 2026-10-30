@@ -82,6 +82,21 @@ interface PlanNode {
  * statement inside it — measured from the executed plans (auto_explain, rolled back so nothing
  * is claimed). A count of work, not a duration: the same on a loaded CI machine as on an idle
  * one, so the bound cannot be missed by a slow run or met by a fast one.
+ *
+ * Planned on statistics that are the same every run (TASK-198, D-15): `analyze` samples rows at
+ * random, and autovacuum may analyze the shared table mid-test, so the plan — and the count —
+ * could differ run to run. Here, in the measuring transaction, jobs is analyzed with a sample
+ * larger than the table (every row is read: deterministic statistics), which also holds the
+ * table's analyze lock (ShareUpdateExclusive, until the rollback), so autovacuum cannot change
+ * them before the claim is planned.
+ *
+ * What it proves (round 1, L3): that the claim, planned on EXACT statistics of this table as the
+ * test built it, reads a bounded number of rows. What it does not: that every plan the planner
+ * could pick on SAMPLED statistics (a production table's) is bounded — a sample can still skew
+ * an estimate; the index the claim relies on (CI run 40098437851's flip) is the code's guard,
+ * this test the measurement of it. The rollback undoes the pg_statistic rows the analyze wrote;
+ * pg_class.reltuples and relpages are written in place (not transactionally) and stay — exact
+ * for the table at that moment, and set again by the test's own `vacuum analyze` at its end.
  */
 async function rowsOfJobsAClaimReads(kinds: string[], limit: number): Promise<number> {
   const client = new Client({ connectionString: process.env.TEST_DATABASE_OWNER_URL });
@@ -95,6 +110,8 @@ async function rowsOfJobsAClaimReads(kinds: string[], limit: number): Promise<nu
   await client.connect();
   try {
     await client.query("begin");
+    await client.query("set local default_statistics_target = 10000");
+    await client.query("analyze jobs");
     await client.query("load 'auto_explain'");
     for (const [k, v] of [
       ["auto_explain.log_min_duration", "0"],
@@ -188,7 +205,9 @@ dbDescribe("PostgresJobStore", () => {
     ]);
     expect(x.succeeded + y.succeeded).toBe(20);
     expect(runs.size).toBe(20);
-    expect([...runs.values()].every((n) => n === 1)).toBe(true);
+    const counts = [...runs.values()];
+    expect(counts).toHaveLength(20);
+    expect(counts.every((n) => n === 1)).toBe(true);
   });
 
   it("recovers a dead worker's job when its lease lapses; the late settle changes nothing", async () => {

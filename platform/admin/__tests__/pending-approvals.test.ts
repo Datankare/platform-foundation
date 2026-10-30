@@ -57,7 +57,9 @@ function approval(overrides: Record<string, unknown> = {}) {
     reviewedBy: null,
     reviewComment: null,
     reviewedAt: null,
-    expiresAt: "2026-02-01T00:00:00.000Z",
+    // Still pending: an expiry in the future, whatever day the suite runs (TASK-198, D-19 — it
+    // was 2026-02-01, already past).
+    expiresAt: "2099-02-01T00:00:00.000Z",
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -88,6 +90,7 @@ describe("listPendingApprovals — ADR-040 040a", () => {
   it("derives config_manage_standard for standard-tier keys", async () => {
     mockTier.mockResolvedValue("standard");
     const out = await listPendingApprovals();
+    expect(out.length).toBeGreaterThan(0);
     expect(out.every((a) => a.requiredPermission === "config_manage_standard")).toBe(
       true
     );

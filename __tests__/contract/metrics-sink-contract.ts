@@ -39,6 +39,7 @@ export function runMetricsSinkContract(fx: MetricsSinkContractFixtures): void {
       sink.record(event("contract.b"));
       await sink.flush();
       const results = await sink.query({ name: "contract.a" });
+      expect(results.length).toBeGreaterThan(0);
       expect(results.every((e) => e.name === "contract.a")).toBe(true);
     });
 

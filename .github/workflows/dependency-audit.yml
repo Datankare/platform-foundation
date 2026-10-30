@@ -28,7 +28,14 @@ jobs:
         with:
           node-version: "24"
       - name: Install dependencies
-        run: npm ci
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
       - name: Audit (production, hard gate)
         run: npm audit --omit=dev --audit-level=high
       - name: Audit (dev, informational)

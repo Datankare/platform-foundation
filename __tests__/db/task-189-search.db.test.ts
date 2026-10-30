@@ -333,7 +333,9 @@ dbDescribe("TASK-189 search: platform_config and the catalog", () => {
     expect(retired.rows).toEqual([]);
     const byCategory = await search({ table: "platform_config", category: "i18n" });
     expect(byCategory.rows.length).toBeGreaterThan(0);
-    expect(column(byCategory, "category").every((c) => c === "i18n")).toBe(true);
+    const categories = column(byCategory, "category");
+    expect(categories.length).toBeGreaterThan(0);
+    expect(categories.every((c) => c === "i18n")).toBe(true);
     // A boolean setting is its JSON text, not a yes/no (round 1).
     const flag = await search({
       table: "platform_config",
@@ -350,9 +352,9 @@ dbDescribe("TASK-189 search: platform_config and the catalog", () => {
     expect(column(perms, "code")).toContain("admin_view_audit");
     const grants = await search({ table: "role_permissions", text: "admin_view_audit" });
     expect(grants.rows.length).toBeGreaterThan(0);
-    expect(column(grants, "permission").every((p) => p === "admin_view_audit")).toBe(
-      true
-    );
+    const permissions = column(grants, "permission");
+    expect(permissions.length).toBeGreaterThan(0);
+    expect(permissions.every((p) => p === "admin_view_audit")).toBe(true);
     const groups = await search({ table: "entitlement_groups", text: `t${RUN}_group` });
     expect(column(groups, "code")).toEqual([`t${RUN}_group`]);
     expect(column(groups, "is_active")).toEqual([true]);

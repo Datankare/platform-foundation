@@ -598,15 +598,16 @@ describe("workflow hygiene", () => {
   );
 
   const guard = join(DIR, "promotion-guard.yml");
-  (existsSync(guard) ? it : it.skip)(
-    "the promotion guard checks the source repository and what is promoted (H-10)",
-    () => {
+  // Required, not skipped when absent (TASK-198, D-20): deleting the guard must fail here.
+  it("the promotion guard checks the source repository and what is promoted (H-10)", () => {
+    expect(existsSync(guard)).toBe(true);
+    {
       const text = readFileSync(guard, "utf8");
       expect(text).toMatch(/head\.repo\.full_name/);
       expect(text).toMatch(/origin\/staging\^\{tree\}/);
       expect(text).toMatch(/merge-base --is-ancestor origin\/main/);
     }
-  );
+  });
 });
 
 describe("sync excludes (H-3)", () => {
@@ -634,4 +635,342 @@ describe("sync excludes (H-3)", () => {
       expect(unanchored([...exclude, ...exclude_patterns]).map(excludeFix)).toEqual([]);
     }
   );
+});
+
+/**
+ * Fail on absence (TASK-198, D-16, D-20; TASK-191). A check that can skip silently, a test pass
+ * that leaves a required suite optional, a failure whose seed and results die with the log, an
+ * install that fails the layer on one network blip — each made TASK-191's one-off failure
+ * undiagnosable or let a gate pass on nothing. Over every workflow of the repository (and the
+ * platform's templates), a consumer's included.
+ */
+interface Step {
+  readonly name?: string;
+  readonly run?: string;
+  readonly uses?: string;
+  readonly if?: string;
+  readonly env?: Record<string, unknown>;
+  readonly with?: Record<string, unknown>;
+}
+interface Workflow {
+  readonly jobs?: Record<
+    string,
+    { readonly steps?: Step[]; readonly env?: Record<string, unknown> }
+  >;
+}
+
+/** The package.json scripts that run jest (`test`, `test:coverage`, …), by name. */
+function jestScripts(root = process.cwd()): Set<string> {
+  const file = join(root, "package.json");
+  if (!existsSync(file)) return new Set();
+  const scripts = (
+    JSON.parse(readFileSync(file, "utf8")) as { scripts?: Record<string, string> }
+  ).scripts;
+  return new Set(
+    Object.entries(scripts ?? {})
+      .filter(
+        ([, command]) => /\bjest\b/.test(command) && !/\bplaywright\b/.test(command)
+      )
+      .map(([name]) => name)
+  );
+}
+
+/**
+ * Whether a step's script runs the jest suite: `npx jest`, `jest`, or `npm test` / `npm run <s>`
+ * for a package.json script that runs jest. A line that only echoes is not a run.
+ */
+export function runsJest(
+  run: string,
+  scripts: ReadonlySet<string> = jestScripts()
+): boolean {
+  return run
+    .split("\n")
+    .filter((l) => !/^\s*(?:echo|#)/.test(l))
+    .some((l) => {
+      if (/(?:^|[\s;&|(])(?:npx\s+)?jest\b/.test(l)) return true;
+      if (/\bnpm\s+test\b/.test(l) && scripts.has("test")) return true;
+      return [...l.matchAll(/\bnpm\s+run\s+([\w:.-]+)/g)].some((m) => scripts.has(m[1]));
+    });
+}
+
+/** What a workflow's jest passes lack, as messages (empty: nothing). */
+export function jestPassProblems(
+  file: string,
+  wf: Workflow,
+  scripts: ReadonlySet<string> = jestScripts()
+): string[] {
+  const out: string[] = [];
+  for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+    const steps = job.steps ?? [];
+    const jestAt = steps.flatMap((step, i) =>
+      step.run && runsJest(step.run, scripts) ? [i] : []
+    );
+    for (const i of jestAt) {
+      const step = steps[i];
+      const run = step.run!;
+      const label = `${file} job ${id}, step "${step.name ?? run.slice(0, 40)}"`;
+      for (const flag of ["REQUIRE_DB_TESTS", "REQUIRE_VALKEY_TESTS"]) {
+        if (String(step.env?.[flag] ?? job.env?.[flag] ?? "") !== "1")
+          out.push(
+            `${label} runs jest without ${flag}: "1" — a missing service would skip its suites (D-20)`
+          );
+      }
+      if (!/--json\b[^\n]*--outputFile=jest-results-/.test(run))
+        out.push(
+          `${label} keeps no results: add --json --outputFile=jest-results-<pass>.json (D-16)`
+        );
+      const seeded = steps
+        .slice(0, i)
+        .some(
+          (s) =>
+            /\bGITHUB_SHA\b/.test(s.run ?? "") &&
+            /FC_SEED=[^\n]*>>\s*"?\$GITHUB_ENV"?/.test(s.run ?? "") &&
+            /GITHUB_STEP_SUMMARY/.test(s.run ?? "")
+        );
+      if (!seeded)
+        out.push(
+          `${label} runs with an unrecorded fast-check seed: set FC_SEED from $GITHUB_SHA in an earlier step, into $GITHUB_ENV and the step summary (D-16)`
+        );
+    }
+    if (jestAt.length === 0) continue;
+    const last = Math.max(...jestAt);
+    const uploaded = steps.some(
+      (s, k) =>
+        k > last &&
+        /actions\/upload-artifact@/.test(s.uses ?? "") &&
+        /failure\(\)/.test(s.if ?? "") &&
+        /jest-results-/.test(String(s.with?.path ?? ""))
+    );
+    if (!uploaded)
+      out.push(
+        `${file} job ${id}: no step after its jest passes uploads jest-results-*.json when the job fails (D-16)`
+      );
+  }
+  return out;
+}
+
+/** Installs in a workflow that a network blip fails outright, as messages. */
+export function installRetryProblems(file: string, wf: Workflow): string[] {
+  const out: string[] = [];
+  for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+    for (const step of job.steps ?? []) {
+      const run = step.run ?? "";
+      const label = `${file} job ${id}, step "${step.name ?? run.slice(0, 40)}"`;
+      if (/\bnpm ci\b/.test(run) && !/for attempt in[\s\S]*npm ci &&/.test(run))
+        out.push(`${label}: npm ci without a retry loop (TASK-191)`);
+      for (const line of run.split("\n")) {
+        if (/^\s*(?:#|echo\b)/.test(line)) continue;
+        // A download from outside — not a probe of a server (the job's own, or a deployment's
+        // health endpoint, polled in a loop of its own).
+        if (
+          /\bcurl\b/.test(line) &&
+          !/localhost|127\.0\.0\.1|\/api\/health/.test(line) &&
+          !/--retry\b/.test(line)
+        )
+          out.push(`${label}: curl without --retry (TASK-191)`);
+        if (
+          /\bapt-get\s(?:[^\n]*\s)?(?:update|install)\b/.test(line) &&
+          !/Acquire::Retries=/.test(line)
+        )
+          out.push(`${label}: apt-get without -o Acquire::Retries=<n> (TASK-191)`);
+      }
+    }
+  }
+  return out;
+}
+
+/** A notice or warning that a check, or part of one, did not run. */
+const SKIP_ANNOUNCED = /::(?:notice|warning)::/;
+const SKIP_WORDS =
+  /\bskip(?:ped|ping|s)?\b|\bnot run\b|\bdoes not run\b|\bdid not run\b/i;
+
+/** Steps that announce a skipped check with no switch to make the skip a failure. */
+export function silentSkips(file: string, wf: Workflow): string[] {
+  const out: string[] = [];
+  for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+    for (const step of job.steps ?? []) {
+      const run = step.run ?? "";
+      const skips = run
+        .split("\n")
+        .filter((l) => SKIP_ANNOUNCED.test(l) && SKIP_WORDS.test(l));
+      if (skips.length === 0) continue;
+      const switched =
+        Object.keys({ ...job.env, ...step.env }).some((k) => /_REQUIRED$/.test(k)) &&
+        /\$\{?\w+_REQUIRED\}?/.test(run);
+      if (!switched) out.push(`${file} job ${id}, step "${step.name ?? ""}"`);
+    }
+  }
+  return out;
+}
+
+/** Skips that are not a missing secret, by workflow and step name: the reason. */
+const SKIPS_BY_DESIGN: Readonly<Record<string, string>> = {
+  '.github/workflows/ci.yml job container-image, step "Deploy smoke test against the image"':
+    "the image runs mock providers with no translation key on purpose (no AI credential goes into CI's image); the translation step is proved with real providers against every deployment by the deploy smoke workflow",
+};
+
+describe("fail on absence (TASK-198, D-16, D-20)", () => {
+  const load = (file: string): Workflow =>
+    parseDocument(readFileSync(join(process.cwd(), file), "utf8")).toJS() as Workflow;
+  const files = WORKFLOWS;
+  const scripts = new Set(["test", "test:coverage", "test:core"]);
+
+  it("self-test: the jest-pass, install and skip checks find what they look for", () => {
+    const bare: Workflow = {
+      jobs: {
+        unit: {
+          steps: [
+            { name: "Install", run: "npm ci" },
+            { run: "sudo curl -fsSL -o k https://x\nsudo apt-get update -qq" },
+            {
+              name: "seed",
+              run: 'echo "FC_SEED=1" >> "$GITHUB_ENV"\necho x >> "$GITHUB_STEP_SUMMARY"',
+            },
+            {
+              uses: "actions/upload-artifact@abc # v7",
+              if: "failure()",
+              with: { path: "jest-results-*.json" },
+            },
+            { name: "core", run: "npm run test:core", env: { REQUIRE_DB_TESTS: "1" } },
+            { name: "e2e", run: "npm run test:e2e" },
+            { name: "probe", run: 'curl -sf -o /dev/null "$TARGET/api/health/ready"' },
+          ],
+        },
+        live: {
+          steps: [
+            {
+              name: "secrets",
+              run: 'echo "::notice::Journey A skipped: E2E_USER_EMAIL is not set"\necho "::warning::the scan does not run on forks"',
+            },
+          ],
+        },
+      },
+    };
+    expect(jestPassProblems("ci.yml", bare, scripts)).toEqual([
+      expect.stringMatching(/step "core" runs jest without REQUIRE_VALKEY_TESTS/),
+      expect.stringMatching(/step "core" keeps no results/),
+      expect.stringMatching(/step "core" runs with an unrecorded fast-check seed/),
+      expect.stringMatching(/job unit: no step after its jest passes uploads/),
+    ]);
+    expect(installRetryProblems("ci.yml", bare)).toEqual([
+      expect.stringMatching(/step "Install": npm ci without a retry loop/),
+      expect.stringMatching(/curl without --retry/),
+      expect.stringMatching(/apt-get without -o Acquire::Retries/),
+    ]);
+    expect(silentSkips("w.yml", bare)).toEqual(['w.yml job live, step "secrets"']);
+    expect(runsJest("npx jest --silent", scripts)).toBe(true);
+    expect(runsJest("npm test", scripts)).toBe(true);
+    expect(runsJest("TZ=x npm run test:core -- --json", scripts)).toBe(true);
+    expect(runsJest("npm run test:e2e", scripts)).toBe(false);
+    expect(runsJest('echo "replay with npx jest <file>"', scripts)).toBe(false);
+    const fixed: Workflow = {
+      jobs: {
+        unit: {
+          steps: [
+            { run: "for attempt in 1 2 3; do\n  npm ci && exit 0\ndone\nexit 1" },
+            {
+              run: 'seed=$((16#${GITHUB_SHA:0:7}))\necho "FC_SEED=$seed" >> "$GITHUB_ENV"\necho "seed" >> "$GITHUB_STEP_SUMMARY"',
+            },
+            {
+              name: "core",
+              run: "npm run test:core -- --json --outputFile=jest-results-core.json",
+              env: { REQUIRE_DB_TESTS: "1", REQUIRE_VALKEY_TESTS: "1" },
+            },
+            {
+              uses: "actions/upload-artifact@abc # v7",
+              if: "failure()",
+              with: { path: "jest-results-*.json" },
+            },
+          ],
+        },
+        live: {
+          steps: [
+            {
+              name: "secrets",
+              env: { JOURNEY_REQUIRED: "${{ vars.JOURNEY_REQUIRED }}" },
+              run: 'if [ "$JOURNEY_REQUIRED" = true ]; then exit 1; fi\necho "::notice::Journey A skipped"',
+            },
+          ],
+        },
+      },
+    };
+    expect(jestPassProblems("ci.yml", fixed, scripts)).toEqual([]);
+    expect(installRetryProblems("ci.yml", fixed)).toEqual([]);
+    expect(silentSkips("w.yml", fixed)).toEqual([]);
+  });
+
+  it("the CI workflow exists (a consumer's own included)", () => {
+    expect(existsSync(join(process.cwd(), ".github/workflows/ci.yml"))).toBe(true);
+  });
+
+  it("every jest pass in every workflow requires its databases and caches, records its seed and keeps its results", () => {
+    expect(files.flatMap((f) => jestPassProblems(f, load(f)))).toEqual([]);
+    const passes = files.flatMap((f) =>
+      Object.values(load(f).jobs ?? {}).flatMap((j) =>
+        (j.steps ?? []).filter((s) => s.run && runsJest(s.run))
+      )
+    );
+    expect(passes.length).toBeGreaterThan(3);
+  });
+
+  it("every install in every workflow is retried", () => {
+    expect(files.flatMap((f) => installRetryProblems(f, load(f)))).toEqual([]);
+  });
+
+  it("the fuzz job runs the soak suites whatever the property step did, and alerts a scheduled failure", () => {
+    const fuzz = ".github/workflows/fuzz.yml";
+    expect(existsSync(join(process.cwd(), fuzz))).toBe(true);
+    const steps = Object.values(load(fuzz).jobs ?? {}).flatMap((j) => j.steps ?? []);
+    const soak = steps.find((s) => /__tests__\/soak\//.test(s.run ?? ""));
+    expect(soak?.name).toMatch(/^Soak/);
+    expect(soak?.if).toMatch(/!cancelled\(\)|always\(\)/);
+    const alert = steps.find((s) => /gh issue (?:create|comment)/.test(s.run ?? ""));
+    expect(alert?.if).toMatch(/failure\(\)[\s\S]*schedule/);
+  });
+
+  it("CI compares the journey exemptions with the base branch, before its jest passes (TASK-198 round 1)", () => {
+    const jobs = Object.values(load(".github/workflows/ci.yml").jobs ?? {});
+    const found = jobs.filter((j) => {
+      const steps = j.steps ?? [];
+      const at = steps.findIndex((st) =>
+        /JOURNEY_BASE=[^\n]*>>\s*"?\$GITHUB_ENV"?/.test(st.run ?? "")
+      );
+      const firstJest = steps.findIndex((st) => st.run !== undefined && runsJest(st.run));
+      const deep = steps.some(
+        (st) =>
+          /actions\/checkout@/.test(st.uses ?? "") &&
+          String(st.with?.["fetch-depth"]) === "0"
+      );
+      return at >= 0 && firstJest > at && deep;
+    });
+    expect(found.length).toBeGreaterThan(0);
+  });
+
+  it.each(files.filter((f) => f.startsWith(".github/workflows/")))(
+    "%s skips no check silently: a skip has a *_REQUIRED switch that makes it a failure",
+    (file) => {
+      const skips = silentSkips(file, load(file));
+      expect(skips.filter((s) => !SKIPS_BY_DESIGN[s])).toEqual([]);
+    }
+  );
+
+  it("every skip allowed by design is still a skip, with its reason", () => {
+    const workflows = files.filter((f) => f.startsWith(".github/workflows/"));
+    const all = workflows.flatMap((f) => silentSkips(f, load(f)));
+    // Every step of this repository's workflows, named as silentSkips names them: an allowance for
+    // a step this repository does not have (a consumer's workflows differ) is not this one's to
+    // judge (round 2).
+    const steps = new Set(
+      workflows.flatMap((f) =>
+        Object.entries(load(f).jobs ?? {}).flatMap(([id, job]) =>
+          (job.steps ?? []).map((st) => `${f} job ${id}, step "${st.name ?? ""}"`)
+        )
+      )
+    );
+    for (const [step, reason] of Object.entries(SKIPS_BY_DESIGN)) {
+      expect(reason.length).toBeGreaterThan(40);
+      if (!steps.has(step)) continue;
+      expect([step, all.includes(step)]).toEqual([step, true]);
+    }
+  });
 });

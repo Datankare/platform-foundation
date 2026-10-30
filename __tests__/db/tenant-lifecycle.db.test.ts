@@ -274,6 +274,7 @@ dbDescribe("tenant lifecycle (ADR-053 D7)", () => {
       domains: expect.any(Array),
     });
     expect(Date.parse(head.export.at)).not.toBeNaN();
+    expect(rowLines).toHaveLength(3);
     expect(rowLines.every((l) => l.table === "users" && l.row.tenant_id === t.id)).toBe(
       true
     );

@@ -134,6 +134,7 @@ dbDescribe("R12-2 (M1) on Postgres: every append goes to the chain's tail", () =
           })
       )
     );
+    expect(results.length).toBeGreaterThan(0);
     expect(results.every(Boolean)).toBe(true);
     const chain = await t.run(() => readTrajectoryChain(store, first));
     expect(chain.map((r) => r.trajectory.segment ?? 1)).toEqual([1, 2]);

@@ -268,6 +268,7 @@ describe("the Roles screen", () => {
     // Each group is a region named by its own heading — no two regions share a name.
     fireEvent.click(button);
     const regions = screen.getAllByRole("region");
+    expect(regions.length).toBeGreaterThan(0);
     for (const r of regions) {
       const heading = document.getElementById(r.getAttribute("aria-labelledby")!);
       expect(heading?.tagName).toBe("H3");

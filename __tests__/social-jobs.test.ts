@@ -90,6 +90,7 @@ describe("social jobs", () => {
     await groups(2);
     const r = await runWithTenant(T, () => runCurator(ctx({ kind: "social.curator" })));
     expect(r).toEqual({ summary: { groups: 2 } });
+    expect(exec).toHaveBeenCalledTimes(2);
     expect(exec.mock.calls.every((c) => c[0] === "curator")).toBe(true);
   });
 

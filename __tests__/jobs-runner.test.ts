@@ -215,7 +215,9 @@ describe("job declarations", () => {
     expect(owners.get("test.app")).toBe("app");
     expect(getJobDefinition("test.app")?.description).toBe("the app's own");
     expect(listJobDefinitions().map((d) => d.kind)).toContain("test.app");
-    expect(listScheduledJobs().every((d) => d.schedule)).toBe(true);
+    const scheduled = listScheduledJobs();
+    expect(scheduled.length).toBeGreaterThan(0);
+    expect(scheduled.every((d) => d.schedule)).toBe(true);
     resetJobRegistry();
     expect(getJobDefinition("test.app")).toBeUndefined();
   });
@@ -676,6 +678,7 @@ describe("runDue at its limits: misbehaving handlers, budgets, leases", () => {
     expect(r).toMatchObject({ succeeded: 2, continued: 1 });
     expect(payloads).toEqual([{}, { after: "g1" }]);
     const jobs = await store.listJobs({ kind: k });
+    expect(jobs.length).toBeGreaterThan(0);
     expect(jobs.every((j) => j.source === "schedule" && j.tenantId === A)).toBe(true);
   });
 

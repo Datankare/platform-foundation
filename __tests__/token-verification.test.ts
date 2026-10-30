@@ -111,7 +111,9 @@ describe("remembering a verification", () => {
     const all = Promise.all([1, 2, 3, 4, 5].map(() => v.verify("tok", claims(), ask)));
     await new Promise((r) => setTimeout(r, 5));
     release();
-    expect((await all).every((p) => p?.sub === SUB)).toBe(true);
+    const verified = await all;
+    expect(verified).toHaveLength(5);
+    expect(verified.every((p) => p?.sub === SUB)).toBe(true);
     expect(ask).toHaveBeenCalledTimes(1);
   });
 
