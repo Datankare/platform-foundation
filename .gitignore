@@ -57,3 +57,6 @@ SESSION_HANDOFF_*.md
 
 # local archive debris
 *.tgz
+
+# jest results a CI pass writes for the job's failure upload (TASK-198): never part of the tree
+/jest-results-*.json

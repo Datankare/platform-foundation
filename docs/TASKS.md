@@ -5317,7 +5317,16 @@ Infrastructure (TASK-191 suspect 7): `npm ci` in a three-try loop, `curl --retry
 `Acquire::Retries` in every CI job (held by `workflow-hygiene`). Not done here: live journeys on
 staging or production (they run on dev only), and the S7/S8 journeys the exemptions name.
 
-_Last updated: October 30, 2026 (TASK-198 review round 3: SHIP)_
+**Follow-up (first run on develop, 8316436):** CI's core pass failed — the coverage pass, in the
+same job, had written `jest-results-coverage.json` to the working tree, and the tree check
+(`module-app-manifest`: `platform-paths.json` lists every file the platform ships) counts untracked,
+non-ignored files. Playform's passes run in separate jobs, so it passed there. Fixed: `.gitignore`
+ignores `/jest-results-*.json` (both repos), and `workflow-hygiene` now requires every results file
+a workflow writes to be ignored by git (it failed on the old `.gitignore`, naming all five files).
+Not caught before shipping because the gates ran each pass on its own, never two passes in one
+working tree as CI's single job does.
+
+_Last updated: October 30, 2026 (TASK-198 review round 3: SHIP; CI follow-up)_
 
 _Previously updated: October 30, 2026 (TASK-198 review round 1 applied)_
 

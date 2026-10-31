@@ -65,7 +65,8 @@ code. Consumer steps: §1b, the eight "Release candidate" rows.
   (a ratchet; not synced). Consumer step: create `journey-exemptions.json` (the test prints what
   is missing), and mirror the `ci.yml` changes — the seed step, `--json --outputFile`, the upload,
   `REQUIRE_VALKEY_TESTS` in every pass and the install retries — which `workflow-hygiene` now
-  checks.
+  checks — and add `/jest-results-*.json` to `.gitignore` (not synced; a later pass's tree check
+  otherwise counts an earlier pass's results file).
 - **One list on the Users screen; ids behind "Show details" (TASK-190).** A command-bar search
   of `users` run on the Users screen now filters the screen's own list — removable chips ("Role:
   Moderator ✕", "Clear all") — and its results row says "The matching users are shown in the

@@ -29,6 +29,7 @@
  * checks, so the form a consumer copies is the compliant one.
  */
 
+import { spawnSync } from "child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import {
@@ -911,6 +912,35 @@ describe("fail on absence (TASK-198, D-16, D-20)", () => {
       )
     );
     expect(passes.length).toBeGreaterThan(3);
+  });
+
+  // A results file a jest pass writes stays in the working tree for the job's later steps. One git
+  // does not ignore is an untracked file the next pass's tree checks count as the platform's own
+  // (module-app-manifest: platform-paths.json lists every file shipped): the core pass failed on
+  // the coverage pass's jest-results-coverage.json (TASK-198 follow-up).
+  it("every jest results file a workflow writes is ignored by git", () => {
+    const written = [
+      ...new Set(
+        files.flatMap((f) =>
+          Object.values(load(f).jobs ?? {}).flatMap((j) =>
+            (j.steps ?? []).flatMap((s) =>
+              [
+                ...(s.run ?? "").matchAll(/--outputFile(?:=|\s+)(["']?)([^\s"']+)\1/g),
+              ].map((m) => m[2])
+            )
+          )
+        )
+      ),
+    ];
+    expect(written.length).toBeGreaterThan(0);
+    const status = (f: string) =>
+      spawnSync("git", ["check-ignore", "-q", "--no-index", f], { cwd: process.cwd() })
+        .status;
+    // 0: ignored; 1: not ignored; anything else: git could not answer (not a checkout, no git) —
+    // a failure that says so, never read as "not ignored".
+    const unanswered = written.filter((f) => ![0, 1].includes(status(f) ?? -1));
+    expect(unanswered).toEqual([]);
+    expect(written.filter((f) => status(f) === 1)).toEqual([]);
   });
 
   it("every install in every workflow is retried", () => {
