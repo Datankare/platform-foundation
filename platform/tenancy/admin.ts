@@ -790,12 +790,25 @@ export async function makeTenantAdmin(
     return fail("tenant.invalid", "Give the user's email address.");
   }
   if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
+  // The record names the account, never the address typed (TASK-193, audit A-3): it is written
+  // in the operator's tenant, which the account's erasure reaches by its id, and an address typed
+  // by mistake is no one's to keep. Read first; the promotion below counts again under its lock
+  // and promotes only the account recorded.
+  const candidates = (
+    await withOwnerTx("tenant-lifecycle", (tx) =>
+      tx.query<{ id: string }>(
+        "select id from users where tenant_id = $1::uuid and lower(email) = $2 and deleted_at is null limit 2",
+        [tenantId, address]
+      )
+    )
+  ).rows;
+  const recordedId = candidates.length === 1 ? candidates[0].id : null;
   // Invalidated once the promotion has committed, on every instance (RR-9).
   let promotedSub: string | null = null;
   return recorded(
     operator,
     "tenant_admin_granted",
-    { tenantId, email: address },
+    { tenantId, found: candidates.length, ...(recordedId ? { userId: recordedId } : {}) },
     async () => {
       const result = await withOwnerTx("tenant-lifecycle", async (tx) => {
         const { rows } = await tx.query<PromotionRow>(
@@ -815,11 +828,12 @@ export async function makeTenantAdmin(
             where tally.live = 1 and tally.verified = 1
               and u.tenant_id = $1::uuid
               and u.id in (select c.id from candidates c)
+              and u.id = $3::uuid
            returning u.id, u.cognito_sub
          )
          select tally.live, tally.verified, p.id, p.cognito_sub
            from tally left join promoted p on true`,
-          [tenantId, address]
+          [tenantId, address, recordedId]
         );
         const r = rows[0];
         if (!r || r.live === 0) {

@@ -236,6 +236,21 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
   // on an erased account and goes; one decided stands, with the user's id replaced. An email
   // naming them is replaced by their id at the soft delete (softDeleteUser), so both are found.
   // About the user means the id is a value in the document (review 8 H-C: never a near miss).
+  // The run of such a held action ends with it (TASK-193, audit B-2): the hold is deleted next,
+  // and its trajectory was left paused for good.
+  {
+    name: "heldAboutTrajectories",
+    table: "agent_trajectories",
+    action: "anonymise",
+    reason:
+      "the run of a held action about an erased account is ended (failed); the hold itself is deleted next (proposalsHeldAbout)",
+    columns: [],
+    count:
+      "select count(*)::int as n from agent_trajectories where status in ('running', 'paused', 'awaiting_retry', 'indeterminate') and id::text in (select trajectory_id from proposals where status in ('proposed', 'approved') and (jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) or jsonb_path_exists(effects, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))",
+    erase:
+      "update agent_trajectories set status = 'failed', version = version + 1, updated_at = now() where status in ('running', 'paused', 'awaiting_retry', 'indeterminate') and id::text in (select trajectory_id from proposals where status in ('proposed', 'approved') and (jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) or jsonb_path_exists(effects, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))",
+    exportReason: "another account's held action about the user (proposalsHeldAbout)",
+  },
   {
     name: "proposalsHeldAbout",
     table: "proposals",
@@ -502,6 +517,25 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
       "select count(*)::int as n from audit_log where actor_id = $1::uuid or target_id = $1::uuid",
     erase:
       "update audit_log set ip_address = null, user_agent = null where actor_id = $1::uuid or target_id = $1::uuid",
+    exportReason: "exported as auditLog by data-export (auditRowsForUser)",
+  },
+  // TASK-193 (audit A-4): free text a person wrote about the account — a restriction's reason, a
+  // reviewer's notes — is erased with it, from every record ABOUT the account (its target, or the
+  // user_id / userId it names: review round 1, item 6) — never from a record that only names it as
+  // the requester or approver of an act about someone else, whose text is about that someone. The
+  // record of the act stands (AUDIT_TEXT_KEYS, platform/auth/audit-details.ts; the list here is
+  // held equal to it by __tests__/audit-details-schema.test.ts). Before the id is replaced below.
+  {
+    name: "auditText",
+    table: "audit_log",
+    action: "anonymise",
+    columns: [],
+    reason:
+      "the record of an act about the account stands; the free text written about the account in it is erased",
+    count:
+      "select count(*)::int as n from audit_log where (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']",
+    erase:
+      "update audit_log set details = (details - array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']) || jsonb_build_object('textErased', true) where (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']",
     exportReason: "exported as auditLog by data-export (auditRowsForUser)",
   },
   // Review 8 M3: audit_log.details was claimed by auditLog, whose erasure never touched it — an
@@ -840,6 +874,12 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "user_deletions.user_id": "the record of an erasure, which must outlive it",
   "user_deletions.cognito_sub":
     "the record of an erasure: the identity it closed, never provisioned again (TASK-174)",
+  "user_deletions.last_purge_error":
+    "the record of an erasure: the names of the steps a failed purge could not complete (TASK-193)",
+  "user_deletions.external_erasures":
+    "the record of an erasure: each store outside the database it reached, when and how often (TASK-193)",
+  "user_deletions.identity_pool":
+    "the record of an erasure: the identity pool it erased from — a pool's id, nothing of the person (TASK-193 round 1)",
   // The platform's own machinery.
   "applied_migrations.confidence": "schema history",
   "applied_migrations.filename": "schema history",
@@ -874,6 +914,35 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "jobs.payload":
     "the platform enqueues no job naming a user; an app whose jobs do erases them in its deletion module",
 };
+
+/**
+ * The erasure's statements in other tenants (TASK-193, audit A-3): an operator's act is recorded in
+ * the operator's own tenant, and may name an account of another (the "make tenant admin" record).
+ * Each runs on the owner connection with the account's id as `$1`, after the account's own
+ * tenant's erasure (gdpr-deletion.ts eraseMentionsInOtherTenants, the gdpr.retention-purge job):
+ * the free text of a record about the account (its target, or the user_id / userId it names) is
+ * erased, and then every mention of its id becomes "erased", in every tenant. The text keys are
+ * AUDIT_TEXT_KEYS (held equal by __tests__/audit-details-schema.test.ts).
+ *
+ * Cost (review round 1, item 6): no index serves a match inside details, so each erased account
+ * costs one read of the whole audit_log, every tenant's — once per account, by the job, never a
+ * request. It is read in page ranges of CROSS_TENANT_ERASURE_PAGES, each its own transaction
+ * (`$2`, `$3`: the range's first and past-the-end TIDs), so no transaction is long.
+ */
+export const CROSS_TENANT_ERASURE: readonly string[] = [
+  // The free text of a record about the account (review round 1, item 6) — first, while its id
+  // still says which records those are.
+  "update audit_log set details = (details - array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']) || jsonb_build_object('textErased', true) where ctid >= $2::tid and ctid < $3::tid and (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']",
+  // Every mention of its id, in any record.
+  "update audit_log set details = regexp_replace(details::text, $1::text, 'erased', 'gi')::jsonb where ctid >= $2::tid and ctid < $3::tid and details::text ~* $1::text",
+];
+
+/**
+ * The pages of audit_log one CROSS_TENANT_ERASURE pass reads in a transaction (review round 1,
+ * item 6): the statements take a page range (`$2`–`$3`, a TID range scan), so each transaction
+ * reads at most this many 8 KiB pages (80 MiB) and holds its row locks only that long.
+ */
+export const CROSS_TENANT_ERASURE_PAGES = 10_000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

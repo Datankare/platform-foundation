@@ -20,7 +20,7 @@ import { getProposalStore } from "@/platform/agents/proposal-store";
 import { listApprovals } from "@/platform/admin/config-approval";
 import { getPermissionTier } from "@/platform/auth/platform-config";
 import { authorityFor, type HoldAuthority } from "@/platform/admin/hold-authority";
-import { approvalExpiryDays, approvalLapsed } from "@/platform/admin/hold-expiry";
+import { approvalExpiryDays, holdLapsed } from "@/platform/admin/hold-expiry";
 
 export { proposalConfigKey } from "@/platform/admin/hold-authority";
 
@@ -94,11 +94,11 @@ export async function listPendingApprovals(
     listApprovals({ status: "pending" }).catch((): ConfigApprovalRecord[] => []),
   ]);
 
-  // An approval never used, past config.approval_expiry_days, has lapsed and is not offered
-  // (review 7 M7; the config.expire-approvals job withdraws it).
+  // An approval never used, or a hold never decided, past config.approval_expiry_days, has lapsed
+  // and is not offered (review 7 M7, TASK-193; the config.expire-approvals job withdraws it).
   const days = await approvalExpiryDays();
   const owned = proposals.flatMap((p) => {
-    if (approvalLapsed(p, days)) return [];
+    if (holdLapsed(p, days)) return [];
     const authority = authorityFor(p, authorities);
     return authority ? [{ p, authority }] : [];
   });

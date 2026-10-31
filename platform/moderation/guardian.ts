@@ -29,7 +29,11 @@
 import type { AgentIdentity } from "@/platform/agents/types";
 import { executeAgent } from "@/platform/agents/runtime";
 import type { WorkflowFn } from "@/platform/agents/runtime";
-import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { withTrajectory } from "@/platform/agents/trajectory-closure";
+import {
+  getTrajectoryStore,
+  type TrajectoryStore,
+} from "@/platform/agents/trajectory-store";
 import { generateId } from "@/platform/agents/utils";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 import type {
@@ -154,6 +158,25 @@ export class Guardian {
   }
 
   /**
+   * The runtime trajectory of a screen with nothing to screen: opened for its id, and ended at
+   * once (TASK-193 — it was left `running` for good).
+   */
+  private emptyRun(
+    store: TrajectoryStore,
+    direction: ScreeningDirection
+  ): Promise<string> {
+    return withTrajectory(
+      {
+        subject: { kind: "agent", id: this.identity.actorId },
+        trigger: `guardian-${direction}`,
+        scopeType: "platform",
+        store,
+      },
+      async (id) => id
+    );
+  }
+
+  /**
    * Screen content through the full agentic pipeline.
    *
    * Trajectory:
@@ -180,13 +203,9 @@ export class Guardian {
     const trajectoryStore = getTrajectoryStore();
     const scope = context.userId ?? "anonymous";
 
-    // ── Guard: empty text (still minted a runtime trajectory for the id) ──
+    // ── Guard: empty text (a runtime trajectory for the id, ended at once: TASK-193) ──
     if (!text || text.trim().length === 0) {
-      const empty = await trajectoryStore.create(
-        { kind: "agent", id: this.identity.actorId },
-        `guardian-${direction}`,
-        "platform"
-      );
+      const emptyId = await this.emptyRun(trajectoryStore, direction);
       return this.buildResult({
         action: "allow",
         triggeredBy: "none",
@@ -200,7 +219,7 @@ export class Guardian {
         attributeToUser: true,
         pipelineLatencyMs: Date.now() - startTime,
         classifierCostUsd: 0,
-        trajectoryId: empty.trajectory.trajectoryId,
+        trajectoryId: emptyId,
       });
     }
 

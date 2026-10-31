@@ -58,6 +58,7 @@ import {
   type ActionResult,
 } from "./handlers";
 import { searchResultFor, searchStepRecord } from "./handlers/search";
+import { HELD_CURRENT_ROLE, heldRoleSnapshot } from "./handlers/roles";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -243,7 +244,10 @@ export async function runCommandBarAction(args: {
   readonly trajectoryId: string;
   readonly stepIndex: number;
 }): Promise<CommandBarOutcome> {
-  const { tool, input, admin, trajectoryId, stepIndex } = args;
+  const { tool, admin, trajectoryId, stepIndex } = args;
+  // What a held change was requested against is recorded here, never taken from a caller.
+  const { [HELD_CURRENT_ROLE]: _claimed, ...input } = args.input;
+  void _claimed;
   const held = await isDualControlledAction(tool);
   // The handler's whole result, for the admin; the step records the tool's (runtimeToolFor).
   let full: ActionResult | undefined;
@@ -278,6 +282,12 @@ export async function runCommandBarAction(args: {
     if (!(err instanceof PipelineRejectedError) || err.reason !== "requires-approval") {
       throw err;
     }
+    // A held role change records the user's role now, so its approval applies it only while
+    // that is still the role (TASK-193, audit B-4).
+    const payload =
+      tool === "change_user_role"
+        ? { ...input, [HELD_CURRENT_ROLE]: (await heldRoleSnapshot(input)) ?? null }
+        : input;
     const proposal = await proposeOnce({
       spec: {
         type: runtimeTool.id,
@@ -290,7 +300,7 @@ export async function runCommandBarAction(args: {
       sessionId: trajectoryId,
       operationId,
       label: runtimeTool.id,
-      payload: input,
+      payload,
       trajectoryId,
       stepIndex,
       proposalStore,

@@ -533,13 +533,20 @@ dbDescribe("the core duties, run as jobs", () => {
     });
   });
 
-  it("agents.trajectory-retention deletes finished trajectories past retention only", async () => {
+  // TASK-193 (audit B-1/B-3, A-1): before, an old `running` trajectory was kept for ever — this
+  // test asserted it. Now the job's reaper first ends an open one with no activity for
+  // agent.trajectory.abandon_after_hours and no open hold (failed, its last activity kept), so one
+  // past retention is then deleted like any finished one; one waiting on an open hold is kept.
+  it("agents.trajectory-retention ends abandoned open trajectories, then deletes finished ones past retention", async () => {
     const ids = await a.run(() =>
       withTenantTx(async (tx) => {
         const made: Record<string, string> = {};
         for (const [label, status, age] of [
           ["oldDone", "completed", "200 days"],
           ["oldRunning", "running", "200 days"],
+          ["oldHeld", "paused", "200 days"],
+          ["staleRunning", "running", "2 days"],
+          ["freshRunning", "running", "1 hour"],
           ["newDone", "completed", "1 day"],
         ] as const) {
           const { rows } = await tx.query<{ id: string }>(
@@ -550,18 +557,40 @@ dbDescribe("the core duties, run as jobs", () => {
           );
           made[label] = rows[0].id;
         }
+        await tx.query(
+          `insert into proposals (operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, effective_risk)
+           values ($1, 's', $2, 'dbtest', 'proposed', 'dbtest-agent', 'agent', 'restricted')`,
+          [`op_${made.oldHeld}`, made.oldHeld]
+        );
         return made;
       })
     );
     const r = await runFor("agents.trajectory-retention", a.id);
     expect(r.succeeded).toBe(1);
-    const left = (
-      await owner<{ id: string }>(
-        "select id from agent_trajectories where id = any($1::uuid[])",
-        [Object.values(ids)]
+    const left = Object.fromEntries(
+      (
+        await owner<{ id: string; status: string }>(
+          "select id, status::text from agent_trajectories where id = any($1::uuid[])",
+          [Object.values(ids)]
+        )
+      ).rows.map((x) => [x.id, x.status])
+    );
+    expect(left).toEqual({
+      [ids.oldHeld]: "paused",
+      [ids.staleRunning]: "failed",
+      [ids.freshRunning]: "running",
+      [ids.newDone]: "completed",
+    });
+    const [reaped] = (
+      await owner<{ steps: { action: string; output: { was: string } }[] }>(
+        "select steps from agent_trajectories where id = $1::uuid",
+        [ids.staleRunning]
       )
-    ).rows.map((x) => x.id);
-    expect(left.sort()).toEqual([ids.oldRunning, ids.newDone].sort());
+    ).rows;
+    expect(reaped.steps.at(-1)).toMatchObject({
+      action: "trajectory-abandoned",
+      output: { was: "running" },
+    });
   });
 
   // Review 11 L-5: the job sweeps every tenant on the owner connection — run here, it recovered

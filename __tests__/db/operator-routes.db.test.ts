@@ -569,7 +569,13 @@ dbDescribe(`${SUITE} PATCH /api/operator/tenants/[id]`, () => {
       "request.invalid_json"
     );
     await expectCode(await rename(t.id, {}), 400, "request.missing_fields");
-    await expectCode(await rename(t.id, { name: "x" }), 400, "tenant.invalid");
+    // The refusal says what was wrong (S2 round 2: tenant.invalid carries its message).
+    const invalid = await expectCode(
+      await rename(t.id, { name: "x" }),
+      400,
+      "tenant.invalid"
+    );
+    expect(JSON.stringify(invalid)).toMatch(/characters/);
     await expectCode(
       await rename("not-a-uuid", { name: "Valid Co" }),
       404,
@@ -1214,11 +1220,14 @@ dbDescribe(`${SUITE} POST /api/operator/tenants/[id]/admins`, () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ result: { userId: user } });
     expect(await roleOf(user)).toBe(adminRole);
-    expect(
-      (await audits("tenant_admin_granted", t.id))
-        .filter((r) => r.details.email === mail("first"))
-        .map((r) => r.details.outcome)
-    ).toEqual(["attempted"]);
+    // The record names the account, never the address typed (TASK-193, audit A-3): it is kept
+    // in the operator's tenant, which the account's erasure reaches only by its id.
+    const records = (await audits("tenant_admin_granted", t.id)).filter(
+      (r) => r.details.userId === user
+    );
+    expect(records.map((r) => r.details.outcome)).toEqual(["attempted"]);
+    expect(records[0].details).toMatchObject({ tenantId: t.id, found: 1 });
+    expect(JSON.stringify(records[0].details)).not.toContain("@");
   });
 
   it("refuses, as a conflict, an email two live accounts share and one never verified", async () => {

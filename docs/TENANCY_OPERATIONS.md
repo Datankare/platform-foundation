@@ -173,8 +173,12 @@ The operator console's readiness check (section 4) verifies all three.
 
 ### 3.3 The IAM key
 
-The platform sets a new user's tenant (AdminUpdateUserAttributes) and checks the pool's setup.
-Create an IAM user for this alone, with this policy (replace region, account and pool id):
+The platform sets a new user's tenant (AdminUpdateUserAttributes), deletes an erased account's
+identity (ListUsers finds the pool user by its subject — a federated user's username is not its
+subject — then AdminDeleteUser; DescribeUserPool confirms the pool before a "not found" counts as
+erased: TASK-193 — without them every erasure's identity step stays pending and alerts
+`gdpr.external_erasure_pending`) and checks the pool's setup. Create an IAM user for this
+alone, with this policy (replace region, account and pool id):
 
 ```json
 {
@@ -185,6 +189,8 @@ Create an IAM user for this alone, with this policy (replace region, account and
       "Action": [
         "cognito-idp:AdminUpdateUserAttributes",
         "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminDeleteUser",
+        "cognito-idp:ListUsers",
         "cognito-idp:DescribeUserPool",
         "cognito-idp:ListUserPoolClients",
         "cognito-idp:DescribeUserPoolClient",
@@ -265,9 +271,50 @@ Rules the platform enforces:
 | Suspend / delete              | Never the tenant the operator is acting from                                                                              |
 | Delete                        | Requested by one operator, approved by another within 7 days; the tenant is refused at once; data is purged 30 days later |
 | Restore                       | Only before the purge; the tenant comes back suspended                                                                    |
+| Attest an external erasure    | Only a step the system could not verify; asked by one operator, approved by another within 7 days; a fixed reason         |
 | Export                        | Every row the tenant owns, newline-delimited JSON, from one consistent snapshot, headed by the tenant and its addresses   |
 | A suspension or deletion      | Takes effect on the acting instance at once and on every other within 30 seconds (directory cache)                        |
 | Adding or removing an address | Answers on the acting instance at once and on every other within 30 seconds (address snapshot)                            |
+
+### Closing an erasure the system cannot verify (TASK-193)
+
+An erasure's identity step whose identity was not found in a pool the system cannot prove the
+account's (alert `gdpr.identity_pool_unverified`, docs/runbooks/jobs.md §6) stays pending until two
+operators attest it erased. Only such a step can be attested; the reason is one of
+`pool_decommissioned`, `deleted_in_old_pool`, `identity_never_existed`; the note (3–500
+characters) is kept only in the audit record. One operator asks, a different one approves within 7
+days; the step is then recorded done and `attested` (who asked, who approved, when, why) and the
+next gdpr.retention-purge run completes the erasure. There is no console screen: call the route
+with your own access token (copy it from the `Authorization: Bearer …` header of any `/api/admin`
+request in the browser's network tab while signed in to the console).
+
+Find the step (SQL Editor):
+
+```sql
+select tenant_id, user_id, external_erasures -> 'identity-provider' as step
+  from public.user_deletions
+ where external_erasures -> 'identity-provider' ->> 'poolUnverified' = 'true';
+```
+
+Ask (first operator), then approve (second operator) — set the two ids from that query:
+
+```bash
+export HOST=https://<host> TENANT_ID=<tenant_id> USER_ID=<user_id>
+read -rs "T?Paste your access token (hidden): "; echo
+curl -s -X POST "$HOST/api/operator/tenants/$TENANT_ID/erasures/$USER_ID/attestation" -H "Authorization: Bearer $T" -H "content-type: application/json" -d '{"reason":"deleted_in_old_pool","note":"deleted in the old pool by <name> on <date>"}'; echo
+unset T
+```
+
+```bash
+read -rs "T?Paste your access token (hidden): "; echo
+curl -s -X POST "$HOST/api/operator/tenants/$TENANT_ID/erasures/$USER_ID/attestation" -H "Authorization: Bearer $T" -H "content-type: application/json" -d '{"decision":"approve","note":"checked"}'; echo
+unset T
+```
+
+The first answers `201` with the step's `attestationRequest`; the second `200` with `doneAt` and
+`attested` (`tenant.self_approval` when the asking operator approves; `{"decision":"reject"}`
+withdraws it). Check: the query above no longer lists it, and after the next gdpr.retention-purge
+run `select purged_at from public.user_deletions where user_id = '<user_id>';` is set.
 
 ### Configuration
 
@@ -325,7 +372,7 @@ it for that account (review 16, 6.6).
 | Nothing to decide about the subject (TASK-177): the command always binds the pool user's **`sub`**                                                                                      | It is what every token verifier names a signed-in identity by — the platform's own Cognito provider and Playform's alike, for a native and a federated (Google) user. A Google user's **User name** (`Google_1093…`) is never a subject. Review 16's `--subject` is gone: `--subject sub` still runs for one release (a deprecation note), `--subject username` is refused (exit 2) — drop the flag from any script. No data migration: platform-foundation has no deployment with existing users, and Playform's provider has always bound the `sub` |
 | Note **when the deployment moved to the new pool** (UTC): the time of the first deployment whose `NEXT_PUBLIC_COGNITO_USER_POOL_ID` is the new pool (the host's deployment list)        | The command's `--created-before`: accounts made since then are the new pool's (first sign-ins), never re-linked to. If unsure, take an **earlier** time — never a later one                                                                                                                                                                                                                                                                                                                                                                           |
 | In the new pool's Google identity provider, map Google's `email_verified` claim to the `email_verified` attribute (Attribute mapping) — for Google and Sign in with Apple **only**      | The command re-links only an address the pool says is verified, from a source it trusts (`AUTH_TRUSTED_EMAIL_IDPS`, default `Google`; add `SignInWithApple` if you use it). **Never map it for Microsoft Entra ID** (or any OIDC/SAML provider whose `email` the account's own tenant sets): its address is not verified by anyone (nOAuth) — such a user is refused `pool.unverified` whatever the mapping says                                                                                                                                      |
-| Create a key that may call **only** `cognito-idp:ListUsers` on the new pool (IAM → a user or role with an inline policy on `arn:aws:cognito-idp:<region>:<account>:userpool/<pool id>`) | The command only reads the pool (by address, and by subject to check an account is not already bound there). The app's own `COGNITO_ADMIN_*` key is not allowed `ListUsers`, and should not be                                                                                                                                                                                                                                                                                                                                                        |
+| Create a key that may call **only** `cognito-idp:ListUsers` on the new pool (IAM → a user or role with an inline policy on `arn:aws:cognito-idp:<region>:<account>:userpool/<pool id>`) | The command only reads the pool (by address, and by subject to check an account is not already bound there). Use a key of its own for it: the app's `COGNITO_ADMIN_*` key now holds `ListUsers` too (§3.3, the erasure's lookup by subject), but also the writes this command never needs                                                                                                                                                                                                                                                             |
 | Each person signs in once with the new pool (Google, or sign-up and confirm)                                                                                                            | Their identity then exists in the pool. A first sign-in may also create a stray ordinary account for the new subject — the command offers to merge it (6.3)                                                                                                                                                                                                                                                                                                                                                                                           |
 | Staff who sign in with Google: decide how they meet `auth.staff_mfa_required` (on by default)                                                                                           | Cognito applies no second factor to a federated sign-in, so GetUser reports none and `/admin` answers `auth.mfa_required` for them while the setting is on — after the re-link too (the account is reached; administration is refused). Either they sign in with a password and an authenticator, or the setting is turned off (a safety-tier change: a second operator approves it) with two-step verification enforced for them at Google                                                                                                           |
 

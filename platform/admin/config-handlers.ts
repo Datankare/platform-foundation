@@ -70,6 +70,10 @@ import { TOOL_BOUNDARIES } from "./types";
 import type { Tool, StepBoundary, AgentIdentity } from "@/platform/agents/types";
 import { invokeTool } from "@/platform/agents/tool-invoker";
 import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import {
+  finishTrajectory,
+  type TrajectoryOutcome,
+} from "@/platform/agents/trajectory-closure";
 import { getProposalStore } from "@/platform/agents/proposal-store";
 import { proposeOnce, PipelineRejectedError } from "@/platform/action-pipeline";
 import { approvalPolicy } from "@/platform/agents/gating";
@@ -1489,8 +1493,8 @@ export async function dispatchConfigTool(
   // ADR-029 D1: the roster is the dispatcher. A tool is invocable because it carries its
   // handler, not because a switch elsewhere happens to name it — the switch and the roster
   // could previously disagree, and nothing would have said so.
-  const tool = CONFIG_TOOL_BY_ID.get(toolId);
-  if (!tool) {
+  const found = CONFIG_TOOL_BY_ID.get(toolId);
+  if (!found) {
     return {
       toolId,
       success: false,
@@ -1499,6 +1503,7 @@ export async function dispatchConfigTool(
       durationMs: 0,
     };
   }
+  const tool: Tool = found;
 
   // ADR-039 F2b: run through the governed runtime (invokeTool) — risk floor, budget ceiling,
   // effect ledger and trajectory recording — rather than a hand-rolled step. A config write's
@@ -1519,171 +1524,186 @@ export async function dispatchConfigTool(
     ...(principal ? { onBehalfOf: principal } : {}),
   };
   const existingTrajectoryId = context?.trajectoryId;
-  let trajectoryId: string;
   if (existingTrajectoryId && (await trajectoryStore.getById(existingTrajectoryId))) {
-    trajectoryId = existingTrajectoryId;
-  } else {
-    const created = await trajectoryStore.create(
-      { kind: "agent", id: actor.actorId },
-      `config:${toolId}`,
-      "platform"
-    );
-    trajectoryId = created.trajectory.trajectoryId;
+    return dispatchInTrajectory(existingTrajectoryId);
   }
-
-  // ADR-039 F2b-2 dual-control: a config write to a key in config.dual_control_keys is
-  // catastrophic-if-wrong, so raise its risk to `restricted` — crossing the gating threshold
-  // forces a runtime hold cleared by an independent human (approval policy default = "user"),
-  // on top of config-approval's domain two-person gate. Non-listed keys stay below the line.
-  //
-  // Fail closed (audit X-7): when the key list cannot be read, every config write is held; and
-  // the settings that govern dual control itself are always held, so emptying the list cannot
-  // be the step that turns it off.
-  const targetKey = typeof input.key === "string" ? input.key : undefined;
-  let isDualControl =
-    (toolId === "update_config" || toolId === "reset_config") &&
-    (targetKey === undefined || (await isDualControlledKey(targetKey)));
-
-  // Review 11 M-2: a change that provably only removes power (an agent suspended, a scope or a
-  // token lifetime narrowed, a required feature added to a capability) is not held — the kill
-  // switch must not wait for a second admin. Proved against the value it replaces; the handler
-  // proves it again and the write compares and sets. A caller never supplies the value replaced,
-  // neither this one nor a held change's (review 12 H2).
-  const { expectPrevious: _ignored, heldPrevious: _ignoredHeld, ...callerInput } = input;
-  void _ignored;
-  void _ignoredHeld;
-  input = callerInput;
-  if (
-    isDualControl &&
-    toolId === "update_config" &&
-    targetKey &&
-    isPowerReducibleKey(targetKey)
-  ) {
-    const before = await valueBefore(toolId, targetKey, input);
-    if (
-      before !== undefined &&
-      powerReduction(targetKey, before.value, input.value).reduces
-    ) {
-      isDualControl = false;
-      input = { ...input, expectPrevious: { value: before.value } };
-    }
-  }
-  // Review 12 H2: a held change records the value it replaces, so its approval applies it only
-  // onto that value (compare-and-set) — never over a kill switch or any change made since.
-  if (isDualControl && targetKey && RESUMABLE_TOOLS.has(toolId)) {
-    const before = await valueBefore(toolId, targetKey, input);
-    if (before !== undefined) input = { ...input, heldPrevious: before };
-  }
-
-  const effectiveTool: Tool = isDualControl
-    ? { ...tool, declaredRisk: "restricted" }
-    : tool;
-
-  let result: ConfigToolResult;
+  // A trajectory opened here is this call's, and is ended with it (TASK-193: every config write
+  // left one `running` for good — the config assistant's too, whose `traj-…` context id is never a
+  // stored trajectory). A held write's is the hold's to end (paused: finishTrajectory leaves it).
+  const created = await trajectoryStore.create(
+    { kind: "agent", id: actor.actorId },
+    `config:${toolId}`,
+    "platform"
+  );
+  const ownTrajectoryId = created.trajectory.trajectoryId;
+  let ended: TrajectoryOutcome = "failed";
   try {
-    const invoked = await invokeTool({
-      tool: effectiveTool,
-      input,
-      actor,
-      sessionId: trajectoryId,
-      trajectoryId,
-      stepIndex: context?.steps.length ?? 0,
-      trajectoryStore,
-      proposalStore: getProposalStore(),
-    });
-    result = invoked.output as unknown as ConfigToolResult;
-  } catch (err) {
-    // A dual-control write holds rather than fails: mint the proposal (idempotent) and surface
-    // who must approve. This is not an error — the change is pending an independent human, not
-    // broken. Clearing the hold (re-invoke with the approved proposal) is the ADR-040 surface.
-    if (err instanceof PipelineRejectedError && err.reason === "requires-approval") {
-      const stepIndex = context?.steps.length ?? 0;
-      const proposal = await proposeOnce({
-        spec: {
-          type: effectiveTool.id,
-          effects: effectiveTool.effects,
-          declaredRisk: effectiveTool.declaredRisk,
-          ephemeral: false,
-          commutative: false,
-        },
+    const result = await dispatchInTrajectory(ownTrajectoryId);
+    ended = result.success ? "completed" : "failed";
+    return result;
+  } finally {
+    await finishTrajectory(trajectoryStore, ownTrajectoryId, ended);
+  }
+
+  async function dispatchInTrajectory(trajectoryId: string): Promise<ConfigToolResult> {
+    // ADR-039 F2b-2 dual-control: a config write to a key in config.dual_control_keys is
+    // catastrophic-if-wrong, so raise its risk to `restricted` — crossing the gating threshold
+    // forces a runtime hold cleared by an independent human (approval policy default = "user"),
+    // on top of config-approval's domain two-person gate. Non-listed keys stay below the line.
+    //
+    // Fail closed (audit X-7): when the key list cannot be read, every config write is held; and
+    // the settings that govern dual control itself are always held, so emptying the list cannot
+    // be the step that turns it off.
+    const targetKey = typeof input.key === "string" ? input.key : undefined;
+    let isDualControl =
+      (toolId === "update_config" || toolId === "reset_config") &&
+      (targetKey === undefined || (await isDualControlledKey(targetKey)));
+
+    // Review 11 M-2: a change that provably only removes power (an agent suspended, a scope or a
+    // token lifetime narrowed, a required feature added to a capability) is not held — the kill
+    // switch must not wait for a second admin. Proved against the value it replaces; the handler
+    // proves it again and the write compares and sets. A caller never supplies the value replaced,
+    // neither this one nor a held change's (review 12 H2).
+    const {
+      expectPrevious: _ignored,
+      heldPrevious: _ignoredHeld,
+      ...callerInput
+    } = input;
+    void _ignored;
+    void _ignoredHeld;
+    input = callerInput;
+    if (
+      isDualControl &&
+      toolId === "update_config" &&
+      targetKey &&
+      isPowerReducibleKey(targetKey)
+    ) {
+      const before = await valueBefore(toolId, targetKey, input);
+      if (
+        before !== undefined &&
+        powerReduction(targetKey, before.value, input.value).reduces
+      ) {
+        isDualControl = false;
+        input = { ...input, expectPrevious: { value: before.value } };
+      }
+    }
+    // Review 12 H2: a held change records the value it replaces, so its approval applies it only
+    // onto that value (compare-and-set) — never over a kill switch or any change made since.
+    if (isDualControl && targetKey && RESUMABLE_TOOLS.has(toolId)) {
+      const before = await valueBefore(toolId, targetKey, input);
+      if (before !== undefined) input = { ...input, heldPrevious: before };
+    }
+
+    const effectiveTool: Tool = isDualControl
+      ? { ...tool, declaredRisk: "restricted" }
+      : tool;
+
+    let result: ConfigToolResult;
+    try {
+      const invoked = await invokeTool({
+        tool: effectiveTool,
+        input,
         actor,
         sessionId: trajectoryId,
-        operationId: `op_${trajectoryId}_${stepIndex}`,
-        label: effectiveTool.id,
-        payload: input,
         trajectoryId,
-        stepIndex,
-        proposalStore: getProposalStore(),
+        stepIndex: context?.steps.length ?? 0,
         trajectoryStore,
+        proposalStore: getProposalStore(),
       });
-      const policy = await getApprovalPolicyStore().load();
-      const approver = approvalPolicy(
-        proposal.effectiveRisk,
-        effectiveTool.effects,
-        policy
-      );
+      result = invoked.output as unknown as ConfigToolResult;
+    } catch (err) {
+      // A dual-control write holds rather than fails: mint the proposal (idempotent) and surface
+      // who must approve. This is not an error — the change is pending an independent human, not
+      // broken. Clearing the hold (re-invoke with the approved proposal) is the ADR-040 surface.
+      if (err instanceof PipelineRejectedError && err.reason === "requires-approval") {
+        const stepIndex = context?.steps.length ?? 0;
+        const proposal = await proposeOnce({
+          spec: {
+            type: effectiveTool.id,
+            effects: effectiveTool.effects,
+            declaredRisk: effectiveTool.declaredRisk,
+            ephemeral: false,
+            commutative: false,
+          },
+          actor,
+          sessionId: trajectoryId,
+          operationId: `op_${trajectoryId}_${stepIndex}`,
+          label: effectiveTool.id,
+          payload: input,
+          trajectoryId,
+          stepIndex,
+          proposalStore: getProposalStore(),
+          trajectoryStore,
+        });
+        const policy = await getApprovalPolicyStore().load();
+        const approver = approvalPolicy(
+          proposal.effectiveRisk,
+          effectiveTool.effects,
+          policy
+        );
+        return {
+          toolId,
+          success: false,
+          held: true,
+          data: {
+            pendingApproval: true,
+            proposalId: proposal.proposalId,
+            operationId: proposal.operationId,
+            requiredApprover: approver.actorType,
+          },
+          approval: {
+            proposalId: proposal.proposalId,
+            operationId: proposal.operationId,
+            requiredApprover: approver.actorType,
+          },
+          durationMs: 0,
+        };
+      }
+      logger.error("Config tool invocation failed in the runtime pipeline", {
+        route: "platform/admin/config-handlers",
+        toolId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return {
         toolId,
         success: false,
-        held: true,
-        data: {
-          pendingApproval: true,
-          proposalId: proposal.proposalId,
-          operationId: proposal.operationId,
-          requiredApprover: approver.actorType,
-        },
-        approval: {
-          proposalId: proposal.proposalId,
-          operationId: proposal.operationId,
-          requiredApprover: approver.actorType,
-        },
+        data: null,
+        error: err instanceof Error ? err.message : "Tool invocation failed",
         durationMs: 0,
       };
     }
-    logger.error("Config tool invocation failed in the runtime pipeline", {
-      route: "platform/admin/config-handlers",
-      toolId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return {
-      toolId,
-      success: false,
-      data: null,
-      error: err instanceof Error ? err.message : "Tool invocation failed",
-      durationMs: 0,
-    };
-  }
 
-  // Project the governed step into the response view. The runtime trajectory is the source
-  // of truth; context.steps is this request's response projection, keeping the per-tool
-  // boundary for the UI.
-  if (context && result) {
-    // Fail closed. An unclassified tool gets the STRICTER boundary, not the lower one:
-    // recording a state-changing tool as cognition would place it below the governance a
-    // commitment receives. Not a throw — this is a recording concern, and refusing to run a
-    // working tool because its boundary is unlisted is a worse failure than recording it
-    // conservatively (TASK-064).
-    const classified = TOOL_BOUNDARIES[toolId];
-    if (!classified) {
-      logger.warn("Tool has no boundary classification — recording as commitment", {
-        route: "platform/admin/config-handlers",
-        toolId,
+    // Project the governed step into the response view. The runtime trajectory is the source
+    // of truth; context.steps is this request's response projection, keeping the per-tool
+    // boundary for the UI.
+    if (context && result) {
+      // Fail closed. An unclassified tool gets the STRICTER boundary, not the lower one:
+      // recording a state-changing tool as cognition would place it below the governance a
+      // commitment receives. Not a throw — this is a recording concern, and refusing to run a
+      // working tool because its boundary is unlisted is a worse failure than recording it
+      // conservatively (TASK-064).
+      const classified = TOOL_BOUNDARIES[toolId];
+      if (!classified) {
+        logger.warn("Tool has no boundary classification — recording as commitment", {
+          route: "platform/admin/config-handlers",
+          toolId,
+        });
+      }
+      const boundary: StepBoundary = classified ?? "commitment";
+      context.steps.push({
+        stepIndex: context.steps.length,
+        action: toolId,
+        boundary,
+        input: { toolId },
+        output: { success: result.success },
+        cost: 0,
+        durationMs: result.durationMs,
+        timestamp: new Date().toISOString(),
       });
     }
-    const boundary: StepBoundary = classified ?? "commitment";
-    context.steps.push({
-      stepIndex: context.steps.length,
-      action: toolId,
-      boundary,
-      input: { toolId },
-      output: { success: result.success },
-      cost: 0,
-      durationMs: result.durationMs,
-      timestamp: new Date().toISOString(),
-    });
-  }
 
-  return result;
+    return result;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -56,7 +56,10 @@ import { getOrchestrator } from "@/platform/ai";
 import { buildAdminSystemPrompt } from "@/prompts";
 import { getModerationStore } from "@/platform/moderation/store";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
-import { handleChangeUserRole } from "@/app/api/admin/ai/handlers/roles";
+import {
+  HELD_CURRENT_ROLE,
+  handleChangeUserRole,
+} from "@/app/api/admin/ai/handlers/roles";
 import {
   handleBlockUserFeature,
   handleUnblockUserFeature,
@@ -270,6 +273,49 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
       )
     );
     expect(res.success).toBe(true);
+    expect(await roleOf(bob)).toBe(cat.roles.staff);
+  });
+
+  it("applies a held change only onto the role it was requested against, by id (TASK-193 L5)", async () => {
+    // Requested against another role (the user's changed since): stale, nothing changed.
+    const stale = await a.run(() =>
+      handleChangeUserRole(
+        {
+          user_identifier: bob,
+          new_role: cat.roleNames.staff,
+          [HELD_CURRENT_ROLE]: cat.roles.staff,
+        },
+        barAdmin
+      )
+    );
+    expect(stale).toMatchObject({ success: false });
+    expect(stale.error).toMatch(/the user's role/);
+    expect(await roleOf(bob)).toBe(cat.roles.ops);
+    // A name is not a role: the role's name recorded, not its id, never matches.
+    const byName = await a.run(() =>
+      handleChangeUserRole(
+        {
+          user_identifier: bob,
+          new_role: cat.roleNames.staff,
+          [HELD_CURRENT_ROLE]: cat.roleNames.ops,
+        },
+        barAdmin
+      )
+    );
+    expect(byName).toMatchObject({ success: false });
+    expect(await roleOf(bob)).toBe(cat.roles.ops);
+    // Requested against the role the user still has: applied.
+    const applied = await a.run(() =>
+      handleChangeUserRole(
+        {
+          user_identifier: bob,
+          new_role: cat.roleNames.staff,
+          [HELD_CURRENT_ROLE]: cat.roles.ops,
+        },
+        barAdmin
+      )
+    );
+    expect(applied.success).toBe(true);
     expect(await roleOf(bob)).toBe(cat.roles.staff);
   });
 

@@ -56,16 +56,22 @@ export const ATOMIC_RECOVERED_NOTE =
  *   approval approved again ->  trajectory awaiting_retry (an atomic run: approve it again to retry)
  *
  * — only from the statuses a run leaves it in; a finished (completed, failed) or already
- * undecided trajectory is left as it is. A run whose step was recorded (executed) moves nothing.
+ * undecided trajectory is left as it is. A run whose step was recorded (executed) ran:
+ *
+ *   approval executed       ->  trajectory completed (review round 1, L1), unless it is a
+ *                               workflow's: its user continues the workflow past the step (M1)
  */
 export const RECOVERED_TRAJECTORY: Readonly<
   Record<
-    "indeterminate" | "approved",
+    "indeterminate" | "approved" | "executed",
     { readonly to: TrajectoryStatus; readonly from: readonly TrajectoryStatus[] }
   >
 > = {
   indeterminate: { to: "indeterminate", from: ["running", "paused", "awaiting_retry"] },
   approved: { to: "awaiting_retry", from: ["running", "paused"] },
+  // Its step was recorded: the action ran, so the request it was held for is over (review
+  // round 1, L1) — except a workflow's, which its user continues past the step (M1).
+  executed: { to: "completed", from: ["running", "paused", "awaiting_retry"] },
 };
 
 /**

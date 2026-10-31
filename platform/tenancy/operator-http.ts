@@ -36,7 +36,8 @@ export function operatorError(
     case "tenant.state_conflict":
       return apiError("tenant.conflict", { params: { reason: message }, request });
     case "tenant.invalid":
-      return apiError("tenant.invalid", { request });
+      // With what was wrong (S2 round 2): a reason outside the list, a note too long, a slug.
+      return apiError("tenant.invalid", { params: { reason: message }, request });
     case "tenant.own_tenant":
       return apiError("tenant.own_tenant", { request });
     case "tenant.self_approval":

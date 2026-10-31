@@ -32,6 +32,7 @@ import {
 } from "@/platform/auth/role-lookup";
 import { mayChangePlatformCatalog } from "@/platform/admin/config-scope";
 import { NEW_ROLE_SORT_ORDER } from "@/platform/auth/catalog-order";
+import { staleChangeMessage } from "@/platform/admin/stale-change";
 import {
   catalogTx,
   failedAsResult,
@@ -350,9 +351,11 @@ async function resolveAssignment(
   // crafted value could widen the update to other users (TASK-145).
   const target = await findUser(tx, identifier, { forUpdate: lock });
   if (!target) {
+    // Never the identifier itself (TASK-193, audit A-2): the result is the run's step, and an
+    // address typed here — mistyped, or someone's with no account — would outlive any erasure.
     return {
       ok: false,
-      result: { success: false, error: `User "${identifier}" not found` },
+      result: { success: false, error: "User not found" },
     };
   }
   const role = await findRole(tx, { name: roleName });
@@ -373,6 +376,30 @@ async function resolveAssignment(
   const refused = checkRoleAssignment(admin, target.id, role, currentRole);
   if (refused) return { ok: false, result: refusal(refused) };
   return { ok: true, target, role, currentRole };
+}
+
+/**
+ * The input key a held role change records the user's role under when it is requested (TASK-193,
+ * audit B-4): its approval applies it only while the user still has that role. Set by the command
+ * bar when it holds the change (heldRoleSnapshot), never taken from a caller.
+ */
+export const HELD_CURRENT_ROLE = "held_current_role_id";
+
+/**
+ * The user's role now, by id (null: none), for a change to be held — undefined when the user
+ * cannot be found (the run will refuse it). Read in the current tenant. The id, not the name
+ * (review round 1, L5): a role renamed, or deleted and another made with its name, is not the
+ * role the change was requested against.
+ */
+export async function heldRoleSnapshot(
+  input: Record<string, any>
+): Promise<string | null | undefined> {
+  const identifier = String(input.user_identifier ?? "");
+  return withTenantTx(async (tx) => {
+    const user = await findUser(tx, identifier);
+    if (!user) return undefined;
+    return user.roleId ?? null;
+  });
 }
 
 export async function handleChangeUserRole(
@@ -406,13 +433,24 @@ export async function handleChangeUserRole(
           // The user is locked and the rules checked again on what the update will change.
           const now = await resolveAssignment(tx, admin, plan.target.id, roleName, true);
           if (!now.ok) return now.result;
+          // A held change runs only onto the role it was requested against (TASK-193, audit B-4):
+          // the user's role changed since — a year-old approval, or another change made in
+          // between — makes it stale, never applied over what is there now.
+          if (
+            Object.prototype.hasOwnProperty.call(input, HELD_CURRENT_ROLE) &&
+            (now.currentRole?.id ?? null) !== input[HELD_CURRENT_ROLE]
+          ) {
+            return { success: false, error: staleChangeMessage("the user's role") };
+          }
           await tx.query("update users set role_id = $2::uuid where id = $1::uuid", [
             now.target.id,
             now.role.id,
           ]);
+          // The account's id, never the identifier typed (TASK-193, audit A-2: an address in the
+          // step outlived the account's erasure — only a whole-string address is replaced).
           return {
             success: true,
-            result: `User "${user_identifier}" assigned to "${now.role.name}"`,
+            result: `User ${now.target.id} assigned to "${now.role.name}"`,
           };
         })
       );

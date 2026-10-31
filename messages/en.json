@@ -108,7 +108,7 @@
     },
     "tenant": {
       "conflict": "That could not be done: {reason}.",
-      "invalid": "Some of the tenant details are not valid.",
+      "invalid": "Some of the details are not valid: {reason}",
       "mismatch": "This account belongs to a different organisation. Sign in on your organisation's address.",
       "missing": "Your account is not assigned to an organisation yet. Contact your administrator.",
       "not_active": "That tenant is deleted and awaiting purge. Restore it first.",

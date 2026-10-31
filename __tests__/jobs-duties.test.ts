@@ -18,7 +18,31 @@ jest.mock("@/platform/moderation/strikes", () => ({
 jest.mock("@/platform/auth/account-status-guard", () => ({
   expireLapsedAccountStatuses: jest.fn(),
 }));
-jest.mock("@/platform/auth/gdpr-deletion", () => ({ purgeDueErasures: jest.fn() }));
+jest.mock("@/platform/auth/gdpr-deletion", () => ({
+  purgeDueErasures: jest.fn(),
+  reconcileErasures: jest.fn(async () => 0),
+  retryExternalErasures: jest.fn(async () => ({
+    due: 0,
+    done: 0,
+    pending: 0,
+    stopped: false,
+  })),
+  eraseMentionsInOtherTenants: jest.fn(async () => ({
+    due: 0,
+    erased: 0,
+    stopped: false,
+  })),
+}));
+jest.mock("@/platform/auth/coppa", () => ({
+  expireParentalConsent: jest.fn(async () => ({
+    enabled: false,
+    due: 0,
+    erased: 0,
+    failed: 0,
+    stopped: false,
+    days: 14,
+  })),
+}));
 jest.mock("@/platform/auth/user-provisioning", () => ({
   upgradeLegacyErasureHashes: jest.fn(async () => 0),
 }));
@@ -186,11 +210,21 @@ describe("the core duties", () => {
     );
   });
 
-  it("the GDPR purge fails the attempt when an erasure did not complete, and continues a full batch", async () => {
-    (purgeDueErasures as jest.Mock).mockResolvedValue({ due: 3, purged: 1, failed: 2 });
-    const failing = duty("gdpr.retention-purge")();
-    await expect(failing).rejects.toBeInstanceOf(JobFailure);
-    await expect(failing).rejects.toThrow("2 of 3 due erasures did not complete");
+  // TASK-193 (audit B-7): a failed erasure no longer fails the run. It threw before the run could
+  // continue, so erasures that always fail held every later one back; now each failure is
+  // deferred with a growing interval and alerted once it keeps failing (purgeDueErasures), and
+  // the run reports it and goes on.
+  it("the GDPR purge reports erasures that did not complete, and continues a full batch", async () => {
+    (purgeDueErasures as jest.Mock).mockResolvedValue({
+      due: 3,
+      purged: 1,
+      failed: 2,
+      stuck: 0,
+    });
+    await expect(duty("gdpr.retention-purge")()).resolves.toMatchObject({
+      summary: { due: 3, purged: 1, failed: 2 },
+    });
+    void JobFailure;
     (purgeDueErasures as jest.Mock).mockResolvedValue({
       due: 100,
       purged: 100,
@@ -216,7 +250,18 @@ describe("the core duties", () => {
     });
     upgradeLegacyErasureHashes.mockResolvedValueOnce(3);
     expect(await duty("gdpr.retention-purge")()).toEqual({
-      summary: { due: 0, purged: 0, hashesUpgraded: 3 },
+      summary: {
+        due: 0,
+        purged: 0,
+        failed: 0,
+        stuck: undefined,
+        hashesUpgraded: 3,
+        reconciled: 0,
+        consentExpired: 0,
+        externalDone: 0,
+        externalPending: 0,
+        mentionsErased: 0,
+      },
     });
   });
 

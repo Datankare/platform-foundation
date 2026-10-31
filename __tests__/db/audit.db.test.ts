@@ -63,7 +63,8 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
         actorId: actor,
         targetId: target,
         agent: "escalation-reaper",
-        details: { from: "free", to: "admin" },
+        // TASK-193: the keys role_changed's schema allows (platform/auth/audit-details.ts).
+        details: { oldRole: "free", newRole: "admin" },
         ipAddress: "10.0.0.7",
         userAgent: "jest",
       })
@@ -76,7 +77,7 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
       action: "role_changed",
       actor_id: actor,
       target_id: target,
-      details: { from: "free", to: "admin", agent: "escalation-reaper" },
+      details: { oldRole: "free", newRole: "admin", agent: "escalation-reaper" },
       ip_address: "10.0.0.7",
       user_agent: "jest",
       tenant_id: t.id,

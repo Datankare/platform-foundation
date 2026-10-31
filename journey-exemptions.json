@@ -1,6 +1,6 @@
 {
   "_comment": "TASK-198 D-21: the pages and API routes with no e2e test or live journey, and why (__tests__/journey-coverage.test.ts). A ratchet: it may only shrink — an exemption no longer needed fails until removed (UPDATE_JOURNEY_EXEMPTIONS=1 npx jest __tests__/journey-coverage.test.ts), and a reviewer reads an added one as a gate loosened (REVIEW.md rule 8). Per repository — not synced.",
-  "count": 73,
+  "count": 74,
   "exemptions": {
     "/admin": "the admin console with no e2e or live journey here — pending the S7/S8 admin journeys",
     "/api/account/age": "account and identity flow with no journey yet (sign-up, verification, reset, MFA, SSO, export, delete, age) — pending the S7/S8 account journeys",
@@ -69,6 +69,7 @@
     "/api/operator/tenants/[id]/config": "admin console section with no e2e or live journey yet — pending the S7/S8 admin journeys (most change state; read views first)",
     "/api/operator/tenants/[id]/deletion": "admin console section with no e2e or live journey yet — pending the S7/S8 admin journeys (most change state; read views first)",
     "/api/operator/tenants/[id]/domains": "admin console section with no e2e or live journey yet — pending the S7/S8 admin journeys (most change state; read views first)",
+    "/api/operator/tenants/[id]/erasures/[userId]/attestation": "operator dual-control attestation of an erasure step the system cannot verify (TASK-193): needs two operators and a pool-unverified erasure, which no journey sets up yet; the path is held by db/erasure-reconciliation and the route-role matrix — pending the S7/S8 operator journeys",
     "/api/operator/tenants/[id]/export": "admin console section with no e2e or live journey yet — pending the S7/S8 admin journeys (most change state; read views first)",
     "/api/operator/tenants/[id]/state": "admin console section with no e2e or live journey yet — pending the S7/S8 admin journeys (most change state; read views first)",
     "/api/process": "the one-shot translate route (paid providers) — PF has no deployment of its own: a consuming app's deploy smoke check translates through it with real providers, and CI's container-image job runs the smoke check without the translation; no e2e test or live journey here",

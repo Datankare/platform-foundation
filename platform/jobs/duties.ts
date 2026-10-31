@@ -11,8 +11,12 @@
  *   moderation.release-claims      each tenant     timed-out review claims back to the queue
  *   moderation.expire-strikes      each tenant     strikes past their expiry marked expired
  *   accounts.expire-restrictions   each tenant     lapsed restrictions/suspensions → warned
- *   gdpr.retention-purge           each tenant*    erasures past their retention period completed
- *   agents.trajectory-retention    each tenant*    finished trajectories past retention deleted
+ *   gdpr.retention-purge           each tenant*    erasures past their retention period completed;
+ *                                                  unrecorded erasures recorded, children's
+ *                                                  accounts past their consent period erased,
+ *                                                  external erasures retried (TASK-193)
+ *   agents.trajectory-retention    each tenant*    abandoned open trajectories ended (TASK-193), then
+ *                                                  finished ones past retention deleted
  *   config.expire-approvals        platform        stale configuration approvals expired (TASK-036)
  *   tenancy.purge-due              platform        deleted tenants past their purge time purged
  *   jobs.prune                     platform        succeeded jobs past jobs.retention_days deleted
@@ -36,7 +40,13 @@
 import { expireStaleApprovals } from "@/platform/admin/config-approval";
 import { applyTrajectoryRetention } from "@/platform/agents/trajectory-retention";
 import { expireLapsedAccountStatuses } from "@/platform/auth/account-status-guard";
-import { purgeDueErasures } from "@/platform/auth/gdpr-deletion";
+import {
+  eraseMentionsInOtherTenants,
+  purgeDueErasures,
+  reconcileErasures,
+  retryExternalErasures,
+} from "@/platform/auth/gdpr-deletion";
+import { expireParentalConsent } from "@/platform/auth/coppa";
 import { upgradeLegacyErasureHashes } from "@/platform/auth/user-provisioning";
 import { getConfigNumber } from "@/platform/auth/platform-config";
 import {
@@ -140,22 +150,50 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
     handler: async (ctx) => {
       // Legacy unkeyed address hashes become the current key's first (review 8 L6).
       const upgraded = await upgradeLegacyErasureHashes(ACCOUNT_BATCH);
+      // TASK-193: an account marked deleted without its erasure record is recorded (B-6); a
+      // child's account whose consent was not given in time is erased (B-10, COPPA); the stores
+      // outside the database still holding an erased person are tried again (B-8/D-9).
+      const reconciled = await reconcileErasures(ctx.agent, ACCOUNT_BATCH);
+      const consent = await expireParentalConsent(ERASURE_BATCH, ctx.signal);
+      const external = await retryExternalErasures(ERASURE_BATCH, ctx.signal);
       const r = await purgeDueErasures(ctx.agent, ERASURE_BATCH, ctx.signal);
-      if (r.failed > 0) {
-        throw new JobFailure(
-          `${r.failed} of ${r.due} due erasures did not complete; they stay due and are tried again.`
-        );
-      }
+      // An erased account's mentions in other tenants' audit records (an operator's act) (A-3).
+      const mentions = await eraseMentionsInOtherTenants(ERASURE_BATCH, ctx.signal);
+      // A failed erasure is retried later with a growing interval and alerted once it keeps
+      // failing (purgeDueErasures); the run goes on to the next part, so the erasures that always
+      // fail never hold the others back (B-7: the run failed before it could continue).
       return {
-        summary: { due: r.due, purged: r.purged, hashesUpgraded: upgraded },
-        ...more(r.stopped || r.due >= ERASURE_BATCH || upgraded >= ACCOUNT_BATCH),
+        summary: {
+          due: r.due,
+          purged: r.purged,
+          failed: r.failed,
+          stuck: r.stuck,
+          hashesUpgraded: upgraded,
+          reconciled,
+          consentExpired: consent.erased,
+          externalDone: external.done,
+          externalPending: external.pending,
+          mentionsErased: mentions.erased,
+        },
+        ...more(
+          r.stopped ||
+            consent.stopped ||
+            external.stopped ||
+            mentions.stopped ||
+            mentions.due >= ERASURE_BATCH ||
+            r.due >= ERASURE_BATCH ||
+            consent.due >= ERASURE_BATCH ||
+            external.due >= ERASURE_BATCH ||
+            reconciled >= ACCOUNT_BATCH ||
+            upgraded >= ACCOUNT_BATCH
+        ),
       };
     },
   },
   {
     kind: "agents.trajectory-retention",
     description:
-      "Deletes completed and failed agent trajectories older than agent.trajectory.retention_days.",
+      "Ends open agent trajectories with no activity for agent.trajectory.abandon_after_hours and no open hold, then deletes completed and failed ones older than agent.trajectory.retention_days.",
     runsForSuspended: true,
     schedule: {
       scope: "each-tenant",
@@ -166,7 +204,12 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
     handler: async () => {
       const r = await applyTrajectoryRetention();
       return {
-        summary: { deleted: r.deleted, retentionDays: r.retentionDays },
+        summary: {
+          deleted: r.deleted,
+          retentionDays: r.retentionDays,
+          abandoned: r.abandoned,
+          abandonHours: r.abandonHours,
+        },
         ...more(r.more),
       };
     },

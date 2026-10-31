@@ -1029,6 +1029,47 @@ export interface TrajectoryStore {
    * @scheduled agents.trajectory-retention
    */
   deleteFinishedBefore(cutoff: Date, limit: number): Promise<number>;
+
+  /**
+   * The reaper (TASK-193): end `failed`, with a step saying so, up to `limit` of the current
+   * tenant's open trajectories (running, paused, awaiting_retry, indeterminate) that have had no
+   * activity since `cutoff` and have no open hold — no proposal proposed, approved, executing or
+   * indeterminate — on any segment of their chain; never an app session's (its session owns it). A chain's earlier segment, once its last
+   * segment is over, takes that segment's status. Their `updated_at` is left as it was, so
+   * retention counts from the last activity. `openHolds` is for a store that cannot see the
+   * proposals itself (the in-memory one): the trajectory ids an open hold names. `workflows`: a
+   * workflow's trajectory waits for its own, longer cutoff (absent: every one takes `cutoff`;
+   * the agents.trajectory-retention job always gives it).
+   * Optional: a store without it is never reaped (platform/agents/trajectory-closure.ts).
+   *
+   * @scheduled agents.trajectory-retention
+   */
+  closeAbandoned?(
+    cutoff: Date,
+    limit: number,
+    openHolds?: () => Promise<ReadonlySet<string>>,
+    workflows?: WorkflowAbandonment
+  ): Promise<AbandonedTrajectories>;
+}
+
+/**
+ * A workflow's trajectory is the user's to continue (ADR-029 D8): the reaper holds it to its own,
+ * longer bound (review round 1, M1). A chain whose last segment's trigger is one of `triggers`
+ * is reaped only when untouched since `cutoff`.
+ */
+export interface WorkflowAbandonment {
+  readonly triggers: readonly string[];
+  readonly cutoff: Date;
+}
+
+/** What one run of the trajectory reaper ended (TrajectoryStore.closeAbandoned). */
+export interface AbandonedTrajectories {
+  /** Open trajectories with no activity and no open hold, ended `failed`. */
+  readonly closed: number;
+  /** Of them, how many were `indeterminate` (an external effect never resolved): alerted. */
+  readonly indeterminate: number;
+  /** Earlier segments of a finished chain given its status. */
+  readonly segments: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════

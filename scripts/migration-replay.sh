@@ -1435,6 +1435,64 @@ if [ "$before" != "$after" ]; then
   diff <(echo "$before") <(echo "$after") || true
   exit 1
 fi
+step "060: lifecycle settings seeded, columns added, approved approvals marked applied only by their own change; applied again keeps an operator's value"
+"${PSQL[@]}" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.platform_config
+                  WHERE key = 'agent.trajectory.abandon_after_hours' AND value = '24'::jsonb
+                    AND value_type = 'number' AND tenant_overridable = true) THEN
+    RAISE EXCEPTION '060: agent.trajectory.abandon_after_hours is not seeded (24, tenant-settable)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.platform_config
+                  WHERE key = 'agent.workflow.abandon_after_days' AND value = '30'::jsonb
+                    AND value_type = 'number' AND tenant_overridable = true) THEN
+    RAISE EXCEPTION '060: agent.workflow.abandon_after_days is not seeded (30, tenant-settable)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.platform_config
+                  WHERE key = 'coppa.consent_expiry_days' AND value = '14'::jsonb
+                    AND permission_tier = 'safety' AND tenant_overridable = false) THEN
+    RAISE EXCEPTION '060: coppa.consent_expiry_days is not seeded (14, operator-only)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.platform_config
+                  WHERE key = 'coppa.consent_expiry_enabled' AND value = 'false'::jsonb
+                    AND value_type = 'boolean' AND permission_tier = 'safety'
+                    AND tenant_overridable = false) THEN
+    RAISE EXCEPTION '060: coppa.consent_expiry_enabled is not seeded (false, operator-only)';
+  END IF;
+  IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public'
+        AND ((table_name = 'user_deletions' AND column_name IN ('purge_attempts', 'purge_retry_at',
+              'last_purge_error', 'external_erasures', 'mentions_erased_at', 'identity_pool'))
+          OR (table_name = 'config_pending_approvals' AND column_name = 'applied_at')
+          OR (table_name = 'proposals' AND column_name = 'reminded_at'))) <> 8 THEN
+    RAISE EXCEPTION '060: a column is missing';
+  END IF;
+END $$;
+UPDATE public.platform_config SET value = '48'::jsonb WHERE key = 'agent.trajectory.abandon_after_hours';
+UPDATE public.platform_config SET value = '45'::jsonb WHERE key = 'agent.workflow.abandon_after_days';
+UPDATE public.platform_config SET value = '30'::jsonb WHERE key = 'coppa.consent_expiry_days';
+-- Two approved, unapplied approvals: one whose own change is in the history, one whose key was
+-- written since with another value. Applied again, 060 marks only the first.
+INSERT INTO public.config_pending_approvals
+  (id, config_key, current_value, proposed_value, change_comment, tenant_id, scope, status, reviewed_by, reviewed_at)
+VALUES
+  ('00000000-0000-4000-8000-000000000601', 'agent.trajectory.abandon_after_hours', '24', '12', 'replay 060 applied', NULL, 'platform', 'approved', '00000000-0000-4000-8000-0000000006ff', now() - interval '1 hour'),
+  ('00000000-0000-4000-8000-000000000602', 'agent.trajectory.abandon_after_hours', '24', '6', 'replay 060 other', NULL, 'platform', 'approved', '00000000-0000-4000-8000-0000000006ff', now() - interval '1 hour');
+INSERT INTO public.platform_config_history
+  (config_key, previous_value, new_value, changed_by, change_comment, tenant_id, scope, created_at)
+VALUES
+  ('agent.trajectory.abandon_after_hours', '24', '12', '00000000-0000-4000-8000-0000000006ff', 'replay 060', NULL, 'platform', now() - interval '50 minutes');
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/060_lifecycle_closure.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT string_agg(value::text, ',' ORDER BY key) FROM public.platform_config WHERE key IN ('agent.trajectory.abandon_after_hours', 'agent.workflow.abandon_after_days', 'coppa.consent_expiry_days')")" = "48,45,30" ] \
+  || { echo "✗ applying 060 a second time overwrote an operator's value"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT string_agg(change_comment || '=' || (applied_at IS NOT NULL)::text, ',' ORDER BY change_comment) FROM public.config_pending_approvals WHERE change_comment LIKE 'replay 060 %'")" = "replay 060 applied=true,replay 060 other=false" ] \
+  || { echo "✗ 060 marked an approval applied without its own change in the history (or missed one with it)"; exit 1; }
+"${PSQL[@]}" -c "UPDATE public.platform_config SET value = '24'::jsonb WHERE key = 'agent.trajectory.abandon_after_hours'" \
+  -c "UPDATE public.platform_config SET value = '30'::jsonb WHERE key = 'agent.workflow.abandon_after_days'" \
+  -c "UPDATE public.platform_config SET value = '14'::jsonb WHERE key = 'coppa.consent_expiry_days'" \
+  -c "DELETE FROM public.config_pending_approvals WHERE change_comment LIKE 'replay 060 %'" \
+  -c "DELETE FROM public.platform_config_history WHERE change_comment = 'replay 060'" >/dev/null
 
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —

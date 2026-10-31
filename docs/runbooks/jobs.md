@@ -122,3 +122,34 @@ A tenant's administrators may turn the scheduled social agents (analyst, curator
 tenant: the setting `social.scheduled_agents_enabled` on their **Tenant** page. Their jobs then
 succeed without running the agent. Operators see the setting on the tenant's settings (Tenants →
 Settings), and the tenant's administrators see their own recent jobs, read-only, on the Tenant page.
+
+## 6. Erasures that do not complete (TASK-193)
+
+gdpr.retention-purge no longer fails its attempt when an erasure fails: each failure is deferred
+(`user_deletions.purge_attempts`, `purge_retry_at`: 1 h, doubling, at most 7 days;
+`last_purge_error` names the failing steps), so the others go on. Alerts:
+
+- `gdpr.erasure_stuck` — an erasure has failed 5 or more times. Read `last_purge_error`; fix the
+  step (an app's deletion module, the database); it is retried on its own.
+- `gdpr.external_erasure_pending` — a store outside the database (the identity provider) refused
+  3 or more times: check the Cognito IAM key holds `cognito-idp:AdminDeleteUser`
+  (TENANCY_OPERATIONS §3.3). Until it is done the erasure is not marked purged.
+- `gdpr.erasure_unrecorded` — accounts marked deleted had no erasure record; each is now recorded
+  and purged on schedule. Find what deleted them outside `softDeleteUser`.
+- `gdpr.identity_pool_unverified` — the identity was not found, but in a pool not shown to be the
+  account's: the identity was never proven present in the current pool (an old-pool account never
+  re-linked, an erasure from before migration 060, a reconciled one), the erasure recorded another
+  pool, or DescribeUserPool did not confirm the pool. It stays pending. If the identity is in an
+  older pool, delete it there; then — or if the pool is gone, or the account never had an
+  identity — two operators attest it (TENANCY_OPERATIONS §4, "Closing an erasure the system
+  cannot verify"). That is the only way to close it; never mark it done by hand.
+
+Each cause alerts once per run: an erasure held only by its identity step is the identity alert,
+not `gdpr.erasure_stuck` as well.
+
+The consent expiry (a child's account whose consent is pending or denied past
+`coppa.consent_expiry_days`) runs only while `coppa.consent_expiry_enabled` is on — off until the
+parental-consent flow ships. Before turning it on, count what it would erase:
+`select count(*) from users where parental_consent_status in ('pending', 'denied') and deleted_at is null and coalesce(age_verified_at, created_at) < now() - interval '14 days';`
+
+Check: `select count(*) filter (where purged_at is null and purge_after <= now()) as due, count(*) filter (where purge_attempts >= 5) as stuck, count(*) filter (where external_erasures -> 'identity-provider' ->> 'doneAt' is null) as identity_pending from user_deletions;`

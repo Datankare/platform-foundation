@@ -5326,7 +5326,162 @@ a workflow writes to be ignored by git (it failed on the old `.gitignore`, namin
 Not caught before shipping because the gates ran each pass on its own, never two passes in one
 working tree as CI's single job does.
 
-_Last updated: October 30, 2026 (TASK-198 review round 3: SHIP; CI follow-up)_
+### TASK-193 — Lifecycle, closure and erasure completeness (the October 2026 class A/B audits)
+
+| Field        | Detail                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-193                                                                                                            |
+| **Type**     | Defect (lifecycle, retention, erasure)                                                                              |
+| **Severity** | Medium (A-1 High)                                                                                                   |
+| **Phase**    | Phase 5                                                                                                             |
+| **Target**   | v6.0.0 (RC)                                                                                                         |
+| **Status**   | Fixed (sweep batch S2) — migration 060 to apply; owner steps below                                                  |
+| **Logged**   | 2026-10-29 (the command bar's trajectory never ended; the class A and B audits, B-1–B-10, A-1–A-4, A-16, D-9, D-10) |
+
+**Filed because** `app/api/admin/ai/execute/route.ts` created a trajectory and never ended it
+(`invokeTool` records steps, never a status); the audit found the same at every caller and on every
+decision path but a plain rejection. Five command-bar trajectories on playform-dev are stuck
+`running`. What changed, by finding:
+
+- **B-1, A-1 — trajectories opened are ended.** `platform/agents/trajectory-closure.ts`:
+  `withTrajectory` (open, run, end: completed / failed, only from `running` — a held request's
+  trajectory is the hold's) and `finishTrajectory`. Used by the command bar, the Users and
+  Entitlements pages' held changes, every governed config write (`dispatchConfigTool`, which also
+  ends the config assistant's: its `traj-…` id was never stored) and the Guardian's empty-text run.
+- **B-3 (and what is already stuck) — the reaper.** `TrajectoryStore.closeAbandoned`, run by
+  `agents.trajectory-retention` before it deletes: an open trajectory (running, paused,
+  awaiting_retry, indeterminate) with no activity for the governed
+  `agent.trajectory.abandon_after_hours` (24) and no open hold on its chain is ended `failed` with a
+  `trajectory-abandoned` step; its last activity time is kept, so retention counts from it. App
+  session trajectories are skipped (B-5, batch S4); a workflow's (its trigger a workflow goal) is
+  the user's to continue and is reaped only past `agent.workflow.abandon_after_days` (30). An indeterminate one raises
+  `agents.indeterminate_reaped`. This closes the five on playform-dev at the job's next run.
+- **B-2 — every decision ends its hold's trajectory.** `settleHeldTrajectory` (gating.ts) brings a
+  single-action hold's trajectory in line with its proposal after every approvals-page decision
+  (approve and run, reject, withdraw, mark executed, reapprove, stale, lapsed); the superseded-hold
+  withdrawal settles each; the expiry sweeps end the chain in the same statement; erasure of a hold
+  about an account ends its trajectory (`heldAboutTrajectories`); a reapproval moves a paused
+  workflow to `awaiting_retry`.
+- **B-4 — undecided holds expire.** A `proposed` hold lapses after `config.approval_expiry_days`
+  from its request (`expireUndecidedHolds`, config.expire-approvals): withdrawn, its trajectory
+  ended, not listed, and a decision on it answers `approvals.expired`. A held role change records
+  the user's role by id (`held_current_role_id`); its approval applies it only while that is still
+  the role, else `approvals.stale`.
+- **B-9 — approved, never applied.** `config_pending_approvals.applied_at`; config.expire-approvals
+  marks an approval approved and unapplied past 600 s applied (its own change — key, scope, tenant,
+  reviewer, the value replaced and the value written — is in the history) or reopens it.
+  `approvals.indeterminate` is raised when a run is found undecided, then at most daily while it
+  waits (`proposals.reminded_at`).
+- **B-6, D-10 — no deleted account without its record.** The soft delete anonymises and records
+  the erasure in one transaction; `reconcileErasures` (gdpr.retention-purge) records any account
+  marked deleted without one (`gdpr.erasure_unrecorded`). **A-16:** the soft delete also clears the
+  parent's address, the ban reason, time zone, language and last sign-in.
+- **B-7 — failing erasures never block the rest.** `purge_attempts` / `purge_retry_at` (1 h,
+  doubling, ≤ 7 days), fewest-tried first, `last_purge_error` (step names only), alert
+  `gdpr.erasure_stuck` after 5; the job no longer fails before it can continue.
+- **B-8, D-9 — the sign-in identity is erased.** `platform/gdpr/external-erasure.ts`: a register
+  of stores outside the database (the identity provider first; an app adds its own). Every erasure
+  deletes the identity with the administrative credentials (`AuthProvider.adminDeleteUser`:
+  ListUsers by the subject, then AdminDeleteUser), records each outcome in
+  `user_deletions.external_erasures`, and the job retries until done
+  (`gdpr.external_erasure_pending`); an erasure is never marked purged while one is pending. An
+  identity not found counts as erased only in the pool the erasure recorded
+  (`user_deletions.identity_pool`), confirmed (DescribeUserPool); otherwise it stays pending and
+  alerts `gdpr.identity_pool_unverified` until two operators attest it (the pool is recorded only
+  when the identity is proven present in it). The self-service route uses the same pipeline. Existing erasures start with nothing
+  recorded, so their identities are deleted too.
+- **B-10 — COPPA.** A child's account pending or denied consent `coppa.consent_expiry_days` (14)
+  after its age was recorded is erased by gdpr.retention-purge (purged in the same run) — while
+  `coppa.consent_expiry_enabled` is on. It ships **off** (owner decision, round 1): it is turned on
+  with the parental-consent email flow, a later batch.
+- **A-2, A-3, A-4 — audit details allowlisted.** `platform/auth/audit-details.ts`: per action (per
+  `type` for admin_action) the keys a record may carry, each with a kind; others are dropped and
+  named; no address-shaped string is stored in any kind but a setting's value (configuration, kept
+  as set); free text (`reason`, `reviewerNotes`, `changeComment`, `note`, `cause`, `deviceName`) is
+  erased from the records about the account (its target, or the `user_id` / `userId` they name —
+  `auditText`), and the account's mentions in other tenants' audit records (an operator's act) are
+  erased by the job (`CROSS_TENANT_ERASURE`, in page ranges of 10,000 pages per transaction — one
+  read of the whole audit log per erased account, by the job; `user_deletions.mentions_erased_at`). The operator's
+  promotion records the account's id, not the address; a role change's step names the account's id,
+  and a miss never echoes what was typed.
+
+**Guard tests** (each shown failing on `45ee685` first): `lifecycle-closure-scan` (creators and
+decision paths, compiler API), `status-lifecycle-registry` + `db/status-lifecycle` (the register
+`platform/assurance/status-lifecycle.ts`: every state of every status column classified, each
+reaped state aged and run through its job), `db/proposal-trajectory-closure` (64 path × status
+cases), `db/erasure-reconciliation` (faults injected), `external-erasure-registry` (+
+`cognito-admin-delete`), `db/canary-erasure` (sentinels in every personal field, every write
+path, every column of every table in every tenant), `audit-details-schema`. Existing tests that
+asserted a defect were changed: `db/jobs` (an old running trajectory kept), `jobs-duties` (a failed
+erasure failed the job), `account-data-rights` (the route deleted the identity with the token).
+
+**Review round 1** (two independent finders, both BLOCK; every finding fixed, in the same commit).
+
+| Finding                                                                                                                                                       | Tag       | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 (High) Cognito `adminDeleteUser` named the user by its subject: a federated user (`Google_…`) answered UserNotFound, counted done while the identity stayed | Important | PF resolves the pool user by `ListUsers` `sub = "…"` (a learnt username first), deletes that; none is `notFound`, two fail; a non-UUID never reaches a filter. Federated, local, none, ambiguous and refusal cases in `cognito-admin-delete` (both repos); the consumer note says `notFound` only when the provider has no user with the subject                                                                                                                                                                                                                                   |
+| 2 (Med) No `cognito_sub`: done without a delete                                                                                                               | Important | The subject falls back to the account's id when it has a subject's shape (an account bound by its id), old records too; unit + `db/erasure-reconciliation` fake-pool case                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 3 (Med) "Not found" counted erased in any pool                                                                                                                | Important | `user_deletions.identity_pool` recorded at the soft delete; not found is done only when it equals the provider's pool and `confirmIdentityPool` (DescribeUserPool) passed this run, else pending, `poolUnverified`, alert `gdpr.identity_pool_unverified`. Wrong-pool, no-pool and unconfirmed cases (round 2: the pool is recorded only when proven; the legacy-pool setting removed)                                                                                                                                                                                             |
+| 4 (Med, operational) The consent expiry would erase accounts waiting on a flow not yet built                                                                  | Important | Owner decision: behind `coppa.consent_expiry_enabled` (boolean, false, operator-only); both settings tested (`db/status-lifecycle`); the count query is in the owner steps and jobs runbook §6                                                                                                                                                                                                                                                                                                                                                                                     |
+| 5 (Low) 060 marked every approved approval applied                                                                                                            | Nit       | Only where the history holds its own change (key, scope, tenant, reviewer, previous = current_value, new = proposed_value); the rest is left to the recovery, which reopens it; the replay checks both                                                                                                                                                                                                                                                                                                                                                                             |
+| 6 (Low) Free text erased from records merely naming the account; an unbounded cross-tenant scan                                                               | Nit       | Only records about it (`target_id`, `details.user_id` / `userId`); the cross-tenant pass runs in TID page ranges, a transaction each; cost documented (`CROSS_TENANT_ERASURE`); canary bystander case                                                                                                                                                                                                                                                                                                                                                                              |
+| 7 (Low) The soft delete read the user without a lock                                                                                                          | Nit       | `for update`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 8 (Low) The backoff exponent grew unbounded                                                                                                                   | Nit       | `least(purge_attempts, 8)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 9 (Low) Addresses redacted from configuration values (a sender, a connection string)                                                                          | Nit       | `kindCarriesAddresses`: never a `value` kind; test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 10 (Low) The canary did not seed time zone, language, last sign-in; no over-deletion side; no identity case                                                   | Nit       | Seeded; a bystander's account, device and the record about them survive; fake-pool identity cases (federated, local, by id, wrong pool)                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 11 (Nit) A repeated soft delete reset the schedule and attempts                                                                                               | Nit       | On conflict keeps `purge_attempts`, brings `purge_after` only forward                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 12 (Nit) The same cause alerted twice (pending identity and stuck purge)                                                                                      | Nit       | `gdpr.erasure_stuck` excludes erasures held only by an external store; the pending alert excludes pool-unverified ones (their own alert)                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| M1 (Med) The reaper ended workflow trajectories the user can still continue (ADR-029 D8)                                                                      | Important | A trajectory whose trigger is a declared workflow goal is reaped only past `agent.workflow.abandon_after_days` (30, governed); an executed hold does not complete it. `db/status-lifecycle`: a workflow paused after an executed step, two days idle, stays paused; 40 days, ended                                                                                                                                                                                                                                                                                                 |
+| Owner decision: an erasure the system cannot verify had no way out                                                                                            | Important | Two-operator attestation (`platform/gdpr/erasure-attestation.ts`, `POST /api/operator/tenants/[id]/erasures/[userId]/attestation`): only a pool-unverified step; a fixed reason (`pool_decommissioned`, `deleted_in_old_pool`, `identity_never_existed`) and a note kept only in the audit record; a second operator approves within 7 days; recorded `attested` (who asked, who approved, when, why), each step audited. `db/erasure-reconciliation`: pending until attested, self-approval refused, a verified step refused, audit records written; the route in the role matrix |
+| L1 (Low) A recovered run whose step was recorded left its trajectory open                                                                                     | Nit       | `RECOVERED_TRAJECTORY.executed`: completed — not a workflow's; `db/proposal-trajectory-closure`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| L2 (Low) "Applied" inferred from any write of the key                                                                                                         | Nit       | Key, scope, tenant, reviewer, previous and new value (as item 5); `db/status-lifecycle`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| L3 (Low) The undecided alert repeated every 15 minutes                                                                                                        | Nit       | `proposals.reminded_at`: alerted when found, then at most daily; test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| L4 (Low) Expiry's open-hold check looked at one segment                                                                                                       | Nit       | Over the whole chain, as the reaper; test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| L5 (Low) The held role compared by name                                                                                                                       | Nit       | `held_current_role_id`; `db/admin-tenant-data` (another id, a name, the same id)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| L6 (Low) The scan counted any `updateStatus`, and a second create inside `withTrajectory` as closed; the register did not say which states wait on a person   | Nit       | `updateStatus` counts only on a hold's `.trajectoryId`; a store create inside `withTrajectory` is open; fixture self-test; `waitsOn` in the register, required for the person-first states                                                                                                                                                                                                                                                                                                                                                                                         |
+
+**Review round 2** (verifier BLOCK, 3 Medium; every finding fixed, in the same commit).
+
+| Finding                                                                                                                                          | Tag       | Fix                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1 (Med) The soft delete recorded the current pool whether or not the identity was there; a re-soft-delete gave a pre-060 record the current pool | Important | `identity_pool` is recorded only when the identity is proven present (`AuthProvider.identityInPool`: the provider's own lookup, or a subject learnt from a token this pool verified — PF ListUsers, Playform `poolUserOf`); never replaced; no coalesce on a repeat. `db/erasure-reconciliation`: an old-pool account never re-linked, erased now, records no pool and stays unverified (twice erased, still none) |
+| 2 (Med) `gdpr.legacy_identity_pool` let a setting turn "not found" into erased                                                                   | Important | Removed — from 060, the replay check, the code, the docs and the tests; attestation is the only way to close an unverifiable step                                                                                                                                                                                                                                                                                  |
+| 3 (Med) Approval did not re-check the step; a request outlived a different failure                                                               | Important | Approval requires the step still pending and pool-unverified; a job run recording any other outcome drops the open request (the merge keeps it only while unverifiable). Tests for both                                                                                                                                                                                                                            |
+| 4 (Low) The audited-external scanner keyed wrappers by name: the second `recorded` was never registered, its calls never checked                 | Nit       | Keyed by file and name (an import resolved by its file, through a barrel by its one owner); the self-test names both `recorded` wrappers                                                                                                                                                                                                                                                                           |
+| Nit: TENANCY_OPERATIONS said the app key has no `ListUsers`                                                                                      | Nit       | Corrected: the app key has it now; the relink command still uses a key of its own                                                                                                                                                                                                                                                                                                                                  |
+| Nit: `tenant.invalid` dropped its message                                                                                                        | Nit       | Carried as `reason` (`messages/en.json`, the registry, API_ERRORS); `db/operator-routes` checks it                                                                                                                                                                                                                                                                                                                 |
+
+**Review round 3** (final; an independent verifier of round 2): **SHIP**, 0 Important. Accepted
+residuals: (Low) the pool is proven only at soft-delete time, so a throttled or not-yet-permitted
+lookup then leaves a step for attestation that a later retry could have proven (fails closed:
+operator work, not data); (Low) the proof reads `users.cognito_sub` while the erase reads
+`user_deletions.cognito_sub` — unreachable today, since nothing nulls `users.cognito_sub`;
+(Nit) `tenant.invalid` echoes operator input without a length bound (operator-only, escaped).
+
+**Known consequence (round 1, item 3):** erasures recorded before 060 (and reconciled ones) have no
+pool: their identities, not found, stay pending and alert until two operators attest them — the two 7-Jun staff rows on playform-dev among them (their
+database rows are purged; the erasure is not marked complete until the owner checks the old pool
+and they are attested).
+
+**Owner steps:** (1) apply migration 060 in the SQL Editor; (2) add `cognito-idp:AdminDeleteUser`
+and `cognito-idp:ListUsers` to the Cognito IAM key's policy (TENANCY_OPERATIONS §3.3) — until then
+every erasure's identity step stays pending and alerts; (3) for an erasure whose identity is in a
+pool that is gone, or was deleted there by hand, have two operators attest it (TENANCY_OPERATIONS
+§4) — the only way to close one the system cannot verify; (4) after deploy,
+run `agents.trajectory-retention` now from the operator console's jobs page (or wait for its daily
+run) and check: `select status, count(*) from agent_trajectories where trigger = 'command-bar'
+group by 1;` — no `running` older than a day; (5) leave `coppa.consent_expiry_enabled` off until
+the parental-consent flow ships; before turning it on, count what it would erase:
+`select count(*) from users where parental_consent_status in ('pending', 'denied') and deleted_at
+is null and coalesce(age_verified_at, created_at) < now() - interval '14 days';`.
+
+**Deferred / not here:** B-5, B-11–B-14, A-8, A-9 (retention for tables without rules: batch S4).
+
+_Last updated: October 30, 2026 (TASK-193 review round 3: SHIP)_
+
+_Previously updated: October 29, 2026 (TASK-193 fixed: lifecycle, closure and erasure completeness)_
+
+_Previously updated: October 30, 2026 (TASK-198 review round 3: SHIP; CI follow-up)_
 
 _Previously updated: October 30, 2026 (TASK-198 review round 1 applied)_
 

@@ -44,6 +44,7 @@ import {
 } from "@/platform/action-pipeline";
 import { getProposalStore } from "./proposal-store";
 import { getTrajectoryStore } from "./trajectory-store";
+import { isWorkflowTrajectory } from "./trajectory-closure";
 import {
   DEFAULT_APPROVAL_POLICY,
   resolveApprover,
@@ -197,6 +198,64 @@ export async function endHeldTrajectory(
 }
 
 /**
+ * Bring a single-action hold's trajectory in line with its proposal as it now stands (TASK-193):
+ * the trajectory of an action held for an administrator (the command bar's, the Users and
+ * Entitlements pages', a governed config write) holds that one action, so once the hold is
+ * decided the trajectory is over or waits with it:
+ *
+ *   executed              -> completed (the action ran)
+ *   rejected, superseded  -> failed, the decision recorded (endHeldTrajectory)
+ *   approved              -> awaiting_retry (its run failed before taking effect; approve again)
+ *   indeterminate         -> indeterminate (a person decides its outcome)
+ *   proposed, executing   -> as it is (still awaiting a decision, or being run)
+ *
+ * Every move is from an open status only (compare-and-set): a finished trajectory stays as it is.
+ * Not for a workflow's hold — its workflow continues past an executed step (workflow-loop.ts),
+ * so an executed hold on a workflow's trajectory (its trigger a workflow goal) leaves it as it is;
+ * its decision paths end it themselves (withdrawHeldAction, rejectHeldAction,
+ * resolveUndecidedHeldAction). Best effort: an error is swallowed, and the reaper ends what is
+ * left (trajectory-closure.ts). Undefined `proposal` (deleted): nothing to do.
+ */
+export async function settleHeldTrajectory(
+  trajectoryStore: TrajectoryStore,
+  proposal: ProposalRecord | undefined
+): Promise<void> {
+  if (!proposal) return;
+  try {
+    switch (proposal.status) {
+      case "executed":
+        // Never a workflow's (review round 1, M1): its user continues it past the step.
+        if (
+          await isWorkflowTrajectory(await trajectoryStore.getById(proposal.trajectoryId))
+        )
+          return;
+        await trajectoryStore.updateStatus(proposal.trajectoryId, "completed", {
+          from: OPEN_TRAJECTORY,
+        });
+        return;
+      case "rejected":
+      case "superseded":
+        await endHeldTrajectory(trajectoryStore, proposal);
+        return;
+      case "approved":
+        await trajectoryStore.updateStatus(proposal.trajectoryId, "awaiting_retry", {
+          from: ["running", "paused"],
+        });
+        return;
+      case "indeterminate":
+        await trajectoryStore.updateStatus(proposal.trajectoryId, "indeterminate", {
+          from: ["running", "paused", "awaiting_retry"],
+        });
+        return;
+      default:
+        return;
+    }
+  } catch {
+    // Best effort: the hold's decision stands; the reaper ends a trajectory left open.
+  }
+}
+
+/**
  * Withdraw a kept approval — approved, its run failed before taking effect — instead of
  * approving it again (approved -> rejected, ProposalStore.withdraw), and end its workflow: the
  * trajectory records the withdrawal and is `failed`, never continued (TASK-170). Returns the
@@ -251,10 +310,11 @@ export async function resolveUndecidedHeldAction(
   if (args.resolution === "executed") {
     await endHeldTrajectory(trajectoryStore, done);
   } else {
-    // Only from indeterminate, in one step with the check (TASK-175): approved again, the step
+    // Only from indeterminate — or paused, a waiting state (TASK-193: it was left paused as if
+    // nothing had been decided) — in one step with the check (TASK-175): approved again, the step
     // may already be running (or have run) on a resume — never moved back to awaiting_retry.
     await trajectoryStore.updateStatus(done.trajectoryId, "awaiting_retry", {
-      from: ["indeterminate"],
+      from: ["indeterminate", "paused"],
     });
   }
   return done;

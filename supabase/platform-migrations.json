@@ -60,6 +60,7 @@
     "056_users_list_indexes.sql",
     "057_users_last_login_backfill.sql",
     "058_ai_prompt_cache_setting.sql",
-    "059_roles_sort_order.sql"
+    "059_roles_sort_order.sql",
+    "060_lifecycle_closure.sql"
   ]
 }

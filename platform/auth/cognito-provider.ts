@@ -384,6 +384,9 @@ function subAttribute(
   return typeof value === "string" && value ? value : undefined;
 }
 
+/** A Cognito subject: a UUID (an erasure's lookup never puts anything else into a filter). */
+const SUB_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** How many sub → pool-username pairs a provider remembers for its administrative calls. */
 const POOL_USERNAMES_MAX = 10_000;
 
@@ -1425,6 +1428,125 @@ export class CognitoAuthProvider implements AuthProvider {
       return { success: true };
     } catch (error) {
       return this.codedFailure(error, "Account deletion failed");
+    }
+  }
+
+  /**
+   * Delete the identity with the administrative credentials (TASK-193, audit B-8/D-9): erasure's
+   * identity step, by the user's subject. The call names the pool user by its username: the one
+   * a signed token taught (TASK-177), else the one ListUsers finds with this `sub` — a native
+   * user's or a federated one's (`Google_…`; round 1: falling back to the `sub` as the username
+   * answered UserNotFoundException for every federated user, counted done while the identity
+   * stayed). `notFound` only when this pool has no user with the subject (ListUsers answered
+   * none, or a subject no pool user can have); an ambiguous or refused lookup fails, and the
+   * erasure retries it. The subject's remembered verifications are revoked when it is gone.
+   */
+  async adminDeleteUser(
+    userId: AuthUserId
+  ): Promise<{ success: boolean; notFound?: boolean; error?: string }> {
+    // A Cognito subject is a UUID: anything else names no pool user, and never reaches a filter.
+    if (!SUB_SHAPE.test(userId)) return { success: true, notFound: true };
+    let credentials: AwsCredentials;
+    try {
+      credentials = this.requireAdmin();
+    } catch (error) {
+      return this.codedFailure(error, "adminDeleteUser");
+    }
+    try {
+      let username = this.poolUsernames.get(userId);
+      if (!username) {
+        const found = await callCognito(
+          this.config,
+          "ListUsers",
+          { UserPoolId: this.config.userPoolId, Filter: `sub = "${userId}"`, Limit: 2 },
+          credentials
+        );
+        const users = (
+          (found.Users as
+            | Array<{
+                Username?: string;
+                Attributes?: Array<{ Name: string; Value: string }>;
+              }>
+            | undefined) ?? []
+        ).filter((u) => u.Attributes?.find((a) => a.Name === "sub")?.Value === userId);
+        if (users.length === 0) {
+          await revokeTokenVerification(userId);
+          return { success: true, notFound: true };
+        }
+        if (users.length > 1 || !users[0].Username) {
+          return { success: false, error: "more than one pool user has this subject" };
+        }
+        username = users[0].Username;
+      }
+      await callCognito(
+        this.config,
+        "AdminDeleteUser",
+        { UserPoolId: this.config.userPoolId, Username: username },
+        credentials
+      );
+      await revokeTokenVerification(userId);
+      logger.info("User identity deleted from Cognito (administrative)");
+      return { success: true };
+    } catch (error) {
+      if (
+        error instanceof CognitoError &&
+        error.cognitoType === "UserNotFoundException"
+      ) {
+        await revokeTokenVerification(userId);
+        return { success: true, notFound: true };
+      }
+      return this.codedFailure(error, "adminDeleteUser");
+    }
+  }
+
+  /**
+   * Whether this pool has the identity with this subject (S2 round 2): a username learnt from a
+   * token this pool signed, or ListUsers finding exactly one user with the subject. False when
+   * ListUsers finds none (or the subject is not a UUID); undefined when the lookup fails or is
+   * ambiguous.
+   */
+  async identityInPool(userId: AuthUserId): Promise<boolean | undefined> {
+    if (!SUB_SHAPE.test(userId)) return false;
+    if (this.poolUsernames.get(userId)) return true;
+    try {
+      const found = await callCognito(
+        this.config,
+        "ListUsers",
+        { UserPoolId: this.config.userPoolId, Filter: `sub = "${userId}"`, Limit: 2 },
+        this.requireAdmin()
+      );
+      const users = (
+        (found.Users as
+          Array<{ Attributes?: Array<{ Name: string; Value: string }> }> | undefined) ??
+        []
+      ).filter((u) => u.Attributes?.find((a) => a.Name === "sub")?.Value === userId);
+      if (users.length === 0) return false;
+      return users.length === 1 ? true : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The identity pool this provider erases from (TASK-193 round 1: recorded on each erasure). */
+  identityPoolId(): string {
+    return this.config.userPoolId;
+  }
+
+  /**
+   * Whether the pool the administrative credentials reach is this one (DescribeUserPool answers
+   * this pool's id): a "not found" counts as erased only after this positive check.
+   */
+  async confirmIdentityPool(): Promise<boolean> {
+    try {
+      const r = await callCognito(
+        this.config,
+        "DescribeUserPool",
+        { UserPoolId: this.config.userPoolId },
+        this.requireAdmin()
+      );
+      return (r.UserPool as { Id?: string } | undefined)?.Id === this.config.userPoolId;
+    } catch {
+      return false;
     }
   }
 

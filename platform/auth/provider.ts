@@ -239,6 +239,41 @@ export interface AuthProvider {
    */
   deleteUser(accessToken: AuthToken): Promise<{ success: boolean; error?: string }>;
 
+  /**
+   * Delete a user's identity with the provider's administrative credentials, by its subject
+   * (TASK-193, audit B-8/D-9): how erasure removes the sign-in identity — the address and
+   * attributes the provider holds — for an admin or retention erasure as for a self-service one,
+   * retried until it is done (platform/gdpr/external-erasure.ts). `notFound` only when the
+   * provider proved this pool has no user with the subject — looked up by the subject itself
+   * (Cognito: ListUsers on `sub`, which finds federated users too), never by assuming the subject
+   * is the username; the erasure then counts it erased only in the account's recorded pool, after
+   * confirmIdentityPool. It also forgets the subject's remembered token
+   * verifications. Optional: a provider without it leaves every erasure's identity step pending,
+   * and alerted.
+   */
+  adminDeleteUser?(
+    userId: AuthUserId
+  ): Promise<{ success: boolean; notFound?: boolean; error?: string }>;
+
+  /**
+   * The identity pool adminDeleteUser erases from (TASK-193 round 1): recorded on each erasure,
+   * so a later "not found" counts as erased only in the pool the account was in.
+   */
+  identityPoolId?(): string | undefined;
+
+  /**
+   * A positive check that the administrative credentials reach identityPoolId()'s pool (Cognito:
+   * DescribeUserPool answers its id). False when it cannot be shown.
+   */
+  confirmIdentityPool?(): Promise<boolean>;
+
+  /**
+   * Whether this pool has the identity with this subject (S2 round 2): true only when the provider
+   * found it — its own lookup, or a subject learnt from a token this pool verified; false when it
+   * has none; undefined when it could not tell. An erasure records its pool only on true.
+   */
+  identityInPool?(userId: AuthUserId): Promise<boolean | undefined>;
+
   // ── Tenancy (ADR-053 D2) — optional: single-tenant deployments never call these ──
 
   /**

@@ -27,13 +27,15 @@
  */
 
 import {
+  alertWaitingUndecided,
   approvalExpiryDays,
   expireLapsedApprovedHolds,
+  expireUndecidedHolds,
   recoverStaleRuns,
   RUN_LEASE_SECONDS,
   type SweepScope,
 } from "@/platform/admin/hold-expiry";
-import { withOwnerTx, withTenantTx } from "@/platform/data";
+import { withOwnerTx, withTenantTx, type Tx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import type { ErrorCode } from "@/platform/errors/registry";
 import { getConfigOrThrow } from "@/platform/auth/platform-config";
@@ -240,7 +242,10 @@ export async function approveAndApply(
   const approved = await approveChange(approvalId, reviewerId, reviewComment);
   if (!approved.success || !approved.record) return approved;
   const applied = await apply(approved.record);
-  if (applied.success) return approved;
+  if (applied.success) {
+    await markApplied(approvalId);
+    return approved;
+  }
 
   // The value it replaces changed since it was requested (review 12 H2): nothing was applied, and
   // the approval is withdrawn — never reopened to be approved onto a value it was not judged
@@ -299,6 +304,101 @@ export async function approveAndApply(
     errorParams: { service: "config" },
     applyError: applied.error,
   };
+}
+
+/**
+ * Record that an approved change was applied (TASK-193, audit B-9). Best effort: an approval left
+ * without it is found by recoverUnappliedApprovals, which reads the change's own history record.
+ */
+async function markApplied(approvalId: string): Promise<void> {
+  try {
+    await withTenantTx((tx) =>
+      tx.query(
+        "update config_pending_approvals set applied_at = now() where id = $1::uuid and status = 'approved' and applied_at is null",
+        [approvalId]
+      )
+    );
+  } catch (err) {
+    logger.warn("An applied approval could not be marked applied; the expiry job will", {
+      approvalId,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/admin/config-approval",
+    });
+  }
+}
+
+/** How long an approval may stay approved and unapplied before the job looks at it (B-9). */
+export const APPLY_LEASE_SECONDS = 600;
+
+/** Who recovers an approval approved and never marked applied. */
+export const APPLY_RECOVERY_ACTOR = "system:approval-apply-recovery";
+
+/**
+ * Every configuration approval approved more than `leaseSeconds` ago and never marked applied
+ * (TASK-193, audit B-9: approve and apply are two transactions, so a crash between them left an
+ * approved, unapplied change listed nowhere — the enum has no state past approved): when the
+ * change's history shows the reviewer's write of exactly this change since the approval (key,
+ * scope, tenant, the value replaced and the value written — review round 1), it was applied — marked so;
+ * otherwise it was not — reopened (pending, reviewer cleared), as an apply failure does, so it is
+ * listed again and expires on its own date. On the owner connection (the job), every tenant's (or
+ * `scope`'s); each recovery recorded in its tenant's audit log in the same statement.
+ */
+export async function recoverUnappliedApprovals(
+  tx: Tx,
+  leaseSeconds: number = APPLY_LEASE_SECONDS,
+  scope?: SweepScope & { readonly platform?: boolean }
+): Promise<number> {
+  const { rows } = await tx.query<{ n: number }>(
+    `with stuck as (
+       select a.tenant_id, a.id, a.config_key,
+              -- The change itself (round 1): the same key, scope and tenant, written by the
+              -- reviewer after the approval, from the value it was requested against to the value
+              -- approved (a reset's: the default it inherits) — never just any write of the key.
+              exists (select 1 from platform_config_history h
+                       where h.config_key = a.config_key
+                         and h.changed_by = a.reviewed_by
+                         and h.created_at >= a.reviewed_at
+                         and h.tenant_id is not distinct from a.tenant_id
+                         and h.scope = case when a.action = 'reset' then 'tenant' else a.scope end
+                         and coalesce(h.new_value, 'null'::jsonb) = coalesce(a.proposed_value, 'null'::jsonb)
+                         and coalesce(h.previous_value, 'null'::jsonb) = coalesce(a.current_value, 'null'::jsonb)) as applied
+         from config_pending_approvals a
+        where a.status = 'approved' and a.applied_at is null
+          and a.reviewed_at < now() - make_interval(secs => $1::int)
+          and ($3::uuid[] is null or a.tenant_id = any($3::uuid[])
+               or ($4::boolean and a.tenant_id is null))
+        for update of a
+     ),
+     recovered as (
+       update config_pending_approvals a
+          set applied_at = case when s.applied then now() else null end,
+              status = case when s.applied then a.status else 'pending'::config_approval_status end,
+              reviewed_by = case when s.applied then a.reviewed_by else null end,
+              review_comment = case when s.applied then a.review_comment else null end,
+              reviewed_at = case when s.applied then a.reviewed_at else null end
+         from stuck s
+        where a.id = s.id and a.status = 'approved' and a.applied_at is null
+        returning a.tenant_id, a.id, a.config_key, s.applied
+     ),
+     audit as (
+       insert into audit_log (tenant_id, action, details)
+       select r.tenant_id, 'admin_action'::audit_action,
+              jsonb_build_object('type', 'approval_apply_recovered', 'holdId', r.id,
+                                 'source', 'config-approval', 'key', r.config_key,
+                                 'status', case when r.applied then 'applied' else 'reopened' end,
+                                 'agent', $2::text, 'outcome', 'succeeded')
+         from recovered r
+        where r.tenant_id is not null
+     )
+     select count(*)::int as n from recovered`,
+    [
+      leaseSeconds,
+      APPLY_RECOVERY_ACTOR,
+      scope?.tenantIds ?? null,
+      scope?.platform === true,
+    ]
+  );
+  return rows[0]?.n ?? 0;
 }
 
 /** Pending approvals withdrawn per statement and audit record (review 13 L7). */
@@ -594,6 +694,9 @@ export async function expireStaleApprovals(
 ): Promise<number> {
   const days = await approvalExpiryDays();
   return withOwnerTx("platform-job", async (tx) => {
+    // Approved and never applied (TASK-193, audit B-9): marked applied, or reopened — before the
+    // expiry below, so a reopened one past its date expires in the same pass.
+    const reopened = await recoverUnappliedApprovals(tx, APPLY_LEASE_SECONDS, scope);
     const { rowCount } = await tx.query(
       `update config_pending_approvals set status = 'expired'
         where status = 'pending' and expires_at < now()
@@ -605,10 +708,13 @@ export async function expireStaleApprovals(
     // when it was atomic, else undecided (review 10 H2, review 11 H-1) — before the lapse check,
     // so an approval given back past its period lapses in the same pass.
     const recovered = await recoverStaleRuns(tx, RUN_LEASE_SECONDS, scope ?? {});
-    // And every runtime hold approved but never run past the same period (review 7 M7).
-    return (
-      rowCount + recovered + (await expireLapsedApprovedHolds(tx, days, scope ?? {}))
-    );
+    // And every runtime hold approved but never run past the same period (review 7 M7), and
+    // every one never decided (TASK-193, audit B-4) — each with its trajectory.
+    const lapsed = await expireLapsedApprovedHolds(tx, days, scope ?? {});
+    const undecided = await expireUndecidedHolds(tx, days, scope ?? {});
+    // Undecided runs wait for a person: alerted again on every run while any is waiting.
+    await alertWaitingUndecided(tx, scope ?? {});
+    return rowCount + reopened + recovered + lapsed + undecided;
   });
 }
 

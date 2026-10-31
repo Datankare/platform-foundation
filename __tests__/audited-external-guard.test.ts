@@ -58,8 +58,15 @@ const scan = scanAudited(REPO, ROOT);
 describe("every audited() call site's flag matches what its act reaches (AST)", () => {
   it("finds the call sites and wrappers it means to (self-test)", () => {
     expect(scan.sites.length).toBeGreaterThan(30);
+    // Keyed by file and name: the two files' `recorded` are two wrappers (S2 round 2).
     expect(Object.keys(scan.wrappers).sort()).toEqual(
-      expect.arrayContaining(["audited", "auditedResponse", "runAudited"])
+      expect.arrayContaining([
+        "platform/auth/audit.ts#audited",
+        "platform/auth/audit.ts#auditedResponse",
+        "app/api/admin/ai/handlers/shared.ts#runAudited",
+        "platform/tenancy/admin.ts#recorded",
+        "platform/gdpr/erasure-attestation.ts#recorded",
+      ])
     );
     const external = scan.sites.filter((s) => s.reaches.length > 0).map((s) => s.file);
     // The purges run every registered module's erasure hook; run-now runs job handlers.

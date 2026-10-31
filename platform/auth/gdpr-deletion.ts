@@ -21,12 +21,26 @@
  * Sprint 5, Tasks 5.1 + 5.2
  */
 
-import { withTenantTx } from "@/platform/data";
+import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import { emailHash } from "@/platform/auth/user-provisioning";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
-import { eraseUserData, type ErasureStep } from "@/platform/auth/user-data";
+import {
+  CROSS_TENANT_ERASURE,
+  CROSS_TENANT_ERASURE_PAGES,
+  eraseUserData,
+  type ErasureStep,
+} from "@/platform/auth/user-data";
+import { raiseAlert } from "@/platform/observability/alert";
+import {
+  EXTERNAL_ERASURE_ALERT_ATTEMPTS,
+  provenIdentityPool,
+  listExternalErasures,
+  pendingExternalErasures,
+  runExternalErasures,
+  type RecordedExternalErasure,
+} from "@/platform/gdpr/external-erasure";
 
 export interface DeletionModule {
   moduleName: string;
@@ -110,38 +124,100 @@ export function getDeletionModules(): DeletionModule[] {
   return [...registeredModules];
 }
 
+/** Days from the soft delete to the purge (the retention period). */
+export const ERASURE_RETENTION_DAYS = 30;
+
+/** How the soft delete is asked for. */
+export interface SoftDeleteOptions {
+  /**
+   * The system asks (a job), not a person: `requestedBy` is the agent's name, recorded as the
+   * audit record's agent (a person's request names their users.id, the actor).
+   */
+  readonly system?: boolean;
+  /** Days until the purge (default ERASURE_RETENTION_DAYS); 0 purges at the next run. */
+  readonly purgeAfterDays?: number;
+  /** Why, for the audit record (e.g. "parental_consent_expired"). */
+  readonly trigger?: string;
+}
+
+/** What the soft delete did; `external`: the stores outside the database still to be erased. */
+export interface SoftDeleteResult {
+  readonly success: boolean;
+  readonly errors: string[];
+  /** The external stores (platform/gdpr/external-erasure.ts) not yet erased; retried by the job. */
+  readonly externalPending?: readonly string[];
+}
+
 /**
- * Phase 1: Soft delete a user.
- * - Sets deleted_at on the user record
- * - Anonymizes PII (email, display_name, real_name)
- * - Runs soft delete on all registered modules
- * - Audit logged
+ * The users columns the soft delete clears, with what they become (TASK-193, audit A-16: the
+ * parent's address, the ban reason, the time zone and language stayed until the purge, and went
+ * out in any tenant export meanwhile). __tests__/db/erasure-reconciliation.db.test.ts requires
+ * every column of users that can hold personal data to be here or in SOFT_DELETE_KEPT.
+ */
+export const SOFT_DELETE_CLEARED: readonly string[] = [
+  "email",
+  "display_name",
+  "real_name",
+  "avatar_url",
+  "date_of_birth",
+  "parental_consent_email",
+  "ban_reason",
+  "timezone",
+  "language_preference",
+  "last_login_at",
+];
+
+/** The users columns the soft delete keeps until the purge, with why. */
+export const SOFT_DELETE_KEPT: Readonly<Record<string, string>> = {
+  id: "the account's key, which the erasure record and every mention use",
+  cognito_sub:
+    "the closed identity: an erased account's identity is refused at sign-in until the purge (it is also on the erasure record)",
+  tenant_id: "the account's tenant",
+  role_id: "a reference to the role catalog",
+  account_status: "the account's standing, which a ban keeps (A-11; also on the record)",
+  status_changed_by:
+    "the staff member's id on a standing change (their record, not this account's)",
+};
+
+/**
+ * Phase 1: Soft delete a user — recorded, anonymised, and the erasure scheduled, as ONE
+ * transaction (TASK-193, audit B-6/D-10: the record was written in a later transaction, after the
+ * modules ran, so a failure in between left an account marked deleted — refused at sign-in, so
+ * the user could not retry — that no purge would ever select; a banned address's hash, written
+ * from the address the first attempt had already cleared, was lost on any retry). Then the app's
+ * modules' soft deletes, and the stores outside the database (the sign-in identity first),
+ * whose outcomes are recorded on the erasure and retried by the job until done.
+ *
+ * reconcileErasures (the gdpr.retention-purge job) records any account marked deleted without an
+ * erasure record — one left by the code before this change — so every erasure completes.
  */
 export async function softDeleteUser(
   userId: string,
-  requestedBy: string
-): Promise<{ success: boolean; errors: string[] }> {
+  requestedBy: string,
+  options: SoftDeleteOptions = {}
+): Promise<SoftDeleteResult> {
+  const purgeAfterDays = Math.max(0, options.purgeAfterDays ?? ERASURE_RETENTION_DAYS);
   try {
     // Recorded before anything is deleted; no record, no deletion (Adversarial Validation, 6).
     // A partial deletion reports failure, which audited() records as a follow-up.
     return await audited(
       {
         action: "account_deleted",
-        actorId: requestedBy,
+        ...(options.system ? { agent: requestedBy } : { actorId: requestedBy }),
         targetId: userId,
         details: {
           phase: "soft_delete",
           moduleCount: registeredModules.length,
+          ...(options.trigger ? { trigger: options.trigger } : {}),
         },
       },
-      async () => {
+      async (): Promise<SoftDeleteResult> => {
         const errors: string[] = [];
 
-        // 1. Anonymize user record (again is fine: an already-deleted user stays deleted). A
-        //    banned account's address is kept only as a hash, so the ban follows the address
-        //    to a new identity and erasing the account does not lift it (audit A-11).
-        let standing: string | null = null;
-        let addressHash: { hash: string; keyId: string | null } | null = null;
+        // 1. Anonymise the user record and record the erasure, in one transaction (B-6). Again is
+        //    fine: an already-deleted user stays deleted, and its record keeps what it had. A
+        //    banned account's address is kept only as a hash, so the ban follows the address to a
+        //    new identity and erasing the account does not lift it (audit A-11).
         let subject: string | null = null;
         const userError = await failure(() =>
           withTenantTx(async (tx) => {
@@ -150,13 +226,14 @@ export async function softDeleteUser(
               status: string;
               sub: string | null;
             }>(
-              "select email, account_status::text as status, cognito_sub as sub from users where id = $1::uuid",
+              "select email, account_status::text as status, cognito_sub as sub from users where id = $1::uuid for update",
               [userId]
             );
-            standing = before.rows[0]?.status ?? null;
+            if (before.rowCount === 0) throw new Error("no such user");
+            const standing = before.rows[0]?.status ?? null;
             subject = before.rows[0]?.sub ?? null;
             const email = before.rows[0]?.email;
-            addressHash = standing === "banned" && email ? emailHash(email) : null;
+            const addressHash = standing === "banned" && email ? emailHash(email) : null;
             // A held action or a run may name the account by its address (change_user_role takes
             // an email or an id): the address becomes the id here, while it is still known, so
             // the hard purge finds every mention by the id (review 7 M4). Only a JSON string value
@@ -171,20 +248,54 @@ export async function softDeleteUser(
             await tx.query(
               `update users
                   set email = null, display_name = '[deleted]', real_name = null,
-                      avatar_url = null, date_of_birth = null, deleted_at = now()
+                      avatar_url = null, date_of_birth = null, parental_consent_email = null,
+                      ban_reason = null, timezone = 'UTC', language_preference = 'en',
+                      last_login_at = null, deleted_at = now()
                 where id = $1::uuid and deleted_at is null`,
               [userId]
             );
-            const found = await tx.query("select 1 from users where id = $1::uuid", [
-              userId,
-            ]);
-            if (found.rowCount === 0) throw new Error("no such user");
+            // The record the hard purge works from — in the same transaction: no anonymised
+            // account without it, and no record of an erasure that did not happen.
+            await tx.query(
+              `insert into user_deletions (user_id, requested_by, modules, standing, email_hash, email_hash_key, email_hash_scheme, cognito_sub, purge_after)
+               values ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7, $8, now() + make_interval(days => $9::int))
+               on conflict (tenant_id, user_id) do update
+                 set requested_by = excluded.requested_by, modules = excluded.modules,
+                     cognito_sub = coalesce(excluded.cognito_sub, user_deletions.cognito_sub),
+                     -- Asked again (round 1): the erasure keeps its schedule and its attempts —
+                     -- only ever brought forward (a consent expiry purges at once).
+                     purge_after = least(user_deletions.purge_after, excluded.purge_after),
+                     standing = coalesce(excluded.standing, user_deletions.standing),
+                     email_hash_key = case when excluded.email_hash is null then user_deletions.email_hash_key else excluded.email_hash_key end,
+                     email_hash_scheme = case when excluded.email_hash is null then user_deletions.email_hash_scheme else excluded.email_hash_scheme end,
+                     email_hash = coalesce(excluded.email_hash, user_deletions.email_hash)`,
+              [
+                userId,
+                requestedBy,
+                JSON.stringify(registeredModules.map((m) => m.moduleName)),
+                standing,
+                addressHash?.hash ?? null,
+                addressHash?.keyId ?? null,
+                addressHash?.scheme ?? null,
+                // The identity, so it is never given a fresh account — kept for an account
+                // re-linked to a new pool, whose subject is not its id (TASK-174, migration 054).
+                subject,
+                purgeAfterDays,
+              ]
+            );
           })
         );
 
         if (userError) {
-          // Nothing to erase is not an erasure: stop before the modules and the record.
-          return { success: false, errors: [`users: ${userError}`] };
+          // Nothing to erase is not an erasure; an erasure not recorded did not happen.
+          return {
+            success: false,
+            errors: [
+              userError === "no such user"
+                ? "users: no such user"
+                : `users: ${userError}`,
+            ],
+          };
         }
         // The deleted account's cached permissions go at once, here and on every instance
         // (review 7 M5: they were served until the cache's TTL ran out).
@@ -198,51 +309,24 @@ export async function softDeleteUser(
           }
         }
 
-        // 3. Record the erasure. It is what the hard purge works from: without it the erasure
-        //    would never complete, so the deletion has not succeeded.
-        const recordError = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
-              `insert into user_deletions (user_id, requested_by, modules, standing, email_hash, email_hash_key, email_hash_scheme, cognito_sub)
-               values ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7, $8)
-               on conflict (tenant_id, user_id) do update
-                 set requested_by = excluded.requested_by, modules = excluded.modules,
-                     cognito_sub = coalesce(excluded.cognito_sub, user_deletions.cognito_sub),
-                     soft_deleted_at = now(), purge_after = now() + interval '30 days',
-                     purged_at = null,
-                     standing = coalesce(excluded.standing, user_deletions.standing),
-                     email_hash_key = case when excluded.email_hash is null then user_deletions.email_hash_key else excluded.email_hash_key end,
-                     email_hash_scheme = case when excluded.email_hash is null then user_deletions.email_hash_scheme else excluded.email_hash_scheme end,
-                     email_hash = coalesce(excluded.email_hash, user_deletions.email_hash)`,
-              [
-                userId,
-                requestedBy,
-                JSON.stringify(registeredModules.map((m) => m.moduleName)),
-                standing,
-                (addressHash as { hash: string } | null)?.hash ?? null,
-                (addressHash as { keyId: string | null } | null)?.keyId ?? null,
-                (addressHash as { scheme: string } | null)?.scheme ?? null,
-                // The identity, so it is never given a fresh account — kept for an account
-                // re-linked to a new pool, whose subject is not its id (TASK-174, migration 054).
-                subject,
-              ]
-            )
-          )
-        );
-        if (recordError) {
-          logger.error("Failed to record the deletion", {
-            userId,
-            error: recordError,
-            route: "platform/auth/gdpr-deletion",
-          });
-          errors.push(`deletion record: ${recordError}`);
-        }
+        // 3. The stores outside the database — the sign-in identity first (B-8/D-9): erased with
+        //    the administrative credentials, each outcome recorded; one not done is retried by the
+        //    gdpr.retention-purge job until it is, and blocks the purge's completion meanwhile.
+        //    First the pool, recorded only when the identity is proven present in it (S2 round 2:
+        //    an old-pool account, never re-linked, is not proven here — its "not found" stays
+        //    unverified until two operators attest it). Never replaced once recorded.
+        await recordProvenIdentityPool(userId, subject);
+        const external = await eraseExternalStores(userId);
 
-        return { success: errors.length === 0, errors };
+        return {
+          success: errors.length === 0,
+          errors,
+          ...(external.pending.length > 0 ? { externalPending: external.pending } : {}),
+        };
       },
-      // The registered modules may reach outside the database (an identity provider, a file
-      // store): never inside a caller's transaction, whose rollback could not undo them (review
-      // 13 L5).
+      // The registered modules and the external stores reach outside the database (an identity
+      // provider, a file store): never inside a caller's transaction, whose rollback could not
+      // undo them (review 13 L5).
       { external: true }
     );
   } catch (err) {
@@ -252,19 +336,267 @@ export async function softDeleteUser(
   }
 }
 
+/** Record the pool the identity is proven present in, if it is, on an erasure with none. */
+async function recordProvenIdentityPool(
+  userId: string,
+  sub: string | null
+): Promise<void> {
+  const pool = await provenIdentityPool({ userId, sub });
+  if (!pool) return;
+  const error = await failure(() =>
+    withTenantTx((tx) =>
+      tx.query(
+        "update user_deletions set identity_pool = $2 where user_id = $1::uuid and identity_pool is null",
+        [userId, pool]
+      )
+    )
+  );
+  if (error) {
+    logger.warn("An erasure's identity pool could not be recorded; it stays unverified", {
+      userId,
+      error,
+      route: "platform/auth/gdpr-deletion",
+    });
+  }
+}
+
+/** Who records an erasure found without its record (reconcileErasures). */
+export const ERASURE_RECONCILE_ACTOR = "system:erasure-reconcile";
+
+/**
+ * Record every account of the current tenant marked deleted that has no erasure record (TASK-193,
+ * audit B-6): left by the soft delete before it wrote both in one transaction, or by anything that
+ * sets deleted_at alone. Each is given its record — the purge due a retention period after it was
+ * deleted, its identity kept for the external erasure — so it is purged like any other, and the
+ * system's recording of it is audited; an alert says how many were found. At most `limit` per run.
+ *
+ * @scheduled gdpr.retention-purge
+ */
+export async function reconcileErasures(agent: string, limit = 500): Promise<number> {
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ user_id: string }>(
+      `with orphan as (
+         select u.id, u.deleted_at, u.cognito_sub, u.account_status::text as standing
+           from users u
+          where u.deleted_at is not null
+            and not exists (select 1 from user_deletions d where d.user_id = u.id)
+          order by u.deleted_at
+          limit $3::int
+       ),
+       recorded as (
+         insert into user_deletions (user_id, requested_by, modules, standing, cognito_sub, soft_deleted_at, purge_after)
+         select o.id, $1, $2::jsonb, o.standing, o.cognito_sub, o.deleted_at,
+                o.deleted_at + make_interval(days => $4::int)
+           from orphan o
+         on conflict (tenant_id, user_id) do nothing
+         returning user_id
+       ),
+       audit as (
+         insert into audit_log (action, target_id, details)
+         select 'account_deleted'::audit_action, r.user_id,
+                jsonb_build_object('phase', 'erasure_recorded', 'trigger', 'reconcile',
+                                   'agent', $1::text, 'by', $5::text, 'outcome', 'succeeded')
+           from recorded r
+       )
+       select user_id from recorded`,
+      [
+        ERASURE_RECONCILE_ACTOR,
+        JSON.stringify(registeredModules.map((m) => m.moduleName)),
+        limit,
+        ERASURE_RETENTION_DAYS,
+        agent,
+      ]
+    )
+  );
+  if (rows.length > 0) {
+    raiseAlert({
+      name: "gdpr.erasure_unrecorded",
+      message: `${rows.length} account(s) marked deleted had no erasure record; each is now recorded and will be purged on schedule. Find what deleted them without the erasure pipeline (docs/runbooks/jobs.md).`,
+      count: rows.length,
+    });
+  }
+  return rows.length;
+}
+
+/**
+ * Erase `userId` from every registered external store not yet done for it, and record each outcome
+ * on its erasure record (platform/gdpr/external-erasure.ts). Returns the stores still pending. An
+ * account with no erasure record has nothing to run (the reconcile records it first).
+ */
+async function eraseExternalStores(
+  userId: string,
+  /** The subject when the account has no erasure record (a purge without one): not recorded. */
+  unrecordedSub?: string | null
+): Promise<{ readonly pending: readonly string[] }> {
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{
+      sub: string | null;
+      pool: string | null;
+      external: Record<string, RecordedExternalErasure>;
+    }>(
+      "select cognito_sub as sub, identity_pool as pool, external_erasures as external from user_deletions where user_id = $1::uuid",
+      [userId]
+    )
+  );
+  if (!rows.length) {
+    if (unrecordedSub === undefined) return { pending: pendingExternalErasures({}) };
+    const once = await runExternalErasures(
+      // Proven present first, as the soft delete's record is (S2 round 2).
+      {
+        userId,
+        sub: unrecordedSub,
+        pool: await provenIdentityPool({ userId, sub: unrecordedSub }),
+      },
+      {}
+    );
+    return { pending: once.pending };
+  }
+  const run = await runExternalErasures(
+    { userId, sub: rows[0].sub, pool: rows[0].pool },
+    rows[0].external ?? {}
+  );
+  const writeError = await failure(() =>
+    withTenantTx((tx) =>
+      tx.query(
+        // Merged per store (round 1, attestation): a store an operator attested meanwhile keeps
+        // its record, and an attestation request made or withdrawn meanwhile stands as it is now —
+        // while the step is still unverifiable: any other outcome (S2 round 2: refused,
+        // unavailable) drops an open request, which was asked about a pool it no longer shows.
+        `update user_deletions d
+            set external_erasures = d.external_erasures || coalesce((
+              select jsonb_object_agg(n.key,
+                       case when d.external_erasures -> n.key ? 'doneAt' then d.external_erasures -> n.key
+                            else (n.value - 'attestationRequest')
+                                 || case when d.external_erasures -> n.key ? 'attestationRequest'
+                                          and coalesce((n.value ->> 'poolUnverified')::boolean, false)
+                                         then jsonb_build_object('attestationRequest', d.external_erasures -> n.key -> 'attestationRequest')
+                                         else '{}'::jsonb end
+                       end)
+                from jsonb_each($2::jsonb) n), '{}'::jsonb)
+          where d.user_id = $1::uuid`,
+        [userId, JSON.stringify(run.outcomes)]
+      )
+    )
+  );
+  if (writeError) {
+    logger.error(
+      "An external erasure's outcome could not be recorded; it will run again",
+      {
+        userId,
+        error: writeError,
+        route: "platform/auth/gdpr-deletion",
+      }
+    );
+  }
+  return { pending: run.pending };
+}
+
+/** What one external-erasure retry run did. */
+export interface ExternalRetryResult {
+  readonly due: number;
+  readonly done: number;
+  readonly pending: number;
+  readonly stopped: boolean;
+}
+
+/**
+ * Retry the external erasures still pending in the current tenant (TASK-193, audit B-8/D-9) —
+ * every erasure, purged or not, whose stores outside the database are not all done and whose
+ * retry is due — at most `limit` per run. A store still pending after
+ * EXTERNAL_ERASURE_ALERT_ATTEMPTS attempts is alerted (gdpr.external_erasure_pending).
+ *
+ * @scheduled gdpr.retention-purge
+ */
+export async function retryExternalErasures(
+  limit = 100,
+  signal?: AbortSignal
+): Promise<ExternalRetryResult> {
+  const names = listExternalErasures().map((e) => e.name);
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ user_id: string }>(
+      `select user_id from user_deletions
+        where exists (select 1 from unnest($1::text[]) as n(name)
+                       where external_erasures -> n.name ->> 'doneAt' is null
+                         and coalesce((external_erasures -> n.name ->> 'retryAt')::timestamptz, '-infinity'::timestamptz) <= now())
+        order by soft_deleted_at, user_id
+        limit $2::int`,
+      [names, limit]
+    )
+  );
+  let done = 0;
+  let pending = 0;
+  let stopped = false;
+  for (const { user_id: userId } of rows) {
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
+    const r = await eraseExternalStores(userId);
+    if (r.pending.length === 0) done++;
+    else pending++;
+  }
+  const { rows: stuck } = await withTenantTx((tx) =>
+    tx.query<{ n: number }>(
+      `select count(*)::int as n from user_deletions
+        where exists (select 1 from unnest($1::text[]) as n(name)
+                       where external_erasures -> n.name ->> 'doneAt' is null
+                         and coalesce((external_erasures -> n.name ->> 'poolUnverified')::boolean, false) = false
+                         and coalesce((external_erasures -> n.name ->> 'attempts')::int, 0) >= $2::int)`,
+      [names, EXTERNAL_ERASURE_ALERT_ATTEMPTS]
+    )
+  );
+  if ((stuck[0]?.n ?? 0) > 0) {
+    raiseAlert({
+      name: "gdpr.external_erasure_pending",
+      message: `${stuck[0].n} erasure(s) could not remove the person from a store outside the database (the identity provider: check its administrative credentials and their AdminDeleteUser permission). They are retried until done (docs/runbooks/jobs.md).`,
+      count: stuck[0].n,
+    });
+  }
+  const { rows: unverified } = await withTenantTx((tx) =>
+    tx.query<{ n: number }>(
+      `select count(*)::int as n from user_deletions
+        where exists (select 1 from unnest($1::text[]) as n(name)
+                       where external_erasures -> n.name ->> 'doneAt' is null
+                         and coalesce((external_erasures -> n.name ->> 'poolUnverified')::boolean, false))`,
+      [names]
+    )
+  );
+  if ((unverified[0]?.n ?? 0) > 0) {
+    raiseAlert({
+      name: "gdpr.identity_pool_unverified",
+      message: `${unverified[0].n} erasure(s) did not find the person's identity, but in a pool not shown to be the one the account was in (an older pool, or one not confirmed): they stay pending. Delete the identity from its pool, or confirm the pool (docs/runbooks/jobs.md §6).`,
+      count: unverified[0].n,
+    });
+  }
+  return { due: rows.length, done, pending, stopped };
+}
+
 /**
  * Phase 2: Hard purge a user's data. Permanently removes all data across all modules. Called for
  * each account whose retention period has passed by purgeDueErasures, and by the admin purge.
  *
  * The app's modules run first; then the platform's register (platform/auth/user-data.ts) erases
  * every platform table that holds the user's data, user row last, in one transaction — all of
- * it or none (audit X-15, E-8: before, only the user row was deleted).
+ * it or none (audit X-15, E-8: before, only the user row was deleted). The erasure is marked
+ * complete only when every store outside the database is erased too (TASK-193, B-8/D-9): one
+ * still pending is tried again here, and while it stays pending the purge reports failure and is
+ * retried.
  */
 export async function hardPurgeUser(
   userId: string
 ): Promise<{ success: boolean; errors: string[]; steps?: readonly ErasureStep[] }> {
   const errors: string[] = [];
   let steps: readonly ErasureStep[] | undefined;
+  // The account's identity, read before its row goes: what the external stores know it by when
+  // it has no erasure record to keep it.
+  const subject = await withTenantTx((tx) =>
+    tx.query<{ sub: string | null }>(
+      "select cognito_sub as sub from users where id = $1::uuid",
+      [userId]
+    )
+  )
+    .then((r) => r.rows[0]?.sub ?? null)
+    .catch(() => null);
 
   // 1. Run hard purge on all registered modules
   for (const mod of registeredModules) {
@@ -283,12 +615,20 @@ export async function hardPurgeUser(
     errors.push(`users: ${userError}`);
   }
 
-  // 3. Mark the erasure complete — only when everything was removed.
+  // 3. The stores outside the database: none may still hold the person when it is complete.
+  const external = await eraseExternalStores(userId, subject).catch((err: unknown) => ({
+    pending: [err instanceof Error ? err.message : String(err)],
+  }));
+  if (external.pending.length > 0) {
+    errors.push(`external: ${external.pending.join(", ")} not yet erased`);
+  }
+
+  // 4. Mark the erasure complete — only when everything was removed.
   if (errors.length === 0) {
     const recordError = await failure(() =>
       withTenantTx((tx) =>
         tx.query(
-          "update user_deletions set purged_at = now() where user_id = $1::uuid and purged_at is null",
+          "update user_deletions set purged_at = now(), purge_retry_at = null, last_purge_error = null where user_id = $1::uuid and purged_at is null",
           [userId]
         )
       )
@@ -311,18 +651,27 @@ export interface ErasureRunResult {
   /** Accounts whose retention period had passed (at most the run's limit). */
   readonly due: number;
   readonly purged: number;
-  /** Erasures that could not complete; they stay due and are tried on the next run. */
+  /** Erasures that could not complete; they stay due and are tried again later (backoff). */
   readonly failed: number;
+  /** Erasures that have failed PURGE_ALERT_ATTEMPTS times or more (alerted). */
+  readonly stuck: number;
   /** The run was told to stop (its signal) before every due account was handled. */
   readonly stopped: boolean;
 }
 
+/** After this many failed purges an erasure is alerted (gdpr.erasure_stuck). */
+export const PURGE_ALERT_ATTEMPTS = 5;
+
 /**
  * Erase every account of the current tenant whose retention period has passed (user_deletions
- * purge_after), at most `limit` per run, oldest first. Each erasure is recorded before it runs
- * (gdpr_purge_executed, by `agent`); one that cannot be recorded or does not complete is
- * counted as failed and stays due. `signal` (the job's): checked between accounts — aborted, the
- * run stops with `stopped` and the rest stay due.
+ * purge_after), at most `limit` per run — those tried fewest times first, then oldest. Each
+ * erasure is recorded before it runs (gdpr_purge_executed, by `agent`). One that cannot be
+ * recorded or does not complete is counted as failed and tried again after a growing interval
+ * (purge_attempts, purge_retry_at: 1 hour, doubling, at most 7 days), with the steps that failed
+ * (last_purge_error) — so erasures that always fail never hold the others back (TASK-193, audit
+ * B-7: the oldest 100 were retried first, every run, for ever). One that has failed
+ * PURGE_ALERT_ATTEMPTS times is alerted. `signal` (the job's): checked between accounts —
+ * aborted, the run stops with `stopped` and the rest stay due.
  *
  * @scheduled gdpr.retention-purge
  */
@@ -335,7 +684,8 @@ export async function purgeDueErasures(
     tx.query<{ user_id: string }>(
       `select user_id from user_deletions
         where purged_at is null and purge_after <= now()
-        order by purge_after, user_id
+          and (purge_retry_at is null or purge_retry_at <= now())
+        order by purge_attempts, purge_after, user_id
         limit $1::int`,
       [limit]
     )
@@ -350,6 +700,7 @@ export async function purgeDueErasures(
       stopped = true;
       break;
     }
+    let failedSteps: string | undefined;
     try {
       const result = await audited(
         {
@@ -360,6 +711,7 @@ export async function purgeDueErasures(
         },
         async () => {
           const r = await hardPurgeUser(userId);
+          if (!r.success) failedSteps = failingSteps(r.errors);
           return r.success
             ? { success: true as const }
             : { success: false as const, error: r.errors.join("; ") };
@@ -371,8 +723,132 @@ export async function purgeDueErasures(
       else failed++;
     } catch (err) {
       if (!(err instanceof AuditWriteError)) throw err;
+      failedSteps = "audit";
       failed++;
     }
+    if (failedSteps !== undefined) await deferPurge(userId, failedSteps);
   }
-  return { due: rows.length, purged, failed, stopped };
+  const { rows: stuck } = await withTenantTx((tx) =>
+    tx.query<{ n: number }>(
+      // One alert per cause (round 1): an erasure held only by a store outside the database is
+      // that store's alert (retryExternalErasures), not this one.
+      "select count(*)::int as n from user_deletions where purged_at is null and purge_attempts >= $1::int and coalesce(last_purge_error, '') <> 'external'",
+      [PURGE_ALERT_ATTEMPTS]
+    )
+  );
+  const stuckCount = stuck[0]?.n ?? 0;
+  if (stuckCount > 0) {
+    raiseAlert({
+      name: "gdpr.erasure_stuck",
+      message: `${stuckCount} erasure(s) have failed ${PURGE_ALERT_ATTEMPTS} or more times; each is retried with a growing interval. user_deletions.last_purge_error names the steps that failed (docs/runbooks/jobs.md).`,
+      count: stuckCount,
+    });
+  }
+  return { due: rows.length, purged, failed, stuck: stuckCount, stopped };
+}
+
+/** The names of the steps that failed (`module: message` → `module`), never their messages. */
+function failingSteps(errors: readonly string[]): string {
+  return errors
+    .map((e) => e.split(":")[0]?.trim() || "unknown")
+    .join(", ")
+    .slice(0, 500);
+}
+
+/** Record a failed purge and when it is tried again (1 h, doubling, at most 7 days). */
+async function deferPurge(userId: string, steps: string): Promise<void> {
+  const writeError = await failure(() =>
+    withTenantTx((tx) =>
+      tx.query(
+        `update user_deletions
+            set purge_attempts = purge_attempts + 1,
+                purge_retry_at = now() + least(interval '7 days', interval '1 hour' * power(2, least(purge_attempts, 8))),
+                last_purge_error = $2
+          where user_id = $1::uuid and purged_at is null`,
+        [userId, steps]
+      )
+    )
+  );
+  if (writeError) {
+    logger.error("A failed purge's retry could not be recorded; it is due again", {
+      userId,
+      error: writeError,
+      route: "platform/auth/gdpr-deletion",
+    });
+  }
+}
+
+/**
+ * For every erasure of the current tenant that is complete and whose mentions in other tenants
+ * are not yet erased (user_deletions.mentions_erased_at), run CROSS_TENANT_ERASURE on the owner
+ * connection (TASK-193, audit A-3): an operator's act about the account is recorded in the
+ * operator's own tenant, which the account's erasure — in its own tenant — never reached. A job
+ * step, never a request's (the admin purge's mentions are erased by the next run). At most
+ * `limit` per run; `signal` is checked between accounts.
+ *
+ * @scheduled gdpr.retention-purge
+ */
+export async function eraseMentionsInOtherTenants(
+  limit = 100,
+  signal?: AbortSignal
+): Promise<{ readonly due: number; readonly erased: number; readonly stopped: boolean }> {
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ user_id: string }>(
+      `select user_id from user_deletions
+        where purged_at is not null and mentions_erased_at is null
+        order by purged_at, user_id
+        limit $1::int`,
+      [limit]
+    )
+  );
+  let erased = 0;
+  let stopped = false;
+  for (const { user_id: userId } of rows) {
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
+    const id = userId.toLowerCase();
+    let aborted = false;
+    const error = await failure(async () => {
+      // In page ranges, one transaction each (review round 1, item 6: one statement read the
+      // whole audit log, every tenant's, in one transaction). Records written after the size is
+      // read are new — none names an account erased before them.
+      const { rows: size } = await withOwnerTx("platform-job", (tx) =>
+        tx.query<{ pages: number }>(
+          "select (pg_relation_size('public.audit_log') / current_setting('block_size')::int)::int as pages"
+        )
+      );
+      const pages = size[0]?.pages ?? 0;
+      for (let from = 0; from <= pages; from += CROSS_TENANT_ERASURE_PAGES) {
+        if (signal?.aborted) {
+          aborted = true;
+          return;
+        }
+        const range = [id, `(${from},0)`, `(${from + CROSS_TENANT_ERASURE_PAGES},0)`];
+        await withOwnerTx("platform-job", async (tx) => {
+          for (const text of CROSS_TENANT_ERASURE) await tx.query(text, range);
+        });
+      }
+      await withTenantTx((tx) =>
+        tx.query(
+          "update user_deletions set mentions_erased_at = now() where user_id = $1::uuid",
+          [userId]
+        )
+      );
+    });
+    if (aborted) {
+      // Not marked: the next run erases its mentions again from the start (idempotent).
+      stopped = true;
+      break;
+    }
+    if (error) {
+      logger.error("An erased account's mentions in other tenants could not be erased", {
+        userId,
+        error,
+        route: "platform/auth/gdpr-deletion",
+      });
+    } else erased++;
+  }
+  return { due: rows.length, erased, stopped };
 }

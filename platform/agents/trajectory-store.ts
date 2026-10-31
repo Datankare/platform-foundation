@@ -26,6 +26,8 @@ export type {
   UpdateStatusOptions,
 } from "@/platform/kernel/types";
 import type {
+  AbandonedTrajectories,
+  WorkflowAbandonment,
   AddStepOptions,
   TrajectorySubject,
   TrajectoryQuery,
@@ -35,6 +37,9 @@ import type {
   UpdateStatusOptions,
 } from "@/platform/kernel/types";
 import { generateId } from "./utils";
+
+/** The step the reaper records on a trajectory it ends (TASK-193, trajectory-closure.ts). */
+export const REAPED_ACTION = "trajectory-abandoned";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 import {
@@ -386,6 +391,90 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
       }
     }
     return deleted;
+  }
+
+  /**
+   * The reaper, as the durable store's (TASK-193): `openHolds` names the trajectories an open hold
+   * is on — this store cannot see the proposals. `updatedAt` is left as it was.
+   */
+  async closeAbandoned(
+    cutoff: Date,
+    limit: number,
+    openHolds?: () => Promise<ReadonlySet<string>>,
+    workflows?: WorkflowAbandonment
+  ): Promise<AbandonedTrajectories> {
+    const held = openHolds ? await openHolds() : new Set<string>();
+    const records = this.parts.current();
+    const links = this.next.current();
+    const at = cutoff.getTime();
+    const open = (s: TrajectoryStatus) =>
+      s === "running" ||
+      s === "paused" ||
+      s === "awaiting_retry" ||
+      s === "indeterminate";
+    const chainIds = (r: TrajectoryRecord): string[] => {
+      const ids: string[] = [];
+      let at2: TrajectoryRecord | undefined = this.rootOf(r);
+      const seen = new Set<string>();
+      while (at2 && !seen.has(at2.trajectory.trajectoryId)) {
+        seen.add(at2.trajectory.trajectoryId);
+        ids.push(at2.trajectory.trajectoryId);
+        const n = links.get(at2.trajectory.trajectoryId);
+        at2 = n ? records.get(n) : undefined;
+      }
+      return ids;
+    };
+    let closed = 0;
+    let indeterminate = 0;
+    for (const [id, r] of [...records]) {
+      if (closed >= limit) break;
+      const t = r.trajectory;
+      // A workflow's trajectory waits for its own, longer cutoff (review round 1, M1).
+      const until =
+        workflows && workflows.triggers.includes(r.trigger)
+          ? workflows.cutoff.getTime()
+          : at;
+      if (!open(t.status) || links.has(id) || new Date(t.updatedAt).getTime() >= until)
+        continue;
+      // An app session's trajectory is its session's (audit B-5), never reaped here.
+      if (r.subject.kind === "session") continue;
+      if (chainIds(r).some((c) => held.has(c))) continue;
+      const room = trajectoryHasRoom(t.steps.length, this.bytesOf(id));
+      const step: Step = {
+        stepIndex: (t.stepOffset ?? 0) + t.steps.length,
+        action: REAPED_ACTION,
+        boundary: "cognition",
+        input: { reaper: "agents.trajectory-retention" },
+        output: {
+          status: "failed",
+          was: t.status,
+          reason: `no activity and no open hold since ${new Date(until).toISOString()}`,
+        },
+        cost: 0,
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+      };
+      records.set(id, {
+        ...r,
+        trajectory: {
+          ...t,
+          status: "failed",
+          steps: room ? [...t.steps, step] : t.steps,
+        },
+      });
+      if (room) this.sizes.current().set(id, this.bytesOf(id) + stepBytes(step));
+      closed++;
+      if (t.status === "indeterminate") indeterminate++;
+    }
+    let segments = 0;
+    for (const [id, r] of [...records]) {
+      if (!links.has(id) || !open(r.trajectory.status)) continue;
+      const tail = this.tailOf(r).trajectory;
+      if (tail.status !== "completed" && tail.status !== "failed") continue;
+      records.set(id, { ...r, trajectory: { ...r.trajectory, status: tail.status } });
+      segments++;
+    }
+    return { closed, indeterminate, segments };
   }
 
   /** The current tenant's record count (test helper) */

@@ -18,10 +18,11 @@ made the Cognito `sub` for every provider (TASK-177), and review 17 of sign-out 
 provider (TASK-178), and the admin Users screen with the address kept in step (TASK-185), and the
 standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186), and the
 command bar's search limited to what the admin pages show (TASK-189), and one list on the Users
-screen (TASK-190), and roles and permissions in a logical order (TASK-192). Deploy:
-migrations 053, 054, 055, 056, 057, 058 and 059 in the SQL Editor
+screen (TASK-190), and roles and permissions in a logical order (TASK-192), and every lifecycle
+closed and every erasure completed (TASK-193). Deploy:
+migrations 053, 054, 055, 056, 057, 058, 059 and 060 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
-code. Consumer steps: §1b, the eight "Release candidate" rows.
+code. Consumer steps: §1b, the nine "Release candidate" rows.
 
 - **Roles and permissions in a logical order (TASK-192).** Migration 059 sets the roles'
   `sort_order`: staff first (super_admin 10, admin 20, moderator 30, safety_approver 40), then the
@@ -52,6 +53,36 @@ code. Consumer steps: §1b, the eight "Release candidate" rows.
   (10): move it (to 1000 to follow the seeded roles by name, or between two of them — 55 sits
   between guest and free). An app's own category of permissions is listed after the platform's,
   headed by its name. TASKS TASK-192.
+- **Every state has a way out; every erasure completes (TASK-193).** Trajectories opened for a
+  request are ended (`withTrajectory` / `finishTrajectory`, `platform/agents/trajectory-closure.ts`),
+  every decision on a hold ends its trajectory (`settleHeldTrajectory`), and
+  `agents.trajectory-retention` first ends open trajectories with no activity for
+  `agent.trajectory.abandon_after_hours` and no open hold (**`TrajectoryStore.closeAbandoned`**,
+  optional). A hold never decided expires after `config.approval_expiry_days`; a held role change
+  applies only onto the role it was requested against. An approved configuration change never
+  applied is found and applied-marked or reopened (`applied_at`). Erasure: the record is written
+  with the anonymisation (one transaction), an account deleted without one is recorded by the job,
+  failing purges back off and are alerted, the soft delete also clears the parent's address, ban
+  reason, time zone, language and last sign-in, and the sign-in identity is deleted with the
+  administrative credentials through a register of external stores (**`AuthProvider.adminDeleteUser`**,
+  optional; `registerExternalErasure`), retried until done — the self-service route included. A
+  child's account whose parental consent stays pending or denied past `coppa.consent_expiry_days`
+  (14) is erased — once `coppa.consent_expiry_enabled` is on (off until the parental-consent flow
+  ships). A workflow's trajectory is the user's to continue: reaped only past
+  `agent.workflow.abandon_after_days` (30). An identity not found counts as erased only in the pool
+  the identity was proven present in, confirmed (`gdpr.identity_pool_unverified` otherwise); two
+  operators may attest one the system cannot verify (`POST
+/api/operator/tenants/[id]/erasures/[userId]/attestation`) — the only way to close it. Audit details are allowlisted per action
+  (`platform/auth/audit-details.ts`): an unregistered key is dropped, no address is stored (but a
+  setting's value is kept as set), free text is erased from the records about the account, in every
+  tenant. Migration 060. **Consumer steps:** implement `adminDeleteUser` in your own auth provider —
+  by the subject, resolving the provider's own user (a federated one's username is not its
+  subject); `notFound` only when no user has that subject — with `identityPoolId` and
+  `confirmIdentityPool` (and give its IAM key `cognito-idp:AdminDeleteUser` and
+  `cognito-idp:ListUsers`); register any store outside the database
+  that holds people (`registerExternalErasure`); an audit record of your own carries only keys in
+  `AUDIT_DETAILS_SCHEMA`; `softDeleteUser` takes an optional third argument and may return
+  `externalPending`. TASKS TASK-193.
 - **Tests a loaded runner cannot fail, and failures that can be replayed (TASK-198).** The
   stamp reader's breaker tests run on jest's fake clock (the real-clock proofs in the fuzz job's
   soak step, `__tests__/soak/`); DB suites keep the 10 s statement timeout, plan on fixed

@@ -247,7 +247,13 @@ describe("approving (X-10, B-10, RR-19)", () => {
       {
         tool: "change_user_role",
         admin: CALLERS.admin.userId,
-        input: { user_identifier: "u@x.y", new_role: "moderator" },
+        // TASK-193 (B-4): the held change carries the user's role as it was when requested (none
+        // here: the fake database knows no such user), and runs only while that still holds.
+        input: {
+          user_identifier: "u@x.y",
+          new_role: "moderator",
+          held_current_role_id: null,
+        },
       },
     ]);
     expect((await proposals.getById(id))?.status).toBe("executed");

@@ -95,7 +95,9 @@ import {
 
 type Handler = (
   request: NextRequest,
-  context: { params: Promise<{ id: string; kind: string; approvalId: string }> }
+  context: {
+    params: Promise<{ id: string; kind: string; approvalId: string; userId: string }>;
+  }
 ) => Promise<Response>;
 
 interface RouteCase {
@@ -517,6 +519,16 @@ const ROUTES: readonly RouteCase[] = [
     ),
     validQuery: `?host=m-${RUN}.example.test`,
   },
+  op(
+    `tenants/${ID}/erasures/${ID}/attestation`,
+    "POST",
+    "tenants/[id]/erasures/[userId]/attestation",
+    () =>
+      fc.record({
+        reason: fc.constantFrom("pool_decommissioned", "deleted_in_old_pool"),
+        note: text(),
+      })
+  ),
   op(`tenants/${ID}/export`, "GET", "tenants/[id]/export"),
   op(`tenants/${ID}/state`, "POST", "tenants/[id]/state", () =>
     fc.record({ action: fc.constantFrom("suspend", "resume"), reason: words() })
@@ -632,7 +644,7 @@ async function call(
   const mod = await route.load();
   const handler = mod[route.method] as Handler;
   return handler(request(route, caller, body, raw, query), {
-    params: Promise.resolve({ id: ID, kind: ID, approvalId: ID }),
+    params: Promise.resolve({ id: ID, kind: ID, approvalId: ID, userId: ID }),
   });
 }
 
@@ -764,6 +776,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
             r.path.startsWith("operator/") ? "/approvals/[approvalId]" : "/approvals/[id]"
           )
           .replace(`schedules/${ID}`, "schedules/[kind]")
+          .replace(`erasures/${ID}`, "erasures/[userId]")
           .replaceAll(ID, "[id]")
       )
     );

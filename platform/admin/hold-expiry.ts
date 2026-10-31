@@ -12,6 +12,11 @@
  *     decision on it answers approvals.expired and withdraws it, and the config.expire-approvals
  *     job withdraws every lapsed one (expireLapsedApprovedHolds).
  *
+ * A hold never decided (`proposed`) lapses after the same period from its request (TASK-193,
+ * audit B-4: it never expired, and a year-old held role change could still be approved):
+ * expireUndecidedHolds withdraws it and ends its trajectory; it is not listed once lapsed, and a
+ * decision on it answers approvals.expired. Every withdrawal here ends the hold's trajectory.
+ *
  * A run claims its approval (approved -> executing, with a fresh run token) and ends it by that
  * token (executed, or approved again when it failed before taking effect: review 10 H2, review 11
  * H-1). A run that did not end within RUN_LEASE_SECONDS — its process died, or it is simply slower
@@ -49,6 +54,7 @@ import {
   INDETERMINATE_NOTE,
   RECOVERED_TRAJECTORY,
 } from "@/platform/agents/proposal-store";
+import { workflowTriggers } from "@/platform/agents/trajectory-closure";
 import { raiseAlert } from "@/platform/observability/alert";
 
 /** The approval period, shared with configuration approvals. */
@@ -97,7 +103,9 @@ export function lapsedNote(days: number): string {
  * Withdraw every lapsed approval `tx` can see — on the owner connection (the job), every
  * tenant's. The note keeps who had approved it and when, as ProposalStore.withdraw does. Each
  * withdrawal is recorded in its tenant's audit log, by the system (review 8 L5: the job left no
- * record), in the same statement: no record, no withdrawal.
+ * record), in the same statement: no record, no withdrawal. The hold's trajectory ends in the same
+ * statement too (TASK-193: it was left awaiting_retry or running for good): every open segment of
+ * its chain is `failed`, unless another open hold not withdrawn here is on any segment of it.
  */
 export async function expireLapsedApprovedHolds(
   tx: Tx,
@@ -121,7 +129,27 @@ export async function expireLapsedApprovedHolds(
               decided_at = now(), updated_at = now()
          from lapsed l
         where p.tenant_id = l.tenant_id and p.id = l.id and p.status = 'approved'
-        returning p.tenant_id, p.id, p.label, l.decided_by, l.decided_at
+        returning p.tenant_id, p.id, p.label, p.trajectory_id, l.decided_by, l.decided_at
+     ),
+     ended as (
+       update agent_trajectories t
+          set status = 'failed', version = t.version + 1, updated_at = now()
+         from withdrawn w
+        where t.tenant_id = w.tenant_id
+          and t.chain_root_id = (select r.chain_root_id from agent_trajectories r
+                                  where r.tenant_id = w.tenant_id and r.id::text = w.trajectory_id)
+          and t.status in ('running', 'paused', 'awaiting_retry', 'indeterminate')
+          and not exists (
+            select 1 from proposals o
+             where o.tenant_id = w.tenant_id
+               -- Any segment of the chain (review round 1, L4), as the reaper checks.
+               and o.trajectory_id in (select c.id::text from agent_trajectories c
+                                        where c.tenant_id = t.tenant_id
+                                          and c.chain_root_id = t.chain_root_id)
+               and o.status in ('proposed', 'approved', 'executing', 'indeterminate')
+               and not exists (select 1 from withdrawn x
+                                where x.tenant_id = o.tenant_id and x.id = o.id))
+       returning t.id
      )
      insert into audit_log (tenant_id, action, details)
      select w.tenant_id, 'admin_action'::audit_action,
@@ -133,6 +161,85 @@ export async function expireLapsedApprovedHolds(
     [days, HOLD_EXPIRY_ACTOR, lapsedNote(days), scope.tenantIds ?? null]
   );
   return rowCount;
+}
+
+/** The withdrawal note of a hold never decided within the period (TASK-193, audit B-4). */
+export function undecidedNote(days: number): string {
+  return `expired: not decided within ${days} day${days === 1 ? "" : "s"} of being requested`;
+}
+
+/**
+ * Withdraw every runtime hold still awaiting a decision (`proposed`) `days` after it was requested
+ * — the same period, config.approval_expiry_days, as a configuration approval and an unused
+ * approval (TASK-193, audit B-4: a held role change could be approved a year later, and a hold no
+ * authority owns stayed for ever). On the owner connection (the job), every tenant's (or
+ * `scope.tenantIds`'). Withdrawn as a rejection by the system, its trajectory ended in the same
+ * statement, each recorded in its tenant's audit log (approval_withdrawn, reason "expired",
+ * `decision: "undecided"`): no record, no withdrawal.
+ */
+export async function expireUndecidedHolds(
+  tx: Tx,
+  days: number,
+  scope: SweepScope = {}
+): Promise<number> {
+  const { rowCount } = await tx.query(
+    `with lapsed as (
+       select tenant_id, id
+         from proposals
+        where status = 'proposed' and created_at < now() - make_interval(days => $1::int)
+          and ($4::uuid[] is null or tenant_id = any($4::uuid[]))
+        for update
+     ),
+     withdrawn as (
+       update proposals p
+          set status = 'rejected', decided_by = $2, decision_note = $3,
+              decided_at = now(), updated_at = now()
+         from lapsed l
+        where p.tenant_id = l.tenant_id and p.id = l.id and p.status = 'proposed'
+        returning p.tenant_id, p.id, p.label, p.trajectory_id, p.created_at
+     ),
+     ended as (
+       update agent_trajectories t
+          set status = 'failed', version = t.version + 1, updated_at = now()
+         from withdrawn w
+        where t.tenant_id = w.tenant_id
+          and t.chain_root_id = (select r.chain_root_id from agent_trajectories r
+                                  where r.tenant_id = w.tenant_id and r.id::text = w.trajectory_id)
+          and t.status in ('running', 'paused', 'awaiting_retry', 'indeterminate')
+          and not exists (
+            select 1 from proposals o
+             where o.tenant_id = w.tenant_id
+               -- Any segment of the chain (review round 1, L4), as the reaper checks.
+               and o.trajectory_id in (select c.id::text from agent_trajectories c
+                                        where c.tenant_id = t.tenant_id
+                                          and c.chain_root_id = t.chain_root_id)
+               and o.status in ('proposed', 'approved', 'executing', 'indeterminate')
+               and not exists (select 1 from withdrawn x
+                                where x.tenant_id = o.tenant_id and x.id = o.id))
+       returning t.id
+     )
+     insert into audit_log (tenant_id, action, details)
+     select w.tenant_id, 'admin_action'::audit_action,
+            jsonb_build_object('type', 'approval_withdrawn', 'reason', 'expired',
+                               'decision', 'undecided', 'holdId', w.id, 'source', 'runtime',
+                               'label', w.label, 'requestedAt', w.created_at,
+                               'agent', $2::text, 'outcome', 'succeeded')
+       from withdrawn w`,
+    [days, HOLD_EXPIRY_ACTOR, undecidedNote(days), scope.tenantIds ?? null]
+  );
+  return rowCount;
+}
+
+/** Whether `proposal` is a hold never decided whose period has passed at `now` (TASK-193). */
+export function holdLapsed(
+  proposal: ProposalRecord,
+  days: number,
+  now: number = Date.now()
+): boolean {
+  if (proposal.status === "approved") return approvalLapsed(proposal, days, now);
+  if (proposal.status !== "proposed") return false;
+  const at = Date.parse(proposal.createdAt);
+  return Number.isFinite(at) && at + days * DAY_MS < now;
 }
 
 /**
@@ -199,6 +306,9 @@ export async function recoverStaleRuns(
                                     else $4 end,
               run_token = case when s.atomic and not s.recorded then null else p.run_token end,
               run_atomic = case when s.atomic and not s.recorded then null else p.run_atomic end,
+              -- Alerted below, now: alertWaitingUndecided reminds of it a day on (L3).
+              reminded_at = case when not s.recorded and not s.atomic then now()
+                                 else p.reminded_at end,
               updated_at = now()
          from stale s
         where p.tenant_id = s.tenant_id and p.id = s.id and p.status = 'executing'
@@ -208,12 +318,18 @@ export async function recoverStaleRuns(
      -- in, so a finished or already undecided trajectory is left as it is.
      waiting as (
        select t.tenant_id, t.id, t.status as from_status, r.id as hold_id,
-              case when r.status = 'indeterminate' then $6::text else $8::text end as to_status
+              case when r.status = 'indeterminate' then $6::text
+                   when r.status = 'executed' then $10::text
+                   else $8::text end as to_status
          from recovered r
          join agent_trajectories t
            on t.tenant_id = r.tenant_id and t.id::text = r.trajectory_id
         where (r.status = 'indeterminate' and t.status::text = any($7::text[]))
            or (r.status = 'approved' and t.status::text = any($9::text[]))
+           -- Its step was recorded: the request is over (review round 1, L1) — but a
+           -- workflow's trajectory (its trigger a workflow goal) is its user's to continue (M1).
+           or (r.status = 'executed' and t.status::text = any($11::text[])
+               and not (t.trigger = any($12::text[])))
           for update of t
      ),
      moved as (
@@ -247,6 +363,9 @@ export async function recoverStaleRuns(
       RECOVERED_TRAJECTORY.indeterminate.from,
       RECOVERED_TRAJECTORY.approved.to,
       RECOVERED_TRAJECTORY.approved.from,
+      RECOVERED_TRAJECTORY.executed.to,
+      RECOVERED_TRAJECTORY.executed.from,
+      await workflowTriggers(),
     ]
   );
   const undecided = rows.find((r) => r.status === "indeterminate")?.n ?? 0;
@@ -258,4 +377,50 @@ export async function recoverStaleRuns(
     });
   }
   return rows.reduce((sum, r) => sum + r.n, 0);
+}
+
+/** How often a run still undecided is alerted again (review round 1, L3): at most daily. */
+export const UNDECIDED_REMINDER_HOURS = 24;
+
+/**
+ * Raise approvals.indeterminate again while approved runs are still undecided (TASK-193): an
+ * undecided run waits for a person (never decided by a job — review 11 H-1), and the alert raised
+ * when it was found must not be the only one. Once per run found (recoverStaleRuns raises it and
+ * marks the run reminded), then at most every UNDECIDED_REMINDER_HOURS per run (review round 1,
+ * L3: every 15-minute run raised it again) — `proposals.reminded_at`. Run by the
+ * config.expire-approvals job each time; returns how many are waiting (on the owner connection,
+ * every tenant's — or `scope`'s).
+ */
+export async function alertWaitingUndecided(
+  tx: Tx,
+  scope: SweepScope = {}
+): Promise<number> {
+  const { rows } = await tx.query<{ waiting: number; due: number }>(
+    `with due as (
+       select tenant_id, id from proposals
+        where status = 'indeterminate'
+          and ($1::uuid[] is null or tenant_id = any($1::uuid[]))
+          and (reminded_at is null or reminded_at < now() - make_interval(hours => $2::int))
+          for update skip locked
+     ),
+     reminded as (
+       update proposals p set reminded_at = now()
+         from due d where p.tenant_id = d.tenant_id and p.id = d.id
+       returning p.id
+     )
+     select (select count(*)::int from proposals
+              where status = 'indeterminate'
+                and ($1::uuid[] is null or tenant_id = any($1::uuid[]))) as waiting,
+            (select count(*)::int from reminded) as due`,
+    [scope.tenantIds ?? null, UNDECIDED_REMINDER_HOURS]
+  );
+  const waiting = rows[0]?.waiting ?? 0;
+  if ((rows[0]?.due ?? 0) > 0) {
+    raiseAlert({
+      name: "approvals.indeterminate",
+      message: `${waiting} approved run(s) are still undecided: whether each took effect is unknown. Verify each on the approvals page, then mark it executed or approve it again (docs/runbooks/approvals-and-agents.md).`,
+      count: waiting,
+    });
+  }
+  return waiting;
 }

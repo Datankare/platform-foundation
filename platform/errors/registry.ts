@@ -490,8 +490,8 @@ export const PLATFORM_ERROR_CODES = {
   },
   "tenant.invalid": {
     status: 400,
-    params: [],
-    action: "Show what the tenant form needs and ask again.",
+    params: [{ name: "reason", kind: "id" }],
+    action: "Show the reason (what the form or request needs) and ask again.",
   },
   "tenant.not_found": {
     status: 404,

@@ -7,17 +7,19 @@
  * re-created from the same identity; a banned address keeps its ban, A-11), every app module's
  * soft delete run, and the erasure scheduled — after the retention period the retention job
  * purges every platform table that holds the user's data (platform/auth/user-data.ts). The
- * sign-in identity is then deleted from the identity provider, and the session cookies cleared.
+ * sign-in identity is deleted by the erasure itself, with the provider's administrative
+ * credentials (TASK-193: the same pipeline as an admin or retention erasure), and the session
+ * cookies cleared.
  *
- * An erasure that did not complete answers 503 and says so; one whose identity could not be
- * deleted answers 200 with `identityDeleted: false` (the account is closed either way, and the
- * identity can no longer reach it). At most ten an hour per account.
+ * An erasure that did not complete answers 503 and says so; one whose identity is not deleted yet
+ * answers 200 with `identityDeleted: false` (the account is closed either way, the identity can
+ * no longer reach it, and the job retries its deletion until done). At most ten an hour per account.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireActor, requirePermission } from "@/platform/auth/middleware";
 import { softDeleteUser } from "@/platform/auth/gdpr-deletion";
-import { callAuthProvider, clearSessionCookies } from "@/platform/auth/auth-response";
+import { clearSessionCookies } from "@/platform/auth/auth-response";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -64,18 +66,19 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
   }
 
-  const authHeader = request.headers.get("authorization") ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  const identity = await callAuthProvider((auth) => auth.deleteUser(token), {
-    request,
-    context: "Identity deletion failed",
-  });
-  const identityDeleted = identity.ok && identity.result.success;
+  // The sign-in identity was deleted by the erasure itself, with the provider's administrative
+  // credentials (TASK-193, audit B-8/D-9) — the same step an admin or retention erasure runs; one
+  // not deleted yet is recorded on the erasure and retried by the gdpr.retention-purge job until
+  // it is (before, this route tried once with the user's token and only logged a failure).
+  const identityDeleted = !(erased.externalPending ?? []).includes("identity-provider");
   if (!identityDeleted) {
-    logger.error("Account erased but its sign-in identity was not deleted", {
-      userId: actor.id,
-      route: "app/api/account/delete",
-    });
+    logger.error(
+      "Account erased; its sign-in identity is not deleted yet (retried by the job)",
+      {
+        userId: actor.id,
+        route: "app/api/account/delete",
+      }
+    );
   }
 
   const response = NextResponse.json({ success: true, identityDeleted });

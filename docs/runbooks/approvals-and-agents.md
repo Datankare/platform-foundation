@@ -293,3 +293,23 @@ intermediate change is in the setting's history. If an intermediate change matte
 select tenant_id, id, label, payload->>'key' as key, decision_note, updated_at
   from proposals where status = 'rejected' and decision_note like '%stale%' order by updated_at desc;
 ```
+
+## 6. Holds and trajectories that end on their own (TASK-193)
+
+- **A hold never decided** expires `config.approval_expiry_days` after it was requested, like an
+  unused approval: config.expire-approvals withdraws it (audited `approval_withdrawn`, reason
+  `expired`, `decision: undecided`) and ends its trajectory. A decision on one answers
+  `approvals.expired`; ask again.
+- **An undecided run** (`approvals.indeterminate`) is alerted when it is found, then reminded at
+  most once a day while it waits (`proposals.reminded_at`). Decide it as in §1.
+- **An abandoned trajectory** — open, no activity for `agent.trajectory.abandon_after_hours`, no
+  open hold — is ended `failed` by agents.trajectory-retention, with a `trajectory-abandoned` step,
+  then deleted with the other finished ones after `agent.trajectory.retention_days` (counted from
+  its last activity). `agents.indeterminate_reaped`: one was `indeterminate` — an external effect
+  neither confirmed nor denied; check the effect ledger for its operations before it is deleted.
+  Check: `select status, count(*) from agent_trajectories where status in ('running', 'paused', 'awaiting_retry', 'indeterminate') and updated_at < now() - interval '1 day' group by 1;` —
+  only rows with an open hold, app sessions' and workflows' remain.
+- **A workflow's trajectory** (its trigger is a workflow goal) is the user's to continue — after a
+  step-cap or budget pause, or after an approved step — so it is ended only past
+  `agent.workflow.abandon_after_days` (30) without activity; an executed held step does not
+  complete it either. Its holds end as any hold does.

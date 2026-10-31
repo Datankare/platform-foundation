@@ -67,6 +67,9 @@ function approval(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The fixtures' holds were requested on 2026-01-01/02: read them a day later, inside the
+  // approval period (TASK-193: a hold never decided lapses after it, like an unused approval).
+  jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-01-03T00:00:00.000Z"));
   mockTier.mockResolvedValue("safety");
   mockStore.mockReturnValue(storeWith([proposal()]));
   mockList.mockResolvedValue([approval()]);
@@ -155,5 +158,16 @@ describe("listPendingApprovals — ADR-040 040a", () => {
     mockList.mockResolvedValue([]);
     const [only] = await listPendingApprovals();
     expect(only.reason).toMatch(/could not be applied/);
+  });
+
+  // TASK-193 (audit B-4): a hold never decided lapses after config.approval_expiry_days (7 by
+  // default) from its request, like an unused approval — it is no longer offered (the job
+  // withdraws it and ends its trajectory). Before, a year-old held role change stayed listed.
+  it("does not list a hold never decided once its period has passed", async () => {
+    mockList.mockResolvedValue([]);
+    (Date.now as jest.Mock).mockReturnValue(Date.parse("2026-01-09T01:00:00.000Z"));
+    expect(await listPendingApprovals()).toEqual([]);
+    (Date.now as jest.Mock).mockReturnValue(Date.parse("2026-01-08T23:00:00.000Z"));
+    expect(await listPendingApprovals()).toHaveLength(1);
   });
 });

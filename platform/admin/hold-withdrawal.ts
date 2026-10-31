@@ -39,6 +39,8 @@
  */
 
 import { getProposalStore } from "@/platform/agents/proposal-store";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { settleHeldTrajectory } from "@/platform/agents/gating";
 import { withOwnerTx } from "@/platform/data";
 import { peekTenant, runWithTenant } from "@/platform/tenancy/context";
 import { audited } from "@/platform/auth/audit";
@@ -301,6 +303,14 @@ async function withdrawBatch(
         withdrawn = store.supersede
           ? [...(await store.supersede(ids, ctx.actorId, ctx.note))]
           : await oneByOne(store, batch, ctx.actorId, ctx.note);
+        // Each withdrawn hold's trajectory ends with it (TASK-193): it was left paused for good.
+        const trajectories = getTrajectoryStore();
+        for (const id of withdrawn) {
+          await settleHeldTrajectory(
+            trajectories,
+            await store.getById(id).catch(() => undefined)
+          );
+        }
         return withdrawn.length === ids.length
           ? { success: true as const }
           : {

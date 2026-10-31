@@ -30,6 +30,7 @@ import { assertStorableJson } from "@/platform/errors/json-limits";
 import { ExportTooLargeError } from "@/platform/auth/user-data";
 import { logger } from "@/lib/logger";
 import { AUDIT_ACTIONS, type AuditAction } from "@/platform/auth/audit-actions";
+import { sanitizeAuditDetails } from "@/platform/auth/audit-details";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -99,12 +100,25 @@ export async function recordAudit(
       throw new AuditWriteError(entry.action, `${field} is not a user id`);
     }
   }
-  const details = entry.agent
+  const given = entry.agent
     ? { ...entry.details, agent: entry.agent }
     : entry.details || {};
   // Details often carry caller-shaped JSON: bounded before they are stored (review 9 H2). A
   // refusal is coded (request.json_too_deep / json_too_large), and the audited act does not run.
-  assertStorableJson(details, "audit_log.details");
+  assertStorableJson(given, "audit_log.details");
+  // Only what the action's schema allows, by kind, never a raw address (TASK-193, audit A-2–A-4;
+  // platform/auth/audit-details.ts). A key dropped is a call site to fix: logged.
+  const { details, dropped } = sanitizeAuditDetails(entry.action, given);
+  if (dropped.length > 0) {
+    logger.error(
+      "Audit details carried keys its action's schema does not allow; dropped",
+      {
+        action: entry.action,
+        keys: dropped.map((k) => k.slice(0, 60)),
+        route: "platform/auth/audit",
+      }
+    );
+  }
   let failure: string | undefined;
   // A record of an attempt is written in its own transaction when asked (review 11 L-6): inside
   // an atomic action's transaction it would roll back with the action it records.

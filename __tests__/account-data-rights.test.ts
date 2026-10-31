@@ -169,7 +169,9 @@ describe("POST /api/account/delete", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true, identityDeleted: true });
     expect(mockSoftDelete).toHaveBeenCalledWith(CALLERS.free.userId, CALLERS.free.userId);
-    expect(mockDeleteIdentity).toHaveBeenCalledWith(`test-token:${CALLERS.free.sub}`);
+    // TASK-193 (B-8/D-9): the identity is deleted by the erasure itself, with the provider's
+    // administrative credentials — never by this route with the caller's token, once.
+    expect(mockDeleteIdentity).not.toHaveBeenCalled();
     expect(res.headers.get("set-cookie") ?? "").toMatch(/pf_refresh=;/);
   });
 
@@ -215,8 +217,12 @@ describe("POST /api/account/delete", () => {
     expect((await res.json()).code).toBe("account.not_found");
   });
 
-  it("says so when the identity could not be deleted (the account is closed either way)", async () => {
-    mockDeleteIdentity.mockRejectedValue(new Error("provider down"));
+  it("says so when the identity could not be deleted yet (the account is closed either way; the job retries it)", async () => {
+    mockSoftDelete.mockResolvedValue({
+      success: true,
+      errors: [],
+      externalPending: ["identity-provider"],
+    });
     const res = await deleteAs("free");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true, identityDeleted: false });

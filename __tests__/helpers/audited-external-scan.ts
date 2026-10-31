@@ -58,7 +58,7 @@ export interface AuditedCallSite {
 
 export interface ScanResult {
   readonly sites: readonly AuditedCallSite[];
-  /** Wrappers found: name → file. */
+  /** Wrappers found: "<file>#<name>" → file. */
   readonly wrappers: Readonly<Record<string, string>>;
   /** Wrappers that do not forward their options to audited() (each a finding). */
   readonly unforwarded: readonly string[];
@@ -412,8 +412,14 @@ export function scanAudited(
   };
 
   // Wrappers, found to a fixed point: audited first, then whatever passes its act parameter on.
+  // Keyed by "<file>#<name>" (S2 round 2): two files' wrappers of one name are two wrappers — by
+  // name alone the second was never registered, and its call sites were never checked.
+  const keyOf = (file: string, name: string) => `${file}#${name}`;
   const wrappers = new Map<string, WrapperSpec>([
-    ["audited", { file: "platform/auth/audit.ts", act: 1, options: 2 }],
+    [
+      keyOf("platform/auth/audit.ts", "audited"),
+      { file: "platform/auth/audit.ts", act: 1, options: 2 },
+    ],
   ]);
   const unforwarded = new Set<string>();
   const sites: AuditedCallSite[] = [];
@@ -423,14 +429,23 @@ export function scanAudited(
     callee: ts.Expression
   ): [string, WrapperSpec] | undefined => {
     if (!ts.isIdentifier(callee)) return undefined;
-    const spec = wrappers.get(callee.text);
-    if (!spec) return undefined;
     const imported = fi.imports.get(callee.text);
-    if (imported)
-      return imported.from === spec.file || imported.name === callee.text
-        ? [callee.text, spec]
-        : undefined;
-    return fi.path === spec.file ? [callee.text, spec] : undefined;
+    if (!imported) {
+      // A function of this file: only this file's wrapper of that name.
+      const own = wrappers.get(keyOf(fi.path, callee.text));
+      return own ? [callee.text, own] : undefined;
+    }
+    const exact = wrappers.get(keyOf(imported.from, imported.name));
+    if (exact) return [callee.text, exact];
+    // Imported through a barrel or an unresolved specifier: the one wrapper of that name, when
+    // only one file has it; of several, the one whose file the specifier names.
+    const strip = (f: string) => f.replace(/(\/index)?\.tsx?$/, "");
+    const named = [...wrappers].filter(([k]) => k.endsWith(`#${imported.name}`));
+    const hit =
+      named.length === 1
+        ? named[0]
+        : named.find(([, v]) => strip(v.file) === strip(imported.from));
+    return hit ? [callee.text, hit[1]] : undefined;
   };
 
   for (let pass = 0; pass < 5; pass++) {
@@ -461,10 +476,10 @@ export function scanAudited(
               reaches = bodyReaches(fi, actArg, seen);
             } else if (actArg && encl && calledParam >= 0) {
               act = "parameter";
-              if (encl.name && !wrappers.has(encl.name)) {
+              if (encl.name && !wrappers.has(keyOf(fi.path, encl.name))) {
                 const opt = n.arguments[spec.options];
                 const optIdx = opt ? paramIndex(encl.fn, opt) : -1;
-                wrappers.set(encl.name, {
+                wrappers.set(keyOf(fi.path, encl.name), {
                   file: fi.path,
                   act: calledParam,
                   options: optIdx,
@@ -474,11 +489,11 @@ export function scanAudited(
                 unforwarded.add(`${fi.path}:${encl.name}`);
             } else if (actArg && encl && paramIndex(encl.fn, actArg) >= 0) {
               act = "parameter";
-              if (encl.name && !wrappers.has(encl.name)) {
+              if (encl.name && !wrappers.has(keyOf(fi.path, encl.name))) {
                 const optIdx =
                   n.arguments[spec.options] &&
                   paramIndex(encl.fn, n.arguments[spec.options]);
-                wrappers.set(encl.name, {
+                wrappers.set(keyOf(fi.path, encl.name), {
                   file: fi.path,
                   act: paramIndex(encl.fn, actArg),
                   options: typeof optIdx === "number" ? optIdx : -1,

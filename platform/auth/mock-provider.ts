@@ -286,6 +286,26 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
     async deleteUser(): Promise<{ success: boolean; error?: string }> {
       return { success: true };
     },
+
+    async adminDeleteUser(): Promise<{
+      success: boolean;
+      notFound?: boolean;
+      error?: string;
+    }> {
+      return { success: true };
+    },
+
+    identityPoolId(): string {
+      return "mock-pool";
+    },
+
+    async confirmIdentityPool(): Promise<boolean> {
+      return true;
+    },
+
+    async identityInPool(): Promise<boolean | undefined> {
+      return true;
+    },
   };
 
   return { ...base, ...overrides };

@@ -49,7 +49,9 @@ import {
   approveHeldAction,
   principalOf,
   rejectHeldAction,
+  settleHeldTrajectory,
 } from "@/platform/agents/gating";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 import {
   getApproval,
   approveAndApply,
@@ -67,9 +69,10 @@ import type { ProposalRecord } from "@/platform/kernel/types";
 import { approvedChangeTarget, isOperator } from "@/platform/admin/config-scope";
 import {
   approvalExpiryDays,
-  approvalLapsed,
+  holdLapsed,
   HOLD_EXPIRY_ACTOR,
   lapsedNote,
+  undecidedNote,
 } from "@/platform/admin/hold-expiry";
 
 interface DecisionBody {
@@ -221,12 +224,17 @@ export async function decideApproval(
     },
   };
 
-  // An approval never used, past its period, is withdrawn and decided no further (M7). The
-  // withdrawal is the system's (the period ran out), recorded before it is made, with the
-  // decision that found it lapsed (review 8 L5: it left no audit record).
-  if (held && held.proposal.status === "approved") {
+  // An approval never used, past its period, is withdrawn and decided no further (M7) — and so is
+  // a hold never decided (TASK-193, audit B-4: a held role change could be approved a year
+  // later). The withdrawal is the system's (the period ran out), recorded before it is made, with
+  // the decision that found it lapsed (review 8 L5: it left no audit record).
+  if (
+    held &&
+    (held.proposal.status === "approved" || held.proposal.status === "proposed")
+  ) {
     const days = await approvalExpiryDays();
-    if (approvalLapsed(held.proposal, days)) {
+    const undecided = held.proposal.status === "proposed";
+    if (holdLapsed(held.proposal, days)) {
       try {
         await audited(
           {
@@ -238,15 +246,36 @@ export async function decideApproval(
               holdId: id,
               source,
               label: held.proposal.label,
-              approvedBy: held.proposal.decidedBy ?? null,
-              approvedAt: held.proposal.decidedAt ?? null,
+              ...(undecided
+                ? { decision: "undecided", requestedAt: held.proposal.createdAt }
+                : {
+                    approvedBy: held.proposal.decidedBy ?? null,
+                    approvedAt: held.proposal.decidedAt ?? null,
+                  }),
               foundBy: decidedBy,
             },
           },
-          async () =>
-            (await getProposalStore().withdraw(id, HOLD_EXPIRY_ACTOR, lapsedNote(days)))
+          async () => {
+            const withdrawn = undecided
+              ? await getProposalStore().decide(
+                  id,
+                  "rejected",
+                  HOLD_EXPIRY_ACTOR,
+                  undecidedNote(days)
+                )
+              : await getProposalStore().withdraw(
+                  id,
+                  HOLD_EXPIRY_ACTOR,
+                  lapsedNote(days)
+                );
+            // Its trajectory ends with it (TASK-193); best effort, as every settle.
+            await Promise.resolve()
+              .then(() => settleHeldTrajectory(getTrajectoryStore(), withdrawn))
+              .catch(() => undefined);
+            return withdrawn
               ? { success: true as const }
-              : { success: false as const, error: "already used or decided" }
+              : { success: false as const, error: "already used or decided" };
+          }
         );
       } catch (err) {
         if (err instanceof AuditWriteError)
@@ -352,7 +381,26 @@ interface DecisionOutcome {
  * made): withdraw, reject, approve and run, approve an undecided run again and run it, or mark an
  * undecided run executed (review 11 H-1).
  */
-async function decideRuntimeHold(args: {
+async function decideRuntimeHold(args: RuntimeDecisionArgs): Promise<DecisionOutcome> {
+  try {
+    return await decideRuntimeHoldNow(args);
+  } finally {
+    // Whatever the decision did, the hold's trajectory follows its proposal (TASK-193): the
+    // action ran — completed; withdrawn or rejected — failed; approved, its run failed — waiting
+    // to be approved again. Before, every decision path but a plain rejection left it open.
+    // Best effort: the decision's answer never depends on it — the reaper ends what is left.
+    try {
+      const now = await getProposalStore()
+        .getById(args.id)
+        .catch(() => undefined);
+      await settleHeldTrajectory(getTrajectoryStore(), now);
+    } catch {
+      // Logged by nothing: settleHeldTrajectory swallows its own errors; this guards the read.
+    }
+  }
+}
+
+interface RuntimeDecisionArgs {
   readonly request: NextRequest;
   readonly id: string;
   readonly decision: "approve" | "reject" | "mark_executed" | "reapprove";
@@ -360,7 +408,9 @@ async function decideRuntimeHold(args: {
   readonly decidedBy: string;
   readonly requestId: string;
   readonly held: { proposal: ProposalRecord; authority: HoldAuthority } | undefined;
-}): Promise<DecisionOutcome> {
+}
+
+async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<DecisionOutcome> {
   const { request, id, decision, note, decidedBy, requestId } = args;
   const source = "runtime";
   let held = args.held;

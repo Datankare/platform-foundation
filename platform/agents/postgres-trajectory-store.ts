@@ -49,6 +49,8 @@ import type {
 } from "./trajectory-store";
 import { generateUuid } from "./utils";
 import { withTenantTx, type Tx } from "@/platform/data";
+import type { AbandonedTrajectories, WorkflowAbandonment } from "@/platform/kernel/types";
+import { REAPED_ACTION } from "./trajectory-store";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -431,5 +433,96 @@ export class PostgresTrajectoryStore implements TrajectoryStore {
       )
     );
     return rowCount;
+  }
+
+  /**
+   * The reaper (TASK-193, platform/agents/trajectory-closure.ts): one statement in the tenant's
+   * transaction. A chain's last segment that is open, untouched since `cutoff`, with no open hold
+   * on any segment of its chain — and not an app session's (its session owns it: audit B-5) — is
+   * ended `failed` and given a step saying so (when it has room:
+   * a workflow's — its trigger one of `workflows.triggers` — only past `workflows.cutoff`;
+   * a full one is ended without it); `updated_at` is left as it was. Each earlier segment of a
+   * chain whose last segment is over takes its status. Locked rows are skipped, never waited on.
+   */
+  async closeAbandoned(
+    cutoff: Date,
+    limit: number,
+    _openHolds?: () => Promise<ReadonlySet<string>>,
+    workflows?: WorkflowAbandonment
+  ): Promise<AbandonedTrajectories> {
+    const { rows } = await withTenantTx((tx) =>
+      tx.query<{ kind: string; was: string | null; n: number }>(
+        `with abandoned as (
+           -- A workflow's trajectory (its trigger a workflow goal) takes the workflow cutoff, $7
+           -- (review round 1, M1): a person continues a workflow when they come back to it.
+           select t.id, t.status::text as was,
+                  case when t.trigger = any($6::text[]) then $7::timestamptz
+                       else $1::timestamptz end as until
+             from agent_trajectories t
+            where t.status in ('running', 'paused', 'awaiting_retry', 'indeterminate')
+              and t.subject_kind <> 'session'
+              and t.updated_at < case when t.trigger = any($6::text[]) then $7::timestamptz
+                                      else $1::timestamptz end
+              and not exists (select 1 from agent_trajectories c where c.previous_trajectory_id = t.id)
+              and not exists (
+                select 1 from proposals p
+                 where p.status in ('proposed', 'approved', 'executing', 'indeterminate')
+                   and p.trajectory_id in (select s.id::text from agent_trajectories s
+                                            where s.chain_root_id = t.chain_root_id))
+            order by t.updated_at
+            limit $2::int
+              for update of t skip locked
+         ),
+         closed as (
+           update agent_trajectories t
+              set status = 'failed', version = t.version + 1,
+                  steps = case
+                    when jsonb_array_length(t.steps) < $3::int
+                     and octet_length(t.steps::text) < $4::int
+                    then t.steps || jsonb_build_array(jsonb_build_object(
+                           'stepIndex', t.step_offset + jsonb_array_length(t.steps),
+                           'action', $5::text, 'boundary', 'cognition',
+                           'input', jsonb_build_object('reaper', 'agents.trajectory-retention'),
+                           'output', jsonb_build_object('status', 'failed', 'was', a.was,
+                             'reason', 'no activity and no open hold since ' || to_char(a.until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')),
+                           'cost', 0, 'durationMs', 0,
+                           'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
+                    else t.steps end
+             from abandoned a
+            where t.id = a.id
+           returning t.id, a.was
+         ),
+         segments as (
+           update agent_trajectories t
+              set status = tail.status, version = t.version + 1
+             from agent_trajectories tail
+            where tail.chain_root_id = t.chain_root_id and tail.id <> t.id
+              and tail.status in ('completed', 'failed')
+              and not exists (select 1 from agent_trajectories c where c.previous_trajectory_id = tail.id)
+              and t.status in ('running', 'paused', 'awaiting_retry', 'indeterminate')
+              and exists (select 1 from agent_trajectories c where c.previous_trajectory_id = t.id)
+           returning t.id
+         )
+         select 'closed' as kind, was, count(*)::int as n from closed group by was
+         union all
+         select 'segments', null, count(*)::int from segments`,
+        [
+          cutoff.toISOString(),
+          limit,
+          TRAJECTORY_MAX_STEPS,
+          // Room for the step itself (well under 1 KiB).
+          TRAJECTORY_MAX_BYTES - 1024,
+          REAPED_ACTION,
+          workflows?.triggers ?? [],
+          (workflows?.cutoff ?? cutoff).toISOString(),
+        ]
+      )
+    );
+    const closed = rows.filter((r) => r.kind === "closed");
+    return {
+      closed: closed.reduce((n, r) => n + r.n, 0),
+      indeterminate: closed.find((r) => r.was === "indeterminate")?.n ?? 0,
+      segments: rows.find((r) => r.kind === "segments")?.n ?? 0,
+    };
   }
 }

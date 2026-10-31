@@ -260,6 +260,27 @@ async function seed(t: TestTenant, user: string, other: string): Promise<void> {
                jsonb_build_object('user_identifier', $1::text), 'executed')`,
       [user],
     ],
+    // TASK-193: a held action about the user, and the run it holds (heldAboutTrajectories), and
+    // staff free text about the user in an audit record (auditText).
+    [
+      `with run as (
+         insert into agent_trajectories (trigger, status, subject_kind, subject_id, scope_type)
+         values ('command-bar', 'paused', 'agent', 'command-bar', 'platform') returning id
+       )
+       insert into proposals (operation_id, session_id, trajectory_id, label, actor_id,
+                              actor_role, effective_risk, payload, status)
+       select 'op5', 's', run.id::text, 'change_user_role', 'command-bar', 'agent', 'restricted',
+              jsonb_build_object('user_identifier', $1::text), 'proposed'
+         from run`,
+      [user],
+    ],
+    [
+      `insert into audit_log (action, actor_id, target_id, details)
+       values ('admin_action', $2::uuid, $1::uuid,
+               jsonb_build_object('type', 'block_user_feature', 'feature', 'chat',
+                                  'reason', 'posted her home address'))`,
+      [user, other],
+    ],
   ];
   for (const [text, values] of statements) await sql(t, text, values);
   // The entitlement catalog is platform-owned: a group is made on the owner connection.

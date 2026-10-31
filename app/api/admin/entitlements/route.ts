@@ -22,7 +22,7 @@ import { auditedResponse } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
 import { apiError, internalError, readJsonObject } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
-import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { withTrajectory } from "@/platform/agents/trajectory-closure";
 import { groupWithPermissions } from "@/app/api/admin/ai/handlers/entitlements";
 import {
   COMMAND_BAR_ACTOR_ID,
@@ -136,18 +136,24 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   // same governed action when it is approved.
   if (await isDualControlledAction("set_entitlement_group_active")) {
     try {
-      const trajectory = await getTrajectoryStore().create(
-        { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
-        "admin-entitlements:set_entitlement_group_active",
-        "platform"
+      // Ended with the request (TASK-193) — unless held, when the hold's decision ends it.
+      const outcome = await withTrajectory(
+        {
+          subject: { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+          trigger: "admin-entitlements:set_entitlement_group_active",
+          scopeType: "platform",
+        },
+        (trajectoryId) =>
+          runCommandBarAction({
+            tool: "set_entitlement_group_active",
+            input: { group_id: groupIdChecked, is_active: isActive },
+            admin,
+            trajectoryId,
+            stepIndex: 0,
+          }),
+        (o) =>
+          o.kind === "ran" && (o.result.success || o.result.held) ? "completed" : "failed"
       );
-      const outcome = await runCommandBarAction({
-        tool: "set_entitlement_group_active",
-        input: { group_id: groupIdChecked, is_active: isActive },
-        admin,
-        trajectoryId: trajectory.trajectory.trajectoryId,
-        stepIndex: 0,
-      });
       if (outcome.kind === "held") {
         return NextResponse.json(
           { success: false, held: true, proposalId: outcome.proposalId },

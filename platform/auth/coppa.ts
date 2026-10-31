@@ -190,3 +190,113 @@ export function parseDeclaredBirthDate(value: unknown): AgeVerificationResult | 
     return null;
   }
 }
+
+/** How long a child's account may wait for a parent's consent (TASK-193, audit B-10). */
+export const PARENTAL_CONSENT_EXPIRY_KEY = "coppa.consent_expiry_days";
+export const DEFAULT_PARENTAL_CONSENT_EXPIRY_DAYS = 14;
+const MIN_CONSENT_DAYS = 1;
+const MAX_CONSENT_DAYS = 90;
+
+/** Who erases a child's account whose consent was not given in time. */
+export const PARENTAL_CONSENT_EXPIRY_ACTOR = "system:parental-consent-expiry";
+
+/** The period, in whole days: the tenant's value, else the platform default, clamped 1–90. */
+export async function parentalConsentExpiryDays(): Promise<number> {
+  try {
+    const { getConfigNumber } = await import("@/platform/auth/platform-config");
+    const v = await getConfigNumber(
+      PARENTAL_CONSENT_EXPIRY_KEY,
+      DEFAULT_PARENTAL_CONSENT_EXPIRY_DAYS
+    );
+    if (!Number.isFinite(v)) return DEFAULT_PARENTAL_CONSENT_EXPIRY_DAYS;
+    return Math.min(MAX_CONSENT_DAYS, Math.max(MIN_CONSENT_DAYS, Math.floor(v)));
+  } catch {
+    return DEFAULT_PARENTAL_CONSENT_EXPIRY_DAYS;
+  }
+}
+
+/**
+ * Whether the consent expiry erases at all (review round 1, item 4; owner decision): it ships OFF
+ * — `coppa.consent_expiry_enabled`, false, operator-only — and is turned on with the
+ * parental-consent flow (a later batch), so no account waiting for a consent nobody can yet give
+ * is erased. Unreadable is off.
+ */
+export const PARENTAL_CONSENT_EXPIRY_ENABLED_KEY = "coppa.consent_expiry_enabled";
+
+export async function parentalConsentExpiryEnabled(): Promise<boolean> {
+  try {
+    const { getConfigBoolean } = await import("@/platform/auth/platform-config");
+    return (await getConfigBoolean(PARENTAL_CONSENT_EXPIRY_ENABLED_KEY, false)) === true;
+  } catch {
+    return false;
+  }
+}
+
+/** What one run of the consent expiry did. */
+export interface ConsentExpiryResult {
+  /** Whether coppa.consent_expiry_enabled is on; off, nothing was looked at. */
+  readonly enabled: boolean;
+  readonly due: number;
+  readonly erased: number;
+  readonly failed: number;
+  readonly stopped: boolean;
+  readonly days: number;
+}
+
+/**
+ * Erase every child's account of the current tenant whose parental consent is still pending, or
+ * was denied, `coppa.consent_expiry_days` after its age was recorded (TASK-193, audit
+ * B-10). COPPA §312.5(c)(1) allows a child's (and parent's) contact details to be kept only to
+ * obtain consent, and requires them deleted when consent is not obtained within a reasonable time;
+ * before, such an account kept its date of birth and address for ever. The erasure is the full one
+ * (softDeleteUser: recorded, anonymised, the identity deleted), by the system, with the purge due
+ * at once — the same gdpr.retention-purge run then purges it. At most `limit` per run; `signal` is
+ * checked between accounts. Only while `coppa.consent_expiry_enabled` is on (off by default).
+ *
+ * @scheduled gdpr.retention-purge
+ */
+export async function expireParentalConsent(
+  limit = 100,
+  signal?: AbortSignal
+): Promise<ConsentExpiryResult> {
+  const days = await parentalConsentExpiryDays();
+  if (!(await parentalConsentExpiryEnabled())) {
+    return { enabled: false, due: 0, erased: 0, failed: 0, stopped: false, days };
+  }
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ id: string }>(
+      `select id from users
+        where parental_consent_status in ('pending', 'denied') and deleted_at is null
+          and coalesce(age_verified_at, created_at) < now() - make_interval(days => $1::int)
+        order by coalesce(age_verified_at, created_at), id
+        limit $2::int`,
+      [days, limit]
+    )
+  );
+  // Loaded when needed: the deletion manifest imports the auth layer this module is part of.
+  const { softDeleteUser } = await import("@/platform/auth/gdpr-deletion");
+  let erased = 0;
+  let failed = 0;
+  let stopped = false;
+  for (const { id } of rows) {
+    if (signal?.aborted) {
+      stopped = true;
+      break;
+    }
+    const r = await softDeleteUser(id, PARENTAL_CONSENT_EXPIRY_ACTOR, {
+      system: true,
+      purgeAfterDays: 0,
+      trigger: "parental_consent_expired",
+    });
+    if (r.success) erased++;
+    else {
+      failed++;
+      logger.error("A child's account past its consent period could not be erased", {
+        userId: id,
+        errors: r.errors,
+        route: "platform/auth/coppa",
+      });
+    }
+  }
+  return { enabled: true, due: rows.length, erased, failed, stopped, days };
+}

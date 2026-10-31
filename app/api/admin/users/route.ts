@@ -68,7 +68,7 @@ import {
   isDualControlledAction,
   runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
-import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { withTrajectory } from "@/platform/agents/trajectory-closure";
 import { parseUserListFilters, SEARCH_TEXT_MAX } from "@/app/api/admin/ai/search-filters";
 import {
   USER_SORTS,
@@ -317,18 +317,24 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   // (audit X-10). The hold runs the same governed action when it is approved.
   if (await isDualControlledAction("change_user_role")) {
     try {
-      const trajectory = await getTrajectoryStore().create(
-        { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
-        "admin-users:change_user_role",
-        "platform"
+      // Ended with the request (TASK-193) — unless held, when the hold's decision ends it.
+      const outcome = await withTrajectory(
+        {
+          subject: { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+          trigger: "admin-users:change_user_role",
+          scopeType: "platform",
+        },
+        (trajectoryId) =>
+          runCommandBarAction({
+            tool: "change_user_role",
+            input: { user_identifier: target.id, new_role: newRole.name },
+            admin,
+            trajectoryId,
+            stepIndex: 0,
+          }),
+        (o) =>
+          o.kind === "ran" && (o.result.success || o.result.held) ? "completed" : "failed"
       );
-      const outcome = await runCommandBarAction({
-        tool: "change_user_role",
-        input: { user_identifier: target.id, new_role: newRole.name },
-        admin,
-        trajectoryId: trajectory.trajectory.trajectoryId,
-        stepIndex: 0,
-      });
       if (outcome.kind === "held") {
         return NextResponse.json(
           { success: false, held: true, proposalId: outcome.proposalId },
