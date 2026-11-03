@@ -19,6 +19,14 @@ export const AUDIO_CONVERT_MODULE = definePlatformModule({
       values: ["ffmpeg-service", "passthrough", "mock"],
       defaultValue: "mock",
       singletonKeys: [],
+      coverage: {
+        "ffmpeg-service": {
+          exempt:
+            "the app's own conversion service, not a paid provider: a refused key or an outage is recorded and alerted where it is called (externalFailure in ffmpeg-converter.ts)",
+        },
+        passthrough: "local",
+        mock: "local",
+      },
       // The converter is constructed where it is used; boot only reports missing settings.
       init: (selection, { env, warn }) => {
         if (

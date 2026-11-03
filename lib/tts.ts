@@ -1,6 +1,11 @@
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import {
+  classifyHttpFailure,
+  externalFailure,
+  readFailureText,
+} from "@/platform/observability/external-failure";
 import { getGoogleApiKey } from "@/shared/config/apiKeys";
 
 const TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
@@ -38,7 +43,12 @@ export async function textToSpeech(text: string, languageCode: string): Promise<
       status: res.status,
       route: "lib/tts",
     });
-    throw new Error(`Google TTS API error: ${res.status}`);
+    throw externalFailure(
+      "google-tts",
+      classifyHttpFailure(res.status, { body: await readFailureText(res) }),
+      `Google TTS API error: ${res.status}`,
+      { status: res.status }
+    );
   }
 
   const data = await res.json();

@@ -19,11 +19,40 @@ provider (TASK-178), and the admin Users screen with the address kept in step (T
 standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186), and the
 command bar's search limited to what the admin pages show (TASK-189), and one list on the Users
 screen (TASK-190), and roles and permissions in a logical order (TASK-192), and every lifecycle
-closed and every erasure completed (TASK-193), and the sweep's access-control batch (TASK-194).
-Deploy: migrations 053, 054, 055, 056, 057, 058, 059, 060 and 061 in the SQL Editor
+closed and every erasure completed (TASK-193), and the sweep's access-control batch (TASK-194),
+and external dependency failures coded, probed and alerted (TASK-197). Deploy: migrations 053,
+054, 055, 056, 057, 058, 059, 060, 061, 062 and 063 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
-code. Consumer steps: §1b, the nine "Release candidate" rows.
+code. Consumer steps: §1b, the ten "Release candidate" rows.
 
+- **External dependencies: failures coded, probed and alerted (TASK-197, audit D).** A stream that
+  carries an `error` event or ends before `message_stop` is a failure (`service.unavailable`),
+  never a complete answer — in the Anthropic provider, the orchestrator (for any provider) and
+  `screenStream`. Readiness probes every paid dependency with the deployed credential, cached and
+  optional (degraded): `ai-provider` (each registry model, `max_tokens` 1), `google-translate`,
+  `google-tts` (also: every voice the platform names is still offered), `rate-limit-store`
+  (Upstash) and `certificates` (CA bundles' `notAfter`); `buildReadinessProbes()` is what an app's
+  `instrumentation.ts` now calls, and every provider selection declares its probe or why it has
+  none (`ModuleProviderSlot.coverage`). A refused credential, an exhausted quota or a retired
+  model — Google 403/429, ACRCloud's in-body 3001/3003, a rotated Upstash token, a refused Cognito
+  client secret — is an `ExternalServiceError` (`externalFailure()`: a metric, and an alert
+  `external.<reason>`), answered `service.unavailable` naming the service. Retries honour
+  `Retry-After` (bounded, 10 s per wait and in total, aborted with the caller) with jitter; 429 and 529 are transient. The Upstash limiter fails
+  closed on an `{ error }` item. The model check fails on a deprecated model or one retiring within
+  30 days, and checks the Google voices. A credential register (`docs/credential-register.json`)
+  with a weekly expiry check. **Migration 063** (`applied_migrations.checksum`): from 063 a
+  migration records its own checksum and parity reports a migration edited after it was applied;
+  the replay applies every migration twice. The security review sets `claude-model` (a registry
+  model; the model check fails any other workflow model, and warns loudly — failing after its
+  review-by date, 2026-12-31 — while the pinned action that validates with a retired model is used:
+  the 2026-10-28 incident), warns when the action's
+  false-positive filter was disabled, and fails a PR too large to diff (406) as not reviewed: a repository admin reviews the diff by
+  hand and merges with the ruleset's admin bypass, which GitHub records (no label or
+  acknowledgement; auto-sync PRs are expected to hit it). Alerts are
+  deduplicated per service and reason for 10 minutes; a paid probe has its own 15 s budget and
+  caches a failure for 60 s (song identification's too); the health routes keep the function alive until running paid checks settle (`after()`), and a check in flight past twice its budget is abandoned (degraded, never cached); a billed probe takes its budget (song identification's now does). Consumer: call `buildReadinessProbes()` from your
+  `instrumentation.ts`, keep your own `docs/credential-register.json`, set
+  `SMOKE_HEALTHY_PROBES` in your deploy smoke, and apply 063.
 - **Roles and permissions in a logical order (TASK-192).** Migration 059 sets the roles'
   `sort_order`: staff first (super_admin 10, admin 20, moderator 30, safety_approver 40), then the
   plans from smallest to largest (guest 50 … lifetime 100); any other role still at an old default

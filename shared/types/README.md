@@ -4,7 +4,7 @@ Shared TypeScript types (will absorb current types/ directory).
 
 ## Status
 
-🚧 **Placeholder** — This directory is part of the Platform Foundation platform
+🚧 **Placeholder** — This directory is part of the platform
 monorepo structure. Code will be added here in future phases.
 
 ## Phase

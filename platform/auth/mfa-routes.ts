@@ -137,7 +137,12 @@ export async function confirmStepUp(args: {
         action: "login_failed",
         actorId,
         targetId: actorId,
-        details: { method: "mfa_step_up", purpose },
+        details: {
+          method: "mfa_step_up",
+          purpose,
+          // Why, as a sign-in records it (the provider's code).
+          code: called.result.errorCode ?? "internal.error",
+        },
       },
       request
     );

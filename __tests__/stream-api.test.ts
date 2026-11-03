@@ -13,7 +13,7 @@ import {
   STREAM_MAX_PROMPT_CHARACTERS,
   STREAM_MAX_TOKENS,
 } from "@/platform/ai/stream-policy";
-import { AIRefusalError } from "@/platform/ai/provider";
+import { AIProviderError, AIRefusalError } from "@/platform/ai/provider";
 
 jest.mock("@/lib/safety", () => ({
   checkSafety: jest.fn().mockResolvedValue({ safe: true }),
@@ -191,6 +191,30 @@ describe("/api/stream — screening and streaming", () => {
     const text = await res.text();
     expect(text).toContain('"code":"internal.error"');
     expect(text).not.toContain("upstream secret detail");
+  });
+
+  it("a stream cut off before its final chunk ends coded service.unavailable, never [DONE] (TASK-197)", async () => {
+    streamMock.mockImplementation(async function* () {
+      yield { text: "Half an ans", done: false };
+    });
+    const text = await (await POST(req({ prompt: "hi" }))).text();
+    expect(text).toContain('"code":"service.unavailable"');
+    expect(text).not.toContain("[DONE]");
+    expect(text).not.toMatch(/"done":true,"usage"/);
+  });
+
+  it("a provider's transient mid-stream failure ends coded service.unavailable (TASK-197)", async () => {
+    streamMock.mockImplementation(async function* () {
+      yield { text: "", done: false };
+      throw new AIProviderError(
+        "Anthropic stream failed (overloaded_error)",
+        "transient"
+      );
+    });
+    const text = await (await POST(req({ prompt: "hi" }))).text();
+    expect(text).toContain('"code":"service.unavailable"');
+    expect(text).not.toContain("overloaded_error");
+    expect(text).not.toContain("[DONE]");
   });
 
   it("a model refusal ends the stream as ai.request_declined, not internal.error (TASK-186)", async () => {

@@ -12,6 +12,7 @@
 
 import { definePlatformModule } from "@/platform/modules/define";
 import { getGoogleApiKeySetting } from "@/shared/config/apiKeys";
+import { createGoogleTranslateProbe, GOOGLE_TRANSLATE_PROBE } from "./google-health";
 
 export const TRANSLATION_MODULE = definePlatformModule({
   id: "translation",
@@ -22,6 +23,7 @@ export const TRANSLATION_MODULE = definePlatformModule({
       values: ["google", "mock"],
       defaultValue: "mock",
       singletonKeys: [],
+      coverage: { google: { probe: GOOGLE_TRANSLATE_PROBE }, mock: "local" },
       // The provider is constructed where it is used; boot only reports a missing key.
       init: (selection, { env, warn }) => {
         if (selection === "google" && !getGoogleApiKeySetting(env)) {
@@ -37,5 +39,9 @@ export const TRANSLATION_MODULE = definePlatformModule({
   accountStatusFeatures: ["translate"],
   // Translating existing content: severity may be reduced (moderation.translation_severity_reduction).
   moderationContentTypes: [{ name: "translation", severityReduction: true }],
+  // TASK-197 (audit D-2): the Google key, checked at readiness whenever one is set.
+  healthProbes: [
+    { name: GOOGLE_TRANSLATE_PROBE, create: () => createGoogleTranslateProbe() },
+  ],
   kits: ["__tests__/contract/translation-provider-contract.ts"],
 });

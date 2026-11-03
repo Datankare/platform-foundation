@@ -216,6 +216,7 @@ export {
 } from "./metrics-sink";
 export {
   CachedHealthProbe,
+  settlePendingProbes,
   HealthRegistry,
   PostgresHealthProbe,
   LLMProviderHealthProbe,

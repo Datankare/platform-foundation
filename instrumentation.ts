@@ -59,7 +59,7 @@ export function register() {
     // them. platform/modules/app-modules.ts is the app's own list (a consumer seam).
     boot.recordBootStep("modules");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { registerModules, createModuleHealthProbes } = require("@/platform/modules");
+    const { registerModules } = require("@/platform/modules");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { APP_MODULES } = require("@/platform/modules/app-modules");
     registerModules(APP_MODULES);
@@ -80,45 +80,19 @@ export function register() {
     const { checkJobsFitTick } = require("@/platform/jobs/tick");
     checkJobsFitTick(listJobDefinitions());
 
-    // ADR-056 D4: readiness needs the database (when this deployment has one) and the selected
-    // cache; realtime, the job schedules and the modules' probes (TASK-041: the song-ID probe)
-    // only degrade. The
-    // module probes are built now so each wraps the LIVE provider initProviders() installed —
-    // not a freshly constructed duplicate. A probe that makes a billable call is cached by its
-    // module (audit X-13).
+    // ADR-056 D4: readiness needs the database (when this deployment has one), the selected
+    // cache and the Cognito pool's shape; realtime, the job schedules, the modules' probes
+    // (TASK-041: the song-ID probe; TASK-197: the Google key and voices), the AI provider with the
+    // deployed key and models, and an external rate-limit store (TASK-197) only degrade. The
+    // probes are built now so each wraps the LIVE provider initProviders() installed — not a
+    // freshly constructed duplicate. A probe that makes a billable call is cached (audit X-13).
     boot.recordBootStep("health probes");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { PostgresHealthProbe } = require("@/platform/observability/health");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { hasDatabase } = require("@/platform/data");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getCache, createCacheReadinessProbe } = require("@/platform/cache");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createRealtimeServiceProbe } = require("@/platform/realtime/service-probe");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const contract = require("@/platform/providers/environment-contract");
-    const { getSupabaseUrl, getAuthProviderSetting } = contract;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createScheduleFreshnessProbe } = require("@/platform/jobs/schedule-probe");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createAuthPoolShapeProbe } = require("@/platform/auth/pool-shape-probe");
-    const required: HealthProbe[] = [
-      ...(hasDatabase() ? [new PostgresHealthProbe()] : []),
-      createCacheReadinessProbe(getCache()),
-      // Review 17 L2/L4: a Cognito pool without the required shape (sign-in by email address)
-      // is refused at readiness; `identities` hidden from the app client only degrades.
-      ...(getAuthProviderSetting() === "cognito" ? [createAuthPoolShapeProbe()] : []),
-    ];
-    const degradedOnly: HealthProbe[] = [
-      createRealtimeServiceProbe(
-        process.env.REALTIME_PROVIDER ?? "mock",
-        getSupabaseUrl()
-      ),
-      ...createModuleHealthProbes(),
-      // ADR-056 D4/D6: a deployment whose ticks never arrive reports it (degraded), naming the
-      // duties that have stopped.
-      createScheduleFreshnessProbe(),
-    ];
+    const { buildReadinessProbes } = require("@/platform/providers/readiness-probes");
+    const { required, degradedOnly } = buildReadinessProbes() as {
+      required: HealthProbe[];
+      degradedOnly: HealthProbe[];
+    };
 
     boot.recordBootStep("observability");
     // eslint-disable-next-line @typescript-eslint/no-require-imports

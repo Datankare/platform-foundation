@@ -5,6 +5,18 @@ name: Model registry check
 # Messages call per tier, with the registry's thinking and temperature settings). Sonnet 4 was
 # retired on 2026-06-15 and nothing noticed until calls failed (PR #461).
 #
+# TASK-197 (audit D-3): a deprecated model, or one whose retires_at is within
+# MODEL_RETIRE_LEAD_DAYS (repository variable; default 30), fails the run — a failed scheduled run
+# notifies, a warning did not. With the GOOGLE_API_KEY secret, the Google voices the platform
+# names are checked against voices.list too. The deployed keys are checked at readiness
+# (the ai-provider and google-tts probes), not here.
+#
+# TASK-197 (the 2026-10-28 incident: the security-review action sent the CI key to a retired
+# model): every model a workflow names must be a MODEL_REGISTRY model, and a pinned action that
+# hard-codes a retired model it lets nobody override (KNOWN_ACTION_MODELS in the script) is a loud
+# warning and a summary line until the exception's review-by date, then fails this run — with or
+# without the key, so it is seen, not silent, and cannot outlive its review.
+#
 #   - Weekly, by hand (workflow_dispatch), and on a pull request that changes the registry or the
 #     check. Reads the repository only; no install, no build: scripts/check-model-ids.mjs uses
 #     Node's own fetch. Costs a few tokens per tier per run.
@@ -26,7 +38,10 @@ on:
   pull_request:
     paths:
       - platform/ai/types.ts
+      - platform/voice/voices.ts
+      - lib/tts.ts
       - scripts/check-model-ids.mjs
+      - .github/workflows/**
 
 permissions: {}
 
@@ -55,5 +70,10 @@ jobs:
       - name: Every registry model ID resolves
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           MODEL_CHECK_REQUIRED: ${{ vars.MODEL_CHECK_REQUIRED }}
+          MODEL_RETIRE_LEAD_DAYS: ${{ vars.MODEL_RETIRE_LEAD_DAYS }}
+          # The action's file list (api.github.com) with the job's read-only token, not the
+          # unauthenticated rate limit (TASK-197 review round 3, N5).
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/check-model-ids.mjs

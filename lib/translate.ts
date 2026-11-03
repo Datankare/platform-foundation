@@ -1,6 +1,11 @@
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import {
+  classifyHttpFailure,
+  externalFailure,
+  readFailureText,
+} from "@/platform/observability/external-failure";
 import { getGoogleApiKey } from "@/shared/config/apiKeys";
 
 const TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
@@ -34,7 +39,12 @@ export async function translateText(
       status: res.status,
       route: "lib/translate",
     });
-    throw new Error(`Google Translate API error: ${res.status}`);
+    throw externalFailure(
+      "google-translate",
+      classifyHttpFailure(res.status, { body: await readFailureText(res) }),
+      `Google Translate API error: ${res.status}`,
+      { status: res.status }
+    );
   }
 
   const data = await res.json();

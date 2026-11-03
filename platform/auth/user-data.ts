@@ -956,6 +956,7 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "user_deletions.identity_pool":
     "the record of an erasure: the identity pool it erased from — a pool's id, nothing of the person (TASK-193 round 1)",
   // The platform's own machinery.
+  "applied_migrations.checksum": "schema history (a file checksum, TASK-197)",
   "applied_migrations.confidence": "schema history",
   "applied_migrations.filename": "schema history",
   "applied_migrations.note": "schema history",

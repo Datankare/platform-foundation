@@ -84,6 +84,15 @@ export interface IdentifyRequest {
   readonly trajectoryId?: string;
   /** Step index within the trajectory */
   readonly stepIndex?: number;
+
+  // ── Budget (TASK-197 review round 3, N4) ──
+  /**
+   * The whole call's bound, in ms: the provider sends one attempt within it and no retry (the
+   * health probe passes its budget). Unset: the provider's own timeout and retry.
+   */
+  readonly timeoutMs?: number;
+  /** Aborts the call (the caller's signal, kept). */
+  readonly signal?: AbortSignal;
 }
 
 export interface IdentifyResult {

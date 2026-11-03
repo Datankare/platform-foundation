@@ -39,6 +39,14 @@ import type {
 import { logger } from "@/lib/logger";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import {
+  readFailureText,
+  reportExternalFailure,
+} from "@/platform/observability/external-failure";
+import {
+  classifyHttpFailure,
+  ExternalServiceError,
+} from "@/platform/errors/external-service";
+import {
   getCognitoAdminCredentials,
   getCognitoSettings,
   isTenantId,
@@ -49,6 +57,7 @@ import type {
   TenantAttributeReadiness,
 } from "@/platform/auth/provider";
 import type { ErrorCode } from "@/platform/errors/registry";
+import type { MessageValues } from "@/platform/errors/messages";
 import type { JSONWebKeySet } from "jose";
 import { identityProvidersOf } from "@/platform/auth/identity-directory";
 import {
@@ -65,6 +74,24 @@ import {
   type ProviderOutcome,
   type VerifyOptions,
 } from "@/platform/auth/token-verification";
+
+/**
+ * Whether a Cognito failure is the app client's secret being refused (a wrong, rotated or missing
+ * COGNITO_CLIENT_SECRET): NotAuthorizedException "Unable to verify secret hash for client …", or
+ * "Client … is configured for secret but secret was not received". TASK-197 (audit D-4).
+ */
+export function isClientSecretRejection(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const type =
+    (error as { cognitoType?: unknown }).cognitoType ??
+    (error as { name?: unknown }).name;
+  return (
+    type === "NotAuthorizedException" &&
+    /secret[ _]?hash|configured (?:for|with) secret|secret was not received/i.test(
+      error.message
+    )
+  );
+}
 
 /** ADR-051: Cognito exception types → platform error codes. Anything else is internal. */
 const COGNITO_ERROR_CODES: Readonly<Record<string, ErrorCode>> = {
@@ -380,11 +407,14 @@ export const POOL_SHAPE_OPERATOR_CHECK =
 /**
  * Whether a refused password sign-in is the kind a federated account without a pool password
  * gets (TASK-194, C-3): Cognito answers NotAuthorized (or UserNotFound for a provider-named
- * user) — the same answer as a wrong password, so only a federated account is told it.
+ * user) — the same answer as a wrong password, so only a federated account is told it. Never a
+ * refused client secret (TASK-197, D-4): that is the platform's credential, answered
+ * service.unavailable and alerted (codedFailure), not "your step-up is unavailable".
  */
 function isNoPasswordSignIn(error: unknown): boolean {
   return (
     error instanceof CognitoError &&
+    !isClientSecretRejection(error) &&
     (error.cognitoType === "NotAuthorizedException" ||
       error.cognitoType === "UserNotFoundException")
   );
@@ -958,7 +988,12 @@ export class CognitoAuthProvider implements AuthProvider {
     accessToken: AuthToken,
     password: string,
     totpCode: string | null
-  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }> {
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    errorCode?: ErrorCode;
+    errorParams?: MessageValues;
+  }> {
     const refused = (errorCode: ErrorCode, error: string) => ({
       success: false as const,
       error,
@@ -1161,6 +1196,38 @@ export class CognitoAuthProvider implements AuthProvider {
       });
 
       if (!response.ok) {
+        // TASK-197 (audit D-4): the token endpoint authenticates the app client; a wrong or
+        // rotated COGNITO_CLIENT_SECRET answers `invalid_client` for every sign-in by SSO — the
+        // platform's credential, alerted and coded service.unavailable, not the user's failure.
+        if (/invalid_client/.test(await readFailureText(response))) {
+          reportExternalFailure(
+            new ExternalServiceError(
+              "cognito",
+              "credential",
+              "Cognito's token endpoint refused the app client (invalid_client)",
+              { status: response.status }
+            )
+          );
+          return {
+            success: false,
+            error: `SSO token exchange refused the app client: ${response.status}`,
+            errorCode: "service.unavailable",
+            errorParams: { service: "auth" },
+          };
+        }
+        // Anything else is recorded too (review round 1, L-6): an outage or a throttle as what
+        // it is (an alert where it is the platform's), a refused code — expired, reused — as
+        // `rejected`, a metric only: the user's, who signs in again.
+        reportExternalFailure(
+          new ExternalServiceError(
+            "cognito",
+            response.status >= 500 || response.status === 429
+              ? classifyHttpFailure(response.status)
+              : "rejected",
+            `SSO token exchange failed: ${response.status}`,
+            { status: response.status }
+          )
+        );
         return {
           success: false,
           error: `SSO token exchange failed: ${response.status}`,
@@ -1706,7 +1773,31 @@ export class CognitoAuthProvider implements AuthProvider {
   private codedFailure(
     error: unknown,
     operation: string
-  ): { success: false; error: string; errorCode: ErrorCode } {
+  ): {
+    success: false;
+    error: string;
+    errorCode: ErrorCode;
+    errorParams?: Readonly<Record<string, string>>;
+  } {
+    // TASK-197 (audit D-4): a wrong or rotated COGNITO_CLIENT_SECRET fails every SECRET_HASH with
+    // NotAuthorizedException — read as "wrong email or password" for every user. It is the
+    // platform's credential: coded service.unavailable, and alerted.
+    if (isClientSecretRejection(error)) {
+      reportExternalFailure(
+        new ExternalServiceError(
+          "cognito",
+          "credential",
+          `Cognito refused the app client's secret (${operation})`,
+          { providerCode: "NotAuthorizedException" }
+        )
+      );
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "client secret refused",
+        errorCode: "service.unavailable",
+        errorParams: { service: "auth" },
+      };
+    }
     if (error instanceof CognitoError) {
       logger.warn(`Auth ${operation} failed`, {
         cognitoType: error.cognitoType,

@@ -79,7 +79,21 @@ export interface ModuleProviderSlot {
   readonly singletonKeys: readonly string[];
   /** Install the slot's provider for `selection`. Synchronous, like the core's slots. */
   readonly init: (selection: string, context: ProviderSlotContext) => void;
+  /**
+   * TASK-197 (audit D-2): for each selection, what tells readiness the dependency it reaches
+   * works — the name of the health probe that checks it, or why none does — or "local" for a
+   * selection that reaches nothing outside the process (a mock, memory, passthrough).
+   * __tests__/dependency-probe-coverage.test.ts requires an entry for every value.
+   */
+  readonly coverage?: Readonly<Record<string, DependencyCoverage>>;
 }
+
+/**
+ * How readiness learns that a slot's selection works (TASK-197, audit D-2): a health probe by
+ * name, a stated exemption, or "local" — the selection reaches nothing outside the process.
+ */
+export type DependencyCoverage =
+  "local" | { readonly probe: string } | { readonly exempt: string };
 
 /** Whether an optional feature can be offered (ADR-050 D3). Only booleans leave the server. */
 export interface FeatureStatus {

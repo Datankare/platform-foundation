@@ -121,6 +121,7 @@ graph TD
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | [AGENT_DELEGATION_GUIDE.md](AGENT_DELEGATION_GUIDE.md)               | Build agents that act on a user's behalf (PKCE flow, token lifetime, failure reference).               |
 | [ROTATION_RUNBOOK.md](ROTATION_RUNBOOK.md)                           | Operational runbook for key/secret rotation.                                                           |
+| [credential-register.json](credential-register.json)                 | Every credential this repository holds and when it expires (never a value); checked weekly (TASK-197). |
 | [runbooks/jobs.md](runbooks/jobs.md)                                 | Background jobs (ADR-056): dead letters, stuck jobs, pausing a schedule, nothing runs.                 |
 | [runbooks/approvals-and-agents.md](runbooks/approvals-and-agents.md) | Undecided approvals (a run whose outcome is unknown) and the agent kill switch (review 11).            |
 | [templates/](templates/)                                             | A consuming app's sync workflow and config, in the form the workflow-hygiene check accepts (TASK-160). |

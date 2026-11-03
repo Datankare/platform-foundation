@@ -20,6 +20,10 @@ import type { RateLimiter, RateLimitResult, RateLimitRule } from "./types";
 import { memoryPartition } from "@/platform/tenancy/partition";
 import { generateId } from "@/platform/agents/utils";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import {
+  classifyHttpFailure,
+  externalFailure,
+} from "@/platform/observability/external-failure";
 
 interface RedisResponse<T = unknown> {
   result: T;
@@ -35,6 +39,13 @@ export interface RedisRateLimiterConfig {
   namespace?: string;
   /** Request timeout in ms. Default: 5000 */
   timeoutMs?: number;
+}
+
+/** A ZCARD result: a whole number, or the limiter fails closed (never read as "under"). */
+function countOf(result: unknown): number {
+  if (typeof result === "number" && Number.isInteger(result) && result >= 0)
+    return result;
+  throw externalFailure("upstash", "bad_response", "Redis ZCARD answered no count");
 }
 
 export class RedisRateLimiter implements RateLimiter {
@@ -82,10 +93,30 @@ export class RedisRateLimiter implements RateLimiter {
 
       if (!response.ok) {
         const text = await response.text().catch(() => "unknown error");
-        throw new Error(`Redis pipeline HTTP ${response.status}: ${text}`);
+        throw externalFailure(
+          "upstash",
+          classifyHttpFailure(response.status, { body: text }),
+          `Redis pipeline HTTP ${response.status}: ${text}`,
+          { status: response.status }
+        );
       }
 
-      return (await response.json()) as RedisResponse<T>[];
+      // TASK-197 (audit D-7): Upstash answers a failed command as an `{ error }` item inside an
+      // HTTP 200. Read as a result it was undefined — `undefined > max` is false — so the
+      // request was allowed: the limiter failed open. Every item must be a result.
+      const items = (await response.json()) as unknown;
+      if (
+        !Array.isArray(items) ||
+        items.length !== commands.length ||
+        items.some((i) => !i || typeof i !== "object" || "error" in i || !("result" in i))
+      ) {
+        throw externalFailure(
+          "upstash",
+          "bad_response",
+          "Redis pipeline answered an error item, or not one result per command"
+        );
+      }
+      return items as RedisResponse<T>[];
     } finally {
       clearTimeout(timeout);
     }
@@ -113,10 +144,19 @@ export class RedisRateLimiter implements RateLimiter {
 
       if (!response.ok) {
         const text = await response.text().catch(() => "unknown error");
-        throw new Error(`Redis HTTP ${response.status}: ${text}`);
+        throw externalFailure(
+          "upstash",
+          classifyHttpFailure(response.status, { body: text }),
+          `Redis HTTP ${response.status}: ${text}`,
+          { status: response.status }
+        );
       }
 
-      return (await response.json()) as RedisResponse<T>;
+      const item = (await response.json()) as unknown;
+      if (!item || typeof item !== "object" || "error" in item || !("result" in item)) {
+        throw externalFailure("upstash", "bad_response", "Redis answered an error item");
+      }
+      return item as RedisResponse<T>;
     } finally {
       clearTimeout(timeout);
     }
@@ -142,7 +182,7 @@ export class RedisRateLimiter implements RateLimiter {
       ["EXPIRE", key, String(rule.windowSeconds)],
     ]);
 
-    const count = results[2]?.result as number;
+    const count = countOf(results[2]?.result);
     const resetAt = Math.ceil((now + rule.windowSeconds * 1000) / 1000);
 
     if (count > rule.maxRequests) {
@@ -178,7 +218,7 @@ export class RedisRateLimiter implements RateLimiter {
       ["ZCARD", key],
     ]);
 
-    const count = results[1]?.result as number;
+    const count = countOf(results[1]?.result);
     const remaining = Math.max(0, rule.maxRequests - count);
     const resetAt = Math.ceil((now + rule.windowSeconds * 1000) / 1000);
 

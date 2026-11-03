@@ -20,7 +20,8 @@ import {
  * Sends a minimal audio buffer — expects either a result or a non-connectivity error.
  */
 export async function checkSongIdHealth(
-  provider: SongIdentificationProvider
+  provider: SongIdentificationProvider,
+  timeoutMs?: number
 ): Promise<ProviderHealthStatus> {
   // Minimal WAV-like buffer — provider may return no match (healthy)
   // or throw a validation error (also healthy — means it's reachable)
@@ -30,6 +31,10 @@ export async function checkSongIdHealth(
       audioData: minimalAudio,
       durationSeconds: 5,
       requestId: "health-check",
+      // The probe's budget bounds the billed call (TASK-197 review round 3, N4).
+      ...(timeoutMs !== undefined
+        ? { timeoutMs, signal: AbortSignal.timeout(timeoutMs) }
+        : {}),
     })
   );
 }
@@ -43,8 +48,8 @@ export class SongIdHealthProbeAdapter implements HealthProbe {
     this.provider = provider;
   }
 
-  async check(): Promise<HealthCheckResult> {
-    const result = await checkSongIdHealth(this.provider);
+  async check(timeoutMs?: number): Promise<HealthCheckResult> {
+    const result = await checkSongIdHealth(this.provider, timeoutMs);
     return {
       name: this.name,
       status: result.healthy ? "healthy" : "unhealthy",

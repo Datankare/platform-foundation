@@ -60,12 +60,80 @@ step "baseline (covers 001–$through)"
 # scripts/module-manifest.cjs computes. A module's migrations are listed in its manifest entry.
 order=$(node "$ROOT/scripts/module-manifest.cjs" --replay-order "${REPLAY_MODULES:-}") || {
   echo "✗ migration order (platform/modules/manifest.json)"; exit 1; }
+# TASK-197 (audit D-11): every migration is applied twice, the second time straight after the
+# first, and must change nothing. The per-migration steps further down (049, 050–063) check a
+# second application with the data each could disturb; this is the generic floor under them — the
+# hand-written list had missed the platform's older migrations and every app migration (Playform's
+# 007, 031–036, 052a, 052b). Compared (review round 1, L6): the catalog — columns, constraints,
+# indexes, policies, triggers, functions and procedures, grants, row-level security, types and
+# enums with their labels, sequences' definitions, extensions — and every public table's
+# CONTENTS (a hash of its rows, not a count), so a seed that inserts twice, an update that moves
+# a timestamp or a policy re-created differently is caught — except applied_migrations'
+# recorded_at, which says when a migration was last recorded: a re-application records itself
+# again (Playform's 031–036 set it to now()), by design. The migrations the schema baseline
+# covers (001–037) are never applied by the replay — the baseline is — so they are not re-applied
+# either: they were written for the chain, not against the baseline. A migration that cannot hold
+# this is listed in REAPPLY_EXEMPT ("file:reason").
+REAPPLY_EXEMPT=()
+schema_snapshot() {
+  "${PSQL[@]}" -At <<'SQL'
+SELECT 'policy|' || schemaname || '.' || tablename || '.' || policyname || '|' || cmd || '|'
+  || roles::text || '|' || coalesce(qual, '') || '|' || coalesce(with_check, '')
+  FROM pg_policies WHERE schemaname IN ('public', 'realtime')
+UNION ALL SELECT 'constraint|' || conrelid::regclass || '.' || conname || '|' || pg_get_constraintdef(oid)
+  || '|' || convalidated FROM pg_constraint WHERE connamespace = 'public'::regnamespace
+UNION ALL SELECT 'index|' || pg_get_indexdef(i.indexrelid) FROM pg_index i
+  JOIN pg_class c ON c.oid = i.indrelid WHERE c.relnamespace = 'public'::regnamespace
+UNION ALL SELECT 'column|' || a.attrelid::regclass || '.' || a.attname || '|' || format_type(a.atttypid, a.atttypmod)
+  || '|' || a.attnotnull || '|' || coalesce(pg_get_expr(d.adbin, d.adrelid), '')
+  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+  WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
+UNION ALL SELECT 'function|' || p.oid::regprocedure || '|' || md5(pg_get_functiondef(p.oid)) || '|'
+  || coalesce(p.proacl::text, '') FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prokind IN ('f', 'p')
+UNION ALL SELECT 'type|' || t.typname || '|' || t.typtype::text || '|' || coalesce((SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder)
+    FROM pg_enum e WHERE e.enumtypid = t.oid), '') || '|' || coalesce(format_type(t.typbasetype, t.typtypmod), '')
+  FROM pg_type t WHERE t.typnamespace = 'public'::regnamespace AND t.typtype IN ('e', 'd')
+UNION ALL SELECT 'sequence|' || s.seqrelid::regclass || '|' || s.seqtypid::regtype || '|' || s.seqincrement || '|'
+  || s.seqmin || '|' || s.seqmax || '|' || s.seqcycle FROM pg_sequence s
+  JOIN pg_class c ON c.oid = s.seqrelid WHERE c.relnamespace = 'public'::regnamespace
+UNION ALL SELECT 'extension|' || extname || '|' || extversion FROM pg_extension
+UNION ALL SELECT 'relation|' || c.oid::regclass || '|' || c.relkind::text || '|' || coalesce(c.relacl::text, '') || '|'
+  || c.relrowsecurity || '|' || c.relforcerowsecurity
+  FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'S', 'v', 'm')
+UNION ALL SELECT 'trigger|' || tgrelid::regclass || '.' || tgname || '|' || pg_get_triggerdef(oid)
+  FROM pg_trigger WHERE NOT tgisinternal AND tgrelid IN
+    (SELECT oid FROM pg_class WHERE relnamespace = 'public'::regnamespace)
+UNION ALL SELECT 'database|' || coalesce(datacl::text, '') FROM pg_database WHERE datname = current_database()
+UNION ALL SELECT 'rows|' || c.relname || '|' || (xpath('/row/n/text()', query_to_xml(
+    format('SELECT count(*) || '':'' || md5(coalesce(string_agg((to_jsonb(x) - %L)::text, '','' ORDER BY (to_jsonb(x) - %L)::text), '''')) AS n FROM public.%I x',
+      CASE WHEN c.relname = 'applied_migrations' THEN 'recorded_at' ELSE '' END,
+      CASE WHEN c.relname = 'applied_migrations' THEN 'recorded_at' ELSE '' END, c.relname),
+    false, true, '')))[1]::text
+  FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
+UNION ALL SELECT 'config|' || md5(coalesce(string_agg(to_jsonb(c)::text, '' ORDER BY c.key), ''))
+  FROM public.platform_config c
+ORDER BY 1
+SQL
+}
 applied=0
 for f in $order; do
   if ! grep -qF "('$f', 'verified'" "$BASELINE"; then
-    step "migration $f"
+    step "migration $f (applied twice)"
     "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null
     applied=$((applied + 1))
+    exempt=""
+    for x in "${REAPPLY_EXEMPT[@]}"; do [ "${x%%:*}" = "$f" ] && exempt=1; done
+    [ -n "$exempt" ] && continue
+    before=$(schema_snapshot)
+    "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null 2>&1 \
+      || { echo "✗ $f failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null; exit 1; }
+    after=$(schema_snapshot)
+    if [ "$before" != "$after" ]; then
+      echo "✗ applying $f a second time changed the database:"
+      diff <(echo "$before") <(echo "$after") || true
+      exit 1
+    fi
   fi
 done
 
@@ -1665,6 +1733,28 @@ for path in "$ROOT"/supabase/migrations/*.sql; do
   app_reapplied=$((app_reapplied + 1))
 done
 echo "  ($app_reapplied app migration(s) re-applied)"
+
+step "063: applied_migrations records each migration's checksum; a re-run records the file applied"
+"${PSQL[@]}" <<'SQL'
+DO $$
+DECLARE c text;
+BEGIN
+  SELECT checksum INTO c FROM public.applied_migrations
+   WHERE filename = '063_applied_migrations_checksum.sql';
+  IF c IS NULL OR c !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION '063: its own record carries no checksum (%)', c;
+  END IF;
+  BEGIN
+    UPDATE public.applied_migrations SET checksum = 'not-a-checksum'
+     WHERE filename = '063_applied_migrations_checksum.sql';
+    RAISE EXCEPTION '063: a malformed checksum was accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+END $$;
+SQL
+[ "$("${PSQL[@]}" -At -c "SELECT checksum FROM public.applied_migrations WHERE filename = '063_applied_migrations_checksum.sql'")" \
+  = "$(node "$ROOT/scripts/migration-checksum.mjs" "$ROOT/supabase/migrations/063_applied_migrations_checksum.sql")" ] \
+  || { echo "✗ 063 recorded a checksum other than its file's"; exit 1; }
 
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —

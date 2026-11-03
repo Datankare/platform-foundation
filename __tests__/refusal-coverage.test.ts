@@ -11,8 +11,10 @@
  *            a module exporting `REFUSAL_GUARDS` (function name → codes) under platform/ or lib/
  *            (platform/auth/actor-guard.ts, middleware.ts, admin-guard.ts, account-status-guard,
  *            coppa-gate, guest-allowance, platform/rate-limit/enforce.ts, platform/tenancy/…).
- *            Codes a provider maps at run time (errorFromResult, authResultResponse) are not
- *            seen; their messages are the server's own.
+ *            Codes a provider maps at run time (errorFromResult, authResultResponse, and the
+ *            service.unavailable internalError answers for an external dependency's failure —
+ *            TASK-197) are not seen; their messages are the server's own, and service.unavailable
+ *            is a platform code the shared handler decides.
  *   callers  every "/api/…" literal in app/ (not app/api), components/, hooks/ and lib/, matched
  *            to its route ([param] segments match a `${…}` segment).
  *   covered  a (caller, code) pair is covered when the caller routes refusals through the shared

@@ -1,0 +1,120 @@
+/**
+ * TASK-197 (audit D-11): scripts/migration-parity.mjs compares what each live database applied
+ * with the repository — by name, and from 063 by checksum, so a migration edited after it was
+ * applied is drift. Run against a local server standing in for the database's REST API.
+ */
+import { spawn } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+
+const ROOT = join(__dirname, "..");
+const DIR = join(ROOT, "supabase/migrations");
+const files = readdirSync(DIR)
+  .filter((f) => /^\d+[a-z]?_.*\.sql$/.test(f))
+  .sort();
+
+/** The checksum as the script computes it (its own stamp zeroed, LF line endings). */
+function checksum(file: string): string {
+  const text = readFileSync(join(DIR, file), "utf8")
+    .replace(/\r\n/g, "\n")
+    .replace(/sha256:[0-9a-f]{64}/g, `sha256:${"0".repeat(64)}`);
+  return `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
+}
+
+interface Row {
+  filename: string;
+  confidence: string;
+  checksum?: string | null;
+}
+
+function db(rows: Row[], withChecksumColumn = true): Promise<Server> {
+  const server = createServer((req, res) => {
+    const wantsChecksum = (req.url ?? "").includes("checksum");
+    if (wantsChecksum && !withChecksumColumn) return res.writeHead(400).end("{}");
+    res
+      .writeHead(200, { "content-type": "application/json" })
+      .end(
+        JSON.stringify(
+          rows.map((r) =>
+            withChecksumColumn ? r : { filename: r.filename, confidence: r.confidence }
+          )
+        )
+      );
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
+}
+
+async function parity(server: Server): Promise<{ code: number | null; out: string }> {
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return new Promise((resolve) => {
+    const child = spawn("node", [join(ROOT, "scripts/migration-parity.mjs"), "test"], {
+      cwd: ROOT,
+      env: {
+        PATH: process.env.PATH ?? "",
+        SUPABASE_URL: url,
+        SUPABASE_SERVICE_ROLE_KEY: "k",
+      } as unknown as NodeJS.ProcessEnv,
+    });
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => (out += d));
+    child.stderr.on("data", (d: Buffer) => (out += d));
+    child.on("close", (code: number | null) => resolve({ code, out }));
+  });
+}
+
+const stamped = (f: string) => Number(f.match(/^\d+/)![0]) >= 63;
+const recordAll = (): Row[] =>
+  files.map((f) => ({
+    filename: f,
+    confidence: "verified",
+    checksum: stamped(f) ? checksum(f) : null,
+  }));
+
+async function withDb(rows: Row[], withChecksumColumn = true) {
+  const server = await db(rows, withChecksumColumn);
+  try {
+    return await parity(server);
+  } finally {
+    server.close();
+  }
+}
+
+describe("migration parity (TASK-197, audit D-11)", () => {
+  it("is in parity when every file is recorded with its checksum", async () => {
+    const r = await withDb(recordAll());
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`all ${files.length} migrations recorded`);
+    expect(r.out).toMatch(/recorded without a checksum \(before 063\)/);
+  });
+
+  it("fails, naming it, when a migration changed after it was applied", async () => {
+    const rows = recordAll();
+    const target = rows.find((r) => r.filename.startsWith("063_"))!;
+    target.checksum = `sha256:${"1".repeat(64)}`;
+    const r = await withDb(rows);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("changed since they were applied");
+    expect(r.out).toContain(target.filename);
+  });
+
+  it("cannot check (exit 2), never name-only, when 063 is recorded but the checksums cannot be read (L4)", async () => {
+    const r = await withDb(recordAll(), false);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain(
+      "063_applied_migrations_checksum.sql is recorded but the checksums could not be read"
+    );
+  });
+
+  it("still compares by name on a database without the checksum column (before 063)", async () => {
+    const r = await withDb(
+      recordAll().filter((x) => !stamped(x.filename)),
+      false
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("not recorded");
+    expect(r.out).toContain("063_applied_migrations_checksum.sql");
+  });
+});

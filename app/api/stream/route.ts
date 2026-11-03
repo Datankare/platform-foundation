@@ -35,13 +35,23 @@ import {
   enforceRateLimit,
 } from "@/platform/rate-limit";
 import { apiError, apiErrorBody, readJsonObject } from "@/platform/errors";
-import { screenStream } from "@/platform/ai/screened-stream";
+import { IncompleteStreamError, screenStream } from "@/platform/ai/screened-stream";
 import { checkOutputSafety, checkSafety } from "@/lib/safety";
 import { buildStreamSystemPrompt } from "@/prompts";
 import { logger, generateRequestId } from "@/lib/logger";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 export const runtime = "nodejs";
+
+/** A failure of the provider's (transient), or a stream that ended before its final chunk. */
+function isTransientStreamFailure(err: unknown): boolean {
+  if (err instanceof IncompleteStreamError) return true;
+  return (
+    err instanceof Error &&
+    err.name === "AIProviderError" &&
+    (err as { kind?: unknown }).kind === "transient"
+  );
+}
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -92,9 +102,16 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   // A terminal event carrying a coded, catalog-rendered message only.
   const codedEnd = (
     controller: ReadableStreamDefaultController,
-    code: "internal.error" | "content.rejected" | "ai.request_declined"
+    code:
+      | "internal.error"
+      | "content.rejected"
+      | "ai.request_declined"
+      | "service.unavailable"
   ) => {
-    const coded = apiErrorBody(code, { request });
+    const coded = apiErrorBody(code, {
+      request,
+      ...(code === "service.unavailable" ? { params: { service: "ai" } } : {}),
+    });
     send(controller, {
       text: "",
       done: true,
@@ -137,6 +154,16 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
               route: "/api/stream",
             });
             codedEnd(controller, "ai.request_declined");
+          } else if (isTransientStreamFailure(event.error)) {
+            // TASK-197 (audit D-1): the provider failed mid-stream (an error event, a stream cut
+            // off before its end): what was shown is incomplete, and saying so is the answer.
+            logger.error("Stream failed upstream", {
+              requestId,
+              error:
+                event.error instanceof Error ? event.error.message : String(event.error),
+              route: "/api/stream",
+            });
+            codedEnd(controller, "service.unavailable");
           } else {
             logger.error("Stream error", {
               requestId,

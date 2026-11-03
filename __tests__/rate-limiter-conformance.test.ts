@@ -72,11 +72,39 @@ describe("InMemoryRateLimiter — conformance", () => {
   });
 });
 
+/** Upstash answering every pipeline with `item` for each command (an HTTP 200), or `status`. */
+function brokenUpstash(answer: (cmds: string[][]) => Response) {
+  return () => {
+    mockFetch.mockImplementation(async (_input, init) =>
+      answer(JSON.parse(String(init?.body)) as string[][])
+    );
+    return new RedisRateLimiter({ url: "https://redis.example", token: "t" });
+  };
+}
+
 describe("RedisRateLimiter (Upstash) — conformance (REST emulation)", () => {
   runRateLimiterContract({
     makeLimiter: () => {
       emulateUpstash();
       return new RedisRateLimiter({ url: "https://redis.example", token: "t" });
+    },
+    // TASK-197 (audit D-7): each was read as an undefined count — `undefined > max` is false, so
+    // the request was admitted.
+    brokenStores: {
+      "an { error } item in an HTTP 200": brokenUpstash((cmds) =>
+        json(
+          200,
+          cmds.map(() => ({ error: "WRONGTYPE Operation against a key" }))
+        )
+      ),
+      "fewer items than commands": brokenUpstash(() => json(200, [{ result: 0 }])),
+      "a count that is not a number": brokenUpstash((cmds) =>
+        json(
+          200,
+          cmds.map(() => ({ result: null }))
+        )
+      ),
+      "a refused token (401)": brokenUpstash(() => json(401, { error: "Unauthorized" })),
     },
   });
 });

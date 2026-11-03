@@ -7,15 +7,23 @@
  * This compares the migration files in supabase/migrations with the database's own record
  * (applied_migrations, which every migration writes) and fails on any difference:
  *   - a file the database has not recorded (not applied, or applied without its record);
- *   - a record with no file (applied from somewhere else, or a file deleted from the repo).
+ *   - a record with no file (applied from somewhere else, or a file deleted from the repo);
+ *   - TASK-197 (audit D-11): a record whose checksum differs from the file's — the migration was
+ *     edited after it was applied (052 changed across reviews 8 to 14 and read as in parity).
+ *     Migrations from 063 record their own checksum (scripts/migration-checksum.mjs); a record
+ *     from before has none, and is counted, not compared.
  *
  * Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (read-only use; never printed).
  * Usage: node scripts/migration-parity.mjs [label]
  * Exit: 0 in parity, 1 on drift, 2 when it cannot check.
  */
 
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { migrationChecksum } from "./migration-checksum.mjs";
+
+/** The migration that adds applied_migrations.checksum. */
+const CHECKSUM_MIGRATION = "063_applied_migrations_checksum.sql";
 
 const label = process.argv[2] ?? "database";
 const url = (process.env.SUPABASE_URL ?? "").replace(/\/$/, "");
@@ -35,20 +43,35 @@ if (files.length < 10) {
   process.exit(2);
 }
 
+async function readRecords(select) {
+  return fetch(`${url}/rest/v1/applied_migrations?select=${select}&limit=10000`, {
+    headers: { apikey: key, authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(20_000),
+  });
+}
+
 let rows;
+let hasChecksums = true;
 try {
-  const res = await fetch(
-    `${url}/rest/v1/applied_migrations?select=filename,confidence&limit=10000`,
-    {
-      headers: { apikey: key, authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(20_000),
-    }
-  );
+  let res = await readRecords("filename,confidence,checksum");
+  if (res.status === 400) {
+    // A database before 063 has no checksum column (and 063 then shows as not recorded).
+    hasChecksums = false;
+    res = await readRecords("filename,confidence");
+  }
   if (!res.ok) {
     console.error(`${label}: applied_migrations could not be read (HTTP ${res.status})`);
     process.exit(2);
   }
   rows = await res.json();
+  // Name-only is right only for a database that never ran 063 (review round 1, L4): one that
+  // recorded it has the column, so a failed read of it is "cannot check", never a weaker check.
+  if (!hasChecksums && rows.some((r) => r.filename === CHECKSUM_MIGRATION)) {
+    console.error(
+      `${label}: ${CHECKSUM_MIGRATION} is recorded but the checksums could not be read — cannot check`
+    );
+    process.exit(2);
+  }
 } catch (e) {
   console.error(`${label}: applied_migrations could not be read (${e.name})`);
   process.exit(2);
@@ -94,7 +117,29 @@ if (absent.length) {
   for (const f of absent) console.log(`    ${f}`);
 }
 
-if (unapplied.length === 0 && unknown.length === 0) {
+// TASK-197 (audit D-11): what was applied is what the repository holds.
+const edited = [];
+let unchecked = 0;
+for (const r of rows) {
+  if (!onDisk.has(r.filename)) continue;
+  if (!hasChecksums || r.checksum === null || r.checksum === undefined) {
+    unchecked++;
+    continue;
+  }
+  const text = readFileSync(
+    join(process.cwd(), "supabase", "migrations", r.filename),
+    "utf8"
+  );
+  if (migrationChecksum(text) !== r.checksum) edited.push(r.filename);
+}
+edited.sort();
+if (unchecked) {
+  console.log(
+    `ℹ ${label}: ${unchecked} migration(s) recorded without a checksum (before 063): compared by name only`
+  );
+}
+
+if (unapplied.length === 0 && unknown.length === 0 && edited.length === 0) {
   console.log(`✓ ${label}: all ${files.length} migrations recorded, none extra`);
   process.exit(0);
 }
@@ -107,5 +152,11 @@ if (unapplied.length) {
 if (unknown.length) {
   console.error(`✗ ${label}: ${unknown.length} recorded migration(s) with no file:`);
   for (const f of unknown) console.error(`    ${f}`);
+}
+if (edited.length) {
+  console.error(
+    `✗ ${label}: ${edited.length} migration(s) changed since they were applied (checksum differs):`
+  );
+  for (const f of edited) console.error(`    ${f}`);
 }
 process.exit(1);

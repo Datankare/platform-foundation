@@ -20,6 +20,11 @@ import { chunkText, getByteLength } from "./chunker";
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import {
+  classifyHttpFailure,
+  externalFailure,
+  readFailureText,
+} from "@/platform/observability/external-failure";
 import { getGoogleApiKey } from "@/shared/config/apiKeys";
 
 const TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
@@ -131,7 +136,12 @@ export class GoogleTTSProvider implements TTSProvider {
         status: res.status,
         route: "platform/voice",
       });
-      throw new Error(`Google TTS API error: ${res.status}`);
+      throw externalFailure(
+        "google-tts",
+        classifyHttpFailure(res.status, { body: await readFailureText(res) }),
+        `Google TTS API error: ${res.status}`,
+        { status: res.status }
+      );
     }
 
     const data = await res.json();

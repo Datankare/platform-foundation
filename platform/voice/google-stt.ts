@@ -17,6 +17,11 @@ import { AUTO_DETECT_POOL, VOICE_SUPPORTED_CODES } from "./voices";
 import { logger, generateRequestId } from "@/lib/logger";
 import { sanitizeLanguageCode } from "@/lib/sanitize";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import {
+  classifyHttpFailure,
+  externalFailure,
+  readFailureText,
+} from "@/platform/observability/external-failure";
 import { getGoogleApiKey } from "@/shared/config/apiKeys";
 
 const STT_URL = "https://speech.googleapis.com/v1/speech:recognize";
@@ -85,7 +90,12 @@ export class GoogleSTTProvider implements STTProvider {
         latencyMs,
         route: "platform/voice",
       });
-      throw new Error(`Google STT API error: ${res.status}`);
+      throw externalFailure(
+        "google-stt",
+        classifyHttpFailure(res.status, { body: await readFailureText(res) }),
+        `Google STT API error: ${res.status}`,
+        { status: res.status }
+      );
     }
 
     const response = await res.json();

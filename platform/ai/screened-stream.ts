@@ -38,9 +38,18 @@ export interface ScreenStreamOptions {
   readonly overlap?: number;
 }
 
+/** The source ended without a final (`done`) chunk: the answer is incomplete. */
+export class IncompleteStreamError extends Error {
+  constructor() {
+    super("The model stream ended without a final chunk");
+    this.name = "IncompleteStreamError";
+  }
+}
+
 /**
- * Screen a model stream. Yields released text, then exactly one terminal event: done, rejected
- * or failed. Stops reading the source on rejection or failure.
+ * Screen a model stream. Yields released text, then exactly one terminal event: done (only after
+ * the source's own final chunk), rejected or failed. Stops reading the source on rejection or
+ * failure.
  */
 export async function* screenStream(
   source: AsyncIterable<AIStreamChunk>,
@@ -79,13 +88,15 @@ export async function* screenStream(
         return;
       }
     }
-    // The source ended without a final chunk: screen what is left, then finish.
+    // The source ended without a final chunk (TASK-197, audit D-1): the answer was cut off. What
+    // is left is released only once screened, and the stream ends as failed — never as done, so
+    // a client never shows a truncated answer as complete.
     if (!(await pass())) {
       yield { kind: "rejected" };
       return;
     }
     if (pending) yield release();
-    yield { kind: "done" };
+    yield { kind: "failed", error: new IncompleteStreamError() };
   } catch (error) {
     yield { kind: "failed", error };
   }

@@ -365,6 +365,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
       }
 
       try {
+        let completed = false;
         for await (const chunk of provider.stream(effectiveRequest, streamOptions)) {
           // Track time-to-first-token
           if (firstChunkTime === null && chunk.text) {
@@ -384,6 +385,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
 
           // On final chunk, record metrics
           if (chunk.done) {
+            completed = true;
             const latencyMs = Date.now() - startTime;
             circuitBreaker.recordSuccess();
 
@@ -407,7 +409,16 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           }
 
           yield chunk;
+          if (completed) return;
         }
+        // TASK-197 (audit D-1): a provider's stream that ends without its final chunk was cut off
+        // — whatever provider it is. A failure (counted, and seen by the circuit breaker), never a
+        // short answer passed on as complete.
+        throw new AIProviderError(
+          "The provider's stream ended without a final chunk",
+          "transient",
+          { reason: "unavailable" }
+        );
       } catch (err) {
         const latencyMs = Date.now() - startTime;
         const errorMessage = err instanceof Error ? err.message : "Unknown error";

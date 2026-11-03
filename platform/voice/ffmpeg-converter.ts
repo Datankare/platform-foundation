@@ -30,6 +30,12 @@ import type {
   SourceAudioFormat,
 } from "./audio-format-types";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import {
+  classifyHttpFailure,
+  externalFailure,
+  reportExternalFailure,
+} from "@/platform/observability/external-failure";
+import { ExternalServiceError } from "@/platform/errors/external-service";
 import { logger } from "@/lib/logger";
 
 // ── Constants ───────────────────────────────────────────────────────────
@@ -131,6 +137,32 @@ export class FfmpegServiceConverter implements AudioFormatConverter {
       });
 
       if (!response.ok) {
+        // The service's own failures — a refused key, an outage — are recorded (TASK-197); a
+        // sample it cannot convert (408, 413, 422) is the request's.
+        if (
+          response.status === 401 ||
+          response.status === 403 ||
+          response.status >= 500
+        ) {
+          throw externalFailure(
+            "ffmpeg-service",
+            classifyHttpFailure(response.status),
+            response.status === 401
+              ? "FFmpeg service authentication failed (401)"
+              : `FFmpeg service error: ${response.status} ${response.statusText}`,
+            { status: response.status }
+          );
+        }
+        // The sample's own refusals are recorded too, as `rejected` (a metric, no alert:
+        // review round 1, L-6 — every way out of a failed answer reports).
+        reportExternalFailure(
+          new ExternalServiceError(
+            "ffmpeg-service",
+            "rejected",
+            `FFmpeg service refused the sample: ${response.status}`,
+            { status: response.status }
+          )
+        );
         this.handleHttpError(response.status, response.statusText, audioData.length);
       }
 

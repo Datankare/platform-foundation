@@ -36,6 +36,11 @@ export const SOCIAL_MODULE = definePlatformModule({
       slot: "socialStore",
       envVar: "SOCIAL_STORE",
       values: ["postgres", "supabase", "memory"],
+      coverage: {
+        postgres: { probe: "database" },
+        supabase: { probe: "database" },
+        memory: "local",
+      },
       defaultValue: "memory",
       // Fail closed (TASK-107): a silent memory fallback shared one membership across users and
       // lost it on restart.

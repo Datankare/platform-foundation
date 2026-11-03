@@ -265,3 +265,109 @@ describe("fetchWithTimeout — audit G-9", () => {
     expect(streamSignal?.aborted).toBe(false);
   });
 });
+
+describe("fetchWithTimeout — Retry-After (TASK-197, audit D-8)", () => {
+  const refused = (status: number, retryAfter?: string) => ({
+    status,
+    ok: false,
+    headers: new Headers(retryAfter === undefined ? {} : { "retry-after": retryAfter }),
+  });
+
+  it("waits what the provider asks before retrying", async () => {
+    jest.useFakeTimers();
+    try {
+      const mockFetch = jest
+        .fn()
+        .mockResolvedValueOnce(refused(429, "3"))
+        .mockResolvedValueOnce({ status: 200, ok: true });
+      global.fetch = mockFetch;
+      const pending = fetchWithTimeout("https://api.test.com/data", { maxRetries: 1 });
+      await jest.advanceTimersByTimeAsync(2_900);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(400);
+      expect((await pending).status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not wait for a Retry-After beyond the bound: the refused answer is returned", async () => {
+    const mockFetch = jest.fn().mockResolvedValueOnce(refused(429, "120"));
+    global.fetch = mockFetch;
+    const res = await fetchWithTimeout("https://api.test.com/data", { maxRetries: 2 });
+    expect(res.status).toBe(429);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetchWithTimeout — a timeout is typed (TASK-197, audit D-12)", () => {
+  it("throws a FetchTimeoutError, recognised by type, with the same message", async () => {
+    const { isFetchTimeoutError } = await import("@/lib/fetchWithTimeout");
+    global.fetch = jest.fn(
+      (_u: unknown, init?: RequestInit) =>
+        new Promise((_r, reject) =>
+          init?.signal?.addEventListener("abort", () => {
+            const e = new Error("aborted");
+            e.name = "AbortError";
+            reject(e);
+          })
+        )
+    ) as unknown as typeof fetch;
+    const err = await fetchWithTimeout("https://api.test.com/x", {
+      method: "POST",
+      timeoutMs: 20,
+      maxRetries: 0,
+    }).catch((e: unknown) => e);
+    expect(isFetchTimeoutError(err)).toBe(true);
+    expect((err as Error).message).toContain("timed out after 20ms");
+  });
+});
+
+describe("fetchWithTimeout — retry waits are bounded (TASK-197 review round 1, L-4)", () => {
+  const refusedAfter = (seconds: string) => ({
+    status: 429,
+    ok: false,
+    headers: new Headers({ "retry-after": seconds }),
+  });
+
+  it("a wait ends at once when the caller aborts", async () => {
+    // On jest's fake clock (TASK-198, D-13): the time measured is the clock's, not the runner's.
+    jest.useFakeTimers();
+    try {
+      const mockFetch = jest.fn().mockResolvedValue(refusedAfter("8"));
+      global.fetch = mockFetch;
+      const controller = new AbortController();
+      const started = Date.now();
+      const pending = fetchWithTimeout("https://api.test.com/x", {
+        maxRetries: 1,
+        signal: controller.signal,
+      }).catch((e: unknown) => e);
+      await jest.advanceTimersByTimeAsync(50);
+      controller.abort();
+      const err = await pending;
+      expect((err as Error).name).toBe("AbortError");
+      // Ended at the abort, 50 ms in — never the 8 s Retry-After wait.
+      expect(Date.now() - started).toBe(50);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("all the waits of one call add up to at most MAX_TOTAL_RETRY_WAIT_MS", async () => {
+    jest.useFakeTimers();
+    try {
+      const mockFetch = jest.fn().mockResolvedValue(refusedAfter("6"));
+      global.fetch = mockFetch;
+      const pending = fetchWithTimeout("https://api.test.com/x", { maxRetries: 3 });
+      await jest.advanceTimersByTimeAsync(30_000);
+      const res = await pending;
+      expect(res.status).toBe(429);
+      // 6 s, then a second 6 s would pass 10 s: the refusal is returned instead.
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

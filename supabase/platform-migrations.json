@@ -63,6 +63,7 @@
     "059_roles_sort_order.sql",
     "060_lifecycle_closure.sql",
     "061_feature_permissions_enforced.sql",
-    "062_expire_approvals_required.sql"
+    "062_expire_approvals_required.sql",
+    "063_applied_migrations_checksum.sql"
   ]
 }

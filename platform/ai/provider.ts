@@ -19,6 +19,12 @@ import {
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { estimateCost } from "./instrumentation";
 import { logger } from "@/lib/logger";
+import {
+  classifyHttpFailure,
+  externalFailure,
+  TRANSIENT_REASONS_FOR_AI,
+  type ExternalFailureReason,
+} from "./provider-failure";
 
 // ---------------------------------------------------------------------------
 // Anthropic provider
@@ -79,9 +85,14 @@ export class AnthropicProvider implements AIProvider {
         status: response.status,
         route: "platform/ai/provider",
       });
+      const reason = anthropicFailureReason(response.status, errorBody);
+      externalFailure("anthropic", reason, `Anthropic API returned ${response.status}`, {
+        status: response.status,
+      });
       throw new AIProviderError(
         `Anthropic API returned ${response.status}: ${errorBody}`,
-        response.status >= 500 ? "transient" : "permanent"
+        aiErrorKind(reason),
+        { reason, status: response.status }
       );
     }
 
@@ -186,9 +197,17 @@ export class AnthropicProvider implements AIProvider {
 
     if (!response.ok) {
       const errorBody = await response.text();
+      const reason = anthropicFailureReason(response.status, errorBody);
+      externalFailure(
+        "anthropic",
+        reason,
+        `Anthropic streaming API returned ${response.status}`,
+        { status: response.status }
+      );
       throw new AIProviderError(
         `Anthropic streaming API returned ${response.status}: ${errorBody}`,
-        response.status >= 500 ? "transient" : "permanent"
+        aiErrorKind(reason),
+        { reason, status: response.status }
       );
     }
 
@@ -204,6 +223,12 @@ export class AnthropicProvider implements AIProvider {
     let cacheReadTokens = 0;
     let cacheWriteTokens = 0;
     let refused = false;
+    // TASK-197 (audit D-1): a stream is complete only at message_stop. An `error` event mid-stream
+    // (Anthropic's overloaded_error, api_error…) or a body that ends without message_stop is a
+    // failure — thrown, so the caller answers a coded error, the failure is counted and the
+    // circuit breaker sees it — never a short answer reported as done.
+    let streamError: { type: string; message: string } | null = null;
+    let stopped = false;
 
     try {
       while (true) {
@@ -236,7 +261,17 @@ export class AnthropicProvider implements AIProvider {
             } else if (event.type === "message_delta") {
               refused = event.delta?.stop_reason === "refusal";
               outputTokens = event.usage?.output_tokens ?? 0;
+            } else if (event.type === "error") {
+              streamError = {
+                type:
+                  typeof event.error?.type === "string"
+                    ? event.error.type
+                    : "unknown_error",
+                message:
+                  typeof event.error?.message === "string" ? event.error.message : "",
+              };
             } else if (event.type === "message_stop") {
+              stopped = true;
               yield {
                 text: "",
                 done: true,
@@ -265,8 +300,16 @@ export class AnthropicProvider implements AIProvider {
               modelConfig.modelId
             );
           }
+          if (streamError) throw streamFailure(streamError);
+          if (stopped) {
+            // Complete: what follows message_stop (nothing, by the protocol) is not read.
+            await reader.cancel().catch(() => undefined);
+            return;
+          }
         }
       }
+      // The body ended without message_stop: the answer is cut off, not complete.
+      throw streamFailure({ type: "incomplete_stream", message: "" });
     } finally {
       reader.releaseLock();
     }
@@ -366,12 +409,65 @@ export type AIErrorKind = "config" | "transient" | "permanent";
 
 export class AIProviderError extends Error {
   readonly kind: AIErrorKind;
+  /**
+   * Why the provider failed, when it answered (TASK-197, audit D-8): `rate_limited` and
+   * `overloaded` (429, 529 — transient), `credential` (401, 403), `model_retired` (404),
+   * `quota` (an exhausted credit balance), `unavailable` (5xx), `rejected` (another 4xx).
+   */
+  readonly reason?: ExternalFailureReason;
+  /** The HTTP status, when there was one. */
+  readonly status?: number;
 
-  constructor(message: string, kind: AIErrorKind) {
+  constructor(
+    message: string,
+    kind: AIErrorKind,
+    details: { readonly reason?: ExternalFailureReason; readonly status?: number } = {}
+  ) {
     super(message);
     this.name = "AIProviderError";
     this.kind = kind;
+    if (details.reason !== undefined) this.reason = details.reason;
+    if (details.status !== undefined) this.status = details.status;
   }
+}
+
+/**
+ * The classification table for an Anthropic answer (TASK-197, audit D-8): 429 and 529 are
+ * transient (a 429 that outlived the transport's Retry-After waits is still throttling, not the
+ * client's fault — so the circuit breaker counts it); 401 and 403 are a credential the platform
+ * holds; 404 is a retired model (TASK-186, the request names a model that no longer exists); a
+ * 400 for an exhausted credit balance is the plan, not the request.
+ */
+export function anthropicFailureReason(status: number, body = ""): ExternalFailureReason {
+  if (status === 400 && /credit balance/i.test(body)) return "quota";
+  return classifyHttpFailure(status, { notFound: "model_retired", body });
+}
+
+/** The kind an AIProviderError carries for a reason: transient when a retry may succeed. */
+export function aiErrorKind(reason: ExternalFailureReason): AIErrorKind {
+  return TRANSIENT_REASONS_FOR_AI.has(reason) ? "transient" : "permanent";
+}
+
+/** A stream that failed mid-way (an `error` event) or ended without message_stop. */
+function streamFailure(event: { type: string; message: string }): AIProviderError {
+  // Anthropic's mid-stream error types: overloaded_error and api_error are theirs and pass;
+  // rate_limit_error is throttling; anything else (invalid_request_error…) is the request's.
+  const reason: ExternalFailureReason =
+    event.type === "overloaded_error"
+      ? "overloaded"
+      : event.type === "rate_limit_error"
+        ? "rate_limited"
+        : event.type === "api_error" || event.type === "incomplete_stream"
+          ? "unavailable"
+          : event.type === "authentication_error" || event.type === "permission_error"
+            ? "credential"
+            : "rejected";
+  externalFailure("anthropic", reason, `Anthropic stream failed: ${event.type}`);
+  return new AIProviderError(
+    `Anthropic stream failed (${event.type})${event.message ? `: ${event.message}` : ""}`,
+    aiErrorKind(reason),
+    { reason }
+  );
 }
 
 /**

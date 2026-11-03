@@ -45,6 +45,13 @@
  *   SMOKE_SKIP_TRANSLATE   optional — "1": stop after the guest token (CI without AI credentials)
  *   SMOKE_SESSION_PATH     optional — with SMOKE_DISPATCH_PATH: the session-open route (step 6)
  *   SMOKE_DISPATCH_PATH    optional — with SMOKE_SESSION_PATH: the route an intent is sent to
+ *   SMOKE_HEALTHY_PROBES   optional — comma-separated readiness checks that must be healthy, not
+ *                          merely present (TASK-197): e.g. "ai-provider,google-translate" — a
+ *                          revoked key or a retired model degrades readiness, and this fails the
+ *                          deploy on it. A named check that is missing fails too
+ *                          A probe still pending (a paid probe's first call, answered "degraded:
+ *                          check pending" — TASK-197 round 1, M-1) is polled like the commit
+ *   SMOKE_POLL_MS          optional — the wait between readiness polls (default 10000)
  *   SMOKE_DISPATCH_INTENT  optional — the intent, JSON; default
  *                          {"type":"translate","text":"Good morning","additionalLanguages":[]}
  *
@@ -118,6 +125,16 @@ export function readSettings(env) {
       problems.push(`${name} must be a path such as /api/translate/session`);
     }
   }
+  const healthyProbes = (env.SMOKE_HEALTHY_PROBES ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  for (const p of healthyProbes) {
+    if (!/^[a-z][a-z0-9-]*$/.test(p)) {
+      problems.push("SMOKE_HEALTHY_PROBES must be probe names such as ai-provider");
+      break;
+    }
+  }
   let dispatchIntent = DEFAULT_DISPATCH_INTENT;
   if ((env.SMOKE_DISPATCH_INTENT ?? "").trim() !== "") {
     try {
@@ -133,9 +150,14 @@ export function readSettings(env) {
       problems.push("SMOKE_DISPATCH_INTENT must be a JSON object");
     }
   }
+  const poll = Number(env.SMOKE_POLL_MS ?? 10000);
+  if (!Number.isFinite(poll) || poll < 0)
+    problems.push("SMOKE_POLL_MS must be a non-negative number");
   if (problems.length) throw new Error(problems.join("; "));
   return {
     session: sessionPath ? { sessionPath, dispatchPath, intent: dispatchIntent } : null,
+    healthyProbes,
+    pollMs: poll,
     skipTranslate: skip === "1",
     base: url.origin,
     expected: expected || null,
@@ -191,6 +213,14 @@ const fail = (msg) => {
   throw new StepFailure(msg);
 };
 
+/** The names among `required` that the readiness answer does not report healthy. */
+export function unhealthyRequired(res, required) {
+  const checks = Array.isArray(res?.json?.checks) ? res.json.checks : [];
+  return required.filter(
+    (name) => !checks.some((c) => c?.name === name && c.status === "healthy")
+  );
+}
+
 /** A readiness answer that lets traffic in: 200, ready, and ready or degraded. */
 export function isReady(res) {
   return (
@@ -207,7 +237,7 @@ export async function runSmoke(settings, log = console.log) {
   for (;;) {
     live = await call(settings, "GET", "/api/health/live").catch((e) => ({ error: e }));
     if (live.status === 200 || Date.now() >= deadline) break;
-    await sleep(10_000);
+    await sleep(settings.pollMs ?? 10_000);
   }
   if (live.error) fail(`live: request failed (${live.error.message})`);
   if (live.status !== 200) fail(`live: ${live.status}`);
@@ -216,9 +246,14 @@ export async function runSmoke(settings, log = console.log) {
   let ready;
   for (;;) {
     ready = await call(settings, "GET", "/api/health/ready").catch((e) => ({ error: e }));
-    const ok = isReady(ready) && commitMatches(ready.json?.commit, settings.expected);
+    // A named probe may answer "timed out" on the first, cold, readiness call while its billed
+    // check completes (it is cached): it is polled like the commit.
+    const ok =
+      isReady(ready) &&
+      commitMatches(ready.json?.commit, settings.expected) &&
+      unhealthyRequired(ready, settings.healthyProbes ?? []).length === 0;
     if (ok || Date.now() >= deadline) break;
-    await sleep(10_000);
+    await sleep(settings.pollMs ?? 10_000);
   }
   if (ready.error) fail(`ready: request failed (${ready.error.message})`);
   if (!isReady(ready)) {
@@ -241,6 +276,15 @@ export async function runSmoke(settings, log = console.log) {
     fail(`ready: deployed commit ${commit ?? "unknown"} is not ${settings.expected}`);
   }
   log(`✓ ready 200 (${ready.json?.status}), commit ${commit ?? "not reported"}`);
+  const notHealthy = (ready.json?.checks ?? []).filter((c) => c?.status !== "healthy");
+  if (notHealthy.length) {
+    log(`  degraded: ${notHealthy.map((c) => `${c.name} ${c.status}`).join(", ")}`);
+  }
+  // TASK-197: the probes this deployment requires healthy (a revoked key, a retired model).
+  const required = settings.healthyProbes ?? [];
+  const failing = unhealthyRequired(ready, required);
+  if (failing.length) fail(`ready: not healthy: ${failing.join(", ")}`);
+  if (required.length) log(`✓ healthy: ${required.join(", ")}`);
 
   // 2 — features
   const features = await call(settings, "GET", "/api/features");

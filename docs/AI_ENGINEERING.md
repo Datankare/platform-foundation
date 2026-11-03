@@ -173,7 +173,7 @@ out, install or execute the head's code.
 [`anthropics/claude-code-security-review`](https://github.com/anthropics/claude-code-security-review)
 on every pull request to `develop`, `staging` and `main`, pinned to commit
 `0c6a49f1fa56a1d472575da86a94dbc1edb78eda` (its `main` on 2026-02-11; the repository publishes no
-release tags). Inputs: `claude-api-key` (the `ANTHROPIC_API_KEY` secret), `comment-pr: true`
+release tags). Inputs: `claude-api-key` (the `ANTHROPIC_API_KEY` secret), `claude-model`, `comment-pr: true`
 (findings are posted on the PR), `upload-results: true`, `run-every-commit: true`.
 
 - **It fails its check; blocking is planned.** The action itself never fails on findings; it reports a count
@@ -204,9 +204,33 @@ release tags). Inputs: `claude-api-key` (the `ANTHROPIC_API_KEY` secret), `comme
   own README says it is not hardened against prompt injection and should review trusted PRs
   only; this is how that holds here.
 - **What it installs.** The action installs Claude Code from npm and its Python requirements at
-  run time, unpinned by its own workflow; pinning the action's commit does not pin those. It uses
-  its built-in default model (`claude-opus-4-1-20250805` at the pinned commit). Recorded in
-  ASSURANCE §3.
+  run time, unpinned by its own workflow; pinning the action's commit does not pin those. Recorded
+  in ASSURANCE §3.
+- **Its model (TASK-197).** `claude-model` is set to the platform's standard tier
+  (`MODEL_REGISTRY.standard`); unset, the action used its own default (`claude-opus-4-1-20250805`).
+  The model check (`scripts/check-model-ids.mjs`) fails a workflow model that is not a registry
+  model. The pinned commit also hard-codes the retired `claude-3-5-haiku-20241022` for its API
+  check (`claudecode/claude_api_client.py:62`); when that check fails the action turns off its
+  false-positive filter and only logs it. No input overrides it: the model check lists it as a
+  known exception — a loud warning and a summary line until its review-by date (2026-12-31), a
+  failure after it — and the gate step turns the log line ("Claude
+  API validation failed") into a warning in the summary. On 2026-10-28 this sent Playform's
+  `ANTHROPIC_API_KEY` — the playform-dev app key — to the retired model (Anthropic's notice).
+- **A pull request too large to diff (TASK-197).** GitHub answers 406 for the diff of a very large
+  PR — Playform's auto-sync PRs are expected to hit it — and the action fetches the diff itself, so
+  it cannot review such a PR in parts. The check fails with: "The action cannot fetch this PR's
+  diff (too large). It has not been reviewed. A repository admin must review the diff manually
+  and, if satisfied, merge using the ruleset's admin bypass (GitHub records the bypass)." That is
+  the whole procedure: the admin reads the diff (locally, `git diff base...head`, when the web
+  view refuses it too), and merges past the failing check with the ruleset's bypass; GitHub's
+  audit log and the PR's timeline record who bypassed. There is no label, acknowledgement or
+  re-run that turns the check green — an in-workflow acknowledgement was built and removed after
+  three review rounds (the owner's decision, TASK-197 round 3): each version could be forged or
+  replayed. The 406 is matched only as the action's own PR-data error (anchored), so no other
+  failure reads as "too large".
+- **CI keys (owner action, TASK-197).** Give each repository a CI-only Anthropic key (its own
+  workspace or key, with its own spend limit) for its `ANTHROPIC_API_KEY` secret — never an app's
+  deployment key — so a CI tool's calls are neither billed to nor reported against an app.
 
 ## 5. The evidence each change carries
 

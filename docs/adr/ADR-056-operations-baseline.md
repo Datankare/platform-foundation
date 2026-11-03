@@ -148,6 +148,14 @@ than unhealthy. `scripts/deploy-smoke.mjs` checks liveness, then readiness (and 
 Consumer seam: Playform keeps its own `instrumentation.ts`, which must record the boot steps and
 register the probes the same way to report readiness.
 
+**TASK-197 (audit D-2).** The paid dependencies are probed too, with the deployed credentials:
+`ai-provider`, `google-translate`, `google-tts`, `rate-limit-store` and `certificates` — optional
+like the module probes (degraded, never unready), and the billed ones cached. One builder,
+`buildReadinessProbes()` (`platform/providers/readiness-probes.ts`), is what the platform's and an
+app's `instrumentation.ts` register; every provider selection declares its probe or why it has
+none (`CORE_DEPENDENCY_COVERAGE`, `ModuleProviderSlot.coverage`), held by a test. The deploy smoke
+can require named probes healthy (`SMOKE_HEALTHY_PROBES`).
+
 **TASK-143.** `load-test.yml`: a run whose target is the runner (the schedule, or a manual run left
 at its default) builds the app, starts it on the E2E harness and waits for `/api/health/ready`
 before k6; a manual run against an `https://` address tests it directly; any other input is refused

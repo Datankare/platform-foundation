@@ -25,6 +25,7 @@ import {
   readinessChanged,
   reportProbeProblems,
 } from "@/platform/observability/readiness";
+import { keepAliveForProbes } from "@/platform/observability/keep-probes-alive";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { PLATFORM_VERSION } from "@/platform/version";
 
@@ -47,6 +48,8 @@ export const GET = tenantRoute(async function GET() {
         .join(","),
     });
   }
+  // Paid checks still running finish within this request (round 2), not frozen after it.
+  keepAliveForProbes();
   return NextResponse.json(
     {
       status: readiness.status,

@@ -13,7 +13,10 @@
 import { MockSongIdentifier } from "@/platform/voice/mock-identify";
 import { MockAudioConverter } from "@/platform/voice/mock-audio-converter";
 import { PassthroughConverter } from "@/platform/voice/passthrough-converter";
-import { checkSongIdHealth } from "@/platform/voice/song-id-health";
+import {
+  checkSongIdHealth,
+  SongIdHealthProbeAdapter,
+} from "@/platform/voice/song-id-health";
 import { checkAudioConverterHealth } from "@/platform/voice/audio-convert-health";
 import {
   CANONICAL_FORMAT,
@@ -894,5 +897,37 @@ describe("Integration: Convert → Identify", () => {
     expect(result.matched).toBe(true);
     expect(result.match).not.toBeNull();
     expect(result.confidence).toBe(0);
+  });
+});
+
+describe("the song-identification probe honours its budget (TASK-197 review round 3, N4)", () => {
+  it("song identification: the probe's budget reaches the provider (a timeout and a signal), one call", async () => {
+    const seen: { timeoutMs?: number; aborted?: boolean }[] = [];
+    let signal: AbortSignal | undefined;
+    const provider = {
+      name: "acrcloud",
+      identify: (req: { timeoutMs?: number; signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          seen.push({ timeoutMs: req.timeoutMs });
+          signal = req.signal;
+          req.signal?.addEventListener("abort", () => reject(new Error("timed out")));
+        }),
+    };
+    // A provider that never answers: the check ends only because the budget's own signal aborts
+    // it — shown by the signal's reason, not by a bound on the runner's clock (TASK-198, D-13) —
+    // and that signal is the budget's: AbortSignal.timeout(200), once.
+    const timeout = jest.spyOn(AbortSignal, "timeout");
+    try {
+      const r = await new SongIdHealthProbeAdapter(provider as never).check(200);
+      expect(timeout).toHaveBeenCalledTimes(1);
+      expect(timeout).toHaveBeenCalledWith(200);
+      expect(signal?.aborted).toBe(true);
+      expect((signal?.reason as Error | undefined)?.name).toBe("TimeoutError");
+      expect(seen).toEqual([{ timeoutMs: 200 }]);
+      expect(r.name).toBe("song-identification");
+      expect(r.status).toBe("unhealthy");
+    } finally {
+      timeout.mockRestore();
+    }
   });
 });

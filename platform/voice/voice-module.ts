@@ -16,6 +16,7 @@ import { definePlatformModule } from "@/platform/modules/define";
 import type { ModuleProviderSlot } from "@/platform/modules/types";
 import type { EnvSource } from "@/platform/providers/environment-contract";
 import { getGoogleApiKeySetting } from "@/shared/config/apiKeys";
+import { createGoogleTtsProbe, GOOGLE_TTS_PROBE } from "./google-tts-health";
 import {
   AUDIO_CONVERTER_NEEDS,
   isAudioConverterReady,
@@ -31,7 +32,8 @@ function googleSpeechReady(env: EnvSource): boolean {
 function googleSlot(
   slot: string,
   envVar: string,
-  consequence: string
+  consequence: string,
+  googleProbe: string
 ): ModuleProviderSlot {
   return {
     slot,
@@ -39,6 +41,7 @@ function googleSlot(
     values: ["google", "mock"],
     defaultValue: "mock",
     singletonKeys: [],
+    coverage: { google: { probe: googleProbe }, mock: "local" },
     init: (selection, { env, warn }) => {
       if (selection === "google" && !getGoogleApiKeySetting(env)) {
         warn(`${envVar}=google but GOOGLE_API_KEY missing — ${consequence}`);
@@ -51,8 +54,10 @@ export const VOICE_MODULE = definePlatformModule({
   id: "voice",
   dependsOn: ["translation", "audio-convert"],
   providers: [
-    googleSlot("tts", "TTS_PROVIDER", "TTS will fail"),
-    googleSlot("stt", "STT_PROVIDER", "STT will fail"),
+    googleSlot("tts", "TTS_PROVIDER", "TTS will fail", GOOGLE_TTS_PROBE),
+    // Speech-to-text has no free call to probe with; the key it uses (GOOGLE_API_KEY) is the one
+    // the text-to-speech and translation probes check.
+    googleSlot("stt", "STT_PROVIDER", "STT will fail", GOOGLE_TTS_PROBE),
   ],
   goals: ["transcribe", "speak", "translate-and-speak", "full-pipeline"],
   consentFeatures: ["transcribe"],
@@ -74,6 +79,8 @@ export const VOICE_MODULE = definePlatformModule({
       check: (env) => ({ available: googleSpeechReady(env) }),
     },
   ],
+  // TASK-197 (audit D-2/D-3): the Google key and the voices the platform names, at readiness.
+  healthProbes: [{ name: GOOGLE_TTS_PROBE, create: () => createGoogleTtsProbe() }],
   kits: [
     "__tests__/contract/tts-provider-contract.ts",
     "__tests__/contract/stt-provider-contract.ts",

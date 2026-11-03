@@ -124,7 +124,57 @@ Then
 answers `false` and `f`. It inserts one row of `platform_config` (the governed switch above
 `AIRequest.promptCache`, off) and takes no lock beyond it; run again, it keeps an operator's value.
 The code works without it: an absent setting reads as off.
-The code works without it: an absent setting reads as off.
+
+**Release candidate (TASK-192):** `059_roles_sort_order.sql`, after 058, on its own:
+
+```bash
+pbcopy < supabase/migrations/059_roles_sort_order.sql
+```
+
+Then
+`select name, sort_order from public.roles order by sort_order, name;`
+answers super_admin 10, admin 20, moderator 30, safety_approver 40, guest 50, free 60, daily 70,
+monthly 80, annual 90, lifetime 100, then any other role — at 1000 if it was at an old default (0
+or 99: dev's `tester`), else at the value it had; and
+`select column_default from information_schema.columns where table_schema = 'public' and table_name = 'roles' and column_name = 'sort_order';`
+answers `1000`. It updates `sort_order` on the roles whose value differs (each such role's
+Modified date becomes the day it ran) and, first, sets the column's default; a seeded role a
+database lacks is skipped. It waits at most 5 s for its lock (`lock_timeout`): if it stops with
+"canceling statement due to lock timeout", nothing changed — run it again. Run it as one batch — the whole
+file in one SQL Editor query, which runs it in one transaction (or `psql --single-transaction
+-f`): `set local` has no effect outside a transaction, and the timeout would not apply. The
+seeded roles use 10–100 in steps of 10; a role of your own below 10 (not an old default, so kept)
+now sorts ahead of super_admin: move it — to 1000 to follow the seeded roles by name, or between
+two of them. Run again, it changes nothing. The code works without it: the lists are only
+in the old order.
+
+**Release candidate (TASK-193):** `060_lifecycle_closure.sql`, after 059, on its own:
+
+```bash
+pbcopy < supabase/migrations/060_lifecycle_closure.sql
+```
+
+Then
+`select key, value from public.platform_config where key in ('agent.trajectory.abandon_after_hours', 'agent.workflow.abandon_after_days', 'coppa.consent_expiry_days', 'coppa.consent_expiry_enabled') order by key;`
+answers `24`, `30`, `14` and `false`. It seeds four settings, adds columns to
+`config_pending_approvals`, `user_deletions` and `proposals` (no rewrite; each lock for its
+statement only, `lock_timeout` 5 s — run again if it times out) and marks applied each approved
+approval whose own change is in the configuration history (key, scope, tenant, reviewer, the value
+replaced and the value written); any other approved one is reopened by the next
+config.expire-approvals run, so
+`select count(*) from public.config_pending_approvals where status = 'approved' and applied_at is null;`
+answers 0 after that run. Apply it before the code: the code writes those columns. Then give the
+Cognito IAM key `cognito-idp:AdminDeleteUser` and `cognito-idp:ListUsers` (TENANCY_OPERATIONS §3.3).
+
+The consent expiry ships **off** (`coppa.consent_expiry_enabled` false, operator-only): it is turned
+on with the parental-consent flow. Before turning it on, count what its first run would erase:
+`select count(*) from public.users where parental_consent_status in ('pending', 'denied') and deleted_at is null and coalesce(age_verified_at, created_at) < now() - interval '14 days';`
+(14: `coppa.consent_expiry_days`).
+
+Erasures recorded before 060 have no `identity_pool` (it is recorded only when the identity is
+proven present in the pool): an identity the pool no longer has counts as erased only in the pool
+an erasure recorded, so theirs stay pending and alert `gdpr.identity_pool_unverified`
+(docs/runbooks/jobs.md §6) until two operators attest them (TENANCY_OPERATIONS §4).
 
 **Release candidate (TASK-194):** `061_feature_permissions_enforced.sql`, after 060, on its own,
 **before the code** — the code enforces `can_translate`, `can_view_profile` and `can_edit_profile`,
@@ -351,55 +401,19 @@ one administrator completes neither. Give a second person an approver account �
 [TENANCY_OPERATIONS](TENANCY_OPERATIONS.md) ("Dual control needs a second approver; the first safety
 approver"), whose exact SQL and check are there.
 
-**Release candidate (TASK-192):** `059_roles_sort_order.sql`, after 058, on its own:
+**Release candidate (TASK-197):** `063_applied_migrations_checksum.sql`, after 062, on its own:
 
 ```bash
-pbcopy < supabase/migrations/059_roles_sort_order.sql
+pbcopy < supabase/migrations/063_applied_migrations_checksum.sql
 ```
 
 Then
-`select name, sort_order from public.roles order by sort_order, name;`
-answers super_admin 10, admin 20, moderator 30, safety_approver 40, guest 50, free 60, daily 70,
-monthly 80, annual 90, lifetime 100, then any other role — at 1000 if it was at an old default (0
-or 99: dev's `tester`), else at the value it had; and
-`select column_default from information_schema.columns where table_schema = 'public' and table_name = 'roles' and column_name = 'sort_order';`
-answers `1000`. It updates `sort_order` on the roles whose value differs (each such role's
-Modified date becomes the day it ran) and, first, sets the column's default; a seeded role a
-database lacks is skipped. It waits at most 5 s for its lock (`lock_timeout`): if it stops with
-"canceling statement due to lock timeout", nothing changed — run it again. Run it as one batch — the whole
-file in one SQL Editor query, which runs it in one transaction (or `psql --single-transaction
--f`): `set local` has no effect outside a transaction, and the timeout would not apply. The
-seeded roles use 10–100 in steps of 10; a role of your own below 10 (not an old default, so kept)
-now sorts ahead of super_admin: move it — to 1000 to follow the seeded roles by name, or between
-two of them. Run again, it changes nothing. The code works without it: the lists are only
-in the old order.
-**Release candidate (TASK-193):** `060_lifecycle_closure.sql`, after 059, on its own:
-
-```bash
-pbcopy < supabase/migrations/060_lifecycle_closure.sql
-```
-
-Then
-`select key, value from public.platform_config where key in ('agent.trajectory.abandon_after_hours', 'agent.workflow.abandon_after_days', 'coppa.consent_expiry_days', 'coppa.consent_expiry_enabled') order by key;`
-answers `24`, `30`, `14` and `false`. It seeds four settings, adds columns to
-`config_pending_approvals`, `user_deletions` and `proposals` (no rewrite; each lock for its
-statement only, `lock_timeout` 5 s — run again if it times out) and marks applied each approved
-approval whose own change is in the configuration history (key, scope, tenant, reviewer, the value
-replaced and the value written); any other approved one is reopened by the next
-config.expire-approvals run, so
-`select count(*) from public.config_pending_approvals where status = 'approved' and applied_at is null;`
-answers 0 after that run. Apply it before the code: the code writes those columns. Then give the
-Cognito IAM key `cognito-idp:AdminDeleteUser` and `cognito-idp:ListUsers` (TENANCY_OPERATIONS §3.3).
-
-The consent expiry ships **off** (`coppa.consent_expiry_enabled` false, operator-only): it is turned
-on with the parental-consent flow. Before turning it on, count what its first run would erase:
-`select count(*) from public.users where parental_consent_status in ('pending', 'denied') and deleted_at is null and coalesce(age_verified_at, created_at) < now() - interval '14 days';`
-(14: `coppa.consent_expiry_days`).
-
-Erasures recorded before 060 have no `identity_pool` (it is recorded only when the identity is
-proven present in the pool): an identity the pool no longer has counts as erased only in the pool
-an erasure recorded, so theirs stay pending and alert `gdpr.identity_pool_unverified`
-(docs/runbooks/jobs.md §6) until two operators attest them (TENANCY_OPERATIONS §4).
+`select checksum from public.applied_migrations where filename = '063_applied_migrations_checksum.sql';`
+answers the same `sha256:…` as `node scripts/migration-checksum.mjs supabase/migrations/063_applied_migrations_checksum.sql`.
+It adds one nullable column to `applied_migrations` (a brief lock on that table, no rewrite;
+`lock_timeout` 5 s) and records itself with its checksum. From 063 every migration records the
+checksum of its own file and `scripts/migration-parity.mjs` reports one edited after it was
+applied; the rows before have none and are compared by name.
 
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
@@ -620,6 +634,7 @@ in Vercel and redeploy — never by turning a check off.
 | **Release candidate — the subject is the Cognito `sub` (TASK-177).** No migration. **(a) Scripts:** drop `--subject` from every `scripts/relink-identity.mjs` call — the command always binds the pool user's `sub`; `--subject sub` still runs for one release (a deprecation note on stderr), `--subject username` is refused (exit 2). **(b) Your provider:** name every subject by the access token's `sub` — the verified payload's `sub`, sessions, `revokeTokenVerification`, `getUserInfo` — never the token's `username` or GetUser's `Username` (Playform's `cognito-auth.ts` already does; nothing to change there). A provider of yours that calls `AdminUpdateUserAttributes` / `AdminGetUser` for a federated user must pass its pool username, not its `sub` (Cognito accepts only a native user's `sub` there): the platform's provider learns it from the user's signed token. **(c) An `IdentityDirectory` of your own:** `findByEmail` + `findBySub(sub)`; `subjectAttribute`, `findBySubject` and `DirectoryUser.subject` are removed (`DirectoryUser.sub` is the subject). **(d) Tests:** take the synced token-verification kit (new TASK-177 cases: a federated token named by its `sub`; a revocation by the `sub` voids it) and run it against your provider; its lookup's `user` answer now carries the token's `sub` — answer GetUser with a `sub` attribute equal to it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | A provider that names a federated user by its username binds `Google_…`, which provisioning (UUID subjects only) refuses — a new Google user never gets an account — and its sign-out revokes a subject no verification is stamped with. Review 16's flag let an operator bind the wrong one                                                                                           |
 | **Release candidate — review 17: whose sign-out it is, and the pool's shape (TASK-178).** No migration. **(a) Setting:** set `REFRESH_COOKIE_KEY` (`openssl rand -hex 32`, its own per environment, the same on every instance; §1 step 3) — production boot refuses a real auth provider without it. Every refresh cookie issued before the deploy is refused once (`/api/auth/refresh` answers `auth.token_invalid`): those users sign in again when their access token expires — deploy when that is acceptable. Rotation: `REFRESH_COOKIE_KEY_PREVIOUS`. **(b) Code of yours that reads or writes `pf_refresh`:** use `readRefreshCookie` (now MAC-checked; `null` for a forged or unsigned cookie), `setRefreshCookie` (now returns `false` when it cannot sign) and `refreshCookieValue(userId, token)` (tests: build cookies with it, never `` `${id}.${token}` ``). A sign-out route of your own: revoke (`revokeTokenVerification`) and record `logout` only for a subject the provider proved — the bearer's `verifyToken` payload `sub` before the sign-out, or the user a refresh of the cookie's token proves — never the cookie's id alone, and never `tokenSubject` (unverified). A test that mocks the provider for `/api/auth/sign-out` mocks `verifyToken` and `refreshToken` too. **(c) Your provider:** treat a GetUser answer with no `sub` attribute, or another user's, as invalid, and remember nothing from it (`Username`) before that check; the synced token-verification kit now asserts both (`null`) and fails a provider without the check. **(d) The pool:** users must sign in by email address (`UsernameAttributes` includes `email` — fixed at pool creation) and the app client must read `identities`; check with the two `aws cognito-idp` commands in [ENV_REFERENCE.md](ENV_REFERENCE.md#cognito-pool-shape-review-17-l2l4). Readiness has a new required probe `identity-pool` (with `AUTH_PROVIDER=cognito`): a username-sign-in pool answers 503, `identities` hidden reports degraded; it runs with the administrative credentials if set (`DescribeUserPool`, `DescribeUserPoolClient` — already in their policy), else logs once that the operator must check. A provider of your own may implement `checkPoolShape()`; one that applies the native-user rule must not apply it while `identities` is hidden (`identityProvidersFrom(username, attrs, identitiesReadable)`). **(e) `AUTH_TRUSTED_EMAIL_IDPS`:** names now match case-insensitively and may have spaces around commas; a malformed value is refused by boot and by the re-link command (exit 2) | A forged cookie made the platform void another user's remembered verifications and record their `logout`; a bearer with another user's cookie voided the wrong user and kept its own verifications. A provider that accepts a sub-less GetUser answer, or a username-sign-in pool, misattributes who verified an address and cannot refresh sessions                                   |
 | **Release candidate — lifecycle, closure and erasure (TASK-193).** Migration 060. **(a) Your auth provider:** implement the optional `adminDeleteUser(sub)` (an administrative delete, by the identity's **subject**: resolve the provider's own user from it — a federated user's username is not its subject — and delete that; answer `{ success: true, notFound: true }` only when the provider has **no user with that subject**, never for any error that merely says "not found" about a username you guessed), `identityPoolId()` (the pool it deletes from, recorded on each erasure) and `confirmIdentityPool()` (a positive check that the credentials reach that pool) — a "not found" counts as erased only in the pool the erasure recorded, after that check; without `adminDeleteUser` every erasure keeps its identity step pending and alerts. **(b) Stores outside the database** that hold people (files, mail lists): `registerExternalErasure({ name, holds, erase })`. **(c) Audit records of your own** carry only the keys `AUDIT_DETAILS_SCHEMA` allows for their action (others are dropped and logged): add yours there, each with its kind; free text is `text`. **(d) A trajectory your code opens** is ended: wrap it in `withTrajectory`, or call `finishTrajectory` — `__tests__/lifecycle-closure-scan.test.ts` reads your sources too (its `CLOSERS` lists one that is ended elsewhere). **(e) A trajectory store of your own** may add `closeAbandoned` (the reaper skips a store without it). **(f)** `softDeleteUser` takes an optional third argument and may return `externalPending`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Trajectories, holds, unapplied approvals and children's accounts that were kept for ever now end; the identity, typed addresses and free text no longer outlive an erasure                                                                                                                                                                                                             |
+| **Release candidate — external dependency failures (TASK-197).** Migration 063 (§1 step 2). **(a) Readiness:** `instrumentation.ts` builds its probes with `buildReadinessProbes()` (`@/platform/providers/readiness-probes`) and passes its `required` and `degradedOnly` to `initObservability` — the AI provider, Google, an Upstash rate-limit store and the CA bundles are probed with the deployed credentials (optional: degraded). **(b) Coverage:** a module slot of your own declares `coverage` for each value (a probe name, `{ exempt }` with a reason, or `"local"`). **(c) Errors:** an external call that fails throws `externalFailure(service, reason, …)` (`@/platform/observability/external-failure`); `internalError` answers it `service.unavailable`. **(d) Credentials:** keep your own `docs/credential-register.json` (sync-exclude it) and run `scripts/check-credential-expiry.mjs` weekly; set `SMOKE_HEALTHY_PROBES` in your deploy smoke.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Without (a) the new probes are not registered; without (c) a refused key is a 500 with no alert                                                                                                                                                                                                                                                                                        |
 
 #### §1b example — `identityProviders` from GetUser's `identities` (TASK-176 trusted-address sync)
 

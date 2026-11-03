@@ -7,7 +7,11 @@
  */
 
 import fc from "fast-check";
-import { screenStream, type ScreenedEvent } from "@/platform/ai/screened-stream";
+import {
+  IncompleteStreamError,
+  screenStream,
+  type ScreenedEvent,
+} from "@/platform/ai/screened-stream";
 import type { AIStreamChunk } from "@/platform/ai/types";
 import { fuzzParams } from "@/__tests__/helpers/fuzz";
 
@@ -17,6 +21,8 @@ async function* chunks(parts: string[], done = true): AsyncGenerator<AIStreamChu
   for (let i = 0; i < parts.length; i++) {
     yield { text: parts[i], done: done && i === parts.length - 1 };
   }
+  // A complete stream always ends with its final chunk, even an empty one.
+  if (done && parts.length === 0) yield { text: "", done: true };
 }
 
 async function collect(it: AsyncIterable<ScreenedEvent>): Promise<ScreenedEvent[]> {
@@ -112,10 +118,39 @@ describe("screenStream", () => {
     expect(terminal(ev)).toBe("failed");
   });
 
-  it("screens and releases what is left when the source ends without a final chunk", async () => {
+  // TASK-197 (audit D-1): this test asserted the defect — a source that ended without its final
+  // chunk (the provider's stream cut off mid-answer) finished as "done", so /api/stream told the
+  // client a truncated answer was complete. What is left is still released only once screened,
+  // and the stream ends as failed.
+  it("screens and releases what is left when the source ends without a final chunk, then fails", async () => {
     const ev = await collect(screenStream(chunks(["ab"], false), allow, { window: 10 }));
     expect(released(ev)).toBe("ab");
-    expect(terminal(ev)).toBe("done");
+    expect(terminal(ev)).toBe("failed");
+    const last = ev[ev.length - 1];
+    expect(last.kind === "failed" && last.error).toBeInstanceOf(IncompleteStreamError);
+  });
+
+  it("a source that ends without a final chunk withholds unscreened text even then", async () => {
+    const ev = await collect(
+      screenStream(chunks(["xBAD"], false), noBad, { window: 10 })
+    );
+    expect(released(ev)).toBe("");
+    expect(terminal(ev)).toBe("rejected");
+  });
+
+  it("property: a stream without its final chunk never ends as done (TASK-197)", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(fc.string(), { maxLength: 20 }),
+        fc.integer({ min: 1, max: 50 }),
+        async (parts, window) => {
+          const ev = await collect(screenStream(chunks(parts, false), allow, { window }));
+          expect(ev.some((e) => e.kind === "done")).toBe(false);
+          expect(terminal(ev)).toBe("failed");
+          expect(released(ev)).toBe(parts.join(""));
+        }
+      )
+    );
   });
 
   it("property: released text never contains a banned term, however it is chunked", async () => {

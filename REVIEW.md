@@ -27,6 +27,12 @@ its tier and its security result are not trustworthy: any PR touching `.github/`
 definition, and the owner takes its tier from the base classifier run locally
 ([AI_ENGINEERING](docs/AI_ENGINEERING.md) §4.2).
 
+A PR the security review cannot fetch — GitHub answers 406 for a diff too large to serve; an
+app's auto-sync PRs are expected to hit it — fails that check and **has not been reviewed**. A
+repository admin reviews the diff by hand and, if satisfied, merges with the ruleset's admin
+bypass, which GitHub records. Nothing in the workflow stands in for that review: no label, no
+acknowledgement (TASK-197; [AI_ENGINEERING](docs/AI_ENGINEERING.md) §4.3).
+
 ## Rules
 
 1. **Evidence.** Every finding names a file and line and says what happens there. A guess from

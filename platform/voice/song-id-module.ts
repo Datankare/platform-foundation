@@ -15,6 +15,7 @@
 
 import { definePlatformModule } from "@/platform/modules/define";
 import { CachedHealthProbe } from "@/platform/observability/health";
+import { PAID_PROBE_CACHE } from "@/platform/observability/paid-api-probe";
 import { ACRCloudIdentifier, getAcrCloudConfig } from "./acrcloud-identify";
 import {
   AUDIO_CONVERTER_NEEDS,
@@ -42,6 +43,7 @@ export const SONG_ID_MODULE = definePlatformModule({
       values: ["acrcloud", "mock"],
       defaultValue: "mock",
       singletonKeys: [SONGIDPROVIDER_KEY],
+      coverage: { acrcloud: { probe: "song-identification" }, mock: "local" },
       init: (selection, { env, warn }) => {
         if (selection !== "acrcloud") {
           setSongIdProvider(new MockSongIdentifier());
@@ -88,9 +90,13 @@ export const SONG_ID_MODULE = definePlatformModule({
     {
       name: "song-identification",
       create: () =>
+        // Billed per call: the paid-probe budget and failure cache, as every paid probe
+        // (TASK-197 review round 2).
         new CachedHealthProbe(
           new SongIdHealthProbeAdapter(getSongIdProvider()),
-          SONG_ID_PROBE_TTL_MS
+          SONG_ID_PROBE_TTL_MS,
+          Date.now,
+          PAID_PROBE_CACHE
         ),
     },
   ],

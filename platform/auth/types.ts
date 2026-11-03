@@ -8,6 +8,7 @@
  */
 
 import type { ErrorCode } from "@/platform/errors/registry";
+import type { MessageValues } from "@/platform/errors/messages";
 
 /** Unique identifier for a user in the auth system */
 export type AuthUserId = string;
@@ -26,6 +27,8 @@ export interface AuthResult {
   error?: string;
   /** ADR-051: what a route returns on failure; `error` is for logs. */
   errorCode?: ErrorCode;
+  /** The code's params, when it has any (`service.unavailable`'s service — TASK-197). */
+  errorParams?: MessageValues;
   /** True if the user needs to complete MFA before access is granted */
   mfaRequired?: boolean;
   /** Session identifier for MFA challenge flow */

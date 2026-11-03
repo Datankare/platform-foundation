@@ -90,7 +90,11 @@ describe("request settings per tier", () => {
 
   it("stream on the standard tier drops temperature and turns thinking off", async () => {
     mockFetch(() =>
-      sseResponse([{ type: "message_start", message: { usage: { input_tokens: 1 } } }])
+      sseResponse([
+        { type: "message_start", message: { usage: { input_tokens: 1 } } },
+        // A complete stream ends with message_stop (TASK-197: one that does not is a failure).
+        { type: "message_stop" },
+      ])
     );
     await drain(
       new AnthropicProvider("k").stream(request("standard"), { temperature: 0.4 })
@@ -199,7 +203,11 @@ describe("response handling", () => {
   it("stream() passes thinking blocks back unmodified too", async () => {
     const thinking = { type: "thinking", thinking: "t", signature: "s" };
     mockFetch(() =>
-      sseResponse([{ type: "message_start", message: { usage: { input_tokens: 1 } } }])
+      sseResponse([
+        { type: "message_start", message: { usage: { input_tokens: 1 } } },
+        // A complete stream ends with message_stop (TASK-197: one that does not is a failure).
+        { type: "message_stop" },
+      ])
     );
     await drain(
       new AnthropicProvider("k").stream({
@@ -334,7 +342,11 @@ describe("prompt caching (opt-in)", () => {
 
   it("stream is off by default too", async () => {
     mockFetch(() =>
-      sseResponse([{ type: "message_start", message: { usage: { input_tokens: 1 } } }])
+      sseResponse([
+        { type: "message_start", message: { usage: { input_tokens: 1 } } },
+        // A complete stream ends with message_stop (TASK-197: one that does not is a failure).
+        { type: "message_stop" },
+      ])
     );
     await drain(
       new AnthropicProvider("k").stream({ ...request("standard"), system: "rules" })

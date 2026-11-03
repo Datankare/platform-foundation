@@ -18,6 +18,7 @@
  */
 
 import type { ErrorCode } from "@/platform/errors/registry";
+import type { MessageValues } from "@/platform/errors/messages";
 import type {
   AuthResult,
   AuthSession,
@@ -188,7 +189,13 @@ export interface AuthProvider {
     accessToken: AuthToken,
     password: string,
     totpCode: string | null
-  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }>;
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    errorCode?: ErrorCode;
+    /** The code's params (`service.unavailable`'s service, TASK-197). */
+    errorParams?: MessageValues;
+  }>;
 
   // ── SSO (Social Sign-In) ──────────────────────────────────────────
 

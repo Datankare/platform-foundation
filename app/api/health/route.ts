@@ -43,6 +43,7 @@ import {
   cachedHealthCheck,
   reportProbeProblems,
 } from "@/platform/observability/readiness";
+import { keepAliveForProbes } from "@/platform/observability/keep-probes-alive";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 export { deployedCommit };
@@ -84,6 +85,8 @@ export const GET = tenantRoute(async function GET() {
   }
 
   const report = await cachedHealthCheck(observability.health, HEALTH_TIMEOUT_MS);
+  // Paid checks still running finish within this request (round 2), not frozen after it.
+  keepAliveForProbes();
 
   // A registry with no probes reports healthy by definition (worstStatus of an empty list).
   // That is the same lie in a new place unless it is visible, so it is both logged and

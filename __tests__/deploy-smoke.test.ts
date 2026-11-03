@@ -61,13 +61,20 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+/** The first `pendingCalls` readiness answers are `pendingReadiness` (a probe still pending). */
+let readyCalls = 0;
+let pendingCalls = 0;
+let pendingReadiness: Record<string, unknown> = {};
+
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   const d = deployment;
   if (req.method === "GET" && req.url === "/api/health/live") {
     return send(res, d.liveStatus, { status: "live", commit: d.commit });
   }
   if (req.method === "GET" && req.url === "/api/health/ready") {
-    return send(res, d.healthStatus, { ...d.readiness, commit: d.commit });
+    readyCalls++;
+    const readiness: object = readyCalls <= pendingCalls ? pendingReadiness : d.readiness;
+    return send(res, d.healthStatus, { ...readiness, commit: d.commit });
   }
   if (req.method === "GET" && req.url === "/api/features") {
     return send(res, 200, { features: { sso_google: { available: true } } });
@@ -203,6 +210,66 @@ describe("deploy smoke (TASK-102)", () => {
     const r = await smoke({ SMOKE_BASE_URL: base });
     expect(r.out).toContain("✓ ready 200 (degraded)");
     expect(r.code).toBe(0);
+  });
+
+  it("fails a degraded instance when a probe it must have healthy is not (SMOKE_HEALTHY_PROBES, TASK-197)", async () => {
+    deployment.readiness = {
+      status: "degraded",
+      ready: true,
+      boot: "completed",
+      checks: [
+        { name: "database", status: "healthy", required: true },
+        { name: "ai-provider", status: "unhealthy", required: false },
+      ],
+    };
+    const r = await smoke({ SMOKE_BASE_URL: base, SMOKE_HEALTHY_PROBES: "ai-provider" });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("not healthy: ai-provider");
+    const missing = await smoke({
+      SMOKE_BASE_URL: base,
+      SMOKE_HEALTHY_PROBES: "google-tts",
+    });
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain("not healthy: google-tts");
+    deployment.readiness.checks[1] = {
+      name: "ai-provider",
+      status: "healthy",
+      required: false,
+    };
+    deployment.readiness.status = "ready";
+    const ok = await smoke({ SMOKE_BASE_URL: base, SMOKE_HEALTHY_PROBES: "ai-provider" });
+    expect(ok.out).toContain("✓ healthy: ai-provider");
+    expect(ok.code).toBe(0);
+  });
+
+  it("polls a required probe that is still pending, and passes once it answers healthy (TASK-197 round 1, M-1)", async () => {
+    deployment.readiness = {
+      status: "ready",
+      ready: true,
+      boot: "completed",
+      checks: [{ name: "ai-provider", status: "healthy", required: false }],
+    };
+    readyCalls = 0;
+    pendingCalls = 2;
+    pendingReadiness = {
+      status: "degraded",
+      ready: true,
+      boot: "completed",
+      checks: [{ name: "ai-provider", status: "degraded", required: false }],
+    };
+    try {
+      const r = await smoke({
+        SMOKE_BASE_URL: base,
+        SMOKE_HEALTHY_PROBES: "ai-provider",
+        SMOKE_WAIT_SECONDS: "10",
+        SMOKE_POLL_MS: "50",
+      });
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("✓ healthy: ai-provider");
+      expect(readyCalls).toBeGreaterThan(2);
+    } finally {
+      pendingCalls = 0;
+    }
   });
 
   it("refuses a 200 that does not say ready (an old or broken readiness answer)", async () => {
@@ -354,6 +421,7 @@ describe("deploy smoke (TASK-102)", () => {
       { SMOKE_BASE_URL: base, SMOKE_TRANSLATE_PATH: "process" },
       { SMOKE_BASE_URL: base, SMOKE_TRANSLATION_FIELD: "a.b" },
       { SMOKE_BASE_URL: base, SMOKE_SKIP_TRANSLATE: "true" },
+      { SMOKE_BASE_URL: base, SMOKE_HEALTHY_PROBES: "AI Provider" },
       { SMOKE_BASE_URL: base, SMOKE_SESSION_PATH: "/api/translate/session" },
       { SMOKE_BASE_URL: base, SMOKE_SESSION_PATH: "x", SMOKE_DISPATCH_PATH: "/api/d" },
       {

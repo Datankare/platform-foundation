@@ -44,6 +44,7 @@ jest.mock("@/platform/auth/audit", () => ({
 }));
 
 import { resetRateLimiter } from "@/platform/rate-limit";
+import { sanitizeAuditDetails } from "@/platform/auth/audit-details";
 import { confirmStepUp, FACTOR_CHANGING_ROUTES } from "@/platform/auth/mfa-routes";
 import { POST as setup } from "@/app/api/auth/mfa/setup/route";
 import { POST as disable } from "@/app/api/auth/mfa/disable/route";
@@ -150,9 +151,20 @@ describe.each(Object.keys(FACTOR_CHANGING_ROUTES))("%s (factor-changing)", (rout
     expect(mockRecordAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "login_failed",
-        details: expect.objectContaining({ method: "mfa_step_up" }),
+        details: expect.objectContaining({
+          method: "mfa_step_up",
+          // Why it was refused, as a sign-in records it (the provider's code).
+          code: "auth.code_invalid",
+        }),
       })
     );
+    // …and the audit writer keeps it: `code` is a key login_failed's schema allows, as a code.
+    const recorded = mockRecordAudit.mock.calls.find(
+      ([e]) => (e as { action: string }).action === "login_failed"
+    )![0] as { details: Record<string, unknown> };
+    const kept = sanitizeAuditDetails("login_failed", recorded.details);
+    expect(kept.dropped).toEqual([]);
+    expect(kept.details).toMatchObject({ code: "auth.code_invalid" });
   });
 
   it("asks the provider for proof of the token's own factor, and then makes the change", async () => {

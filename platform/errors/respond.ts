@@ -17,6 +17,7 @@
 
 import { NextResponse } from "next/server";
 import { isJsonLimitError } from "./json-limits";
+import { isExternalServiceError } from "./external-service";
 import { logger } from "@/lib/logger";
 import {
   ERROR_CODES,
@@ -101,6 +102,27 @@ export function internalError(
   if (isJsonLimitError(err)) {
     return apiError(err.code, { params: { ...err.params }, request: options.request });
   }
+  // An external dependency that failed (TASK-197, audit D-5): a refused credential, an exhausted
+  // quota, an overloaded provider — the coded 503 naming the service, never a 500 and never the
+  // provider's text. The provider recorded it (externalFailure: a metric, and an alert when a
+  // person must act). A request the provider refused as malformed stays a 500: it is ours.
+  if (isExternalServiceError(err) && err.reason !== "rejected") {
+    try {
+      logger.error(options.context ?? "External service failed", {
+        route: options.request?.nextUrl?.pathname,
+        service: err.service,
+        reason: err.reason,
+        status: err.status,
+        error: err.message,
+      });
+    } catch {
+      // Logging must not turn a 503 into an unhandled throw.
+    }
+    return apiError("service.unavailable", {
+      params: { service: err.service },
+      request: options.request,
+    });
+  }
   const requestId = newRequestId();
   try {
     logger.error(options.context ?? "Internal error", {
@@ -123,7 +145,7 @@ export function internalError(
 export interface CodedFailure {
   error?: string;
   errorCode?: ErrorCode;
-  errorParams?: Readonly<Record<string, string | number | readonly string[]>>;
+  errorParams?: ErrorParams;
 }
 
 /**

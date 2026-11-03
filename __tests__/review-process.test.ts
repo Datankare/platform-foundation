@@ -18,7 +18,17 @@
  * The per-change protocol itself is run by the AI engineer, not by CI; nothing here claims to
  * prove it ran (AI_ENGINEERING §3).
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { spawn } from "child_process";
+import { tmpdir } from "os";
+import { MODEL_REGISTRY } from "@/platform/ai/types";
 import { join } from "path";
 import { parse } from "yaml";
 
@@ -87,6 +97,8 @@ describe("REVIEW.md", () => {
     expect(text).toMatch(/names a file and line/);
     expect(text).toMatch(/summary opens with a count/);
     expect(text).toContain('"Nothing to fix."');
+    // TASK-197 round 3: a PR too large to diff is reviewed by an admin, merged by the bypass.
+    expect(text).toMatch(/has not been reviewed\*\*[\s\S]*admin\s+bypass/);
     for (const skipped of [
       "platform/modules/platform-paths.json",
       "package-lock.json",
@@ -161,19 +173,65 @@ describe("the reviewer eval set", () => {
   });
 });
 
+type Step = { uses?: string; with?: Record<string, unknown>; run?: string };
+type Job = { permissions?: Record<string, string>; steps: Step[] };
+type Workflow = {
+  on: Record<string, unknown>;
+  permissions?: unknown;
+  jobs: Record<string, Job>;
+};
+
+/** The security review's gate step, run against a scan's result (TASK-197). */
+const wf = parse(read(".github/workflows/security-review.yml")) as Workflow & {
+  jobs: { "security-review": Job & { env: Record<string, string> } };
+};
+const job = wf.jobs["security-review"];
+const gate = (job.steps.find(
+  (st) => (st as { name?: string }).name === "Open findings block"
+)?.run ?? "") as string;
+
+function bash(script: string, env: Record<string, string>) {
+  return new Promise<{ code: number | null; out: string }>((resolve) => {
+    const child = spawn("bash", ["-c", script], {
+      env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv,
+    });
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => (out += d));
+    child.stderr.on("data", (d: Buffer) => (out += d));
+    child.on("close", (code: number | null) => resolve({ code, out }));
+  });
+}
+
+/** One run of the gate after a scan that left `scanned` (and the action's `errlog`). */
+async function runGate(opts: { scanned: unknown; errlog?: string; findings?: string }) {
+  const ws = mkdtempSync(join(tmpdir(), "sr-"));
+  const summary = join(ws, "summary.md");
+  writeFileSync(join(ws, "claudecode-results.json"), JSON.stringify(opts.scanned));
+  if (opts.errlog) writeFileSync(join(ws, "claudecode-error.log"), opts.errlog);
+  const r = await bash(gate, {
+    GITHUB_WORKSPACE: ws,
+    GITHUB_STEP_SUMMARY: summary,
+    FINDINGS: opts.findings ?? "0",
+  });
+  let summaryText = "";
+  try {
+    summaryText = readFileSync(summary, "utf8");
+  } catch {
+    // No summary written.
+  }
+  return { ...r, summary: summaryText };
+}
+
+const tooLarge = {
+  error:
+    "Failed to fetch PR data: 406 Client Error: Not Acceptable for url: https://api.github.com/repos/x/y/pulls/9",
+};
+
 describe("the review workflows", () => {
   const WORKFLOWS = ["review-tier.yml", "security-review.yml"].map(
     (f) => `.github/workflows/${f}`
   );
   const ALLOWED = new Set(["contents:read", "pull-requests:write"]);
-
-  type Step = { uses?: string; with?: Record<string, unknown>; run?: string };
-  type Job = { permissions?: Record<string, string>; steps: Step[] };
-  type Workflow = {
-    on: Record<string, unknown>;
-    permissions?: unknown;
-    jobs: Record<string, Job>;
-  };
 
   it.each(WORKFLOWS)("%s exists", (file) => {
     expect(existsSync(join(ROOT, file))).toBe(true);
@@ -281,6 +339,66 @@ describe("the review workflows", () => {
       /if \[ "\$code" -eq 2 \]; then[\s\S]*tier: High \(unreadable path: classification refused\)[\s\S]*tier=High/
     );
     expect(classify).toMatch(/elif \[ "\$code" -ne 0 \]; then[\s\S]*exit 1/);
+  });
+});
+
+describe("the security review gate (TASK-197)", () => {
+  it("sets claude-model to a registry model (the action's default is not ours)", () => {
+    const action = job.steps.find((st) =>
+      st.uses?.startsWith("anthropics/claude-code-security-review@")
+    );
+    const ids = Object.values(MODEL_REGISTRY).map((m) => m.modelId);
+    expect(ids).toContain(action?.with?.["claude-model"]);
+  });
+
+  // Review round 3 (the owner's decision): no in-workflow acknowledgement of any kind.
+  it("has no acknowledgement mechanism: no label events, no label, no status or issue-events lookup", () => {
+    const text = read(".github/workflows/security-review.yml").replace(/^\s*#.*$/gm, "");
+    expect(
+      (wf as unknown as { on: { pull_request: { types: string[] } } }).on.pull_request
+        .types
+    ).toEqual(["opened", "reopened", "synchronize"]);
+    expect(text).not.toMatch(/labeled|security-review-not-reviewable|statuses|issues\//);
+    expect(job.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+  });
+
+  it("a PR too large to diff (406) fails: not reviewed, an admin reviews it and merges with the recorded bypass", async () => {
+    const r = await runGate({ scanned: tooLarge });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(
+      "::error::The action cannot fetch this PR's diff (too large). It has not been reviewed. A repository admin must review the diff manually and, if satisfied, merge using the ruleset's admin bypass (GitHub records the bypass)."
+    );
+    expect(r.out).not.toMatch(/re-run/i);
+    expect(r.summary).toContain("not reviewable by the action (406)");
+  });
+
+  it("the 406 match is anchored to the action's PR-data error (L1)", async () => {
+    const r = await runGate({
+      scanned: { error: "Claude Code not available: Failed to fetch PR data: 406 " },
+    });
+    expect(r.code).toBe(1);
+    expect(r.out).not.toContain("cannot fetch this PR's diff");
+    expect(r.out).toContain("left no readable result");
+  });
+
+  it("findings still block, and a clean scan passes", async () => {
+    const found = await runGate({
+      scanned: { findings: [{ severity: "HIGH" }] },
+      findings: "1",
+    });
+    expect(found.code).toBe(1);
+    const clean = await runGate({ scanned: { findings: [] } });
+    expect(clean.code).toBe(0);
+  });
+
+  it("surfaces the action's disabled false-positive filter as a warning", async () => {
+    const r = await runGate({
+      scanned: { findings: [] },
+      errlog: "WARNING Claude API validation failed: API validation failed: 404 model",
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("::warning::The security review's API check failed");
+    expect(r.summary).toContain("false-positive filter was disabled");
   });
 });
 

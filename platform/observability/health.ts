@@ -172,6 +172,11 @@ export class PostgresHealthProbe implements HealthProbe {
  *
  * Makes a lightweight request to verify API key validity and service availability.
  * Does NOT run an actual completion — that would be expensive and slow.
+ *
+ * @deprecated TASK-197 (audit D-2): its empty-body request answers 400 for a retired model and
+ * for an exhausted credit balance alike, and both are reported healthy. Readiness registers
+ * createAIProviderReadinessProbe (platform/ai/readiness-probe.ts) instead — the deployed key and
+ * models, max_tokens 1, cached. Kept only for consumers that construct it.
  */
 export class LLMProviderHealthProbe implements HealthProbe {
   readonly name = "llm-provider";
@@ -314,33 +319,139 @@ export class HttpHealthProbe implements HealthProbe {
  * identification bills per call) turned every health request into a paid call anyone could
  * repeat (audit X-13). Wrapped, the paid call happens at most once per interval per instance;
  * concurrent checks share one in-flight call; the reported result carries when it was taken.
+ *
+ * TASK-197 review round 1 (M-1), with `options.budgetMs`: the probe gets its own, longer budget,
+ * independent of the readiness race (3 s per probe). A check answers within the caller's timeout
+ * whatever the probe does: the cached result while a refresh runs, or — before any result —
+ * "degraded: check pending", never a timeout read as "unhealthy". `options.failureTtlMs` keeps a
+ * result that is not healthy (a timeout, no answer) only that long, so a cold start's slow call
+ * is retried soon rather than reported for the whole interval. Round 2: a check in flight longer
+ * than twice its budget is abandoned (answered degraded, never cached), and a result that took
+ * that long is not cached; the routes keep the function alive for running checks (`after()`).
  */
+/**
+ * The paid checks still running, kept per process (shared by bundle copies, ADR-032), so a route
+ * can keep its function alive until they settle (`settlePendingProbes`, called from `after()` by
+ * the readiness and health routes — TASK-197 review round 2). On a serverless platform a check
+ * left running after the response is otherwise frozen with the function, and its "timeout" on
+ * the next thaw is not the provider's.
+ */
+function pendingChecks(): Set<Promise<unknown>> {
+  const key = "platform.observability.pending-probe-checks";
+  const g = globalThis as unknown as Record<string, Set<Promise<unknown>> | undefined>;
+  return (g[key] ??= new Set());
+}
+
+/** Resolves when every paid check running now has settled (never rejects). */
+export async function settlePendingProbes(): Promise<void> {
+  await Promise.allSettled([...pendingChecks()]);
+}
+
 export class CachedHealthProbe implements HealthProbe {
   readonly name: string;
   private last: { result: HealthCheckResult; at: number } | null = null;
-  private inFlight: Promise<HealthCheckResult> | null = null;
+  private inFlight: { promise: Promise<HealthCheckResult>; startedAt: number } | null =
+    null;
 
   constructor(
     private readonly probe: HealthProbe,
     private readonly ttlMs: number,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly options: {
+      readonly budgetMs?: number;
+      readonly failureTtlMs?: number;
+    } = {}
   ) {
     if (!(ttlMs > 0)) throw new Error("CachedHealthProbe needs a positive ttlMs");
     this.name = probe.name;
   }
 
-  async check(timeoutMs?: number): Promise<HealthCheckResult> {
-    if (this.last && this.now() - this.last.at < this.ttlMs) return this.last.result;
-    if (this.inFlight) return this.inFlight;
-    this.inFlight = this.probe
-      .check(timeoutMs)
+  private fresh(): boolean {
+    if (!this.last) return false;
+    const ttl =
+      this.last.result.status === "healthy"
+        ? this.ttlMs
+        : Math.min(this.ttlMs, this.options.failureTtlMs ?? this.ttlMs);
+    return this.now() - this.last.at < ttl;
+  }
+
+  /**
+   * How long a check may stay in flight (round 2): twice its budget. Past it, it is abandoned —
+   * its answer is never cached (it was frozen, or hung) — and the next check starts afresh.
+   */
+  private maxAgeMs(): number | null {
+    return this.options.budgetMs === undefined ? null : 2 * this.options.budgetMs;
+  }
+
+  private refresh(timeoutMs?: number): Promise<HealthCheckResult> {
+    if (this.inFlight) return this.inFlight.promise;
+    const startedAt = this.now();
+    const flight = { startedAt } as {
+      promise: Promise<HealthCheckResult>;
+      startedAt: number;
+    };
+    flight.promise = this.probe
+      .check(this.options.budgetMs ?? timeoutMs)
       .then((result) => {
-        this.last = { result, at: this.now() };
+        const maxAge = this.maxAgeMs();
+        // A superseded check, or one that took longer than twice its budget (the function was
+        // frozen while it ran), answers its caller but is not cached.
+        if (
+          this.inFlight === flight &&
+          (maxAge === null || this.now() - startedAt <= maxAge)
+        ) {
+          this.last = { result, at: this.now() };
+        }
         return result;
-      })
-      .finally(() => {
-        this.inFlight = null;
       });
-    return this.inFlight;
+    const settled = flight.promise.finally(() => {
+      if (this.inFlight === flight) this.inFlight = null;
+      pendingChecks().delete(settled);
+    });
+    settled.catch(() => undefined);
+    pendingChecks().add(settled);
+    this.inFlight = flight;
+    return flight.promise;
+  }
+
+  async check(timeoutMs?: number): Promise<HealthCheckResult> {
+    if (this.last && this.fresh()) return this.last.result;
+    const maxAge = this.maxAgeMs();
+    if (
+      this.inFlight &&
+      maxAge !== null &&
+      this.now() - this.inFlight.startedAt > maxAge
+    ) {
+      // Abandoned: answered degraded — no answer is not proof of failure, and an optional
+      // probe never takes an instance out of rotation (ADR-056 D4; round 3, N4) — never cached;
+      // a new check starts.
+      this.inFlight = null;
+      this.refresh(timeoutMs).catch(() => undefined);
+      return {
+        name: this.name,
+        status: "degraded",
+        detail: `check did not finish within ${maxAge} ms`,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    const running = this.refresh(timeoutMs);
+    if (this.options.budgetMs === undefined) return running;
+    // Answer within the caller's bound (a margin under it), whatever the probe's own budget.
+    const answerWithin = Math.max(0, (timeoutMs ?? DEFAULT_TIMEOUT_MS) - 250);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pending = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), answerWithin);
+      (timer as { unref?: () => void }).unref?.();
+    });
+    const settled = await Promise.race([running, pending]);
+    clearTimeout(timer);
+    if (settled) return settled;
+    if (this.last) return this.last.result;
+    return {
+      name: this.name,
+      status: "degraded",
+      detail: "check pending: the provider has not answered yet",
+      checkedAt: new Date().toISOString(),
+    };
   }
 }

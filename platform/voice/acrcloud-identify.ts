@@ -34,6 +34,11 @@ import type {
 } from "./identify-types";
 import { MIN_CLIP_SECONDS, MAX_CLIP_SECONDS, IDENTIFY_INTENT } from "./identify-types";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
+import {
+  classifyHttpFailure,
+  externalFailure,
+  type ExternalFailureReason,
+} from "@/platform/observability/external-failure";
 import { logger, generateRequestId } from "@/lib/logger";
 
 // ── Constants ───────────────────────────────────────────────────────────
@@ -110,7 +115,7 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
     });
 
     const formData = this.buildSignedFormData(audioPayload);
-    const data = await this.sendRequest(formData, requestId);
+    const data = await this.sendRequest(formData, requestId, request);
     const latencyMs = Date.now() - start;
 
     return this.parseResponse(data, {
@@ -189,18 +194,27 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
 
   private async sendRequest(
     formData: FormData,
-    requestId: string
+    requestId: string,
+    budget: Pick<IdentifyRequest, "timeoutMs" | "signal"> = {}
   ): Promise<ACRCloudResponse> {
     try {
+      // A caller's budget (the health probe's) bounds the whole call: one attempt, no retry
+      // past it (TASK-197 review round 3, N4).
       const response = await fetchWithTimeout(`https://${this.host}/v1/identify`, {
         method: "POST",
         body: formData,
-        timeoutMs: API_TIMEOUT_MS,
-        maxRetries: 1,
+        timeoutMs: budget.timeoutMs ?? API_TIMEOUT_MS,
+        maxRetries: budget.timeoutMs === undefined ? 1 : 0,
+        ...(budget.signal ? { signal: budget.signal } : {}),
       });
 
       if (!response.ok) {
-        throw new Error(`ACRCloud HTTP error: ${response.status} ${response.statusText}`);
+        throw externalFailure(
+          "acrcloud",
+          classifyHttpFailure(response.status),
+          `ACRCloud HTTP error: ${response.status} ${response.statusText}`,
+          { status: response.status }
+        );
       }
 
       return (await response.json()) as ACRCloudResponse;
@@ -249,7 +263,14 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
     }
 
     if (data.status.code !== 0) {
-      throw new Error(`ACRCloud error: ${data.status.code} — ${data.status.msg}`);
+      // An error inside an HTTP 200 (audit D-5): a bad key or an exhausted plan must reach an
+      // operator, not end as a 500 with a log line.
+      throw externalFailure(
+        "acrcloud",
+        acrCloudFailureReason(data.status.code),
+        `ACRCloud error: ${data.status.code} — ${data.status.msg}`,
+        { providerCode: String(data.status.code) }
+      );
     }
 
     const music = data.metadata?.music?.[0];
@@ -285,6 +306,19 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
       genres: music.genres?.map((g) => g.name),
     };
   }
+}
+
+/**
+ * ACRCloud's in-body status codes (docs.acrcloud.com, "Error codes"): 3001 missing or invalid
+ * access key, 3014 invalid signature (the secret), 3003 and 3015 the plan's call or rate limit,
+ * 3000 their server; anything else (2004 an unreadable sample, 3006 bad parameters) is the
+ * request's.
+ */
+export function acrCloudFailureReason(code: number): ExternalFailureReason {
+  if (code === 3001 || code === 3014) return "credential";
+  if (code === 3003 || code === 3015) return "quota";
+  if (code === 3000) return "unavailable";
+  return "rejected";
 }
 
 // ── Configuration (TASK-042 — single source of truth) ───────────────────────

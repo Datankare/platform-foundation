@@ -23,6 +23,22 @@ name: Security review
 #     check (the default scans a PR once and would leave the first result standing).
 #   - The action installs Claude Code (npm) and its Python requirements unpinned at run time;
 #     pinning its commit does not pin those (ASSURANCE §3).
+#   - TASK-197 (the 2026-10-28 incident). The model is set: `claude-model` is the platform's
+#     standard tier (MODEL_REGISTRY in platform/ai/types.ts; scripts/check-model-ids.mjs fails a
+#     workflow model that is not a registry model) — unset, the action used its own default
+#     (claude-opus-4-1-20250805). The pinned commit also hard-codes claude-3-5-haiku-20241022, a
+#     retired model, for its API check (claudecode/claude_api_client.py:62): that check fails and
+#     the action silently turns its false-positive filter off. No input overrides it; the model
+#     check lists it as a known exception (a loud warning until its review-by date, 2026-12-31,
+#     then a failure), and the "Open findings block" step below turns the action's "Claude API
+#     validation failed" log line into a warning in the summary. Upstream: an issue is to be
+#     filed (TASK-197).
+#   - A pull request too large for GitHub to serve as a diff (406 Not Acceptable — Playform's
+#     auto-sync PRs are expected to hit it) cannot be reviewed by the action: it fetches the PR's
+#     diff itself, so it cannot be fed in parts. The check FAILS, saying so — never a silent pass,
+#     never "re-run". There is no in-workflow acknowledgement (TASK-197 review round 3, the
+#     owner's decision): a repository admin reviews the diff by hand and, if satisfied, merges with
+#     the ruleset's admin bypass, which GitHub records (docs/AI_ENGINEERING.md §4.3, REVIEW.md).
 
 on:
   pull_request:
@@ -90,6 +106,9 @@ jobs:
         uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda # main, 2026-02-11 (no release tags)
         with:
           claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The platform's standard tier (MODEL_REGISTRY.standard, platform/ai/types.ts); the model
+          # check fails when this is not a registry model (TASK-197).
+          claude-model: claude-sonnet-5-5
           comment-pr: "true"
           upload-results: "true"
           run-every-commit: "true"
@@ -101,6 +120,28 @@ jobs:
         run: |
           set -uo pipefail
           results="$GITHUB_WORKSPACE/claudecode-results.json"
+          errlog="$GITHUB_WORKSPACE/claudecode-error.log"
+          # TASK-197: the pinned action's API check uses a retired model; when it fails the action
+          # turns off its false-positive filter and says so only in its own log.
+          if [ -f "$errlog" ] && grep -q "Claude API validation failed" "$errlog"; then
+            echo "::warning::The security review's API check failed (Claude API validation failed): the action's false-positive filter was disabled, so its findings were not filtered. Known cause: the pinned action validates with a retired model (TASK-197)."
+            {
+              echo "> ⚠ The action's false-positive filter was disabled: its API check failed (\"Claude API validation failed\" — the pinned action validates with a retired model, TASK-197)."
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # TASK-197: a PR too large for GitHub to serve as a diff (406) cannot be reviewed by the
+          # action. Not a pass and not "re-run": it fails, and an admin reviews it by hand.
+          if [ -s "$results" ] && jq -e '(.error // "") | test("^Failed to fetch PR data: 406 ")' "$results" > /dev/null 2>&1; then
+            msg="The action cannot fetch this PR's diff (too large). It has not been reviewed. A repository admin must review the diff manually and, if satisfied, merge using the ruleset's admin bypass (GitHub records the bypass)."
+            echo "::error::$msg"
+            {
+              echo "## Security review: not reviewable by the action (406)"
+              echo
+              echo "$msg See docs/AI_ENGINEERING.md §4.3."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           if [ ! -s "$results" ] || ! jq -e '(.error | not) and (.findings | type == "array")' "$results" > /dev/null 2>&1; then
             echo "::error::The security review ran but left no readable result (see the job log and the security-review-results artifact). Re-run the job; nothing was reviewed."
             exit 1

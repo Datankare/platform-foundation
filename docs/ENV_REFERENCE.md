@@ -322,6 +322,31 @@ Selecting `CACHE_PROVIDER=upstash` or `RATE_LIMIT_STORE=upstash` requires the tw
 | `ERROR_REPORTER` | No            | `noop`  | `sentry` `noop`     |
 | `SENTRY_DSN`     | With `sentry` | —       | Sentry project DSN. |
 
+### Readiness probes of paid dependencies (TASK-197)
+
+`/api/health/ready` probes each paid dependency with **this deployment's** credentials, cached and
+optional (ADR-056 D4 — a failure makes readiness `degraded`, still serving, and reaches the error
+reporter when it changes): `ai-provider` (with `AI_PROVIDER` unset or `anthropic`: one
+`max_tokens` 1 call per `MODEL_REGISTRY` model, with `ANTHROPIC_API_KEY`, every 15 minutes),
+`google-translate` and `google-tts` (with `GOOGLE_API_KEY`: free list calls; `google-tts` also
+checks every voice the platform names is still offered), `rate-limit-store` (with
+`RATE_LIMIT_STORE=upstash`: one read a minute) and `certificates` (the `notAfter` of
+`DATABASE_SSL_CA` and `VALKEY_CA_CERT`: degraded within 30 days, unhealthy when expired; also an
+alert at boot). The deploy smoke's `SMOKE_HEALTHY_PROBES` (comma-separated names) fails a deploy
+whose named probes are not healthy.
+
+### Credential register (TASK-197)
+
+Nothing recorded when a credential expires. [`credential-register.json`](credential-register.json)
+lists every credential this repository holds — its workflows' secrets; an app adds its
+deployment's — by name, where it lives and when it expires (`YYYY-MM-DD`, `unknown`, or `never`
+with a reason), **never a value**. `scripts/check-credential-expiry.mjs` runs weekly
+(`credential-expiry.yml`): a date within 30 days (`CREDENTIAL_LEAD_DAYS`, a repository variable,
+overrides) or past fails the run; `unknown` warns — the owner records the date. A test requires a
+row for every secret a workflow reads. Rotation: [ROTATION_RUNBOOK](ROTATION_RUNBOOK.md). The
+model check's lead time for a retiring model is `MODEL_RETIRE_LEAD_DAYS` (a repository variable;
+default 30).
+
 ---
 
 ## Stores (persistence backends)

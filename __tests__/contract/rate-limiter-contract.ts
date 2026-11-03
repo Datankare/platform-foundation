@@ -6,7 +6,10 @@
  *   - peeking never counts;
  *   - callers and rules are counted independently;
  *   - concurrent checks never admit more than the limit;
- *   - requests age out of the window; reset forgets a caller.
+ *   - requests age out of the window; reset forgets a caller;
+ *   - a store that answers wrongly fails closed (TASK-197, audit D-7): an error where a count
+ *     should be — an Upstash `{ error }` item inside an HTTP 200 — throws (enforceRateLimit then
+ *     refuses with 503), never admits. A store with such a failure mode supplies it.
  */
 
 import type { RateLimiter, RateLimitRule } from "@/platform/rate-limit";
@@ -19,6 +22,11 @@ export interface RateLimiterContractFixtures {
    * move: the ageing-out test then uses a one-second window and waits it out.
    */
   databaseClock?: boolean;
+  /**
+   * Limiters whose store answers wrongly in the ways this store can (named), each fresh: every
+   * check and peek must throw — fail closed — never admit or report room.
+   */
+  brokenStores?: Readonly<Record<string, () => RateLimiter | Promise<RateLimiter>>>;
 }
 
 const RULE: RateLimitRule = { id: "kit:rule", maxRequests: 3, windowSeconds: 60 };
@@ -111,4 +119,12 @@ export function runRateLimiterContract(fx: RateLimiterContractFixtures): void {
       remaining: 2,
     });
   });
+
+  for (const [failure, make] of Object.entries(fx.brokenStores ?? {})) {
+    it(`fails closed when the store answers wrongly: ${failure}`, async () => {
+      const broken = await make();
+      await expect(broken.check("ip:broken", RULE)).rejects.toThrow();
+      await expect(broken.peek("ip:broken", RULE)).rejects.toThrow();
+    });
+  }
 }

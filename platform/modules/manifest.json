@@ -70,6 +70,7 @@
         "platform/voice/README.md",
         "platform/voice/chunker.ts",
         "platform/voice/google-stt.ts",
+        "platform/voice/google-tts-health.ts",
         "platform/voice/google-tts.ts",
         "platform/voice/health-probe.ts",
         "platform/voice/index.ts",
@@ -84,6 +85,7 @@
       "routes": [],
       "components": [],
       "tests": [
+        "__tests__/google-readiness-probes.test.ts",
         "__tests__/google-stt-contract.test.ts",
         "__tests__/google-tts-contract.test.ts",
         "__tests__/modules/voice.module.test.ts",
@@ -117,6 +119,7 @@
       "routes": [],
       "components": [],
       "tests": [
+        "__tests__/acrcloud-failure.test.ts",
         "__tests__/acrcloud-identify-contract.test.ts",
         "__tests__/modules/song-id.module.test.ts",
         "__tests__/song-id-provider.test.ts",

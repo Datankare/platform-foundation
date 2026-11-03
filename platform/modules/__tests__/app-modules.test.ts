@@ -160,9 +160,12 @@ describe("PF's app modules", () => {
     });
   });
 
-  it("registers the song-identification health probe", async () => {
+  it("registers the modules' health probes: the Google key and voices, song identification", async () => {
     const { createModuleHealthProbes } = await import("@/platform/modules/contributions");
+    // TASK-197 (audit D-2): translation and voice probe the deployed Google key.
     expect(createModuleHealthProbes().map((p) => p.name)).toEqual([
+      "google-translate",
+      "google-tts",
       "song-identification",
     ]);
   });
