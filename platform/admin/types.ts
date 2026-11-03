@@ -24,6 +24,7 @@
  * @module platform/admin
  */
 
+import type { ErrorCode } from "@/platform/errors/registry";
 import type { Step, StepBoundary } from "@/platform/agents/types";
 
 // ---------------------------------------------------------------------------
@@ -104,10 +105,28 @@ export type ConfigScope = "platform" | "tenant";
 // Config validation
 // ---------------------------------------------------------------------------
 
-/** Result of validating a proposed config value */
+/**
+ * Why a value is refused, structured (TASK-194 round 14, item 2): what the screens say, through
+ * `admin.config_invalid_value` and its message's select. `errors` stays the English, for logs.
+ */
+export interface ConfigValueRefusal {
+  readonly reason:
+    "type" | "below_min" | "above_max" | "not_allowed" | "not_serializable" | "too_large";
+  /** For below_min. */
+  readonly min?: number;
+  /** For above_max (the maximum value), and too_large (the maximum bytes). */
+  readonly max?: number;
+  /** For type: the setting's type (number, boolean, string, string_enum, json_array). */
+  readonly expected?: string;
+  /** For not_allowed, and type with expected string_enum: the values it takes (round 15, I-8). */
+  readonly allowed?: readonly string[];
+}
+
 export interface ConfigValidationResult {
   readonly valid: boolean;
   readonly errors: readonly string[];
+  /** When not valid: the first reason, structured (round 14). */
+  readonly refusal?: ConfigValueRefusal;
   /** When valid: the value as the setting's type (a form's "50" as 50, "true" as true). */
   readonly value?: unknown;
 }
@@ -306,6 +325,12 @@ export interface ConfigToolResult {
   };
   /** Duration of this tool call in ms */
   readonly durationMs: number;
+  /**
+   * A failure's registry code and params (TASK-194 round 13, I-C): what the config route answers.
+   * A failure without one is answered `admin.action_failed`, its text logged.
+   */
+  readonly errorCode?: ErrorCode;
+  readonly errorParams?: Readonly<Record<string, string | number | readonly string[]>>;
 }
 
 /**

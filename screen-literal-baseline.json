@@ -1,4 +1,6 @@
 {
   "_comment": "ADR-051 / TASK-110 screen-literal ratchet for this repository: user-visible English literals left in screens. Lower it in the commit that moves strings to messages/; Sprint 7B takes it to 0. Per repository \u2014 not synced.",
-  "count": 284
+  "count": 312,
+  "_round13": "TASK-194 round 13 (nit 6): the scan counts a sentence given to a state setter too (31 found, all older than this round but the dual-control panel's, which moved to the catalog with its 7 JSX literals): 284 - 7 + 31 = 308.",
+  "_round14": "TASK-194 round 14 (item 7): the scan walks every literal inside a setter's argument (ternary branches, updaters, object fields; t()/renderMessage() skipped). It found 4 more, all present at the base 9dff0ab (app/admin/page.tsx 'Decision recorded', components/admin/HeldActionsPanel.tsx 'Network error', components/auth/AgeGate.tsx x2): 308 + 4 = 312. Residual R-75."
 }

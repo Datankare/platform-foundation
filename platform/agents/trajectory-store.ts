@@ -332,6 +332,35 @@ export class InMemoryTrajectoryStore implements TrajectoryStore {
     return updated;
   }
 
+  /**
+   * Whether `operationId`'s run recorded its commitment step in `trajectoryId`'s chain, and the
+   * chain's trigger — what the in-memory recovery reads, as the database one does
+   * (RecoveryTrajectories.recordedRun; TASK-194 round 17). Each segment met once (review 12 L6).
+   */
+  recordedRun(
+    trajectoryId: string,
+    operationId: string
+  ): { readonly recorded: boolean; readonly trigger?: string } {
+    const current = this.parts.current().get(trajectoryId);
+    if (!current) return { recorded: false };
+    const records = this.parts.current();
+    const links = this.next.current();
+    const seen = new Set<string>();
+    let at: TrajectoryRecord | undefined = this.rootOf(current);
+    while (at && !seen.has(at.trajectory.trajectoryId)) {
+      seen.add(at.trajectory.trajectoryId);
+      if (
+        at.trajectory.steps.some(
+          (s) => s.operationId === operationId && s.boundary === "commitment"
+        )
+      )
+        return { recorded: true, trigger: current.trigger };
+      const nextId = links.get(at.trajectory.trajectoryId);
+      at = nextId ? records.get(nextId) : undefined;
+    }
+    return { recorded: false, trigger: current.trigger };
+  }
+
   async getById(trajectoryId: string): Promise<TrajectoryRecord | undefined> {
     return this.parts.current().get(trajectoryId);
   }

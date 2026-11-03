@@ -123,7 +123,7 @@ export function internalError(
 export interface CodedFailure {
   error?: string;
   errorCode?: ErrorCode;
-  errorParams?: Readonly<Record<string, string | number>>;
+  errorParams?: Readonly<Record<string, string | number | readonly string[]>>;
 }
 
 /**

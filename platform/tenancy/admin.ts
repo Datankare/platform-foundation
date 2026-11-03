@@ -24,6 +24,8 @@ import { DEFAULT_USER_ROLE } from "@/platform/auth/user-provisioning";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
 import { withOwnerSnapshot, withOwnerTx } from "@/platform/data";
 import { isTenantId } from "@/platform/providers/environment-contract";
+import { assignUserRole } from "@/platform/auth/role-assignment";
+import type { RoleRefusal, VerifiedAdmin } from "@/platform/auth/role-governance";
 import { peekTenant } from "./context";
 import { TENANT_PURGE_AFTER_DAYS } from "./postgres-directory";
 import {
@@ -37,11 +39,18 @@ import {
   type TenantRecord,
   type TenantStatus,
 } from "./directory";
+import { sameId } from "@/platform/auth/same-id";
 
 /** The verified operator acting. */
 export interface Operator {
   /** users.id of the operator — recorded as the actor. */
   readonly userId: string;
+  /**
+   * The verified operator (operator-http operatorOf), for the actions that apply the role rules
+   * to them — making a tenant's administrator (TASK-194, audit C-5). An action that needs it
+   * refuses without it.
+   */
+  readonly admin?: VerifiedAdmin;
 }
 
 /** A platform process acting on its own schedule (a job), named in the audit record. */
@@ -61,11 +70,19 @@ export type OperatorFailure =
   | "tenant.request_not_found"
   | "tenant.self_approval"
   | "tenant.user_not_found"
+  /** A role rule refused the change (the result carries the rule's refusal). */
+  | "tenant.role_refused"
   | "audit.unavailable";
 
 export type OperatorResult<T> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly code: OperatorFailure; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly code: OperatorFailure;
+      readonly message: string;
+      /** For tenant.role_refused: the role rule's coded refusal. */
+      readonly refusal?: RoleRefusal;
+    };
 
 const ok = <T>(value: T): OperatorResult<T> => ({ ok: true, value });
 const fail = <T>(code: OperatorFailure, message: string): OperatorResult<T> => ({
@@ -112,7 +129,7 @@ async function recorded<T>(
 }
 
 function ownTenant(tenantId: string): boolean {
-  return peekTenant()?.tenantId === tenantId;
+  return sameId(peekTenant()?.tenantId, tenantId);
 }
 
 interface TenantRow {
@@ -554,7 +571,7 @@ export async function decideTenantDeletion(
             "The request has expired."
           );
         }
-        if (approve && r.requested_by === operator.userId) {
+        if (approve && sameId(r.requested_by, operator.userId)) {
           return fail<DeletionRequest>(
             "tenant.self_approval",
             "A different operator must approve a deletion you requested."
@@ -761,11 +778,9 @@ export async function exportTenantData(
 
 // ── The first administrator ───────────────────────────────────────────
 
-interface PromotionRow {
-  live: number;
-  verified: number;
-  id: string | null;
-  cognito_sub: string | null;
+interface CandidateRow {
+  id: string;
+  email_verified: boolean;
 }
 
 /**
@@ -773,8 +788,14 @@ interface PromotionRow {
  * admin. The user must already exist in that tenant (signed up at one of its addresses), and be
  * the one live account with that address: not deleted, its email verified (users.email_verified,
  * recorded from the identity provider when the account was created). Exactly one such account
- * is promoted, or none: one statement counts the candidates and updates only when there is
- * exactly one, so an address shared by two accounts never makes both administrators.
+ * is promoted, or none: the candidates are locked and counted first, so an address shared by two
+ * accounts never makes both administrators.
+ *
+ * The role rules apply, to the operator (TASK-194, audit C-5): the change goes through the one
+ * role writer (platform/auth/role-assignment.ts assignUserRole) — never the operator's own
+ * account, never a protected role's (a super_admin is not demoted by being "made admin": that
+ * role changes in the database only, ADR-013), and only with every permission of both roles.
+ * Before, this set role_id = 'admin' on the owner connection with no rule at all.
  *
  * Emails are not unique per tenant in the schema: nothing at sign-up stops two identities of one
  * tenant from carrying the same address, so a unique index on (tenant_id, lower(email)) could
@@ -790,6 +811,14 @@ export async function makeTenantAdmin(
     return fail("tenant.invalid", "Give the user's email address.");
   }
   if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
+  const actor = operator.admin;
+  if (!actor) {
+    // Fail closed: the rules cannot be applied to an operator not verified here.
+    return fail(
+      "tenant.invalid",
+      "The operator could not be verified for a role change."
+    );
+  }
   // The record names the account, never the address typed (TASK-193, audit A-3): it is written
   // in the operator's tenant, which the account's erasure reaches by its id, and an address typed
   // by mistake is no one's to keep. Read first; the promotion below counts again under its lock
@@ -811,51 +840,55 @@ export async function makeTenantAdmin(
     { tenantId, found: candidates.length, ...(recordedId ? { userId: recordedId } : {}) },
     async () => {
       const result = await withOwnerTx("tenant-lifecycle", async (tx) => {
-        const { rows } = await tx.query<PromotionRow>(
-          `with candidates as (
-           select id, email_verified from users
+        const { rows } = await tx.query<CandidateRow>(
+          `select id, email_verified from users
             where tenant_id = $1::uuid and lower(email) = $2 and deleted_at is null
-            for update
-         ),
-         tally as (
-           select count(*)::int as live,
-                  count(*) filter (where email_verified)::int as verified
-             from candidates
-         ),
-         promoted as (
-           update users u set role_id = (select r.id from roles r where r.name = 'admin')
-             from tally
-            where tally.live = 1 and tally.verified = 1
-              and u.tenant_id = $1::uuid
-              and u.id in (select c.id from candidates c)
-              and u.id = $3::uuid
-           returning u.id, u.cognito_sub
-         )
-         select tally.live, tally.verified, p.id, p.cognito_sub
-           from tally left join promoted p on true`,
-          [tenantId, address, recordedId]
+            for update`,
+          [tenantId, address]
         );
-        const r = rows[0];
-        if (!r || r.live === 0) {
+        if (rows.length === 0) {
           return fail<{ userId: string }>(
             "tenant.user_not_found",
             "No user with that email in this tenant; they must sign up at one of its addresses first."
           );
         }
-        if (r.live > 1) {
+        if (rows.length > 1) {
           return fail<{ userId: string }>(
             "tenant.state_conflict",
             "More than one account in this tenant has that email; none was made administrator."
           );
         }
-        if (!r.id) {
+        if (!rows[0].email_verified) {
           return fail<{ userId: string }>(
             "tenant.state_conflict",
             "That account has not verified its email; it was not made administrator."
           );
         }
-        promotedSub = r.cognito_sub;
-        return ok({ userId: r.id });
+        // Only the account recorded (TASK-193, audit A-3): one that replaced it since is not
+        // the account the record names.
+        if (!sameId(rows[0].id, recordedId)) {
+          return fail<{ userId: string }>(
+            "tenant.state_conflict",
+            "The account with that email changed while this ran; it was not made administrator."
+          );
+        }
+        const assigned = await assignUserRole(tx, actor, rows[0].id, { name: "admin" });
+        if (assigned.kind === "refused") {
+          return {
+            ok: false as const,
+            code: "tenant.role_refused" as const,
+            message: "A role rule refused making this account administrator.",
+            refusal: assigned.refusal,
+          };
+        }
+        if (assigned.kind === "not_found" || assigned.kind === "stale") {
+          return fail<{ userId: string }>(
+            "tenant.state_conflict",
+            "The account or the administrator role changed; it was not made administrator."
+          );
+        }
+        promotedSub = assigned.target.cognitoSub;
+        return ok({ userId: assigned.target.id });
       });
       if (promotedSub) await invalidatePermissions(promotedSub);
       return result;

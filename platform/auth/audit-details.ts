@@ -26,6 +26,10 @@
  */
 
 import type { AuditAction } from "@/platform/auth/audit-actions";
+import {
+  APP_AUDIT_DETAIL_KINDS,
+  APP_AUDIT_DETAILS_SCHEMA,
+} from "@/platform/auth/app-audit-details";
 
 export type DetailKind =
   /** An id: a users.id, a record's id, an operation's. */
@@ -43,8 +47,14 @@ export type DetailKind =
   /** Free text a person wrote: bounded, and erased with the account it is about. */
   | "text";
 
-/** Every key an audit record's details may carry, and its kind. */
-export const AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> = {
+/** Per action, the keys its details may carry. */
+export type DetailsSchema = Readonly<Record<string, readonly string[]>>;
+
+/** The kinds an app's own key may have (platform/auth/app-audit-details.ts): never free text. */
+export type AppDetailKind = Exclude<DetailKind, "text">;
+
+/** Every key the platform's audit records may carry, and its kind. */
+export const PLATFORM_AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> = {
   // The writer's own (COMMON_DETAIL_KEYS).
   type: "code",
   outcome: "code",
@@ -67,6 +77,13 @@ export const AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> = {
   method: "code",
   code: "code",
   factor: "code",
+  // A step-up (TASK-194, audit C-3): what it was for, how it was proved, a factor replaced.
+  purpose: "code",
+  stepUp: "code",
+  replaced: "boolean",
+  // An erasure's listed reason (PURGE_REASONS: a code, kept — rebase P-2; `reason` is free text,
+  // erased with the account, and an erasure's records are about the account erased).
+  purgeReason: "code",
   field: "code",
   fields: "list",
   from: "value",
@@ -126,6 +143,7 @@ export const AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> = {
   previous: "value",
   policy: "value",
   rules: "value",
+  default_approver: "code",
   changes: "value",
   // Jobs and the operator console.
   kind: "code",
@@ -182,16 +200,16 @@ export const COMMON_DETAIL_KEYS: readonly string[] = [
  * Per action — for admin_action and the other actions that carry a `type`, per
  * `<action>:<type>` — the keys its details may carry beside COMMON_DETAIL_KEYS.
  */
-export const AUDIT_DETAILS_SCHEMA: Readonly<Record<string, readonly string[]>> = {
+export const PLATFORM_AUDIT_DETAILS_SCHEMA: DetailsSchema = {
   account_created: ["role", "via", "banCarriedOver"],
   account_deleted: ["phase", "moduleCount", "trigger", "by"],
-  gdpr_purge_executed: ["phase", "trigger"],
-  gdpr_purge_dry_run: [],
+  gdpr_purge_executed: ["phase", "trigger", "purgeReason"],
+  gdpr_purge_dry_run: ["purgeReason"],
   login_success: ["method"],
-  login_failed: ["method", "code"],
+  login_failed: ["method", "code", "purpose"],
   logout: [],
-  mfa_enabled: ["factor"],
-  mfa_disabled: ["factor"],
+  mfa_enabled: ["factor", "replaced"],
+  mfa_disabled: ["factor", "stepUp"],
   data_exported: ["moduleCount"],
   device_registered: ["deviceId", "deviceName"],
   device_removed: ["deviceId"],
@@ -238,6 +256,11 @@ export const AUDIT_DETAILS_SCHEMA: Readonly<Record<string, readonly string[]>> =
     "requiredPermission",
     "authority",
     "label",
+    // Round 6, P-2: the decider's note (text, erased with the account it is about) and who had
+    // approved the hold before this decision (an id) — for a withdrawal, a re-approval or a
+    // run marked executed, whose approver is otherwise only on the hold.
+    "note",
+    "approvedBy",
   ],
   "admin_action:approval_run_recovered": [
     "label",
@@ -248,6 +271,8 @@ export const AUDIT_DETAILS_SCHEMA: Readonly<Record<string, readonly string[]>> =
   ],
   "admin_action:approval_apply_recovered": ["source", "key", "status"],
   "admin_action:approved_run_failed": ["tool", "approvalKept"],
+  // Round 17: a run whose write lost its commit — it may stand; its claim is kept.
+  "admin_action:approved_run_indeterminate": ["tool"],
   "admin_action:approval_run_conflict": ["tool"],
   "admin_action:action_applied_not_recorded": ["tool"],
   "admin_action:assign_permissions": ["role_name", "added", "removed"],
@@ -311,7 +336,11 @@ export const AUDIT_DETAILS_SCHEMA: Readonly<Record<string, readonly string[]>> =
     "trajectoryId",
     "guardianDecisionId",
   ],
-  "admin_action:set_approval_policy": ["rules"],
+  "admin_action:set_approval_policy": ["rules", "default_approver"],
+  // An erasure asked for and held (TASK-194, audit C-6): a refusal's code, the listed reason.
+  "admin_action:gdpr_purge_requested": ["code", "purgeReason"],
+  // A review-queue submission, recorded naming its moderator (TASK-194, audit C-9).
+  "admin_action:review_submitted": ["source", "requestId"],
   "admin_action:power_reduction_applied": ["key", "changes"],
   "admin_action:job_run_now": [
     "kind",
@@ -357,6 +386,21 @@ export const AUDIT_DETAILS_SCHEMA: Readonly<Record<string, readonly string[]>> =
     "store",
     "note",
   ],
+};
+
+/**
+ * Every key an audit record's details may carry, and its kind: the platform's, and the app's own
+ * (platform/auth/app-audit-details.ts — never redefining one of the platform's).
+ */
+export const AUDIT_DETAIL_KINDS: Readonly<Record<string, DetailKind>> = {
+  ...PLATFORM_AUDIT_DETAIL_KINDS,
+  ...APP_AUDIT_DETAIL_KINDS,
+};
+
+/** The keys each action (admin_action: each type) may carry: the platform's and the app's. */
+export const AUDIT_DETAILS_SCHEMA: DetailsSchema = {
+  ...PLATFORM_AUDIT_DETAILS_SCHEMA,
+  ...APP_AUDIT_DETAILS_SCHEMA,
 };
 
 /** The keys of free text a person wrote: erased with the account the record is about. */

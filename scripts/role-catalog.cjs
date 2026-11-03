@@ -196,7 +196,8 @@ function applyStatement(catalog, stmt, file) {
   }
 
   // role_permissions: the baseline's (id, role_id, permission_id, ...) VALUES rows, or a
-  // migration's SELECT r.id, p.id ... WHERE r.name = 'x' AND p.code IN ('a', ...).
+  // migration's SELECT r.id, p.id ... WHERE r.name = 'x' AND p.code IN ('a', ...) [AND NOT
+  // EXISTS (… applied_migrations …)] (061's re-run guard: false on the replay's one run).
   if (/^values\b/i.test(rest)) {
     const roleCol = columns.indexOf("role_id");
     const permCol = columns.indexOf("permission_id");
@@ -210,8 +211,22 @@ function applyStatement(catalog, stmt, file) {
     }
     return;
   }
+  // Every role that exists then (TASK-194, 061): SELECT r.id, p.id FROM roles r, permissions p
+  // WHERE p.code IN ('a', ...) [AND NOT EXISTS (… applied_migrations …)] — the guard that makes a
+  // re-run grant nothing is false on the replay's one run, so the grant applies.
+  const toAll = rest.match(
+    /^select\s+r\.id\s*,\s*p\.id\s+from\s+(?:public\.)?roles\s+r\s*,\s*(?:public\.)?permissions\s+p\s+where\s+p\.code\s+in\s*\(([^)]*)\)\s*(?:and\s+not\s+exists\s*\(\s*select\s+1\s+from\s+(?:public\.)?applied_migrations\s+where\s+filename\s*=\s*'[^']+'\s*\)\s*)?(?:on\s+conflict[\s\S]*)?$/i
+  );
+  if (toAll) {
+    for (const perms of catalog.roles.values()) {
+      for (const code of quoted(toAll[1])) {
+        if (catalog.permissions.has(code)) perms.add(code);
+      }
+    }
+    return;
+  }
   const grant = rest.match(
-    /^select\s+r\.id\s*,\s*p\.id\s+from\s+(?:public\.)?roles\s+r\s*,\s*(?:public\.)?permissions\s+p\s+where\s+r\.name\s*=\s*'([^']+)'\s+and\s+p\.code\s+in\s*\(([^)]*)\)\s*(?:on\s+conflict[\s\S]*)?$/i
+    /^select\s+r\.id\s*,\s*p\.id\s+from\s+(?:public\.)?roles\s+r\s*,\s*(?:public\.)?permissions\s+p\s+where\s+r\.name\s*=\s*'([^']+)'\s+and\s+p\.code\s+in\s*\(([^)]*)\)\s*(?:and\s+not\s+exists\s*\(\s*select\s+1\s+from\s+(?:public\.)?applied_migrations\s+where\s+filename\s*=\s*'[^']+'\s*\)\s*)?(?:on\s+conflict[\s\S]*)?$/i
   );
   if (!grant) throw new Error(`${file}: unsupported grant form: ${stmt.slice(0, 160)}`);
   const role = grant[1];

@@ -140,6 +140,11 @@ export function createBrowserAuthProvider(): AuthProvider {
       }),
 
     disableMfa: async (_accessToken: AuthToken) => notFromTheBrowser("disableMfa"),
+    confirmCurrentFactor: async (
+      _accessToken: AuthToken,
+      _password: string,
+      _code: string | null
+    ) => notFromTheBrowser("confirmCurrentFactor"),
 
     // ── SSO ──
     // The browser starts SSO by navigating to /api/auth/sso/<provider> (the server keeps state

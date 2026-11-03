@@ -45,6 +45,15 @@ export interface JobSchedule {
    * job off for their tenant. Read in the tenant's context before each scheduled run.
    */
   readonly tenantOptOutKey?: string;
+  /**
+   * Cannot be turned off (TASK-194 round 18): the scheduler ignores its `enabled` setting, and
+   * every config write refuses to set it off or for one tenant (round 19: `jobs.schedule_required`,
+   * platform/jobs/required-schedule.ts). For a duty nothing else does —
+   * config.expire-approvals settles approvals whose outcome is being checked and lists undecided
+   * runs for a person. Its interval stays an operator's (bounded). It has no `tenantOptOutKey`
+   * (defineJob refuses one).
+   */
+  readonly required?: boolean;
 }
 
 /** Retry timing: exponential from baseMs, capped at maxMs, with jitter (./backoff.ts). */

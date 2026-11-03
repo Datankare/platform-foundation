@@ -9,13 +9,12 @@
  *   approveHeldAction() records a decision and returns the trajectory to running
  *
  * THE APPROVER IS AN IDENTITY, NOT A HUMAN-ONLY FLAG. HeldAction.approver is an
- * AgentIdentity whose actorType is "user" | "agent" | "system". Today approvalPolicy
- * returns "user" for everything — human review, the P10 default. That is a POLICY choice
- * living in one function, NOT a property welded into the contract: moving a class of action
- * to agent approval later is a change to this function (and, in Sprint 3c, to an
- * admin-governed policy store), never a change to the envelope. The seam is deliberate so
- * the agent-approver path stays reachable as the system earns trust (recorded in the
- * ADR-030 amendment of 2026-08-15 so a future planner finds it where they look — GOTCHA-70).
+ * AgentIdentity whose actorType is "user" | "agent" | "system", so moving a class of action to
+ * agent approval is a policy change, never an envelope change (ADR-030, 2026-08-15). But a
+ * restricted action — by risk or by effect — is always a person's ("restricted ⇒ person",
+ * ADR-030/ADR-040 addendum, TASK-194): no rule or default changes it. While GATING_THRESHOLD is
+ * "restricted" every held action is restricted, so the admin-governed policy decides no current
+ * hold; it decides only for actions below restricted, in an app that lowers the threshold.
  *
  * approveHeldAction is type-agnostic on WHO decides: it takes a decidedBy actor id and does
  * not care whether that id is a human or an agent. The commit path was already type-blind;
@@ -50,14 +49,15 @@ import {
   resolveApprover,
   type ApprovalPolicy,
 } from "./approval-policy-store";
+import { sameId } from "@/platform/auth/same-id";
 
 /**
  * Which actor type may approve a held action of this risk/effects.
  *
- * DEFAULT: human review for everything (returns actorType "user"). This is the P10
- * default and the ONLY policy Sprint 3b ships. Sprint 3c makes it admin-governed and
- * per-action-class; the agent-approver path (returning actorType "agent") is reachable
- * without touching HeldAction, because actorType "agent" was always a legal value.
+ * A restricted action (risk or effect) is a person's ("user"), whatever `policy` says
+ * (resolveApprover; "restricted ⇒ person", ADR-030/ADR-040 addendum). Below restricted the policy's
+ * rules decide, else its default (a person: the stores take no other). With no policy given, the
+ * default policy: a person for everything (P10).
  *
  * The role/id are left generic here: the concrete approver identity (which human, which
  * admin role) is a consumer/Playform-A concern. What PF-B fixes is the TYPE required.
@@ -277,8 +277,11 @@ export async function withdrawHeldAction(
 }
 
 export interface ResolveUndecidedArgs extends ApproveHeldActionArgs {
-  /** `executed`: verified that the run took effect; `approved`: verified that it did not. */
-  readonly resolution: "executed" | "approved";
+  /**
+   * `executed`: verified that the run took effect; `approved`: verified that it did not, and run
+   * again; `rejected`: verified that it did not, and withdrawn without running (round 6).
+   */
+  readonly resolution: "executed" | "approved" | "rejected";
 }
 
 /**
@@ -286,9 +289,10 @@ export interface ResolveUndecidedArgs extends ApproveHeldActionArgs {
  * review 11 H-1), for a workflow (TASK-170): `approved` — it did not take effect and is approved
  * again: the workflow waits in `awaiting_retry`, and the caller then runs it with
  * resumeApprovedAction (once); `executed` — it took effect, but its output was never recorded, so
- * the workflow cannot continue past it: it ends (`failed`, the decision recorded). Returns the
- * resolved record, or undefined when the run was not undecided. The caller checks who may decide
- * and audits it.
+ * the workflow cannot continue past it: it ends (`failed`, the decision recorded); `rejected` — it
+ * did not take effect and is withdrawn, never run: the workflow ends the same way (TASK-194 round
+ * 6). Returns the resolved record, or undefined when the run was not undecided. The caller checks
+ * who may decide and audits it.
  */
 export async function resolveUndecidedHeldAction(
   args: ResolveUndecidedArgs
@@ -299,7 +303,9 @@ export async function resolveUndecidedHeldAction(
     args.note?.trim() ||
     (args.resolution === "executed"
       ? "verified as applied"
-      : "approved again: verified that its run did not take effect");
+      : args.resolution === "rejected"
+        ? "verified that its run did not take effect"
+        : "approved again: verified that its run did not take effect");
   const done = await proposalStore.resolveIndeterminate(
     args.proposalId,
     args.resolution,
@@ -307,7 +313,7 @@ export async function resolveUndecidedHeldAction(
     note
   );
   if (!done) return undefined;
-  if (args.resolution === "executed") {
+  if (args.resolution !== "approved") {
     await endHeldTrajectory(trajectoryStore, done);
   } else {
     // Only from indeterminate — or paused, a waiting state (TASK-193: it was left paused as if
@@ -332,7 +338,7 @@ export async function resolveUndecidedHeldAction(
 export function principalOf(actor: AgentIdentity): string | undefined {
   if (actor.actorType === "user") return actor.actorId || undefined;
   if (actor.actorType !== "agent" || !actor.onBehalfOf) return undefined;
-  if (actor.delegation && actor.delegation.onBehalfOf !== actor.onBehalfOf)
+  if (actor.delegation && !sameId(actor.delegation.onBehalfOf, actor.onBehalfOf))
     return undefined;
   return actor.onBehalfOf;
 }
@@ -373,7 +379,7 @@ export function heldActionRefusal(
   policy: ApprovalPolicy = DEFAULT_APPROVAL_POLICY
 ): HeldActionRefusal | null {
   const owner = proposal ? principalOf(proposal.actor) : undefined;
-  if (!proposal || owner === undefined || owner !== principalOf(decider)) {
+  if (!proposal || owner === undefined || !sameId(owner, principalOf(decider))) {
     return "not_found";
   }
   if (proposal.status !== "proposed") return "not_open";
@@ -383,13 +389,13 @@ export function heldActionRefusal(
   if (
     proposer.actorType !== "user" &&
     decider.actorType === proposer.actorType &&
-    decider.actorId === proposer.actorId
+    sameId(decider.actorId, proposer.actorId)
   ) {
     return "self_approval";
   }
   // Independence is shown by session: the provider must report one (TokenPayload.sessionId).
   if (!proposer.sessionId || !decider.sessionId) return "approver_not_allowed";
-  if (decider.sessionId === proposer.sessionId) return "self_approval";
+  if (sameId(decider.sessionId, proposer.sessionId)) return "self_approval";
   const required = approvalPolicy(proposal.effectiveRisk, proposal.effects, policy);
   return decider.actorType === required.actorType ? null : "approver_not_allowed";
 }

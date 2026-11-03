@@ -71,6 +71,8 @@ jest.mock("@/platform/auth/platform-config", () => ({
 }));
 jest.mock("@/platform/admin/config-handlers", () => ({
   runApprovedConfigChange: jest.fn(),
+  codedConfigFailure: jest.requireActual("@/platform/admin/config-handlers")
+    .codedConfigFailure,
 }));
 
 import { NextRequest } from "next/server";
@@ -195,6 +197,26 @@ describe("an approved held config change is applied on its approval", () => {
       expect(body).not.toContain("governs the platform");
     }
   );
+
+  // Round 14, item 1: why it did not apply, when the run said — its own code, never run_failed
+  // (the code was dropped: a change already waiting read as "try again").
+  it.each([
+    ["approvals.already_pending", { key: "k" }, 409],
+    ["service.unavailable", { service: "audit" }, 503],
+  ])("answers the run's own %s at its status", async (code, params, status) => {
+    tool({
+      applied: false,
+      requiresApproval: true,
+      approvalError: "A pending approval already exists (row 7)",
+      errorCode: code,
+      errorParams: params,
+    });
+    const res = await approveRuntime();
+    expect(res.status).toBe(status);
+    const text = await res.text();
+    expect(JSON.parse(text).code).toBe(code);
+    expect(text).not.toContain("row 7");
+  });
 
   it("a hold no authority owns is not decided here — an agent's step is its owner's (B-10)", async () => {
     mockStore.mockReturnValue({
@@ -458,4 +480,164 @@ describe("every decision is recorded first (release review, Sprint 7X)", () => {
     expect(res.status).toBe(503);
     expect(mockApproveHeld).not.toHaveBeenCalled();
   });
+});
+
+// TASK-194, audit C-2: the change's own rules are evaluated for the approver on every decision
+// that makes it take effect or declares it done — approve, reapprove, mark_executed — and not on
+// a rejection, which changes nothing.
+describe("the change's own rules bind the approver on every effective decision", () => {
+  const { decideApproval } = jest.requireActual(
+    "@/platform/admin/approval-decision"
+  ) as typeof import("@/platform/admin/approval-decision");
+  const rule = jest.fn();
+  const authority = {
+    name: "test",
+    owns: () => true,
+    requiredPermission: async () => "can_access_admin",
+    approverRuleRefusal: rule,
+    resume: async () => ({ kind: "applied" as const }),
+  };
+  const proposal = (status: string) =>
+    mockStore.mockReturnValue({
+      getById: jest.fn().mockResolvedValue({
+        proposalId: "p1",
+        label: "any",
+        status,
+        actor: {
+          actorType: "agent",
+          actorId: "x",
+          onBehalfOf: CALLERS.super_admin.userId,
+        },
+        payload: {},
+      }),
+      withdraw: jest.fn(),
+    });
+  const decide = (decision: string) =>
+    decideApproval(
+      req({ decision, source: "runtime" }, "admin"),
+      {
+        userId: CALLERS.admin.userId,
+        sub: CALLERS.admin.sub,
+        roleName: "admin",
+        permissions: CALLERS.admin.permissions,
+      },
+      "p1",
+      [authority]
+    );
+
+  beforeEach(() => {
+    rule.mockReset().mockResolvedValue({
+      code: "auth.grant_exceeds_own",
+      params: { permission: "config_manage_safety" },
+    });
+  });
+
+  it.each([
+    ["approve", "proposed"],
+    ["reapprove", "indeterminate"],
+    ["mark_executed", "indeterminate"],
+  ])(
+    "refuses %s with the rule's code when the approver fails it",
+    async (decision, status) => {
+      proposal(status);
+      const res = await decide(decision);
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ code: "auth.grant_exceeds_own" });
+      expect(rule).toHaveBeenCalledTimes(1);
+      expect(mockApproveHeld).not.toHaveBeenCalled();
+    }
+  );
+
+  it("does not hold a rejection to them: rejecting changes nothing", async () => {
+    proposal("proposed");
+    await decide("reject");
+    expect(rule).not.toHaveBeenCalled();
+  });
+
+  it("does not hold a withdrawal of an undecided run to them: it never runs (round 5, item 2)", async () => {
+    proposal("indeterminate");
+    await decide("withdraw");
+    expect(rule).not.toHaveBeenCalled();
+    expect(mockApproveHeld).not.toHaveBeenCalled();
+  });
+
+  it("fails closed (503) when the rules cannot be read", async () => {
+    proposal("proposed");
+    rule.mockRejectedValue(new Error("db down"));
+    const res = await decide("approve");
+    expect(res.status).toBe(503);
+    expect(mockApproveHeld).not.toHaveBeenCalled();
+  });
+});
+
+// TASK-194 round 6, I-1 and P-1: nobody decides a hold about their own account, in any
+// direction — approve, reapprove, mark_executed, withdraw and reject alike (A3).
+describe("no decision on a hold about the decider's own account (round 6, I-1, P-1)", () => {
+  const { decideApproval } = jest.requireActual(
+    "@/platform/admin/approval-decision"
+  ) as typeof import("@/platform/admin/approval-decision");
+  const resume = jest.fn();
+  const authority = {
+    name: "test",
+    owns: () => true,
+    requiredPermission: async () => "can_access_admin",
+    targetAccount: async () => CALLERS.admin.userId.toUpperCase(),
+    resume,
+  };
+  const store = (status: string) => {
+    const s = {
+      getById: jest.fn().mockResolvedValue({
+        proposalId: "p1",
+        label: "purge_user_data",
+        status,
+        createdAt: new Date().toISOString(),
+        actor: {
+          actorType: "agent",
+          actorId: "x",
+          onBehalfOf: CALLERS.super_admin.userId,
+        },
+        payload: { userId: CALLERS.admin.userId },
+      }),
+      withdraw: jest.fn(),
+      resolveIndeterminate: jest.fn(),
+      decide: jest.fn(),
+    };
+    mockStore.mockReturnValue(s);
+    return s;
+  };
+  const decide = (decision: string) =>
+    decideApproval(
+      req({ decision, source: "runtime" }, "admin"),
+      {
+        userId: CALLERS.admin.userId,
+        sub: CALLERS.admin.sub,
+        roleName: "admin",
+        permissions: CALLERS.admin.permissions,
+      },
+      "p1",
+      [authority]
+    );
+
+  it.each([
+    ["approve", "proposed"],
+    ["reject", "proposed"],
+    ["reject", "approved"],
+    ["reapprove", "indeterminate"],
+    ["mark_executed", "indeterminate"],
+    ["withdraw", "indeterminate"],
+  ])(
+    "refuses %s of a %s hold to its target: admin.self_target, nothing changed",
+    async (decision, status) => {
+      const s = store(status);
+      const res = await decide(decision);
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ code: "admin.self_target" });
+      expect(s.withdraw).not.toHaveBeenCalled();
+      expect(s.resolveIndeterminate).not.toHaveBeenCalled();
+      expect(s.decide).not.toHaveBeenCalled();
+      expect(mockApproveHeld).not.toHaveBeenCalled();
+      expect(mockRejectHeld).not.toHaveBeenCalled();
+      expect(resume).not.toHaveBeenCalled();
+    }
+  );
 });

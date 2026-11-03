@@ -129,6 +129,30 @@ describe("OperatorJobsView", () => {
     expect(screen.getByText(/2 of 3 due erasures did not complete/)).toBeDefined();
   });
 
+  // TASK-194 round 18: a required schedule offers no "Turn off" — it is always on.
+  it("a required schedule has no Turn off, and says it is always on", () => {
+    render(
+      <OperatorJobsView
+        data={{
+          ...DATA,
+          schedules: [
+            {
+              ...DATA.schedules![0],
+              kind: "config.expire-approvals",
+              enabled: true,
+              required: true,
+            },
+          ],
+        }}
+      />
+    );
+    expect(screen.getByText("config.expire-approvals")).toBeDefined();
+    expect(
+      screen.queryByRole("button", { name: /^Turn off config\.expire-approvals/ })
+    ).toBeNull();
+    expect(screen.getByText(/Required: always on/)).toBeDefined();
+  });
+
   it("is accessible (axe, WCAG 2.2 AA)", async () => {
     const { container } = render(<OperatorJobsView data={DATA} />);
     await noViolations(container);

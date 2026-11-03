@@ -280,9 +280,23 @@ dbDescribe("canary erasure: nothing of the person is left anywhere (TASK-193)", 
       })
     );
     // A-3: the operator, in its own tenant, makes the account its tenant's administrator.
+    // A verified super_admin operator: TASK-194 (audit C-5) applies the role rules to them, and
+    // an operator not verified is refused.
     const op = await operatorTenant.user(`canary-operator-${RUN}`);
     const promoted = await operatorTenant.run(() =>
-      makeTenantAdmin({ userId: op }, home.id, S.email)
+      makeTenantAdmin(
+        {
+          userId: op,
+          admin: {
+            userId: op,
+            sub: randomUUID(),
+            roleName: "super_admin",
+            permissions: ["*"],
+          },
+        },
+        home.id,
+        S.email
+      )
     );
     expect(promoted.ok).toBe(true);
     // A sign-in with a network address and browser; a consent; a named device.

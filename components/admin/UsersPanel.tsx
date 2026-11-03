@@ -9,7 +9,8 @@
  *
  *   change role    PATCH /api/admin/users — a 202 `held` is shown as held for approval (dual
  *                  control), never as done;
- *   erase account  POST /api/admin/gdpr, after a confirmation.
+ *   erase account  POST /api/admin/gdpr, after a confirmation — held (202) for a second admin's
+ *                  approval, shown as held (TASK-194).
  *
  * Which actions are shown comes from USER_ROW_ACTION_PERMISSIONS, the map the routes' guards are
  * checked against (__tests__/admin-authorization-matrix.test.ts). Display only: each route
@@ -626,6 +627,32 @@ function FilterChips({
   );
 }
 
+/**
+ * Whether the account's erasure is already waiting for approval (TASK-194 round 1, A6): read when
+ * the panel opens, so it is shown after a reload too; unreadable, it reads as not pending (the
+ * button stays, and the route refuses a second one).
+ */
+function usePendingErasure(
+  mayErase: boolean,
+  userId: string
+): [boolean, (pending: boolean) => void] {
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    if (!mayErase) return;
+    let live = true;
+    void apiFetch(`/api/admin/gdpr?userId=${encodeURIComponent(userId)}`)
+      .then(async (res): Promise<Body> => (res.ok ? bodyOf(res) : {}))
+      .then((body) => {
+        if (live && body.pending && typeof body.pending === "object") setPending(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [mayErase, userId]);
+  return [pending, setPending];
+}
+
 type Outcome =
   | { readonly kind: "done"; readonly text: string }
   | { readonly kind: "info"; readonly text: string }
@@ -689,6 +716,8 @@ function UserDetail({
     actionable && hasPermission(USER_ROW_ACTION_PERMISSIONS.change_role);
   const mayErase = actionable && hasPermission(USER_ROW_ACTION_PERMISSIONS.erase_account);
 
+  const [erasePending, setErasePending] = usePendingErasure(mayErase, user.id);
+
   const closeErase = () => {
     focusEraseNext.current = true;
     setConfirmErase(false);
@@ -734,7 +763,11 @@ function UserDetail({
         body: JSON.stringify({ userId: user.id, reason: "admin-action" }),
       });
       const body = await bodyOf(res);
-      if (res.ok) {
+      // An erasure is always held for a second admin (TASK-194, audit C-6): nothing is erased yet.
+      if (res.status === 202 && body.held === true) {
+        setOutcome({ kind: "held", text: t("erase_held") });
+        setErasePending(true);
+      } else if (res.ok) {
         const status = typeof body.status === "string" ? body.status : "";
         setOutcome(
           status === "completed"
@@ -840,7 +873,17 @@ function UserDetail({
           </div>
         )}
 
+        {mayErase && erasePending && outcome?.kind !== "held" && (
+          <p
+            role="status"
+            data-erase-pending="true"
+            className="rounded-lg border border-amber-700 bg-amber-900/20 px-3 py-2 text-sm text-amber-200"
+          >
+            {t("erase_pending")}
+          </p>
+        )}
         {mayErase &&
+          !erasePending &&
           (confirmErase ? (
             <div
               ref={dialog}

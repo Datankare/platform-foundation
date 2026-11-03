@@ -170,6 +170,26 @@ export interface AuthProvider {
    */
   disableMfa(accessToken: AuthToken): Promise<{ success: boolean; error?: string }>;
 
+  /**
+   * Prove the caller holds the account's CURRENT second factor now (step-up, TASK-194 audit
+   * C-3): the token's user signs in again with `password` and answers the MFA challenge with
+   * `totpCode` from the authenticator already enrolled. Changing or removing a factor requires it,
+   * so a stolen access token alone can neither turn MFA off nor enrol an attacker's
+   * authenticator. The sign-in it makes leaves no session (its tokens are revoked). Fails —
+   * coded — on a wrong password or code, an account with no factor, or a token of another user.
+   * Cognito checks an enrolled factor's code only inside a sign-in challenge, hence the password.
+   *
+   * `totpCode` null (TASK-194 round 1, B1 — the delegation consent): the account proves itself
+   * with its password alone, which only an account with NO second factor may — one with a factor
+   * is refused auth.step_up_required (its code is needed). A federated account without a pool
+   * password is refused auth.step_up_unavailable.
+   */
+  confirmCurrentFactor(
+    accessToken: AuthToken,
+    password: string,
+    totpCode: string | null
+  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }>;
+
   // ── SSO (Social Sign-In) ──────────────────────────────────────────
 
   /**

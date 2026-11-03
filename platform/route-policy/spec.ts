@@ -19,9 +19,12 @@ export interface AppRoutePolicy {
   readonly verifiers: readonly string[];
   /** Names of the app's functions that apply a rate limit. Each must call enforceRateLimit. */
   readonly limiters: readonly string[];
-  /** The app's routes that are public by design (path from the repository root → reason). */
+  /**
+   * The app's route methods that are public by design ("<path from the repository root> <METHOD>"
+   * → reason; per method, TASK-194 round 1 A4: a method added beside a public one is not public).
+   */
   readonly publicRoutes: Readonly<Record<string, string>>;
-  /** The app's routes exempt from rate limiting (path → reason). */
+  /** The app's route methods exempt from rate limiting ("<path> <METHOD>" → reason; per method). */
   readonly rateLimitExempt: Readonly<Record<string, string>>;
   /**
    * Names of the app's functions that make a paid provider call (model, translation, speech,
@@ -43,4 +46,11 @@ export interface AppRoutePolicy {
    * (TASK-154).
    */
   readonly directFetch?: Readonly<Record<string, string>>;
+  /**
+   * The app's feature names (platform/auth/feature-permissions.ts FEATURE_PERMISSIONS keys) that
+   * no route of the app guards on yet (feature → reason). Every other key must be named, as a
+   * literal, at a guard call site — `__tests__/feature-permissions-enforced.test.ts` (TASK-194
+   * round 1, C4).
+   */
+  readonly reservedFeatures?: Readonly<Record<string, string>>;
 }

@@ -14,6 +14,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_TENANT_ID, isTenantId } from "@/platform/providers/environment-contract";
+import { sameId } from "@/platform/auth/same-id";
 
 export { DEFAULT_TENANT_ID, isTenantId };
 
@@ -95,7 +96,7 @@ export function enterTenant(ctx: TenantContext): TenantContext {
   if (!cell) return next;
   const current = cell.ctx;
   if (current) {
-    if (current.tenantId !== next.tenantId || current.mode !== next.mode) {
+    if (!sameId(current.tenantId, next.tenantId) || current.mode !== next.mode) {
       throw new TenantContextError("A request cannot change tenant");
     }
     return current;
@@ -121,7 +122,14 @@ export function peekTenant(): TenantContext | undefined {
   return storage().getStore()?.ctx;
 }
 
-/** Run `fn` with no tenant and no scope — for tests proving that work outside a tenant is refused. */
+/**
+ * Run `fn` with no tenant and no scope: what it reads is the platform's own, never a tenant's
+ * override. For reading the recurring jobs' schedules as the scheduler does — the platform
+ * defaults govern them: the scheduler taking due slots (jobs/runner.ts), the stale-schedule probe
+ * (jobs/schedule-probe.ts), the operators' Jobs view (jobs/operator.ts describeSchedules) and the
+ * approval-expiry job's interval in the settling bound (admin/approval-settle.ts) — and for tests
+ * proving that work outside a tenant is refused. Never for reading or writing tenant data.
+ */
 export function runWithoutTenant<T>(fn: () => T): T {
   return storage().exit(fn);
 }

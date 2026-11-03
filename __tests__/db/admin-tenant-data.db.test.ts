@@ -289,7 +289,7 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
       )
     );
     expect(stale).toMatchObject({ success: false });
-    expect(stale.error).toMatch(/the user's role/);
+    expect(stale).toMatchObject({ code: "approvals.stale" });
     expect(await roleOf(bob)).toBe(cat.roles.ops);
     // A name is not a role: the role's name recorded, not its id, never matches.
     const byName = await a.run(() =>
@@ -334,7 +334,10 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
         barAdmin
       )
     );
-    expect(res.error).toMatch(/not found/);
+    expect(res).toMatchObject({
+      code: "admin.target_not_found",
+      params: { target: "user" },
+    });
     expect(await roleOf(gone)).toBe(cat.roles.ops);
   });
 
@@ -387,7 +390,10 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
           barAdmin
         )
       );
-      expect(res.error).toMatch(/not found/);
+      expect(res).toMatchObject({
+        code: "admin.target_not_found",
+        params: { target: "user" },
+      });
       expect(await roleOf(outsider)).toBe(cat.roles.ops);
     }
   );
@@ -954,24 +960,73 @@ dbDescribe(`${SUITE} POST /api/admin/gdpr`, () => {
     }));
   });
 
-  it("purges for a super_admin, recording them as the requester", async () => {
+  // TASK-194, audit C-6: an erasure is held for a second admin (202) and runs only once approved
+  // (__tests__/db/approver-rules.db.test.ts approves it); these cases asserted one admin's erasure
+  // ran at once. The pipeline's own answers are proved through a dry run, which runs it at once
+  // through the same governed handler.
+  it("holds a super_admin's erasure for a second admin: 202, nothing run or recorded as run", async () => {
     const before = (await auditOf(a)).length;
     const res = await purge();
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ held: true, success: false });
+    expect(execute).not.toHaveBeenCalled();
+    // Only the request is recorded (TASK-194 round 1, A1) — nothing as run.
+    expect((await auditOf(a)).slice(before)).toEqual([
+      expect.objectContaining({
+        action: "admin_action",
+        actor_id: superAdmin.userId,
+        details: expect.objectContaining({ type: "gdpr_purge_requested" }),
+      }),
+    ]);
+  });
+
+  it("runs a dry run at once, recording the requester (the pipeline is the platform's)", async () => {
+    const before = (await auditOf(a)).length;
+    const res = await purge(superAdmin, {
+      userId: carol,
+      reason: "admin-action",
+      dryRun: true,
+    });
     expect(res.status).toBe(200);
     expect((await res.json()).purgeId).toBe("pg1");
     expect(execute).toHaveBeenCalledWith(
-      expect.objectContaining({ requestedBy: superAdmin.userId, userId: carol })
+      expect.objectContaining({
+        requestedBy: superAdmin.userId,
+        userId: carol,
+        dryRun: true,
+      })
     );
     // The platform's own pipeline, for this requester (audit X-15: it had no handler).
     expect(createPlatformPurgePipeline).toHaveBeenCalledWith(superAdmin.userId);
     expect((await auditOf(a)).slice(before)[0]).toMatchObject({
-      action: "gdpr_purge_executed",
+      action: "gdpr_purge_dry_run",
       actor_id: superAdmin.userId,
       target_id: carol,
     });
   });
 
-  it.each(["anonymous", "free", "moderator", "safety_approver", "admin"] as const)(
+  it("a dry run that does not complete answers its PurgeResult, as the screen reads it (round 3, I-3)", async () => {
+    execute.mockResolvedValue({
+      purgeId: "pg2",
+      status: "partial",
+      totalDeleted: 1,
+      steps: [
+        { handler: "db", success: true, deletedCount: 1 },
+        { handler: "cache", success: false, deletedCount: 0, error: "down" },
+      ],
+    });
+    const res = await purge(superAdmin, {
+      userId: carol,
+      reason: "admin-action",
+      dryRun: true,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ purgeId: "pg2", status: "partial" });
+  });
+
+  // safety_approver holds admin_purge_user_data since 061 (TASK-194 round 1, A2): an erasure is a
+  // super_admin's and a safety approver's together — approver-rules.db.test.ts proves it.
+  it.each(["anonymous", "free", "moderator", "admin"] as const)(
     "refuses %s (audit X-15)",
     async (role) => {
       const res = await purge(role === "anonymous" ? role : suiteCaller(role, RUN));
@@ -1015,9 +1070,15 @@ dbDescribe(`${SUITE} POST /api/admin/gdpr`, () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("purges a soft-deleted user of this tenant (erasing a deleted account)", async () => {
+  it("holds the erasure of a soft-deleted user of this tenant (erasing a deleted account)", async () => {
     const res = await purge(superAdmin, { userId: gone, reason: "account-deletion" });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
+    const dry = await purge(superAdmin, {
+      userId: gone,
+      reason: "account-deletion",
+      dryRun: true,
+    });
+    expect(dry.status).toBe(200);
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ userId: gone }));
   });
 
@@ -1045,7 +1106,8 @@ dbDescribe(`${SUITE} POST /api/admin/gdpr`, () => {
       totalDeleted: 0,
       steps: [],
     });
-    expect((await purge()).status).toBe(503);
+    const dry = { userId: carol, reason: "admin-action", dryRun: true };
+    expect((await purge(superAdmin, dry)).status).toBe(503);
   });
 
   it.each([
@@ -1060,11 +1122,16 @@ dbDescribe(`${SUITE} POST /api/admin/gdpr`, () => {
 
   it("500s when the pipeline throws", async () => {
     execute.mockRejectedValue(new Error("pipeline down"));
-    expect((await purge()).status).toBe(500);
+    const dry = { userId: carol, reason: "admin-action", dryRun: true };
+    expect((await purge(superAdmin, dry)).status).toBe(500);
   });
 
   it("does not run a purge when the audit log is unavailable", async () => {
-    const res = await purge(callerWithUnrecordableId("super_admin", RUN));
+    const res = await purge(callerWithUnrecordableId("super_admin", RUN), {
+      userId: carol,
+      reason: "admin-action",
+      dryRun: true,
+    });
     expect(res.status).toBe(503);
     expect(execute).not.toHaveBeenCalled();
   });

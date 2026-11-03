@@ -90,9 +90,17 @@ export const PLATFORM_ERROR_CODES = {
     action:
       "Explain that accounts for children under 13 are not available yet; nothing was created or recorded. Do not retry.",
   },
+  // Round 14, item 2: why, structured — the message words each reason (an ICU select).
   "admin.config_invalid_value": {
     status: 422,
-    params: [{ name: "key", kind: "id" }],
+    params: [
+      { name: "key", kind: "id" },
+      { name: "reason", kind: "id" },
+      { name: "min", kind: "number", optional: true },
+      { name: "max", kind: "number", optional: true },
+      { name: "expected", kind: "id", optional: true },
+      { name: "allowed", kind: "list", optional: true },
+    ],
     action: "Show the setting's allowed type and range, and ask for a valid value.",
   },
   "admin.config_scope_refused": {
@@ -115,6 +123,36 @@ export const PLATFORM_ERROR_CODES = {
     action:
       "Explain that this changes what every tenant shares, so only a platform operator can do it; do not retry.",
   },
+  "admin.action_failed": {
+    status: 500,
+    params: [],
+    action:
+      "A command-bar action did not complete and nothing more can be said safely (TASK-199): its cause is in the server log; check the change's own screen before trying again.",
+  },
+  "admin.already_exists": {
+    status: 409,
+    params: [],
+    action:
+      "Something with that name or key already exists (TASK-199): choose another one, or change the one there.",
+  },
+  "admin.erasure_pending": {
+    status: 409,
+    params: [],
+    action:
+      "A new erasure request for an account that already has one open (TASK-194 round 1, A6) is refused, not held: decide the open one in Approvals (approve or reject it), then request again if it is still needed.",
+  },
+  "admin.purge_incomplete": {
+    status: 500,
+    params: [{ name: "status", kind: "id" }],
+    action:
+      "An erasure ran and did not complete (TASK-199): its steps are in the audit log; run it again — every step is safe to repeat.",
+  },
+  "admin.role_in_use": {
+    status: 409,
+    params: [{ name: "count", kind: "number" }],
+    action:
+      "The role still has accounts (TASK-199): move them to another role on the Users screen, then delete it.",
+  },
   "admin.self_target": {
     status: 403,
     params: [],
@@ -125,6 +163,13 @@ export const PLATFORM_ERROR_CODES = {
     params: [{ name: "target", kind: "id" }],
     action: "Refresh the list and pick an existing item.",
   },
+  "admin.write_indeterminate": {
+    status: 503,
+    params: [],
+    action:
+      "The connection was lost while the change was saved (review 14 L-2; TASK-199): it may or may not have taken effect — check before you retry.",
+  },
+
   // The model declined the request (stop_reason "refusal", AIRefusalError): not an outage, so not
   // service.unavailable — the same request is declined again (TASK-186).
   "ai.request_declined": {
@@ -137,7 +182,40 @@ export const PLATFORM_ERROR_CODES = {
     status: 403,
     params: [],
     action:
-      "Ask the approver the approval policy names (a person, unless the policy says otherwise).",
+      "Ask the approver it needs: a person for a restricted action — every held action today, whatever the approval policy says (ADR-030, restricted ⇒ person); below restricted, the one the policy names.",
+  },
+  // TASK-194 round 13, I-C: a config change filed for two-person approval while another change to
+  // the same key waits — refused, nothing filed.
+  "approvals.already_pending": {
+    status: 409,
+    params: [{ name: "key", kind: "id" }],
+    action:
+      "Decide the change already waiting for this setting in Approvals, then request again.",
+  },
+  "approvals.settling": {
+    status: 409,
+    params: [
+      { name: "key", kind: "id" },
+      { name: "minutes", kind: "number" },
+    ],
+    action:
+      "An approved change to this setting is not yet known to be applied: the approval-expiry job (required) settles it — marks it applied, or reopens it. Request again after the minutes given (TASK-194 rounds 17–18).",
+  },
+
+  "approvals.run_in_progress": {
+    status: 409,
+    params: [{ name: "minutes", kind: "number" }],
+    action:
+      "An approved step's run has not ended and its outcome is not yet known (it is not yet listed as undecided): nothing can be decided yet. Check again after the minutes given, when it is listed for a decision (TASK-194 round 18).",
+  },
+  "approvals.requester_lacks_permission": {
+    status: 409,
+    params: [
+      { name: "permission", kind: "id" },
+      { name: "reason", kind: "id" },
+    ],
+    action:
+      "The account that requested the held action no longer may (reason lacks: it no longer holds the permission; removed: it is no longer an administrator here). The approval stands: it runs once they may again — or reject it. Never the approver's own permission (TASK-194 round 17).",
   },
   "approvals.decision_conflict": {
     status: 409,
@@ -155,7 +233,15 @@ export const PLATFORM_ERROR_CODES = {
     status: 409,
     params: [],
     action:
-      "Verify whether the change took effect, then mark it executed (decision mark_executed) or approve it again (decision reapprove).",
+      "Verify whether the change took effect: if it did, mark it executed (decision mark_executed); if it did not, withdraw it (decision withdraw), or approve it again to run it (decision reapprove) — an erasure only while no other erasure of the account is open.",
+  },
+  // TASK-194 round 8, item 1: approving an undecided run again that duplicates an older open hold
+  // (a second erasure of one account) — refused, nothing changed.
+  "approvals.duplicate_undecided": {
+    status: 409,
+    params: [],
+    action:
+      "Another hold of the same action on the same subject is open, so this undecided one is not run again. Verify it: if it took effect, mark it executed (decision mark_executed); if it did not, withdraw it (decision withdraw).",
   },
   "approvals.hold_not_found": {
     status: 404,
@@ -186,7 +272,7 @@ export const PLATFORM_ERROR_CODES = {
     status: 409,
     params: [],
     action:
-      "Nothing was changed and the request is withdrawn. Tell the requester to submit the change again against the current value.",
+      "What the held change would replace changed since it was requested (a setting, a role): nothing was changed. The request is withdrawn when its withdrawal is recorded (the answer says `withdrawn: true`); left settling (`settling: true`), it is listed again within `settlesWithinMinutes` — reject it then; otherwise reject it now. Tell the requester to submit the change again against the current value.",
   },
   "auth.account_exists": {
     status: 409,
@@ -248,6 +334,18 @@ export const PLATFORM_ERROR_CODES = {
     params: [],
     action:
       "Ask the user to set up MFA (POST /api/auth/mfa/setup, then /verify) and sign in again with it; administrative access needs a second factor.",
+  },
+  "auth.step_up_required": {
+    status: 403,
+    params: [],
+    action:
+      "Changing or removing a second factor needs proof of the current one (TASK-194): send the account's password and a current code from the enrolled authenticator as { password, currentCode }.",
+  },
+  "auth.step_up_unavailable": {
+    status: 403,
+    params: [],
+    action:
+      'The account signs in through a federated provider (SSO) and its proof of the current factor could not be made with a pool password (TASK-194): tell the user to check the password if they set one, or else to ask an operator for the recorded, operator-assisted two-step verification reset (docs/TENANCY_OPERATIONS.md, "Resetting two-step verification"). The factor is unchanged.',
   },
   "auth.password_policy": {
     status: 400,
@@ -332,6 +430,12 @@ export const PLATFORM_ERROR_CODES = {
     params: [],
     action:
       "Refresh the Jobs page: only a dead-lettered job can be replayed or discarded, and this one is queued, running or finished (another operator may have acted).",
+  },
+  "jobs.schedule_required": {
+    status: 409,
+    params: [],
+    action:
+      "This recurring job cannot be turned off, or given one tenant's own setting: nothing else does its duty (config.expire-approvals settles approvals and lists undecided runs). Change its interval instead.",
   },
   "jobs.not_found": {
     status: 404,
@@ -451,6 +555,19 @@ export const PLATFORM_ERROR_CODES = {
     ],
     action: "Send one of the allowed values.",
   },
+  "request.unknown_input": {
+    status: 400,
+    params: [
+      { name: "field", kind: "id" },
+      { name: "allowed", kind: "list" },
+    ],
+    action: "Send only the action's own inputs.",
+  },
+  "request.unknown_input_none": {
+    status: 400,
+    params: [{ name: "field", kind: "id" }],
+    action: "Send only the action's own inputs; nothing may be set there.",
+  },
   "request.missing_fields": {
     status: 400,
     params: [{ name: "fields", kind: "list" }],
@@ -539,6 +656,27 @@ export const PLATFORM_ERROR_CODES = {
 export const ERROR_CODES = { ...PLATFORM_ERROR_CODES, ...APP_ERROR_CODES } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
+
+type ParamSpecOf<C extends ErrorCode> = (typeof ERROR_CODES)[C]["params"][number];
+type ParamValueOf<K> = K extends "number"
+  ? number
+  : K extends "list"
+    ? readonly string[]
+    : string;
+
+/**
+ * A code's params as the registry declares them, typed per kind (TASK-194 rebase, round 3): every
+ * non-optional param required, a number a number, a list a list.
+ */
+export type ParamsOf<C extends ErrorCode> = {
+  [P in ParamSpecOf<C> as P extends { optional: true } ? never : P["name"]]: ParamValueOf<
+    P["kind"]
+  >;
+} & {
+  [
+    P in ParamSpecOf<C> as P extends { optional: true } ? P["name"] : never
+  ]?: ParamValueOf<P["kind"]>;
+};
 
 /** The platform's own codes (an app's `app.*` codes excluded). */
 export type PlatformErrorCode = keyof typeof PLATFORM_ERROR_CODES;

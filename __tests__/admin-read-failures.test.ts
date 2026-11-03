@@ -137,7 +137,8 @@ describe("handleChangeUserRole", () => {
     );
     expect(res).toMatchObject({
       success: false,
-      error: expect.stringMatching(/not found/),
+      code: "admin.target_not_found",
+      params: { target: "current role" },
     });
     expect(updates()).toEqual([]);
   });
@@ -154,7 +155,9 @@ describe("handleChangeUserRole", () => {
     );
     expect(res).toMatchObject({
       success: false,
-      error: "The change could not be saved: the database is unavailable or refused it.",
+      error: "service.unavailable",
+      code: "service.unavailable",
+      params: { service: "database" },
     });
     expect(JSON.stringify(res)).not.toContain("write refused");
     expect(fakeData().audit.map((r) => r.details.outcome)).toEqual([

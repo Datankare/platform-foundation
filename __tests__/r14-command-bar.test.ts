@@ -70,7 +70,10 @@ describe("R14-L2 a role change whose commit is lost", () => {
       admin
     );
     expect(res).toMatchObject({ success: false, indeterminate: true });
-    expect(res.error).toMatch(/may or may not have been applied/);
+    expect(res).toMatchObject({
+      error: "admin.write_indeterminate",
+      code: "admin.write_indeterminate",
+    });
     expect(fakeData().audit.map((a) => a.details.outcome)).toEqual([
       "attempted",
       "indeterminate",

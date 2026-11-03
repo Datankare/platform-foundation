@@ -20,7 +20,7 @@ import {
 } from "@/platform/agents/governed-agent-config";
 import { writeGovernedConfig } from "@/platform/admin/governed-config";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
-import { fromGovernedConfig, type ActionResult } from "./shared";
+import { coded, fromGovernedConfig, type ActionResult } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -60,30 +60,29 @@ export async function handleSetCapabilityMapping(
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const capability: string = input.capability;
-  if (!capability) return { success: false, error: "capability is required" };
+  if (!capability) return coded("request.missing_fields", { fields: ["capability"] });
   const remove: boolean = input.remove === true;
 
   const pairs = await readPairs();
   if (!pairs) {
-    return {
-      success: false,
-      error: "The capability map could not be read, so nothing was changed.",
-    };
+    // The map could not be read: nothing was changed.
+    return coded("service.unavailable", { service: "capabilities" });
   }
   const idx = pairs.findIndex(([c]) => c === capability);
 
   let summary: string;
   if (remove) {
-    if (idx === -1) return { success: false, error: `No mapping for "${capability}"` };
+    if (idx === -1)
+      return coded("admin.target_not_found", { target: "capability mapping" });
     pairs.splice(idx, 1);
     summary = `Removed capability mapping "${capability}"`;
   } else {
     const features: string[] = Array.isArray(input.features) ? input.features : [];
     if (features.length === 0) {
-      return {
-        success: false,
-        error: "features must be a non-empty list (or use remove)",
-      };
+      return coded("request.invalid_value", {
+        field: "features",
+        allowed: ["a non-empty list of features (or remove: true)"],
+      });
     }
     if (idx === -1) pairs.push([capability, features]);
     else pairs[idx][1] = features;

@@ -27,6 +27,7 @@ import { withTenantTx } from "@/platform/data";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import type { TokenPayload } from "@/platform/auth/types";
 import type { ErrorCode } from "@/platform/errors/registry";
+import { sameId } from "@/platform/auth/same-id";
 
 export type { VerifiedAdmin } from "@/platform/auth/role-governance";
 
@@ -183,7 +184,7 @@ export async function verifiedAdminById(userId: string): Promise<VerifiedAdmin |
     const sub = rows[0]?.cognito_sub;
     if (!sub) return null;
     const effective = await getCachedPermissions(sub);
-    if (!effective || effective.userId !== userId) return null;
+    if (!effective || !sameId(effective.userId, userId)) return null;
     if (!(await isInGoodStanding(effective.userId))) return null;
     return {
       userId: effective.userId,

@@ -37,6 +37,7 @@ import {
   type ProvisioningProfile,
 } from "@/platform/auth/user-provisioning";
 import type { ErrorCode } from "@/platform/errors/registry";
+import { sameId } from "@/platform/auth/same-id";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -277,7 +278,7 @@ async function loadAccountState(
       // The identity's account has another id (re-linked to a new identity pool, TASK-174): the
       // caller passed the subject where the account id belongs — the per-account checks already
       // read under it would be another account's. Refused (fail closed), never read through.
-      if (accountId?.toLowerCase() !== userId.toLowerCase()) {
+      if (!sameId(accountId, userId)) {
         logger.warn(
           "Account status guard: called with an identity's subject, not its account id",
           { route: "platform/auth/account-status-guard" }

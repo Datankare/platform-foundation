@@ -179,15 +179,64 @@ describe("ai execute route", () => {
     const res = await executePOST(jsonReq({ actions: [{ tool: "bogus" }] }));
     const parsed = await res.json();
     expect(parsed.results[0].success).toBe(false);
-    expect(parsed.results[0].error).toMatch(/Unknown tool/);
+    // Coded, per the error-code contract (TASK-199): no free text of the route's own.
+    expect(parsed.results[0]).toMatchObject({
+      error: "request.invalid_value",
+      code: "request.invalid_value",
+      params: { field: "tool" },
+    });
+    expect(parsed.results[0].params.allowed).toContain("create_role");
   });
 
-  it("captures an invokeTool failure", async () => {
-    mockInvokeTool.mockRejectedValue(new Error("gated"));
+  it("a failed result with no registered code reaches the screen as internal.error, never its text (rebase round 2, 2)", async () => {
+    mockInvokeTool.mockResolvedValue({
+      output: { success: false, error: 'relation "secret_table" is gone' },
+    });
+    const res = await executePOST(
+      jsonReq({ actions: [{ tool: "create_role", input: {} }] })
+    );
+    const parsed = await res.json();
+    expect(parsed.results[0]).toMatchObject({
+      success: false,
+      error: "internal.error",
+      code: "internal.error",
+      params: { requestId: expect.any(String) },
+    });
+    expect(JSON.stringify(parsed)).not.toMatch(/secret_table/);
+  });
+
+  it("a coded failure reaches the screen as it is (rebase round 2, 2)", async () => {
+    mockInvokeTool.mockResolvedValue({
+      output: {
+        success: false,
+        error: "admin.target_not_found",
+        code: "admin.target_not_found",
+        params: { target: "role" },
+      },
+    });
+    const res = await executePOST(
+      jsonReq({ actions: [{ tool: "create_role", input: {} }] })
+    );
+    expect((await res.json()).results[0]).toMatchObject({
+      code: "admin.target_not_found",
+      params: { target: "role" },
+    });
+  });
+
+  it("captures an invokeTool failure as a coded error, never its text (TASK-199)", async () => {
+    mockInvokeTool.mockRejectedValue(
+      new Error('relation "secret_table" violates constraint users_pkey')
+    );
     const body = { actions: [{ tool: "create_role", input: {} }] };
     const res = await executePOST(jsonReq(body));
     const parsed = await res.json();
-    expect(parsed.results[0].success).toBe(false);
+    expect(parsed.results[0]).toMatchObject({
+      success: false,
+      error: "internal.error",
+      code: "internal.error",
+      params: { requestId: expect.any(String) },
+    });
+    expect(JSON.stringify(parsed)).not.toMatch(/secret_table|users_pkey|constraint/);
   });
 
   it.each([

@@ -33,12 +33,22 @@ describe("InMemoryApprovalPolicyStore — tenants", () => {
   });
 
   it("starts every tenant at the store's initial policy", async () => {
-    const initial = { ...DEFAULT_APPROVAL_POLICY, version: 4, default: "agent" as const };
+    // Told apart from the default by its version and a rule (round 12, I-2: a non-person
+    // default, which this used, is read as a person's).
+    const initial = {
+      ...DEFAULT_APPROVAL_POLICY,
+      version: 4,
+      rules: [{ maxRisk: "ordinary" as const, requiredApprover: "agent" as const }],
+    };
     const store = new InMemoryApprovalPolicyStore(initial);
     const a = await memoryTenant();
     const b = await memoryTenant();
     await a.run(() => store.setRules([], "admin"));
-    expect(await a.run(() => store.load())).toEqual({ ...initial, version: 5 });
+    expect(await a.run(() => store.load())).toEqual({
+      ...initial,
+      version: 5,
+      rules: [],
+    });
     expect(await b.run(() => store.load())).toEqual(initial);
   });
 });

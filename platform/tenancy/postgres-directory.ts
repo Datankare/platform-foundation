@@ -26,6 +26,7 @@ import {
   type TenantRecord,
   type TenantStatus,
 } from "./directory";
+import { sameId } from "@/platform/auth/same-id";
 
 interface TenantRow {
   id: string;
@@ -82,7 +83,7 @@ export class PostgresTenantDirectory implements TenantDirectory {
     // the tenant, ask in its transaction. Operators read other tenants on the owner connection.
     const read = (tx: Tx) =>
       tx.query<TenantRow>("select * from public.directory_tenant($1::uuid)", [tenantId]);
-    const { rows } = await (peekTenant()?.tenantId === tenantId
+    const { rows } = await (sameId(peekTenant()?.tenantId, tenantId)
       ? withTenantTx(read)
       : withPlatformTx(read));
     return rows[0] ? tenant(rows[0]) : null;

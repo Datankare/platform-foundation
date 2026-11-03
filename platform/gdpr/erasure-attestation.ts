@@ -30,6 +30,7 @@ import { withOwnerTx, type Tx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import type { Operator, OperatorResult } from "@/platform/tenancy/admin";
 import { listExternalErasures, type RecordedExternalErasure } from "./external-erasure";
+import { sameId } from "@/platform/auth/same-id";
 
 /** Why a step may be attested erased: the only answers accepted. */
 export const ATTESTATION_REASONS = [
@@ -249,7 +250,7 @@ export async function decideErasureAttestation(
             "The step is no longer unverifiable; ask again if it becomes so."
           );
         }
-        if (approve && asked.by === operator.userId) {
+        if (approve && sameId(asked.by, operator.userId)) {
           return fail<RecordedExternalErasure>(
             "tenant.self_approval",
             "A different operator must approve an attestation you asked for."

@@ -188,13 +188,14 @@ draws and would let an agent approve its own held action. nextActions offers the
 what the agent may do — poll or abandon — never `approve`.
 
 **The approver is an identity, and human review is a policy default, not a welded property.**
-HeldAction.approver is an AgentIdentity whose actorType is "user" | "agent" | "system".
-platform/agents/gating.ts approvalPolicy() returns actorType "user" for everything today —
-human review, the P10 default and the only policy Sprint 3b ships. Moving a class of action
-to agent approval later is a change to that policy (and, in Sprint 3c, to an admin-governed
-policy store), NEVER a change to this envelope: actorType "agent" was always a legal value
-of the field. The seam is deliberate so the agent-approver path stays reachable as the
-system earns trust. Recorded here so a future planner finds it where they look (GOTCHA-70).
+HeldAction.approver is an AgentIdentity whose actorType is "user" | "agent" | "system". Moving a
+class of action to agent approval is a change to the approval policy (Sprint 3c: an
+admin-governed policy store), NEVER a change to this envelope: actorType "agent" was always a
+legal value of the field. The seam is deliberate so the agent-approver path stays reachable as
+the system earns trust. Recorded here so a future planner finds it where they look (GOTCHA-70).
+**Superseded in part (TASK-194, October 2026 — see the amendment below):** a restricted action is
+always a person's to approve, whatever the policy says; while the gating threshold is
+`restricted`, every held action is restricted, so the policy decides no current hold.
 
 **Approval satisfies the gate; it does not skip it (P4).** The pipeline's execute path gains
 an approvedProposalId that, with a proposalStore, verifies a real approved proposal for the
@@ -246,6 +247,31 @@ Two smaller corrections in the same commit:
   and requirement 4 already establishes cost as numeric.
 
 ---
+
+### 2026-10-31 — restricted ⇒ person (TASK-194; addendum, with ADR-040)
+
+**Decision.** A held action whose effective risk is `restricted`, or whose effects include
+`restricted`, is always approved by a person (`actorType` "user"). No rule and no default of the
+approval policy can change that: `resolveApprover` returns "user" for it before it reads the
+policy; the stores refuse a rule that names another approver for it (`approvalRulesProblem`,
+since Sprint 3c) and a default other than "user" (`approvalPolicyProblem`); a stored default set
+by hand to anything else is applied as "user" and not carried forward.
+
+**What that leaves the policy.** The pipeline holds an action at `GATING_THRESHOLD`
+(platform/kernel/types.ts), which is `restricted`; so today every held action is restricted and
+the policy decides none of them — whatever an admin writes with `set_approval_policy`, a person
+approves every current hold. The policy store is kept as a platform seam (not removed): it
+decides only for actions below `restricted`, which reach a hold only in an app that lowers the
+threshold. The screens say so — the command bar's answer to a policy change, and a held policy
+change in **Approvals**.
+
+**Why a decision, not a default.** The October 2026 audit (TASK-145) found that tests confirmed
+what the system did and nothing proved what it refused; the S1 sweep (TASK-194) then applied the
+tool's `default_approver`, which had been taken and dropped — and with it an admin could have made
+an agent the approver of a restricted action no rule matched (round 12, I-2). A restricted action
+is dual-control and catastrophic if wrong (ADR-039, ADR-040): it is not a class of action that
+earns agent approval. The invariant is asserted for every restricted label and effect
+(`__tests__/restricted-needs-person.test.ts`).
 
 ## Related
 

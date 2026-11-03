@@ -38,7 +38,8 @@ does not lapse, and blocks a second proposal for the same operation.
 The job raises `approvals.indeterminate` (an error log line with `alert`, a metric
 `alert.approvals.indeterminate`, an error report) and the approvals page lists the row first.
 
-1. Find it: the approvals page (**Took effect** / **Did not — approve again**), or
+1. Find it: the approvals page (**Took effect** / **Did not — approve again** / **Did not —
+   withdraw it**), or
 
    ```sql
    select tenant_id, id, label, operation_id, payload, decided_by, decided_at, last_run_error, updated_at
@@ -55,12 +56,40 @@ The job raises `approvals.indeterminate` (an error log line with `alert`, a metr
    - it took effect → `{"decision": "mark_executed", "source": "runtime", "note": "…"}` — the
      approval is used;
    - it did not → `{"decision": "reapprove", "source": "runtime", "note": "…"}` — a fresh approval
-     by an independent approver (never the requester), run at once, exactly once.
+     by an independent approver (never the requester), run at once, exactly once;
+   - it did not, and it is not to run → `{"decision": "withdraw", "source": "runtime", "note": "…"}`
+     — closed as rejected, never run (TASK-194 round 5). A second erasure hold of one account
+     (one held before 061) is withdrawn, never approved again: `reapprove` on it answers
+     `approvals.duplicate_undecided` while the older hold is open, and changes nothing.
 
-   Both need an admin other than the hold's requester (review 12 L7): the requester's own
-   `mark_executed` answers `approvals.self_approval`, as their approval would.
+   All three need an admin other than the hold's requester (review 12 L7): the requester's own
+   `mark_executed` or `withdraw` answers `approvals.self_approval`, as their approval would.
+   Nobody decides a hold about their own account, in any direction (A3; round 6): the account an
+   erasure, a restriction or a role change acts on answers `admin.self_target` to every decision
+   on it — approve, reapprove, mark_executed, withdraw and reject.
 
    `approve` and `reject` on an undecided row answer `approvals.indeterminate` (409).
+
+   **No one may decide it** (round 7, I-3): when every account in good standing in the tenant that
+   holds the hold's permission and `can_access_admin` (round 8) is its requester, the account it
+   acts on, or one the change's own rules refuse (round 9 — a role change needs every permission of
+   both roles) — an erasure requested by the tenant's only `super_admin` of its only
+   `safety_approver`, say — no one there may approve it again or mark it executed. One who holds the
+   permission but fails the rules may still withdraw it, if it did not take effect (the rules bind
+   only the decisions that run the change or declare it done). It never lapses (an undecided run
+   waits for a person); an erasure's then also keeps any later erasure of that account from being
+   held (`proposals_purge_one_open`). **Approvals** says so on the row ("No one here may approve
+   this again or mark it executed…"), and the `approvals.indeterminate` alert says what to do. A
+   platform operator decides it, in that tenant: **Operator → Tenants →** the tenant **→ Settings →
+   Held changes** shows the row with the same three decisions ("No one in this tenant but its
+   requester and the account it acts on may approve it again or mark it executed …: decide it
+   here"), or `POST /api/operator/tenants/{tenantId}/approvals/{holdId}` with the body above. The
+   operator is held to the same rules (the hold's permission, independence, A3) and is recorded as
+   the decider. Or give a second person the permission (**Users** → change role), who then decides
+   it in **Approvals** — but that role change is itself held (`change_user_role` is under dual
+   control), and with no second administrator it is stuck the same way: the operator approves it in
+   the same **Held changes** list (round 8, item 2), where it runs at once, as its requester. The
+   role must not be a protected one (`super_admin`): give `safety_approver` for an erasure.
 
 4. If the run was only slow, it may still end: its completion by its token lands while the row is
    undecided (the row becomes `executed`). After a decision, a late end is a conflict (§2).
@@ -94,11 +123,11 @@ select tenant_id, id, trigger, status, updated_at from agent_trajectories
  where status in ('awaiting_retry', 'indeterminate') order by updated_at;
 ```
 
-| To                      | Do (through the app's approval route — never by hand)                                                                                                                                     |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Retry it                | Approve it again: the route runs `resumeApprovedAction` on the kept approval — once, however many approve at once; the workflow then continues                                            |
-| Not retry it            | Reject it: the route withdraws the kept approval (`withdrawHeldAction`); the trajectory records the withdrawal and is `failed`                                                            |
-| Decide an undecided run | `reapprove` (it did not take effect — `resolveUndecidedHeldAction` "approved", then resumed once) or `mark_executed` (it did — the workflow ends `failed`: its output was never recorded) |
+| To                      | Do (through the app's approval route — never by hand)                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retry it                | Approve it again: the route runs `resumeApprovedAction` on the kept approval — once, however many approve at once; the workflow then continues                                                                                                                                                          |
+| Not retry it            | Reject it: the route withdraws the kept approval (`withdrawHeldAction`); the trajectory records the withdrawal and is `failed`                                                                                                                                                                          |
+| Decide an undecided run | `reapprove` (it did not take effect — `resolveUndecidedHeldAction` "approved", then resumed once), `withdraw` ("Did not — withdraw it": it did not, and is not to run — "rejected", the workflow ends `failed`) or `mark_executed` (it did — the workflow ends `failed`: its output was never recorded) |
 
 **A run lost mid-run** (TASK-173): when `config.expire-approvals` takes back an agent workflow's run
 that never ended, it moves the workflow with the approval, in the same statement — `indeterminate`
@@ -270,11 +299,17 @@ widening.
 
 ## 5. A stale held change
 
-`approvals.stale` (409): the setting a held change would replace was changed after the change was
-requested — by the kill switch, a power reduction, or another approved change (review 12 H2). Every
-held config change records the value it replaces and is applied only onto it; nothing was applied,
-the hold is withdrawn (audit `approval_withdrawn`, reason `stale`), and approving it again answers 409. Tell the requester to ask again against the current value. A hold requested before this release
-recorded no value and is refused the same way.
+`approvals.stale` (409): what a held change would replace — a setting, or an account's role (the
+command bar's role change) — was changed after the change was requested: by the kill switch, a
+power reduction, or another approved change (review 12 H2). Every held change records what it
+replaces and is applied only onto it; nothing was applied. The hold is withdrawn by the system when
+the withdrawal lands — the answer says `withdrawn: true` (audit `approval_withdrawn`, reason
+`stale`, the system as the agent, the approver as `foundBy`) — and approving it again answers 409.
+When the withdrawal does not land the answer has no `withdrawn`: a runtime hold stays approved —
+reject it; a two-person approval is left settling (`settling: true`, `settlesWithinMinutes`) and is
+listed again within that bound — reject it then. Either way, tell the requester to ask again against
+the current value. A hold requested before this release recorded no value and is refused the same
+way.
 
 **A reset** (`reset_config`, or an approval with `action` `reset`) is also compared on what it
 resets **to** (review 13 M1): it is applied only while the platform default the tenant would inherit
@@ -301,7 +336,17 @@ select tenant_id, id, label, payload->>'key' as key, decision_note, updated_at
   `expired`, `decision: undecided`) and ends its trajectory. A decision on one answers
   `approvals.expired`; ask again.
 - **An undecided run** (`approvals.indeterminate`) is alerted when it is found, then reminded at
-  most once a day while it waits (`proposals.reminded_at`). Decide it as in §1.
+  most once a day while it waits (`proposals.reminded_at`). Decide it as in §1. Every approved run whose write
+  lost its commit lands here (TASK-194 round 16): its claim is kept, never approved again blind.
+- **The settling job** (config.expire-approvals) marks a lost commit undecided, settles a
+  configuration approval approved and not yet known to be applied, and reminds of undecided runs.
+  It is required (TASK-194 round 18): it cannot be turned off — the Jobs screen offers no "Turn
+  off", and every config write that would turn it off or give a tenant its own value of it (the
+  Jobs route, the config page, tenant settings, the config assistant, approving such a change)
+  answers `jobs.schedule_required` (round 19); a change filed for that before 062 — a two-person
+  approval or a held change — is withdrawn by the system when approved (`approval_withdrawn`,
+  reason `refused`; round 20) — and only its interval may change.
+  A request for a key such a row blocks answers `approvals.settling`, with when to ask again.
 - **An abandoned trajectory** — open, no activity for `agent.trajectory.abandon_after_hours`, no
   open hold — is ended `failed` by agents.trajectory-retention, with a `trajectory-abandoned` step,
   then deleted with the other finished ones after `agent.trajectory.retention_days` (counted from

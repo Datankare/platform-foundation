@@ -52,6 +52,7 @@ jest.mock("@/app/api/admin/ai/handlers", () => {
     handleChangeUserRole: record("change_user_role"),
     handleAssignPermissions: record("assign_permissions"),
     handleSuspendAgent: record("suspend_agent"),
+    handlePurgeUserData: record("purge_user_data"),
   };
 });
 
@@ -72,12 +73,23 @@ import { POST as decide } from "@/app/api/admin/approvals/[id]/route";
 import { GET as listApprovals } from "@/app/api/admin/approvals/route";
 import { PATCH } from "@/app/api/admin/users/route";
 import {
+  COMMAND_BAR_HANDLERS,
   COMMAND_BAR_HOLDS,
   DEFAULT_DUAL_CONTROL_ACTIONS,
   isDualControlledAction,
+  runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
+import type { AdminToolId } from "@/app/api/admin/ai/tool-permissions";
 
 let proposals: InMemoryProposalStore;
+
+/**
+ * The account "u@x.y" names, and its role (rebase P-1: a held role change records the account by
+ * id and its role then — an address no account has is refused, never held).
+ */
+const HELD_USER = "00000000-0000-4000-9000-0000000000bb";
+const HELD_USER_ROLE = "00000000-0000-4000-9000-00000000f0bb";
+const HELD_MOD_ROLE = "00000000-0000-4000-9000-00000000f0bc";
 
 const post = (url: string, body: unknown, caller: CallerName) =>
   new NextRequest(`http://localhost${url}`, {
@@ -124,6 +136,32 @@ beforeEach(() => {
       const identity = Object.values(CALLERS).find((c) => c.userId === values[0]);
       return identity ? [{ cognito_sub: identity.sub }] : [];
     }
+    if (
+      /select id, cognito_sub, role_id from users where (?:email|id) = \$1/.test(sql) &&
+      (values[0] === "u@x.y" || values[0] === HELD_USER)
+    ) {
+      return [{ id: HELD_USER, cognito_sub: null, role_id: HELD_USER_ROLE }];
+    }
+    // The held user's account and roles, which the summary and the approver's role rules read
+    // (checkChangeUserRole applies the rules to both roles; an account or role not found is the
+    // run's to report, never the approver's rule).
+    if (/select id, email, role_id from users where id = \$1::uuid/.test(sql)) {
+      return values[0] === HELD_USER
+        ? [{ id: HELD_USER, email: "u@x.y", role_id: HELD_USER_ROLE }]
+        : [];
+    }
+    if (/from roles where id = \$1::uuid/.test(sql) && values[0] === HELD_USER_ROLE) {
+      return [{ id: HELD_USER_ROLE, name: "free", is_default: true }];
+    }
+    if (/from roles where name = \$1/.test(sql) && values[0] === "moderator") {
+      return [{ id: HELD_MOD_ROLE, name: "moderator", is_default: false }];
+    }
+    if (/from permissions p/.test(sql) && values[0] === HELD_MOD_ROLE) {
+      return [{ code: "can_access_admin" }, { code: "can_moderate" }];
+    }
+    if (/from permissions p/.test(sql) && values[0] === HELD_USER_ROLE) {
+      return [{ code: "can_play" }];
+    }
     return undefined;
   };
 });
@@ -145,8 +183,168 @@ describe("holding (C-14)", () => {
       status: "proposed",
       label: "change_user_role",
       actor: { actorId: "command-bar", onBehalfOf: CALLERS.admin.userId },
-      payload: { user_identifier: "u@x.y", new_role: "moderator" },
+      // The account by id and its role then (rebase P-1), never the address typed.
+      payload: {
+        user_identifier: HELD_USER,
+        new_role: "moderator",
+        held_current_role_id: HELD_USER_ROLE,
+      },
     });
+  });
+
+  // Rebase N-2 discarded a caller's held_current_role_id, keeping the server's snapshot; since
+  // round 11 (item 2) it is refused — round 12 (nit 1): as the server's to set,
+  // request.field_not_accepted — nothing held, nothing run, so a caller's snapshot is never kept.
+  it("refuses a caller's held_current_role_id when the change would be held (rebase N-2; round 11)", async () => {
+    const result = await hold("admin", "change_user_role", {
+      user_identifier: "u@x.y",
+      new_role: "moderator",
+      held_current_role_id: "00000000-0000-4000-9000-00000000dead",
+    });
+    expect(result).toMatchObject({
+      success: false,
+      code: "request.field_not_accepted",
+      params: { field: "held_current_role_id" },
+    });
+    expect(result.held).toBeUndefined();
+    expect(await proposals.query({})).toEqual([]);
+  });
+
+  it("refuses a caller's held_current_role_id when the change would run at once too (rebase N-2; round 11)", async () => {
+    mockList.mockResolvedValue([]);
+    const result = await hold("super_admin", "change_user_role", {
+      user_identifier: "u@x.y",
+      new_role: "moderator",
+      held_current_role_id: "00000000-0000-4000-9000-00000000dead",
+    });
+    expect(result).toMatchObject({ success: false, code: "request.field_not_accepted" });
+    expect(ran).toEqual([]);
+  });
+
+  it("refuses a key outside the action's schema — held or not — nothing held, nothing run (round 10, I-A)", async () => {
+    const held = await hold("admin", "change_user_role", {
+      user_identifier: "u@x.y",
+      new_role: "moderator",
+      why: "she posted her address",
+    });
+    expect(held).toMatchObject({
+      success: false,
+      code: "request.unknown_input",
+      params: { field: "why", allowed: ["user_identifier", "new_role"] },
+    });
+    expect(held.held).toBeUndefined();
+    const now = await hold("super_admin", "suspend_agent", {
+      agent_id: "agent:x",
+      note: "free text",
+    });
+    expect(now).toMatchObject({ success: false, code: "request.unknown_input" });
+    expect(ran).toEqual([]);
+    expect(await proposals.query({})).toEqual([]);
+  });
+
+  it("never holds a policy whose default approver is not a person (round 12, I-2)", async () => {
+    const res = await hold("super_admin", "set_approval_policy", {
+      default_approver: "agent",
+      rules: [{ max_risk: "ordinary", required_approver: "agent" }],
+    });
+    expect(res).toMatchObject({
+      success: false,
+      code: "request.invalid_value",
+      params: { field: "default_approver", allowed: ["user"] },
+    });
+    expect(res.held).toBeUndefined();
+    expect(ran).toEqual([]);
+    expect(await proposals.query({})).toEqual([]);
+  });
+
+  it("refuses a key nested in a rule of a list — nothing held, nothing run (round 11, item 3)", async () => {
+    const res = await hold("super_admin", "set_approval_policy", {
+      default_approver: "user",
+      rules: [
+        { max_risk: "ordinary", required_approver: "agent" },
+        { max_risk: "restricted", required_approver: "user", note: "about her" },
+      ],
+    });
+    expect(res).toMatchObject({
+      success: false,
+      code: "request.unknown_input",
+      params: {
+        field: "rules[1].note",
+        allowed: ["max_risk", "effects", "required_approver"],
+      },
+    });
+    // An object given where the schema names a string is no input either: none of its keys is.
+    const shaped = await hold("admin", "change_user_role", {
+      user_identifier: "u@x.y",
+      new_role: { name: "moderator", why: "free text" },
+    });
+    expect(shaped).toMatchObject({
+      code: "request.unknown_input_none",
+      params: { field: "new_role.name" },
+    });
+    expect((shaped as { params?: object }).params).not.toHaveProperty("allowed");
+    expect(ran).toEqual([]);
+    expect(await proposals.query({})).toEqual([]);
+  });
+
+  it("every action that can be held or run checks its input against its schema (round 10, I-A)", async () => {
+    for (const tool of Object.keys(COMMAND_BAR_HANDLERS) as AdminToolId[]) {
+      // search refuses any key that is not a filter of its table in its own parser (TASK-189);
+      // it is never held.
+      if (tool === "search") continue;
+      const outcome = await runCommandBarAction({
+        tool,
+        input: { planted_key: "free text" },
+        admin: {
+          userId: CALLERS.super_admin.userId,
+          sub: CALLERS.super_admin.sub,
+          roleName: "super_admin",
+          permissions: CALLERS.super_admin.permissions,
+        },
+        trajectoryId: `t-${tool}`,
+        stepIndex: 0,
+      });
+      expect([tool, outcome]).toEqual([
+        tool,
+        {
+          kind: "ran",
+          result: expect.objectContaining({
+            code: "request.unknown_input",
+            params: expect.objectContaining({ field: "planted_key" }),
+          }),
+        },
+      ]);
+    }
+    expect(ran).toEqual([]);
+    expect(await proposals.query({})).toEqual([]);
+  });
+
+  it("refuses, never holds, an erasure whose reason is not a listed one (round 9, I-3)", async () => {
+    const r = await hold("super_admin", "purge_user_data", {
+      userId: "00000000-0000-4000-9000-0000000000dd",
+      reason: "she posted her address",
+    });
+    expect(r).toMatchObject({
+      success: false,
+      code: "request.invalid_value",
+      params: { field: "reason" },
+    });
+    expect(r.held).toBeUndefined();
+    expect(await proposals.query({ labels: ["purge_user_data"] })).toEqual([]);
+  });
+
+  it("refuses, never holds, a role change for an account that is not found (rebase P-1)", async () => {
+    const result = await hold("admin", "change_user_role", {
+      user_identifier: "nobody@x.y",
+      new_role: "moderator",
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error: "admin.target_not_found",
+      code: "admin.target_not_found",
+    });
+    expect(result.held).toBeUndefined();
+    expect(await proposals.query({ statuses: ["proposed"] })).toEqual([]);
   });
 
   it("runs an action that is not on the list at once", async () => {
@@ -247,12 +445,12 @@ describe("approving (X-10, B-10, RR-19)", () => {
       {
         tool: "change_user_role",
         admin: CALLERS.admin.userId,
-        // TASK-193 (B-4): the held change carries the user's role as it was when requested (none
-        // here: the fake database knows no such user), and runs only while that still holds.
+        // TASK-193 (B-4): the held change carries the user's role as it was when requested, and
+        // runs only while that still holds; rebase P-1: the account by id.
         input: {
-          user_identifier: "u@x.y",
+          user_identifier: HELD_USER,
           new_role: "moderator",
-          held_current_role_id: null,
+          held_current_role_id: HELD_USER_ROLE,
         },
       },
     ]);
@@ -282,7 +480,19 @@ describe("approving (X-10, B-10, RR-19)", () => {
     // The requester cannot be found (removed, or no longer an admin in this tenant).
     fakeData().answer = () => [];
     const res = await approve(id, "super_admin");
-    expect(res.status).toBe(503);
+    // Round 16, R-b: said as what it is — the requester lacks the permission (it answered
+    // approvals.run_failed, 503, "try again"), with the approval kept for when they hold it.
+    // Round 17, I-3: the requester's standing, named as theirs (auth.permission_denied read as
+    // the approver's own): an account no longer an administrator here is "removed".
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "approvals.requester_lacks_permission",
+      params: { permission: "admin_manage_users", reason: "removed" },
+      message: expect.stringMatching(
+        /^The account that requested this is no longer an administrator here/
+      ),
+      approvalKept: true,
+    });
     expect(ran).toEqual([]);
     expect((await proposals.getById(id))?.status).toBe("approved");
 
@@ -293,6 +503,32 @@ describe("approving (X-10, B-10, RR-19)", () => {
     const retry = await approve(id, "super_admin");
     expect(retry.status).toBe(200);
     expect(ran).toHaveLength(1);
+  });
+
+  // Round 17, I-3: a requester who is still here but no longer holds the permission — said as
+  // theirs, with the permission, never as the approver's.
+  it("a requester who lost the permission: approvals.requester_lacks_permission, reason lacks", async () => {
+    // The requester's account is still an administrator, without admin_manage_users.
+    const requester = CALLERS.admin as { permissions: readonly string[] };
+    const had = requester.permissions;
+    requester.permissions = had.filter((p) => p !== "admin_manage_users");
+    let res: Response;
+    try {
+      res = await approve(id, "super_admin");
+    } finally {
+      requester.permissions = had;
+    }
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      code: "approvals.requester_lacks_permission",
+      params: { permission: "admin_manage_users", reason: "lacks" },
+      approvalKept: true,
+    });
+    expect(body.message).toBe(
+      "The account that requested this no longer holds admin_manage_users: it runs once they hold it again, or reject it."
+    );
+    expect(ran).toEqual([]);
   });
 
   // Review 7 M7: an approved hold whose run failed could neither be rejected nor expire.
@@ -315,7 +551,7 @@ describe("approving (X-10, B-10, RR-19)", () => {
   };
   const failTheRun = async () => {
     fakeData().answer = () => [];
-    expect((await approve(id, "super_admin")).status).toBe(503);
+    expect((await approve(id, "super_admin")).status).toBe(409);
     expect((await proposals.getById(id))?.status).toBe("approved");
   };
 
@@ -484,6 +720,165 @@ describe("whose holds the command bar owns (review 7 L5)", () => {
   });
 });
 
+describe("a duplicate erasure hold (TASK-199)", () => {
+  const ACCOUNT = "00000000-0000-4000-9000-0000000000cc";
+  // Requested for a safety approver, who holds admin_purge_user_data (round 18: requested for an
+  // admin, who does not, the approved erasure never ran — approvals.requester_lacks_permission).
+  const erasure = (n: number) =>
+    proposals.create({
+      operationId: `op_dup_${n}`,
+      sessionId: `dup-${n}`,
+      trajectoryId: `dup-${n}`,
+      label: "purge_user_data",
+      actor: {
+        actorType: "agent",
+        actorId: "command-bar",
+        agentRole: "command-bar",
+        onBehalfOf: CALLERS.safety_approver.userId,
+      },
+      effects: ["stateWrite"],
+      effectiveRisk: "restricted",
+      // One held before 061's index, or under a draft index's spelling: two for one account.
+      payload: {
+        userId: n === 1 ? ACCOUNT : ACCOUNT.toUpperCase(),
+        reason: "admin-action",
+      },
+    });
+
+  it("an undecided duplicate is rejected by the system, recorded, never approved; the older one stands", async () => {
+    const kept = await erasure(1);
+    await new Promise((r) => setTimeout(r, 5));
+    const duplicate = await erasure(2);
+    const res = await approve(duplicate.proposalId, "super_admin");
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("admin.erasure_pending");
+    expect((await proposals.getById(duplicate.proposalId))?.status).toBe("rejected");
+    expect((await proposals.getById(kept.proposalId))?.status).toBe("proposed");
+    expect(ran).toEqual([]);
+    const recorded = fakeData().audit.filter(
+      (a) => a.details.type === "approval_withdrawn" && a.details.reason === "duplicate"
+    );
+    expect(recorded.map((a) => a.details)).toEqual([
+      expect.objectContaining({
+        holdId: duplicate.proposalId,
+        holdIds: [kept.proposalId],
+        decision: "undecided",
+        foundBy: CALLERS.super_admin.userId,
+      }),
+    ]);
+  });
+
+  // Round 5, item 2: an undecided (indeterminate) duplicate. Approving it again would run a
+  // second erasure while the older hold is open; it is withdrawn instead, once verified.
+  const undecided = async (n: number) => {
+    const hold = await erasure(n);
+    await proposals.decide(hold.proposalId, "approved", CALLERS.super_admin.userId, "ok");
+    expect(await proposals.claim(hold.proposalId)).toBeDefined();
+    proposals.recoverStaleRuns(Date.now() + 1000);
+    expect((await proposals.getById(hold.proposalId))?.status).toBe("indeterminate");
+    return hold;
+  };
+  const decideAs = (
+    id: string,
+    decision: string,
+    caller: CallerName,
+    extra: Record<string, unknown> = {}
+  ) =>
+    decide(
+      post(
+        `/api/admin/approvals/${id}`,
+        { decision, source: "runtime", ...extra },
+        caller
+      ),
+      { params: Promise.resolve({ id }) }
+    );
+
+  it("an undecided duplicate is not approved again while the older hold is open: nothing runs (round 5, item 2)", async () => {
+    const kept = await erasure(1);
+    await new Promise((r) => setTimeout(r, 5));
+    const duplicate = await undecided(2);
+    const res = await decideAs(duplicate.proposalId, "reapprove", "super_admin");
+    expect(res.status).toBe(409);
+    // Its own code (round 8, item 1): what to do with this hold, not a new request's answer.
+    expect((await res.json()).code).toBe("approvals.duplicate_undecided");
+    expect((await proposals.getById(duplicate.proposalId))?.status).toBe("indeterminate");
+    expect((await proposals.getById(kept.proposalId))?.status).toBe("proposed");
+    expect(ran).toEqual([]);
+  });
+
+  it("an undecided hold verified not applied is withdrawn: rejected, never run, recorded (round 5, item 2)", async () => {
+    await erasure(1);
+    await new Promise((r) => setTimeout(r, 5));
+    const duplicate = await undecided(2);
+    const res = await decideAs(duplicate.proposalId, "withdraw", "super_admin", {
+      note: "checked: no rows were erased",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ decision: "withdraw", status: "rejected" });
+    const now = await proposals.getById(duplicate.proposalId);
+    expect(now).toMatchObject({
+      status: "rejected",
+      decidedBy: CALLERS.super_admin.userId,
+    });
+    expect(ran).toEqual([]);
+    expect(
+      fakeData().audit.filter((a) => a.details.type === "approval_decision")
+    ).toEqual([
+      expect.objectContaining({
+        details: expect.objectContaining({
+          holdId: duplicate.proposalId,
+          decision: "withdraw",
+          // Round 6, P-2: the decider's note, and who had approved the run.
+          note: "checked: no rows were erased",
+          approvedBy: CALLERS.super_admin.userId,
+        }),
+      }),
+    ]);
+  });
+
+  it("withdraw is a decision on an undecided run only, by an independent decider holding the permission (round 5, item 2)", async () => {
+    const open = await erasure(1);
+    const onProposed = await decideAs(open.proposalId, "withdraw", "super_admin");
+    expect(onProposed.status).toBe(409);
+    expect((await onProposed.json()).code).toBe("approvals.decision_conflict");
+    const held = await undecided(2);
+    // The requester (the safety approver the command bar acted for) may not decide it.
+    const own = await decideAs(held.proposalId, "withdraw", "safety_approver");
+    expect(own.status).toBe(409);
+    expect((await own.json()).code).toBe("approvals.self_approval");
+    // Nor one without the hold's permission.
+    const weak = await decideAs(held.proposalId, "withdraw", "moderator");
+    expect(weak.status).toBe(403);
+    expect((await weak.json()).code).toBe("approvals.permission_required");
+    expect((await proposals.getById(held.proposalId))?.status).toBe("indeterminate");
+    // Rejecting it as if it never ran stays refused: withdraw is the verified decision.
+    const rejected = await decideAs(held.proposalId, "reject", "super_admin");
+    expect((await rejected.json()).code).toBe("approvals.indeterminate");
+  });
+
+  it("an older hold that has lapsed is no hold to duplicate: the live one is approved (round 2, 1)", async () => {
+    // The older hold was asked for past any approval period (default 7 days): it can never be
+    // approved, so the live one is not its duplicate.
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const iso = jest.spyOn(Date.prototype, "toISOString").mockReturnValueOnce(old);
+    let lapsed: Awaited<ReturnType<typeof erasure>>;
+    try {
+      lapsed = await erasure(1);
+    } finally {
+      iso.mockRestore();
+    }
+    expect(lapsed.createdAt).toBe(old);
+    const live = await erasure(2);
+    const res = await approve(live.proposalId, "super_admin");
+    // Approved and run (round 18: the requester holds the permission, so the erasure runs —
+    // the hold is executed, its action recorded once).
+    expect(res.status).toBe(200);
+    expect((await proposals.getById(live.proposalId))?.status).toBe("executed");
+    expect(ran.map((r) => r.tool)).toEqual(["purge_user_data"]);
+    expect(fakeData().audit.filter((a) => a.details.reason === "duplicate")).toEqual([]);
+  });
+});
+
 describe("a plan stops at a held action", () => {
   it("does not run the actions after it", async () => {
     const res = await execute(
@@ -498,6 +893,8 @@ describe("a plan stops at a held action", () => {
         "super_admin"
       )
     );
+    // Accepted and waiting: 202, as every route that can hold answers (round 11, item 1).
+    expect(res.status).toBe(202);
     const { results } = await res.json();
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ tool: "assign_permissions", held: true });

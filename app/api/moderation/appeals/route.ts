@@ -29,6 +29,7 @@ import type {
 import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { sameId } from "@/platform/auth/same-id";
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "active",
@@ -95,8 +96,8 @@ async function derivePreviousStatus(
           details.type === "sentinel_decision") &&
         // The appealed decision is the Guardian's; Sentinel records it as guardianDecisionId
         // (its own run id is trajectoryId, which never matched — Sprint 7X).
-        (details.guardianDecisionId === trajectoryId ||
-          details.trajectoryId === trajectoryId) &&
+        (sameId(details.guardianDecisionId, trajectoryId) ||
+          sameId(details.trajectoryId, trajectoryId)) &&
         typeof details.previousStatus === "string" &&
         VALID_STATUSES.has(details.previousStatus)
       ) {
@@ -150,7 +151,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     }
 
     // Ownership (F6): a user may only appeal their own decision.
-    if (original.userId !== appealingUserId) {
+    if (!sameId(original.userId, appealingUserId)) {
       logger.warn("Appeal ownership mismatch", {
         appealingUserId,
         decisionOwner: original.userId ?? "unknown",

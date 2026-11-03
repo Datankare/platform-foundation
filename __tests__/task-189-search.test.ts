@@ -348,17 +348,29 @@ describe("TASK-189: malformed and hostile filters are refused before any stateme
     [{ table: "audit_log", target_id: "1 or 1=1" }, "target_id"],
     [{ table: "audit_log", within_days: -1 }, "within_days"],
     [{ table: "platform_config", category: "a b" }, "category"],
-    // A filter the table does not take is refused, never ignored.
-    [{ table: "roles", status: "active" }, "filters"],
-    [{ table: "audit_log", role: "free" }, "filters"],
-    [{ table: "users", limit: 1000 }, "filters"],
-    [{ table: "users", order: "cognito_sub" }, "filters"],
-    [{ table: "users", columns: ["date_of_birth"] }, "filters"],
   ])("%p is refused (field %s)", async (input, field) => {
     const res = await handleSearch(input, ALL);
     expect(res).toMatchObject({
       success: false,
       code: "request.invalid_value",
+      params: { field },
+    });
+    expect(fakeData().statements).toEqual([]);
+  });
+
+  // A filter the table does not take is refused, never ignored — as no input of the search
+  // (request.unknown_input, round 12 nit 3; it was request.invalid_value of "filters").
+  it.each([
+    [{ table: "roles", status: "active" }, "status"],
+    [{ table: "audit_log", role: "free" }, "role"],
+    [{ table: "users", limit: 1000 }, "limit"],
+    [{ table: "users", order: "cognito_sub" }, "order"],
+    [{ table: "users", columns: ["date_of_birth"] }, "columns"],
+  ])("%p is refused as no input (field %s)", async (input, field) => {
+    const res = await handleSearch(input, ALL);
+    expect(res).toMatchObject({
+      success: false,
+      code: "request.unknown_input",
       params: { field },
     });
     expect(fakeData().statements).toEqual([]);
@@ -579,12 +591,34 @@ describe("TASK-189 round 2: the step records an allowlist, never a value it was 
     expect(stored).not.toMatch(/kid@example|Kid Person|Secret Club|nested/);
   });
 
+  it("an unknown table is refused with the tables as a list (round 5, item 5)", async () => {
+    const res = await handleSearch({ table: "no_such_table" }, ALL);
+    expect(res).toMatchObject({
+      success: false,
+      code: "request.invalid_value",
+      params: { field: "table" },
+    });
+    const allowed = (res as { params?: { allowed?: unknown } }).params?.allowed;
+    expect(Array.isArray(allowed)).toBe(true);
+    expect(allowed).toContain("roles");
+    expect(allowed).toEqual(TABLES);
+  });
+
+  it("an unknown filter is refused with the table's filters, each its own entry (round 5, item 4)", async () => {
+    const res = await handleSearch({ table: "users", nope: "x" }, ALL);
+    expect(res).toMatchObject({
+      success: false,
+      code: "request.unknown_input",
+      params: { field: "nope", allowed: ["table", "query", ...SEARCH_FILTERS.users] },
+    });
+  });
+
   it("text and query together are refused, neither dropped", async () => {
     const res = await handleSearch({ table: "users", text: "a", query: "b" }, ALL);
     expect(res.success).toBe(false);
     expect(res).toMatchObject({
       code: "request.invalid_value",
-      params: { field: "query", allowed: "give one of text or query, not both" },
+      params: { field: "query", allowed: ["give one of text or query, not both"] },
     });
   });
 });
@@ -598,9 +632,12 @@ describe("TASK-189 round 1: a database error is logged, never returned", () => {
     };
     const res = await handleSearch({ table: "users" }, ALL);
     expect(res.success).toBe(false);
-    expect(res.error).toBe(
-      "The search could not be run: the database is unavailable or refused it. Nothing was changed."
-    );
+    // Coded (rebase round 2, finding 2): the screen shows service.unavailable's message.
+    expect(res).toMatchObject({
+      error: "service.unavailable",
+      code: "service.unavailable",
+      params: { service: "search" },
+    });
     expect(JSON.stringify(res)).not.toMatch(/secret_col|relation/);
     expect(spy).toHaveBeenCalledWith(
       "Admin command search failed",

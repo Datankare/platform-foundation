@@ -23,6 +23,7 @@ import { logger } from "@/lib/logger";
 import { enterTenant, peekTenant, type TenantContext } from "./context";
 import { resolveAnonymous, resolveForIdentity, type ResolveOptions } from "./resolve";
 import type { ErrorCode } from "@/platform/errors/registry";
+import { sameId } from "@/platform/auth/same-id";
 
 interface RequestLike {
   readonly headers: Headers;
@@ -89,7 +90,7 @@ export async function bindIdentityTenant(
   const present = peekTenant();
   if (
     present &&
-    (present.tenantId !== resolution.context.tenantId ||
+    (!sameId(present.tenantId, resolution.context.tenantId) ||
       present.mode !== resolution.context.mode)
   ) {
     logger.warn("Identity refused: its tenant is not the request's", {});

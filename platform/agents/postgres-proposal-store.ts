@@ -32,6 +32,7 @@ import type {
 import { generateUuid } from "./utils";
 import { withTenantTx } from "@/platform/data";
 import { assertStorableJson } from "@/platform/errors/json-limits";
+import { sameId } from "@/platform/auth/same-id";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -81,7 +82,7 @@ function actorOf(row: ProposalRow): AgentIdentity {
   if (
     typeof a.actorType !== "string" ||
     !ACTOR_TYPES.has(a.actorType) ||
-    a.actorId !== row.actor_id ||
+    !sameId(a.actorId, row.actor_id) ||
     a.agentRole !== row.actor_role
   ) {
     return legacy;
@@ -286,10 +287,26 @@ export class PostgresProposalStore implements ProposalStore {
 
   async resolveIndeterminate(
     proposalId: string,
-    resolution: "executed" | "approved",
+    resolution: "executed" | "approved" | "rejected",
     decidedBy: string,
     note: string
   ): Promise<ProposalRecord | undefined> {
+    if (resolution === "rejected") {
+      // Withdrawn without running, verified not applied (TASK-194 round 5): the note keeps who had
+      // approved it and when (the same wording as the in-memory store), the run token cleared.
+      return this.update(
+        proposalId,
+        `update proposals
+            set status = 'rejected', decided_by = $2,
+                decision_note = 'Approved by ' || coalesce(decided_by, 'unknown') || ' at '
+                  || coalesce(to_char(decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'unknown')
+                  || ', its run undecided; withdrawn, verified not applied: ' || $3,
+                decided_at = now(), run_token = null, run_atomic = null, updated_at = now()
+          where id = $1::uuid and status = 'indeterminate'
+          returning id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, actor_identity, effects, effective_risk, payload, observed_version, decided_by, decided_at, decision_note, last_run_error, run_token, run_atomic, created_at, updated_at`,
+        [decidedBy, note.slice(0, 1000)]
+      );
+    }
     return resolution === "approved"
       ? this.update(
           proposalId,

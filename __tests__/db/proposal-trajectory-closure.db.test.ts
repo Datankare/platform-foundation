@@ -50,9 +50,10 @@ import { eraseUserData } from "@/platform/auth/user-data";
 import { alertWaitingUndecided } from "@/platform/admin/hold-expiry";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 
-const mockAlerts: { name: string; count?: number }[] = [];
+const mockAlerts: { name: string; count?: number; message?: string }[] = [];
 jest.mock("@/platform/observability/alert", () => ({
-  raiseAlert: (a: { name: string; count?: number }) => mockAlerts.push(a),
+  raiseAlert: (a: { name: string; count?: number; message?: string }) =>
+    mockAlerts.push(a),
 }));
 
 const OPEN = ["running", "paused", "awaiting_retry", "indeterminate"] as const;
@@ -82,7 +83,7 @@ const AUTHORITY: HoldAuthority = {
       return { kind: "applied" };
     }
     if (resumeAs === "stale") {
-      return { kind: "stale", error: "approvals.stale: changed" };
+      return { kind: "stale", error: "approvals.stale" };
     }
     return { kind: "failed", error: "it could not run", approvalKept: true };
   },
@@ -416,6 +417,10 @@ dbDescribe("no hold ends with its trajectory left open (TASK-193, B-2)", () => {
     mockAlerts.length = 0;
     expect(await sweep()).toBeGreaterThan(0);
     expect(mockAlerts.map((a) => a.name)).toEqual(["approvals.indeterminate"]);
+    // Round 7, I-3: what to do when no one in the tenant may decide it.
+    expect(mockAlerts[0].message).toMatch(
+      /no one in its tenant but its requester and the account it acts on may decide it, a platform operator decides it/
+    );
     mockAlerts.length = 0;
     await sweep();
     await sweep();

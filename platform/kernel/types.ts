@@ -275,6 +275,18 @@ export type ToolExecute = (
   context?: ActionContext
 ) => Promise<Record<string, unknown>>;
 
+/**
+ * Why an approved run did not take effect (Tool.reportsFailure): its reason, or a coded one — a
+ * registry code (platform/errors) and its params, with the code as the reason (no free text).
+ */
+export type RunFailure =
+  | string
+  | {
+      readonly reason: string;
+      readonly code: string;
+      readonly params?: Readonly<Record<string, unknown>>;
+    };
+
 export interface Tool {
   /** Unique tool identifier */
   readonly id: string;
@@ -332,9 +344,11 @@ export interface Tool {
   /**
    * Whether the tool's own (schema-valid) output says it did not take effect — the reason, or
    * undefined when it did. Asked only for a run released by an approval: such a run that reports
-   * failure keeps its approval for a retry, as one that throws does (review 10 H2).
+   * failure keeps its approval for a retry, as one that throws does (review 10 H2). A coded
+   * failure (TASK-194 round 15, I-1) names its registry code and params, so the decision answers
+   * why — a change already waiting, the audit log unavailable — not only that it failed.
    */
-  readonly reportsFailure?: (output: Record<string, unknown>) => string | undefined;
+  readonly reportsFailure?: (output: Record<string, unknown>) => RunFailure | undefined;
   /**
    * Every effect of this tool is a write in the current tenant's database transaction
    * (platform/data withTenantTx — never the owner connection, never an external call). Its
@@ -753,10 +767,10 @@ export interface CostSummary {
  * and would let an agent approve its own held action.
  *
  * `approver` is an AgentIdentity carrying an actorType ("user" | "agent" | "system"). It is
- * deliberately NOT a human-only flag: the requirement that a human approve is a POLICY
- * default (platform/agents/gating.ts approvalPolicy), not a property of this type. Moving a
- * class of action to agent approval is a policy change, never an envelope change, because
- * actorType "agent" was always a legal value here. See the ADR-030 amendment of 2026-08-15.
+ * deliberately NOT a human-only flag in the type: who approves is the approval policy's to say
+ * (platform/agents/gating.ts approvalPolicy) — except that a restricted action is always a
+ * person's ("restricted ⇒ person", ADR-030 amendment of 2026-10-31), and while GATING_THRESHOLD
+ * is "restricted" every held action is. See the ADR-030 amendments of 2026-08-15 and 2026-10-31.
  */
 export interface HeldAction {
   readonly proposalId: string;
@@ -774,8 +788,8 @@ export interface HeldAction {
   /**
    * What the held step waits for, when it is not a first decision (absent): `retry` — it was
    * approved, its run failed before taking effect and the approval was kept: approving it again
-   * runs it (once); `outcome` — its run's outcome is unknown: a person marks it executed or
-   * approves it again. Set on the response to a continuation of an `awaiting_retry` or
+   * runs it (once); `outcome` — its run's outcome is unknown: a person marks it executed, approves
+   * it again or withdraws it. Set on the response to a continuation of an `awaiting_retry` or
    * `indeterminate` workflow, which runs nothing.
    */
   readonly awaiting?: "retry" | "outcome";
@@ -1092,14 +1106,14 @@ export interface AbandonedTrajectories {
  * taking effect — so a transient failure does not burn the approval, and approving again retries
  * it. While `executing`, no second run can claim it.
  *
- * `indeterminate` (review 11 H-1): a run that did not end within its lease — slower than the
- * lease, or its process died — and whose effect cannot be known: the approval-expiry job moves it
- * here (platform/admin/hold-expiry.ts), never back to `approved` (the process may have died
- * between the effect and its record). It is not runnable: a human decides — marks it executed
- * after verifying the effect happened, or re-approves it with a fresh approval (both audited,
- * ProposalStore.resolveIndeterminate). The run itself, should it still end, completes it by its
- * token. Only an atomic run (claim, effect and completion in one transaction) is returned to
- * `approved`: its effect rolled back with its claim.
+ * `indeterminate` (review 11 H-1): a run that did not end within its lease — slower than the lease,
+ * or its process died — and whose effect cannot be known: the approval-expiry job moves it here
+ * (platform/admin/hold-expiry.ts), never back to `approved` (the process may have died between the
+ * effect and its record). It is not runnable: a human decides — marks it executed after verifying
+ * the effect happened, re-approves it with a fresh approval, or withdraws it without running after
+ * verifying it did not (each audited, ProposalStore.resolveIndeterminate). The run itself, should
+ * it still end, completes it by its token. Only an atomic run (claim, effect and completion in one
+ * transaction) is returned to `approved`: its effect rolled back with its claim.
  *
  * `executed` is TERMINAL: the approval was used and the action took effect (or took effect and
  * its record could not be stored — the error says so); it can never release a second run.
@@ -1235,13 +1249,16 @@ export interface ProposalStore {
   ): Promise<ProposalRecord | undefined>;
   /**
    * A human's decision on an `indeterminate` run (review 11 H-1): `executed` (verified that it
-   * took effect) or `approved` (verified that it did not, and approved again — a fresh approval:
-   * `decidedBy` and the decision time are replaced, the old run token cleared). Only from
+   * took effect), `approved` (verified that it did not, and approved again — a fresh approval:
+   * `decidedBy` and the decision time are replaced, the old run token cleared) or `rejected`
+   * (verified that it did not, and withdrawn without running — any held action, TASK-194 rounds
+   * 5–6: `decidedBy`, the time and the note recorded, the old run token cleared; a duplicate
+   * erasure hold, for one, is closed this way, never run a second time). Only from
    * `indeterminate`; undefined otherwise. The caller audits it.
    */
   resolveIndeterminate(
     proposalId: string,
-    resolution: "executed" | "approved",
+    resolution: "executed" | "approved" | "rejected",
     decidedBy: string,
     note: string
   ): Promise<ProposalRecord | undefined>;

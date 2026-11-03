@@ -48,6 +48,7 @@ jest.mock("@/app/api/admin/ai/command-bar", () => {
   };
 });
 
+import { FEATURE_PERMISSION_CODES } from "@/platform/auth/feature-permissions";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
@@ -148,6 +149,8 @@ if (DB_ENABLED) {
       "admin_manage_entitlements",
       cat.codes.x,
       cat.codes.y,
+      // Every role holds the feature permissions since 061 (TASK-194), an admin's included.
+      ...FEATURE_PERMISSION_CODES,
     ];
     tenantAdmin = {
       userId: randomUUID(),
@@ -177,7 +180,10 @@ dbDescribe(`${SUITE} handleCreateRole`, () => {
       )
     );
     expect(res.success).toBe(true);
-    expect(await permsOf((await roleNamed(name("support"))).id)).toEqual([cat.codes.x]);
+    // And, by default, the feature permissions (round 1, A7).
+    expect(await permsOf((await roleNamed(name("support"))).id)).toEqual(
+      [cat.codes.x, ...FEATURE_PERMISSION_CODES].sort()
+    );
     const audit = (await auditOf(a)).slice(before);
     expect(audit[0]).toMatchObject({
       action: "admin_action",
@@ -186,12 +192,58 @@ dbDescribe(`${SUITE} handleCreateRole`, () => {
     });
   });
 
-  it("creates a role with no permissions", async () => {
+  it("creates a role asked with no permissions holding the feature permissions (round 1, A7)", async () => {
     const res = await shared(() =>
       handleCreateRole({ name: name("bare"), display_name: "Bare" }, operator)
     );
     expect(res.success).toBe(true);
-    expect(await permsOf((await roleNamed(name("bare"))).id)).toEqual([]);
+    expect(await permsOf((await roleNamed(name("bare"))).id)).toEqual([
+      ...FEATURE_PERMISSION_CODES,
+    ]);
+    expect(res.result).not.toMatch(/lacks/);
+  });
+
+  // Round 2: an admin who lacks a default feature permission still creates the role — that
+  // default is skipped and said, never a refusal (the grant rule: no one grants what they lack).
+  it("an admin lacking a feature permission creates the role without it, and is told", async () => {
+    const lacking: VerifiedAdmin = {
+      ...operator,
+      permissions: operator.permissions.filter((p) => p !== "can_translate"),
+    };
+    const res = await shared(() =>
+      handleCreateRole({ name: name("partial"), display_name: "Partial" }, lacking)
+    );
+    expect(res.success).toBe(true);
+    expect(await permsOf((await roleNamed(name("partial"))).id)).toEqual(
+      FEATURE_PERMISSION_CODES.filter((c) => c !== "can_translate")
+    );
+    expect(res.result).toMatch(/lacks can_translate/);
+    // Asked for by name, it is refused as before.
+    const asked = await shared(() =>
+      handleCreateRole(
+        { name: name("partial2"), display_name: "P2", permissions: ["can_translate"] },
+        lacking
+      )
+    );
+    expect(asked).toMatchObject({ success: false, code: "auth.grant_exceeds_own" });
+  });
+
+  it("creates a role without a feature permission only when asked, and says so (round 1, A7)", async () => {
+    const res = await shared(() =>
+      handleCreateRole(
+        {
+          name: name("notr"),
+          display_name: "No translate",
+          without_feature_permissions: ["can_translate"],
+        },
+        operator
+      )
+    );
+    expect(res.success).toBe(true);
+    expect(await permsOf((await roleNamed(name("notr"))).id)).toEqual(
+      FEATURE_PERMISSION_CODES.filter((c) => c !== "can_translate")
+    );
+    expect(res.result).toMatch(/lacks can_translate/);
   });
 
   it("says a taken name plainly, never with the database's own message", async () => {
@@ -199,7 +251,10 @@ dbDescribe(`${SUITE} handleCreateRole`, () => {
       handleCreateRole({ name: cat.roleNames.ops, display_name: "Ops" }, operator)
     );
     expect(res.success).toBe(false);
-    expect(res.error).toBe("That already exists: choose another name.");
+    expect(res).toMatchObject({
+      error: "admin.already_exists",
+      code: "admin.already_exists",
+    });
     expect(res.error).not.toMatch(/duplicate|unique|constraint/i);
   });
 
@@ -246,14 +301,14 @@ dbDescribe(`${SUITE} handleDeleteRole`, () => {
       handleDeleteRole({ role_name: name("ghost") }, operator)
     );
     expect(res.success).toBe(false);
-    expect(res.error).toMatch(/not found/);
+    expect(res).toMatchObject({ code: "admin.target_not_found" });
   });
 
   it("refuses when users are still assigned", async () => {
     const res = await shared(() =>
       handleDeleteRole({ role_name: cat.roleNames.ops }, operator)
     );
-    expect(res.error).toMatch(/1 users assigned/);
+    expect(res).toMatchObject({ code: "admin.role_in_use", params: { count: 1 } });
     expect(await roleNamed(cat.roleNames.ops)).toBeDefined();
   });
 
@@ -261,7 +316,7 @@ dbDescribe(`${SUITE} handleDeleteRole`, () => {
     const res = await shared(() =>
       handleDeleteRole({ role_name: cat.roleNames.spare }, operator)
     );
-    expect(res.error).toMatch(/users assigned/);
+    expect(res).toMatchObject({ code: "admin.role_in_use" });
     expect(await roleNamed(cat.roleNames.spare)).toBeDefined();
   });
 
@@ -312,7 +367,7 @@ dbDescribe(`${SUITE} handleDuplicateRole`, () => {
         operator
       )
     );
-    expect(res.error).toMatch(/not found/);
+    expect(res).toMatchObject({ code: "admin.target_not_found" });
   });
 
   it("refuses to copy permissions the admin does not hold", async () => {
@@ -425,13 +480,27 @@ dbDescribe(`${SUITE} handleAssignPermissions`, () => {
     );
     expect(res.success).toBe(true);
     expect(res.result).toMatch(/\+1, -1/);
-    expect(await permsOf(id)).toEqual([cat.codes.y]);
+    expect(await permsOf(id)).toEqual([cat.codes.y, ...FEATURE_PERMISSION_CODES].sort());
     // Re-adding a permission the role holds is a no-op.
     const again = await shared(() =>
       handleAssignPermissions({ role_name: name("assign"), add: [cat.codes.y] }, operator)
     );
     expect(again.success).toBe(true);
-    expect(await permsOf(id)).toEqual([cat.codes.y]);
+    expect(await permsOf(id)).toEqual([cat.codes.y, ...FEATURE_PERMISSION_CODES].sort());
+  });
+
+  it("says when a change leaves the role without a feature permission (round 1, A7)", async () => {
+    await shared(() =>
+      handleCreateRole({ name: name("gap"), display_name: "Gap" }, operator)
+    );
+    const res = await shared(() =>
+      handleAssignPermissions(
+        { role_name: name("gap"), add: [], remove: ["can_translate"] },
+        operator
+      )
+    );
+    expect(res.success).toBe(true);
+    expect(res.result).toMatch(/lacks can_translate/);
   });
 
   it("refuses when the role is not found", async () => {

@@ -170,9 +170,11 @@ describe("an unreadable or malformed registry is never overwritten (audit B-21)"
       () => handleSetAgentTtl({ agent_id: "agent:a", max_token_ttl: 60 }, ACTOR),
     ]) {
       const r = await run();
+      // The registry could not be read: coded (rebase round 2, finding 2).
       expect(r).toMatchObject({
         success: false,
-        error: expect.stringMatching(/could not be read/),
+        code: "service.unavailable",
+        params: { service: "agents" },
       });
     }
     expect(writeGovernedConfig).not.toHaveBeenCalled();

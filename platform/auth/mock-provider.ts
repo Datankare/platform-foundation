@@ -10,6 +10,7 @@
  *   const result = await auth.signIn("test@example.com", "password");
  */
 
+import type { ErrorCode } from "@/platform/errors/registry";
 import type { AuthProvider } from "@/platform/auth/provider";
 import type {
   AuthResult,
@@ -206,6 +207,30 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
     },
 
     async disableMfa(): Promise<{ success: boolean; error?: string }> {
+      return { success: true };
+    },
+
+    // Step-up (audit C-3): "wrong-password" and the code 000000 are refused, as elsewhere here;
+    // the mock account has no second factor, so a password alone (code null) proves it.
+    async confirmCurrentFactor(
+      _accessToken: AuthToken,
+      password: string,
+      totpCode: string | null
+    ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }> {
+      if (password === "wrong-password") {
+        return {
+          success: false,
+          error: "Incorrect password",
+          errorCode: "auth.invalid_credentials",
+        };
+      }
+      if (totpCode === "000000") {
+        return {
+          success: false,
+          error: "Invalid TOTP code",
+          errorCode: "auth.code_invalid",
+        };
+      }
       return { success: true };
     },
 

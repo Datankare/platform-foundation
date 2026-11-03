@@ -31,10 +31,15 @@
  *
  * An approved run whose outcome is unknown (review 11 H-1: status indeterminate — it did not end
  * within its lease and left no step) takes only a decision on its outcome: "mark_executed" (the
- * decider verified it took effect; the hold's permission needed) or "reapprove" (verified it did
+ * decider verified it took effect; the hold's permission needed), "reapprove" (verified it did
  * not; a fresh approval, independent of the requester and under the hold's scope rules, run at
- * once, once). "approve" and "reject" on it answer approvals.indeterminate, and the two new
- * decisions on anything else approvals.decision_conflict. Each is recorded (approval_decision).
+ * once, once) or "withdraw" (verified it did not, and it is not to run: closed as rejected, never
+ * run — TASK-194 round 5; independent of the requester, the hold's permission needed). "approve"
+ * and "reject" on it answer approvals.indeterminate, and the three decisions on anything else
+ * approvals.decision_conflict. Each is recorded (approval_decision). A "reapprove" of a hold its
+ * authority finds duplicates an older open one (duplicateOf: a second erasure of one account)
+ * answers approvals.duplicate_undecided (round 8) and changes nothing — it would run the action a
+ * second time; such a hold, verified not applied, is withdrawn.
  *
  * @module platform/admin
  */
@@ -55,10 +60,20 @@ import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 import {
   getApproval,
   approveAndApply,
+  APPLY_LEASE_SECONDS,
   rejectChange,
 } from "@/platform/admin/config-approval";
 import { requiredPermissionForKey } from "@/platform/admin/pending-approvals";
-import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
+import { withdrawLapsedHold } from "@/platform/admin/lapsed-hold";
+import {
+  apiError,
+  apiErrorBody,
+  errorFromResult,
+  readJsonObject,
+} from "@/platform/errors";
+import { ERROR_CODES, type ErrorCode } from "@/platform/errors/registry";
+import { settlesWithinMinutes } from "@/platform/admin/approval-settle";
+import { LOST_COMMIT_CODE } from "@/platform/action-pipeline";
 import {
   authorityFor,
   proposalConfigKey,
@@ -70,15 +85,120 @@ import { approvedChangeTarget, isOperator } from "@/platform/admin/config-scope"
 import {
   approvalExpiryDays,
   holdLapsed,
-  HOLD_EXPIRY_ACTOR,
-  lapsedNote,
-  undecidedNote,
+  RUN_LEASE_SECONDS,
 } from "@/platform/admin/hold-expiry";
+import { sameId } from "@/platform/auth/same-id";
+import { requiredJobWithdrawalNote } from "@/platform/jobs/required-schedule";
+
+/** A users.id's shape: only an account id is a record's target (recordAudit refuses another). */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Who rejects a hold that duplicates another (TASK-199): the system, not the decider. */
+export const DUPLICATE_HOLD_ACTOR = "system:duplicate-hold";
+
+/**
+ * Who withdraws an approved hold that is stale or refused for good when it runs (round 21, I-2):
+ * the system — as a lapse, a duplicate and a config approval's apply are withdrawn — with the
+ * decider recorded as who found it.
+ */
+export const REFUSED_HOLD_ACTOR = "system:held-change-refused";
+
+/** The note on a hold refused for good, by its code (round 21, nit 2). */
+function refusedHoldNote(code: ErrorCode, proposal: ProposalRecord): string {
+  const key = proposalConfigKey(proposal.payload);
+  return code === "jobs.schedule_required" && key
+    ? `refused: ${requiredJobWithdrawalNote(key)}`
+    : `refused: ${code}`;
+}
+
+/**
+ * Withdraw an approved hold that is stale or refused for good (round 21, I-2): recorded first
+ * (approval_withdrawn — the system as the agent, the decider as `foundBy`, who had approved it and
+ * when), then withdrawn as the system, its trajectory settled with it (as a lapse's). Whether it
+ * was withdrawn: false when it is no longer approved. AuditWriteError when the record cannot be
+ * written (nothing is withdrawn).
+ */
+async function withdrawRefusedHold(
+  /** A code, never free text (audit-details' rule: a literal-union parameter). */
+  reason: "stale" | "refused",
+  args: {
+    readonly id: string;
+    readonly source: string;
+    readonly decidedBy: string;
+    readonly proposal: ProposalRecord;
+    readonly note: string;
+  }
+): Promise<boolean> {
+  const { id, source, decidedBy, proposal, note } = args;
+  // Who approved it and when: the hold as it stands now (approved just now, or kept from before).
+  const approved = (await getProposalStore().getById(id)) ?? proposal;
+  const outcome = await audited(
+    {
+      action: "admin_action",
+      agent: REFUSED_HOLD_ACTOR,
+      details: {
+        type: "approval_withdrawn",
+        reason,
+        holdId: id,
+        source,
+        label: proposal.label,
+        key: proposalConfigKey(proposal.payload) ?? null,
+        approvedBy: approved.decidedBy ?? null,
+        approvedAt: approved.decidedAt ?? null,
+        foundBy: decidedBy,
+      },
+    },
+    async () => {
+      const withdrawn = await getProposalStore().withdraw(id, REFUSED_HOLD_ACTOR, note);
+      // Settled here, then again by decideRuntimeHold's `finally` (round 22, N-1; round 23, nit
+      // 1): its one caller today (decideRuntimeHoldNow) runs inside that `try`, so this settle runs
+      // first and the `finally`'s is the no-op (each move is a compare-and-set from an open
+      // status). Kept so the helper stays correct called from anywhere else, as
+      // withdrawLapsedHold and refuseDuplicateHold settle their own.
+      await Promise.resolve()
+        .then(() => settleHeldTrajectory(getTrajectoryStore(), withdrawn))
+        .catch(() => undefined);
+      return withdrawn
+        ? { success: true as const }
+        : { success: false as const, error: "not withdrawn (no longer approved)" };
+    }
+  );
+  return outcome.success;
+}
 
 interface DecisionBody {
   decision?: string;
   source?: string;
   note?: string;
+}
+
+/**
+ * The answer to a config approval whose apply failed: its code (errorFromResult) and, for the
+ * screen, what became of the approval (round 16, items 3–4) — `withdrawn` by the system, or
+ * `settling` (approved, its outcome checked by the apply recovery) with when it is listed again.
+ */
+async function configDecisionFailure(
+  result: Parameters<typeof errorFromResult>[0] & { withdrawn?: true; settling?: true },
+  request: NextRequest
+): Promise<NextResponse> {
+  const failed = errorFromResult(result, {
+    request,
+    context: "Approval decision failed",
+  });
+  if (!result.withdrawn && !result.settling) return failed;
+  return NextResponse.json(
+    {
+      ...((await failed.json()) as Record<string, unknown>),
+      ...(result.withdrawn ? { withdrawn: true } : {}),
+      ...(result.settling
+        ? {
+            settling: true,
+            settlesWithinMinutes: await settlesWithinMinutes(APPLY_LEASE_SECONDS),
+          }
+        : {}),
+    },
+    { status: failed.status, headers: failed.headers }
+  );
 }
 
 /** Decide hold `id` as `admin`, in the current tenant; the HTTP response. */
@@ -100,18 +220,20 @@ export async function decideApproval(
     decision !== "approve" &&
     decision !== "reject" &&
     decision !== "mark_executed" &&
-    decision !== "reapprove"
+    decision !== "reapprove" &&
+    decision !== "withdraw"
   ) {
     return apiError("request.invalid_value", {
       params: {
         field: "decision",
-        allowed: ["approve", "reject", "mark_executed", "reapprove"],
+        allowed: ["approve", "reject", "mark_executed", "reapprove", "withdraw"],
       },
       request,
     });
   }
   // A decision on an approved run whose outcome is unknown (review 11 H-1): only a runtime hold.
-  const onUndecided = decision === "mark_executed" || decision === "reapprove";
+  const onUndecided =
+    decision === "mark_executed" || decision === "reapprove" || decision === "withdraw";
   if (source !== "runtime" && source !== "config-approval") {
     return apiError("request.invalid_value", {
       params: { field: "source", allowed: ["runtime", "config-approval"] },
@@ -191,13 +313,14 @@ export async function decideApproval(
 
   // ADR-040 enforcement, server-side: independent + authorized. Marking an undecided run
   // executed is a decision on the hold like approving it (review 12 L7): the requester may not
-  // declare their own change applied either.
+  // declare their own change applied either — nor, withdrawing it, declare it not applied.
   // Holds recorded before Sprint 7X may name the requester by identity-provider subject.
   if (
     (decision === "approve" ||
       decision === "reapprove" ||
-      decision === "mark_executed") &&
-    requesters.some((r) => r === admin.userId || r === admin.sub)
+      decision === "mark_executed" ||
+      decision === "withdraw") &&
+    requesters.some((r) => sameId(r, admin.userId) || sameId(r, admin.sub))
   ) {
     return apiError("approvals.self_approval", { request });
   }
@@ -207,12 +330,58 @@ export async function decideApproval(
       request,
     });
   }
+  // Never on one's own account (TASK-194 round 1, A3): a decider is not the account the held
+  // action acts on, whatever the action — a restriction, an erasure, a role change — and whatever
+  // the decision: approve, reapprove, mark_executed, and withdraw and reject too (round 6, I-1,
+  // P-1: the target of an erasure must not withdraw or reject it either). Unreadable: no decision.
+  // The account it acts on, read once: refused to decide here, and named by the decision's record
+  // (round 7, I-1: the record's note is erased with that account only if the record names it).
+  let target: string | null | undefined;
+  if (held?.authority.targetAccount) {
+    try {
+      target = await held.authority.targetAccount(held.proposal);
+    } catch (err) {
+      logger.error("Held action's target could not be read", {
+        holdId: id,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/admin/approval-decision",
+      });
+      return apiError("service.unavailable", { params: { service: "roles" }, request });
+    }
+    // An account not found is not the approver's (theirs exists); the action reports it itself.
+    if (target && (sameId(target, admin.userId) || sameId(target, admin.sub))) {
+      return apiError("admin.self_target", { request });
+    }
+  }
+  // The change's own rules, for the approver (TASK-194, audit C-2): an approver must be able to
+  // make the change themselves — a role change only by one holding every permission of both
+  // roles, never of a protected role, never their own. Unreadable rules: no decision.
+  if (
+    held?.authority.approverRuleRefusal &&
+    (decision === "approve" || decision === "reapprove" || decision === "mark_executed")
+  ) {
+    let refused;
+    try {
+      refused = await held.authority.approverRuleRefusal(held.proposal, admin);
+    } catch (err) {
+      logger.error("Approver rule check failed", {
+        holdId: id,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/admin/approval-decision",
+      });
+      return apiError("service.unavailable", { params: { service: "roles" }, request });
+    }
+    if (refused) return apiError(refused.code, { params: refused.params, request });
+  }
 
   // Every decision is recorded before it takes effect, naming the decider and the requester
-  // (release review, Sprint 7X: decisions left no audit record).
+  // (release review, Sprint 7X: decisions left no audit record) — and the account the held action
+  // acts on, as its target: the decider's note about it is erased with that account (round 7,
+  // I-1; platform/auth/user-data.ts auditText finds a record by its target).
   const entry = {
     action: "admin_action" as const,
     actorId: decidedBy,
+    ...(target && UUID_SHAPE.test(target) ? { targetId: target } : {}),
     details: {
       type: "approval_decision",
       holdId: id,
@@ -221,6 +390,11 @@ export async function decideApproval(
       requester,
       requiredPermission,
       ...(held ? { authority: held.authority.name, label: held.proposal.label } : {}),
+      // The decider's note (free text: erased with the target account, round 7, I-1), and who had
+      // approved the hold before this decision (round 6, P-2): a withdrawal, a re-approval or a
+      // run marked executed is about an approval already given.
+      ...(note?.trim() ? { note: note.trim() } : {}),
+      ...(held?.proposal.decidedBy ? { approvedBy: held.proposal.decidedBy } : {}),
     },
   };
 
@@ -233,50 +407,14 @@ export async function decideApproval(
     (held.proposal.status === "approved" || held.proposal.status === "proposed")
   ) {
     const days = await approvalExpiryDays();
-    const undecided = held.proposal.status === "proposed";
     if (holdLapsed(held.proposal, days)) {
       try {
-        await audited(
-          {
-            action: "admin_action",
-            agent: HOLD_EXPIRY_ACTOR,
-            details: {
-              type: "approval_withdrawn",
-              reason: "expired",
-              holdId: id,
-              source,
-              label: held.proposal.label,
-              ...(undecided
-                ? { decision: "undecided", requestedAt: held.proposal.createdAt }
-                : {
-                    approvedBy: held.proposal.decidedBy ?? null,
-                    approvedAt: held.proposal.decidedAt ?? null,
-                  }),
-              foundBy: decidedBy,
-            },
-          },
-          async () => {
-            const withdrawn = undecided
-              ? await getProposalStore().decide(
-                  id,
-                  "rejected",
-                  HOLD_EXPIRY_ACTOR,
-                  undecidedNote(days)
-                )
-              : await getProposalStore().withdraw(
-                  id,
-                  HOLD_EXPIRY_ACTOR,
-                  lapsedNote(days)
-                );
-            // Its trajectory ends with it (TASK-193); best effort, as every settle.
-            await Promise.resolve()
-              .then(() => settleHeldTrajectory(getTrajectoryStore(), withdrawn))
-              .catch(() => undefined);
-            return withdrawn
-              ? { success: true as const }
-              : { success: false as const, error: "already used or decided" };
-          }
-        );
+        await withdrawLapsedHold({
+          proposal: held.proposal,
+          days,
+          source: "runtime",
+          foundBy: decidedBy,
+        });
       } catch (err) {
         if (err instanceof AuditWriteError)
           return apiError("service.unavailable", {
@@ -289,74 +427,116 @@ export async function decideApproval(
     }
   }
 
+  // A duplicate of another open hold (TASK-199): rejected by the system, never approved.
+  if (held && decision === "approve") {
+    const refused = await refuseDuplicateHold({ request, id, source, decidedBy, held });
+    if (refused) return refused;
+  }
+  // An undecided duplicate is never approved again (TASK-194 round 5): that would run the action
+  // a second time while the older hold is open. Nothing changes; verified not applied, it is
+  // withdrawn ("withdraw"), and verified applied, marked executed.
+  if (held && decision === "reapprove" && held.authority.duplicateOf) {
+    let duplicate: Awaited<ReturnType<NonNullable<HoldAuthority["duplicateOf"]>>>;
+    try {
+      duplicate = await held.authority.duplicateOf(held.proposal);
+    } catch (err) {
+      logger.error("Held action's duplicates could not be read", {
+        holdId: id,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/admin/approval-decision",
+      });
+      return apiError("service.unavailable", {
+        params: { service: "approvals" },
+        request,
+      });
+    }
+    // Its own code (round 8, item 1): what to do with this hold — not a new request's answer.
+    if (duplicate) return apiError("approvals.duplicate_undecided", { request });
+  }
+
   try {
-    const done = await audited(entry, async () => {
-      if (source === "runtime") {
-        return decideRuntimeHold({
-          request,
-          id,
-          decision,
-          note,
-          decidedBy,
-          requestId,
-          held,
-        });
-      }
-      // An approved change is applied in the same outcome; one that cannot be applied is
-      // reopened, never left approved and unapplied (release review).
-      const result =
-        decision === "approve"
-          ? await approveAndApply(id, decidedBy, note ?? "", (record) => {
-              const target = approvedChangeTarget(isOperator(admin), record.scope);
-              if (!target.ok)
-                return Promise.resolve({ success: false, error: target.reason });
-              // Only onto the value it was requested against (review 12 H2): a change made
-              // since — a kill switch, a power reduction — makes it stale, never undone by it.
-              const expectPrevious = { value: record.currentValue };
-              if (record.action === "reset") {
-                // A reset's proposed value is the platform default it inherits, recorded at
-                // request time: it applies only while the default is still that (review 13 M1).
-                return clearTenantConfig(
+    const done = await audited(
+      entry,
+      async () => {
+        if (source === "runtime") {
+          return decideRuntimeHold({
+            request,
+            id,
+            decision,
+            note,
+            decidedBy,
+            requestId,
+            held,
+          });
+        }
+        // An approved change is applied in the same outcome. One that cannot be applied is, as
+        // its failure says (approveAndApply; round 15, P-1; round 16, items 3–4): reopened;
+        // withdrawn by the system when the withdrawal lands (stale, a value refused — else left
+        // to settle); or — a lost commit — left approved and unapplied, settled by the apply
+        // recovery.
+        const result =
+          decision === "approve"
+            ? await approveAndApply(id, decidedBy, note ?? "", (record) => {
+                const target = approvedChangeTarget(isOperator(admin), record.scope);
+                // Coded (round 15, P-1): a place the reviewer may not write.
+                if (!target.ok)
+                  return Promise.resolve({
+                    success: false,
+                    error: target.reason,
+                    errorCode: "admin.config_scope_refused",
+                    errorParams: { key: record.configKey },
+                  });
+                // Only onto the value it was requested against (review 12 H2): a change made
+                // since — a kill switch, a power reduction — makes it stale, never undone by it.
+                const expectPrevious = { value: record.currentValue };
+                if (record.action === "reset") {
+                  // A reset's proposed value is the platform default it inherits, recorded at
+                  // request time: it applies only while the default is still that (review 13 M1).
+                  return clearTenantConfig(
+                    record.configKey,
+                    decidedBy,
+                    `Approved: ${record.changeComment}`,
+                    target.target.operator,
+                    { expectPrevious, expectInherited: { value: record.proposedValue } }
+                  );
+                }
+                return setConfigWithHistory(
                   record.configKey,
+                  record.proposedValue,
                   decidedBy,
                   `Approved: ${record.changeComment}`,
-                  target.target.operator,
-                  { expectPrevious, expectInherited: { value: record.proposedValue } }
+                  "config_agent",
+                  undefined,
+                  target.target,
+                  { expectPrevious }
                 );
-              }
-              return setConfigWithHistory(
-                record.configKey,
-                record.proposedValue,
-                decidedBy,
-                `Approved: ${record.changeComment}`,
-                "config_agent",
-                undefined,
-                target.target,
-                { expectPrevious }
-              );
-            })
-          : await rejectChange(id, decidedBy, note ?? "");
-      if (!result.success) {
-        logger.error("Approval decision failed", {
-          requestId,
-          approvalId: id,
-          error: result.error,
-          route: "api/admin/approvals/[id]",
-        });
+              })
+            : await rejectChange(id, decidedBy, note ?? "");
+        if (!result.success) {
+          logger.error("Approval decision failed", {
+            requestId,
+            approvalId: id,
+            error: result.error,
+            route: "api/admin/approvals/[id]",
+          });
+          const response = await configDecisionFailure(result, request);
+          // A lost commit is audited indeterminate, never failed (round 16, item 2).
+          return {
+            success: false,
+            error: result.error,
+            ...(result.errorCode === LOST_COMMIT_CODE ? { indeterminate: true } : {}),
+            response,
+          };
+        }
         return {
-          success: false,
-          error: result.error,
-          response: errorFromResult(result, {
-            request,
-            context: "Approval decision failed",
-          }),
+          success: true,
+          response: NextResponse.json({ decision, source, requestId }),
         };
-      }
-      return {
-        success: true,
-        response: NextResponse.json({ decision, source, requestId }),
-      };
-    });
+        // A runtime hold's approval runs it through its authority (HoldAuthority.resume,
+        // @external): an erasure reaches the identity provider (round 9, P-1).
+      },
+      { external: true }
+    );
     return done.response;
   } catch (err) {
     if (err instanceof AuditWriteError) {
@@ -403,7 +583,7 @@ async function decideRuntimeHold(args: RuntimeDecisionArgs): Promise<DecisionOut
 interface RuntimeDecisionArgs {
   readonly request: NextRequest;
   readonly id: string;
-  readonly decision: "approve" | "reject" | "mark_executed" | "reapprove";
+  readonly decision: "approve" | "reject" | "mark_executed" | "reapprove" | "withdraw";
   readonly note: string | undefined;
   readonly decidedBy: string;
   readonly requestId: string;
@@ -431,6 +611,27 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
     return {
       success: true,
       response: NextResponse.json({ decision, source, withdrawn: true, requestId }),
+    };
+  }
+  if (decision === "withdraw") {
+    // Verified by a person not to have taken effect, and not to run (TASK-194 round 5): closed as
+    // rejected, never run — the decider, the time and the note recorded on the hold.
+    const gone = await getProposalStore().resolveIndeterminate(
+      id,
+      "rejected",
+      decidedBy,
+      note?.trim() || "verified that its run did not take effect"
+    );
+    if (!gone) {
+      return {
+        success: false,
+        error: "not undecided (its run ended, or another admin decided it)",
+        response: apiError("approvals.decision_conflict", { request }),
+      };
+    }
+    return {
+      success: true,
+      response: NextResponse.json({ decision, source, status: gone.status, requestId }),
     };
   }
   if (decision === "mark_executed") {
@@ -494,10 +695,19 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
     if (outcome.kind === "approved" && held) {
       const ran: HoldResumeResult = await held.authority
         .resume(held.proposal)
-        .catch((err: unknown) => ({
-          kind: "failed" as const,
-          error: err instanceof Error ? err.message : String(err),
-        }));
+        .catch((err: unknown) => {
+          // Its text is logged, never carried (round 15, I-4).
+          logger.error("Approved held change could not be run", {
+            requestId,
+            proposalId: id,
+            error: err instanceof Error ? err.message : String(err),
+            route: "platform/admin/approval-decision",
+          });
+          return {
+            kind: "failed" as const,
+            error: "The approved change could not be run.",
+          };
+        });
       if (ran.kind === "applied")
         resumed = {
           applied: true,
@@ -505,41 +715,44 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
         };
       else if (ran.kind === "pending")
         resumed = { applied: false, approval: ran.approval };
-      else if (ran.kind === "stale") {
-        // The key changed since the hold was requested (review 12 H2): nothing was applied. The
-        // hold is withdrawn — recorded first — and the requester must ask again.
-        const withdrawn = await audited(
-          {
-            action: "admin_action",
-            actorId: decidedBy,
-            details: {
-              type: "approval_withdrawn",
-              reason: "stale",
-              holdId: id,
-              source,
-              label: held.proposal.label,
-              key: proposalConfigKey(held.proposal.payload) ?? null,
-            },
-          },
-          async () =>
-            (await getProposalStore().withdraw(
-              id,
-              decidedBy,
-              "stale: the setting changed since it was requested"
-            ))
-              ? { success: true as const }
-              : { success: false as const, error: "not withdrawn (no longer approved)" }
-        );
-        logger.warn("Approved held change was stale; withdrawn", {
+      else if (ran.kind === "stale" || ran.kind === "refused") {
+        // Stale (review 12 H2: the key changed since it was requested) or refused for good
+        // (round 20, residual A: a required job's key, held before the job was required): nothing
+        // was applied, and approving it again could only fail the same way. Withdrawn by the
+        // system — recorded first, the decider as who found it (round 21, I-2) — and answered with
+        // its code and, when the withdrawal landed, `withdrawn: true`, so the panels read the list
+        // again. A run whose claim was kept never reaches here (resumeFailure, round 21, I-1).
+        const withdrawn = await withdrawRefusedHold(ran.kind, {
+          id,
+          source,
+          decidedBy,
+          proposal: held.proposal,
+          note:
+            ran.kind === "stale"
+              ? "stale: what it would replace changed since it was requested"
+              : refusedHoldNote(ran.code, held.proposal),
+        });
+        const code: ErrorCode = ran.kind === "stale" ? "approvals.stale" : ran.code;
+        logger.warn("Approved held change not applied: stale or refused for good", {
           requestId,
           proposalId: id,
-          withdrawn: withdrawn.success,
+          code,
+          withdrawn,
           route: "platform/admin/approval-decision",
         });
         return {
           success: false,
-          error: `stale: ${ran.error}`,
-          response: apiError("approvals.stale", { request }),
+          error: `${ran.kind}: ${ran.error}`,
+          response: NextResponse.json(
+            {
+              ...apiErrorBody(code, {
+                params: ran.kind === "refused" ? { ...(ran.params ?? {}) } : {},
+                request,
+              }),
+              ...(withdrawn ? { withdrawn: true } : {}),
+            },
+            { status: ERROR_CODES[code].status }
+          ),
         };
       } else if (ran.kind === "in_use") {
         // Another run holds the approval, or it was used: it runs once.
@@ -557,12 +770,47 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
           error,
           route: "platform/admin/approval-decision",
         });
-        // True: the approval stands (the run's claim was released, or never taken), so
-        // approving again retries it (review 10 H2: it said "try again" and then 409).
+        // The approval stands when the run's claim was released, or never taken — approving
+        // again retries it (review 10 H2: it said "try again" and then 409); `approvalKept` says
+        // so to the screen, which says what to do (round 15, I-1). Why it did not apply, when the
+        // run said (round 14, item 1; round 15, I-1: through the pipeline's release): a change
+        // to the key already waiting for approval, the audit log unavailable, a lost commit —
+        // its own code. A claim that could not be given back is no approval standing: its run's
+        // outcome is a person's to decide once its lease has passed (approvals.indeterminate).
+        const kept = ran.approvalKept !== false;
+        const code: ErrorCode = !kept
+          ? "approvals.indeterminate"
+          : ran.code &&
+              ran.code !== "admin.action_failed" &&
+              ran.code !== "internal.error"
+            ? ran.code
+            : "approvals.run_failed";
+        // Not kept — its write lost its commit (round 16, item 1), or the release could not be
+        // written: the screen says when it is listed as undecided.
+        const said = NextResponse.json(
+          {
+            ...apiErrorBody(code, {
+              params: kept && code === ran.code ? { ...(ran.params ?? {}) } : {},
+              request,
+            }),
+            approvalKept: kept,
+            ...(kept
+              ? {}
+              : {
+                  undecidedWithinMinutes: await settlesWithinMinutes(RUN_LEASE_SECONDS),
+                }),
+          },
+          { status: ERROR_CODES[code].status }
+        );
+        // The record says what is true of the approval (round 16, item 5), and a lost commit is
+        // audited indeterminate, never failed (item 2): the write may stand.
         return {
           success: false,
-          error: `Approved but not applied; approval kept: ${error}`,
-          response: apiError("approvals.run_failed", { request }),
+          error: kept
+            ? `Approved but not applied; approval kept: ${error}`
+            : `Approved but not applied; its run's claim not given back, undecided once its lease has passed: ${error}`,
+          ...(ran.code === LOST_COMMIT_CODE ? { indeterminate: true } : {}),
+          response: said,
         };
       }
     }
@@ -601,4 +849,71 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
     success: true,
     response: NextResponse.json({ decision, source, requestId }),
   };
+}
+
+/**
+ * When `held` is an undecided hold its authority says another, older open hold already covers
+ * (TASK-199: HoldAuthority.duplicateOf), reject it — the system's decision, recorded before it is
+ * made — and answer the authority's code; undefined when it is no duplicate. Unreadable: 503.
+ */
+async function refuseDuplicateHold(args: {
+  readonly request: NextRequest;
+  readonly id: string;
+  readonly source: string;
+  readonly decidedBy: string;
+  readonly held: { readonly proposal: ProposalRecord; readonly authority: HoldAuthority };
+}): Promise<NextResponse | undefined> {
+  const { request, id, source, decidedBy, held } = args;
+  if (!held.authority.duplicateOf) return undefined;
+  let duplicate: Awaited<ReturnType<NonNullable<HoldAuthority["duplicateOf"]>>>;
+  try {
+    duplicate = await held.authority.duplicateOf(held.proposal);
+  } catch (err) {
+    logger.error("Held action's duplicates could not be read", {
+      holdId: id,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/admin/approval-decision",
+    });
+    return apiError("service.unavailable", { params: { service: "approvals" }, request });
+  }
+  if (!duplicate) return undefined;
+  try {
+    await audited(
+      {
+        action: "admin_action",
+        agent: DUPLICATE_HOLD_ACTOR,
+        details: {
+          type: "approval_withdrawn",
+          reason: "duplicate",
+          holdId: id,
+          source,
+          label: held.proposal.label,
+          decision: "undecided",
+          requestedAt: held.proposal.createdAt,
+          holdIds: [duplicate.holdId],
+          foundBy: decidedBy,
+        },
+      },
+      async () => {
+        const rejected = await getProposalStore().decide(
+          id,
+          "rejected",
+          DUPLICATE_HOLD_ACTOR,
+          `duplicate of hold ${duplicate.holdId}, which stands`
+        );
+        await Promise.resolve()
+          .then(() => settleHeldTrajectory(getTrajectoryStore(), rejected))
+          .catch(() => undefined);
+        return rejected
+          ? { success: true as const }
+          : { success: false as const, error: "already decided" };
+      }
+    );
+  } catch (err) {
+    if (err instanceof AuditWriteError) {
+      return apiError("service.unavailable", { params: { service: "audit" }, request });
+    }
+    throw err;
+  }
+  return apiError(duplicate.code, { request });
 }

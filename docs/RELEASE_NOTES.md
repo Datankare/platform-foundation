@@ -19,8 +19,8 @@ provider (TASK-178), and the admin Users screen with the address kept in step (T
 standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186), and the
 command bar's search limited to what the admin pages show (TASK-189), and one list on the Users
 screen (TASK-190), and roles and permissions in a logical order (TASK-192), and every lifecycle
-closed and every erasure completed (TASK-193). Deploy:
-migrations 053, 054, 055, 056, 057, 058, 059 and 060 in the SQL Editor
+closed and every erasure completed (TASK-193), and the sweep's access-control batch (TASK-194).
+Deploy: migrations 053, 054, 055, 056, 057, 058, 059, 060 and 061 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the nine "Release candidate" rows.
 
@@ -98,6 +98,116 @@ code. Consumer steps: §1b, the nine "Release candidate" rows.
   `REQUIRE_VALKEY_TESTS` in every pass and the install retries — which `workflow-hygiene` now
   checks — and add `/jest-results-*.json` to `.gitignore` (not synced; a later pass's tree check
   otherwise counts an earlier pass's results file).
+
+- **Access control: approvers, erasure, step-up, feature permissions (TASK-194).** An approver of a
+  held change must satisfy the change's own rules, evaluated for them against the held payload
+  (`HoldAuthority.approverRuleRefusal`; the command bar's `APPROVER_RULES`): an admin can no longer
+  approve a role change they could not make. An account's erasure (`POST /api/admin/gdpr`) is always
+  held for a second holder of `admin_purge_user_data` (202 `held`; the Users screen says so); a dry
+  run answers at once. Turning MFA off, or re-enrolling an enrolled account, needs
+  `{ password, currentCode }` (`auth.step_up_required`; `AuthProvider.confirmCurrentFactor` — a
+  consumer with its
+  own provider implements it); a federated (SSO) account without a pool password is told
+  `auth.step_up_unavailable` and recovers through the operator-assisted reset
+  (`docs/TENANCY_OPERATIONS.md`, "Resetting two-step verification"). The feature permissions are
+  enforced (`platform/auth/feature-permissions.ts`, by `requireActorWithStatus`: translate,
+  view_profile, update_profile; migration 061 grants them to every role). `makeTenantAdmin` applies
+  the role rules to the operator (no super_admin demoted); every `users.role_id` change goes through
+  `assignUserRole`. The config assistant checks the tier of the key each tool acts on
+  (`configToolTargetKey`). A review-queue submission names and records its moderator; the
+  reviewer-assist prompt wraps every record field as data. `/api/admin/tenant` returns settings and
+  job history only with `config_view`; `/api/admin/capabilities` names no plumbing. Guards: route
+  checks per method (compiler API), owner-transaction lenders traced, the role-write,
+  irreversible-route, data-family, staff-audit and catalog-enforcement registries ([TASKS](TASKS.md)
+  TASK-194). Review round 1: Approvals shows what each held action would do — the account it acts
+  on, an erasure's reason, a role change's roles (`PendingApproval.summary`, server-built and
+  allowlisted); an erasure's request is recorded when made, and an account has one open erasure at a
+  time (409 `admin.erasure_pending`; the Users screen shows it after a reload). Migration 061 also
+  grants `admin_purge_user_data` to `safety_approver` — **dual control needs a second approver
+  account**: give a second person one, or bootstrap the first safety approver once
+  (TENANCY_OPERATIONS). An approver never acts on their own account, whatever the action. A role
+  created in the command bar has the three feature permissions by default; the Roles screen says
+  when a role lacks any. A guest's feature permission is the `guest` role's, a user's is resolved by
+  their account (users.id), and a user refused one cannot continue as a guest. 061 refuses a catalog
+  without its permissions. `confirmStepUp` is exported for other routes to reuse;
+  `confirmCurrentFactor(token, password, null)` proves an account with no second factor by its
+  password. The logger redacts client secrets, PKCE verifiers and step-up codes. The step-up covers
+  the app's routes only: a stolen access token can still call Cognito directly until server-side
+  sessions (batch S9) — SECURITY_DEBT SEC-016. Review round 2: a held action's summary goes only to
+  an admin holding its required permission; the guest-block marker only on a definite refusal on a
+  route guests use (an unreadable permission is 503); one open erasure per account is kept by the
+  database too (061's `proposals_purge_one_open`); an admin lacking a default feature permission
+  still creates the role without it, and is told; an erasure needs two distinct holders of
+  `admin_purge_user_data`. Rebased onto TASK-193, and its review (TASKS TASK-194): an erasure
+  request withdraws the account's open erasure hold whose period ran out (recorded) instead of
+  refusing, and the Users screen does not show it as pending; a held role change records the account
+  by id (an account not found is refused, never held), and Approvals says when the account's role
+  changed since; an erasure's listed reason is kept as `purgeReason` (a code) when the account's
+  free text is erased; account ids are normalised for every command-bar action and the execute route
+  answers coded errors only (`internal.error` with a reference); an undecided duplicate erasure hold
+  is rejected on approval; applying 061 again replaces a draft's index (TASK-199). **Consumer
+  steps:** an app's own audit records register their keys in the new seam
+  `platform/auth/app-audit-details.ts` (sync-excluded: add it to your `.github/sync-config.json`;
+  never `text`, never a platform key), not in `audit-details.ts`; a reader of erasure records reads
+  `purgeReason` (older records keep `reason`); `HoldAuthority.duplicateOf` is optional. Round 2:
+  every command-bar refusal is a code of the contract — new `admin.already_exists`,
+  `admin.role_in_use`, `admin.write_indeterminate`, `admin.purge_incomplete`, `admin.action_failed`
+  — shown as its message (no free text, no store or exception text); a duplicate erasure hold is
+  judged only against a live one; ids in authorization decisions are compared with `sameId`
+  (`platform/auth/same-id.ts`: UUIDs in any case — an admin's own id in upper case no longer passes
+  the entitlement self-change rule). **Consumer steps:** a command-bar handler of your own returns
+  `coded(code, params)` for a refusal (`__tests__/command-bar-coded-results.test.ts`), and compares
+  ids in your own authorization code with `sameId` (`__tests__/id-equality.test.ts` scans `app/api`
+  too). Round 3: a held change made stale is withdrawn again (stale detection on the code
+  `approvals.stale`; the `"approvals.stale: "` text prefix is gone — a consumer that matched it
+  reads the code); every coded refusal carries its required params (`coded()` typed by the
+  registry); a dry-run erasure that did not complete answers its result; `sameId` reads every UUID
+  spelling Postgres accepts, and entitlement grants refuse a user id without the canonical UUID
+  shape; the id-equality guard covers moderation, social, jobs, sessions, the pipeline and `lib/`;
+  061 refuses, naming them, while an account has more than one open erasure hold. Round 4: 061's
+  refusal gives each hold's status and what to do with it; `request.invalid_value`'s `allowed` is a
+  list wherever the command bar or the Users list answers it (a screen reading it as a string reads
+  its first entry). Round 5: a participant leaves a turn order in every spelling of their id, and a
+  session naming one participant twice is refused; an undecided run verified not to have taken
+  effect can be **withdrawn** without running (**Approvals**: "Did not — withdraw it"), and an
+  undecided duplicate erasure hold is never approved again (a second erasure) — 061 and the deploy
+  notes say so. Round 6: nobody decides a hold about their own account, rejecting and withdrawing
+  included (`admin.self_target`); a decision's audit record keeps its note and the hold's previous
+  approver; an agent workflow's undecided step can be withdrawn too. Round 7: that note names the
+  account the hold acts on, and is erased with it; an undecided hold no one in its tenant may
+  decide says so in **Approvals** and in its alert, and a platform operator decides it from the
+  tenant's settings. Round 8: an undecided duplicate refused approval again answers
+  `approvals.duplicate_undecided`; an erased account's decided holds lose the notes and reasons
+  written about it. Round 9: and every run's step about it loses its free text; an erasure is held
+  only with a listed reason; a hold whose only other deciders fail its own rules is flagged too.
+  Round 10: an action's input may carry only its own keys (any other is refused, never dropped);
+  a holder who fails a change's own rules may still withdraw it.
+  Round 11: a change held for approval is shown as held on the dual-control screen (it read as an
+  error); a refused command-bar plan says why; an input's nested keys are checked too; the
+  approval policy's default approver is applied — round 12: and may only be a person, and a
+  restricted action is always a person's to approve; a held policy change shows what it would
+  store; a change filed for two-person approval shows as pending; an invalid value for a
+  dual-controlled setting is refused, never held. Round 13: every hold today is restricted, so a
+  person approves it whatever the approval policy says (and the screens say so); the dual-control
+  screen says why a value is refused; a config change is held only as it would run. Round 14: a
+  change already waiting, an unavailable audit log or approval store and a write of unknown outcome
+  are said as such on the config page, Jobs schedules, the command bar and an approved hold (they
+  read as an unexpected error); a refused value says why in words of the catalog; no store's own
+  error text reaches the screen. Round 15: an approved change that could not be applied says why and what
+  to do next (decide a change already waiting first; check a change that may have applied); a
+  refused filing is never shown as pending; a value a list setting does not take names the list;
+  after a change that may have applied, the setting is read again. Round 16: an approved change whose write may
+  have applied is never run again blind — it is listed as undecided, to verify and mark executed or
+  withdraw; a configuration approval whose outcome is being checked says when it is listed again;
+  one withdrawn by the system says so, and is recorded. Round 17: a change being settled is said as such; a
+  requester who may no longer run an approved action is named as the requester; an operator's held
+  changes say what the approvals page says. Round 18: the job that settles these
+  (config.expire-approvals) can no longer be turned off — only its interval changed (migration
+  062). Round 19: no config write turns it off or sets it for one tenant — the config page,
+  tenant settings, the config assistant and an approval all refuse it (`jobs.schedule_required`),
+  and 062 withdraws any approval still pending for it. Round 20: a change to it held before then is
+  withdrawn by the system when approved, never left to be approved again. Round 21: a held change
+  withdrawn because the setting changed is said so and the list is read again.
 - **One list on the Users screen; ids behind "Show details" (TASK-190).** A command-bar search
   of `users` run on the Users screen now filters the screen's own list — removable chips ("Role:
   Moderator ✕", "Clear all") — and its results row says "The matching users are shown in the

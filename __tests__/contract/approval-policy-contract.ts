@@ -78,6 +78,24 @@ export function runApprovalPolicyStoreContract(
       expect(after.default).toBe("user");
     });
 
+    it("takes a person as the default, and keeps it after (TASK-194 rounds 11, 12)", async () => {
+      const set = await store.setRules([], "admin-1", "user");
+      expect(set.default).toBe("user");
+      const kept = await store.setRules([], "admin-2");
+      expect(kept.default).toBe("user");
+    });
+
+    // Round 12, I-2: an action no rule matches may be restricted, and falls to the default.
+    it("refuses a default approver other than a person; nothing is written", async () => {
+      const before = await store.load();
+      for (const bad of ["agent", "system", "anyone"]) {
+        await expect(
+          store.setRules([], "admin-1", bad as unknown as "user")
+        ).rejects.toThrow(/default approver/);
+      }
+      expect(await store.load()).toEqual(before);
+    });
+
     it("a stored loosening rule moves resolution to an agent approver", async () => {
       await store.setRules(
         [

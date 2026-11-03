@@ -12,7 +12,8 @@
 
 import { logger } from "@/lib/logger";
 import { withOwnerTx, type Tx } from "@/platform/data";
-import type { RoleRefusal } from "@/platform/auth/role-governance";
+import type { RoleRefusal, VerifiedAdmin } from "@/platform/auth/role-governance";
+import type { ErrorCode, ParamsOf } from "@/platform/errors/registry";
 import { audited, AuditWriteError, type AuditEntry } from "@/platform/auth/audit";
 import {
   describeFailure,
@@ -55,7 +56,7 @@ export type ActionResult = {
   error?: string;
   /** The coded refusal, when an authorization rule refused the action (ADR-051). */
   code?: string;
-  params?: Readonly<Record<string, string>>;
+  params?: Readonly<Record<string, string | number | readonly string[]>>;
   /**
    * The write's commit was lost with its connection (review 14 L-2): it may or may not have taken
    * effect. Never a success; audited `indeterminate`, not `failed`; what follows a write that may
@@ -64,10 +65,64 @@ export type ActionResult = {
   indeterminate?: boolean;
 };
 
+/**
+ * A failed result with its code of the error-code contract (TASK-199): the code is the `error`
+ * too, so nothing but a code reaches the admin's screen or the execute route.
+ */
+export function coded<C extends ErrorCode>(
+  code: C,
+  ...params: keyof ParamsOf<C> extends never ? [] : [ParamsOf<C>]
+): ActionResult {
+  const p = params[0] as ActionResult["params"] | undefined;
+  return { success: false, error: code, code, ...(p ? { params: p } : {}) };
+}
+
 /** An action refused by an authorization rule, carrying its coded error. */
 export function refusal(r: RoleRefusal): ActionResult {
   return { success: false, error: r.code, code: r.code, params: r.params };
 }
+
+/**
+ * An action's rules for an admin, split in two (TASK-194 round 10, I-C): `facts` reads what the
+ * rules depend on — once per action, no admin in it (a read error throws: the caller fails
+ * closed) — and `decide` applies them to one admin, pure. The requester's check, an approver's
+ * (decideApproval) and who could approve at all (pending-approvals noEligibleDecider) all run
+ * the same pair: `applyRule` for one admin, or the facts once and `decide` for each candidate.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any -- an input, as handlers take it */
+export interface ApproverRule<F = unknown> {
+  /**
+   * What is decided on the input and the admin alone, before any read (round 11, nit 5): a
+   * refusal here stands even when the facts cannot be read — an erasure of one's own account is
+   * `admin.self_target`, never a lookup failure.
+   */
+  readonly beforeFacts?: (
+    input: Record<string, any>,
+    admin: VerifiedAdmin
+  ) => ActionResult | null;
+  readonly facts: (input: Record<string, any>) => Promise<F>;
+  readonly decide: (
+    input: Record<string, any>,
+    facts: F,
+    admin: VerifiedAdmin
+  ) => ActionResult | null;
+}
+
+/** The rule for one admin: what needs no read, then its facts read and decided. */
+export async function applyRule<F>(
+  rule: ApproverRule<F>,
+  input: Record<string, any>,
+  admin: VerifiedAdmin
+): Promise<ActionResult | null> {
+  return (
+    rule.beforeFacts?.(input, admin) ?? rule.decide(input, await rule.facts(input), admin)
+  );
+}
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** No facts to read: a rule decided on its input and the admin alone. */
+export const NO_FACTS = async (): Promise<null> => null;
 
 /** A change to the shared catalog refused to an admin who may not make it (ADR-053 D5). */
 export function operatorOnly(): ActionResult {
@@ -101,12 +156,7 @@ export async function failedAsResult(
           route: "app/api/admin/ai/handlers",
         }
       );
-      return {
-        success: false,
-        indeterminate: true,
-        error:
-          "The database connection was lost while the change was being saved: it may or may not have been applied. Check before you retry.",
-      };
+      return { ...coded("admin.write_indeterminate"), indeterminate: true };
     }
     // The database's message (table, constraint, column) is logged, never shown; a unique
     // violation is said in plain words, since it is the admin's to fix.
@@ -115,12 +165,9 @@ export async function failedAsResult(
       route: "app/api/admin/ai/handlers",
     });
     if ((err as { code?: unknown } | null)?.code === "23505") {
-      return { success: false, error: "That already exists: choose another name." };
+      return coded("admin.already_exists");
     }
-    return {
-      success: false,
-      error: "The change could not be saved: the database is unavailable or refused it.",
-    };
+    return coded("service.unavailable", { service: "database" });
   }
 }
 
@@ -154,12 +201,7 @@ export function fromGovernedConfig(
         params: { permission: outcome.permission },
       };
     case "refused_scope":
-      return {
-        success: false,
-        error: outcome.reason,
-        code: "admin.config_scope_refused",
-        params: { key },
-      };
+      return coded("admin.config_scope_refused", { key });
     case "not_found":
       return {
         success: false,
@@ -167,15 +209,38 @@ export function fromGovernedConfig(
         code: "admin.target_not_found",
         params: { target: key },
       };
-    case "invalid":
+    case "invalid": {
+      // The structured reason, worded by the message (round 14, item 2).
+      const { reason, ...bounds } = outcome.params;
       return {
         success: false,
-        error: outcome.errors.join("; "),
+        error: "admin.config_invalid_value",
         code: "admin.config_invalid_value",
-        params: { key },
+        params: { ...bounds, key, reason },
       };
+    }
     case "failed":
-      return { success: false, error: describeFailure(outcome.result) };
+      // Its code when it has one — a change already waiting, the audit log unavailable, a lost
+      // commit (round 14, item 1: every one answered admin.action_failed) — else
+      // admin.action_failed. Its text is logged, never returned (TASK-199).
+      if (outcome.code && outcome.code !== "admin.action_failed") {
+        return {
+          success: false,
+          error: outcome.code,
+          code: outcome.code,
+          params: { ...(outcome.params ?? {}) },
+          // A lost commit may stand (round 15, I-3): audited `indeterminate`, never `failed`.
+          ...(outcome.code === "admin.write_indeterminate"
+            ? { indeterminate: true }
+            : {}),
+        };
+      }
+      logger.error("Governed config write failed", {
+        key,
+        error: describeFailure(outcome.result),
+        route: "app/api/admin/ai/handlers",
+      });
+      return coded("admin.action_failed");
   }
 }
 
@@ -192,12 +257,7 @@ export async function runAudited(
     return await audited(entry, act, options);
   } catch (err) {
     if (err instanceof AuditWriteError) {
-      return {
-        success: false,
-        error: "The audit log is unavailable, so the action was not run.",
-        code: "service.unavailable",
-        params: { service: "audit" },
-      };
+      return coded("service.unavailable", { service: "audit" });
     }
     throw err;
   }

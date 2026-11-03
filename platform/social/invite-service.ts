@@ -14,6 +14,7 @@
 
 import type { AgentIdentity } from "@/platform/agents/types";
 import type { SocialStore, GroupInvite, InviteResult, CreateInviteInput } from "./types";
+import { sameId } from "@/platform/auth/same-id";
 
 export class InviteService {
   private readonly store: SocialStore;
@@ -48,7 +49,7 @@ export class InviteService {
     }
 
     // ── Self-invite check ───────────────────────────────────────
-    if (input.inviterId === input.inviteeId) {
+    if (sameId(input.inviterId, input.inviteeId)) {
       return {
         success: false,
         error: "Cannot invite yourself",
@@ -99,7 +100,7 @@ export class InviteService {
     }
 
     // Authorization: only the invitee can accept
-    if (invite.inviteeId !== accepterId) {
+    if (!sameId(invite.inviteeId, accepterId)) {
       return {
         success: false,
         error: "Only the invitee can accept this invite",
@@ -141,7 +142,7 @@ export class InviteService {
       return { success: false, error: "Invite not found" };
     }
 
-    if (invite.inviteeId !== declinerId) {
+    if (!sameId(invite.inviteeId, declinerId)) {
       return {
         success: false,
         error: "Only the invitee can decline this invite",

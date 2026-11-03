@@ -62,7 +62,12 @@ import {
 import { claimRunnerAuthority } from "./authority";
 import { retryDelayMs, uniformRandom } from "./backoff";
 import { describeJobError, internalDetail, JobTimeoutError } from "./errors";
-import { listJobDefinitions, listScheduledJobs, scheduleKeys } from "./registry";
+import {
+  getJobDefinition,
+  listJobDefinitions,
+  listScheduledJobs,
+  scheduleKeys,
+} from "./registry";
 import { getJobStore } from "./store";
 import { SETTLE_MARGIN_MS } from "./tick";
 import type {
@@ -184,6 +189,8 @@ export async function scheduleInterval(
 
 /** Whether a recurring kind is on. Unreadable: on — a safety duty never stops on a read error. */
 export async function scheduleEnabled(kind: string): Promise<boolean> {
+  // A required schedule always runs: its setting is ignored (TASK-194 round 18).
+  if (getJobDefinition(kind)?.schedule?.required) return true;
   try {
     return await getConfigBoolean(scheduleKeys(kind).enabled, true);
   } catch {

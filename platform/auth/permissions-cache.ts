@@ -35,7 +35,9 @@ import {
   type PublishOutcome,
 } from "@/platform/auth/token-verification";
 import {
+  resolveAccountPermissions,
   resolvePermissions,
+  resolveRolePermissions,
   type EffectivePermissions,
 } from "@/platform/auth/permissions";
 import { memoryPartition } from "@/platform/tenancy/partition";
@@ -44,6 +46,7 @@ import { readStamp } from "@/platform/cache/stamp-reader";
 import { inTransaction, onCommit } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import { randomUUID } from "node:crypto";
+import { sameId } from "@/platform/auth/same-id";
 
 interface CacheEntry {
   /** The subject, so invalidation can find every tenant's entry for it. */
@@ -128,8 +131,92 @@ export async function getCachedPermissions(
   cognitoSub: string,
   ttlMs: number = DEFAULT_TTL_MS
 ): Promise<EffectivePermissions | null> {
+  return cachedResolve(keyFor(cognitoSub), cognitoSub, ttlMs, () =>
+    resolvePermissions(cognitoSub)
+  );
+}
+
+/**
+ * The permissions of the account `accountId` (users.id), cached under its identity `cognitoSub`
+ * for invalidation (TASK-194 round 1, C3): resolved by the account, so a legacy row without a
+ * subject and an account re-linked to a new identity both resolve — a role change of the
+ * account, published for its subject, invalidates it.
+ */
+export async function getCachedAccountPermissions(
+  cognitoSub: string,
+  accountId: string,
+  ttlMs: number = DEFAULT_TTL_MS
+): Promise<EffectivePermissions | null> {
+  return cachedResolve(
+    `${keyFor(cognitoSub)}\u0000account:${accountId}`,
+    cognitoSub,
+    ttlMs,
+    () => resolveAccountPermissions(accountId)
+  );
+}
+
+/**
+ * Whether the account holds `permissionCode` (C3) — cached under `cognitoSub` when the caller has
+ * the identity (a verified token's subject); resolved afresh by the account alone when it does
+ * not (null: an agent's step, which knows the account it acts for, not its subject — an entry it
+ * could not invalidate is never kept).
+ */
+export async function hasAccountPermission(
+  cognitoSub: string | null,
+  accountId: string,
+  permissionCode: string
+): Promise<boolean> {
+  return (
+    (await accountPermissionStanding(cognitoSub, accountId, permissionCode)) === "held"
+  );
+}
+
+/**
+ * The account's standing for `permissionCode` (round 2, N3): `held`, `lacking` — its role and
+ * entitlements were read and do not grant it — or `unknown`: they could not be read. A caller
+ * that acts on a refusal (the guest-block marker) acts only on a definite `lacking`.
+ */
+export async function accountPermissionStanding(
+  cognitoSub: string | null,
+  accountId: string,
+  permissionCode: string
+): Promise<"held" | "lacking" | "unknown"> {
+  const effective = cognitoSub
+    ? await getCachedAccountPermissions(cognitoSub, accountId)
+    : await resolveAccountPermissions(accountId);
+  if (!effective) return "unknown";
+  return effective.permissions.includes(permissionCode) ? "held" : "lacking";
+}
+
+/**
+ * The subject the `guest` role's permissions are cached under (invalidated with every role). No
+ * identity has it: a provider's subject is a UUID, a guest's id is guest-prefixed.
+ */
+const GUEST_ROLE_SUBJECT = "role:guest";
+
+/**
+ * Whether a guest — who has no account, and acts under the `guest` role — holds
+ * `permissionCode` (TASK-194 round 1, C2: a guest's feature permission came from nowhere, so
+ * taking can_translate from guest changed nothing). A catalog change clears every entry
+ * (clearPermissionsCache), this one included. Unreadable: false (fail closed).
+ */
+export async function hasGuestPermission(permissionCode: string): Promise<boolean> {
+  const effective = await cachedResolve(
+    keyFor(GUEST_ROLE_SUBJECT),
+    GUEST_ROLE_SUBJECT,
+    DEFAULT_TTL_MS,
+    () => resolveRolePermissions("guest")
+  );
+  return effective ? effective.permissions.includes(permissionCode) : false;
+}
+
+async function cachedResolve(
+  key: string,
+  cognitoSub: string,
+  ttlMs: number,
+  resolve: () => Promise<EffectivePermissions | null>
+): Promise<EffectivePermissions | null> {
   const now = Date.now();
-  const key = keyFor(cognitoSub);
   const cached = cache.get(key);
 
   const stamps = await currentStamps(cognitoSub);
@@ -145,7 +232,7 @@ export async function getCachedPermissions(
 
   // Cache miss, expired, or invalidated somewhere — resolve from DB. The stamps were read
   // first: an invalidation published while this runs makes the entry stale at once.
-  const permissions = await resolvePermissions(cognitoSub);
+  const permissions = await resolve();
 
   if (permissions) {
     evictIfFull();
@@ -180,7 +267,7 @@ export async function hasCachedPermission(
  */
 export async function invalidatePermissions(cognitoSub: string): Promise<void> {
   for (const [key, entry] of cache) {
-    if (entry.sub === cognitoSub) cache.delete(key);
+    if (sameId(entry.sub, cognitoSub)) cache.delete(key);
   }
   await publishStamp(stampFor(cognitoSub));
   // What changed the user's permissions (a role, an entitlement, the account's deletion) also
@@ -204,7 +291,7 @@ export async function publishInvalidation(
   cognitoSub: string
 ): Promise<InvalidationOutcome> {
   for (const [key, entry] of cache) {
-    if (entry.sub === cognitoSub) cache.delete(key);
+    if (sameId(entry.sub, cognitoSub)) cache.delete(key);
   }
   const permissions = await publishStampNow(stampFor(cognitoSub));
   const tokens = await publishTokenRevocation(cognitoSub);

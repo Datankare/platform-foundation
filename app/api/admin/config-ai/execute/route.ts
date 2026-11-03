@@ -21,15 +21,23 @@ import { requireAdmin } from "@/platform/auth/admin-guard";
 import { holds } from "@/platform/auth/role-governance";
 import { tierPermission } from "@/platform/admin/governed-config";
 import { logger, generateRequestId } from "@/lib/logger";
-import { dispatchConfigTool } from "@/platform/admin/config-handlers";
+import { inputKeyRefusal, type InputSchemaNode } from "@/platform/admin/input-keys";
+import {
+  CONFIG_SERVER_SET_INPUTS,
+  CONFIG_TOOLS,
+  configFailure,
+  dispatchConfigTool,
+} from "@/platform/admin/config-handlers";
 import { getPermissionTier } from "@/platform/auth/platform-config";
 import type { ToolExecutionContext } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, apiErrorBody, readJsonObject } from "@/platform/errors";
+import { ERROR_CODES } from "@/platform/errors/registry";
 import { getApproval } from "@/platform/admin/config-approval";
 import { requiredPermissionForKey } from "@/platform/admin/pending-approvals";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { isOperator } from "@/platform/admin/config-scope";
+import { configToolTargetKey } from "@/platform/admin/hold-keys";
 
 // ---------------------------------------------------------------------------
 // Permission routing
@@ -88,6 +96,9 @@ interface ExecuteRequest {
 // Route handler
 // ---------------------------------------------------------------------------
 
+/** Each config tool's input schema, by its id. */
+const CONFIG_TOOL_SCHEMAS = new Map(CONFIG_TOOLS.map((t) => [t.id, t.inputSchema]));
+
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
 
@@ -128,17 +139,14 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   }
 
   try {
-    // A write needs the target key's tier permission. update_config names the key `key`,
-    // request_approval names it `configKey`; a write naming neither is held to the safety
-    // tier (fail closed — previously request_approval skipped this check).
+    // A write needs the tier permission of the key it acts on — read from the field that tool
+    // acts on (configToolTargetKey: update_config and reset_config `key`, request_approval
+    // `configKey`), the same function the handlers and holds use (TASK-194, audit C-1: this read
+    // `key` first, so a request_approval naming a standard `key` and a safety `configKey` was
+    // checked against the standard key and filed for the safety one). A write naming no key is
+    // held to the safety tier (fail closed).
     if (WRITE_TOOLS.has(body.toolId)) {
-      const input = body.input ?? {};
-      const key =
-        typeof input.key === "string"
-          ? input.key
-          : typeof input.configKey === "string"
-            ? input.configKey
-            : undefined;
+      const key = configToolTargetKey(body.toolId, body.input ?? {});
       const needed = key
         ? tierPermission(await getPermissionTier(key))
         : "config_manage_safety";
@@ -163,6 +171,23 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
           request,
         });
       }
+    }
+
+    // Only the tool's own input keys, at every depth (round 10, I-A; round 11, item 3): a held
+    // change records its input as its hold's payload and its proposal step's input, and free text
+    // under a key no schema names would pass the erasure's register of free-text keys. Refused,
+    // coded — never dropped silently. After the permission checks (a caller who may not act is
+    // told so, not shown the tool's keys). The keys the route and dispatchConfigTool set — the
+    // operator flags, heldPrevious, expectPrevious (CONFIG_SERVER_SET_INPUTS) — are the
+    // server's: a caller's is `request.field_not_accepted` (round 12, nit 1); actorId and
+    // reviewerId are the schema's, and overwritten below.
+    const refused = inputKeyRefusal(
+      CONFIG_TOOL_SCHEMAS.get(body.toolId) as InputSchemaNode | undefined,
+      body.input,
+      new Set(Object.keys(CONFIG_SERVER_SET_INPUTS[body.toolId] ?? {}))
+    );
+    if (refused !== null) {
+      return apiError(refused.code, { params: { ...refused.params }, request });
     }
 
     // SECURITY INVARIANT (S2): Inject actorId/reviewerId from the
@@ -211,7 +236,60 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     if (result.success && data && data.applied === false && !data.pendingConfirmation) {
       status = 422; // Business operation failed (validation error, key not found, etc.)
     }
+    // A request or a review that did not go through (request_approval, approve_change,
+    // reject_change answer `success: false` in their data): refused too — it answered 200
+    // (round 13, I-C).
+    if (result.success && data && data.success === false) status = 422;
+    // Accepted, not applied, waiting on another admin — 202, as the users, entitlements and gdpr
+    // routes answer a hold and the command bar a plan that stopped at one (TASK-194 round 11,
+    // item 1): a dual-controlled change held as a runtime proposal (`held`), and — round 12, I-1 —
+    // a change filed for two-person approval (a config approval: `requiresApproval`, filed
+    // without an `approvalError`). A filing that failed stays 422.
+    const pendingApproval =
+      result.success &&
+      data !== null &&
+      data.requiresApproval === true &&
+      !data.approvalError;
+    if ((result as { held?: unknown }).held === true || pendingApproval) status = 202;
 
+    // A refusal answers its registry code, params and message (round 13, I-C), at the code's own
+    // status (round 14, item 4: it was 422 for every one — a change already waiting is 409, the
+    // audit log unavailable 503). Its text — the error, an approval's or an apply's, the entry's
+    // English reasons — is never returned (round 14, item 12); configFailure logs it when no code
+    // says why (an admin.action_failed). Nor is a refused filing's `requiresApproval` or
+    // `approval` (round 15, I-2): it filed nothing, and a reader must never take it as pending.
+    if (status === 422) {
+      const f = configFailure(result);
+      const body = apiErrorBody(f.code, { params: f.params, request });
+      const data =
+        result.data && typeof result.data === "object"
+          ? (() => {
+              const {
+                error: _e,
+                approvalError: _a,
+                applyError: _p,
+                validationErrors: _v,
+                requiresApproval: _r,
+                approval: _ap,
+                ...rest
+              } = result.data as Record<string, unknown>;
+              void [_e, _a, _p, _v, _r, _ap];
+              return rest;
+            })()
+          : result.data;
+      return NextResponse.json(
+        {
+          toolId: result.toolId,
+          data,
+          durationMs: result.durationMs,
+          ...body,
+          trajectoryId: trajectoryContext.trajectoryId,
+          agentId: trajectoryContext.agentId,
+          steps: trajectoryContext.steps,
+        },
+        { status: ERROR_CODES[f.code].status }
+      );
+    }
     return NextResponse.json(
       {
         ...result,

@@ -7,6 +7,7 @@ import {
   ADMIN_HIGHLIGHT_MAX_SECONDS,
 } from "@/shared/config/limits";
 import { renderMessage } from "@/platform/errors/messages";
+import { missingFeaturePermissions } from "@/platform/auth/feature-permissions";
 import {
   isPanelUnavailable,
   PanelUnavailable,
@@ -125,6 +126,24 @@ function AdminDate({
   );
 }
 
+/**
+ * A role that lacks a feature permission is said so (TASK-194 round 1, A7): its holders cannot
+ * translate, or see or edit their profile — a role made after migration 061 without them, or one
+ * an administrator took them from.
+ */
+function FeatureGap({ permissions }: { permissions?: readonly RolePermission[] }) {
+  if (!Array.isArray(permissions)) return null;
+  const missing = missingFeaturePermissions(permissions.map((p) => p.code));
+  if (missing.length === 0) return null;
+  return (
+    <span data-feature-gap="true" className="block text-xs text-amber-300">
+      {renderMessage("screens.admin_console.roles.lacks_feature_permissions", {
+        permissions: missing.join(", "),
+      })}
+    </span>
+  );
+}
+
 export function RolesDataView({ data }: { data: any }) {
   const roles = data?.roles || [];
   const [expandedRole, setExpandedRole] = useState<string | null>(null);
@@ -198,6 +217,7 @@ export function RolesDataView({ data }: { data: any }) {
                         {isExpanded ? "▲" : "▼"}
                       </span>
                     </button>
+                    <FeatureGap permissions={r.permissions} />
                   </td>
                   <td className={`${tdClass} text-xs text-gray-400`}>
                     <AdminDate iso={r.createdAt} />

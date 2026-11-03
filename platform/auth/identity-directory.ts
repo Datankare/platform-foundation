@@ -28,6 +28,7 @@
 
 import { signAwsJsonPost, type AwsCredentials } from "@/platform/auth/aws-sigv4";
 import { COGNITO_POOL_ID } from "@/platform/providers/environment-contract";
+import { sameId } from "@/platform/auth/same-id";
 
 /** The tenant attribute the platform sets (ADR-053 D2; the Cognito provider's TENANT_ATTRIBUTE). */
 export const POOL_TENANT_ATTRIBUTE = "custom:tenant_id";
@@ -193,8 +194,8 @@ export class CognitoIdentityDirectory implements IdentityDirectory {
     // A subject is a UUID; anything else (a legacy id that is not one, a username) is no subject
     // of this pool and never reaches a filter. Only that very subject is kept (an exact match).
     if (!SUB.test(sub)) return [];
-    return (await this.list(`sub = "${sub}"`, "one subject")).filter(
-      (u) => u.sub === sub
+    return (await this.list(`sub = "${sub}"`, "one subject")).filter((u) =>
+      sameId(u.sub, sub)
     );
   }
 

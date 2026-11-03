@@ -5,6 +5,7 @@
  * The tenant settings and operator tenants screens (components/admin/TenancyPanels.tsx,
  * ADR-053 D5/D7): what each sends, and that each shows the server's answer.
  */
+import { renderMessage } from "@/platform/errors/messages";
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
@@ -151,6 +152,45 @@ describe("TenantSettingsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save signups_enabled" }));
     await screen.findByText("signups_enabled: Only operators.");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Round 15, nit 4: a write whose commit was lost may have applied — the page reads the setting
+  // again, so the admin sees its actual value, and says the outcome is unknown.
+  const LOST = "The change may or may not have taken effect: check before you retry.";
+
+  it("after a lost commit (save) reloads the setting and says so", async () => {
+    const after = {
+      ...TENANT,
+      settings: TENANT.settings.map((x) =>
+        x.key === "max_devices_per_player" ? { ...x, value: 7, overridden: true } : x
+      ),
+    };
+    answers([503, { code: "admin.write_indeterminate", message: LOST }], [200, after]);
+    render(<TenantSettingsView data={TENANT} />);
+    fireEvent.change(screen.getByLabelText("New value for max_devices_per_player"), {
+      target: { value: "7" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save max_devices_per_player" }));
+    await screen.findByText(`max_devices_per_player: ${LOST}`);
+    expect(sent(1).url).toBe("/api/admin/tenant");
+    await screen.findByText("7");
+  });
+
+  it("after a lost commit (reset) reloads the setting and says so", async () => {
+    const after = {
+      ...TENANT,
+      settings: TENANT.settings.map((x) =>
+        x.key === "signups_enabled" ? { ...x, value: true, overridden: false } : x
+      ),
+    };
+    answers([503, { code: "admin.write_indeterminate", message: LOST }], [200, after]);
+    render(<TenantSettingsView data={TENANT} />);
+    const reset = "Use the platform default for signups_enabled";
+    fireEvent.click(screen.getByRole("button", { name: reset }));
+    await screen.findByText(`signups_enabled: ${LOST}`);
+    expect(sent(1).url).toBe("/api/admin/tenant");
+    // Reloaded: it uses the platform default now, so there is nothing to reset.
+    await waitFor(() => expect(screen.queryByRole("button", { name: reset })).toBeNull());
   });
 
   it("goes back to the default through DELETE", async () => {
@@ -563,6 +603,141 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
       decision: "approve",
       source: "config-approval",
     });
+  });
+
+  // TASK-194 round 17: an operator's decision is read as the Approvals panel reads it — the shared
+  // reader (decision-outcome.ts): what became of the approval, and when; the list read again.
+  it.each([
+    [
+      {
+        code: "admin.write_indeterminate",
+        message: "M.",
+        settling: true,
+        settlesWithinMinutes: 75,
+      },
+      "moderation.strike_ban_threshold: M. Its outcome is being checked: if it did not apply, it is listed again within 75 minutes.",
+    ],
+    [
+      { code: "approvals.stale", message: "M.", withdrawn: true },
+      "moderation.strike_ban_threshold: M. It was withdrawn; the requester must ask again.",
+    ],
+  ])(
+    "a decision's outcome (%j) is said as the Approvals panel says it, and the list read again",
+    async (body, said) => {
+      routes({
+        [`GET ${base}/config`]: [200, { entries: ENTRIES }],
+        [`GET ${base}/approvals`]: [200, { approvals: HELD }],
+        [`POST ${base}/approvals/apr-1`]: [409, body],
+      });
+      await open();
+      const reads = () =>
+        fetchMock.mock.calls.filter(([u]) => u === `${base}/approvals`).length;
+      const before = reads();
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Approve the held change moderation.strike_ban_threshold",
+        })
+      );
+      await screen.findByText(said);
+      await waitFor(() => expect(reads()).toBe(before + 1));
+    }
+  );
+
+  it("an undecided held change offers its three decisions, and withdraws it through the operator route (round 7, I-3)", async () => {
+    const undecided = {
+      source: "runtime",
+      id: "hold-9",
+      label: "purge_user_data",
+      requester: "admin-1",
+      requiredPermission: "admin_purge_user_data",
+      undecided: true,
+      noEligibleDecider: true,
+    };
+    routes({
+      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
+      [`GET ${base}/approvals`]: [200, { approvals: [undecided] }],
+      [`POST ${base}/approvals/hold-9`]: [
+        200,
+        { decision: "withdraw", status: "rejected" },
+      ],
+    });
+    await open();
+    // No one in the tenant may decide it: said, for the operator.
+    expect(
+      screen.getByText(
+        "No one in this tenant but its requester and the account it acts on may approve it again or mark it executed (another holder who fails its rules may only withdraw it): decide it here."
+      )
+    ).toBeDefined();
+    expect(
+      screen.queryByRole("button", { name: "Approve the held change purge_user_data" })
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Mark purge_user_data executed: verified that it took effect",
+      })
+    ).toBeDefined();
+    expect(
+      screen.getByRole("button", {
+        name: "Approve purge_user_data again: verified that it did not take effect",
+      })
+    ).toBeDefined();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Withdraw purge_user_data: verified that it did not take effect; it will not run",
+      })
+    );
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => u === `${base}/approvals/hold-9`)).toBe(
+        true
+      )
+    );
+    const post = fetchMock.mock.calls.find(([u]) => u === `${base}/approvals/hold-9`) as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(post[1].body))).toEqual({
+      decision: "withdraw",
+      source: "runtime",
+    });
+  });
+
+  it("an undecided duplicate refused approval again says what to do with it (round 8, item 1)", async () => {
+    const undecided = {
+      source: "runtime",
+      id: "hold-8",
+      label: "purge_user_data",
+      requester: "admin-1",
+      requiredPermission: "admin_purge_user_data",
+      undecided: true,
+    };
+    routes({
+      [`GET ${base}/config`]: [200, { entries: ENTRIES }],
+      [`GET ${base}/approvals`]: [200, { approvals: [undecided] }],
+      [`POST ${base}/approvals/hold-8`]: [
+        409,
+        {
+          code: "approvals.duplicate_undecided",
+          message: renderMessage("errors.approvals.duplicate_undecided"),
+        },
+      ],
+    });
+    await open();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Approve purge_user_data again: verified that it did not take effect",
+      })
+    );
+    // As the Approvals panel says it (round 17: one reader): an erasure's duplicate is named.
+    await screen.findByText(
+      renderMessage("screens.held.result_duplicate_undecided", {
+        label: "purge_user_data",
+      })
+    );
+    expect(
+      renderMessage("screens.held.result_duplicate_undecided", {
+        label: "purge_user_data",
+      })
+    ).toMatch(/withdraw it/);
   });
 
   it("an unreadable tenant's settings say why; Close removes the panel", async () => {

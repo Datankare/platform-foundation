@@ -38,6 +38,7 @@ import {
 import { withOwnerTx, withTenantTx, type Tx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import type { ErrorCode } from "@/platform/errors/registry";
+import { writeFailureCode, type IncompleteWrite } from "@/platform/admin/write-failure";
 import { getConfigOrThrow } from "@/platform/auth/platform-config";
 import type {
   ConfigApprovalRecord,
@@ -46,6 +47,8 @@ import type {
   ConfigApprovalAction,
   ConfigScope,
 } from "./types";
+import { sameId } from "@/platform/auth/same-id";
+import { requiredJobWithdrawalNote } from "@/platform/jobs/required-schedule";
 
 // ---------------------------------------------------------------------------
 // DB row shape
@@ -132,6 +135,9 @@ export async function isApprovalRequired(): Promise<boolean> {
 // CRUD Operations
 // ---------------------------------------------------------------------------
 
+/** An approved change to the key is not yet known to be applied (round 17, I-2). */
+const SETTLING = Symbol("settling");
+
 /**
  * Create a pending approval request.
  * Returns the created record or an error.
@@ -147,7 +153,7 @@ export async function requestApproval(params: {
   scope?: ConfigScope;
   /** "reset": the tenant's own value is removed when approved (scope "tenant" only). */
   action?: ConfigApprovalAction;
-}): Promise<{ success: boolean; record?: ConfigApprovalRecord; error?: string }> {
+}): Promise<ConfigApprovalResult> {
   try {
     const outcome = await withTenantTx(async (tx) => {
       // One open request per key and scope in a tenant: serialise concurrent requests for the
@@ -157,11 +163,19 @@ export async function requestApproval(params: {
       await tx.query("select pg_advisory_xact_lock(hashtextextended($1, 49))", [
         `config-approval:${tx.tenantId ?? "-"}:${scope}:${params.configKey}`,
       ]);
-      const existing = await tx.query(
-        "select 1 from config_pending_approvals where config_key = $1 and scope = $2 and status = 'pending' limit 1",
+      // Open: pending, or approved and not yet known to be applied (round 16, R-d — an apply
+      // that lost its commit, or one not marked applied, is settled by the apply recovery; a
+      // second change filed beside it could be applied on top of it, or under it).
+      const existing = await tx.query<{ status: string }>(
+        `select status::text as status from config_pending_approvals
+          where config_key = $1 and scope = $2
+            and (status = 'pending' or (status = 'approved' and applied_at is null))
+          order by (status = 'pending') desc
+          limit 1`,
         [params.configKey, scope]
       );
-      if (existing.rowCount > 0) return null;
+      if (existing.rowCount > 0)
+        return existing.rows[0]?.status === "pending" ? null : SETTLING;
       const { rows } = await tx.query<ApprovalRow>(
         `insert into config_pending_approvals
            (config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, scope, action)
@@ -183,10 +197,26 @@ export async function requestApproval(params: {
       return rows[0] ?? null;
     });
 
+    if (outcome === SETTLING) {
+      // Its own code (round 17, I-2): no one can decide it — the approval-expiry job settles it.
+      const { settlesWithinMinutes } = await import("@/platform/admin/approval-settle");
+      return {
+        success: false,
+        error: `An approved change to "${params.configKey}" is being settled.`,
+        errorCode: "approvals.settling",
+        errorParams: {
+          key: params.configKey,
+          minutes: await settlesWithinMinutes(APPLY_LEASE_SECONDS),
+        },
+      };
+    }
     if (outcome === null) {
       return {
         success: false,
         error: `A pending approval already exists for "${params.configKey}". It must be resolved before requesting another change.`,
+        // Coded (TASK-194 round 13, I-C): the one waiting must be decided first.
+        errorCode: "approvals.already_pending",
+        errorParams: { key: params.configKey },
       };
     }
     return { success: true, record: mapApprovalRow(outcome) };
@@ -196,9 +226,13 @@ export async function requestApproval(params: {
       error: err instanceof Error ? err.message : String(err),
       route: "platform/admin/config-approval",
     });
+    // Fixed text (round 14, item 12): the error's own message — a table, a constraint — is
+    // logged above, never returned.
     return {
       success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: "The approval store is unavailable.",
+      errorCode: "service.unavailable",
+      errorParams: { service: "config" },
     };
   }
 }
@@ -209,7 +243,7 @@ export interface ConfigApprovalResult {
   record?: ConfigApprovalRecord;
   error?: string;
   errorCode?: ErrorCode;
-  errorParams?: Record<string, string | number>;
+  errorParams?: Record<string, string | number | readonly string[]>;
 }
 
 /**
@@ -225,11 +259,28 @@ export async function approveChange(
   return reviewChange(approvalId, reviewerId, reviewComment, "approved");
 }
 
+/** Who withdraws an approved change that will not be applied (stale, or a value refused). */
+export const APPLY_WITHDRAWAL_ACTOR = "system:approval-apply";
+
 /**
- * Approve a pending change and apply it, as one outcome (release review, Sprint 7X): if the
- * change cannot be applied, the approval is reopened (back to pending, reviewer cleared), so an
- * approved change is never left unapplied and unable to be approved again. The reviewer is
- * checked against the key's own tier by the caller.
+ * What became of an approval whose apply failed, for the screen (TASK-194 round 16, items 3–4):
+ * `withdrawn` — closed by the system (stale, or a value its entry refuses): the requester asks
+ * again; `settling` — approved and not yet known to be applied (a lost commit, or a withdrawal
+ * that could not be written): the apply recovery settles it within APPLY_LEASE_SECONDS plus the
+ * job's interval. Neither: reopened, listed again to be decided.
+ */
+export interface ApplyFailureOutcome {
+  readonly applyError?: string;
+  readonly withdrawn?: true;
+  readonly settling?: true;
+}
+
+/**
+ * Approve a pending change and apply it, as one outcome (release review, Sprint 7X). When the
+ * change cannot be applied, what becomes of the approval follows why (round 15, P-1; round 16,
+ * items 3–4): a lost commit is left approved and unapplied, to settle; a stale change or a value
+ * its entry refuses is withdrawn by the system, recorded; anything else is reopened (back to
+ * pending, reviewer cleared). The reviewer is checked against the key's own tier by the caller.
  */
 export async function approveAndApply(
   approvalId: string,
@@ -237,47 +288,70 @@ export async function approveAndApply(
   reviewComment: string,
   apply: (
     record: ConfigApprovalRecord
-  ) => Promise<{ success: boolean; error?: string; stale?: boolean }>
-): Promise<ConfigApprovalResult & { applyError?: string }> {
+  ) => Promise<{ success: boolean; stale?: boolean } & IncompleteWrite>
+): Promise<ConfigApprovalResult & ApplyFailureOutcome> {
   const approved = await approveChange(approvalId, reviewerId, reviewComment);
   if (!approved.success || !approved.record) return approved;
-  const applied = await apply(approved.record);
+  const record = approved.record;
+  const applied = await apply(record);
   if (applied.success) {
     await markApplied(approvalId);
     return approved;
   }
 
   // The value it replaces changed since it was requested (review 12 H2): nothing was applied, and
-  // the approval is withdrawn — never reopened to be approved onto a value it was not judged
-  // against. The requester asks again. (The decision itself is audited by its caller.)
+  // the approval is withdrawn when the withdrawal lands (else left settling, for the approval-
+  // expiry job) — never reopened to be approved onto a value it was not judged against. The
+  // requester asks again. (The decision itself is audited by its caller.)
   if (applied.stale) {
-    try {
-      await withTenantTx((tx) =>
-        tx.query(
-          `update config_pending_approvals
-              set status = 'rejected', review_comment = $2
-            where id = $1::uuid and status = 'approved'`,
-          [
-            approvalId,
-            `withdrawn: stale — "${approved.record!.configKey}" changed since it was requested`,
-          ]
-        )
-      );
-    } catch (err) {
-      logger.error("A stale approval could not be withdrawn", {
-        approvalId,
-        error: err instanceof Error ? err.message : String(err),
-        route: "platform/admin/config-approval",
-      });
-    }
+    const withdrawn = await withdrawUnapplied(record, "stale");
     return {
       success: false,
       error: applied.error ?? "The setting changed since this change was requested.",
       errorCode: "approvals.stale",
       applyError: applied.error,
+      ...(withdrawn ? { withdrawn: true as const } : { settling: true as const }),
     };
   }
 
+  // Coded as every config write is (round 15, P-1: write-failure.ts — it answered
+  // service.unavailable {config} for every failure); its text is logged, never returned.
+  const key = record.configKey;
+  const failure = writeFailureCode(key, applied);
+  logger.error("Approved change could not be applied", {
+    approvalId,
+    code: failure.code,
+    error: applied.error,
+    route: "platform/admin/config-approval",
+  });
+  const answer = {
+    success: false,
+    error: "Approved but not applied.",
+    errorCode: failure.code,
+    errorParams: { ...failure.params },
+    applyError: applied.error,
+  };
+
+  // A lost commit may have applied (review 14 L-2): never reopened — approving it again would
+  // apply it twice. It stays approved and unapplied, the TASK-193 state for "may have applied":
+  // once its apply lease has passed, recoverUnappliedApprovals reads the change's own history
+  // and marks it applied, or reopens it.
+  if (applied.indeterminate) return { ...answer, settling: true };
+
+  // A value its entry now refuses (its range or list changed since it was requested), or a
+  // required job's setting turned off or set for a tenant (round 19, I-1: filed before the job
+  // was required): withdrawn when the withdrawal lands (else left settling), as a stale one is —
+  // reopened, it would only fail the same way when approved again.
+  if (
+    failure.code === "admin.config_invalid_value" ||
+    failure.code === "jobs.schedule_required"
+  ) {
+    const withdrawn = await withdrawUnapplied(record, "refused", failure.code);
+    return withdrawn ? { ...answer, withdrawn: true } : { ...answer, settling: true };
+  }
+
+  // Nothing changed (the audit log unavailable, a scope refused, a failed write): reopened, to
+  // be listed and decided again.
   try {
     await withTenantTx((tx) =>
       tx.query(
@@ -297,13 +371,70 @@ export async function approveAndApply(
       }
     );
   }
-  return {
-    success: false,
-    error: `Approved but not applied: ${applied.error ?? "unknown error"}`,
-    errorCode: "service.unavailable",
-    errorParams: { service: "config" },
-    applyError: applied.error,
-  };
+  return answer;
+}
+
+/**
+ * Withdraw an approved change that will not be applied — stale, or a value its entry refuses
+ * (round 16, item 3) — by the system: the row (no reviewer: it is not the approver's rejection;
+ * the note names the system and who had approved it) and its audit record (approval_withdrawn,
+ * `reason`) in one transaction — no record, no withdrawal. Whether it was withdrawn; when not, it
+ * stays approved and unapplied, and the apply recovery reopens it (its history shows no write).
+ */
+async function withdrawUnapplied(
+  record: ConfigApprovalRecord,
+  reason: "stale" | "refused",
+  /** Why it is refused (round 20, nit 2): a required job's key is noted as 062 notes it. */
+  code?: ErrorCode
+): Promise<boolean> {
+  try {
+    const { recordAudit } = await import("@/platform/auth/audit");
+    return await withTenantTx(async (tx) => {
+      const { rows } = await tx.query<{ id: string }>(
+        `update config_pending_approvals
+            set status = 'rejected', reviewed_by = null, review_comment = $2
+          where id = $1::uuid and status = 'approved'
+          returning id`,
+        [
+          record.id,
+          `${
+            code === "jobs.schedule_required"
+              ? `withdrawn by the system: ${requiredJobWithdrawalNote(record.configKey)}`
+              : `withdrawn by the system: ${
+                  reason === "stale"
+                    ? `stale — "${record.configKey}" changed since it was requested`
+                    : `refused — "${record.configKey}" no longer takes the value requested`
+                }`
+          } (approved by ${record.reviewedBy ?? "unknown"} at ${record.reviewedAt ?? "unknown"})`,
+        ]
+      );
+      if (!rows.length) return false;
+      await recordAudit({
+        action: "admin_action",
+        agent: APPLY_WITHDRAWAL_ACTOR,
+        details: {
+          type: "approval_withdrawn",
+          // The parameter's literal union: a code, never free text (audit-details' rule).
+          reason,
+          source: "config-approval",
+          holdIds: [record.id],
+          key: record.configKey,
+          scope: record.scope,
+          ...(record.reviewedBy ? { approvedBy: record.reviewedBy } : {}),
+          ...(record.reviewedAt ? { approvedAt: record.reviewedAt } : {}),
+        },
+      });
+      return true;
+    });
+  } catch (err) {
+    logger.error("An approval that will not be applied could not be withdrawn", {
+      approvalId: record.id,
+      reason,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/admin/config-approval",
+    });
+    return false;
+  }
 }
 
 /**
@@ -311,19 +442,31 @@ export async function approveAndApply(
  * without it is found by recoverUnappliedApprovals, which reads the change's own history record.
  */
 async function markApplied(approvalId: string): Promise<void> {
-  try {
-    await withTenantTx((tx) =>
-      tx.query(
-        "update config_pending_approvals set applied_at = now() where id = $1::uuid and status = 'approved' and applied_at is null",
-        [approvalId]
-      )
-    );
-  } catch (err) {
-    logger.warn("An applied approval could not be marked applied; the expiry job will", {
-      approvalId,
-      error: err instanceof Error ? err.message : String(err),
-      route: "platform/admin/config-approval",
-    });
+  // Tried twice (round 17, I-2): unmarked, the row blocks new requests for its key
+  // (approvals.settling) until the apply recovery finds the change in its history and marks it —
+  // the way out, within APPLY_LEASE_SECONDS plus the job's interval (the job is required: it
+  // always runs — round 18).
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await withTenantTx((tx) =>
+        tx.query(
+          "update config_pending_approvals set applied_at = now() where id = $1::uuid and status = 'approved' and applied_at is null",
+          [approvalId]
+        )
+      );
+      return;
+    } catch (err) {
+      logger.warn(
+        attempt === 1
+          ? "An applied approval could not be marked applied; trying once more"
+          : "An applied approval could not be marked applied; the apply recovery will",
+        {
+          approvalId,
+          error: err instanceof Error ? err.message : String(err),
+          route: "platform/admin/config-approval",
+        }
+      );
+    }
   }
 }
 
@@ -559,7 +702,7 @@ async function reviewChange(
           errorCode: "approvals.expired",
         };
       }
-      if (newStatus === "approved" && current.requested_by === reviewerId) {
+      if (newStatus === "approved" && sameId(current.requested_by, reviewerId)) {
         return {
           success: false,
           error:
@@ -591,9 +734,13 @@ async function reviewChange(
       error: err instanceof Error ? err.message : String(err),
       route: "platform/admin/config-approval",
     });
+    // Fixed text (round 14, item 12): the error's own message — a table, a constraint — is
+    // logged above, never returned.
     return {
       success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: "The approval store is unavailable.",
+      errorCode: "service.unavailable",
+      errorParams: { service: "config" },
     };
   }
 }
@@ -677,14 +824,14 @@ export async function countPendingApprovals(): Promise<number> {
 }
 
 /**
- * Mark every pending approval past its expiry as expired — each tenant's and the platform's own
- * — and withdraw every runtime hold approved but never run within the same period
- * (platform/admin/hold-expiry.ts, review 7 M7)
- * (a shared deployment's platform defaults, tenant_id null) — so no list keeps offering a
- * decision that would be refused (TASK-036). Returns the count expired. A platform job: the
- * owner connection, from the runner only, never a request.
+ * Mark every pending approval past its expiry as expired — each tenant's, and any with no tenant
+ * (none the code files: every approval carries the tenant that filed it, a shared deployment's
+ * platform-default one the operator's; one made by hand) — and withdraw every runtime hold
+ * approved but never run within the same period (platform/admin/hold-expiry.ts, review 7 M7), so
+ * no list keeps offering a decision that would be refused (TASK-036). Returns the count expired.
+ * A platform job: the owner connection, from the runner only, never a request.
  *
- * `scope` is for tests (review 11 L-5): only those tenants' rows — and the platform's own when
+ * `scope` is for tests (review 11 L-5): only those tenants' rows — and those with no tenant when
  * `platform` is set — so a test's run does not sweep a parallel test's rows. The job passes none.
  *
  * @scheduled config.expire-approvals

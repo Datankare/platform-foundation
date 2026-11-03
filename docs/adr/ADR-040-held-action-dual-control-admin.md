@@ -40,8 +40,10 @@ because the requirement is _derived_, not maintained:
   `config_manage_standard`. Unknown keys fail closed to `safety` (P11), as the config read path
   already does.
 - **Runtime tool-proposal holds** (no config key) — fail closed to `config_manage_safety`; the
-  runtime approver _actorType_ (user/agent/system) is still decided by the existing versioned
-  `approval-policy-store` rule (risk + effects), unchanged.
+  runtime approver _actorType_ is a person ("user") for every restricted hold — and while the
+  gating threshold is `restricted`, every hold is — whatever the approval policy says (the
+  TASK-194 addendum below, "restricted ⇒ person"); the versioned `approval-policy-store` rules
+  (risk + effects) decide only for actions below `restricted`.
 - **Enforcement** is server-side and never trusted from the client:
   `hasPermission(decidedBy, requiredPermission) && decidedBy !== requester`. `super_admin`
   seed-holds every permission, so break-glass ("may approve anything") falls out with no special
@@ -212,6 +214,11 @@ every agent of a tenant at once (`POST /api/operator/tenants/[id]/agents/suspend
   every unheld reduction withdraw the pending holds on their key (audited, reason `superseded`).
   Whole-value application had let an approved scope change, requested before the kill switch,
   re-activate every agent the switch suspended.
+  _Note, November 1, 2026 (TASK-194, S1 round 23):_ "the hold withdrawn" is the system's act when
+  the withdrawal lands (`withdrawn: true` in the answer; the record names the system, the decider
+  as `foundBy`), and only when the run's claim was given back. Not landing, a runtime hold stays
+  approved — reject it — and a two-person approval is left settling, listed again for the same.
+  What changed may be a role (the command bar's role change), not only a setting.
 - _Reach and independence (L7)._ A change of either key is published to every instance's config
   cache through the shared cache; the kill switch exists for the current tenant in every
   deployment mode (`POST /api/admin/agents/suspend`, `config_manage_safety`); `mark_executed` is
@@ -256,5 +263,121 @@ every agent of a tenant at once (`POST /api/operator/tenants/[id]/agents/suspend
   these would be speculative narrow roles; the tier-derived rule already differentiates by class,
   and per-domain roles slot in later as plain grants with no code change.
 
-_Last updated: September 8, 2026 (Phase 5 Sprint 3d — ADR-040 full design: unified approvals
+## Addendum — TASK-194 (October 2026): "authorized to edit" includes the change's own rules
+
+"Approve iff you can edit" had been read as "hold the edit's permission". A change can need more:
+a role change needs every permission of both roles and never a protected role (ADR-013,
+`checkRoleAssignment`), a catalog change the standing to change the catalog
+(`mayChangePlatformCatalog`). An approver is now held to those rules, evaluated for the approver
+against the held payload: `HoldAuthority.approverRuleRefusal`, checked by `decideApproval` on
+approve, reapprove and mark_executed — the command bar's `APPROVER_RULES` are the handlers' own
+check functions, so the two cannot drift. A rejection is not held to them (it changes nothing).
+
+The irreversible admin action — an account's erasure (`purge_user_data`) — is always held, whatever
+`admin.dual_control_actions` says (`ALWAYS_HELD_ACTIONS`): a reversible role change was
+dual-controlled while an erasure was one admin's alone. Every route reaching an irreversible effect
+is held through such an action or recorded as an accepted single-actor effect with its reason
+(`__tests__/irreversible-routes.test.ts`); a user's deletion of their own account is the latter.
+
+An undecided run (`indeterminate`) verified not to have taken effect may also be **withdrawn**
+(TASK-194 round 5): decision `withdraw` closes it as `rejected`, never run, recording the decider
+and the note — independent of the requester, the hold's permission needed, as for
+`mark_executed`. Before, such a hold could only be approved again, which runs it: for a second
+erasure hold of one account (held before 061's index) that is a second erasure. A `reapprove` of an
+undecided hold its authority finds duplicates an older open one (`duplicateOf`) answers
+`approvals.duplicate_undecided` (round 8: its own code, saying to mark it executed or withdraw it)
+and changes nothing.
+
+**Whose account it is binds every decision (round 6).** A3 — no decider is the account the held
+action acts on (`HoldAuthority.targetAccount`, `admin.self_target`) — was checked on approve,
+reapprove and mark_executed only: the target of an erasure holding `admin_purge_user_data` could
+withdraw or reject it. It is checked on every decision now, withdraw and reject included: nobody
+decides a hold about their own account, in any direction. The change's own rules
+(`approverRuleRefusal`, C-2) still bind only the decisions that run the change or declare it done
+— a rejection or a withdrawal never runs it. Each decision's audit record (`approval_decision`)
+names the decider's note and the hold's previous approver (`note`, `approvedBy`), and the account
+the held action acts on as its target, so the note is erased with that account (round 7).
+
+**No one may decide it (round 7).** An undecided run never lapses; when every holder of its
+permission in the tenant is its requester or the account it acts on, no one there may decide it
+(and an undecided erasure keeps any later erasure of the account from being held). The listing
+marks it for a viewer (`PendingApproval.noEligibleDecider`; a decider holds the hold's permission
+and `can_access_admin`, one read for every undecided hold — round 8), **Approvals** says a
+platform operator decides it, the `approvals.indeterminate` alert says how, and the operator's
+tenant settings offer its three decisions — the operator route runs the same `decideApproval`,
+under the same rules.
+
+_Previously updated: October 31, 2026 (TASK-194 round 7: no one may decide it; the note erased)._
+
+_Previously updated: October 31, 2026 (TASK-194 round 6: A3 on every decision)._
+
+_Previously updated: October 31, 2026 (TASK-194 round 5: an undecided run withdrawn without
+running)._
+
+## Addendum — TASK-194 (October 2026): restricted ⇒ person
+
+A held restricted action — by its effective risk or its effects — is approved by a person, whatever
+the approval policy's rules or default say: `resolveApprover` decides it before the policy, and
+the stores refuse a rule or a default that would say otherwise (a hand-set default is applied as
+"user"). While `GATING_THRESHOLD` is `restricted`, every hold is restricted, so no rule or default
+changes who approves a current hold; the policy store stays as a seam for an app or tenant that
+lowers the threshold, deciding only for actions below `restricted`. Why, and the history (TASK-145,
+the S1 sweep's round 12): ADR-030's amendment of 2026-10-31. The command bar and **Approvals** say
+it to an admin who changes the policy.
+
+## Addendum — TASK-194 (November 2026): every lost commit is undecided
+
+An approved run whose write lost its commit (`admin.write_indeterminate`) may have taken effect.
+Since the S1 sweep's round 16 its claim is never given back (`ApprovedRunFailedError.released`
+false, `LOST_COMMIT_CODE`): the run stays `executing`, and once its lease (`RUN_LEASE_SECONDS`) has
+passed the approval-expiry job (`config.expire-approvals`, `recoverStaleRuns`) marks it
+`indeterminate` — so every lost commit now lands with the undecided runs of review 11 H-1. That
+design stands: an undecided run never lapses and is never decided by a job, because only a person
+can say whether it took effect. Its safeguard is the alert: `approvals.indeterminate` is raised
+when the run is found undecided, and again at most every `UNDECIDED_REMINDER_HOURS` (24) while it
+waits (`alertWaitingUndecided`). Both run in that same job, so the job cannot be turned off (round
+18): its schedule is `required` — the scheduler ignores its `enabled` setting; every config write
+refuses to turn it off or to give a tenant its own value of it (`jobs.schedule_required`, round
+19: the Jobs screen and its route, the config page, an operator's tenant settings, the config
+assistant, a held change's approval and an approved two-person change's apply — the store's write
+itself refuses it); and migration 062 set the setting on, removed every tenant's override of it and
+withdrew every approval still pending for it. A change to it held before then and approved now is
+withdrawn by the system, recorded (`approval_withdrawn`, reason `refused`), never kept to be
+approved again: a runtime hold through its authority's resume (`HoldResumeResult` `refused`,
+round 20), a two-person approval by its apply. A runtime hold withdrawn as stale or refused is the
+system's act (round 21: `system:held-change-refused`, the decider recorded as `foundBy`, who had
+approved it and when), answered `withdrawn: true` so the screens read the list again — and only
+when its run's claim was given back: a claim kept is a run whose outcome is unknown, listed as
+undecided for a person, never withdrawn. Only its interval is an operator's, within
+its bounds; the screens give the bound — the lease, that interval and a tick. A person clears an
+undecided run on **Approvals** — verify, then mark it executed or withdraw it (a config hold may
+also be approved again: a retry of one that took effect is refused as stale); where no one in its
+tenant but its requester and the account it acts on may decide it, a platform operator does, from
+**Operator → Tenants → the tenant → Settings → Held changes**, which lists it
+(docs/runbooks/approvals-and-agents.md, "No one may decide it"). A two-person config approval whose
+apply lost its commit is the same in its own table: left approved and unapplied, settled by the
+same job (`recoverUnappliedApprovals`) from the change's history, its key answering
+`approvals.settling` to a new request until then. That the job runner itself has stopped (no tick
+arrives) is readiness's to report (`schedule-probe`), not this design's.
+
+_Last updated: November 1, 2026 (TASK-194, round 23: a dated note on H2 — a stale hold withdrawn
+when the withdrawal lands)._
+
+_Previously updated: November 1, 2026 (TASK-194 addendum, round 21: a stale or refused hold
+withdrawn by the system, only when its claim was given back)._
+
+_Previously updated: November 1, 2026 (TASK-194 addendum, round 20: a change held before the job
+was required is withdrawn when approved)._
+
+_Previously updated: November 1, 2026 (TASK-194 addendum, round 19: no config write turns the
+approval-expiry job off)._
+
+_Previously updated: November 1, 2026 (TASK-194 addendum, round 18: the approval-expiry job is
+required)._
+
+_Previously updated: November 1, 2026 (TASK-194 addendum: every lost commit is undecided)._
+
+_Previously updated: October 29, 2026 (TASK-194 addendum: approver rules; erasure always held)._
+
+_Previously updated: September 8, 2026 (Phase 5 Sprint 3d — ADR-040 full design: unified approvals
 surface, approve-iff-authorized-to-edit, safety_approver; implementation 040a-c)._

@@ -14,7 +14,7 @@ empty here, and listed in the app's sync exclude list (like `platform/errors/app
 export const APP_ROUTE_POLICY: AppRoutePolicy = {
   verifiers: ["requireAuthWithStatus"], // lib/route-guard.ts
   limiters: ["resolveAgentRouteContext"], // lib/agent-route-context.ts
-  publicRoutes: {}, // "app/api/…/route.ts": "reason"
+  publicRoutes: {}, // "app/api/…/route.ts POST": "reason" — per method
   rateLimitExempt: {},
 };
 ```

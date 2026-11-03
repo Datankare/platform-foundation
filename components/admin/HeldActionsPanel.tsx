@@ -9,7 +9,8 @@
  *
  * An approved run whose outcome is unknown (review 11 H-1: it did not end within its lease) is
  * not approved or rejected: after verifying, an admin marks it executed, or — when it did not take
- * effect — approves it again (a fresh approval). Both are recorded.
+ * effect — approves it again (a fresh approval) or withdraws it (closed, never run: TASK-194 round
+ * 5). Each is recorded.
  *
  * After a decision the panel says what happened (TASK-186, the owner's ask) — "Approved: <label>
  * took effect", "<label>: <reason>", "Rejected: <label>" — in a status
@@ -23,11 +24,16 @@ import type { PendingApproval } from "@/platform/admin/pending-approvals";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { announceSessionEnd, readRefusal } from "@/platform/errors/refusal";
+import {
+  changesTheList,
+  refusedDecisionText,
+  type DecisionOutcome,
+} from "./decision-outcome";
 
 /** How long a decision's result stays on screen unless dismissed. */
 export const RESULT_MS = 6000;
 
-type Decision = "approve" | "reject" | "mark_executed" | "reapprove";
+type Decision = "approve" | "reject" | "mark_executed" | "reapprove" | "withdraw";
 interface DecisionResult {
   readonly ok: boolean;
   readonly text: string;
@@ -41,6 +47,7 @@ function acceptedText(
 ): string {
   if (decision === "reject") return t("result_rejected", { label });
   if (decision === "mark_executed") return t("result_marked_executed", { label });
+  if (decision === "withdraw") return t("result_withdrawn", { label });
   if (body.pendingApproval) return t("result_approved_pending", { label });
   if (body.recorded === false) return t("result_approved_unrecorded", { label });
   return t("result_approved", { label });
@@ -62,6 +69,74 @@ function approverHint(permission: string): string {
     default:
       return permission;
   }
+}
+
+/**
+ * What the held action would do (TASK-194 round 1, A1): the server's allowlisted summary — the
+ * account it acts on, and an erasure's reason, a role change's roles, a restriction's feature.
+ */
+function summaryLines(summary: PendingApproval["summary"]): string[] {
+  if (!summary) return [];
+  const lines: string[] = [];
+  if (summary.target) {
+    lines.push(
+      summary.target.notFound
+        ? t("summary_target_missing")
+        : t("summary_target", { account: summary.target.email ?? summary.target.id })
+    );
+  }
+  if (summary.fromRole || summary.toRole) {
+    lines.push(
+      t("summary_role", {
+        from: summary.fromRole ?? t("summary_role_unknown"),
+        to: summary.toRole ?? t("summary_role_unknown"),
+      })
+    );
+  }
+  if (summary.roleChangedSince) {
+    lines.push(
+      t("summary_role_changed", {
+        role: summary.roleChangedSince.now ?? t("summary_role_unknown"),
+      })
+    );
+  }
+  if (summary.feature) lines.push(t("summary_feature", { feature: summary.feature }));
+  if (summary.reason) lines.push(t("summary_reason", { reason: summary.reason }));
+  if (summary.dryRun) lines.push(t("summary_dry_run"));
+  // A held policy change: each rule it would store, then its default approver (round 12, I-2) —
+  // risks, effects and approvers in the catalog's words (round 13, nit 6: ICU selects).
+  if (summary.approvalPolicy) {
+    const policy = summary.approvalPolicy;
+    if (policy.rules.length === 0) lines.push(t("summary_policy_no_rules"));
+    policy.rules.forEach((rule, i) =>
+      lines.push(
+        rule.effects && rule.effects.length > 0
+          ? t("summary_policy_rule_effects", {
+              n: i + 1,
+              risk: rule.maxRisk,
+              // Each effect in the catalog's words (round 13, nit 6), listed as the locale lists.
+              effects: rule.effects.map((effect) =>
+                t("summary_policy_effect", { effect })
+              ),
+              approver: rule.requiredApprover,
+            })
+          : t("summary_policy_rule", {
+              n: i + 1,
+              risk: rule.maxRisk,
+              approver: rule.requiredApprover,
+            })
+      )
+    );
+    lines.push(
+      policy.defaultApprover
+        ? t("summary_policy_default", { approver: policy.defaultApprover })
+        : t("summary_policy_default_kept")
+    );
+    // What the rules do not change (round 13, I-A; ADR-030/ADR-040 addendum): every hold is
+    // restricted while the gating threshold is, and a restricted action is always a person's.
+    lines.push(t("summary_policy_restricted"));
+  }
+  return lines;
 }
 
 function sourceLabel(source: PendingApproval["source"]): string {
@@ -89,6 +164,18 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
     setRows(data?.approvals ?? []);
   }
 
+  /** The list as the server has it now (round 16): best effort — the rows stay on a failure. */
+  async function reloadRows() {
+    try {
+      const res = await apiFetch("/api/admin/approvals");
+      if (!res.ok) return;
+      const body = (await res.json()) as { approvals?: PendingApproval[] };
+      if (Array.isArray(body.approvals)) setRows(body.approvals);
+    } catch {
+      // Unreachable: the rows stay; the result above says what happened.
+    }
+  }
+
   async function decide(row: PendingApproval, decision: Decision) {
     setBusyId(row.id);
     setResult(null);
@@ -102,17 +189,15 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
       if (!res.ok) {
         const refused = await readRefusal(res);
         if (refused.kind === "signed-out-erased") announceSessionEnd(refused.code);
-        // Approved, and the run failed: the approval stands (approving again retries it).
-        if (refused.code === "approvals.run_failed") {
-          setResult({
-            ok: false,
-            text: t("result_approved_failed", {
-              label: row.label,
-              reason: refused.message,
-            }),
-          });
-        }
+        // What became of the approval (round 15, I-1; round 16), read as readRefusal reads the
+        // body.
+        const copy = typeof res.clone === "function" ? res.clone() : res;
+        const outcome = (await copy.json().catch(() => ({}))) as DecisionOutcome;
+        const text = refusedDecisionText(row.label, refused, outcome);
+        if (text) setResult({ ok: false, text });
         setErrors((e) => ({ ...e, [row.id]: refused.message }));
+        // Withdrawn, settling or not kept: the row is no longer what it was — read the list again.
+        if (changesTheList(outcome)) await reloadRows();
         return;
       }
       const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -200,7 +285,21 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
                   </span>
                 </td>
                 <td className={tdClass}>
+                  {summaryLines(a.summary).map((line) => (
+                    <span
+                      key={line}
+                      data-summary="true"
+                      className="block text-xs text-gray-200"
+                    >
+                      {line}
+                    </span>
+                  ))}
                   <span className="text-xs text-gray-400">{a.reason}</span>
+                  {a.undecided && a.noEligibleDecider && (
+                    <span className="block text-xs text-amber-200 mt-1">
+                      {t("no_eligible_decider", { permission: a.requiredPermission })}
+                    </span>
+                  )}
                 </td>
                 <td className={tdClass}>
                   <span className="text-xs">{approverHint(a.requiredPermission)}</span>
@@ -228,6 +327,15 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
                         className="px-2 py-1 text-xs rounded bg-amber-900/40 border border-amber-700 text-amber-200 disabled:opacity-50"
                       >
                         {t("reapprove")}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId === a.id}
+                        onClick={() => decide(a, "withdraw")}
+                        aria-label={t("withdraw_label", { label: a.label })}
+                        className="px-2 py-1 text-xs rounded bg-red-900/40 border border-red-700 text-red-200 disabled:opacity-50"
+                      >
+                        {t("withdraw")}
                       </button>
                     </div>
                   ) : (

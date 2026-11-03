@@ -165,9 +165,11 @@ describe("clearing a tenant's value", () => {
   it("changes nothing when its audit record cannot be written", async () => {
     auditFails = true;
     answers = [[entryRow()]];
+    // Flagged, so the config tool codes it service.unavailable {audit} (round 14, item 3).
     await expect(clear()).resolves.toEqual({
       success: false,
       error: "The audit log is unavailable, so the value was not changed.",
+      auditUnavailable: true,
     });
   });
 

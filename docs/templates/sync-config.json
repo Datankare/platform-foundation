@@ -18,6 +18,7 @@
     "docs/APP_ENV_REFERENCE.md",
     "messages/app/**",
     "platform/errors/app-codes.ts",
+    "platform/auth/app-audit-details.ts",
     "platform/route-policy/app-route-policy.ts",
     "platform/assurance/unwired-security.ts",
     "platform/modules/app-modules.ts",

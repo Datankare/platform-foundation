@@ -61,6 +61,8 @@
     "057_users_last_login_backfill.sql",
     "058_ai_prompt_cache_setting.sql",
     "059_roles_sort_order.sql",
-    "060_lifecycle_closure.sql"
+    "060_lifecycle_closure.sql",
+    "061_feature_permissions_enforced.sql",
+    "062_expire_approvals_required.sql"
   ]
 }

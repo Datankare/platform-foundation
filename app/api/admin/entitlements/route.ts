@@ -214,9 +214,11 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
           }
         );
       } catch (error) {
+        // The audit record's reason is fixed text; the error's own is logged by internalError
+        // (round 14, item 12).
         return {
           success: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: "The change could not be written.",
           response: internalError(error, {
             request,
             context: "Admin entitlements query failed",

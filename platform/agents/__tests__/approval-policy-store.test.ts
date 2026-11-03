@@ -6,6 +6,8 @@
  * that a loosening rule moves the required approver to "agent".
  */
 
+import { logger } from "@/lib/logger";
+import { runWithTenant } from "@/platform/tenancy/context";
 import {
   DEFAULT_APPROVAL_POLICY,
   InMemoryApprovalPolicyStore,
@@ -35,18 +37,133 @@ describe("resolveApprover — pure resolution over a policy", () => {
     expect(resolveApprover(policy, "restricted", []).actorType).toBe("user");
   });
 
+  // On a consequential action: a rule the stores would take (round 12, I-2 — this used a
+  // restricted one, which no store takes and the resolver now never lets decide).
   it("requires all listed effects to be present for an effects-scoped rule", () => {
     const policy: ApprovalPolicy = {
       version: 3,
       default: "user",
       rules: [
-        { maxRisk: "restricted", effects: ["externalCall"], requiredApprover: "agent" },
+        {
+          maxRisk: "consequential",
+          effects: ["externalCall"],
+          requiredApprover: "agent",
+        },
       ],
     };
-    expect(resolveApprover(policy, "restricted", ["externalCall"]).actorType).toBe(
+    expect(resolveApprover(policy, "consequential", ["externalCall"]).actorType).toBe(
       "agent"
     );
-    expect(resolveApprover(policy, "restricted", ["stateWrite"]).actorType).toBe("user");
+    expect(resolveApprover(policy, "consequential", ["stateWrite"]).actorType).toBe(
+      "user"
+    );
+  });
+
+  // Round 12, I-2 (a): whatever a policy says — a default or a rule no store would take — a
+  // restricted action (by its risk or its effects) is a person's to approve.
+  it.each([
+    ["a non-person default", { default: "agent", rules: [] }],
+    ["a system default", { default: "system", rules: [] }],
+    [
+      "a rule naming an agent for it",
+      { default: "user", rules: [{ maxRisk: "restricted", requiredApprover: "agent" }] },
+    ],
+  ] as const)("a restricted action is always a person's, despite %s", (_name, p) => {
+    const policy = { version: 9, ...p } as unknown as ApprovalPolicy;
+    expect(resolveApprover(policy, "restricted", []).actorType).toBe("user");
+    expect(resolveApprover(policy, "ordinary", ["restricted"]).actorType).toBe("user");
+    expect(
+      resolveApprover(policy, "consequential", ["stateWrite", "restricted"]).actorType
+    ).toBe("user");
+  });
+
+  it("a hand-set non-person default is read as a person's by the store (round 12, I-2)", async () => {
+    // A spy on the logger the store holds (it may be loaded before this suite's mocks).
+    const warn = jest.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const store = new InMemoryApprovalPolicyStore({
+      version: 4,
+      default: "agent",
+      rules: [],
+    });
+    expect((await store.load()).default).toBe("user");
+    // Said, naming the value and the version (round 13, nit 1).
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/default overridden/),
+      expect.objectContaining({ storedDefault: "agent", version: 4 })
+    );
+    warn.mockRestore();
+    expect((await store.setRules([], "admin")).default).toBe("user");
+  });
+
+  it("warns once per stored version, not on every load (round 14, item 10)", async () => {
+    const warn = jest.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const overridden = () =>
+      warn.mock.calls.filter(([m]) => /default overridden/.test(String(m))).length;
+    const store = new InMemoryApprovalPolicyStore({
+      version: 71,
+      default: "agent",
+      rules: [],
+    });
+    // Every hold and every workflow step loads the policy: one warning for the version.
+    for (let i = 0; i < 5; i++) expect((await store.load()).default).toBe("user");
+    expect(overridden()).toBe(1);
+    // Another stored version (or another value) is said again, once.
+    const next = new InMemoryApprovalPolicyStore({
+      version: 72,
+      default: "system",
+      rules: [],
+    });
+    await next.load();
+    await next.load();
+    expect(overridden()).toBe(2);
+    warn.mockRestore();
+  });
+
+  it("warns once per tenant's stored version: two tenants with the same version are two (round 15, I-7)", async () => {
+    const warn = jest.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const overridden = () =>
+      warn.mock.calls.filter(([m]) => /default overridden/.test(String(m)));
+    // One store instance, partitioned by tenant; each tenant's own version 81.
+    const store = new InMemoryApprovalPolicyStore({
+      version: 81,
+      default: "agent",
+      rules: [],
+    });
+    for (const tenantId of [
+      "00000000-0000-4000-8000-0000000000c1",
+      "00000000-0000-4000-8000-0000000000c2",
+    ])
+      await runWithTenant({ tenantId, mode: "single" } as never, async () => {
+        await store.load();
+        await store.load();
+      });
+    expect(overridden()).toHaveLength(2);
+    expect(overridden().map(([, f]) => (f as { tenantId?: string }).tenantId)).toEqual([
+      "00000000-0000-4000-8000-0000000000c1",
+      "00000000-0000-4000-8000-0000000000c2",
+    ]);
+    warn.mockRestore();
+  });
+
+  it("the warned-about set is bounded without flooding: a recent version is not warned again (round 16, nit 4)", async () => {
+    const warn = jest.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const overridden = () =>
+      warn.mock.calls.filter(([m]) => /default overridden/.test(String(m))).length;
+    const load = (version: number) =>
+      new InMemoryApprovalPolicyStore({ version, default: "agent", rules: [] }).load();
+    // A full set of 100 stored versions, each warned once.
+    for (let v = 9000; v < 9100; v++) await load(v);
+    expect(overridden()).toBe(100);
+    // The first is used again (most recent now), then one more version arrives: only the least
+    // recently seen is let go — not everything at once (it cleared the whole set at 100, and every
+    // version warned again).
+    await load(9000);
+    await load(9100);
+    expect(overridden()).toBe(101);
+    await load(9000);
+    await load(9099);
+    expect(overridden()).toBe(101);
+    warn.mockRestore();
   });
 
   it("takes the first matching rule in policy order", () => {

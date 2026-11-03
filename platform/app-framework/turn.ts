@@ -15,6 +15,7 @@
 
 import type { AgentIdentity } from "@/platform/agents/types";
 import type { TurnState } from "./types";
+import { sameId } from "@/platform/auth/same-id";
 
 /**
  * Variant knobs a consumer might declare. None are implemented in the Sprint 1 core;
@@ -57,8 +58,25 @@ export function assertTurnConfigSupported(config?: TurnVariantConfig): void {
 
 // ── Universal core ────────────────────────────────────────────────────
 
-/** Initialize turn state from an ordered participant list. */
+/**
+ * Refuse one participant named twice — in any spelling of their id (sameId). A turn order with
+ * two spellings of one actor gives that actor two turns, and removing one spelling would leave
+ * the other able to act. initTurnState and createSession both refuse at the source.
+ */
+export function assertDistinctParticipants(participants: readonly AgentIdentity[]): void {
+  participants.forEach((p, i) => {
+    if (participants.slice(0, i).some((q) => sameId(q.actorId, p.actorId))) {
+      throw new Error(
+        `app-framework: participant ${p.actorId} named more than once — each participant ` +
+          `once, in one spelling of their id (ADR-028 D6)`
+      );
+    }
+  });
+}
+
+/** Initialize turn state from an ordered participant list (each participant once). */
 export function initTurnState(participants: readonly AgentIdentity[]): TurnState {
+  assertDistinctParticipants(participants);
   return {
     order: participants.map((p) => p.actorId),
     currentIndex: 0,
@@ -73,7 +91,7 @@ export function currentTurnActor(turn: TurnState): string | undefined {
 
 /** Is it this actor's turn? The validation the coordinator enforces before an action. */
 export function isCurrentTurn(turn: TurnState, actorId: string): boolean {
-  return currentTurnActor(turn) === actorId;
+  return sameId(currentTurnActor(turn), actorId);
 }
 
 /** Advance to the next participant, wrapping and incrementing the turn counter. */
@@ -87,18 +105,22 @@ export function advanceTurn(turn: TurnState): TurnState {
   };
 }
 
-/** Remove a participant from the order, keeping the current actor stable where possible. */
+/**
+ * Remove a participant from the order — every entry in any spelling of their id (sameId), so a
+ * state holding two spellings (built before the source refused them) leaves none able to act —
+ * keeping the current actor stable where possible.
+ */
 export function removeParticipant(turn: TurnState, actorId: string): TurnState {
-  const idx = turn.order.indexOf(actorId);
-  if (idx === -1) return turn;
-  const order = turn.order.filter((id) => id !== actorId);
+  const removed = turn.order.map((id) => sameId(id, actorId));
+  if (!removed.includes(true)) return turn;
+  const order = turn.order.filter((_, i) => !removed[i]);
   if (order.length === 0) {
     return { order, currentIndex: 0, turnNumber: turn.turnNumber };
   }
-  // If the removed actor was before the current one, shift the pointer back to keep
-  // the same actor current; if it WAS the current one, the next actor becomes current.
-  const currentIndex =
-    idx < turn.currentIndex ? turn.currentIndex - 1 : turn.currentIndex % order.length;
+  // The pointer moves back by the entries removed before it. If the current entry was removed,
+  // the next remaining entry becomes current (it now sits at that shifted index), wrapping.
+  const before = removed.slice(0, turn.currentIndex).filter(Boolean).length;
+  const currentIndex = (turn.currentIndex - before) % order.length;
   return { order, currentIndex, turnNumber: turn.turnNumber };
 }
 
@@ -112,4 +134,5 @@ export function removeParticipant(turn: TurnState, actorId: string): TurnState {
 //
 // 3. removeParticipant keeps the current actor stable when someone earlier in the order
 //    leaves; when the CURRENT actor is removed, the next actor becomes current without
-//    incrementing turnNumber (the turn was never completed).
+//    incrementing turnNumber (the turn was never completed). It removes every spelling of the
+//    id; initTurnState and createSession refuse two spellings of one participant at the source.

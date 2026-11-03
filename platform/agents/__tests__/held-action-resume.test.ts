@@ -533,15 +533,18 @@ describe("trajectory ownership", () => {
 });
 
 describe("who may decide a held action (heldActionRefusal)", () => {
-  async function proposal(actor: AgentIdentity = AGENT): Promise<ProposalRecord> {
+  async function proposal(
+    actor: AgentIdentity = AGENT,
+    risk: "restricted" | "consequential" = "restricted"
+  ): Promise<ProposalRecord> {
     return proposals.create({
       operationId: `op_${generateSecureId()}`,
       sessionId: "s",
       trajectoryId: "t",
       label: "publish",
       actor,
-      effects: ["restricted"],
-      effectiveRisk: "restricted",
+      effects: risk === "restricted" ? ["restricted"] : ["externalCall"],
+      effectiveRisk: risk,
     });
   }
   const agentPolicy: ApprovalPolicy = { version: 2, default: "agent", rules: [] };
@@ -605,21 +608,36 @@ describe("who may decide a held action (heldActionRefusal)", () => {
     );
   });
 
+  // On a consequential action, which a policy may give an agent to approve. (Round 12, I-2: this
+  // used a restricted one — and so asserted that a non-person default let an agent approve it.)
   it("refuses an approver of a kind the policy does not name", async () => {
     const otherAgent: AgentIdentity = {
       ...AGENT,
       actorId: "agent:other",
       sessionId: "s2",
     };
-    expect(heldActionRefusal(await proposal(), otherAgent, "approve")).toBe(
+    const held = () => proposal(AGENT, "consequential");
+    expect(heldActionRefusal(await held(), otherAgent, "approve")).toBe(
       "approver_not_allowed"
     );
-    expect(heldActionRefusal(await proposal(), OWNER, "approve", agentPolicy)).toBe(
+    expect(heldActionRefusal(await held(), OWNER, "approve", agentPolicy)).toBe(
       "approver_not_allowed"
     );
     expect(
-      heldActionRefusal(await proposal(), otherAgent, "approve", agentPolicy)
+      heldActionRefusal(await held(), otherAgent, "approve", agentPolicy)
     ).toBeNull();
+  });
+
+  it("a restricted action is a person's whatever the policy names (round 12, I-2)", async () => {
+    const otherAgent: AgentIdentity = {
+      ...AGENT,
+      actorId: "agent:other",
+      sessionId: "s2",
+    };
+    expect(heldActionRefusal(await proposal(), otherAgent, "approve", agentPolicy)).toBe(
+      "approver_not_allowed"
+    );
+    expect(heldActionRefusal(await proposal(), OWNER, "approve", agentPolicy)).toBeNull();
   });
 
   it("lets the owner — or the proposing agent itself — reject", async () => {

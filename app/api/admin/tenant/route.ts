@@ -8,10 +8,15 @@
  * tenant's, under its row-level security; null when the job history could not be read).
  * Changing a setting goes through PUT /api/admin/config, which in a shared deployment sets the
  * tenant's own value.
+ *
+ * The settings and the job history are the config page's data (TASK-194, audit C-10): returned
+ * only to an admin who holds config_view, as GET /api/admin/config requires; for anyone else who
+ * enters the admin area (a moderator) they are null — not read, not shown.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
+import { holds } from "@/platform/auth/role-governance";
 import { internalError } from "@/platform/errors";
 import { withTenantTx } from "@/platform/data";
 import { currentTenant } from "@/platform/tenancy/context";
@@ -23,6 +28,8 @@ import { tenantRoute } from "@/platform/tenancy/route";
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const guard = await requireAdmin(request, "can_access_admin");
   if (guard.error) return guard.error;
+  // The config page's families, for its permission only (audit C-10).
+  const mayViewConfig = holds(guard.admin, "config_view");
   try {
     const ctx = currentTenant();
     // The tenant's own record, read in its own transaction: the directory's cache holds what
@@ -41,9 +48,9 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
         )
       ),
       getBudgetTracker().getTenantStatus(),
-      listEnhancedConfig(),
+      mayViewConfig ? listEnhancedConfig() : Promise.resolve(null),
       // The history is informative: a failed read shows as unavailable, never fails the page.
-      listTenantJobHistory(25).catch(() => null),
+      mayViewConfig ? listTenantJobHistory(25).catch(() => null) : Promise.resolve(null),
     ]);
     const tenant = own.rows[0];
     return NextResponse.json({
@@ -61,20 +68,21 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
       budget,
       // A single deployment's administrators govern every setting (the config page); here the
       // ones a tenant may set for itself.
-      settings: settings
-        .filter((e) => e.tenantOverridable)
-        .map((e) => ({
-          key: e.key,
-          description: e.description,
-          value: e.value,
-          platformValue: e.platformValue,
-          overridden: e.overridden,
-          valueType: e.valueType,
-          minValue: e.minValue,
-          maxValue: e.maxValue,
-          allowedValues: e.allowedValues,
-          permissionTier: e.permissionTier,
-        })),
+      settings:
+        settings
+          ?.filter((e) => e.tenantOverridable)
+          .map((e) => ({
+            key: e.key,
+            description: e.description,
+            value: e.value,
+            platformValue: e.platformValue,
+            overridden: e.overridden,
+            valueType: e.valueType,
+            minValue: e.minValue,
+            maxValue: e.maxValue,
+            allowedValues: e.allowedValues,
+            permissionTier: e.permissionTier,
+          })) ?? null,
       jobs:
         jobs?.map((j) => ({
           id: j.id,

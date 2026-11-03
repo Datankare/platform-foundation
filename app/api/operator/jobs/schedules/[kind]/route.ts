@@ -6,7 +6,8 @@
  *   One setting per request: jobs.<kind>.enabled or jobs.<kind>.interval_minutes, the platform
  *   default, through the governed write — tier permission, validation (the interval's bounds),
  *   the audit record, history, two-person approval and dual control (turning off a safety duty
- *   needs a second operator). 200 applied, 202 held for approval.
+ *   needs a second operator). 200 applied, 202 held for approval; 409 jobs.schedule_required for
+ *   a required job turned off (TASK-194 round 18: it is always on — only its interval changes).
  */
 
 import { NextRequest } from "next/server";

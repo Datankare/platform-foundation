@@ -5,6 +5,7 @@
  * Sprint 6
  */
 
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { holds } from "@/platform/auth/role-governance";
@@ -16,6 +17,8 @@ import { logger } from "@/lib/logger";
 import {
   COMMAND_BAR_ACTOR_ID,
   COMMAND_BAR_HANDLERS,
+  codedResult,
+  isErasureHoldConflict,
   runCommandBarAction,
   type ActionResult as BarResult,
 } from "@/app/api/admin/ai/command-bar";
@@ -74,7 +77,14 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
         // Never String() an arbitrary value: an object with a non-callable toString throws.
         const named =
           typeof action.tool === "string" ? action.tool.slice(0, 64) : "(invalid)";
-        results.push({ tool: named, success: false, error: `Unknown tool: ${named}` });
+        // Coded, per the error-code contract (TASK-199).
+        results.push({
+          tool: named,
+          success: false,
+          error: "request.invalid_value",
+          code: "request.invalid_value",
+          params: { field: "tool", allowed: [...validTools].sort() },
+        });
         break;
       }
 
@@ -118,12 +128,33 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
               }
             : outcome.result;
       } catch (err) {
-        result = {
-          success: false,
-          error: err instanceof Error ? err.message : "Tool invocation failed",
-        };
+        // An erasure already held for the account, kept by the database (round 3, L6): its coded
+        // answer. Anything else is internal.error with a reference (TASK-199): the error's own
+        // text — a table, a constraint, a stack's message — is logged, never returned.
+        if (isErasureHoldConflict(err)) {
+          result = {
+            success: false,
+            error: "admin.erasure_pending",
+            code: "admin.erasure_pending",
+          };
+        } else {
+          const requestId = randomUUID();
+          logger.error("Admin command-bar action failed", {
+            requestId,
+            tool,
+            error: err instanceof Error ? err.message : String(err),
+            route: "api/admin/ai/execute",
+          });
+          result = {
+            success: false,
+            error: "internal.error",
+            code: "internal.error",
+            params: { requestId },
+          };
+        }
       }
-      results.push({ tool: action.tool, ...result });
+      // Only a code of the contract reaches the screen (rebase round 2, finding 2).
+      results.push({ tool: action.tool, ...codedResult(tool, result) });
       if (!result.success) break;
     }
   };
@@ -144,5 +175,8 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     route: "api/admin/ai/execute",
   });
 
-  return NextResponse.json({ results });
+  // A plan that stopped at a held action (it is always the last: a held result is no success)
+  // is accepted and waiting: 202, as every route that can hold answers (round 11, item 1).
+  const stoppedHeld = results.length > 0 && results[results.length - 1].held === true;
+  return NextResponse.json({ results }, { status: stoppedHeld ? 202 : 200 });
 });

@@ -19,6 +19,7 @@
 import {
   ActionNotRecordedError,
   ApprovedRunFailedError,
+  LOST_COMMIT_CODE,
   executeActionPipeline,
   isPipelineConflict,
   type PipelineOutcome,
@@ -410,15 +411,34 @@ async function recordUnrecorded(
 
 /**
  * Audit an approved run that failed before taking effect (review 11 L-6): an atomic run's own
- * attempt records rolled back with its transaction, so the failure is written here, after it.
+ * attempt records rolled back with its transaction, so the failure is written here, after it. A
+ * run whose write lost its commit did not fail — it may stand (TASK-194 round 17): recorded
+ * `approved_run_indeterminate`, its claim kept, never `approved_run_failed` — and only when its
+ * claim was in fact kept (round 18, nit 5: an atomic run's rolled back with it). Exported for its
+ * test.
  */
-async function recordApprovedRunFailed(
+export async function recordApprovedRunFailed(
   err: ApprovedRunFailedError,
   toolId: string,
   actorId: string
 ): Promise<void> {
   try {
     const { writeAuditLogOutsideTransaction } = await import("@/platform/auth/audit");
+    // Only a claim kept is undecided (round 18, nit 5): a released one is a failed run.
+    if (!err.released && err.failure?.code === LOST_COMMIT_CODE) {
+      await writeAuditLogOutsideTransaction({
+        action: "admin_action",
+        agent: actorId,
+        details: {
+          type: "approved_run_indeterminate",
+          tool: toolId,
+          holdId: err.proposalId,
+          outcome: "indeterminate",
+          reason: err.reason.slice(0, 500),
+        },
+      });
+      return;
+    }
     await writeAuditLogOutsideTransaction({
       action: "admin_action",
       agent: actorId,

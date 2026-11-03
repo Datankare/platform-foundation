@@ -109,15 +109,60 @@ describe("docs integrity — README counts match the filesystem (Gotcha 85)", ()
     expect(stated.every((c) => c === n)).toBe(true);
   });
 
+  // TASK-194 round 19: PLATFORM_ARCHITECTURE said "52 migrations" when there were 63 — no check
+  // read it; round 20: Playform's migration guide said "all 65 migrations recorded". One pattern
+  // finds a count however it is worded (round 21, nit 3: the README's check uses it too); the
+  // architecture docs and the migration guides state none of their own: they point to the
+  // README's, which the check below keeps true.
+  const MIGRATION_COUNT = /(\d+)\s+(?:[\w-]+\s+)?migration(?:s| files)\b/g;
+  const countsIn = (text: string) => text.match(MIGRATION_COUNT) ?? [];
+
   it("every migration count stated in the README equals the migration file count", () => {
     const n = readdirSync(join(ROOT, "supabase", "migrations")).filter((f) =>
       f.endsWith(".sql")
     ).length;
-    const stated = [...readme.matchAll(/(\d+)\s+(?:database )?migrations/g)].map((m) =>
-      Number(m[1])
-    );
+    const stated = [...readme.matchAll(MIGRATION_COUNT)].map((m) => Number(m[1]));
     expect(stated.length).toBeGreaterThan(0); // self-test: the pattern must match
     expect(stated.every((c) => c === n)).toBe(true);
+    // The capture is the count, however it is worded (round 21, nit 3).
+    expect(
+      [..."63 SQL migrations; 64 migration files".matchAll(MIGRATION_COUNT)].map(
+        (m) => m[1]
+      )
+    ).toEqual(["63", "64"]);
+  });
+
+  it("the migration-count pattern finds a count however it is worded", () => {
+    expect(countsIn(readme).length).toBeGreaterThan(0); // the README's own
+    for (const planted of [
+      "63 migrations",
+      "63 database migrations",
+      "63 SQL migrations",
+      "63 migration files",
+      "all 65 migrations recorded",
+      "73\n migrations",
+    ])
+      expect(countsIn(planted)).toHaveLength(1);
+    for (const clean of ["migration 062", "the migrations in supabase/migrations/"])
+      expect(countsIn(clean)).toEqual([]);
+  });
+
+  it("the architecture docs and the migration guides state no migration count", () => {
+    const guides = readdirSync(DOCS).filter((f) =>
+      /^(?:PLAYFORM_)?MIGRATION_.*\.md$/.test(f)
+    );
+    expect(guides).toContain("MIGRATION_v5_to_v6.md"); // self-test: the guides are read
+    const docs = [
+      "PLATFORM_ARCHITECTURE.md",
+      "TAD.md",
+      "AGENT_ARCHITECTURE.md",
+      ...guides,
+    ]
+      .map((f) => join("docs", f))
+      .filter((rel) => existsSync(join(ROOT, rel)));
+    expect(docs).toContain(join("docs", "PLATFORM_ARCHITECTURE.md"));
+    const counted = docs.flatMap((rel) => countsIn(read(rel)).map((m) => `${rel}: ${m}`));
+    expect(counted).toEqual([]);
   });
 });
 

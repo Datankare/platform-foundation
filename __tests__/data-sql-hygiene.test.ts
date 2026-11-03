@@ -10,10 +10,16 @@
  *  3. SQL text is never built from values: no template literal with a substitution, and no string
  *     concatenation, is passed to tx.query. Values go in as parameters.
  *  4. The owner connection (outside row-level security) is used only from the files listed here,
- *     each for a named purpose.
+ *     each for a named purpose — directly, or through a function that lends its caller an owner
+ *     transaction (catalogTx): every caller of such a lender is an owner caller too, traced to a
+ *     fixed point with the compiler API (helpers/owner-scan.ts; TASK-194, audit C-12 — the list
+ *     matched the literal `withOwnerTx(` text, so a lender's callers were never reviewed).
+ *  5. Where a config write goes is the caller's explicit choice: no ConfigWriteTarget parameter
+ *     is optional or defaulted (the platform default is written on the owner connection).
  */
 
 import { productionSources, read } from "./helpers/route-policy";
+import { scanOwnerLenders } from "./helpers/owner-scan";
 
 const SOURCES = productionSources();
 const strip = (src: string) =>
@@ -33,6 +39,10 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "platform defaults (single-tenant administrators, operators) and operator-set tenant values (ADR-053 D5)",
   "app/api/admin/ai/handlers/shared.ts":
     "command-bar changes to the shared role and entitlement catalog, after mayChangePlatformCatalog (ADR-053 D5)",
+  "app/api/admin/ai/handlers/roles.ts":
+    "catalogTx: role-catalog changes (create, delete, duplicate, permissions), each after mayChangePlatformCatalog and the role rules, and the reads they are checked against (ADR-053 D5)",
+  "app/api/admin/ai/handlers/entitlements.ts":
+    "catalogTx: entitlement-group changes (create, turn on or off), each after mayChangePlatformCatalog and the grant rule, and the reads they are checked against (ADR-053 D5)",
   "app/api/admin/entitlements/route.ts":
     "turning a shared entitlement group on or off, after mayChangePlatformCatalog (ADR-053 D5)",
   "platform/auth/gdpr-deletion.ts":
@@ -45,6 +55,8 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "the operator command re-linking accounts to a new identity pool: the address's accounts in whichever tenant holds them, changed with their audit record in one transaction (TASK-174)",
   "platform/gdpr/erasure-attestation.ts":
     "two operators attesting an external erasure the system cannot verify, on the erased account's tenant's record (TASK-193 round 1)",
+  "platform/auth/identity-relink-command.ts":
+    "the operator's re-link command (scripts/relink-identities): calls relinkIdentities, which lends the owner transaction only to its `onChunk` hook — the command passes none (found by the round 1 scan, A5: a hook reached through an object parameter)",
   "platform/jobs/postgres-store.ts":
     "the job runner: claiming, settling and scheduling every tenant's jobs; operators' cross-tenant job views (ADR-056 D2)",
 };
@@ -91,6 +103,70 @@ describe("data access hygiene (ADR-053 D4)", () => {
     );
     expect(offenders).toEqual([]);
     for (const f of Object.keys(OWNER_CALLERS)) expect(SOURCES).toContain(f);
+  });
+
+  const OWNER_SCAN = scanOwnerLenders(SOURCES.map((f) => ({ path: f, text: read(f) })));
+
+  it("finds the owner lenders it means to (self-test)", () => {
+    expect(OWNER_SCAN.lenders.catalogTx).toBe("app/api/admin/ai/handlers/shared.ts");
+  });
+
+  it("every caller of a function lending an owner transaction is a listed owner caller", () => {
+    const unlisted = Object.entries(OWNER_SCAN.lenderCallers)
+      .filter(([f]) => !(f in OWNER_CALLERS))
+      .map(([f, lenders]) => `${f} → ${lenders.join(", ")}`);
+    expect(unlisted).toEqual([]);
+  });
+
+  it("no ConfigWriteTarget parameter is optional or defaulted", () => {
+    expect(OWNER_SCAN.defaultedTargets).toEqual([]);
+  });
+
+  it("traces lenders through lenders, and not fixed-statement owner functions (self-test)", () => {
+    const scan = scanOwnerLenders([
+      {
+        path: "a.ts",
+        text:
+          "export function lend(fn) { return withOwnerTx('x', fn); }\n" +
+          "export function lend2(cb) { return lend((tx) => cb(tx)); }\n" +
+          "export function fixed(id) { return withOwnerTx('x', (tx) => tx.query('q', [id])); }\n" +
+          "export function sink(w) { return withOwnerTx('x', async (tx) => w('chunk')); }\n" +
+          "export function write(k, target: ConfigWriteTarget = DEFAULT) {}",
+      },
+      { path: "b.ts", text: "lend2((tx) => tx.query('anything')); fixed(1); sink(log);" },
+    ]);
+    expect(scan.lenders).toEqual({ lend: "a.ts", lend2: "a.ts" });
+    expect(scan.lenderCallers).toEqual({ "b.ts": ["lend2"] });
+    expect(scan.defaultedTargets).toEqual(["a.ts: write(target)"]);
+  });
+
+  it("traces object-literal lenders and callbacks forwarded through properties and objects (self-test, round 1 A5)", () => {
+    const scan = scanOwnerLenders([
+      {
+        path: "a.ts",
+        text:
+          "export const store = { run: (fn) => withOwnerTx('x', fn), fixed: (id) => withOwnerTx('x', (tx) => tx.query('q', [id])) };\n" +
+          "export const svc = { exec(opts) { return withOwnerTx('x', opts.work); } };\n" +
+          "export function viaObject(cb) { return run({ work: cb }); }\n" +
+          "export function viaProp({ work }) { return withOwnerTx('x', (tx) => work(tx)); }\n" +
+          "export function viaCallObj(opts) { return withOwnerTx('x', (tx) => opts.work({ tx })); }\n" +
+          "export function viaArray(cb) { return run([cb]); }\n" +
+          "export function sink(w) { return withOwnerTx('x', async (tx) => w.write('chunk')); }",
+      },
+      {
+        path: "b.ts",
+        text: "store.run((tx) => tx.query('q')); svc.exec({ work: (tx) => tx }); store.fixed(1); sink(log);",
+      },
+    ]);
+    expect(scan.lenders).toEqual({
+      run: "a.ts",
+      exec: "a.ts",
+      viaObject: "a.ts",
+      viaProp: "a.ts",
+      viaCallObj: "a.ts",
+      viaArray: "a.ts",
+    });
+    expect(scan.lenderCallers).toEqual({ "b.ts": ["exec", "run"] });
   });
 
   it("recognises SQL built from values (self-test)", () => {

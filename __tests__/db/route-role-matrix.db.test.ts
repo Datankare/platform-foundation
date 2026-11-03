@@ -66,6 +66,7 @@ jest.mock("@/platform/ai", () => {
   };
 });
 
+import { routeMethods } from "../helpers/route-methods";
 import fc from "fast-check";
 import { NextRequest } from "next/server";
 import { fuzzParams, fuzzParamsPart } from "../helpers/fuzz";
@@ -134,7 +135,7 @@ const decisionBody = (extra: Record<string, fc.Arbitrary<unknown>> = {}) =>
       ...extra,
     }),
     fc.record({
-      decision: fc.constantFrom("mark_executed", "reapprove"),
+      decision: fc.constantFrom("mark_executed", "reapprove", "withdraw"),
       source: fc.constant("runtime"),
       ...extra,
     })
@@ -288,10 +289,21 @@ const ROUTES: readonly RouteCase[] = [
     permission: "config_view",
     body: {},
     valid: () =>
-      fc.record({
-        toolId: fc.constantFrom("search_config", "get_config", "get_history"),
-        input: fc.record({ key: fc.constant(`matrix.${RUN}.absent`), query: text() }),
-      }),
+      // Each read tool with its own keys only (round 10, I-A: another key is refused).
+      fc.oneof(
+        fc.record({
+          toolId: fc.constant("search_config"),
+          input: fc.record({ query: text() }),
+        }),
+        fc.record({
+          toolId: fc.constant("get_config"),
+          input: fc.record({ key: fc.constant(`matrix.${RUN}.absent`) }),
+        }),
+        fc.record({
+          toolId: fc.constant("get_history"),
+          input: fc.record({ configKey: fc.constant(`matrix.${RUN}.absent`) }),
+        })
+      ),
   },
   {
     path: "admin/entitlements",
@@ -306,6 +318,14 @@ const ROUTES: readonly RouteCase[] = [
     permission: "admin_manage_entitlements",
     body: {},
     valid: () => fc.record({ groupId: aUuid(), isActive: fc.boolean() }),
+  },
+  // The open erasure hold on an account, for the Users screen (TASK-194 round 1, A6).
+  {
+    path: "admin/gdpr",
+    method: "GET",
+    load: R("admin/gdpr"),
+    permission: "admin_purge_user_data",
+    validQuery: `?userId=${ID}`,
   },
   {
     path: "admin/gdpr",
@@ -748,17 +768,22 @@ const CALLERS = [...Object.keys(ROLE_PERMISSIONS), ...SPECIAL];
 const PROPERTY_PARTS = [1, 2, 3, 4] as const;
 
 dbDescribe("route role matrix (TASK-146, Postgres)", () => {
-  it("covers every privileged route file", () => {
-    // A new admin, moderation or account route must be added to the matrix.
-    const { readdirSync, statSync } = jest.requireActual("fs") as typeof import("fs");
+  it("covers every method of every privileged route (TASK-194, audit C-11: not just each file)", () => {
+    // A new admin, moderation or account route — or a new method on one — must be added.
+    const { readdirSync, readFileSync, statSync } = jest.requireActual(
+      "fs"
+    ) as typeof import("fs");
     const { join } = jest.requireActual("path") as typeof import("path");
     const found: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         const p = join(dir, name);
         if (statSync(p).isDirectory()) walk(p);
-        else if (name === "route.ts")
-          found.push(p.replace(/^app\/api\//, "").replace(/\/route\.ts$/, ""));
+        else if (name === "route.ts") {
+          const path = p.replace(/^app\/api\//, "").replace(/\/route\.ts$/, "");
+          for (const m of routeMethods(readFileSync(p, "utf8"), p))
+            found.push(`${m.method} ${path}`);
+        }
       }
     };
     for (const root of [
@@ -769,17 +794,21 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
     ])
       walk(root);
     const covered = new Set(
-      ROUTES.map((r) =>
-        r.path
-          .replace(
-            `/approvals/${ID}`,
-            r.path.startsWith("operator/") ? "/approvals/[approvalId]" : "/approvals/[id]"
-          )
-          .replace(`schedules/${ID}`, "schedules/[kind]")
-          .replace(`erasures/${ID}`, "erasures/[userId]")
-          .replaceAll(ID, "[id]")
+      ROUTES.map(
+        (r) =>
+          `${r.method} ${r.path
+            .replace(
+              `/approvals/${ID}`,
+              r.path.startsWith("operator/")
+                ? "/approvals/[approvalId]"
+                : "/approvals/[id]"
+            )
+            .replace(`schedules/${ID}`, "schedules/[kind]")
+            .replace(`erasures/${ID}`, "erasures/[userId]")
+            .replaceAll(ID, "[id]")}`
       )
     );
+    expect(found.length).toBeGreaterThan(40);
     expect(found.filter((p) => !covered.has(p)).sort()).toEqual([]);
   });
 

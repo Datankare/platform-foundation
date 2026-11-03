@@ -245,7 +245,35 @@ interface Reach {
 }
 
 /** What an act's code reaches: external modules, fetch, `@external` functions — transitively. */
-function reachability(index: FileIndex): Reach {
+/**
+ * The interface and type members tagged `@external` in `files` (round 9, P-1): a call through one
+ * — `held.authority.resume(…)` — reaches outside whatever value implements it (an authority runs
+ * any action), which no import can show. Matched by member name, on any value.
+ */
+function externalMembers(files: readonly SourceText[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const f of files) {
+    if (!f.text.includes("@external")) continue;
+    const sf = ts.createSourceFile(f.path, f.text, ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node): void => {
+      // An interface or type member, or a class method (round 10, N-D), tagged `@external`.
+      if (
+        (ts.isMethodSignature(n) ||
+          ts.isPropertySignature(n) ||
+          ts.isMethodDeclaration(n)) &&
+        ts.isIdentifier(n.name) &&
+        hasExternalTag(n)
+      ) {
+        out.add(n.name.text);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+function reachability(index: FileIndex, members: ReadonlySet<string> = new Set()): Reach {
   const { exportedExternal } = index;
 
   const externalModule = (from: string): string | undefined => {
@@ -291,6 +319,54 @@ function reachability(index: FileIndex): Reach {
     return undefined;
   };
 
+  /**
+   * The members a call may name: `x.m(…)`, `x.m.call(…)`, `x["m"](…)`, or `m(…)` destructured —
+   * every member a name is bound to anywhere in its file (round 11, nit 6: two functions that
+   * bind one name to different members, the last binding hid the first).
+   */
+  const membersCalled = (callee: ts.Expression, fi: FileInfo): readonly string[] => {
+    let e = callee;
+    if (
+      ts.isPropertyAccessExpression(e) &&
+      ["call", "apply"].includes(e.name.text) &&
+      (ts.isPropertyAccessExpression(e.expression) ||
+        ts.isElementAccessExpression(e.expression))
+    ) {
+      e = e.expression;
+    }
+    if (ts.isPropertyAccessExpression(e)) return [e.name.text];
+    if (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression)) {
+      return [e.argumentExpression.text];
+    }
+    if (ts.isIdentifier(e)) return [...(destructured(fi).get(e.text) ?? [])];
+    return [];
+  };
+
+  /** Each file's names bound by destructuring a member: local name → every member it names. */
+  const destructuredCache = new Map<FileInfo, Map<string, Set<string>>>();
+  const destructured = (fi: FileInfo): Map<string, Set<string>> => {
+    const hit = destructuredCache.get(fi);
+    if (hit) return hit;
+    const out = new Map<string, Set<string>>();
+    const visit = (n: ts.Node): void => {
+      if (
+        ts.isBindingElement(n) &&
+        ts.isObjectBindingPattern(n.parent) &&
+        ts.isIdentifier(n.name)
+      ) {
+        const key = n.propertyName ?? n.name;
+        if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) {
+          if (!out.has(n.name.text)) out.set(n.name.text, new Set());
+          out.get(n.name.text)!.add(key.text);
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(fi.sf);
+    destructuredCache.set(fi, out);
+    return out;
+  };
+
   /** The root identifier of `a.b.c(…)` / `a().b`. */
   const rootName = (e: ts.Expression): string | undefined => {
     let cur: ts.Expression = e;
@@ -309,6 +385,13 @@ function reachability(index: FileIndex): Reach {
     const visit = (n: ts.Node): void => {
       if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
         const callee = n.expression;
+        // A tagged member called on any value (round 9, P-1) — by name (`x.resume(…)`), through
+        // `.call`/`.apply` (`x.resume.call(…)`), by element access (`x["resume"](…)`), or bound
+        // by destructuring (`const { resume } = x; resume(…)`) — round 10, N-D. What no reading
+        // of one file can see — a member passed as a value to another function, or renamed through
+        // a variable it is assigned to — is not followed: such a call is the author's to tag.
+        for (const member of membersCalled(callee, fi))
+          if (members.has(member)) out.push(`.${member} (@external member)`);
         const name = rootName(callee);
         if (name) {
           const r = nameReaches(fi, name, seen, ts.isIdentifier(callee));
@@ -341,7 +424,10 @@ export function scanAudited(
 ): ScanResult {
   const index = fileIndex(files, root, read);
   const { info } = index;
-  const { nameReaches, nodeReaches, bodyReaches } = reachability(index);
+  const { nameReaches, nodeReaches, bodyReaches } = reachability(
+    index,
+    externalMembers(files)
+  );
 
   /** The function a node sits in, and its name, if it has one. */
   const enclosing = (n: ts.Node): { fn: FnNode; name?: string } | undefined => {

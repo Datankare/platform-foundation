@@ -216,12 +216,15 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
   },
   {
     kind: "config.expire-approvals",
-    description: "Marks pending configuration approvals past their expiry as expired.",
+    description:
+      "Marks pending configuration approvals past their expiry as expired, settles approvals whose outcome is being checked, and lists undecided runs for a person.",
     schedule: {
       scope: "platform",
       defaultIntervalMinutes: 60,
       minIntervalMinutes: 15,
       maxIntervalMinutes: 1440,
+      // Nothing else settles a lost commit or reminds of an undecided run (TASK-194 round 18).
+      required: true,
     },
     handler: async () => ({ summary: { expired: await expireStaleApprovals() } }),
   },

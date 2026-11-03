@@ -19,6 +19,8 @@ export function jobsResponse<T>(
       return apiError("jobs.not_found", { request });
     case "jobs.not_dead":
       return apiError("jobs.not_dead", { request });
+    case "jobs.schedule_required":
+      return apiError("jobs.schedule_required", { request });
     case "audit.unavailable":
       return apiError("service.unavailable", { params: { service: "audit" }, request });
   }

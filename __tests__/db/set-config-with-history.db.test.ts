@@ -46,7 +46,11 @@ jest.mock("@/platform/data", () => {
 import { randomUUID } from "node:crypto";
 import { withOwnerTx } from "@/platform/data";
 import { runWithTenant } from "@/platform/tenancy/context";
-import { clearConfigCache, setConfigWithHistory } from "@/platform/auth/platform-config";
+import {
+  clearConfigCache,
+  PLATFORM_DEFAULT_TARGET,
+  setConfigWithHistory,
+} from "@/platform/auth/platform-config";
 import {
   connectTestDatabase,
   createTestTenant,
@@ -88,7 +92,15 @@ const audit = () =>
 /** As a single-tenant deployment's administrator: the platform default, as before tenancy. */
 const set = (v: unknown, actor = ADMIN) =>
   runWithTenant({ tenantId: t.id, mode: "single" }, () =>
-    setConfigWithHistory(KEY, v, actor, "load test")
+    setConfigWithHistory(
+      KEY,
+      v,
+      actor,
+      "load test",
+      "config_agent",
+      undefined,
+      PLATFORM_DEFAULT_TARGET
+    )
   );
 
 dbDescribe("setConfigWithHistory", () => {
@@ -146,6 +158,8 @@ dbDescribe("setConfigWithHistory", () => {
     // An actor id the audit log refuses: the record cannot be written.
     const result = await set(200, "not-a-user-id");
     expect(result.success).toBe(false);
+    // Flagged, so the config tool answers service.unavailable {audit} (round 14, item 3).
+    expect(result.auditUnavailable).toBe(true);
     expect(await value()).toBe(100);
     expect(await history()).toEqual([]);
   });
@@ -154,6 +168,8 @@ dbDescribe("setConfigWithHistory", () => {
     const result = await set(5);
     expect(result.success).toBe(false);
     expect(result.validationErrors?.length).toBeGreaterThan(0);
+    // The structured reason the message words (round 14, item 2).
+    expect(result.valueRefusal).toEqual({ reason: "below_min", min: 10 });
     expect(await audit()).toEqual([]);
     expect(await value()).toBe(100);
   });
@@ -161,7 +177,15 @@ dbDescribe("setConfigWithHistory", () => {
   it("never creates an unknown key", async () => {
     const unknown = `${KEY}.made-up`;
     const result = await runWithTenant({ tenantId: t.id, mode: "single" }, () =>
-      setConfigWithHistory(unknown, 1, ADMIN, "x")
+      setConfigWithHistory(
+        unknown,
+        1,
+        ADMIN,
+        "x",
+        "config_agent",
+        undefined,
+        PLATFORM_DEFAULT_TARGET
+      )
     );
     expect(result.success).toBe(false);
     expect(await q("select 1 from platform_config where key = $1", [unknown])).toEqual(

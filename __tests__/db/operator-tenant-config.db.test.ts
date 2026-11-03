@@ -41,6 +41,14 @@ import { GET as approvalsGET } from "@/app/api/operator/tenants/[id]/approvals/r
 import { POST as decidePOST } from "@/app/api/operator/tenants/[id]/approvals/[approvalId]/route";
 import { DELETE as adminConfigDELETE } from "@/app/api/admin/config/route";
 import { GET as adminApprovalsGET } from "@/app/api/admin/approvals/route";
+import { POST as adminDecidePOST } from "@/app/api/admin/approvals/[id]/route";
+import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
+import { setProposalStore, type ProposalStore } from "@/platform/agents/proposal-store";
+import { PostgresProposalStore } from "@/platform/agents/postgres-proposal-store";
+import {
+  COMMAND_BAR_ACTOR_ID,
+  runCommandBarAction,
+} from "@/app/api/admin/ai/command-bar";
 import {
   DB_ENABLED,
   connectTestDatabase,
@@ -52,6 +60,8 @@ import {
 } from "../helpers/db";
 import {
   asCallerIn,
+  createCatalog,
+  dropCatalog,
   insertUser,
   newRun,
   seededRoleId,
@@ -179,6 +189,7 @@ if (DB_ENABLED) {
     );
     await q("delete from platform_config where key = any($1)", [KEYS]);
     await dropTestTenants();
+    await dropCatalog();
     await disconnectTestDatabase();
   });
   beforeEach(() => clearConfigCache());
@@ -407,5 +418,200 @@ dbDescribe("operator per-tenant settings — approvals and holds are the target'
       200
     );
     expect(await override(target, SAFE)).toBeUndefined();
+  });
+});
+
+// Round 7, I-3: an undecided erasure whose only possible deciders are its requester and the
+// account it acts on never lapses (an undecided run waits for a person) — and, through
+// proposals_purge_one_open, blocks any later erasure of that account. No one in the tenant may
+// decide it; the Approvals screen says so, and a platform operator decides it in that tenant.
+dbDescribe("an undecided hold no one in its tenant may decide (round 7, I-3)", () => {
+  let previous: ProposalStore | undefined;
+  beforeAll(() => {
+    previous = setProposalStore(new PostgresProposalStore());
+  });
+  afterAll(() => {
+    if (previous) setProposalStore(previous);
+  });
+
+  it("refuses its requester and its target, says so, and a platform operator decides it", async () => {
+    // The tenant's only holders of admin_purge_user_data: the requester and the account erased.
+    const requester = suiteCaller("super_admin", RUN, { name: "i3-requester" });
+    const victim = suiteCaller("safety_approver", RUN, { name: "i3-victim" });
+    await insertUser(target, {
+      id: requester.userId,
+      roleId: await seededRoleId("super_admin"),
+    });
+    await insertUser(target, {
+      id: victim.userId,
+      roleId: await seededRoleId("safety_approver"),
+    });
+    const id = await target.run(async () => {
+      const trajectory = await getTrajectoryStore().create(
+        { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+        "round7:i3",
+        "platform"
+      );
+      const outcome = await runCommandBarAction({
+        tool: "purge_user_data",
+        input: { userId: victim.userId, reason: "admin-action" },
+        admin: {
+          userId: requester.userId,
+          sub: requester.sub,
+          roleName: requester.roleName,
+          permissions: requester.permissions,
+        },
+        trajectoryId: trajectory.trajectory.trajectoryId,
+        stepIndex: 0,
+      });
+      if (outcome.kind !== "held") throw new Error("not held");
+      return outcome.proposalId;
+    });
+    // Approved by someone since gone, its run lost: undecided, which never lapses.
+    await q(
+      `update proposals set status = 'indeterminate', decided_by = $2, decided_at = now(),
+              run_token = gen_random_uuid(), run_atomic = false
+        where id = $1::uuid`,
+      [id, requester.userId]
+    );
+    const asAdmin = (who: TestIdentity, decision: string) =>
+      adminDecidePOST(
+        req(`/api/admin/approvals/${id}`, who, {
+          method: "POST",
+          body: { decision, source: "runtime" },
+          tenant: target,
+        }),
+        { params: Promise.resolve({ id }) }
+      );
+    // Its requester may not decide it, nor the account it acts on.
+    expect((await (await asAdmin(requester, "withdraw")).json()).code).toBe(
+      "approvals.self_approval"
+    );
+    expect((await (await asAdmin(victim, "withdraw")).json()).code).toBe(
+      "admin.self_target"
+    );
+    // One more holder of its permission, without can_access_admin (round 8, item 6): they cannot
+    // reach any approvals screen, so they are no decider either.
+    const catalog = await createCatalog(RUN, {
+      permissions: [],
+      roles: { purgeOnly: ["admin_purge_user_data"] },
+    });
+    await insertUser(target, { roleId: catalog.roles.purgeOnly });
+    // The screens say no one in the tenant may decide it — to the operator too.
+    const listed = (await held(op1)).find((h) => h.id === id) as
+      { undecided?: boolean; noEligibleDecider?: boolean } | undefined;
+    expect(listed).toMatchObject({ undecided: true, noEligibleDecider: true });
+    // A platform operator decides it, in that tenant: withdrawn, never run.
+    const res = await decide(op1, id, "runtime", "withdraw");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ decision: "withdraw", status: "rejected" });
+    expect(
+      (
+        await q<{ status: string }>("select status from proposals where id = $1::uuid", [
+          id,
+        ])
+      )[0]?.status
+    ).toBe("rejected");
+  });
+
+  it("the role change that would give a second person the permission is held too, and an operator approves it (round 8, item 2)", async () => {
+    const requester = suiteCaller("super_admin", RUN, { name: "i8-requester" });
+    await insertUser(target, {
+      id: requester.userId,
+      roleId: await seededRoleId("super_admin"),
+      cognitoSub: requester.sub,
+    });
+    const helper = await insertUser(target, { roleId: await seededRoleId("free") });
+    const id = await target.run(async () => {
+      const trajectory = await getTrajectoryStore().create(
+        { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+        "round8:item2",
+        "platform"
+      );
+      const outcome = await runCommandBarAction({
+        tool: "change_user_role",
+        input: { user_identifier: helper, new_role: "safety_approver" },
+        admin: {
+          userId: requester.userId,
+          sub: requester.sub,
+          roleName: requester.roleName,
+          permissions: requester.permissions,
+        },
+        trajectoryId: trajectory.trajectory.trajectoryId,
+        stepIndex: 0,
+      });
+      if (outcome.kind !== "held") throw new Error("not held");
+      return outcome.proposalId;
+    });
+    // Its requester may not approve it.
+    const own = await adminDecidePOST(
+      req(`/api/admin/approvals/${id}`, requester, {
+        method: "POST",
+        body: { decision: "approve", source: "runtime" },
+        tenant: target,
+      }),
+      { params: Promise.resolve({ id }) }
+    );
+    expect((await own.json()).code).toBe("approvals.self_approval");
+    // An operator approves it in the tenant's held changes: it runs, once.
+    expect((await held(op1)).map((h) => h.id)).toContain(id);
+    const res = await decide(op1, id, "runtime", "approve");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ outcome: "approved", applied: true });
+    const role = await q<{ name: string }>(
+      "select r.name from users u join roles r on r.id = u.role_id where u.id = $1::uuid",
+      [helper]
+    );
+    expect(role).toEqual([{ name: "safety_approver" }]);
+  });
+
+  it("flags an undecided role change whose only other holder fails its approver rules (round 9, P-2)", async () => {
+    // The tenant's administrator holds admin_manage_users, but not every permission of the
+    // safety approver's role: the role change's own rules (C-2) refuse them as its decider.
+    const requester = suiteCaller("super_admin", RUN, { name: "i9-requester" });
+    await insertUser(target, {
+      id: requester.userId,
+      roleId: await seededRoleId("super_admin"),
+      cognitoSub: requester.sub,
+    });
+    const helper = await insertUser(target, { roleId: await seededRoleId("free") });
+    const id = await target.run(async () => {
+      const trajectory = await getTrajectoryStore().create(
+        { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+        "round9:p2",
+        "platform"
+      );
+      const outcome = await runCommandBarAction({
+        tool: "change_user_role",
+        input: { user_identifier: helper, new_role: "safety_approver" },
+        admin: {
+          userId: requester.userId,
+          sub: requester.sub,
+          roleName: requester.roleName,
+          permissions: requester.permissions,
+        },
+        trajectoryId: trajectory.trajectory.trajectoryId,
+        stepIndex: 0,
+      });
+      if (outcome.kind !== "held") throw new Error("not held");
+      return outcome.proposalId;
+    });
+    await q(
+      `update proposals set status = 'indeterminate', decided_by = $2, decided_at = now(),
+              run_token = gen_random_uuid(), run_atomic = false
+        where id = $1::uuid`,
+      [id, requester.userId]
+    );
+    // Every other super_admin of the tenant (earlier cases') is out of good standing for this
+    // case: the tenant's administrator is the only other holder of admin_manage_users.
+    await q(
+      `update users set account_status = 'suspended', suspended_until = now() + interval '1 day'
+        where tenant_id = $1::uuid and id <> all($2::uuid[])
+          and role_id = (select id from roles where name = 'super_admin')`,
+      [target.id, [requester.userId]]
+    );
+    const listed = (await held(op1)).find((h) => h.id === id) as
+      { undecided?: boolean; noEligibleDecider?: boolean } | undefined;
+    expect(listed).toMatchObject({ undecided: true, noEligibleDecider: true });
   });
 });

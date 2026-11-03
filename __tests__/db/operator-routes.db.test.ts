@@ -334,6 +334,21 @@ dbDescribe(`${SUITE} GET /api/admin/tenant`, () => {
     ).toMatchObject({ overridden: false });
   });
 
+  // TASK-194, audit C-10: the settings and the job history are the config page's (config_view).
+  it("shows a moderator the tenant, but neither its settings nor its jobs", async () => {
+    const moderator = suiteCaller("moderator", RUN, { name: "own-moderator" });
+    await insertUser(t, {
+      id: moderator.userId,
+      roleId: await seededRoleId("moderator"),
+    });
+    const res = await get(moderator);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.tenant).toMatchObject({ id: t.id });
+    expect(body.settings).toBeNull();
+    expect(body.jobs).toBeNull();
+  });
+
   it("answers in a single deployment too", async () => {
     const res = await get(admin, "single");
     expect(res.status).toBe(200);
@@ -1253,6 +1268,48 @@ dbDescribe(`${SUITE} POST /api/operator/tenants/[id]/admins`, () => {
       "tenant.conflict"
     );
     for (const id of [twinA, twinB, unverified]) expect(await roleOf(id)).toBe(freeRole);
+  });
+
+  it("promotes only the account its record names: one that replaced it meanwhile is refused (rebase N-1)", async () => {
+    // The account the record is about is read first (TASK-193, A-3); between that read and the
+    // locked promotion it is deleted and another account takes its address. The promotion must
+    // not land on the newcomer, whom the record does not name.
+    const first = await insertUser(t, {
+      roleId: freeRole,
+      email: mail("swapped"),
+      emailVerified: true,
+    });
+    let newcomer: string | undefined;
+    const data = jest.requireActual<typeof import("@/platform/data")>("@/platform/data");
+    const real = data.withOwnerTx;
+    let calls = 0;
+    const spy = jest
+      .spyOn(data, "withOwnerTx")
+      .mockImplementation(async (purpose, fn) => {
+        const out = await real(purpose, fn);
+        calls += 1;
+        if (purpose === "tenant-lifecycle" && calls === 1) {
+          await real("operator", (tx) =>
+            tx.query("update users set deleted_at = now() where id = $1::uuid", [first])
+          );
+          newcomer = await insertUser(t, {
+            roleId: freeRole,
+            email: mail("swapped"),
+            emailVerified: true,
+          });
+        }
+        return out;
+      });
+    let res: Response;
+    try {
+      res = await grant(t.id, { email: mail("swapped") });
+    } finally {
+      spy.mockRestore();
+    }
+    await expectCode(res, 409, "tenant.conflict");
+    expect(newcomer).toBeDefined();
+    expect(await roleOf(newcomer!)).toBe(freeRole);
+    expect(await roleOf(first)).toBe(freeRole);
   });
 
   it("answers a coded 500 when the service fails", async () => {

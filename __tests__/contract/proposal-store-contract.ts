@@ -22,6 +22,12 @@ export interface ProposalStoreContractFixtures {
    * the arms that need one are skipped without it.
    */
   markUndecided?: (store: ProposalStore, proposalId: string) => Promise<void>;
+  /**
+   * A trajectory whose step for `operationId` was recorded (a commitment step carrying it), as a
+   * run that took effect leaves it; its id. With markUndecided, the arm that checks the recovery
+   * reads it runs (TASK-194 round 17: the in-memory recovery did not).
+   */
+  trajectoryWithCommitment?: (operationId: string) => Promise<string>;
 }
 
 export function runProposalStoreContract(fx: ProposalStoreContractFixtures): void {
@@ -369,6 +375,27 @@ function describeRunClaims(
       await expect(get().create({ ...base })).rejects.toThrow();
     });
 
+    // Round 17: the recovery reads the run's recorded step, in both stores — a run that took
+    // effect is executed, never left for a person to decide.
+    const maybeRecorded = fx.markUndecided && fx.trajectoryWithCommitment ? it : it.skip;
+    maybeRecorded(
+      "a claimed run past its lease whose step was recorded is recovered executed; one without, undecided",
+      async () => {
+        const trajectoryId = await fx.trajectoryWithCommitment!("op_rec");
+        const p = await get().create({ ...base, operationId: "op_rec", trajectoryId });
+        await get().decide(p.proposalId, "approved", "alice");
+        await claimed(p.proposalId);
+        await fx.markUndecided!(get(), p.proposalId);
+        expect((await get().getById(p.proposalId))?.status).toBe("executed");
+
+        const q = await get().create({ ...base, operationId: "op_none", trajectoryId });
+        await get().decide(q.proposalId, "approved", "alice");
+        await claimed(q.proposalId);
+        await fx.markUndecided!(get(), q.proposalId);
+        expect((await get().getById(q.proposalId))?.status).toBe("indeterminate");
+      }
+    );
+
     describe("an undecided run (review 11 H-1)", () => {
       const undecided = async (op = "op_1") => {
         const id = await approved(op);
@@ -412,6 +439,29 @@ function describeRunClaims(
         // The run's own completion, should it end now, still lands on the same claim.
         expect((await get().complete(id, token))?.status).toBe("executed");
       });
+
+      maybe(
+        "a person withdraws it, verified not applied: rejected, never run, and the old run's token ends nothing (round 5, item 2)",
+        async () => {
+          const { id, token } = await undecided();
+          const gone = await get().resolveIndeterminate(
+            id,
+            "rejected",
+            "bob",
+            "verified not applied"
+          );
+          expect(gone).toMatchObject({ status: "rejected", decidedBy: "bob" });
+          expect(gone?.decisionNote).toContain("verified not applied");
+          expect(gone?.runToken).toBeUndefined();
+          expect(await get().claim(id)).toBeUndefined();
+          expect(await get().complete(id, token)).toBeUndefined();
+          expect(await get().release(id, "late", token)).toBeUndefined();
+          // Decided once: a second decision on it finds nothing undecided.
+          expect(
+            await get().resolveIndeterminate(id, "approved", "bob", "x")
+          ).toBeUndefined();
+        }
+      );
 
       maybe(
         "a person approves it again: a fresh approval, and the old run's token ends nothing",

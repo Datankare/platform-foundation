@@ -9,23 +9,30 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { apiError } from "@/platform/errors";
-import type { VerifiedAdmin } from "@/platform/auth/role-governance";
+import type { RoleRefusal, VerifiedAdmin } from "@/platform/auth/role-governance";
 import { OPERATOR_PERMISSION } from "@/platform/admin/config-scope";
 import type { Operator, OperatorFailure, OperatorResult } from "./admin";
 
 export { OPERATOR_PERMISSION };
 
 export function operatorOf(admin: VerifiedAdmin): Operator {
-  return { userId: admin.userId };
+  // The verified operator travels with the action: the role rules apply to them (audit C-5).
+  return { userId: admin.userId, admin };
 }
 
 /** The coded error for an operator failure. */
 export function operatorError(
   code: OperatorFailure,
   message: string,
-  request: NextRequest
+  request: NextRequest,
+  /** For tenant.role_refused: the role rule that refused (its own code, ADR-051). */
+  refusal?: RoleRefusal
 ): NextResponse {
   switch (code) {
+    case "tenant.role_refused":
+      return refusal
+        ? apiError(refusal.code, { params: refusal.params, request })
+        : apiError("auth.role_database_only", { params: { role: "unknown" }, request });
     case "tenant.not_found":
     case "tenant.request_not_found":
     case "tenant.user_not_found":
@@ -54,5 +61,5 @@ export function operatorResponse<T>(
   okStatus = 200
 ): NextResponse {
   if (result.ok) return NextResponse.json({ result: result.value }, { status: okStatus });
-  return operatorError(result.code, result.message, request);
+  return operatorError(result.code, result.message, request, result.refusal);
 }

@@ -50,6 +50,17 @@ export interface PurgeResult {
   totalDeleted: number;
 }
 
+/**
+ * The reasons an erasure may be recorded under: a listed code, never free text (round 9, I-3 —
+ * the erasure of an account keeps an erasure hold's reason only when it is one of these).
+ */
+export const PURGE_REASONS = [
+  "user-request",
+  "admin-action",
+  "account-deletion",
+  "legal-order",
+] as const satisfies readonly PurgeRequest["reason"][];
+
 /** Purge request input */
 export interface PurgeRequest {
   /** User ID to purge */

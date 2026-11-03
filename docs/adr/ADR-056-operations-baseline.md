@@ -124,8 +124,9 @@ job", a "scheduled job" or something run "on a schedule" without the tag.
 
 **Operators.** The Jobs console (`components/admin/JobsPanels.tsx`, the "Jobs (operators)" section,
 `platform_operate`): every recurring job with its owner, scope, setting, bounds, last run, last
-outcome and queue counts — turn it on or off and change its interval (a reason asked inline,
-answered 200 applied or 202 held), run it now (enqueued for every active tenant or the platform,
+outcome and queue counts — turn it on or off (a required job is always on: no switch, and turning
+it off is refused, `jobs.schedule_required` — TASK-194 rounds 18–19) and change its interval (a
+reason asked inline, answered 200 applied or 202 held), run it now (enqueued for every active tenant or the platform,
 what fits in 45 s run in the request); the dead letters with their recorded reason — replay (from
 the first attempt; a second replay is `jobs.not_dead`) or discard (confirmed first). Routes
 `/api/operator/jobs`, `/api/operator/jobs/schedules/[kind]` (PATCH),

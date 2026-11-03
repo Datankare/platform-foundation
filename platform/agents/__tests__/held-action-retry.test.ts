@@ -580,6 +580,39 @@ describe("an approved run whose outcome is unknown blocks the workflow until dec
     expect(executed).toEqual([]);
   });
 
+  it("withdrawn, verified not applied: the workflow ends, recorded, never run (round 6, I-2)", async () => {
+    const { proposalId, trajectoryId } = await undecided("full-pipeline");
+    proposals.recoverStaleRuns(Date.now() + 60_000);
+    const done = await resolveUndecidedHeldAction({
+      proposalId,
+      resolution: "rejected",
+      decidedBy: "user-1",
+    });
+    expect(done).toMatchObject({ status: "rejected", decidedBy: "user-1" });
+    expect(done?.decisionNote).toContain("verified not applied");
+    expect(await status(trajectoryId)).toBe("failed");
+    const t = await trajectories.getById(trajectoryId);
+    expect(t!.trajectory.steps.at(-1)?.output).toMatchObject({ status: "rejected" });
+    await expect(resumeApprovedAction({ proposalId })).rejects.toBeInstanceOf(
+      HeldActionNotApprovedError
+    );
+    await expect(continueAsAgent(trajectoryId, "full-pipeline")).rejects.toBeInstanceOf(
+      TrajectoryAccessError
+    );
+    expect(executed).toEqual([]);
+  });
+
+  it("an undecided run's held answer names all three decisions (round 6, N-1)", async () => {
+    const { trajectoryId } = await undecided();
+    proposals.recoverStaleRuns(Date.now() + 60_000);
+    const r = await continueAsAgent(trajectoryId, "translate");
+    expect(r.nextActions[0].description).toMatch(
+      /mark it executed, approve it again or withdraw it/
+    );
+    // Still only the agent's own affordances: the decisions are a person's (ADR-031).
+    expect(r.nextActions.map((a) => a.action)).toEqual(["retry", "done"]);
+  });
+
   it("marked executed by another path: the next continuation ends it", async () => {
     const { proposalId, trajectoryId } = await undecided();
     proposals.recoverStaleRuns(Date.now() + 60_000);

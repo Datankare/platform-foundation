@@ -18,6 +18,7 @@
 import { logger } from "@/lib/logger";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { DEFAULT_TENANT_ID, isTenantId } from "@/platform/providers/environment-contract";
+import { sameId } from "@/platform/auth/same-id";
 
 export type TenantStatus = "active" | "suspended" | "deleted";
 
@@ -180,7 +181,7 @@ export class InMemoryTenantDirectory implements TenantDirectory {
 
   async listDomains(tenantId: string): Promise<readonly TenantDomainRecord[]> {
     return [...this.domains.values()]
-      .filter((d) => d.tenantId === tenantId)
+      .filter((d) => sameId(d.tenantId, tenantId))
       .sort((a, b) => a.host.localeCompare(b.host));
   }
 
@@ -233,7 +234,7 @@ export class InMemoryTenantDirectory implements TenantDirectory {
 
   async removeDomain(tenantId: string, host: string): Promise<boolean> {
     const d = this.domains.get(host);
-    if (!d || d.tenantId !== tenantId) return false;
+    if (!d || !sameId(d.tenantId, tenantId)) return false;
     this.domains.delete(host);
     return true;
   }

@@ -28,6 +28,8 @@ export const ADMIN_TOOL_PERMISSIONS = {
   unblock_user_feature: "admin_manage_account_restrictions",
   set_approval_policy: "admin_manage_approval_policy",
   set_capability_mapping: "admin_manage_config",
+  // An account's irreversible erasure (TASK-194, audit C-6): always held for a second admin.
+  purge_user_data: "admin_purge_user_data",
   // search reads one of these tables; each table requires its own page's permission.
   search: "can_access_admin",
 } as const satisfies Record<string, string>;

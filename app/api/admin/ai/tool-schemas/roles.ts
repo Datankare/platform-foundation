@@ -24,6 +24,12 @@ export const rolesSchemas: Record<string, AdminTool[]> = {
             items: { type: "string" },
             description: "Permission codes to assign",
           },
+          without_feature_permissions: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Feature permissions (can_translate, can_view_profile, can_edit_profile) the role is created without. By default a new role has all three; name one here only when asked to leave it out.",
+          },
         },
         required: ["name", "display_name"],
       },

@@ -2,9 +2,15 @@
  * app/api/operator/tenants/[id]/approvals/[approvalId]/route.ts — decide one of a tenant's held
  * changes (operators only, ADR-040, ADR-053 D7)
  *
- * POST { decision: "approve" | "reject" | "mark_executed" | "reapprove", source, note? } — the
- * same decision as /api/admin/approvals/[id] (platform/admin/approval-decision.ts), in that
- * tenant: the decider must hold the permission the change needs and must not be its requester.
+ * POST body:
+ *
+ *     { decision: "approve" | "reject" | "mark_executed" | "reapprove" | "withdraw",
+ *       source, note? }
+ *
+ * The same decision as /api/admin/approvals/[id] (platform/admin/approval-decision.ts), in that
+ * tenant, under the same rules: the decider must hold the permission the change needs, must not be
+ * its requester, must not be the account the held action acts on (A3), and — to approve it, approve
+ * it again or mark it executed — must satisfy the change's own rules (approverRuleRefusal, C-2).
  */
 
 import { NextRequest } from "next/server";

@@ -35,22 +35,43 @@ Every agent call is authorized by two independent gates, both of which must pass
 
 The delegation token is what makes the agent gate _attested_ rather than a bare header claim.
 
-## Getting a token (the PKCE flow)
+## Getting a token (the PKCE flow, the agent authenticated)
 
-Two calls, both on the authenticated user's session.
+Every call is on the authenticated user's session. The **agent** makes the request and the
+exchange, authenticating with its own **client credential**; the **user** consents in between, on
+a screen that shows only what the server recorded, and proves it is them. (TASK-194, audit C-7:
+an issuer that authenticates only the user lets any signed-in user mint a token as any registered
+agent, so agent attribution in audit records and trajectories is forgeable.) The issuer is the
+consuming app's — Playform's `lib/agent-delegation.ts` is the reference; the paths below are its.
+
+### 0. The agent's client credential
+
+An administrator holding `admin_manage_agents` issues it:
+`POST /api/agent/delegation/credential { "agentId" }` → `{ "clientSecret", "credentialId",
+"pending" }`, shown once, stored as its SHA-256 hash. The agent sends it on its request and its
+exchange as `x-agent-client-id` / `x-agent-client-secret` headers — never in a body, a URL or a
+browser.
+
+- A **first-party** agent's (any user may delegate to it) is dual-controlled (round 1, B3): held
+  until a second administrator approves it (`POST /api/agent/delegation/credential/approve
+{ "credentialId" }`, never the requester).
+- A rotation keeps the previous credential valid for a governed overlap
+  (`agent.delegation.credential_overlap_seconds`, 24 h by default), so the agent switches without
+  an outage; `DELETE /api/agent/delegation/credential { "agentId" }` revokes all of an agent's.
 
 ### 1. Generate a PKCE pair
 
 ```
-code_verifier  = <a high-entropy random string you keep secret, one per request>
-code_challenge = base64url( sha256( code_verifier ) )
+code_verifier  = 43–128 characters of A–Z a–z 0–9 - . _ ~, random, one per request
+code_challenge = base64url( sha256( code_verifier ) )   (43 characters)
 ```
 
-### 2. POST /api/agent/delegation/authorize
+Both are checked for form (RFC 7636; round 1, B8) and compared in constant time.
+
+### 2. POST /api/agent/delegation/request (the agent)
 
 ```json
 {
-  "agentId": "agent:<your-agent-id>",
   "scope": ["translate", "speak"],
   "code_challenge": "<from step 1>",
   "code_challenge_method": "S256",
@@ -58,31 +79,38 @@ code_challenge = base64url( sha256( code_verifier ) )
 }
 ```
 
-- `scope` must be a subset of what the agent is registered for — a broader ask is rejected
-  (`scope_exceeds_agent`). Consent cannot exceed the agent's standing trust.
-- `code_challenge_method` must be `S256`. `plain` is rejected.
-- `requested_ttl` is optional (see Token lifetime below).
+With the client credential headers. The agent must be registered and active, and one this user
+may delegate to (its registry `owner` is `first-party` or this user); `scope` must be a subset of
+its registered scopes (`scope_exceeds_agent`); `S256` only. Returns `{ "request": "<handle>",
+"expires_in": 300 }`; send the user to the consent screen with the handle only.
 
-Returns `{ "code": "<authorization code>", "expires_in": 60 }`. The code is **single-use** and
-expires in 60 seconds.
+### 3. The user consents — with a step-up
 
-### 3. POST /api/agent/delegation/token
+The consent screen reads the request from the server (never the URL: audit E-118) and shows the
+agent's registry name, each scope in words and the token's effective lifetime. **Allow** is
+`POST /api/agent/delegation/authorize { "request", "decision": "allow", "password",
+"currentCode"? }`: the user's password, and a current code when the account has two-step
+verification, confirmed by the identity provider (`platform/auth/mfa-routes.ts` `confirmStepUp`;
+round 1, B1). The agent holds the user's bearer token while it asks, so the bearer alone must not
+be able to consent. Deny needs no step-up.
+
+### 4. POST /api/agent/delegation/token (the agent)
 
 ```json
-{ "code": "<from step 2>", "code_verifier": "<from step 1>" }
+{ "code": "<the request handle>", "code_verifier": "<from step 1>" }
 ```
 
-Returns `{ "token": "<JWT>", "token_type": "Bearer", "expires_in": <seconds> }`.
+With the client credential headers again. Returns `{ "token": "<JWT>", "token_type": "Bearer",
+"expires_in": <seconds> }`. The request is consumed atomically — a second exchange, a wrong
+verifier, an expired, unconsented or denied request, another user's or another agent's all fail
+(`invalid_or_expired_code` / `pkce_verification_failed`). A failed verifier still consumes it.
 
-The code is consumed atomically on this call — a second exchange, a wrong verifier, an
-expired code, or a code from a different user all fail (`invalid_or_expired_code` /
-`pkce_verification_failed`). A failed verifier still consumes the code; start over from step 1.
+### 5. Present the token
 
-### 4. Present the token
-
-Send it on each agent request in the `x-agent-delegation` header, alongside the user's normal
+Send it on the agent request in the `x-agent-delegation` header, alongside the user's normal
 auth. The endpoint verifies the signature, the `onBehalfOf` binding (must equal the
-authenticated user), expiry, and replay before honoring it.
+authenticated user) and expiry, and honours a token once (its use is recorded; a replay is
+refused).
 
 ## Token lifetime
 
@@ -92,7 +120,7 @@ The token's TTL is governed, not chosen freely:
 effective_ttl = min(requested_ttl, agent.maxTokenTtl, global_hard_cap)
 ```
 
-- **`requested_ttl`** — your optional ask on `/authorize`. Absent -> the agent ceiling.
+- **`requested_ttl`** — your optional ask on `/request`. Absent -> the agent ceiling.
 - **`agent.maxTokenTtl`** — the per-agent ceiling, set in the trusted-agent registry (default
   300s). You cannot exceed it by asking; to raise it, request a registry change through
   governance (it is admin-approved config, not a code or request-time setting).
@@ -111,9 +139,8 @@ you re-acquire tokens as you go. The rule:
 Concretely:
 
 - **Acquire lazily.** Get a token right before a protected call (or batch), not once at start.
-- **Check-expiry-before-use.** Wrap calls: if the token is missing or within ~30s of expiry,
-  re-mint first. A `getValidToken()` helper that returns the cached token or mints a new one is
-  the standard shape.
+- **One token per call.** A token is honoured once: mint one for each protected call, and never
+  retry a call with the token it already used.
 - **Re-consent needs a live user session.** `/authorize` requires the authenticated user, so
   self-renewal only works while the user is present.
 
@@ -137,12 +164,15 @@ Pick (a), (b), or (c) deliberately per use case. Do not assume a token persists.
 
 | Response error                                                 | Meaning                                                      |
 | -------------------------------------------------------------- | ------------------------------------------------------------ |
+| `client_unauthenticated`                                       | No, or a wrong, agent client credential                      |
+| `agent_not_owned`                                              | The agent's owner is neither `first-party` nor this user     |
 | `agent_not_trusted`                                            | Agent absent from the registry or suspended                  |
 | `scope_exceeds_agent`                                          | Requested scope not a subset of the agent's registered scope |
 | `unsupported_code_challenge_method`                            | `code_challenge_method` was not `S256`                       |
+| `invalid_code_challenge` / `invalid_code_verifier`             | Not of RFC 7636's form                                       |
 | `missing_code_challenge` / `missing_scope` / `missing_agentId` | Required field absent                                        |
 | `invalid_requested_ttl`                                        | `requested_ttl` not a positive integer                       |
-| `invalid_or_expired_code`                                      | Code unknown, expired, already used, or another user's       |
+| `invalid_or_expired_code`                                      | Request unknown, expired, unconsented, used, or not yours    |
 | `pkce_verification_failed`                                     | `code_verifier` did not match the stored challenge           |
 | `token_mint_failed`                                            | Signing key not configured, or minting error                 |
 

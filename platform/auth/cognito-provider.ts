@@ -86,6 +86,7 @@ import {
   mintGuestToken,
   verifyGuestToken as verifyPlatformGuestToken,
 } from "@/platform/auth/guest-token";
+import { sameId } from "@/platform/auth/same-id";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -180,7 +181,7 @@ export function foreignTokenReason(
   // GetUser accepts an access token from any app client of the pool, and a pool shared by two
   // environments would let one environment's token in to the other.
   if (claims.token_use !== "access") return "not an access token";
-  if (claims.client_id !== config.clientId) return "issued to another app client";
+  if (!sameId(claims.client_id, config.clientId)) return "issued to another app client";
   const issuer = `https://cognito-idp.${config.region}.amazonaws.com/${config.userPoolId}`;
   if (claims.iss !== issuer) return "issued by another pool";
   if (typeof claims.exp !== "number" || claims.exp <= nowSeconds) return "expired";
@@ -363,7 +364,7 @@ export function identityProvidersFrom(
   if (identities) return { identityProviders: identityProvidersOf(identities) };
   if (identitiesReadable === false) return {};
   const sub = attrs?.find((a) => a.Name === "sub")?.Value;
-  return typeof poolUsername === "string" && poolUsername && poolUsername === sub
+  return typeof poolUsername === "string" && poolUsername && sameId(poolUsername, sub)
     ? { identityProviders: [] }
     : {};
 }
@@ -375,6 +376,19 @@ export function identityProvidersFrom(
  */
 export const POOL_SHAPE_OPERATOR_CHECK =
   'aws cognito-idp describe-user-pool --user-pool-id <pool> --query UserPool.UsernameAttributes  (must include "email"); aws cognito-idp describe-user-pool-client --user-pool-id <pool> --client-id <client> --query UserPoolClient.ReadAttributes  (null, or must include "identities")';
+
+/**
+ * Whether a refused password sign-in is the kind a federated account without a pool password
+ * gets (TASK-194, C-3): Cognito answers NotAuthorized (or UserNotFound for a provider-named
+ * user) — the same answer as a wrong password, so only a federated account is told it.
+ */
+function isNoPasswordSignIn(error: unknown): boolean {
+  return (
+    error instanceof CognitoError &&
+    (error.cognitoType === "NotAuthorizedException" ||
+      error.cognitoType === "UserNotFoundException")
+  );
+}
 
 /** The `sub` attribute of a GetUser / AdminGetUser answer (undefined when it has none). */
 function subAttribute(
@@ -649,7 +663,7 @@ export class CognitoAuthProvider implements AuthProvider {
     // without a `sub` included (review 17 L1: GetUser always lists it; one that does not cannot
     // be shown to be this user's). Its username is remembered only after that check.
     const sub = subAttribute(attrs);
-    if (sub === undefined || sub !== subject) return { kind: "invalid" };
+    if (sub === undefined || !sameId(sub, subject)) return { kind: "invalid" };
     if (typeof result.Username === "string" && result.Username)
       this.rememberPoolUsername(subject, result.Username);
     warnOnceWithoutSession(decoded);
@@ -701,7 +715,7 @@ export class CognitoAuthProvider implements AuthProvider {
       const decoded = decodeJwtPayload(auth.AccessToken as string);
       const expiresIn = (auth.ExpiresIn as number) ?? 3600;
       // The refreshed session is the same user's, or it is not used.
-      if (subject && decoded?.sub !== subject) return null;
+      if (subject && !sameId(decoded?.sub, subject)) return null;
 
       return {
         userId: (decoded?.sub as string) ?? "",
@@ -931,6 +945,133 @@ export class CognitoAuthProvider implements AuthProvider {
       return { success: true };
     } catch (error) {
       return this.codedFailure(error, "Failed to disable MFA");
+    }
+  }
+
+  /**
+   * Step-up (TASK-194, audit C-3): the token's own user signs in again with the password and
+   * answers the SOFTWARE_TOKEN_MFA challenge with the current code — the one way Cognito checks
+   * an enrolled factor's code. The pool username comes from GetUser on the token, so the proof is
+   * of this token's user; the session it makes is revoked at once (best effort, logged).
+   */
+  async confirmCurrentFactor(
+    accessToken: AuthToken,
+    password: string,
+    totpCode: string | null
+  ): Promise<{ success: boolean; error?: string; errorCode?: ErrorCode }> {
+    const refused = (errorCode: ErrorCode, error: string) => ({
+      success: false as const,
+      error,
+      errorCode,
+    });
+    try {
+      const me = await callCognito(this.config, "GetUser", { AccessToken: accessToken });
+      const username = typeof me.Username === "string" ? me.Username : "";
+      const attrs = (me.UserAttributes as Array<{ Name: string; Value: string }>) ?? [];
+      const sub = subAttribute(attrs);
+      const enrolled = ((me.UserMFASettingList as unknown[] | undefined) ?? []).includes(
+        "SOFTWARE_TOKEN_MFA"
+      );
+      if (!username || !sub) return refused("auth.token_invalid", "token user unknown");
+      // A federated account (any provider in `identities`) may have no password in the pool to
+      // confirm with: where the proof cannot be made, it is told so (auth.step_up_unavailable)
+      // and how to recover — never let through without it.
+      const federated =
+        (identityProvidersFrom(username, attrs, this.identitiesReadable).identityProviders
+          ?.length ?? 0) > 0;
+      // A password alone proves only an account with no second factor (round 1, B1).
+      if (totpCode === null && enrolled) {
+        return refused(
+          "auth.step_up_required",
+          "a second factor is enrolled: its code is needed"
+        );
+      }
+      if (totpCode !== null && !enrolled) {
+        return federated
+          ? refused(
+              "auth.step_up_unavailable",
+              "a federated account has no factor to confirm"
+            )
+          : refused("auth.step_up_required", "no second factor is enrolled");
+      }
+      let started: Record<string, unknown>;
+      try {
+        started = await callCognito(this.config, "InitiateAuth", {
+          ClientId: this.config.clientId,
+          AuthFlow: "USER_PASSWORD_AUTH",
+          AuthParameters: {
+            USERNAME: username,
+            PASSWORD: password,
+            ...withSecretParam(this.config, username),
+          },
+        });
+      } catch (error) {
+        if (federated && isNoPasswordSignIn(error)) {
+          return refused(
+            "auth.step_up_unavailable",
+            "a federated account's password sign-in was refused"
+          );
+        }
+        throw error;
+      }
+      let auth: Record<string, unknown> | undefined;
+      if (totpCode === null) {
+        // The password, and nothing else asked: the sign-in completed. Any challenge (a factor
+        // enrolled since, a new password required) is not a proof made here.
+        if (started.ChallengeName) {
+          return refused(
+            "auth.step_up_required",
+            "the sign-in asked for more than a password"
+          );
+        }
+        auth = started.AuthenticationResult as Record<string, unknown> | undefined;
+      } else {
+        if (started.ChallengeName !== "SOFTWARE_TOKEN_MFA") {
+          // Signed in with no factor challenge: not a proof of the factor. Leave no session.
+          await this.revokeQuietly(started.AuthenticationResult);
+          return refused(
+            "auth.step_up_required",
+            "the sign-in asked for no second factor"
+          );
+        }
+        const answered = await callCognito(this.config, "RespondToAuthChallenge", {
+          ClientId: this.config.clientId,
+          ChallengeName: "SOFTWARE_TOKEN_MFA",
+          Session: started.Session,
+          ChallengeResponses: {
+            USERNAME: username,
+            SOFTWARE_TOKEN_MFA_CODE: totpCode,
+            ...withSecretParam(this.config, username),
+          },
+        });
+        auth = answered.AuthenticationResult as Record<string, unknown> | undefined;
+      }
+      await this.revokeQuietly(auth);
+      if (!auth) return refused("auth.challenge_failed", "MFA challenge failed");
+      const proved = decodeJwtPayload(auth.AccessToken as string);
+      if (!sameId(proved?.sub, sub))
+        return refused("auth.token_invalid", "another user's proof");
+      return { success: true };
+    } catch (error) {
+      return this.codedFailure(error, "confirmCurrentFactor");
+    }
+  }
+
+  /** Revoke a step-up sign-in's refresh token (and so its tokens); a failure is only logged. */
+  private async revokeQuietly(auth: unknown): Promise<void> {
+    const token = (auth as { RefreshToken?: unknown } | undefined)?.RefreshToken;
+    if (typeof token !== "string" || !token) return;
+    try {
+      await callCognito(this.config, "RevokeToken", {
+        ClientId: this.config.clientId,
+        Token: token,
+        ...(this.config.clientSecret ? { ClientSecret: this.config.clientSecret } : {}),
+      });
+    } catch (error) {
+      logger.warn("Step-up session could not be revoked", {
+        error: error instanceof Error ? error.message : String(error),
+        route: "platform/auth/cognito-provider",
+      });
     }
   }
 
@@ -1306,8 +1447,9 @@ export class CognitoAuthProvider implements AuthProvider {
           WriteAttributes?: string[];
           SupportedIdentityProviders?: string[];
         };
-        const which =
-          clientId === this.config.clientId ? "the app client" : `app client ${clientId}`;
+        const which = sameId(clientId, this.config.clientId)
+          ? "the app client"
+          : `app client ${clientId}`;
         // An absent WriteAttributes list means "every writable attribute" — custom ones included.
         if (!c.WriteAttributes || c.WriteAttributes.includes(TENANT_ATTRIBUTE)) {
           return {
@@ -1316,7 +1458,7 @@ export class CognitoAuthProvider implements AuthProvider {
           };
         }
         if (
-          clientId === this.config.clientId &&
+          sameId(clientId, this.config.clientId) &&
           c.ReadAttributes &&
           !c.ReadAttributes.includes(TENANT_ATTRIBUTE)
         ) {
@@ -1468,7 +1610,9 @@ export class CognitoAuthProvider implements AuthProvider {
                 Attributes?: Array<{ Name: string; Value: string }>;
               }>
             | undefined) ?? []
-        ).filter((u) => u.Attributes?.find((a) => a.Name === "sub")?.Value === userId);
+        ).filter((u) =>
+          sameId(u.Attributes?.find((a) => a.Name === "sub")?.Value, userId)
+        );
         if (users.length === 0) {
           await revokeTokenVerification(userId);
           return { success: true, notFound: true };
@@ -1519,7 +1663,7 @@ export class CognitoAuthProvider implements AuthProvider {
         (found.Users as
           Array<{ Attributes?: Array<{ Name: string; Value: string }> }> | undefined) ??
         []
-      ).filter((u) => u.Attributes?.find((a) => a.Name === "sub")?.Value === userId);
+      ).filter((u) => sameId(u.Attributes?.find((a) => a.Name === "sub")?.Value, userId));
       if (users.length === 0) return false;
       return users.length === 1 ? true : undefined;
     } catch {
@@ -1544,7 +1688,10 @@ export class CognitoAuthProvider implements AuthProvider {
         { UserPoolId: this.config.userPoolId },
         this.requireAdmin()
       );
-      return (r.UserPool as { Id?: string } | undefined)?.Id === this.config.userPoolId;
+      return sameId(
+        (r.UserPool as { Id?: string } | undefined)?.Id,
+        this.config.userPoolId
+      );
     } catch {
       return false;
     }

@@ -8,13 +8,32 @@ import { runProposalStoreContract } from "./contract/proposal-store-contract";
 import { runTenantIsolationContract } from "./contract/tenant-isolation-contract";
 import { memoryTenant, proposalIsolation } from "./helpers/store-isolation-fixtures";
 import { InMemoryProposalStore } from "@/platform/agents/proposal-store";
+import { InMemoryTrajectoryStore } from "@/platform/agents/trajectory-store";
 
 describe("InMemoryProposalStore — conformance", () => {
+  const trajectories = new InMemoryTrajectoryStore();
   runProposalStoreContract({
     makeStore: () => new InMemoryProposalStore(),
-    // As the approval-expiry job would: the claim's lease has passed (review 11 H-1).
+    // As the approval-expiry job would: the claim's lease has passed (review 11 H-1) — reading
+    // the run's recorded step, as the job does (round 17).
     markUndecided: async (store) => {
-      (store as InMemoryProposalStore).recoverStaleRuns(Date.now() + 1);
+      (store as InMemoryProposalStore).recoverStaleRuns(Date.now() + 1, trajectories);
+    },
+    trajectoryWithCommitment: async (operationId) => {
+      const t = await trajectories.create(
+        { kind: "agent", id: "guardian" } as never,
+        "kit",
+        "platform"
+      );
+      await trajectories.addStep(t.trajectory.trajectoryId, {
+        operationId,
+        boundary: "commitment",
+        toolId: "delete_everything",
+        input: {},
+        output: {},
+        timestamp: new Date().toISOString(),
+      } as never);
+      return t.trajectory.trajectoryId;
     },
   });
 });

@@ -560,6 +560,17 @@ D4a is unaffected and still needed: the re-link chooses its target from the pool
 address and never moves an account bound in the current pool; an address kept in step with the
 pool only makes the stored one more current.
 
+## Amendment (TASK-194, 2026-10-30) — step-up binds the app's routes, not Cognito
+
+The MFA routes that change an existing factor require a step-up — the password and a current code,
+checked by Cognito in a fresh sign-in challenge (`platform/auth/mfa-routes.ts`, audit C-3). The
+claim is narrow: **the app's own routes require step-up; direct Cognito calls with a stolen access
+token remain possible until S9.** The access token is kept in the browser (`localStorage`) and
+carries `aws.cognito.signin.user.admin`, so whoever steals it can call `SetUserMFAPreference` or
+`AssociateSoftwareToken` on Cognito itself. Accepted as a residual (TASK-194 review round 1, C1 —
+the owner's decision; `docs/SECURITY_DEBT.md` SEC-016); the root fix is batch S9, server-side
+sessions, which keeps the token out of the browser.
+
 ## References
 
 - Phase 1 Identity & Access Plan (Playform_Phase1_Identity_Access_Plan_v1.0.pdf)

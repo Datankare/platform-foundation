@@ -55,6 +55,7 @@ import type { CacheProvider } from "@/platform/cache/types";
 import { getConfigNumber } from "@/platform/auth/platform-config";
 import { logger } from "@/lib/logger";
 import type { TokenPayload } from "@/platform/auth/types";
+import { sameId } from "@/platform/auth/same-id";
 
 /** How a route verifies a token. */
 export interface VerifyOptions {
@@ -188,7 +189,7 @@ export class TokenVerifier {
       remembered &&
       stamp !== undefined &&
       remembered.stamp === stamp &&
-      remembered.payload.sub === subject
+      sameId(remembered.payload.sub, subject)
         ? remembered
         : undefined;
     if (usable && now < usable.verifiedAt + freshSeconds * 1000)
@@ -211,7 +212,7 @@ export class TokenVerifier {
       if (
         remembering &&
         asked !== undefined &&
-        answered.payload.sub === subject &&
+        sameId(answered.payload.sub, subject) &&
         (await this.stampOf(subject)) === asked
       )
         await this.remember(

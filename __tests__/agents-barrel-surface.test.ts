@@ -76,6 +76,10 @@ const EXPECTED_EXPORTS = [
   // Sprint 3c A1 — admin-governable approval policy
   "DEFAULT_APPROVAL_POLICY",
   "approvalRulesProblem",
+  // TASK-194 round 12 (I-2) — one policy check for the handler and every store
+  "approvalPolicyProblem",
+  "APPROVERS",
+  "POLICY_DEFAULT_APPROVERS",
   "InMemoryApprovalPolicyStore",
   "getApprovalPolicyStore",
   "resolveApprover",

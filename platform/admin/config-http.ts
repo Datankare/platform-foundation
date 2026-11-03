@@ -109,8 +109,9 @@ export function governedOutcomeResponse(
         request,
       });
     case "invalid":
+      // The structured reason, worded by the message (round 14, item 2).
       return apiError("admin.config_invalid_value", {
-        params: { key },
+        params: { ...outcome.params, key },
         request,
       });
     case "pending":
@@ -128,11 +129,28 @@ export function governedOutcomeResponse(
     case "applied":
       return NextResponse.json({ success: true, key, value });
     case "failed":
-      return internalError(describeFailure(outcome.result), {
-        request,
-        context: "Admin config write failed",
-      });
+      return failedResponse(outcome, request, "Admin config write failed");
   }
+}
+
+/**
+ * A governed change that did not go through, as its answer (round 14, item 1): its code when it
+ * has one — a change already waiting 409, the audit log unavailable 503, a stale or lost commit
+ * — else internal.error, its text logged. (The code was dropped: every one answered 500.)
+ */
+function failedResponse(
+  outcome: Extract<GovernedConfigOutcome, { kind: "failed" }>,
+  request: NextRequest,
+  context: string
+): Response {
+  if (
+    outcome.code &&
+    outcome.code !== "admin.action_failed" &&
+    outcome.code !== "internal.error"
+  ) {
+    return apiError(outcome.code, { params: { ...(outcome.params ?? {}) }, request });
+  }
+  return internalError(describeFailure(outcome.result), { request, context });
 }
 
 /** DELETE ?key=… as `admin`: the current tenant's own value removed, governed. */
@@ -182,13 +200,13 @@ export async function configResetResponse(
         });
       }
       case "invalid":
+        // A reset sets no value; were one refused, its reason is the entry's (round 14).
+        return apiError("admin.config_invalid_value", {
+          params: { ...outcome.params, key },
+          request,
+        });
       case "failed":
-        return internalError(
-          outcome.kind === "failed"
-            ? describeFailure(outcome.result)
-            : "Config reset failed",
-          { request, context: "Admin config reset failed" }
-        );
+        return failedResponse(outcome, request, "Admin config reset failed");
     }
   } catch (error) {
     return internalError(error, { request, context: "Admin config reset failed" });

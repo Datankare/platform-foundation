@@ -30,6 +30,7 @@
 import { hasDatabase, withTenantTx } from "@/platform/data";
 import { auditableUserId } from "@/platform/auth/auth-events";
 import { logger } from "@/lib/logger";
+import { sameId } from "@/platform/auth/same-id";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -43,14 +44,12 @@ export function bindingOf(
   subject: string,
   rows: readonly { readonly id: string; readonly cognito_sub: string | null }[]
 ): AccountResolution {
-  const bound = rows.find((r) => r.cognito_sub === subject);
+  const bound = rows.find((r) => sameId(r.cognito_sub, subject));
   if (bound) return { kind: "bound", accountId: bound.id };
-  const sameId = UUID.test(subject)
-    ? rows.find((r) => r.id.toLowerCase() === subject.toLowerCase())
-    : undefined;
-  if (!sameId) return { kind: "unprovisioned", accountId: subject };
-  return sameId.cognito_sub === null
-    ? { kind: "bound", accountId: sameId.id }
+  const byId = UUID.test(subject) ? rows.find((r) => sameId(r.id, subject)) : undefined;
+  if (!byId) return { kind: "unprovisioned", accountId: subject };
+  return byId.cognito_sub === null
+    ? { kind: "bound", accountId: byId.id }
     : { kind: "conflict" };
 }
 
@@ -105,7 +104,7 @@ export async function resolveAccountRecord(subject: string): Promise<AccountReco
   );
   const resolution = bindingOf(subject, rows);
   if (resolution.kind !== "bound") return { resolution };
-  const row = rows.find((r) => r.id === resolution.accountId)!;
+  const row = rows.find((r) => sameId(r.id, resolution.accountId))!;
   return {
     resolution,
     address: {

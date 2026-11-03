@@ -117,6 +117,7 @@ import {
   type DirectoryUser,
   type IdentityDirectory,
 } from "@/platform/auth/identity-directory";
+import { sameId } from "@/platform/auth/same-id";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -583,8 +584,8 @@ function bindsTo(
   subject: string
 ): boolean {
   return row.cognito_sub !== null
-    ? row.cognito_sub === subject
-    : UUID.test(subject) && row.id.toLowerCase() === subject.toLowerCase();
+    ? sameId(row.cognito_sub, subject)
+    : UUID.test(subject) && sameId(row.id, subject);
 }
 
 /** The account (live or erased-not-purged) holding each subject — a legacy row by its id. */
@@ -631,8 +632,7 @@ async function erasedSubjects(tx: Tx, subjects: readonly string[]): Promise<Set<
   );
   const erased = new Set<string>();
   for (const s of subjects)
-    if (rows.some((r) => r.cognito_sub === s || r.user_id === s.toLowerCase()))
-      erased.add(s);
+    if (rows.some((r) => sameId(r.cognito_sub, s) || sameId(r.user_id, s))) erased.add(s);
   return erased;
 }
 
@@ -660,7 +660,7 @@ async function strayProblems(
   email: string
 ): Promise<string[]> {
   const problems: string[] = [];
-  if (holder.id.toLowerCase() !== (holder.cognito_sub ?? "").toLowerCase())
+  if (!sameId(holder.id, holder.cognito_sub ?? ""))
     problems.push("it is not a first-sign-in account (its id is not its subject)");
   if (holder.status !== "active") problems.push(`its standing is ${holder.status}`);
   if (!holder.role_default) problems.push(`its role is ${holder.role}, not the default`);
@@ -791,7 +791,11 @@ async function planAddress(
       : "";
 
   if (considered.length === 0) {
-    if (holder && !holder.deleted && (tenantId === null || holder.tenant_id === tenantId))
+    if (
+      holder &&
+      !holder.deleted &&
+      (tenantId === null || sameId(holder.tenant_id, tenantId))
+    )
       return {
         status: "linked",
         email,
@@ -836,7 +840,7 @@ async function planAddress(
     // But never silently instead of the account the operator named (review 16 L1).
     if (
       context.unverifiedAccount !== undefined &&
-      context.unverifiedAccount.toLowerCase() !== target.id.toLowerCase()
+      !sameId(context.unverifiedAccount, target.id)
     )
       return refusal(
         email,
@@ -845,9 +849,7 @@ async function planAddress(
       );
   } else if (context.unverifiedAccount !== undefined) {
     // Named by the operator: for an address with several pre-move accounts, none verified.
-    const named = unverified.find(
-      (a) => a.id.toLowerCase() === context.unverifiedAccount!.toLowerCase()
-    );
+    const named = unverified.find((a) => sameId(a.id, context.unverifiedAccount!));
     if (!named)
       return refusal(
         email,
@@ -872,7 +874,7 @@ async function planAddress(
     target = unverified[0]!;
   }
 
-  if (user.tenantId !== null && user.tenantId !== target.tenant_id)
+  if (user.tenantId !== null && !sameId(user.tenantId, target.tenant_id))
     return refusal(
       email,
       "pool.other_tenant",
@@ -913,7 +915,7 @@ async function planAddress(
 
   let merge: { accountId: string } | undefined;
   if (holder) {
-    if (holder.tenant_id !== target.tenant_id)
+    if (!sameId(holder.tenant_id, target.tenant_id))
       return refusal(
         email,
         "subject.held_elsewhere",
@@ -928,7 +930,7 @@ async function planAddress(
     const problems = await strayProblems(tx, holder, email);
     const asked =
       context.mergeFrom !== undefined
-        ? context.mergeFrom.toLowerCase() === holder.id.toLowerCase()
+        ? sameId(context.mergeFrom, holder.id)
         : context.mergeStrays === true;
     if (context.mergeFrom !== undefined && !asked)
       return refusal(
@@ -1059,7 +1061,7 @@ function samePlan(a: AccountPlan, b: AccountPlan): boolean {
     a.status === "relink" &&
     b.status === "relink" &&
     a.accountId === b.accountId &&
-    a.tenantId === b.tenantId &&
+    sameId(a.tenantId, b.tenantId) &&
     a.previousSubject === b.previousSubject &&
     a.newSubject === b.newSubject &&
     a.merge?.accountId === b.merge?.accountId
@@ -1399,10 +1401,8 @@ export async function relinkIdentities(
     (id) =>
       !plans.some(
         (p) =>
-          (p.status === "relink" &&
-            p.unverifiedConfirmed &&
-            p.accountId.toLowerCase() === id) ||
-          (p.status === "refused" && p.needsConfirmation?.accountId.toLowerCase() === id)
+          (p.status === "relink" && p.unverifiedConfirmed && sameId(p.accountId, id)) ||
+          (p.status === "refused" && sameId(p.needsConfirmation?.accountId, id))
       )
   );
   const skip = bulk && request.skipAmbiguous === true;

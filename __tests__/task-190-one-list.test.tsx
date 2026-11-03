@@ -301,6 +301,44 @@ describe("the Users list applies the command bar's filters, as chips", () => {
   });
 });
 
+describe("a plan the execute route refuses as a whole (round 11, item 1)", () => {
+  it("says the refusal, as the shared handler words it — never nothing", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const p = String(url).split("?")[0];
+      if (p === "/api/admin/session")
+        return json(200, {
+          roleName: "admin",
+          permissions: ["can_access_admin", "admin_manage_users"],
+        });
+      if (p === "/api/admin/users") return listAnswer(String(url));
+      if (p === "/api/admin/ai")
+        return json(200, {
+          plan: {
+            message: "Searching moderators.",
+            actions: [{ tool: "search", input: { table: "users", role: "moderator" } }],
+          },
+        });
+      if (p === "/api/admin/ai/execute")
+        return json(429, {
+          code: "rate.limited",
+          message: "Too many requests. Try again in 30 seconds.",
+          params: { retryAfterSeconds: 30 },
+        });
+      return json(200, {});
+    });
+    render(<AdminPage />);
+    await screen.findByText("ann@example.com");
+    fireEvent.change(screen.getAllByRole("textbox")[0]!, {
+      target: { value: "show moderators" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Confirm 1 action/ }));
+    expect(
+      await screen.findByText("Too many requests. Try again in 30 seconds.")
+    ).toBeDefined();
+  });
+});
+
 describe("the results row of a users search on the Users screen: one line, no table", () => {
   const usersSearch = {
     tool: "search",

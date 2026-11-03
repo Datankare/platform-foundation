@@ -22,6 +22,7 @@ import type {
   GroupResult,
   CreateGroupInput,
 } from "./types";
+import { sameId } from "@/platform/auth/same-id";
 
 // ---------------------------------------------------------------------------
 // Configuration (P13: control plane — externalize in Sprint 4b)
@@ -127,7 +128,7 @@ export class GroupService {
     if (!group) {
       return { success: false, error: "Group not found" };
     }
-    if (group.ownerId !== requesterId) {
+    if (!sameId(group.ownerId, requesterId)) {
       return {
         success: false,
         error: "Only the group owner can archive",

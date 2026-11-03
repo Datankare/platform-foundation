@@ -34,9 +34,15 @@ jest.mock("@/platform/admin/config-scope", () => {
   const actual = jest.requireActual("@/platform/admin/config-scope");
   return { ...actual, resolveConfigTarget: jest.fn(actual.resolveConfigTarget) };
 });
+// The tools' real schemas: the route takes only their keys (TASK-194 round 10, I-A).
 jest.mock("@/platform/admin/config-handlers", () => ({
   dispatchConfigTool: jest.fn(),
-  CONFIG_TOOLS: [],
+  CONFIG_TOOLS: jest.requireActual("@/platform/admin/config-handlers").CONFIG_TOOLS,
+  CONFIG_SERVER_SET_INPUTS: jest.requireActual("@/platform/admin/config-handlers")
+    .CONFIG_SERVER_SET_INPUTS,
+  configFailure: jest.requireActual("@/platform/admin/config-handlers").configFailure,
+  codedConfigFailure: jest.requireActual("@/platform/admin/config-handlers")
+    .codedConfigFailure,
 }));
 jest.mock("@/platform/admin/config-approval", () => ({
   isApprovalRequired: jest.fn().mockResolvedValue(false),
@@ -183,6 +189,89 @@ describe("/api/admin/config-ai/execute", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  // TASK-194, audit C-1: the key checked must be the key the tool acts on. Every write tool, with
+  // every pairing of `key` and `configKey` (a standard key, a safety key, none), as every role:
+  // let through only when the caller holds the tier of the key that tool acts on — the field
+  // CONFIG_TOOL_TARGET_FIELD names, which the real handlers read (config-handlers.test.ts) — and
+  // dispatched with that key unchanged.
+  const schemaKeys = (toolId: string): string[] =>
+    Object.keys(
+      (
+        jest
+          .requireActual("@/platform/admin/config-handlers")
+          .CONFIG_TOOLS.find((t: { id: string }) => t.id === toolId)?.inputSchema as {
+          properties?: object;
+        }
+      )?.properties ?? {}
+    );
+
+  it("checks the tier of the key each write tool acts on, whatever else the request names (C-1)", async () => {
+    const { CONFIG_TOOL_TARGET_FIELD } = jest.requireActual(
+      "@/platform/admin/hold-keys"
+    ) as typeof import("@/platform/admin/hold-keys");
+    const keys = [STANDARD_KEY, SAFETY_KEY, undefined];
+    const holdsTier = (caller: CallerName, key: string | undefined) => {
+      const who = CALLERS[caller as keyof typeof CALLERS];
+      if (!who.inGoodStanding || !who.mfaEnabled) return false; // refused at the guard
+      const perms = who.permissions as readonly string[];
+      const needed =
+        key !== undefined && TIERS[key] === "standard"
+          ? "config_manage_standard"
+          : "config_manage_safety";
+      return perms.includes("config_view") && perms.includes(needed);
+    };
+    const mismatches: string[] = [];
+    for (const toolId of Object.keys(CONFIG_TOOL_TARGET_FIELD)) {
+      for (const key of keys) {
+        for (const configKey of keys) {
+          for (const caller of Object.keys(CALLERS) as CallerName[]) {
+            dispatch.mockClear();
+            const named = {
+              ...(key ? { key } : {}),
+              ...(configKey ? { configKey } : {}),
+              value: 1,
+              proposedValue: 1,
+              changeComment: "c",
+            };
+            // Every field the request names, and — so the tier check is also proven on a
+            // request the route takes — only the tool's own, in turn.
+            const own = Object.fromEntries(
+              Object.entries(named).filter(([k]) => schemaKeys(toolId).includes(k))
+            );
+            for (const input of [named, own]) {
+              dispatch.mockClear();
+              const res = await execute(caller, { toolId, input });
+              const acted = CONFIG_TOOL_TARGET_FIELD[toolId] === "key" ? key : configKey;
+              const allowed = holdsTier(caller, acted);
+              if (allowed !== (res.status !== 403 && res.status !== 401))
+                mismatches.push(
+                  `${toolId} key=${key} configKey=${configKey} as ${caller}: ${res.status}`
+                );
+              // Round 10, I-A: a caller let through who names a key outside the tool's schema
+              // (the other tool's target field among them) is refused — nothing dispatched; one
+              // who names only the tool's own keys reaches it.
+              const extra = Object.keys(input).filter(
+                (k) => !schemaKeys(toolId).includes(k)
+              );
+              if (allowed && (res.status === 400) !== extra.length > 0)
+                mismatches.push(
+                  `${toolId} ${extra.join(",")} as ${caller}: ${res.status}`
+                );
+              if (res.status === 400 && dispatch.mock.calls.length > 0)
+                mismatches.push(`${toolId}: dispatched a refused request`);
+              if (res.status === 200) {
+                const sent = dispatch.mock.calls[0]?.[1] as Record<string, unknown>;
+                if (sent[CONFIG_TOOL_TARGET_FIELD[toolId]] !== acted)
+                  mismatches.push(`${toolId}: dispatched a different key than checked`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
   it("holds a write that names no key to the safety tier", async () => {
     const res = await execute("admin", { toolId: "update_config", input: { value: 1 } });
     expect(res.status).toBe(403);
@@ -205,12 +294,33 @@ describe("/api/admin/config-ai/execute", () => {
         value: 9,
         changeComment: "c",
         actorId: CALLERS.super_admin.userId,
-        reviewerId: CALLERS.super_admin.userId,
       },
     });
     const input = dispatch.mock.calls[0][1];
     expect(input.actorId).toBe(CALLERS.safety_approver.userId);
     expect(input.reviewerId).toBe(CALLERS.safety_approver.userId);
+
+    // A reviewer named on an approval (its schema's key) is overwritten too.
+    approvalFor(SAFETY_KEY);
+    dispatch.mockClear();
+    await execute("safety_approver", {
+      toolId: "approve_change",
+      input: {
+        approvalId: "apr-1",
+        reviewerId: CALLERS.super_admin.userId,
+        reviewComment: "ok",
+      },
+    });
+    expect(dispatch.mock.calls[0][1].reviewerId).toBe(CALLERS.safety_approver.userId);
+
+    // And one named on a change, outside its schema, is refused — never dispatched (round 10).
+    dispatch.mockClear();
+    const res = await execute("safety_approver", {
+      toolId: "update_config",
+      input: { key: SAFETY_KEY, value: 9, changeComment: "c", reviewerId: "x" },
+    });
+    expect(res.status).toBe(400);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -258,7 +368,13 @@ describe("/api/admin/config-ai/execute", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 422 when the tool fails", async () => {
+  // Round 13 (I-C), round 14 (items 3, 4, 5): an uncoded tool failure answers admin.action_failed
+  // at that code's own status, its text logged — never in the body.
+  it("answers an uncoded tool failure admin.action_failed, its text logged, never returned", async () => {
+    const { logger } = jest.requireMock("@/lib/logger") as {
+      logger: { error: jest.Mock };
+    };
+    logger.error.mockClear();
     dispatch.mockResolvedValue({
       toolId: "update_config",
       success: false,
@@ -270,8 +386,63 @@ describe("/api/admin/config-ai/execute", () => {
       toolId: "update_config",
       input: { key: STANDARD_KEY, value: "bad", changeComment: "c" },
     });
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(JSON.parse(text)).toMatchObject({
+      code: "admin.action_failed",
+      message: expect.any(String),
+    });
+    expect(text).not.toContain("Validation failed");
+    expect(logger.error).toHaveBeenCalledWith(
+      "Config tool failed",
+      expect.objectContaining({ error: "Validation failed" })
+    );
   });
+
+  it.each([
+    [
+      "a change already waiting",
+      {
+        success: true,
+        data: {
+          applied: false,
+          requiresApproval: true,
+          approvalError: 'A pending approval already exists for "k" (row 7).',
+          errorCode: "approvals.already_pending",
+          errorParams: { key: STANDARD_KEY },
+        },
+      },
+      409,
+      "approvals.already_pending",
+    ],
+    [
+      "the audit log unavailable",
+      {
+        success: true,
+        data: {
+          applied: false,
+          error: "audit insert failed: relation audit_log",
+          errorCode: "service.unavailable",
+          errorParams: { service: "audit" },
+        },
+      },
+      503,
+      "service.unavailable",
+    ],
+  ])(
+    "answers %s at its code's status, its text never returned (round 14)",
+    async (_l, r, status, code) => {
+      dispatch.mockResolvedValue({ toolId: "update_config", durationMs: 1, ...r });
+      const res = await execute("admin", {
+        toolId: "update_config",
+        input: { key: STANDARD_KEY, value: 3, changeComment: "c" },
+      });
+      expect(res.status).toBe(status);
+      const text = await res.text();
+      expect(JSON.parse(text)).toMatchObject({ code });
+      expect(text).not.toMatch(/row 7|relation audit_log/);
+    }
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -396,13 +567,51 @@ describe("/api/admin/config", () => {
       dispatch.mockResolvedValue({
         toolId: "update_config",
         success: true,
-        data: { applied: false, validationErrors: ["above maximum"] },
+        // As the handler answers it (round 14, item 2): the reason structured.
+        data: {
+          applied: false,
+          validationErrors: ["Value 1000000000 exceeds maximum 100"],
+          errorCode: "admin.config_invalid_value",
+          errorParams: { key: STANDARD_KEY, reason: "above_max", max: 100 },
+        },
         durationMs: 1,
       });
       const res = await put("admin", { key: STANDARD_KEY, value: 1e9 });
       expect(res.status).toBe(422);
-      expect((await res.json()).code).toBe("admin.config_invalid_value");
+      const body = await res.json();
+      expect(body).toMatchObject({
+        code: "admin.config_invalid_value",
+        params: { key: STANDARD_KEY, reason: "above_max", max: 100 },
+        message: `${STANDARD_KEY} must be at most 100.`,
+      });
     });
+
+    // Round 14, item 1: a failed write's own code (it answered 500 for every one).
+    it.each([
+      ["approvals.already_pending", { key: STANDARD_KEY }, 409],
+      ["service.unavailable", { service: "audit" }, 503],
+      ["admin.write_indeterminate", {}, 503],
+    ])(
+      "answers a write that failed with %s at its status",
+      async (code, params, status) => {
+        dispatch.mockResolvedValue({
+          toolId: "update_config",
+          success: true,
+          data: {
+            applied: false,
+            error: "db text",
+            errorCode: code,
+            errorParams: params,
+          },
+          durationMs: 1,
+        });
+        const res = await put("admin", { key: STANDARD_KEY, value: 5 });
+        expect(res.status).toBe(status);
+        const text = await res.text();
+        expect(JSON.parse(text).code).toBe(code);
+        expect(text).not.toContain("db text");
+      }
+    );
 
     it("returns 202 when the change is held for approval", async () => {
       dispatch.mockResolvedValue({
@@ -468,6 +677,19 @@ describe("/api/admin/config", () => {
         expect(dispatch).not.toHaveBeenCalled();
       }
     );
+
+    it("answers a reset whose filing was refused with its code (round 14, item 1)", async () => {
+      answer({
+        applied: false,
+        requiresApproval: true,
+        approvalError: "already waiting",
+        errorCode: "approvals.already_pending",
+        errorParams: { key: STANDARD_KEY },
+      });
+      const res = await del("admin", `?key=${STANDARD_KEY}`);
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("approvals.already_pending");
+    });
 
     it("needs a key", async () => {
       const res = await del("admin", "");

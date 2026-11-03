@@ -372,7 +372,7 @@ export async function recoverStaleRuns(
   if (undecided > 0) {
     raiseAlert({
       name: "approvals.indeterminate",
-      message: `${undecided} approved run(s) did not end within their lease; their outcome is unknown. Verify each on the approvals page, then mark it executed or approve it again (docs/runbooks/approvals-and-agents.md).`,
+      message: `${undecided} approved run(s) did not end within their lease; their outcome is unknown. Verify each on the approvals page, then mark it executed, approve it again or withdraw it; where no one in its tenant but its requester and the account it acts on may decide it, a platform operator decides it — Operator → Tenants → the tenant → Settings → Held changes, which lists it (docs/runbooks/approvals-and-agents.md, "No one may decide it").`,
       count: undecided,
     });
   }
@@ -418,7 +418,7 @@ export async function alertWaitingUndecided(
   if ((rows[0]?.due ?? 0) > 0) {
     raiseAlert({
       name: "approvals.indeterminate",
-      message: `${waiting} approved run(s) are still undecided: whether each took effect is unknown. Verify each on the approvals page, then mark it executed or approve it again (docs/runbooks/approvals-and-agents.md).`,
+      message: `${waiting} approved run(s) are still undecided: whether each took effect is unknown. Verify each on the approvals page, then mark it executed, approve it again or withdraw it; where no one in its tenant but its requester and the account it acts on may decide it, a platform operator decides it — Operator → Tenants → the tenant → Settings → Held changes, which lists it (docs/runbooks/approvals-and-agents.md, "No one may decide it").`,
       count: waiting,
     });
   }

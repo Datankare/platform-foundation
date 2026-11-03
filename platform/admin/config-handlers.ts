@@ -43,6 +43,7 @@ import {
   getConfigHistory,
   getConfigOrThrow,
 } from "@/platform/auth/platform-config";
+import { refusesRequiredSchedule } from "@/platform/jobs/required-schedule";
 import {
   approvedChangeTarget,
   isSharedDeployment,
@@ -53,9 +54,18 @@ import {
   isApprovalRequired,
   requestApproval as createApprovalRequest,
   approveAndApply,
+  APPLY_LEASE_SECONDS,
   rejectChange as rejectApprovalChange,
 } from "./config-approval";
 import { generateImpactReport, isModerationConfig } from "./config-impact";
+import type { ErrorCode } from "@/platform/errors/registry";
+import type { ConfigValueRefusal } from "./types";
+import { isErrorCode } from "@/platform/errors/registry";
+import {
+  invalidValueParams,
+  writeFailureCode,
+  type IncompleteWrite,
+} from "./write-failure";
 import type {
   ConfigToolResult,
   ConfigChangeRequest,
@@ -68,7 +78,9 @@ import type {
 } from "./types";
 import { TOOL_BOUNDARIES } from "./types";
 import type { Tool, StepBoundary, AgentIdentity } from "@/platform/agents/types";
+import type { RunFailure } from "@/platform/kernel/types";
 import { invokeTool } from "@/platform/agents/tool-invoker";
+import { settlesWithinMinutes } from "@/platform/admin/approval-settle";
 import { getTrajectoryStore } from "@/platform/agents/trajectory-store";
 import {
   finishTrajectory,
@@ -89,11 +101,12 @@ import {
 import {
   isHeldPrevious,
   staleChangeMessage,
-  STALE_CHANGE_PREFIX,
+  STALE_CHANGE_CODE,
   type HeldPrevious,
 } from "@/platform/admin/stale-change";
 import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { withdrawSupersededHolds } from "@/platform/admin/hold-withdrawal";
+import { configToolTargetKey } from "@/platform/admin/hold-keys";
 
 // ---------------------------------------------------------------------------
 // Tool execution wrapper
@@ -117,14 +130,147 @@ async function executeToolCall<T>(
       durationMs: Date.now() - start,
     };
   } catch (err) {
+    // Logged, never returned (round 14, item 12).
+    logger.error("Config tool failed", {
+      toolId,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/admin/config-handlers",
+    });
     return {
       toolId,
       success: false,
       data: null,
-      error: err instanceof Error ? err.message : String(err),
+      error: "The config tool failed.",
+      errorCode: "admin.action_failed",
       durationMs: Date.now() - start,
     };
   }
+}
+
+/** A failed config result's registry code and params, when it carries one (round 14, item 1). */
+export function codedConfigFailure(result: ConfigToolResult):
+  | {
+      readonly code: ErrorCode;
+      readonly params: Readonly<Record<string, string | number | readonly string[]>>;
+    }
+  | undefined {
+  const data = (result.data && typeof result.data === "object" ? result.data : {}) as {
+    errorCode?: unknown;
+    errorParams?: ConfigToolResult["errorParams"];
+  };
+  const code = result.errorCode ?? data.errorCode;
+  return typeof code === "string" && isErrorCode(code)
+    ? { code, params: result.errorParams ?? data.errorParams ?? {} }
+    : undefined;
+}
+
+/** A failed config result's own text, for the log only. */
+export function configFailureText(result: ConfigToolResult): string | undefined {
+  const data = (result.data && typeof result.data === "object" ? result.data : {}) as {
+    error?: unknown;
+  };
+  return result.error ?? (typeof data.error === "string" ? data.error : undefined);
+}
+
+/**
+ * The form a config tool is held, and approved, in: restricted (dual control raised its risk) —
+ * so its approval is what lets it through, never a lower-risk copy that would skip the gate; and
+ * a restricted hold is always a person's to approve (ADR-030, restricted ⇒ person).
+ * __tests__/restricted-needs-person.test.ts checks every config tool's held form.
+ */
+export function heldConfigTool(tool: Tool): Tool {
+  return { ...tool, declaredRisk: "restricted" };
+}
+
+/**
+ * The registry code and params of a failed config result, for an answer (round 13, I-C): its own
+ * (`errorCode`, on the result or in its data), or — for a failure that reached the answer without
+ * one, which __tests__/command-bar-coded-results.test.ts keeps from this file —
+ * `admin.action_failed`. Whenever the answer is `admin.action_failed` — given or fallen back to —
+ * its text is logged, never returned (round 14, item 3: a given one was not logged).
+ */
+export function configFailure(result: ConfigToolResult): {
+  readonly code: ErrorCode;
+  readonly params: Readonly<Record<string, string | number | readonly string[]>>;
+} {
+  const coded = codedConfigFailure(result) ?? {
+    code: "admin.action_failed" as const,
+    params: {},
+  };
+  if (coded.code === "admin.action_failed") {
+    logger.error("Config tool failed", {
+      toolId: result.toolId,
+      error: configFailureText(result),
+      route: "platform/admin/config-handlers",
+    });
+  }
+  return coded;
+}
+
+/**
+ * A refusal, coded (TASK-194 round 13, I-C): the registry code and params a config answer
+ * carries, and the text for the log. Every failure a config tool returns carries one —
+ * __tests__/command-bar-coded-results.test.ts reads this file for any that does not.
+ */
+function refused(
+  errorCode: ErrorCode,
+  errorParams: Readonly<Record<string, string | number | readonly string[]>>,
+  error: string
+) {
+  return { errorCode, errorParams, error };
+}
+
+/** A config key the change names that has no entry. */
+const keyNotFound = (key: string) =>
+  refused("admin.target_not_found", { target: key }, `Config key "${key}" not found.`);
+
+/**
+ * A required job's enabled key set off, or set for one tenant (round 19, I-1): refused before
+ * anything is held, filed or written (platform/jobs/required-schedule.ts).
+ */
+const scheduleRequired = (key: string) =>
+  refused(
+    "jobs.schedule_required",
+    {},
+    `"${key}" turns on a required job: it is always on, and cannot be turned off or set for one tenant.`
+  );
+
+export { invalidValueParams, type InvalidValueParams } from "./write-failure";
+
+/**
+ * A value its entry refuses: `admin.config_invalid_value` with the structured reason — as the
+ * config page and the command bar answer it (round 14, item 2). The entry's English reasons stay
+ * in `validationErrors`, for the log; the config route does not return them.
+ */
+const valueRefused = (
+  key: string,
+  errors: readonly string[],
+  refusal: ConfigValueRefusal | undefined
+) => ({
+  ...refused(
+    "admin.config_invalid_value",
+    invalidValueParams(key, refusal),
+    errors.join("; ")
+  ),
+  validationErrors: errors,
+});
+
+/** Where a change cannot go (ADR-053 D5): an operator's platform default, say. */
+const scopeRefused = (key: string, reason: string) =>
+  refused("admin.config_scope_refused", { key }, reason);
+
+/**
+ * A write that did not complete, coded by what the store said (round 14, item 3): a value its
+ * entry refuses; a commit lost with its connection (`admin.write_indeterminate` — it may have
+ * applied); the audit log unavailable (`service.unavailable`, nothing changed); else
+ * `admin.action_failed`, its text logged by configFailure.
+ */
+function writeFailure(key: string, result: IncompleteWrite) {
+  // The rules are write-failure.ts's, shared with an approved change's apply (round 15, P-1).
+  const { code, params } = writeFailureCode(key, result);
+  if (code === "admin.config_invalid_value")
+    return valueRefused(key, result.validationErrors ?? [], result.valueRefusal);
+  return refused(code, params, result.error ?? "The change was not applied.");
 }
 
 // ---------------------------------------------------------------------------
@@ -213,14 +359,18 @@ export interface UpdateConfigInput {
    * Set by dispatchConfigTool only — never taken from a caller — on a held change (review 12 H2):
    * the value the change replaces, at request time. When the held change is approved it is
    * applied only if the key still holds this value (compare-and-set); otherwise nothing is
-   * changed, the result is stale, and the hold is withdrawn.
+   * changed, the result is stale, and the decision withdraws the hold when the withdrawal lands.
    */
   readonly heldPrevious?: HeldPrevious;
 }
 
 /** The stale result of a held change whose replaced value changed (review 12 H2). */
 function staleResult(key: string) {
-  return { applied: false, stale: true, error: staleChangeMessage(key) };
+  return {
+    applied: false,
+    stale: true,
+    ...refused("approvals.stale", {}, staleChangeMessage(key)),
+  };
 }
 
 /**
@@ -240,19 +390,14 @@ export async function handleUpdateConfig(
   return executeToolCall("update_config", async () => {
     // 1. Load entry metadata
     const entry = await getEnhancedConfig(input.key);
-    if (!entry) {
-      return {
-        applied: false,
-        error: `Config key "${input.key}" not found.`,
-      };
-    }
+    if (!entry) return { applied: false, ...keyNotFound(input.key) };
 
     // 2. Validate proposed value
     const validation = validateConfigValue(entry, input.value);
     if (!validation.valid) {
       return {
         applied: false,
-        validationErrors: validation.errors,
+        ...valueRefused(input.key, validation.errors, validation.refusal),
       };
     }
 
@@ -263,7 +408,13 @@ export async function handleUpdateConfig(
       input.scope
     );
     if (!decision.ok) {
-      return { applied: false, error: decision.reason };
+      return { applied: false, ...scopeRefused(input.key, decision.reason) };
+    }
+    // 3. …nor a required job turned off, or set for a tenant (round 19, I-1).
+    if (
+      await refusesRequiredSchedule(input.key, validation.value, decision.target.scope)
+    ) {
+      return { applied: false, ...scheduleRequired(input.key) };
     }
 
     // 3a. An approved held change (review 12 H2): only onto the value it was requested against.
@@ -282,7 +433,10 @@ export async function handleUpdateConfig(
     if (input.expectPrevious !== undefined) {
       reduction = powerReduction(input.key, input.expectPrevious.value, input.value);
       if (!reduction.reduces) {
-        return { applied: false, error: `Not applied: ${reduction.reason}` };
+        return {
+          applied: false,
+          ...refused("admin.action_failed", {}, `Not applied: ${reduction.reason}`),
+        };
       }
     }
 
@@ -326,6 +480,13 @@ export async function handleUpdateConfig(
         requiresApproval: true,
         approval: approvalResult.record,
         approvalError: approvalResult.error,
+        // A filing that failed is a refusal, coded (round 13, I-C): a change already waiting.
+        ...(approvalResult.success
+          ? {}
+          : {
+              errorCode: approvalResult.errorCode ?? "service.unavailable",
+              errorParams: approvalResult.errorParams ?? { service: "config" },
+            }),
         changeRequest,
       };
     }
@@ -361,7 +522,11 @@ export async function handleUpdateConfig(
         if (err instanceof AuditWriteError) {
           return {
             applied: false,
-            error: "The audit log is unavailable, so the value was not changed.",
+            ...refused(
+              "service.unavailable",
+              { service: "audit" },
+              "The audit log is unavailable, so the value was not changed."
+            ),
           };
         }
         throw err;
@@ -379,12 +544,9 @@ export async function handleUpdateConfig(
     }
     if (result.stale && input.heldPrevious) return staleResult(input.key);
 
-    return {
-      applied: result.success,
-      error: result.error,
-      validationErrors: result.validationErrors,
-      changeRequest,
-    };
+    return result.success
+      ? { applied: true, changeRequest }
+      : { applied: false, ...writeFailure(input.key, result), changeRequest };
   });
 }
 
@@ -415,7 +577,7 @@ export async function handleResetConfig(
 ): Promise<ConfigToolResult> {
   return executeToolCall("reset_config", async () => {
     const entry = await getEnhancedConfig(input.key);
-    if (!entry) return { applied: false, error: `Config key "${input.key}" not found.` };
+    if (!entry) return { applied: false, ...keyNotFound(input.key) };
     // An approved held reset (review 12 H2): only of the value it was requested against.
     const held = input.heldPrevious;
     // And only onto the platform default it was requested to inherit (review 13 M1): a held reset
@@ -434,7 +596,8 @@ export async function handleResetConfig(
     }
     const operator = input.actorIsOperator === true;
     const decision = resolveConfigTarget(operator, entry, "tenant");
-    if (!decision.ok) return { applied: false, error: decision.reason };
+    if (!decision.ok)
+      return { applied: false, ...scopeRefused(input.key, decision.reason) };
 
     const needsApproval =
       entry.permissionTier === "safety" && (await isApprovalRequired());
@@ -465,6 +628,13 @@ export async function handleResetConfig(
         requiresApproval: true,
         approval: approvalResult.record,
         approvalError: approvalResult.error,
+        // A filing that failed is a refusal, coded (round 13, I-C): a change already waiting.
+        ...(approvalResult.success
+          ? {}
+          : {
+              errorCode: approvalResult.errorCode ?? "service.unavailable",
+              errorParams: approvalResult.errorParams ?? { service: "config" },
+            }),
         changeRequest,
       };
     }
@@ -481,7 +651,9 @@ export async function handleResetConfig(
         : {}
     );
     if (result.stale) return staleResult(input.key);
-    return { applied: result.success, error: result.error, changeRequest };
+    return result.success
+      ? { applied: true, changeRequest }
+      : { applied: false, ...writeFailure(input.key, result), changeRequest };
   });
 }
 
@@ -757,16 +929,14 @@ export async function handleRequestApproval(
   return executeToolCall("request_approval", async () => {
     // Load current value
     const entry = await getEnhancedConfig(input.configKey);
-    if (!entry) {
-      return { success: false, error: `Config key "${input.configKey}" not found.` };
-    }
+    if (!entry) return { success: false, ...keyNotFound(input.configKey) };
 
     // Validate before creating approval
     const validation = validateConfigValue(entry, input.proposedValue);
     if (!validation.valid) {
       return {
         success: false,
-        validationErrors: validation.errors,
+        ...valueRefused(input.configKey, validation.errors, validation.refusal),
       };
     }
 
@@ -775,7 +945,19 @@ export async function handleRequestApproval(
       entry,
       input.scope
     );
-    if (!decision.ok) return { success: false, error: decision.reason };
+    if (!decision.ok) {
+      return { success: false, ...scopeRefused(input.configKey, decision.reason) };
+    }
+    // Nothing is filed that its approval would refuse (round 19, I-1).
+    if (
+      await refusesRequiredSchedule(
+        input.configKey,
+        validation.value,
+        decision.target.scope
+      )
+    ) {
+      return { success: false, ...scheduleRequired(input.configKey) };
+    }
 
     const result = await createApprovalRequest({
       configKey: input.configKey,
@@ -811,8 +993,11 @@ export async function handleApproveChange(
   input: ApproveChangeInput
 ): Promise<ConfigToolResult> {
   return executeToolCall("approve_change", async () => {
-    // Approved and applied as one outcome; a change that cannot be applied is reopened
-    // (release review, Sprint 7X — it was left approved, unapplied, and reported as success).
+    // Approved and applied as one outcome (release review, Sprint 7X — it was left approved,
+    // unapplied, and reported as success). One that cannot be applied is, as its failure says
+    // (approveAndApply): reopened; withdrawn by the system when the withdrawal lands (`withdrawn`:
+    // stale, a value refused — else left to settle); or — a lost commit — left approved and
+    // unapplied to settle (`settling`).
     // A change to a shared deployment's platform default is an operator's to approve; refused
     // before the approval is recorded (ADR-053 D5).
     const pending = await getApproval(input.approvalId);
@@ -821,7 +1006,9 @@ export async function handleApproveChange(
         input.reviewerIsOperator === true,
         pending.scope
       );
-      if (!decision.ok) return { success: false, error: decision.reason };
+      if (!decision.ok) {
+        return { success: false, ...scopeRefused(pending.configKey, decision.reason) };
+      }
     }
     const result = await approveAndApply(
       input.approvalId,
@@ -833,7 +1020,10 @@ export async function handleApproveChange(
           record.scope
         );
         if (!decision.ok)
-          return Promise.resolve({ success: false, error: decision.reason });
+          return Promise.resolve({
+            success: false,
+            ...scopeRefused(record.configKey, decision.reason),
+          });
         // Only onto the value it was requested against (review 12 H2).
         const expectPrevious = { value: record.currentValue };
         if (record.action === "reset") {
@@ -858,7 +1048,14 @@ export async function handleApproveChange(
         );
       }
     );
-    if (!result.success) return result;
+    // Settling: when it is settled (round 17, nit 6), as the approvals route answers it.
+    if (!result.success)
+      return result.settling
+        ? {
+            ...result,
+            settlesWithinMinutes: await settlesWithinMinutes(APPLY_LEASE_SECONDS),
+          }
+        : result;
     return { approved: true, applied: true, approval: result.record };
   });
 }
@@ -976,6 +1173,16 @@ export const CONFIG_TOOLS: readonly Tool[] = [
           description: "Mandatory comment explaining why the change is being made",
         },
         actorId: { type: "string", description: "ID of the admin making the change" },
+        confirmed: {
+          type: "boolean",
+          description: "P10: true applies the change; absent or false returns a preview",
+        },
+        scope: {
+          type: "string",
+          enum: ["platform", "tenant"],
+          description:
+            "Where the change goes: the platform default (an operator) or this tenant's value; absent, the deployment's default",
+        },
       },
       required: ["key", "value", "changeComment"],
     },
@@ -1008,6 +1215,10 @@ export const CONFIG_TOOLS: readonly Tool[] = [
           description: "Mandatory comment explaining why the value is reset",
         },
         actorId: { type: "string", description: "ID of the admin making the change" },
+        confirmed: {
+          type: "boolean",
+          description: "P10: true resets the value; absent or false returns a preview",
+        },
       },
       required: ["key", "changeComment"],
     },
@@ -1165,6 +1376,12 @@ export const CONFIG_TOOLS: readonly Tool[] = [
         proposedValue: { description: "Proposed new value" },
         changeComment: { type: "string", description: "Why this change is needed" },
         actorId: { type: "string", description: "ID of the requesting admin" },
+        scope: {
+          type: "string",
+          enum: ["platform", "tenant"],
+          description:
+            "Where the change goes: the platform default (an operator) or this tenant's value; absent, the deployment's default",
+        },
       },
       required: ["configKey", "proposedValue", "changeComment"],
     },
@@ -1304,8 +1521,14 @@ const CONFIG_TOOL_BY_ID: ReadonlyMap<string, Tool> = new Map(
 /** The config tools a runtime (dual-control) hold can stand for. */
 const RESUMABLE_TOOLS: ReadonlySet<string> = new Set(["update_config", "reset_config"]);
 
-/** Whether a config tool's result says the change did not take effect (review 10 H2). */
-export function configResultFailure(output: Record<string, unknown>): string | undefined {
+/**
+ * Whether a config tool's result says the change did not take effect (review 10 H2): its registry
+ * code and params when it has one (TASK-194 round 15, I-1 — the decision on its hold answers it),
+ * else its reason.
+ */
+export function configResultFailure(
+  output: Record<string, unknown>
+): RunFailure | undefined {
   const r = output as unknown as ConfigToolResult;
   const data = (r?.data ?? {}) as {
     applied?: boolean;
@@ -1316,12 +1539,12 @@ export function configResultFailure(output: Record<string, unknown>): string | u
     stale?: boolean;
   };
   // A stale held change (review 12 H2): marked, so the decision withdraws the hold.
-  if (data.stale) {
-    const text = data.error ?? r?.error ?? "the value changed";
-    return text.startsWith(STALE_CHANGE_PREFIX) ? text : `${STALE_CHANGE_PREFIX}${text}`;
-  }
+  if (data.stale) return STALE_CHANGE_CODE;
   if (r?.success && data.applied) return undefined;
   if (r?.success && data.requiresApproval && !data.approvalError) return undefined;
+  const coded = r ? codedConfigFailure(r) : undefined;
+  if (coded && coded.code !== "admin.action_failed")
+    return { reason: coded.code, code: coded.code, params: coded.params };
   return (
     r?.error ??
     data.error ??
@@ -1360,6 +1583,7 @@ export async function runApprovedConfigChange(
       success: false,
       data: { ...staleResult(key), error: staleChangeMessage(key) },
       error: staleChangeMessage(key),
+      errorCode: "approvals.stale",
       durationMs: 0,
     };
   }
@@ -1367,7 +1591,7 @@ export async function runApprovedConfigChange(
   const invoked = await invokeTool({
     // The held form of the tool (dual control raised its risk), so the approval is what
     // lets it through — never a lower-risk copy that would skip the gate.
-    tool: { ...tool, declaredRisk: "restricted", reportsFailure: configResultFailure },
+    tool: { ...heldConfigTool(tool), reportsFailure: configResultFailure },
     input: proposal.payload,
     actor: proposal.actor,
     sessionId: proposal.sessionId,
@@ -1389,19 +1613,122 @@ export async function resumeApprovedConfigChange(
   try {
     return await runApprovedConfigChange(proposalId);
   } catch (err) {
+    const used = err instanceof PipelineRejectedError && err.reason === "approval-used";
+    // Logged, never returned (round 14, item 12): the error's own text stays in the log.
+    if (!used) {
+      logger.error("Approved config change could not be run", {
+        proposalId,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/admin/config-handlers",
+      });
+    }
     return {
       toolId: "update_config",
       success: false,
       data: null,
-      error:
+      error: used
+        ? "This approved change is being applied or has already been applied."
+        : "The approved change could not be run.",
+      errorCode:
         err instanceof PipelineRejectedError && err.reason === "approval-used"
-          ? "This approved change is being applied or has already been applied."
-          : err instanceof Error
-            ? err.message
-            : String(err),
+          ? "approvals.decision_conflict"
+          : "admin.action_failed",
       durationMs: Date.now() - start,
     };
   }
+}
+
+/**
+ * The input keys the server sets for a config tool, never a caller — each with why (round 12,
+ * nit 6). The config route refuses a caller's as `request.field_not_accepted`;
+ * __tests__/input-keys-guard.test.ts allows a handler to read a key outside its schema only when
+ * it is listed here.
+ */
+export const CONFIG_SERVER_SET_INPUTS: Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> = {
+  update_config: {
+    actorIsOperator:
+      "the requester's operator standing, from the verified admin (ADR-053 D5)",
+    heldPrevious:
+      "the value a held change replaces, recorded by dispatchConfigTool when it holds it (review 12 H2)",
+    expectPrevious:
+      "the value a one-admin power reduction is proved of, set by dispatchConfigTool (review 11 M-2)",
+  },
+  reset_config: {
+    actorIsOperator:
+      "the requester's operator standing, from the verified admin (ADR-053 D5)",
+    heldPrevious:
+      "the value a held reset replaces, recorded by dispatchConfigTool when it holds it (review 12 H2)",
+  },
+  request_approval: {
+    actorIsOperator:
+      "the requester's operator standing, from the verified admin (ADR-053 D5)",
+  },
+  approve_change: {
+    reviewerIsOperator:
+      "the reviewer's operator standing, from the verified admin (ADR-053 D5)",
+  },
+};
+
+/** The input field carrying the value each value-setting config tool would store. */
+const HELD_VALUE_FIELD: Readonly<Record<string, string>> = {
+  update_config: "value",
+  request_approval: "proposedValue",
+};
+
+/**
+ * Why a change about to be held would be refused when it runs, as its handler's own coded result,
+ * or undefined (round 12, pre-existing 1; round 13, P-2): its key has no entry; its value is one
+ * the entry refuses (validateConfigValue); or it may not go where it would be written
+ * (resolveConfigTarget — an update or a request at its scope, a reset at this tenant's value when
+ * it would clear one). The same checks, in the same order, as handleUpdateConfig,
+ * handleRequestApproval and handleResetConfig make — so nothing is held that its run would refuse.
+ */
+async function heldChangeProblem(
+  toolId: string,
+  key: string | undefined,
+  input: Record<string, unknown>
+): Promise<ConfigToolResult | undefined> {
+  const field = HELD_VALUE_FIELD[toolId];
+  if (!field && toolId !== "reset_config") return undefined;
+  const result = (
+    refusal: ReturnType<typeof refused> & { validationErrors?: readonly string[] }
+  ): ConfigToolResult => ({
+    toolId,
+    success: true,
+    data: {
+      applied: false,
+      error: refusal.error,
+      errorCode: refusal.errorCode,
+      errorParams: refusal.errorParams,
+      ...(refusal.validationErrors ? { validationErrors: refusal.validationErrors } : {}),
+    },
+    errorCode: refusal.errorCode,
+    errorParams: refusal.errorParams,
+    durationMs: 0,
+  });
+  const entry = key ? await getEnhancedConfig(key) : null;
+  if (!key || !entry) return result(keyNotFound(key ?? ""));
+  const operator = input.actorIsOperator === true;
+  if (field) {
+    const validation = validateConfigValue(entry, input[field]);
+    if (!validation.valid)
+      return result(valueRefused(key, validation.errors, validation.refusal));
+    const scope =
+      input.scope === "platform" || input.scope === "tenant" ? input.scope : undefined;
+    const decision = resolveConfigTarget(operator, entry, scope);
+    if (!decision.ok) return result(scopeRefused(key, decision.reason));
+    if (await refusesRequiredSchedule(key, validation.value, decision.target.scope))
+      return result(scheduleRequired(key));
+    return undefined;
+  }
+  // A reset clears this tenant's own value; with none to clear it changes nothing (as its handler
+  // answers), and otherwise it is refused where the tenant may not hold its own value.
+  if (!isSharedDeployment() || !entry.overridden) return undefined;
+  const decision = resolveConfigTarget(operator, entry, "tenant");
+  if (!decision.ok) return result(scopeRefused(key, decision.reason));
+  return undefined;
 }
 
 /**
@@ -1485,6 +1812,8 @@ export async function dispatchConfigTool(
         success: false,
         data: null,
         error: `Missing required fields: ${missing.join(", ")}`,
+        errorCode: "request.missing_fields",
+        errorParams: { fields: missing },
         durationMs: 0,
       };
     }
@@ -1500,6 +1829,8 @@ export async function dispatchConfigTool(
       success: false,
       data: null,
       error: `Unknown tool: ${toolId}`,
+      errorCode: "request.invalid_value",
+      errorParams: { field: "toolId", allowed: [...CONFIG_TOOL_BY_ID.keys()] },
       durationMs: 0,
     };
   }
@@ -1554,7 +1885,7 @@ export async function dispatchConfigTool(
     // Fail closed (audit X-7): when the key list cannot be read, every config write is held; and
     // the settings that govern dual control itself are always held, so emptying the list cannot
     // be the step that turns it off.
-    const targetKey = typeof input.key === "string" ? input.key : undefined;
+    const targetKey = configToolTargetKey(toolId, input);
     let isDualControl =
       (toolId === "update_config" || toolId === "reset_config") &&
       (targetKey === undefined || (await isDualControlledKey(targetKey)));
@@ -1594,9 +1925,7 @@ export async function dispatchConfigTool(
       if (before !== undefined) input = { ...input, heldPrevious: before };
     }
 
-    const effectiveTool: Tool = isDualControl
-      ? { ...tool, declaredRisk: "restricted" }
-      : tool;
+    const effectiveTool: Tool = isDualControl ? heldConfigTool(tool) : tool;
 
     let result: ConfigToolResult;
     try {
@@ -1616,6 +1945,12 @@ export async function dispatchConfigTool(
       // who must approve. This is not an error — the change is pending an independent human, not
       // broken. Clearing the hold (re-invoke with the approved proposal) is the ADR-040 surface.
       if (err instanceof PipelineRejectedError && err.reason === "requires-approval") {
+        // Nothing is held that its run would refuse (round 12, pre-existing 1; round 13, P-2): a
+        // key with no entry, a value its entry refuses (free text for a number), or a change
+        // where it may not go (its scope) is refused now, coded, as the handler would refuse it
+        // when approved — never held for an approver to clear and the store to keep.
+        const problem = await heldChangeProblem(toolId, targetKey, input);
+        if (problem) return problem;
         const stepIndex = context?.steps.length ?? 0;
         const proposal = await proposeOnce({
           spec: {
@@ -1668,7 +2003,9 @@ export async function dispatchConfigTool(
         toolId,
         success: false,
         data: null,
-        error: err instanceof Error ? err.message : "Tool invocation failed",
+        // Logged above; never returned (round 14, item 12).
+        error: "Tool invocation failed",
+        errorCode: "admin.action_failed",
         durationMs: 0,
       };
     }

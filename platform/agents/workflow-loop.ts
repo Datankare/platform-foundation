@@ -51,6 +51,7 @@ import { getBudgetTracker } from "./budget-tracker";
 import { logger } from "@/lib/logger";
 import { getApprovalPolicyStore } from "./approval-policy-store";
 import { isAgentGoal, listAgentGoals } from "./goals";
+import { sameId } from "@/platform/auth/same-id";
 
 // ── Definition ────────────────────────────────────────────────────────
 
@@ -270,9 +271,9 @@ function mayContinue(
   if (record.trajectory.status === "failed") return false;
   const principal = principalOf(actor);
   if (principal !== undefined) {
-    return record.scopeType === "user" && record.scopeId === principal;
+    return record.scopeType === "user" && sameId(record.scopeId, principal);
   }
-  return record.scopeType === "platform" && record.subject.id === actor.actorId;
+  return record.scopeType === "platform" && sameId(record.subject.id, actor.actorId);
 }
 
 async function openTrajectory(
@@ -370,7 +371,7 @@ async function runSteps(
     // (or holds it), and this one is refused rather than running it without the approval.
     if (
       resume &&
-      (i !== resume.stepIndex || approved?.proposalId !== resume.proposalId)
+      (i !== resume.stepIndex || !sameId(approved?.proposalId, resume.proposalId))
     ) {
       throw new HeldActionNotApprovedError(resume.proposalId);
     }
@@ -549,7 +550,7 @@ async function stepAlreadyRan(
     ...(await proposalStore.query({ operationId, status: "executed" })),
     ...(await proposalStore.query({ operationId, status: "executing" })),
   ];
-  return used.some((p) => p.trajectoryId === trajectoryId);
+  return used.some((p) => sameId(p.trajectoryId, trajectoryId));
 }
 
 /** The operation a held step is proposed under: one per trajectory and step index. */
@@ -574,7 +575,7 @@ async function approvedProposalForStep(
     operationId: stepOperationId(trajectoryId, stepIndex),
     status: "approved",
   });
-  return approved.find((p) => p.trajectoryId === trajectoryId);
+  return approved.find((p) => sameId(p.trajectoryId, trajectoryId));
 }
 
 /**
@@ -607,7 +608,7 @@ async function proposalForStep(
 ): Promise<ProposalRecord | undefined> {
   const all = (
     await proposalStore.query({ operationId: stepOperationId(trajectoryId, stepIndex) })
-  ).filter((p) => p.trajectoryId === trajectoryId);
+  ).filter((p) => sameId(p.trajectoryId, trajectoryId));
   return all.find((p) => LIVE_PROPOSAL.has(p.status)) ?? all[0];
 }
 
@@ -823,7 +824,7 @@ function affordances(
           result.held?.awaiting === "retry"
             ? `Approved, and its run failed before taking effect — waiting to be approved again by ${by}; poll after a decision`
             : result.held?.awaiting === "outcome"
-              ? `Its approved run's outcome is unknown — waiting for ${by} to mark it executed or approve it again; poll after a decision`
+              ? `Its approved run's outcome is unknown — waiting for ${by} to mark it executed, approve it again or withdraw it; poll after a decision`
               : `Held for approval by ${by} — poll or resume after a decision`,
         endpoint: definition.endpoint,
         requiredParams: ["trajectoryId"],
@@ -1176,7 +1177,7 @@ export async function resumeApprovedAction(
   const record = await store.getById(proposal.trajectoryId);
   if (!record) throw new TrajectoryAccessError(proposal.trajectoryId);
   const next = commitmentCount(record.trajectory.steps);
-  if (stepOperationId(proposal.trajectoryId, next) !== proposal.operationId) {
+  if (!sameId(stepOperationId(proposal.trajectoryId, next), proposal.operationId)) {
     // Already run, or for another step: this approval releases nothing now.
     throw new HeldActionNotApprovedError(args.proposalId);
   }

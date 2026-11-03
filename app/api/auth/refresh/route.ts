@@ -24,6 +24,7 @@ import { apiError } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sessionTenantRefusal } from "@/platform/tenancy/identity";
+import { sameId } from "@/platform/auth/same-id";
 
 function refused(request: NextRequest): NextResponse {
   const response = apiError("auth.token_invalid", { request });
@@ -47,7 +48,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   if (!called.ok) return called.response;
   const session = called.result;
   // The renewed session is the cookie's user's, or it is not used.
-  if (!session || !session.accessToken || session.userId !== cookie.userId) {
+  if (!session || !session.accessToken || !sameId(session.userId, cookie.userId)) {
     return refused(request);
   }
   const expiresIn = Math.max(0, session.expiresAt - Math.floor(Date.now() / 1000));

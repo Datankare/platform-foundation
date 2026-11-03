@@ -5,11 +5,13 @@
  * permission required to clear it. Read-only; approve/reject is 040b (POST /[id]).
  *
  * Gated on can_access_admin: any admin may SEE the queue (transparency / manageability);
- * clearing a hold still requires the per-change permission, enforced in 040b.
+ * clearing a hold still requires the per-change permission, enforced in 040b. A hold's summary
+ * (the account it acts on — an address among it) goes only to an admin holding that permission
+ * (TASK-194 round 2, N2).
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { requireAdmin } from "@/platform/auth/admin-guard";
 import { logger, generateRequestId } from "@/lib/logger";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
@@ -17,12 +19,13 @@ import { apiError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
-  const denied = await adminGuard(request, "can_access_admin");
-  if (denied) return denied;
+  const verified = await requireAdmin(request, "can_access_admin");
+  if (verified.error) return verified.error;
 
   const requestId = generateRequestId();
   try {
-    const approvals = await listPendingApprovals([COMMAND_BAR_HOLDS]);
+    // Each hold's summary only to an admin who could decide it (TASK-194 round 2, N2).
+    const approvals = await listPendingApprovals([COMMAND_BAR_HOLDS], verified.admin);
     return NextResponse.json({ approvals, requestId });
   } catch (err) {
     logger.error(

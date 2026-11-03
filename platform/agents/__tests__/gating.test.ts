@@ -7,7 +7,12 @@
  * are the safety-relevant halves.
  */
 
-import { approvalPolicy, approveHeldAction, rejectHeldAction } from "../gating";
+import {
+  approvalPolicy,
+  approveHeldAction,
+  heldActionRefusal,
+  rejectHeldAction,
+} from "../gating";
 import { InMemoryProposalStore } from "../proposal-store";
 import { InMemoryTrajectoryStore } from "../trajectory-store";
 import { InMemoryActivityStateStore } from "@/platform/app-framework/memory-state-store";
@@ -159,5 +164,44 @@ describe("approveHeldAction — reconcile branch (ADR-031 D5)", () => {
     // Non-commutative spec, version moved 1 -> 2: the approval is stale and supersedes
     // rather than committing a transition from a state that no longer exists.
     expect(outcome.kind).toBe("stale");
+  });
+});
+
+// Round 12, I-2: a policy whose default is not a person — set by hand, or reaching the gate past
+// the stores' checks — cannot let an agent approve a restricted held action.
+describe("heldActionRefusal — a restricted action needs a person, whatever the default", () => {
+  const agentDefault = { version: 5, default: "agent" as const, rules: [] };
+
+  it("refuses an agent approver of a restricted hold under a non-person default", () => {
+    // Held by the user's agent in one session; decided by the same user's agent in another (an
+    // independent session), or by the user: only the person may approve it.
+    const proposer = {
+      actorType: "agent" as const,
+      actorId: "agent-a",
+      agentRole: "assistant",
+      onBehalfOf: "u1",
+      sessionId: "s-proposer",
+    };
+    const held = {
+      proposalId: "p1",
+      status: "proposed",
+      actor: proposer,
+      effectiveRisk: "restricted",
+      effects: ["restricted"],
+    } as unknown as Parameters<typeof heldActionRefusal>[0];
+    const agentDecider = { ...proposer, actorId: "agent-b", sessionId: "s-decider" };
+    const userDecider = {
+      actorType: "user" as const,
+      actorId: "u1",
+      agentRole: "user",
+      sessionId: "s-decider",
+    };
+    expect(heldActionRefusal(held, agentDecider, "approve", agentDefault)).toBe(
+      "approver_not_allowed"
+    );
+    expect(heldActionRefusal(held, userDecider, "approve", agentDefault)).toBeNull();
+    expect(approvalPolicy("restricted", ["restricted"], agentDefault).actorType).toBe(
+      "user"
+    );
   });
 });

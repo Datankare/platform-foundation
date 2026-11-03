@@ -20,6 +20,11 @@ import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { TenantJobsList, type JobRow } from "@/components/admin/JobsPanels";
 import { AgentKillSwitch } from "@/components/admin/AgentKillSwitchPanel";
+import {
+  changesTheList,
+  refusedDecisionText,
+  type DecisionOutcome,
+} from "@/components/admin/decision-outcome";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.tenancy.${key}`, values);
@@ -151,6 +156,10 @@ export function TenantSettingsView({ data: initial }: { data: TenantData | undef
       if (r.ok) {
         setDrafts((d) => ({ ...d, [key]: "" }));
         await reload();
+      } else if (r.body.code === "admin.write_indeterminate") {
+        // The commit was lost: it may have applied (round 15, nit 4) — read the setting again,
+        // so what is shown is what it is.
+        await reload();
       }
     } finally {
       setBusy(false);
@@ -169,7 +178,8 @@ export function TenantSettingsView({ data: initial }: { data: TenantData | undef
           ? { text: t("reset_done", { key }), tone: "ok" }
           : { text: t("failed", { label: key, reason: reasonOf(r) }), tone: "error" }
       );
-      if (r.ok) await reload();
+      // A lost commit may have applied (round 15, nit 4): read the setting again.
+      if (r.ok || r.body.code === "admin.write_indeterminate") await reload();
     } finally {
       setBusy(false);
     }
@@ -864,7 +874,18 @@ interface HeldChange {
   requester: string;
   requiredPermission: string;
   reason?: string;
+  /** Its approved run's outcome is unknown: decided by its outcome (review 11 H-1). */
+  undecided?: boolean;
+  /** No one in the tenant may decide it (round 7, I-3): the operator does, here. */
+  noEligibleDecider?: boolean;
 }
+
+/** An undecided run's three decisions, as the Approvals screen names them (screens.held). */
+const UNDECIDED_DECISIONS = [
+  ["mark_executed", "mark_executed", "mark_executed_label"],
+  ["reapprove", "reapprove", "reapprove_label"],
+  ["withdraw", "withdraw", "withdraw_label"],
+] as const;
 
 interface TenantSettingsData {
   readonly entries: TenantConfigEntry[];
@@ -968,13 +989,42 @@ export function OperatorTenantSettings({
       t("reset_done", { key })
     );
 
-  const decide = (h: HeldChange, decision: "approve" | "reject") =>
-    run(
-      h.label,
-      `${base}/approvals/${encodeURIComponent(h.id)}`,
-      { method: "POST", body: JSON.stringify({ decision, source: h.source }) },
-      t("done", { label: h.label })
-    );
+  // A refused decision is read as the Approvals panel reads it (round 17: one reader,
+  // decision-outcome.ts) — what became of the approval, and when — and when the held change is
+  // no longer what it was, the list is read again.
+  const decide = async (
+    h: HeldChange,
+    decision: "approve" | "reject" | "mark_executed" | "reapprove" | "withdraw"
+  ) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const r = await call(`${base}/approvals/${encodeURIComponent(h.id)}`, {
+        method: "POST",
+        body: JSON.stringify({ decision, source: h.source }),
+      });
+      if (r.ok) {
+        setStatus({
+          text: r.body.pending
+            ? t("held", { key: h.label })
+            : t("done", { label: h.label }),
+          tone: "ok",
+        });
+        await load();
+        return;
+      }
+      const reason = reasonOf(r);
+      const said = refusedDecisionText(
+        h.label,
+        { code: typeof r.body.code === "string" ? r.body.code : "", message: reason },
+        r.body as DecisionOutcome
+      );
+      setStatus({ text: said ?? t("failed", { label: h.label, reason }), tone: "error" });
+      if (changesTheList(r.body as DecisionOutcome)) await load();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const q = filter.trim().toLowerCase();
   const shown = entries.filter(
@@ -1011,22 +1061,45 @@ export function OperatorTenantSettings({
                     permission: h.requiredPermission,
                   })}
                 </span>
-                <button
-                  className={quiet}
-                  aria-label={t("approve_held_label", { label: h.label })}
-                  disabled={busy}
-                  onClick={() => void decide(h, "approve")}
-                >
-                  {t("approve")}
-                </button>
-                <button
-                  className={quiet}
-                  aria-label={t("reject_held_label", { label: h.label })}
-                  disabled={busy}
-                  onClick={() => void decide(h, "reject")}
-                >
-                  {t("reject_deletion")}
-                </button>
+                {h.undecided ? (
+                  <>
+                    {h.noEligibleDecider && (
+                      <span className="text-amber-200">{t("held_no_decider")}</span>
+                    )}
+                    {UNDECIDED_DECISIONS.map(([decision, text, label]) => (
+                      <button
+                        key={decision}
+                        className={quiet}
+                        aria-label={renderMessage(`screens.held.${label}`, {
+                          label: h.label,
+                        })}
+                        disabled={busy}
+                        onClick={() => void decide(h, decision)}
+                      >
+                        {renderMessage(`screens.held.${text}`)}
+                      </button>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className={quiet}
+                      aria-label={t("approve_held_label", { label: h.label })}
+                      disabled={busy}
+                      onClick={() => void decide(h, "approve")}
+                    >
+                      {t("approve")}
+                    </button>
+                    <button
+                      className={quiet}
+                      aria-label={t("reject_held_label", { label: h.label })}
+                      disabled={busy}
+                      onClick={() => void decide(h, "reject")}
+                    >
+                      {t("reject_deletion")}
+                    </button>
+                  </>
+                )}
               </li>
             ))}
           </ul>

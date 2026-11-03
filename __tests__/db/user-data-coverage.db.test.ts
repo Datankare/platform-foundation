@@ -281,6 +281,58 @@ async function seed(t: TestTenant, user: string, other: string): Promise<void> {
                                   'reason', 'posted her home address'))`,
       [user, other],
     ],
+    // Round 8, item 3: a decided hold about the user, its note in its run's step
+    // (heldAboutStepNotes) and on the hold (proposalsAbout).
+    [
+      `with ids as (select gen_random_uuid() as hold_id),
+       run as (
+         insert into agent_trajectories (trigger, status, subject_kind, subject_id, scope_type, steps)
+         select 'command-bar', 'failed', 'agent', 'command-bar', 'platform',
+                jsonb_build_array(
+                  jsonb_build_object('proposalId', ids.hold_id::text, 'action', 'block_user_feature',
+                    'input', jsonb_build_object('user_id', $1::text,
+                                                'reason', 'her step reason, round 9'),
+                    'output', jsonb_build_object('status', 'proposed')),
+                  jsonb_build_object('proposalId', ids.hold_id::text,
+                    'output', jsonb_build_object('status', 'rejected', 'note', 'she wrote from home')))
+           from ids
+         returning id
+       )
+       insert into proposals (id, operation_id, session_id, trajectory_id, label, actor_id,
+                              actor_role, effective_risk, payload, status, decision_note)
+       select ids.hold_id, 'op6', 's', run.id::text, 'block_user_feature', 'command-bar', 'agent',
+              'restricted', jsonb_build_object('user_id', $1::text, 'reason', 'her address',
+                                               'note', 'a note about her, round 10'),
+              'rejected', 'she wrote from home'
+         from ids, run`,
+      [user],
+    ],
+    // Round 10, N-B and N-C: a run's steps — one about someone else keeps its free text; one
+    // erasure step about the user keeps its listed reason.
+    [
+      `insert into agent_trajectories (trigger, status, subject_kind, subject_id, scope_type, steps)
+       values ('command-bar', 'completed', 'agent', 'command-bar', 'platform',
+               jsonb_build_array(
+                 jsonb_build_object('action', 'block_user_feature',
+                   'input', jsonb_build_object('user_id', $2::text,
+                                               'reason', 'about someone else, round 10')),
+                 jsonb_build_object('action', 'purge_user_data',
+                   'input', jsonb_build_object('userId', $1::text, 'reason', 'account-deletion',
+                                               'operationId', 'op-round10-purge'))))`,
+      [user, other],
+    ],
+    // Round 9, I-3: decided erasures about the user — one with a listed reason (kept), one with
+    // free text in its reason (an old hold, or one held before the check: erased).
+    [
+      `insert into proposals (operation_id, session_id, trajectory_id, label, actor_id,
+                              actor_role, effective_risk, payload, status)
+       values ('op7', 's', 't', 'purge_user_data', 'command-bar', 'agent', 'restricted',
+               jsonb_build_object('userId', $1::text, 'reason', 'legal-order'), 'rejected'),
+              ('op8', 's', 't', 'purge_user_data', 'command-bar', 'agent', 'restricted',
+               jsonb_build_object('userId', $1::text, 'reason', 'she asked, round 9 purge text'),
+               'rejected')`,
+      [user],
+    ],
   ];
   for (const [text, values] of statements) await sql(t, text, values);
   // The entitlement catalog is platform-owned: a group is made on the owner connection.
@@ -714,6 +766,45 @@ dbDescribe(`${SUITE} erasure`, () => {
     });
     const purged = await t.run(() => hardPurgeUser(user));
     expect(purged).toMatchObject({ success: true, errors: [] });
+
+    // Round 9, I-2: by text — the free text written about the user is gone from every run's
+    // steps and every hold (a step's input reason, a decision's note, an erasure's free reason),
+    // and an erasure's listed reason stays.
+    for (const needle of [
+      "her step reason, round 9",
+      "she wrote from home",
+      "her address",
+      "round 9 purge text",
+      // Round 10, I-B: any free-text key of a hold about the user, not only its reason.
+      "a note about her, round 10",
+    ]) {
+      const [left] = await sql(
+        t,
+        `select (select count(*) from agent_trajectories where steps::text like '%' || $1 || '%')::int
+                + (select count(*) from proposals where to_jsonb(proposals)::text like '%' || $1 || '%')::int as n`,
+        [needle]
+      );
+      expect([needle, left.n]).toEqual([needle, 0]);
+    }
+    const [listed] = await sql(
+      t,
+      "select payload->>'reason' as reason from proposals where operation_id = 'op7'",
+      []
+    );
+    expect(listed).toEqual({ reason: "legal-order" });
+    // Round 10, N-B: a step that does not name the user keeps its free text; N-C: an erasure's
+    // step keeps its listed reason.
+    const [kept] = await sql(
+      t,
+      `select (select count(*) from agent_trajectories
+                where steps::text like '%about someone else, round 10%')::int as other,
+              (select count(*) from agent_trajectories
+                where steps @> jsonb_build_array(jsonb_build_object('input',
+                  jsonb_build_object('operationId', 'op-round10-purge',
+                                     'reason', 'account-deletion'))))::int as listed`,
+      []
+    );
+    expect(kept).toEqual({ other: 1, listed: 1 });
 
     const after = await remaining(t, user);
     // Every entry: nothing names the user — deleted, or anonymised so it no longer does. The

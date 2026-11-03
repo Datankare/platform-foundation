@@ -55,6 +55,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withTenantTx } from "@/platform/data";
 import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
 import { checkRoleAssignment, type RoleRefusal } from "@/platform/auth/role-governance";
+import { assignUserRole } from "@/platform/auth/role-assignment";
 import { findRole, findUser } from "@/platform/auth/role-lookup";
 import { auditedResponse } from "@/platform/auth/audit";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
@@ -175,7 +176,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
   const parsed = parseUserListFilters(params);
   if (!parsed.ok) {
     return apiError("request.invalid_value", {
-      params: { field: parsed.field, allowed: parsed.allowed },
+      params: { field: parsed.field, allowed: [...parsed.allowed] },
       request,
     });
   }
@@ -380,23 +381,21 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
       try {
         outcome = await withTenantTx(
           async (tx): Promise<"changed" | "gone" | RoleRefusal> => {
-            const user = await findUser(tx, target.id, { forUpdate: true });
-            const current = user?.roleId ? await findRole(tx, { id: user.roleId }) : null;
-            const role = await findRole(tx, { id: newRole.id });
-            if (!user || !role || (user.roleId && !current)) return "gone";
-            const now = checkRoleAssignment(admin, user.id, role, current);
-            if (now) return now;
-            await tx.query("update users set role_id = $2::uuid where id = $1::uuid", [
-              user.id,
-              role.id,
-            ]);
+            // The one role writer (platform/auth/role-assignment.ts, audit C-5): the user
+            // locked, the rules applied to what the update changes.
+            const now = await assignUserRole(tx, admin, target.id, { id: newRole.id });
+            // "stale" only answers a held change's expected role, which this does not pass.
+            if (now.kind === "not_found" || now.kind === "stale") return "gone";
+            if (now.kind === "refused") return now.refusal;
             return "changed";
           }
         );
       } catch (error) {
+        // The audit record's reason is fixed text; the error's own is logged by internalError
+        // (round 14, item 12).
         return {
           success: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: "The change could not be written.",
           response: internalError(error, {
             request,
             context: "Admin users query failed",

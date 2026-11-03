@@ -37,6 +37,8 @@ import type {
   SessionEventSubscriber,
   VersionedState,
 } from "./types";
+import { sameId } from "@/platform/auth/same-id";
+import { assertDistinctParticipants, initTurnState } from "./turn";
 
 // ── Event subscribers (D8) ────────────────────────────────────────────
 
@@ -139,6 +141,8 @@ export async function createSession<TState, TAction, TConfig>(
   const { definition, config, participants, budget } = args;
   // 128-bit: sessionId gates access to session state (P4).
   const sessionId = args.sessionId ?? `sess_${generateSecureId()}`;
+  // Each participant once, in one spelling of their id — refused before anything is stored.
+  assertDistinctParticipants(participants);
 
   const store = getActivityStateStore<TState>();
   const initial = definition.initialState(config);
@@ -151,13 +155,7 @@ export async function createSession<TState, TAction, TConfig>(
   );
 
   const turnBased = definition.capabilities.includes("turn-based");
-  const turn = turnBased
-    ? {
-        order: participants.map((p) => p.actorId),
-        currentIndex: 0,
-        turnNumber: 1,
-      }
-    : undefined;
+  const turn = turnBased ? initTurnState(participants) : undefined;
 
   // Persisted so the session can be reconstructed later (TASK-071). Without it,
   // state exists and the session shape does not.
@@ -236,7 +234,7 @@ export async function dispatch<TState, TAction, TConfig>(
   // Turn enforcement (D6 core)
   if (session.turn) {
     const expected = session.turn.order[session.turn.currentIndex];
-    if (expected !== actor.actorId) {
+    if (!sameId(expected, actor.actorId)) {
       throw new ActionRejectedError(
         `not ${actor.actorId}'s turn (expected ${expected})`,
         "not-your-turn"
@@ -373,7 +371,7 @@ export async function loadSession<TState, TAction, TConfig>(
         `does not persist meta.`
     );
   }
-  if (meta.definitionId !== args.definition.id) {
+  if (!sameId(meta.definitionId, args.definition.id)) {
     throw new Error(
       `app-framework: session ${args.sessionId} belongs to definition ` +
         `${meta.definitionId}, not ${args.definition.id}`
@@ -382,7 +380,7 @@ export async function loadSession<TState, TAction, TConfig>(
 
   // ADR-049 D2: only a participant may load a session. Checked before repair, so a
   // non-participant cannot even trigger a repair write on someone else's session.
-  if (!meta.participants.some((p) => p.actorId === args.actor.actorId)) {
+  if (!meta.participants.some((p) => sameId(p.actorId, args.actor.actorId))) {
     throw new SessionAccessDeniedError(args.sessionId, args.actor.actorId);
   }
 

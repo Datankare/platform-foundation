@@ -73,7 +73,7 @@ describe("every audited() call site's flag matches what its act reaches (AST)", 
     expect(external).toEqual(
       expect.arrayContaining([
         "platform/auth/gdpr-deletion.ts",
-        "app/api/admin/gdpr/route.ts",
+        "app/api/admin/ai/handlers/purge.ts",
         "platform/jobs/operator.ts",
       ])
     );
@@ -177,6 +177,108 @@ describe("the scan (self-tests on synthetic sources)", () => {
         site(`export const e = () => audited(E, async () => dbOnly("x"));`),
       ])
     ).toEqual([]);
+  });
+
+  it("reaches through an interface member tagged @external, called on any value (round 9, P-1)", () => {
+    const AUTHORITY: SourceText = {
+      path: "platform/x/authority.ts",
+      text: `
+        export interface Authority {
+          /** Run the approved action. @external It runs any action, which may reach anywhere. */
+          resume(id: string): Promise<void>;
+          /** Read only. */
+          name(): string;
+        }
+      `,
+    };
+    expect(
+      run([
+        HELPERS,
+        BARREL,
+        AUTHORITY,
+        site(`
+          export async function f(held: { authority: Authority }) {
+            await audited(E, async () => held.authority.resume("x"));
+            await audited(E, async () => held.authority.name());
+          }`),
+      ])
+    ).toEqual([expect.stringMatching(/\.resume \(@external member\)/)]);
+  });
+
+  it("reaches a tagged member through .call/.apply, element access, destructuring, and a tagged class method (round 10, N-D)", () => {
+    const AUTHORITY: SourceText = {
+      path: "platform/x/authority.ts",
+      text: `
+        export interface Authority {
+          /** @external Runs any action. */
+          resume(id: string): Promise<void>;
+        }
+        export class Runner {
+          /** @external Calls out. */
+          async dispatch(id: string) { return id; }
+          async read(id: string) { return id; }
+        }
+      `,
+    };
+    const check = (body: string) =>
+      run([
+        HELPERS,
+        BARREL,
+        AUTHORITY,
+        site(`export async function f(held: any, r: Runner) { ${body} }`),
+      ]);
+    expect(
+      check(
+        `await audited(E, async () => held.authority.resume.call(held.authority, "x"));`
+      )
+    ).toEqual([expect.stringMatching(/\.resume \(@external member\)/)]);
+    expect(
+      check(
+        `await audited(E, async () => held.authority.resume.apply(held.authority, ["x"]));`
+      )
+    ).toEqual([expect.stringMatching(/\.resume \(@external member\)/)]);
+    expect(check(`await audited(E, async () => held.authority["resume"]("x"));`)).toEqual(
+      [expect.stringMatching(/resume \(@external member\)/)]
+    );
+    expect(
+      check(
+        `await audited(E, async () => { const { resume } = held.authority; return resume("x"); });`
+      )
+    ).toEqual([expect.stringMatching(/resume \(@external member\)/)]);
+    expect(check(`await audited(E, async () => r.dispatch("x"));`)).toEqual([
+      expect.stringMatching(/\.dispatch \(@external member\)/),
+    ]);
+    expect(check(`await audited(E, async () => r.read("x"));`)).toEqual([]);
+  });
+
+  it("two functions that bind one name to different members: the tagged one is still seen (round 11, nit 6)", () => {
+    const AUTHORITY: SourceText = {
+      path: "platform/x/authority.ts",
+      text: `
+        export interface Authority {
+          /** @external Runs any action. */
+          resume(id: string): Promise<void>;
+          read(id: string): Promise<void>;
+        }
+      `,
+    };
+    // The tagged binding first, the untagged one after: a cache of one member per name kept the
+    // last (read), and missed the call to resume.
+    expect(
+      run([
+        HELPERS,
+        BARREL,
+        AUTHORITY,
+        site(`
+          export async function f(held: any) {
+            await audited(E, async () => { const { resume: go } = held.authority; return go("x"); });
+          }
+          export async function g(held: any) {
+            const { read: go } = held.authority;
+            return go("y");
+          }`),
+      ])
+    ).toEqual([expect.stringMatching(/resume \(@external member\)/)]);
   });
 
   it("an act passed by name is read; an act it cannot read is reported", () => {

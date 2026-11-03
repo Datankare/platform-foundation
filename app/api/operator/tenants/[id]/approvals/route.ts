@@ -26,7 +26,8 @@ export const GET = tenantRoute(async function GET(
     try {
       return NextResponse.json({
         tenantId: id,
-        approvals: await listPendingApprovals([COMMAND_BAR_HOLDS]),
+        // Summaries only where the operator could decide the hold (round 2, N2).
+        approvals: await listPendingApprovals([COMMAND_BAR_HOLDS], guard.admin),
       });
     } catch (error) {
       return internalError(error, { request, context: "Tenant approvals read failed" });

@@ -19,7 +19,8 @@ import {
 } from "@/platform/agents/governed-agent-config";
 import { writeGovernedConfig } from "@/platform/admin/governed-config";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
-import { fromGovernedConfig, type ActionResult } from "./shared";
+import { coded, fromGovernedConfig, type ActionResult } from "./shared";
+import { sameId } from "@/platform/auth/same-id";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -60,10 +61,8 @@ async function readRegistry(): Promise<[string, TrustedAgentRecord][] | null> {
   return wellFormed ? structuredClone(pairs as [string, TrustedAgentRecord][]) : null;
 }
 
-const UNREADABLE: ActionResult = {
-  success: false,
-  error: "The agent registry could not be read, so nothing was changed.",
-};
+/** The registry could not be read: nothing was changed (TASK-199: coded). */
+const UNREADABLE: ActionResult = coded("service.unavailable", { service: "agents" });
 
 async function writeRegistry(
   pairs: [string, TrustedAgentRecord][],
@@ -84,11 +83,11 @@ export async function handleRegisterAgent(
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const agentId: string = input.agent_id;
-  if (!agentId) return { success: false, error: "agent_id is required" };
+  if (!agentId) return coded("request.missing_fields", { fields: ["agent_id"] });
   const pairs = await readRegistry();
   if (!pairs) return UNREADABLE;
-  if (pairs.some(([id]) => id === agentId)) {
-    return { success: false, error: `Agent "${agentId}" is already registered` };
+  if (pairs.some(([id]) => sameId(id, agentId))) {
+    return coded("admin.already_exists");
   }
   const record: TrustedAgentRecord = {
     owner: input.owner || "first-party",
@@ -109,8 +108,8 @@ export async function handleSuspendAgent(
   const reactivate: boolean = input.reactivate === true;
   const pairs = await readRegistry();
   if (!pairs) return UNREADABLE;
-  const entry = pairs.find(([id]) => id === agentId);
-  if (!entry) return { success: false, error: `Agent "${agentId}" is not registered` };
+  const entry = pairs.find(([id]) => sameId(id, agentId));
+  if (!entry) return coded("admin.target_not_found", { target: "agent" });
   entry[1].status = reactivate ? "active" : "suspended";
   return writeRegistry(
     pairs,
@@ -128,8 +127,8 @@ export async function handleSetAgentScope(
   const scopes: string[] = Array.isArray(input.scopes) ? input.scopes : [];
   const pairs = await readRegistry();
   if (!pairs) return UNREADABLE;
-  const entry = pairs.find(([id]) => id === agentId);
-  if (!entry) return { success: false, error: `Agent "${agentId}" is not registered` };
+  const entry = pairs.find(([id]) => sameId(id, agentId));
+  if (!entry) return coded("admin.target_not_found", { target: "agent" });
   entry[1].scopes = scopes;
   return writeRegistry(pairs, admin, `Set scope of ${agentId} to [${scopes.join(", ")}]`);
 }
@@ -142,15 +141,15 @@ export async function handleSetAgentTtl(
   const agentId: string = input.agent_id;
   const ttl: number = input.max_token_ttl;
   if (typeof ttl !== "number" || ttl <= 0) {
-    return {
-      success: false,
-      error: "max_token_ttl must be a positive number of seconds",
-    };
+    return coded("request.invalid_value", {
+      field: "max_token_ttl",
+      allowed: ["a positive number of seconds"],
+    });
   }
   const pairs = await readRegistry();
   if (!pairs) return UNREADABLE;
-  const entry = pairs.find(([id]) => id === agentId);
-  if (!entry) return { success: false, error: `Agent "${agentId}" is not registered` };
+  const entry = pairs.find(([id]) => sameId(id, agentId));
+  if (!entry) return coded("admin.target_not_found", { target: "agent" });
   entry[1].maxTokenTtl = ttl;
   return writeRegistry(pairs, admin, `Set token ceiling of ${agentId} to ${ttl}s`);
 }

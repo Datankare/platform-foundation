@@ -75,7 +75,7 @@ function shouldLog(level: LogLevel): boolean {
  * credentials (ring 6). Enforced here so one forgotten call site cannot leak them.
  */
 const REDACTED_KEYS =
-  /^(?:email|password|newpassword|oldpassword|token|accesstoken|refreshtoken|idtoken|authorization|cookie|phone|phonenumber|secret|apikey|api_key)$/i;
+  /^(?:email|password|newpassword|oldpassword|token|accesstoken|refreshtoken|idtoken|authorization|cookie|phone|phonenumber|secret|apikey|api_key|clientsecret|client_secret|codeverifier|code_verifier|currentcode|current_code)$/i;
 
 /** A copy of `value` with every REDACTED_KEYS field replaced, to a bounded depth. */
 export function redact(value: unknown, depth = 0): unknown {

@@ -14,8 +14,12 @@ import { mayChangePlatformCatalog } from "@/platform/admin/config-scope";
 import { clearPermissionsCache } from "@/platform/auth/permissions-cache";
 import type { Tx } from "@/platform/data";
 import {
+  applyRule,
   catalogTx,
+  coded,
   failedAsResult,
+  NO_FACTS,
+  type ApproverRule,
   operatorOnly,
   refusal,
   runAudited,
@@ -24,16 +28,68 @@ import {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/**
+ * The rules each entitlement change applies to its requester, and an approver of the change held
+ * for them must satisfy too (TASK-194, audit C-2). The coded refusal, or null; read errors throw.
+ */
+function decideCreateEntitlementGroup(
+  input: Record<string, any>,
+  _facts: null,
+  admin: VerifiedAdmin
+): ActionResult | null {
+  if (!mayChangePlatformCatalog(admin)) return operatorOnly();
+  const granted = Array.isArray(input.permissions) ? input.permissions.map(String) : [];
+  // An entitlement grants its permissions to whoever holds it (TASK-145).
+  const refused = checkPermissionGrant(admin, granted);
+  return refused ? refusal(refused) : null;
+}
+
+export const createEntitlementGroupRule: ApproverRule<null> = {
+  facts: NO_FACTS,
+  decide: decideCreateEntitlementGroup,
+};
+
+export function checkCreateEntitlementGroup(
+  input: Record<string, any>,
+  admin: VerifiedAdmin
+): Promise<ActionResult | null> {
+  return applyRule(createEntitlementGroupRule, input, admin);
+}
+
+type GroupFacts = Awaited<ReturnType<typeof groupWithPermissions>>;
+
+function decideSetEntitlementGroupActive(
+  _input: Record<string, any>,
+  group: GroupFacts,
+  admin: VerifiedAdmin
+): ActionResult | null {
+  if (!mayChangePlatformCatalog(admin)) return operatorOnly();
+  if (!group) return null; // the change itself reports it missing
+  const refused = checkPermissionGrant(admin, group.permissions);
+  return refused ? refusal(refused) : null;
+}
+
+export const setEntitlementGroupActiveRule: ApproverRule<GroupFacts> = {
+  facts: (input) =>
+    catalogTx((tx) => groupWithPermissions(tx, String(input.group_id ?? ""), false)),
+  decide: decideSetEntitlementGroupActive,
+};
+
+export function checkSetEntitlementGroupActive(
+  input: Record<string, any>,
+  admin: VerifiedAdmin
+): Promise<ActionResult | null> {
+  return applyRule(setEntitlementGroupActiveRule, input, admin);
+}
+
 export async function handleCreateEntitlementGroup(
   input: Record<string, any>,
   admin: VerifiedAdmin
 ): Promise<ActionResult> {
   const { code, display_name, permissions } = input;
-  if (!mayChangePlatformCatalog(admin)) return operatorOnly();
+  const refused = await checkCreateEntitlementGroup(input, admin);
+  if (refused) return refused;
   const granted = Array.isArray(permissions) ? permissions.map(String) : [];
-  // An entitlement grants its permissions to whoever holds it (TASK-145).
-  const refused = checkPermissionGrant(admin, granted);
-  if (refused) return refusal(refused);
 
   return runAudited(
     {
@@ -109,11 +165,16 @@ export async function handleSetEntitlementGroupActive(
   const groupId = String(input.group_id ?? "");
   const isActive = input.is_active;
   if (typeof isActive !== "boolean" || !UUID.test(groupId)) {
-    return { success: false, error: "group_id and is_active are required" };
+    return typeof isActive !== "boolean"
+      ? coded("request.invalid_value", { field: "is_active", allowed: ["true", "false"] })
+      : coded("request.invalid_value", {
+          field: "group_id",
+          allowed: ["an entitlement group id"],
+        });
   }
   if (!mayChangePlatformCatalog(admin)) return operatorOnly();
   const group = await catalogTx((tx) => groupWithPermissions(tx, groupId, false));
-  if (!group) return { success: false, error: "Entitlement group not found" };
+  if (!group) return coded("admin.target_not_found", { target: "entitlement group" });
   const refused = checkPermissionGrant(admin, group.permissions);
   if (refused) return refusal(refused);
 
@@ -132,7 +193,8 @@ export async function handleSetEntitlementGroupActive(
       failedAsResult(() =>
         catalogTx(async (tx) => {
           const now = await groupWithPermissions(tx, group.id, true);
-          if (!now) return { success: false, error: "Entitlement group not found" };
+          if (!now)
+            return coded("admin.target_not_found", { target: "entitlement group" });
           const refusedNow = checkPermissionGrant(admin, now.permissions);
           if (refusedNow) return refusal(refusedNow);
           await tx.query(

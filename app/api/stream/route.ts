@@ -7,10 +7,12 @@
  * window by window — audit X-11.
  *
  * The proxy only checks that credentials are present; this handler verifies them
- * (requireActorWithStatus — signed-in users only, governed by account status under the
- * `stream` feature). Every field the caller may send is bounded server-side
- * (platform/ai/stream-policy), and the input is screened before any model call. Errors are coded
- * (ADR-051); an upstream failure is logged in full and reported to the client by code only.
+ * (requireActorWithStatus — signed-in users only, governed by account status under the `stream`
+ * feature — not gated on can_translate: the stream is the assistant, not translation, and no
+ * catalog permission governs it; TASK-194 round 1, C6, platform/auth/feature-permissions.ts). Every
+ * field the caller may send is bounded server-side (platform/ai/stream-policy), and the input is
+ * screened before any model call. Errors are coded (ADR-051); an upstream failure is logged in full
+ * and reported to the client by code only.
  *
  * GenAI Principles:
  *   P1  — All AI through orchestration (uses orchestrator.stream())

@@ -45,6 +45,7 @@ import {
 } from "jose";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { getSingleton } from "@/platform/kernel/singleton";
+import { sameId } from "@/platform/auth/same-id";
 
 /**
  * The longest one request waits for the signing keys, in all — the backoff and every fetch it
@@ -320,7 +321,7 @@ export async function verifyAccessTokenSignature(
     return { ok: false, reason: code ?? "signature" };
   }
   if (claims.token_use !== "access") return { ok: false, reason: "not an access token" };
-  if (claims.client_id !== expect.clientId)
+  if (!sameId(claims.client_id, expect.clientId))
     return { ok: false, reason: "issued to another app client" };
   return { ok: true, claims };
 }

@@ -93,8 +93,11 @@ import {
   handleRejectChange,
   dispatchConfigTool,
   CONFIG_TOOLS,
+  configFailure,
 } from "../config-handlers";
+import { logger } from "@/lib/logger";
 import { TOOL_BOUNDARIES } from "../types";
+import { getProposalStore } from "@/platform/agents/proposal-store";
 import { runWithTenant } from "@/platform/tenancy/context";
 import type { EnhancedConfigEntry, ToolExecutionContext } from "../types";
 
@@ -187,6 +190,115 @@ describe("handleGetConfig", () => {
 // ═══════════════════════════════════════════════════════════════════════
 // Tool: update_config
 // ═══════════════════════════════════════════════════════════════════════
+
+// Round 14, item 3: a write that did not complete is coded by what the store said, for an update
+// and for a reset alike; and an admin.action_failed answer — given or fallen back to — is logged.
+describe("a write that did not complete, coded (round 14, item 3)", () => {
+  const SHARED = Object.freeze({
+    tenantId: "11111111-1111-4111-8111-111111111111",
+    mode: "shared" as const,
+  });
+  const write = () =>
+    handleUpdateConfig({
+      key: "rate_limit_rpm",
+      value: 200,
+      changeComment: "c",
+      actorId: "admin-1",
+      confirmed: true,
+    });
+  const reset = () =>
+    runWithTenant(SHARED, () =>
+      handleResetConfig({
+        key: "rate_limit_rpm",
+        changeComment: "c",
+        actorId: "admin-1",
+        confirmed: true,
+      })
+    );
+  beforeEach(() => {
+    mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
+    mockIsApprovalRequired.mockResolvedValue(false);
+  });
+
+  it.each([
+    [
+      { success: false, error: "commit lost", indeterminate: true },
+      "admin.write_indeterminate",
+      {},
+    ],
+    [
+      { success: false, error: "The audit log is unavailable", auditUnavailable: true },
+      "service.unavailable",
+      { service: "audit" },
+    ],
+    [{ success: false, error: "constraint x" }, "admin.action_failed", {}],
+  ])("an update whose write answered %j is %s", async (written, code, params) => {
+    mockGetEnhancedConfig.mockResolvedValue(makeEntry());
+    mockSetConfigWithHistory.mockResolvedValue(written);
+    const r = await write();
+    expect(r.data).toMatchObject({
+      applied: false,
+      errorCode: code,
+      errorParams: params,
+    });
+  });
+
+  it.each([
+    [
+      { success: false, error: "commit lost", indeterminate: true },
+      "admin.write_indeterminate",
+    ],
+    [{ success: false, error: "audit", auditUnavailable: true }, "service.unavailable"],
+  ])("a reset whose clear answered %j is %s", async (written, code) => {
+    mockGetEnhancedConfig.mockResolvedValue(
+      makeEntry({
+        overridden: true,
+        tenantOverridable: true,
+        value: 5,
+        platformValue: 100,
+      })
+    );
+    mockClearTenantConfig.mockResolvedValue(written);
+    const r = await reset();
+    expect(r.data).toMatchObject({ applied: false, errorCode: code });
+  });
+
+  it("logs an admin.action_failed answer, given or fallen back to", () => {
+    (logger.error as jest.Mock).mockClear();
+    const given = configFailure({
+      toolId: "update_config",
+      success: true,
+      data: { applied: false, error: "constraint x", errorCode: "admin.action_failed" },
+      durationMs: 0,
+    });
+    expect(given.code).toBe("admin.action_failed");
+    const fallen = configFailure({
+      toolId: "update_config",
+      success: false,
+      data: null,
+      error: "no code",
+      durationMs: 0,
+    });
+    expect(fallen.code).toBe("admin.action_failed");
+    expect(logger.error).toHaveBeenCalledWith(
+      "Config tool failed",
+      expect.objectContaining({ error: "constraint x" })
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      "Config tool failed",
+      expect.objectContaining({ error: "no code" })
+    );
+    // A coded refusal is no failure to log.
+    (logger.error as jest.Mock).mockClear();
+    configFailure({
+      toolId: "update_config",
+      success: true,
+      data: { errorCode: "approvals.already_pending", errorParams: { key: "k" } },
+      durationMs: 0,
+    });
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+});
 
 describe("handleUpdateConfig", () => {
   it("returns preview without applying when confirmed is false (P10)", async () => {
@@ -848,9 +960,12 @@ describe("dispatchConfigTool", () => {
     expect(context.steps[0].boundary).toBe("commitment");
   });
 
+  // Each held write names an entry that takes its value: a change is held only as its handler
+  // would take it (round 12, pre-existing 1 — these used no entry at all).
   it("holds a write to a dual-control key for human approval (ADR-039 F2b-2)", async () => {
     mockGetConfig.mockResolvedValue(["signups_enabled"]);
-    mockGetEnhancedConfig.mockResolvedValue(null);
+    mockGetEnhancedConfig.mockResolvedValue(makeEntry({ key: "signups_enabled" }));
+    mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
 
     const context: ToolExecutionContext = {
       trajectoryId: "traj-dc-1",
@@ -869,6 +984,121 @@ describe("dispatchConfigTool", () => {
     expect(result.success).toBe(false);
     expect(result.approval?.requiredApprover).toBe("user");
     expect(result.approval?.proposalId).toBeTruthy();
+  });
+
+  // Round 12, pre-existing 1: an invalid value — or a key with no entry — is refused as the
+  // handler refuses it, never held.
+  it.each([
+    ["a value its entry refuses", () => makeEntry({ key: "signups_enabled" }), false],
+    ["a key with no entry", () => null, true],
+  ])("never holds a dual-controlled write with %s", async (_label, entry, valid) => {
+    mockGetConfig.mockResolvedValue(["signups_enabled"]);
+    mockGetEnhancedConfig.mockResolvedValue(entry());
+    mockValidateConfigValue.mockReturnValue(
+      valid
+        ? { valid: true, errors: [] }
+        : { valid: false, errors: ["must be a boolean"] }
+    );
+    const result = await dispatchConfigTool(
+      "update_config",
+      { key: "signups_enabled", value: "she lives at 1 Main St", changeComment: "c" },
+      {
+        trajectoryId: "traj-dc-bad",
+        agentId: "agent-test",
+        onBehalfOf: "admin-1",
+        steps: [],
+      }
+    );
+    expect(result.held).toBeUndefined();
+    expect(result.data).toMatchObject({ applied: false });
+    expect(result.approval).toBeUndefined();
+    expect(
+      (await getProposalStore().query({})).filter((p) => p.trajectoryId === "traj-dc-bad")
+    ).toEqual([]);
+  });
+
+  // Round 13, P-2: nor one its scope refuses, and a reset as its handler would take it — each
+  // refused now, coded, never held for an approver to clear and the run to refuse.
+  describe("never holds a change its run would refuse (round 13, P-2)", () => {
+    const SHARED = Object.freeze({
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      mode: "shared" as const,
+    });
+    const held = (toolId: string, input: Record<string, unknown>) =>
+      runWithTenant(SHARED, () =>
+        dispatchConfigTool(
+          toolId,
+          { changeComment: "c", actorId: "admin-1", ...input },
+          {
+            trajectoryId: `traj-p2-${toolId}`,
+            agentId: "a",
+            onBehalfOf: "admin-1",
+            steps: [],
+          }
+        )
+      );
+    beforeEach(() => {
+      mockGetConfig.mockResolvedValue(["signups_enabled"]);
+      mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
+    });
+    const notHeld = async (result: Awaited<ReturnType<typeof held>>, code: string) => {
+      expect(result.held).toBeUndefined();
+      expect(result.errorCode).toBe(code);
+      expect(
+        (await getProposalStore().query({})).filter((p) =>
+          /traj-p2-/.test(p.trajectoryId)
+        )
+      ).toEqual([]);
+    };
+
+    it("an update to the platform default by a tenant admin", async () => {
+      mockGetEnhancedConfig.mockResolvedValue(
+        makeEntry({ key: "signups_enabled", tenantOverridable: true })
+      );
+      await notHeld(
+        await held("update_config", {
+          key: "signups_enabled",
+          value: true,
+          scope: "platform",
+        }),
+        "admin.config_scope_refused"
+      );
+    });
+
+    it("an update to a key that governs the platform, by a tenant admin", async () => {
+      mockGetEnhancedConfig.mockResolvedValue(
+        makeEntry({ key: "signups_enabled", tenantOverridable: false })
+      );
+      await notHeld(
+        await held("update_config", { key: "signups_enabled", value: true }),
+        "admin.config_scope_refused"
+      );
+    });
+
+    it("a reset of a key that governs the platform, by a tenant admin", async () => {
+      mockGetEnhancedConfig.mockResolvedValue(
+        makeEntry({ key: "signups_enabled", tenantOverridable: false, overridden: true })
+      );
+      await notHeld(
+        await held("reset_config", { key: "signups_enabled" }),
+        "admin.config_scope_refused"
+      );
+    });
+
+    it("a reset of a key with no entry", async () => {
+      mockGetEnhancedConfig.mockResolvedValue(null);
+      await notHeld(
+        await held("reset_config", { key: "signups_enabled" }),
+        "admin.target_not_found"
+      );
+    });
+
+    it("a reset its tenant may make is held, as before", async () => {
+      mockGetEnhancedConfig.mockResolvedValue(
+        makeEntry({ key: "signups_enabled", tenantOverridable: true, overridden: true })
+      );
+      expect((await held("reset_config", { key: "signups_enabled" })).held).toBe(true);
+    });
   });
 
   it("does NOT hold a write to a non-dual-control key", async () => {
@@ -902,7 +1132,8 @@ describe("dispatchConfigTool", () => {
     ],
   ])("holds every config write when %s (fail closed)", async (_label, arrange) => {
     arrange();
-    mockGetEnhancedConfig.mockResolvedValue(null);
+    mockGetEnhancedConfig.mockResolvedValue(makeEntry({ key: "rate_limit_rpm" }));
+    mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
     const result = await dispatchConfigTool(
       "update_config",
       { key: "rate_limit_rpm", value: 1, changeComment: "x", actorId: "admin-1" },
@@ -920,7 +1151,8 @@ describe("dispatchConfigTool", () => {
     "always holds a change to %s, even when the list omits it",
     async (key) => {
       mockGetConfig.mockResolvedValue([]);
-      mockGetEnhancedConfig.mockResolvedValue(null);
+      mockGetEnhancedConfig.mockResolvedValue(makeEntry({ key }));
+      mockValidateConfigValue.mockReturnValue({ valid: true, errors: [] });
       const result = await dispatchConfigTool(
         "update_config",
         { key, value: [], changeComment: "remove dual control", actorId: "admin-1" },
@@ -1060,4 +1292,44 @@ describe("tool boundary map conformance (TASK-064)", () => {
       expect(ids.has(key)).toBe(true);
     }
   });
+});
+
+// TASK-194, audit C-1: each write handler acts on the key in the field CONFIG_TOOL_TARGET_FIELD
+// names — the field the execute route checks the tier of — never on the other one.
+describe("the config write handlers act on the key the route checks", () => {
+  const { CONFIG_TOOL_TARGET_FIELD } = jest.requireActual(
+    "@/platform/admin/hold-keys"
+  ) as typeof import("@/platform/admin/hold-keys");
+  const handlers: Record<string, (input: any) => Promise<unknown>> = {
+    update_config: handleUpdateConfig,
+    reset_config: handleResetConfig,
+    request_approval: handleRequestApproval,
+  };
+
+  it("names a handler for every mapped tool, and a mapping for every write handler", () => {
+    expect(Object.keys(CONFIG_TOOL_TARGET_FIELD).sort()).toEqual(
+      Object.keys(handlers).sort()
+    );
+  });
+
+  it.each(Object.keys(handlers))(
+    "%s reads only the key in its mapped field",
+    async (toolId) => {
+      mockGetEnhancedConfig.mockResolvedValue(null); // stops at the first read
+      await runWithTenant(
+        { tenantId: "00000000-0000-4000-8000-000000000001", mode: "single" },
+        () =>
+          handlers[toolId]({
+            key: "checked.when.key",
+            configKey: "checked.when.configKey",
+            value: 1,
+            proposedValue: 1,
+            changeComment: "c",
+            actorId: "00000000-0000-4000-8000-0000000000aa",
+          })
+      );
+      const read = mockGetEnhancedConfig.mock.calls.map((c) => c[0]);
+      expect(read).toEqual([`checked.when.${CONFIG_TOOL_TARGET_FIELD[toolId]}`]);
+    }
+  );
 });

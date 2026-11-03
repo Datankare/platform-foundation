@@ -61,7 +61,11 @@ dbDescribe("PostgresApprovalPolicyStore", () => {
       ]);
     });
 
-    it("carries a non-default approver forward and reads non-list rules as empty", async () => {
+    // Round 12, I-2: no writer ever stored a default other than "user" (round 11's tool path was
+    // never released); a row set by hand that says otherwise is applied as "user" — stricter,
+    // never weaker — and not carried into the next version. (Until round 12 it was carried and
+    // applied, to restricted actions no rule matched too.)
+    it("reads a hand-set non-person default as a person's, never carries it, and reads non-list rules as empty", async () => {
       await tenant.run(() =>
         withTenantTx((tx) =>
           tx.query(
@@ -70,9 +74,31 @@ dbDescribe("PostgresApprovalPolicyStore", () => {
           )
         )
       );
-      expect(await store.load()).toEqual({ version: 7, default: "agent", rules: [] });
+      expect(await store.load()).toEqual({ version: 7, default: "user", rules: [] });
       const next = await store.setRules([], "admin");
-      expect(next).toEqual({ version: 8, default: "agent", rules: [] });
+      expect(next).toEqual({ version: 8, default: "user", rules: [] });
+      const { rows } = await tenant.run(() =>
+        withTenantTx((tx) =>
+          tx.query<{ default_approver: string }>(
+            "select default_approver from agent_approval_policy where version = 8"
+          )
+        )
+      );
+      expect(rows).toEqual([{ default_approver: "user" }]);
+    });
+
+    it("refuses a default approver other than a person, and a rule it refuses, writing nothing", async () => {
+      await expect(store.setRules([], "admin", "agent")).rejects.toThrow(
+        /default approver/
+      );
+      await expect(
+        store.setRules(
+          [{ maxRisk: "restricted", requiredApprover: "agent" }],
+          "admin",
+          "user"
+        )
+      ).rejects.toThrow(/restricted action/);
+      expect((await store.load()).version).toBe(1);
     });
 
     it("survives a burst of concurrent changes with no lost or duplicate version", async () => {

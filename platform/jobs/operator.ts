@@ -42,7 +42,8 @@ import type { JobRecord, JobScope, ScheduleState } from "./types";
 /** How long an operator's "run now" may run inside the request; the rest waits for a tick. */
 export const RUN_NOW_BUDGET_MS = 45_000;
 
-export type JobsFailure = "jobs.not_found" | "jobs.not_dead" | "audit.unavailable";
+export type JobsFailure =
+  "jobs.not_found" | "jobs.not_dead" | "jobs.schedule_required" | "audit.unavailable";
 
 export type JobsResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -64,6 +65,8 @@ export interface ScheduleView {
   readonly minIntervalMinutes: number;
   readonly maxIntervalMinutes: number;
   readonly tenantOptOutKey: string | null;
+  /** Cannot be turned off (TASK-194 round 18): the screen offers no "Turn off". */
+  readonly required: boolean;
   readonly settings: { readonly enabled: string; readonly interval: string };
   /**
    * Never run yet: null. nextRunAt is when the scheduler will take the next slot under the
@@ -92,6 +95,7 @@ export async function describeSchedules(): Promise<ScheduleView[]> {
         minIntervalMinutes: def.schedule.minIntervalMinutes,
         maxIntervalMinutes: def.schedule.maxIntervalMinutes,
         tenantOptOutKey: def.schedule.tenantOptOutKey ?? null,
+        required: def.schedule.required === true,
         settings: scheduleKeys(def.kind),
         state: state && { ...state, nextRunAt: effectiveNextRun(state, intervalMinutes) },
       });
@@ -137,6 +141,9 @@ export async function setSchedule(
 ): Promise<JobsResult<ScheduleChangeOutcome>> {
   const def = getJobDefinition(kind);
   if (!def?.schedule) return fail("jobs.not_found");
+  // A required schedule is never turned off (TASK-194 round 18): refused, nothing written.
+  if (change.enabled === false && def.schedule.required)
+    return fail("jobs.schedule_required");
   const keys = scheduleKeys(kind);
   const writes: { key: string; value: unknown }[] = [];
   if (change.enabled !== undefined)

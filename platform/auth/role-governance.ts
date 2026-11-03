@@ -18,6 +18,7 @@
  */
 
 import type { ErrorCode } from "@/platform/errors";
+import { sameId } from "@/platform/auth/same-id";
 
 /** Why a rule refused a change: a coded error (ADR-051) and its parameters. */
 export interface RoleRefusal {
@@ -107,7 +108,8 @@ export function checkRoleAssignment(
       return { code: "auth.role_database_only", params: { role: role.name } };
     }
   }
-  if (targetUserId === admin.userId) return { code: "auth.role_self_change", params: {} };
+  if (sameId(targetUserId, admin.userId))
+    return { code: "auth.role_self_change", params: {} };
   return checkPermissionGrant(admin, [
     ...newRole.permissions,
     ...(currentRole?.permissions ?? []),

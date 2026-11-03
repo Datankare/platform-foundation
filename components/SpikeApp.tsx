@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from "react";
 import { Translation } from "@/types";
 import { canSubmitText, getCharState, canClearText } from "@/lib/inputValidation";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { readRefusal } from "@/platform/errors/refusal";
 
 const MAX_CHARS = 100;
 
@@ -119,6 +120,12 @@ export default function SpikeApp() {
         body: JSON.stringify({ text: text.trim() }),
       });
 
+      // A refusal is shown by its code, through the shared handler (TASK-181; TASK-194 added
+      // auth.permission_denied — the feature permission).
+      if (!response.ok) {
+        setError((await readRefusal(response)).message);
+        return;
+      }
       const data = await response.json();
 
       if (!data.success) {

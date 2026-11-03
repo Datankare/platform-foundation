@@ -41,6 +41,7 @@ import { auditableAccountId } from "@/platform/auth/account-identity";
 import { logger } from "@/lib/logger";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { sameId } from "@/platform/auth/same-id";
 
 /** The subject the provider verifies `accessToken` for, or undefined (unproven, or it cannot say). */
 async function verifiedSubject(accessToken: string): Promise<string | undefined> {
@@ -67,7 +68,7 @@ async function provenByRefresh(cookie: {
       cookie.refreshToken,
       cookie.userId
     );
-    return session && session.accessToken && session.userId === cookie.userId
+    return session && session.accessToken && sameId(session.userId, cookie.userId)
       ? { subject: session.userId, accessToken: session.accessToken }
       : undefined;
   } catch {

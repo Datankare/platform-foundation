@@ -6,13 +6,18 @@
  * is reported as what it is — a held or pending change is never reported as applied.
  */
 
-jest.mock("@/platform/admin/config-handlers", () => ({ dispatchConfigTool: jest.fn() }));
+jest.mock("@/platform/admin/config-handlers", () => ({
+  dispatchConfigTool: jest.fn(),
+  codedConfigFailure: jest.requireActual("@/platform/admin/config-handlers")
+    .codedConfigFailure,
+}));
 jest.mock("@/platform/auth/platform-config", () => ({ getEnhancedConfig: jest.fn() }));
 
 import { dispatchConfigTool } from "@/platform/admin/config-handlers";
 import { getEnhancedConfig } from "@/platform/auth/platform-config";
 import {
   describeFailure,
+  resetGovernedConfig,
   tierPermission,
   writeGovernedConfig,
 } from "@/platform/admin/governed-config";
@@ -114,12 +119,30 @@ describe("writeGovernedConfig", () => {
     });
   });
 
+  // Round 13, P-1: a filing refused — another change to the key already waiting — is no
+  // pending approval; it was reported pending, and the change shown as held for approval.
+  it("reports a refused two-person filing as failed, never pending", async () => {
+    entry.mockResolvedValue({ key: "k", permissionTier: "safety" });
+    dispatch.mockResolvedValue(
+      ok({
+        applied: false,
+        requiresApproval: true,
+        approvalError: 'A pending approval already exists for "k".',
+      })
+    );
+    await expect(writeGovernedConfig(safetyAdmin, change)).resolves.toMatchObject({
+      kind: "failed",
+    });
+  });
+
   it("reports validation errors as invalid", async () => {
     entry.mockResolvedValue({ key: "k", permissionTier: "standard" });
     dispatch.mockResolvedValue(ok({ applied: false, validationErrors: ["too big"] }));
     await expect(writeGovernedConfig(standardAdmin, change)).resolves.toEqual({
       kind: "invalid",
       errors: ["too big"],
+      // Uncoded (an older result): the key, and the reason the message words as "other".
+      params: { key: "k", reason: "other" },
     });
   });
 
@@ -133,6 +156,34 @@ describe("writeGovernedConfig", () => {
     await expect(writeGovernedConfig(standardAdmin, change)).resolves.toMatchObject({
       kind: "failed",
     });
+  });
+});
+
+describe("resetGovernedConfig (round 13, P-1)", () => {
+  it("reports a refused two-person filing as failed, never pending", async () => {
+    entry.mockResolvedValue({
+      key: "k",
+      permissionTier: "safety",
+      tenantOverridable: true,
+    });
+    dispatch.mockResolvedValue(
+      ok({ applied: false, requiresApproval: true, approvalError: "already waiting" })
+    );
+    await expect(
+      resetGovernedConfig(safetyAdmin, { key: "k", changeComment: "c" })
+    ).resolves.toMatchObject({ kind: "failed" });
+  });
+
+  it("reports a filed two-person approval as pending", async () => {
+    entry.mockResolvedValue({
+      key: "k",
+      permissionTier: "safety",
+      tenantOverridable: true,
+    });
+    dispatch.mockResolvedValue(ok({ applied: false, requiresApproval: true }));
+    await expect(
+      resetGovernedConfig(safetyAdmin, { key: "k", changeComment: "c" })
+    ).resolves.toMatchObject({ kind: "pending" });
   });
 });
 

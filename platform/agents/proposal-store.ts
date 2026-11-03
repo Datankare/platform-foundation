@@ -18,6 +18,7 @@ import type {
   TrajectoryStatus,
 } from "@/platform/kernel";
 import { generateUuid } from "./utils";
+import { listAgentGoals } from "./goals";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
 
@@ -39,7 +40,7 @@ const ONE_LIVE: ReadonlySet<ProposalStatus> = new Set([
 
 /** Why a run that never ended within its lease is undecided (review 11 H-1). */
 export const INDETERMINATE_NOTE =
-  "run did not end within its lease; its outcome is unknown — verify, then mark it executed or approve it again";
+  "run did not end within its lease; its outcome is unknown — verify, then mark it executed, approve it again or withdraw it";
 
 /** Why an atomic run that never ended was returned to approved (its effect rolled back with it). */
 export const ATOMIC_RECOVERED_NOTE =
@@ -84,11 +85,28 @@ export interface RecoveryTrajectories {
     from: readonly TrajectoryStatus[],
     to: TrajectoryStatus
   ): unknown;
+  /**
+   * Whether the run of `operationId` recorded its step — a commitment step carrying the operation
+   * id, in the trajectory or a continuation of it — and the trajectory's trigger: what the
+   * database recovery reads (hold-expiry.ts recoverStaleRuns; TASK-194 round 17).
+   */
+  recordedRun?(
+    trajectoryId: string,
+    operationId: string
+  ): { readonly recorded: boolean; readonly trigger?: string };
 }
 
 /** The note a withdrawn approval keeps: who had approved it and when, then why it was withdrawn. */
 export function withdrawalNote(approved: ProposalRecord, note: string): string {
   return `Approved by ${approved.decidedBy ?? "unknown"} at ${approved.decidedAt ?? "unknown"}, never run; withdrawn: ${note}`;
+}
+
+/**
+ * The note an undecided run withdrawn without running keeps (TASK-194 round 5): who had approved
+ * it and when, that its run was undecided, then why — the decider verified it did not take effect.
+ */
+export function undecidedWithdrawalNote(approved: ProposalRecord, note: string): string {
+  return `Approved by ${approved.decidedBy ?? "unknown"} at ${approved.decidedAt ?? "unknown"}, its run undecided; withdrawn, verified not applied: ${note}`;
 }
 
 export class InMemoryProposalStore implements ProposalStore {
@@ -242,24 +260,28 @@ export class InMemoryProposalStore implements ProposalStore {
 
   async resolveIndeterminate(
     proposalId: string,
-    resolution: "executed" | "approved",
+    resolution: "executed" | "approved" | "rejected",
     decidedBy: string,
     note: string
   ): Promise<ProposalRecord | undefined> {
     const now = new Date().toISOString();
+    const current = this.parts.current().get(proposalId);
     return this.transition(
       proposalId,
       ["indeterminate"],
       resolution,
-      resolution === "approved"
-        ? {
+      resolution === "executed"
+        ? { lastRunError: `marked executed by ${decidedBy}: ${note}` }
+        : {
             decidedBy,
             decidedAt: now,
-            decisionNote: note,
+            decisionNote:
+              resolution === "rejected" && current
+                ? undecidedWithdrawalNote(current, note)
+                : note,
             runToken: undefined,
             runAtomic: undefined,
           }
-        : { lastRunError: `marked executed by ${decidedBy}: ${note}` }
     );
   }
 
@@ -278,22 +300,38 @@ export class InMemoryProposalStore implements ProposalStore {
     const out: ProposalRecord[] = [];
     for (const r of [...this.parts.current().values()]) {
       if (r.status === "executing" && Date.parse(r.updatedAt) < before) {
-        const back = r.runAtomic
-          ? this.transition(r.proposalId, ["executing"], "approved", {
-              lastRunError: ATOMIC_RECOVERED_NOTE,
-              runToken: undefined,
-              runAtomic: undefined,
-            })
-          : this.transition(r.proposalId, ["executing"], "indeterminate", {
-              lastRunError: INDETERMINATE_NOTE,
-            });
+        // As the database recovery decides (round 17): a run whose step was recorded took
+        // effect — executed, before anything else; an atomic one rolled back — approved again;
+        // any other's outcome is unknown — undecided.
+        const run = trajectories?.recordedRun?.(r.trajectoryId, r.operationId);
+        const back = run?.recorded
+          ? this.transition(r.proposalId, ["executing"], "executed", {})
+          : r.runAtomic
+            ? this.transition(r.proposalId, ["executing"], "approved", {
+                lastRunError: ATOMIC_RECOVERED_NOTE,
+                runToken: undefined,
+                runAtomic: undefined,
+              })
+            : this.transition(r.proposalId, ["executing"], "indeterminate", {
+                lastRunError: INDETERMINATE_NOTE,
+              });
         if (back) {
           out.push(back);
           const move =
             RECOVERED_TRAJECTORY[
-              back.status === "approved" ? "approved" : "indeterminate"
+              back.status === "executed"
+                ? "executed"
+                : back.status === "approved"
+                  ? "approved"
+                  : "indeterminate"
             ];
-          trajectories?.moveStatus(back.trajectoryId, move.from, move.to);
+          // A workflow's trajectory is its user's to continue past a recorded step (M1).
+          const workflowsOwn =
+            back.status === "executed" &&
+            run?.trigger !== undefined &&
+            listAgentGoals().includes(run.trigger);
+          if (!workflowsOwn)
+            trajectories?.moveStatus(back.trajectoryId, move.from, move.to);
         }
       }
     }

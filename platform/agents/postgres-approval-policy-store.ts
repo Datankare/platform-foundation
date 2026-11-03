@@ -23,7 +23,12 @@ import type {
   ApprovalRule,
   ActorType,
 } from "./approval-policy-store";
-import { approvalRulesProblem, DEFAULT_APPROVAL_POLICY } from "./approval-policy-store";
+import {
+  appliedPolicy,
+  approvalPolicyProblem,
+  DEFAULT_APPROVAL_POLICY,
+  POLICY_DEFAULT_APPROVERS,
+} from "./approval-policy-store";
 import { generateUuid } from "./utils";
 import { withSavepoint, withTenantTx } from "@/platform/data";
 
@@ -56,19 +61,20 @@ export class PostgresApprovalPolicyStore implements ApprovalPolicyStore {
           order by version desc limit 1`
       )
     );
-    return rows.length ? mapRow(rows[0]) : DEFAULT_APPROVAL_POLICY;
+    return rows.length ? appliedPolicy(mapRow(rows[0])) : DEFAULT_APPROVAL_POLICY;
   }
 
   /**
    * Append a new policy version: (current max + 1, or the default's version + 1 when there is
-   * none), carrying the current default actorType forward. A unique violation on version means
-   * a concurrent writer took it; retry against the new max.
+   * none), with the default actorType given, else the current one carried forward. A unique
+   * violation on version means a concurrent writer took it; retry against the new max.
    */
   async setRules(
     rules: readonly ApprovalRule[],
-    decidedBy: string
+    decidedBy: string,
+    defaultApprover?: ActorType
   ): Promise<ApprovalPolicy> {
-    const problem = approvalRulesProblem(rules);
+    const problem = approvalPolicyProblem(rules, defaultApprover);
     if (problem) throw new Error(`approval-policy setRules refused: ${problem}`);
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < MAX_VERSION_CONFLICT_RETRIES; attempt++) {
@@ -83,8 +89,10 @@ export class PostgresApprovalPolicyStore implements ApprovalPolicyStore {
              select $1::uuid,
                     coalesce((select max(version) from agent_approval_policy), $2::int) + 1,
                     coalesce(
-                      (select default_approver from agent_approval_policy
-                        order by version desc limit 1),
+                      $6::text,
+                      (select case when default_approver = any($7::text[])
+                                   then default_approver end
+                         from agent_approval_policy order by version desc limit 1),
                       $3),
                     $4::jsonb,
                     $5
@@ -95,6 +103,9 @@ export class PostgresApprovalPolicyStore implements ApprovalPolicyStore {
                 DEFAULT_APPROVAL_POLICY.default,
                 JSON.stringify(rules),
                 decidedBy,
+                defaultApprover ?? null,
+                // A carried-forward default the store would refuse is not carried (round 12).
+                [...POLICY_DEFAULT_APPROVERS],
               ]
             )
           )

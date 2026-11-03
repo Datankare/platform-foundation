@@ -12,26 +12,37 @@
       "child_accounts_unavailable": "Accounts for children under 13 are not available yet. Nothing was created or saved."
     },
     "admin": {
-      "config_invalid_value": "That value is not allowed for {key}.",
+      "action_failed": "The action did not complete. Check its screen before you try again.",
+      "already_exists": "That already exists: choose another name.",
+      "config_invalid_value": "{reason, select, type {{key} takes {expected, select, number {a number} boolean {true or false} string {text} string_enum {text: the values it takes are {allowed}} json_array {a list} other {a value of its own type}}.} below_min {{key} must be at least {min, number}.} above_max {{key} must be at most {max, number}.} not_allowed {The values {key} takes are {allowed}.} not_serializable {That value cannot be stored for {key}.} too_large {That value is too large to store for {key} (at most {max, number} bytes).} other {That value is not allowed for {key}.}}",
       "kill_switch_failed": "The agents could not all be suspended. Nothing was changed; try again.",
       "operator_only": "Only a platform operator can change this: it is shared by every tenant.",
       "config_scope_refused": "{key} governs the platform, so only an operator can change it.",
+      "erasure_pending": "This account's erasure is already waiting for approval.",
+      "purge_incomplete": "The erasure did not complete ({status}). Run it again: every step is safe to repeat.",
+      "role_in_use": "{count, plural, one {# account still has} other {# accounts still have}} this role. Move them to another role first.",
       "self_target": "You cannot take this action on your own account.",
-      "target_not_found": "No {target} matches that request."
+      "target_not_found": "No {target} matches that request.",
+      "write_indeterminate": "The connection was lost while saving: the change may or may not have been made. Check before you retry."
     },
     "ai": {
       "request_declined": "The AI model declined this request. Rephrase it and try again."
     },
     "approvals": {
       "approver_not_allowed": "This action needs approval from someone else.",
+      "already_pending": "A change to {key} is already waiting for approval. Decide it first, then request again.",
+      "settling": "A change to {key} is being settled: whether its approved change was applied is being checked. Request again after {minutes, plural, one {# minute} other {# minutes}}.",
+      "run_in_progress": "This approved step's run has not ended, and whether it took effect is not yet known. It is listed for a decision within {minutes, plural, one {# minute} other {# minutes}}: check again then.",
+      "requester_lacks_permission": "{reason, select, removed {The account that requested this is no longer an administrator here, so it cannot run: reject it.} other {The account that requested this no longer holds {permission}: it runs once they hold it again, or reject it.}}",
       "decision_conflict": "This decision could not be recorded; the item changed. Refresh and try again.",
       "expired": "This approval has expired. Request the change again.",
       "hold_not_found": "That held action was not found.",
+      "duplicate_undecided": "Another hold for the same action on the same subject is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it.",
       "permission_required": "Clearing this change requires the {permission} permission.",
       "run_failed": "Approved, but it could not be applied. It is still approved: approve it again to retry, or reject it.",
-      "indeterminate": "This approved change was being applied and its outcome is unknown. Verify whether it took effect, then mark it executed or approve it again.",
+      "indeterminate": "This approved change was being applied and its outcome is unknown. Verify whether it took effect: if it did, mark it executed; if not, withdraw it, or approve it again (an erasure only when no other erasure of the account is open).",
       "self_approval": "You cannot approve your own change; another approver must clear it.",
-      "stale": "The setting changed after this change was requested, so nothing was changed and the request was withdrawn. Request the change again."
+      "stale": "What this change would replace changed after it was requested, so nothing was changed. Request the change again."
     },
     "auth": {
       "account_exists": "An account with this email already exists.",
@@ -52,6 +63,8 @@
       "role_protected": "The {role} role can only be changed directly in the database.",
       "role_self_change": "You cannot change your own role.",
       "sign_in_required": "Sign in to use this feature.",
+      "step_up_required": "To change two-step verification, confirm it is you: enter your password and a current code from your authenticator app. If you sign in only through your organization's single sign-on and have no password here, ask an administrator to reset two-step verification for you.",
+      "step_up_unavailable": "Your account signs in through single sign-on, so two-step verification could not be confirmed with a password. If you set a password here, check it and try again; otherwise ask an administrator to reset two-step verification for you. Nothing was changed.",
       "signups_closed": "New accounts are not being accepted here right now.",
       "sso_failed": "Single sign-on did not complete. Try another sign-in method.",
       "token_invalid": "Your session has expired. Sign in again.",
@@ -71,7 +84,8 @@
     },
     "jobs": {
       "not_dead": "Only a dead-lettered job can be replayed or discarded, and this one is not.",
-      "not_found": "That job was not found."
+      "not_found": "That job was not found.",
+      "schedule_required": "This job cannot be turned off, or set for one tenant: nothing else does what it does. You can change how often it runs."
     },
     "moderation": {
       "appeal_not_allowed": "Only blocked content can be appealed.",
@@ -99,6 +113,8 @@
       "trajectory_full": "This run has recorded as much as one run may (at most {max, number} steps, 16 MiB in all). Start a new one; nothing was done.",
       "trajectory_chain_full": "This session or run has recorded as much as one may (at most {max, number} segments of up to 1,000 steps each). Start a new one; nothing was done.",
       "invalid_value": "{field} must be one of: {allowed}.",
+      "unknown_input": "{field} is not an input of this action; allowed: {allowed}.",
+      "unknown_input_none": "{field} is not an input of this action.",
       "missing_fields": "Required: {fields}.",
       "text_empty": "Enter some text.",
       "text_too_long": "Text must be {max, number} characters or fewer."
@@ -222,22 +238,67 @@
       "approve": "Approve",
       "approve_held_label": "Approve the held change {label}",
       "reject_held_label": "Reject the held change {label}",
+      "held_no_decider": "No one in this tenant but its requester and the account it acts on may approve it again or mark it executed (another holder who fails its rules may only withdraw it): decide it here.",
       "filter": "Filter",
       "tenant_settable": "its administrators may set this",
       "platform_governed": "operators only",
       "safety_tier": "safety"
     },
+    "dual_control": {
+      "intro": "Keys that require an independent approver before a change applies. Editing this set is itself dual-controlled — changes here are held for approval.",
+      "loading": "Loading…",
+      "empty": "No keys are dual-controlled.",
+      "remove": "Remove",
+      "remove_label": "Remove {key}",
+      "add": "Add",
+      "add_placeholder": "config key to add (e.g. moderation.escalation_sla_hours)",
+      "add_label": "Config key to add to dual-control",
+      "already": "\"{key}\" is already dual-controlled.",
+      "held": "Change held for approval{id, select, none {} other { ({kind, select, approval {approval} other {proposal}} {id})}} — an independent approver must clear it in Approvals.",
+      "applied": "Change applied.",
+      "not_applied": "The change could not be applied."
+    },
     "held": {
       "mark_executed": "Took effect",
       "mark_executed_label": "Mark {label} executed: verified that it took effect",
+      "summary_target": "Account: {account}",
+      "summary_target_missing": "Account: not found",
+      "summary_reason": "Reason: {reason}",
+      "summary_dry_run": "Dry run: counts only, erases nothing",
+      "summary_role": "Role: {from} → {to}",
+      "summary_role_unknown": "unknown",
+      "summary_role_changed": "The account's role is {role} now, not the one this was asked against: approving it will be refused",
+      "summary_feature": "Feature: {feature}",
+      "summary_policy_rule": "Rule {n, number}: actions up to {risk, select, ordinary {ordinary} consequential {consequential} restricted {restricted} other {unknown}} risk are approved by {approver, select, user {a person} agent {an agent} system {the system} other {an unknown approver}}",
+      "summary_policy_rule_effects": "Rule {n, number}: actions up to {risk, select, ordinary {ordinary} consequential {consequential} restricted {restricted} other {unknown}} risk with {effects} are approved by {approver, select, user {a person} agent {an agent} system {the system} other {an unknown approver}}",
+      "summary_policy_effect": "{effect, select, stateWrite {state writes} externalCall {external calls} sendMessage {messages sent} restricted {restricted effects} other {unknown effects}}",
+      "summary_policy_no_rules": "No rules: every action goes to the default approver",
+      "summary_policy_default": "Default approver: {approver, select, user {a person} agent {an agent} system {the system} other {an unknown approver}}",
+      "summary_policy_default_kept": "Default approver: unchanged",
+      "summary_policy_restricted": "Every held action here is restricted, so a person approves it whatever these rules say: they decide only for actions below that risk.",
       "reapprove": "Did not — approve again",
       "reapprove_label": "Approve {label} again: verified that it did not take effect",
+      "withdraw": "Did not — withdraw it",
+      "withdraw_label": "Withdraw {label}: verified that it did not take effect; it will not run",
       "result_approved": "Approved: {label} took effect.",
       "result_approved_pending": "Approved: {label} now waits for a second approval.",
       "result_approved_unrecorded": "Approved: {label} took effect, but its record could not be stored.",
       "result_approved_failed": "{label}: {reason}",
+      "result_approved_waiting": "{label}: {reason} The approval stands: decide the change that is waiting first, then approve this one again.",
+      "result_approved_after_settling": "{label}: {reason} The approval stands: approve it again once that change is settled.",
+      "result_approved_retry": "{label}: {reason} The approval stands: approve it again to retry, or reject it.",
+      "result_approved_refused": "{label}: {reason} The approval stands, but approving it again would be refused the same way: reject it.",
+      "result_approved_undecided": "{label}: whether it took effect is unknown, so it is not approved again. {when, select, minutes {It is listed as undecided within {minutes, plural, one {# minute} other {# minutes}}} other {It is listed as undecided once its run's lease has passed}}: verify it, then mark it executed if it took effect, or withdraw it.",
+      "result_approved_undecided_config": "{label}: whether it took effect is unknown. {when, select, minutes {It is listed as undecided within {minutes, plural, one {# minute} other {# minutes}}} other {It is listed as undecided once its run's lease has passed}}: verify it, then mark it executed if it took effect, or withdraw it — or approve it again: if it took effect, the retry is refused as stale and the hold withdrawn.",
+      "result_approved_settling": "{label}: {reason} Its outcome is being checked: if it did not apply, it is listed again{when, select, minutes { within {minutes, plural, one {# minute} other {# minutes}}} other {}}.",
+      "result_approved_withdrawn": "{label}: {reason} It was withdrawn; the requester must ask again.",
+      "result_approved_stale": "{label}: what it would replace changed after it was requested, so nothing was changed. If it is still listed, reject it; the requester must ask again.",
+      "result_approved_stale_settling": "{label}: what it would replace changed after it was requested, so nothing was changed. It could not be withdrawn: it is listed again{when, select, minutes { within {minutes, plural, one {# minute} other {# minutes}}} other { once its outcome is settled}}; reject it then. The requester must ask again.",
       "result_rejected": "Rejected: {label}.",
       "result_marked_executed": "Recorded: {label} took effect.",
+      "result_withdrawn": "Withdrawn: {label} did not take effect and will not run.",
+      "no_eligible_decider": "No one here may approve this again or mark it executed: its requester and the account it acts on cannot decide it, and no one else in good standing who holds {permission} with access to administration meets the change's own rules (one who holds it but not those rules may still withdraw it, if it did not take effect). A platform operator decides it — Operator → Tenants → this tenant → Settings → Held changes.",
+      "result_duplicate_undecided": "{label}: another erasure of this account is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it.",
       "result_dismiss": "Dismiss"
     },
     "jobs": {
@@ -309,7 +370,8 @@
       "tenant_heading": "Background jobs",
       "tenant_intro": "This tenant's most recent background jobs. Operators manage schedules and failed jobs.",
       "tenant_none": "No background jobs yet.",
-      "tenant_unavailable": "The job history could not be read right now."
+      "tenant_unavailable": "The job history could not be read right now.",
+      "required": "Required: always on"
     },
     "mfa": {
       "title": "Two-step verification is required",
@@ -432,6 +494,8 @@
         "erase_cancel": "Cancel",
         "erased": "The account data was erased.",
         "erase_incomplete": "The erasure did not complete ({status}); nothing more was done.",
+        "erase_held": "Held for approval: a second administrator who may erase accounts must approve this erasure in Approvals before anything is erased.",
+        "erase_pending": "Erasure pending approval: a second administrator who may erase accounts must approve it in Approvals. Nothing has been erased yet.",
         "working": "Working…",
         "no_actions": "Your role cannot change this account.",
         "self_row": "This is your own account: another administrator changes its role or erases it.",
@@ -483,7 +547,6 @@
         "summary_none": "No rows of {table} match.",
         "summary_all": "{matched, plural, one {# row of {table}.} other {# rows of {table}.}}",
         "summary_some": "Showing {shown} of {matched, plural, one {# matching row} other {# matching rows}} of {table}.",
-        "failed": "The search could not be run: the database is unavailable or refused it. Nothing was changed.",
         "redacted": "[redacted: {length, plural, one {# char} other {# chars}}]",
         "plan": "Search {table}",
         "plan_where": "Search {table} where {filters}",
@@ -518,7 +581,11 @@
         "category_social": "Social",
         "category_profile": "Profile",
         "category_privacy": "Privacy",
-        "permissions_toggle": "{count, plural, one {# permission} other {# permissions}} of {role}"
+        "permissions_toggle": "{count, plural, one {# permission} other {# permissions}} of {role}",
+        "lacks_feature_permissions": "Lacks {permissions}: its holders cannot use those features."
+      },
+      "results": {
+        "approval_policy_updated": "Approval policy updated (version {version}, {rules, plural, one {# rule} other {# rules}}). Every action held today is restricted and is approved by a person whatever these rules say; they decide only for actions below that risk."
       }
     },
     "kill_switch": {

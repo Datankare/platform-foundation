@@ -59,6 +59,36 @@ XSS protection. Next.js requires unsafe-eval in dev mode but not production.
 
 ---
 
+### SEC-016 — a stolen access token can call Cognito directly (accepted residual until batch S9)
+
+| Field        | Detail                                                                 |
+| ------------ | ---------------------------------------------------------------------- |
+| **ID**       | SEC-016                                                                |
+| **Type**     | Security — session token exposure (authentication)                     |
+| **Severity** | Medium                                                                 |
+| **OWASP**    | A07 — Identification and Authentication Failures                       |
+| **Status**   | Accepted residual — root fix is batch S9 (server-side sessions)        |
+| **Logged**   | 2026-10-30 (TASK-194 review round 1, finding C1; the owner's decision) |
+| **Deadline** | Batch S9 of the sweep                                                  |
+
+**What:** the browser keeps the Cognito access token in `localStorage`
+(`platform/auth/context.tsx`), and the token carries the `aws.cognito.signin.user.admin` scope.
+TASK-194 (C-3) made **the app's own routes** require a step-up — the password and a current code —
+before a second factor is turned off or replaced (`/api/auth/mfa/disable`, `/api/auth/mfa/setup`
+for an enrolled account). That does not bind Cognito itself: whoever steals the token (an XSS, a
+malicious extension, a shared machine) can call Cognito's own API with it directly —
+`SetUserMFAPreference`, `AssociateSoftwareToken`, `VerifySoftwareToken`, `ChangePassword` with the
+old password, `UpdateUserAttributes` — and so turn off or replace the factor without the step-up,
+until the token expires. **The app's routes require step-up; direct Cognito calls with a stolen
+access token remain possible until S9.**
+
+**Resolution plan:** batch S9 — server-side sessions: the access token never reaches the browser
+(an httpOnly session cookie the server maps to the tokens), so a script in the page cannot read it.
+Until then: the token's lifetime is the pool's (keep it short), sign-out revokes it, and every MFA
+change the app makes is recorded.
+
+---
+
 ### SEC-012 — sprintf-js denial of service, no patched release (accepted risk)
 
 | Field        | Detail                                                     |

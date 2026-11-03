@@ -106,9 +106,11 @@ jest.mock("@/platform/auth/platform-config", () => {
           }
         );
       } catch {
+        // As the real write answers it (round 14, item 3: flagged, so it is coded).
         return {
           success: false,
           error: "The audit log is unavailable, so the value was not changed.",
+          auditUnavailable: true,
         };
       }
     },
@@ -402,6 +404,10 @@ describe("R12-L4 a one-admin reduction is recorded before it is written", () => 
     fakeData().failAudit = true;
     const r = await run("super_admin", "suspend_agent", { agent_id: "agent:a" });
     expect(r).toMatchObject({ success: false });
+    expect(r).toMatchObject({
+      code: "service.unavailable",
+      params: { service: "audit" },
+    });
     expect(writes).toEqual([]);
     expect(statuses()).toEqual(["active", "active"]);
   });

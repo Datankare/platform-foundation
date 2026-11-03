@@ -39,11 +39,13 @@ import type {
   VersionedState,
   ProposalRecord,
   ProposalStore,
+  RunFailure,
 } from "@/platform/kernel";
 import { generateSecureId } from "@/platform/agents/utils";
 import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk";
 import { canonicalJson } from "./canonical-json";
 import { withAuditCorrelation } from "@/platform/kernel/audit-correlation";
+import { sameId } from "@/platform/auth/same-id";
 
 // ── Rejection ─────────────────────────────────────────────────────────
 
@@ -92,30 +94,53 @@ export class PipelineRejectedError extends Error {
 }
 
 /**
- * An approved action's run failed before it took effect (review 10 H2). The approval was not
- * used: its claim was released (executing -> approved, compare-and-set) — or, for an atomic
- * action, the transaction that held the claim rolled back with the effect — so approving again
- * runs it again. `released` is false only when the release itself could not be written; the
- * approval-expiry job then marks it `indeterminate` once its lease has passed, for a person to
- * decide (review 11 H-1).
+ * The registry code of a write whose commit was lost with its connection: it may have taken
+ * effect, so an approved run that reports it is not released (round 16, item 1).
+ */
+export const LOST_COMMIT_CODE = "admin.write_indeterminate";
+
+/**
+ * An approved action's run did not take effect, or is not known to have (review 10 H2). Mostly
+ * it failed before taking effect: its claim was released (executing -> approved,
+ * compare-and-set) — or, for an atomic action, the transaction that held the claim rolled back
+ * with the effect — so approving again runs it again (`released` true). `released` is false — the
+ * claim kept, the run `executing` — when the release itself could not be written, or when the
+ * run's write lost its commit and may stand (LOST_COMMIT_CODE, TASK-194 round 16): never approved
+ * again blind, the approval-expiry job marks it `indeterminate` once its lease has passed, for a
+ * person to verify and mark executed or withdraw (review 11 H-1).
  */
 export class ApprovedRunFailedError extends Error {
+  /**
+   * The run's own registry code and params, when it said why (TASK-194 round 15, I-1): a change
+   * already waiting, the audit log unavailable, a lost commit. Its `reason` is then the code.
+   */
+  readonly failure?: {
+    readonly code: string;
+    readonly params?: Readonly<Record<string, unknown>>;
+  };
+
   constructor(
     readonly label: string,
     readonly proposalId: string,
     readonly reason: string,
     readonly released: boolean,
-    options?: { cause?: unknown }
+    options?: {
+      cause?: unknown;
+      failure?: { code: string; params?: Readonly<Record<string, unknown>> };
+    }
   ) {
     super(
       `${label}: approved, not applied: ${reason}. ${
         released
           ? "The approval stands: approve it again to retry."
-          : "Its approval could not be given back: once its run's lease has passed it is marked undecided, for a person to mark executed or approve again."
+          : options?.failure?.code === LOST_COMMIT_CODE
+            ? "Its write's commit was lost, so it may have taken effect: its claim is kept, and once its run's lease has passed it is marked undecided, for a person to verify and mark executed or withdraw."
+            : "Its approval could not be given back: once its run's lease has passed it is marked undecided, for a person to verify and mark executed or withdraw."
       }`,
       options
     );
     this.name = "ApprovedRunFailedError";
+    if (options?.failure) this.failure = options.failure;
   }
 }
 
@@ -199,7 +224,7 @@ export interface PipelineRequest<TState> {
    * or undefined when it did). A run that reports failure releases its approval, as one that
    * throws does (review 10 H2) — an action reporting `{ success: false }` applied nothing.
    */
-  readonly reportsFailure?: () => string | undefined;
+  readonly reportsFailure?: () => RunFailure | undefined;
   /**
    * The action's every effect is a write in the current tenant's database transaction. With an
    * approval, and a proposal store that has transactions, the claim, the effect, the state
@@ -299,7 +324,7 @@ export async function executeActionPipeline<TState>(
     if (
       !proposal ||
       proposal.status !== "approved" ||
-      proposal.operationId !== req.operationId ||
+      !sameId(proposal.operationId, req.operationId) ||
       proposal.label !== req.label ||
       req.approvalInput === undefined ||
       canonicalJson(proposal.payload) !== canonicalJson(req.approvalInput)
@@ -410,7 +435,7 @@ export async function executeActionPipeline<TState>(
           now?.status === "executing"
             ? `${req.label}: approval ${approvalId} is in use by another run (ADR-031 D2)`
             : now?.status === "indeterminate"
-              ? `${req.label}: approval ${approvalId}'s last run did not end within its lease and its outcome is unknown; a person must mark it executed or approve it again (review 11 H-1)`
+              ? `${req.label}: approval ${approvalId}'s last run did not end within its lease and its outcome is unknown; a person must mark it executed, approve it again or withdraw it (review 11 H-1)`
               : `${req.label}: approval ${approvalId} was already used (ADR-031 D2)`,
           "approval-used"
         );
@@ -456,7 +481,12 @@ export async function executeActionPipeline<TState>(
       performed = req.perform ? await req.perform(context) : undefined;
       const failed = approvalId ? req.reportsFailure?.() : undefined;
       if (failed !== undefined) {
-        throw new ApprovedRunFailedError(req.label, approvalId!, failed, true);
+        // Coded (round 15, I-1): the code is the reason, and travels with the error.
+        throw typeof failed === "string"
+          ? new ApprovedRunFailedError(req.label, approvalId!, failed, true)
+          : new ApprovedRunFailedError(req.label, approvalId!, failed.reason, true, {
+              failure: { code: failed.code, params: failed.params },
+            });
       }
     } catch (err) {
       if (!approvalId || !proposalStore) throw err;
@@ -478,14 +508,27 @@ export async function executeActionPipeline<TState>(
           : err instanceof Error
             ? err.message
             : String(err);
+      // The run's own code, when it gave one, goes with it (round 15, I-1).
+      const failure = err instanceof ApprovedRunFailedError ? err.failure : undefined;
       // Atomic: the transaction that holds the claim rolls back with everything else.
       if (atomic)
         throw new ApprovedRunFailedError(req.label, approvalId, reason, true, {
           cause: err,
+          ...(failure ? { failure } : {}),
+        });
+      // A write whose commit was lost may stand (TASK-194 round 16, item 1): its claim is not
+      // given back — approving it again could apply it twice. It stays executing; once its lease
+      // has passed the recovery (recoverStaleRuns) marks it undecided, for a person to verify and
+      // mark executed or withdraw.
+      if (failure?.code === LOST_COMMIT_CODE)
+        throw new ApprovedRunFailedError(req.label, approvalId, reason, false, {
+          cause: err,
+          failure,
         });
       const released = await releaseClaim(`run failed, approval kept: ${reason}`);
       throw new ApprovedRunFailedError(req.label, approvalId, reason, released, {
         cause: err,
+        ...(failure ? { failure } : {}),
       });
     }
 
@@ -1172,7 +1215,9 @@ export async function repairSession<TState>(
     return { repaired: false, operationId, reason: "trajectory not found" };
   }
 
-  const recorded = record.trajectory.steps.some((s) => s.operationId === operationId);
+  const recorded = record.trajectory.steps.some((s) =>
+    sameId(s.operationId, operationId)
+  );
   if (recorded) {
     return { repaired: false, operationId, reason: "already recorded" };
   }

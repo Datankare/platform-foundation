@@ -173,6 +173,29 @@ describe("ExecutionResultsPanel", () => {
     expect(screen.getByText("Cannot delete — 5 users assigned")).toBeDefined();
   });
 
+  it("renders a coded failure as its catalog message, with its params (rebase round 2, 2)", () => {
+    render(
+      <ExecutionResultsPanel
+        results={[
+          {
+            tool: "delete_role",
+            success: false,
+            error: "admin.role_in_use",
+            code: "admin.role_in_use",
+            params: { count: "5" },
+          },
+        ]}
+        onDismiss={jest.fn()}
+      />
+    );
+    expect(
+      screen.getByText(
+        "5 accounts still have this role. Move them to another role first."
+      )
+    ).toBeDefined();
+    expect(screen.queryByText("admin.role_in_use")).toBeNull();
+  });
+
   it("calls onDismiss", () => {
     const onDismiss = jest.fn();
     render(

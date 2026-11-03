@@ -121,12 +121,13 @@ export type FilterValue = string | number;
 
 export type FilterCheck =
   | { readonly ok: true; readonly value: FilterValue | null }
-  | { readonly ok: false; readonly field: string; readonly allowed: string };
+  | { readonly ok: false; readonly field: string; readonly allowed: readonly string[] };
 
+/** A refused value: `allowed` is the registry's list (request.invalid_value — round 5, item 4). */
 const refused = (field: string, allowed: string): FilterCheck => ({
   ok: false,
   field,
-  allowed,
+  allowed: [allowed],
 });
 
 /**
@@ -199,7 +200,13 @@ export type Filters = Partial<Record<SearchFilter, FilterValue>>;
 
 export type ParsedFilters =
   | { readonly ok: true; readonly filters: Filters }
-  | { readonly ok: false; readonly field: string; readonly allowed: string };
+  | {
+      readonly ok: false;
+      readonly field: string;
+      readonly allowed: readonly string[];
+      /** The key is no filter of the table at all (round 12, nit 3): request.unknown_input. */
+      readonly unknownKey?: true;
+    };
 
 /**
  * The input's filters for `table`, each checked; any other key in the input is refused. A key
@@ -216,7 +223,14 @@ export function parseSearchFilterInput(
     if (key === "table" || key === "query") continue;
     if (raw === null || raw === undefined) continue;
     if (!(allowed as readonly string[]).includes(key)) {
-      return { ok: false, field: "filters", allowed: allowed.join(", ") };
+      // Every key the search takes: its table and the old query, then the table's filters
+      // (round 13, nit 5 — the filters alone left table and query out).
+      return {
+        ok: false,
+        field: key,
+        allowed: ["table", "query", ...allowed],
+        unknownKey: true,
+      };
     }
     const checked = checkSearchFilter(key as SearchFilter, raw);
     if (!checked.ok) return checked;
@@ -224,7 +238,11 @@ export function parseSearchFilterInput(
   }
   const hasQuery = input.query !== undefined && input.query !== null;
   if (hasQuery && input.text !== undefined && input.text !== null) {
-    return { ok: false, field: "query", allowed: "give one of text or query, not both" };
+    return {
+      ok: false,
+      field: "query",
+      allowed: ["give one of text or query, not both"],
+    };
   }
   if (filters.text === undefined && hasQuery) {
     const checked = checkSearchFilter("text", input.query);
@@ -232,7 +250,7 @@ export function parseSearchFilterInput(
       return {
         ok: false,
         field: "query",
-        allowed: `a text of up to ${SEARCH_TEXT_MAX} characters`,
+        allowed: [`a text of up to ${SEARCH_TEXT_MAX} characters`],
       };
     }
     if (checked.value !== null) filters.text = checked.value;
@@ -256,7 +274,7 @@ export function parseUserListFilters(params: URLSearchParams): ParsedFilters {
     if (all.length === 0) continue;
     // One value per filter: a repeated parameter is refused, never one picked silently.
     if (all.length > 1) {
-      return { ok: false, field: name, allowed: "one value" };
+      return { ok: false, field: name, allowed: ["one value"] };
     }
     const raw = all[0]!;
     if (raw === "") continue;

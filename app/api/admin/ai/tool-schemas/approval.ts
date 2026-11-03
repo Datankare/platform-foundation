@@ -9,14 +9,15 @@ export const approvalSchemas: Record<string, AdminTool[]> = {
     {
       name: "set_approval_policy",
       description:
-        "Replace the agent-action approval policy. Set the default approver and an ordered list of rules; each rule matches actions at or below a risk level (and optionally specific effect types) and names who must approve. Writing a policy mints a new version (the change is audited).",
+        'Replace the agent-action approval policy: an ordered list of rules; each matches actions at or below a risk level (and optionally specific effect types) and names who must approve. A restricted action is always approved by a person whatever the rules say, and every action held today is restricted — so the rules decide only for actions below that risk, in an app that holds them. default_approver, if given, must be "user". Writing a policy mints a new version (the change is audited).',
       input_schema: {
         type: "object",
         properties: {
           default_approver: {
             type: "string",
-            enum: ["user", "agent", "system"],
-            description: "Who approves an action that matches no rule",
+            enum: ["user"],
+            description:
+              "Optional. Who approves an action that matches no rule — always a person; absent, it stays as it is",
           },
           rules: {
             type: "array",
@@ -44,7 +45,10 @@ export const approvalSchemas: Record<string, AdminTool[]> = {
             },
           },
         },
-        required: ["default_approver", "rules"],
+        // default_approver is optional (round 13, nit 7): absent, the current default stands;
+        // given, it must be "user" (the enum) — the handler, the hold check and the stores refuse
+        // another.
+        required: ["rules"],
       },
     },
   ],

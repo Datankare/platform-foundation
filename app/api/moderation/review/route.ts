@@ -10,10 +10,15 @@
  *
  * Appeals are NOT submitted here — they have their own endpoint
  * (/api/moderation/appeals) which enforces appeal eligibility + identity.
+ *
+ * A submission names its submitter (TASK-194, audit C-9): POST verifies the moderator with
+ * requireAdmin — adminGuard threw the identity away — and records the submission (who, which
+ * account, which source) before it is filed; with no record it is not filed.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminGuard } from "@/platform/auth/admin-guard";
+import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
+import { auditedResponse } from "@/platform/auth/audit";
 import { logger, generateRequestId } from "@/lib/logger";
 import {
   getQueue,
@@ -133,8 +138,9 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
 });
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
-  const denied = await adminGuard(request, MODERATE_PERMISSION);
-  if (denied) return denied;
+  const guard = await requireAdmin(request, MODERATE_PERMISSION);
+  if (guard.error) return guard.error;
+  const { admin } = guard;
 
   const requestId = generateRequestId();
 
@@ -172,24 +178,44 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await submitForReview({
-      source,
-      moderationResult: moderationResult as ModerationResult,
-      targetUserId,
-      requestId,
-      explanationChain: body.explanationChain as ExplanationChain | undefined,
-    });
-
-    if (!result.success) {
-      logger.error("Review queue submit failed", {
-        error: result.error,
-        requestId,
-        route: "api/moderation/review",
-      });
-      return errorFromResult(result, { request, context: "Review queue submit failed" });
-    }
-
-    return NextResponse.json({ item: result.item }, { status: 201 });
+    // Recorded before it is filed, naming the moderator who filed it (audit C-9).
+    return await auditedResponse(
+      {
+        action: "admin_action",
+        actorId: admin.userId,
+        targetId: targetUserId,
+        details: { type: "review_submitted", source, requestId },
+      },
+      async () => {
+        const result = await submitForReview({
+          source,
+          moderationResult: moderationResult as ModerationResult,
+          targetUserId,
+          requestId,
+          explanationChain: body.explanationChain as ExplanationChain | undefined,
+        });
+        if (!result.success) {
+          logger.error("Review queue submit failed", {
+            error: result.error,
+            requestId,
+            route: "api/moderation/review",
+          });
+          return {
+            success: false,
+            error: result.error ?? "submit failed",
+            response: errorFromResult(result, {
+              request,
+              context: "Review queue submit failed",
+            }),
+          };
+        }
+        return {
+          success: true,
+          response: NextResponse.json({ item: result.item }, { status: 201 }),
+        };
+      },
+      () => apiError("service.unavailable", { params: { service: "audit" }, request })
+    );
   } catch (err) {
     logger.error("Review queue submit error", {
       error: err instanceof Error ? err.message : "Unknown",

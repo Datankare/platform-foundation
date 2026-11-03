@@ -11,7 +11,15 @@
  */
 
 import { withTenantTx } from "@/platform/data";
-import { failedAsResult, runAudited, type ActionResult } from "./shared";
+import {
+  coded,
+  failedAsResult,
+  NO_FACTS,
+  runAudited,
+  type ActionResult,
+  type ApproverRule,
+} from "./shared";
+import { sameId } from "@/platform/auth/same-id";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -19,19 +27,40 @@ const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** A refusal for a missing or malformed user id or feature, or null. */
 function inputProblem(userId: unknown, feature: unknown): ActionResult | null {
-  if (!userId || !feature)
-    return { success: false, error: "user_id and feature are required" };
   if (typeof userId !== "string" || !USER_ID.test(userId)) {
-    return {
-      success: false,
-      error: "user_id must be a user id",
-      code: "request.invalid_value",
-      params: { field: "user_id", allowed: "a user id" },
-    };
+    return coded("request.invalid_value", { field: "user_id", allowed: ["a user id"] });
   }
-  if (typeof feature !== "string")
-    return { success: false, error: "feature must be a string" };
+  if (typeof feature !== "string" || !feature) {
+    return coded("request.missing_fields", { fields: ["feature"] });
+  }
   return null;
+}
+
+/**
+ * The restriction's rule for `admin` — the requester, or an approver of a held one (TASK-194
+ * round 1, A3: registered in APPROVER_RULES): an administrator does not place or lift a
+ * restriction on their own account (release review). The coded refusal, or null.
+ */
+function decideRestrictionTarget(
+  input: Record<string, any>,
+  _facts: null,
+  admin: { readonly userId: string }
+): ActionResult | null {
+  return sameId(input.user_id, admin.userId)
+    ? { success: false, error: "admin.self_target", code: "admin.self_target" }
+    : null;
+}
+
+export const restrictionTargetRule: ApproverRule<null> = {
+  facts: NO_FACTS,
+  decide: decideRestrictionTarget,
+};
+
+export async function checkRestrictionTarget(
+  input: Record<string, any>,
+  admin: { readonly userId: string }
+): Promise<ActionResult | null> {
+  return decideRestrictionTarget(input, null, admin);
 }
 
 /** Block a feature for a user (idempotent — re-blocking is a no-op via the composite PK). */
@@ -43,10 +72,8 @@ export async function handleBlockUserFeature(
   const feature: string = input.feature;
   const problem = inputProblem(userId, feature);
   if (problem) return problem;
-  // An administrator does not place or lift a restriction on their own account (release review).
-  if (userId === actorId) {
-    return { success: false, error: "admin.self_target", code: "admin.self_target" };
-  }
+  const self = await checkRestrictionTarget(input, { userId: actorId });
+  if (self) return self;
   return runAudited(
     {
       action: "admin_action",
@@ -85,10 +112,8 @@ export async function handleUnblockUserFeature(
   const feature: string = input.feature;
   const problem = inputProblem(userId, feature);
   if (problem) return problem;
-  // An administrator does not place or lift a restriction on their own account (release review).
-  if (userId === actorId) {
-    return { success: false, error: "admin.self_target", code: "admin.self_target" };
-  }
+  const self = await checkRestrictionTarget(input, { userId: actorId });
+  if (self) return self;
   return runAudited(
     {
       action: "admin_action",

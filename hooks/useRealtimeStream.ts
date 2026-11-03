@@ -18,6 +18,7 @@
 
 "use client";
 
+import { readRefusal } from "@/platform/errors/refusal";
 import { useState, useCallback, useRef } from "react";
 
 export interface StreamRequestOptions {
@@ -101,8 +102,8 @@ export function useRealtimeStream(
           });
 
           if (!response.ok) {
-            const body = await response.json().catch(() => ({}));
-            throw new Error(body.error ?? `Stream request failed: ${response.status}`);
+            // The refusal's own message, by its code (the shared handler, TASK-181/194).
+            throw new Error((await readRefusal(response)).message);
           }
 
           if (!response.body) {

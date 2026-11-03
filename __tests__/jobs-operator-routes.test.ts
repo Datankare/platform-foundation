@@ -224,6 +224,28 @@ describe("PATCH /api/operator/jobs/schedules/[kind]", () => {
     );
   });
 
+  // TASK-194 round 18: the job that settles approvals and lists undecided runs cannot be turned
+  // off — refused, coded, nothing written; its interval stays the operator's (bounded).
+  it("refuses to turn off a required schedule (config.expire-approvals), writing nothing", async () => {
+    mockWrite.mockResolvedValue({ kind: "applied", result: { success: true } });
+    const res = await patch(
+      { enabled: false, changeComment: "maintenance" },
+      "config.expire-approvals"
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("jobs.schedule_required");
+    expect(mockWrite).not.toHaveBeenCalled();
+    const interval = await patch(
+      { intervalMinutes: 120, changeComment: "less often" },
+      "config.expire-approvals"
+    );
+    expect(interval.status).toBe(200);
+    expect(mockWrite.mock.calls[0][1]).toMatchObject({
+      key: "jobs.config.expire-approvals.interval_minutes",
+      value: 120,
+    });
+  });
+
   it("changes an interval; a held change answers 202", async () => {
     mockWrite.mockResolvedValue({
       kind: "pending",
@@ -240,10 +262,36 @@ describe("PATCH /api/operator/jobs/schedules/[kind]", () => {
 
   it.each([
     [
-      { kind: "invalid", errors: ["Value 1 is below minimum 5"] },
+      {
+        kind: "invalid",
+        errors: ["Value 1 is below minimum 5"],
+        params: { key: "jobs.test.sched.interval_minutes", reason: "below_min", min: 5 },
+      },
       422,
       "admin.config_invalid_value",
     ],
+    // Round 14, item 1: a failed write's own code — it answered 500 for every one.
+    [
+      {
+        kind: "failed",
+        result: { success: true, data: {} },
+        code: "approvals.already_pending",
+        params: { key: "jobs.test.sched.interval_minutes" },
+      },
+      409,
+      "approvals.already_pending",
+    ],
+    [
+      {
+        kind: "failed",
+        result: { success: true, data: {} },
+        code: "service.unavailable",
+        params: { service: "audit" },
+      },
+      503,
+      "service.unavailable",
+    ],
+    [{ kind: "failed", result: { success: false, error: "x" } }, 500, "internal.error"],
     [
       { kind: "refused", permission: "config_manage_safety" },
       403,

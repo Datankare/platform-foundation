@@ -92,7 +92,10 @@ const operator: VerifiedAdmin = {
     "admin_manage_users",
     "platform_operate",
     "can_play",
+    // Every role holds the feature permissions since 061 (TASK-194), and a new role has them.
     "can_translate",
+    "can_view_profile",
+    "can_edit_profile",
   ],
 };
 

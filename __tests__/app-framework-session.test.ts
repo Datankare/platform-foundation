@@ -139,6 +139,73 @@ describe("D6 — turn core", () => {
     expect(isCurrentTurn(t2, "bob")).toBe(true);
   });
 
+  it("removes a participant named in another spelling of their id (round 4, item 5)", () => {
+    const A = "0b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    const B = "1b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    const t = advanceTurn(
+      initTurnState([
+        { ...alice, actorId: A },
+        { ...bob, actorId: B },
+      ])
+    ); // B's turn
+    const t2 = removeParticipant(t, A.toUpperCase());
+    expect(t2.order).toEqual([B]);
+    expect(isCurrentTurn(t2, B)).toBe(true);
+  });
+
+  it("removes every spelling of the id, the current actor kept (round 5, item 1)", () => {
+    const A = "0b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    const B = "1b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    const C = "2b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    // [A, B, A-upper, C], C's turn (index 3): a state built before the source refused it.
+    const t = {
+      order: [A, B, A.toUpperCase(), C],
+      currentIndex: 3,
+      turnNumber: 4,
+    };
+    const t2 = removeParticipant(t, A);
+    expect(t2.order).toEqual([B, C]);
+    expect(t2.order[t2.currentIndex]).toBe(C);
+    expect(isCurrentTurn(t2, A)).toBe(false);
+    expect(isCurrentTurn(t2, A.toUpperCase())).toBe(false);
+    expect(t2.turnNumber).toBe(4);
+  });
+
+  it("removes every spelling when one of them is current: the next remaining actor, wrapping (round 5, item 1)", () => {
+    const A = "0b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    const B = "1b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    const C = "2b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    const order = [A, B, A.toUpperCase(), C];
+    // A-upper current: the next remaining is C.
+    const mid = removeParticipant({ order, currentIndex: 2, turnNumber: 3 }, A);
+    expect(mid.order).toEqual([B, C]);
+    expect(mid.order[mid.currentIndex]).toBe(C);
+    // A current at the end: the next remaining wraps to the first.
+    const end = removeParticipant(
+      { order: [B, C, A], currentIndex: 2, turnNumber: 3 },
+      A
+    );
+    expect(end.order).toEqual([B, C]);
+    expect(end.order[end.currentIndex]).toBe(B);
+    // Every entry the one id: empty, as before.
+    const none = removeParticipant(
+      { order: [A, A.toUpperCase()], currentIndex: 1, turnNumber: 2 },
+      A
+    );
+    expect(none).toEqual({ order: [], currentIndex: 0, turnNumber: 2 });
+  });
+
+  it("refuses one participant named twice, in any spelling, at initTurnState (round 5, item 1)", () => {
+    const A = "0b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    expect(() =>
+      initTurnState([
+        { ...alice, actorId: A },
+        { ...bob, actorId: A.toUpperCase() },
+      ])
+    ).toThrow(/app-framework: participant .* named more than once/);
+    expect(() => initTurnState([alice, alice])).toThrow(/named more than once/);
+  });
+
   it("throws on declared-but-unimplemented variant machinery", () => {
     expect(() => assertTurnConfigSupported({ turnTimeoutMs: 30_000 })).toThrow(
       /not implemented/
@@ -170,6 +237,26 @@ describe("session dispatch", () => {
     if (!isConflict(out)) {
       expect(out.result.version).toBe(2);
       expect(out.result.state.count).toBe(5);
+    }
+  });
+
+  it("refuses a session naming one participant twice, in any spelling, and stores nothing (round 5, item 1)", async () => {
+    const A = "0b5c6f4e-1d2a-4c3b-9e8f-7a6b5c4d3e2f";
+    for (const def of [definition, turnDefinition]) {
+      await expect(
+        createSession({
+          definition: def,
+          config: { start: 0 },
+          participants: [
+            { ...alice, actorId: A },
+            { ...bob, actorId: `{${A.toUpperCase()}}` },
+          ],
+          sessionId: `sess_dup_${def.id}`,
+        })
+      ).rejects.toThrow(/app-framework: participant .* named more than once/);
+      await expect(
+        getActivityStateStore().load(`sess_dup_${def.id}`)
+      ).resolves.toBeNull();
     }
   });
 

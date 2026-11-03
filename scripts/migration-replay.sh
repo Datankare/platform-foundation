@@ -1493,6 +1493,178 @@ SQL
   -c "UPDATE public.platform_config SET value = '14'::jsonb WHERE key = 'coppa.consent_expiry_days'" \
   -c "DELETE FROM public.config_pending_approvals WHERE change_comment LIKE 'replay 060 %'" \
   -c "DELETE FROM public.platform_config_history WHERE change_comment = 'replay 060'" >/dev/null
+step "061: every role holds the enforced feature permissions, safety_approver may approve an erasure; applied again grants nothing — not even a permission removed since; refuses a catalog without its permissions"
+"${PSQL[@]}" <<'SQL'
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.roles r, public.permissions p
+     WHERE p.code IN ('can_translate', 'can_view_profile', 'can_edit_profile')
+       AND NOT EXISTS (SELECT 1 FROM public.role_permissions rp
+                        WHERE rp.role_id = r.id AND rp.permission_id = p.id)
+  ) THEN
+    RAISE EXCEPTION '061: a role lacks one of the enforced feature permissions';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.role_permissions rp
+      JOIN public.roles r ON r.id = rp.role_id
+      JOIN public.permissions p ON p.id = rp.permission_id
+     WHERE r.name = 'safety_approver' AND p.code = 'admin_purge_user_data'
+  ) THEN
+    RAISE EXCEPTION '061: safety_approver does not hold admin_purge_user_data (round 1, A2)';
+  END IF;
+  IF to_regclass('public.proposals_purge_one_open') IS NULL THEN
+    RAISE EXCEPTION '061: the one-open-erasure index is missing (round 2, A6)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.applied_migrations
+                  WHERE filename = '061_feature_permissions_enforced.sql') THEN
+    RAISE EXCEPTION '061 is not recorded in applied_migrations';
+  END IF;
+END $$;
+SQL
+# An administrator removes a grant after the first run; applying 061 again must not put it back
+# (its applied_migrations row is the guard), and must change nothing else.
+"${PSQL[@]}" -c "DELETE FROM public.role_permissions WHERE role_id = (SELECT id FROM public.roles WHERE name = 'moderator') AND permission_id = (SELECT id FROM public.permissions WHERE code = 'can_translate')" >/dev/null
+before061=$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.role_permissions")
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.role_permissions")" = "$before061" ] \
+  || { echo "✗ applying 061 a second time changed role_permissions"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.role_permissions rp JOIN public.roles r ON r.id = rp.role_id JOIN public.permissions p ON p.id = rp.permission_id WHERE r.name = 'moderator' AND p.code = 'can_translate'")" = "0" ] \
+  || { echo "✗ applying 061 a second time granted back a permission an administrator removed"; exit 1; }
+# Put it back as 061's first run left it (the catalog check and the tests read the seeded state).
+"${PSQL[@]}" -c "INSERT INTO public.role_permissions (role_id, permission_id) SELECT r.id, p.id FROM public.roles r, public.permissions p WHERE r.name = 'moderator' AND p.code = 'can_translate'" >/dev/null
+# A development database that applied a draft of 061 (before round 3, L1: the index without
+# lower(); or one not unique) gets the index as 061 defines it when 061 is applied again
+# (TASK-199); the index as defined is left as it is.
+"${PSQL[@]}" -c "DROP INDEX public.proposals_purge_one_open" \
+  -c "CREATE UNIQUE INDEX proposals_purge_one_open ON public.proposals (tenant_id, (payload ->> 'userId')) WHERE label = 'purge_user_data' AND status IN ('proposed', 'approved', 'executing', 'indeterminate')" >/dev/null
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
+"${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'" | grep -q "lower((payload ->> 'userId'::text))" \
+  || { echo "✗ applying 061 again left a draft's index without lower()"; exit 1; }
+# A non-unique draft of the same columns (round 2, finding 5) is replaced too.
+"${PSQL[@]}" -c "DROP INDEX public.proposals_purge_one_open" \
+  -c "CREATE INDEX proposals_purge_one_open ON public.proposals (tenant_id, lower(payload ->> 'userId')) WHERE label = 'purge_user_data' AND status IN ('proposed', 'approved', 'executing', 'indeterminate')" >/dev/null
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
+"${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'" | grep -q "^CREATE UNIQUE INDEX" \
+  || { echo "✗ applying 061 again left a draft's non-unique index"; exit 1; }
+# A draft's database may hold two open erasure holds for one account (round 3, finding 6): 061
+# then refuses — naming each account and its holds — and changes nothing, rather than choosing
+# which erasure stands; once all but one are decided in Approvals, applying it again succeeds.
+"${PSQL[@]}" -c "DROP INDEX public.proposals_purge_one_open" \
+  -c "INSERT INTO public.proposals (id, tenant_id, operation_id, session_id, trajectory_id, label, status, actor_id, actor_role, effective_risk, payload, created_at)
+      VALUES ('00000000-0000-4000-8000-0000000006a1', '00000000-0000-4000-8000-000000000001', 'replay-061-a', 's', 't', 'purge_user_data', 'proposed', 'command-bar', 'command-bar', 'restricted', '{\"userId\": \"00000000-0000-4000-8000-0000000006ff\"}', now() - interval '1 hour'),
+             ('00000000-0000-4000-8000-0000000006a2', '00000000-0000-4000-8000-000000000001', 'replay-061-b', 's', 't', 'purge_user_data', 'approved', 'command-bar', 'command-bar', 'restricted', '{\"userId\": \"00000000-0000-4000-8000-0000000006FF\"}', now())" >/dev/null
+dup061=$(mktemp)
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >"$dup061" 2>&1 || true
+grep -q "061: accounts with more than one open erasure hold" "$dup061" \
+  && grep -q "00000000-0000-4000-8000-0000000006a1 (proposed)" "$dup061" \
+  && grep -q "00000000-0000-4000-8000-0000000006a2 (approved)" "$dup061" \
+  && grep -q "executing: wait for its run to end, then decide it by its new status" "$dup061" \
+  && grep -q "indeterminate: verify whether its erasure took effect: it did, mark it executed; it did not, withdraw it" "$dup061" \
+  && grep -q "never approve it again: that runs a second erasure" "$dup061" \
+  || { echo "✗ 061 over two open erasure holds for one account did not refuse naming them:"; cat "$dup061"; rm -f "$dup061"; exit 1; }
+rm -f "$dup061"
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'")" = "0" ] \
+  || { echo "✗ the refused 061 left an index behind"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT string_agg(status, ',' ORDER BY id) FROM public.proposals WHERE id IN ('00000000-0000-4000-8000-0000000006a1', '00000000-0000-4000-8000-0000000006a2')")" = "proposed,approved" ] \
+  || { echo "✗ the refused 061 changed a hold"; exit 1; }
+# Decided in Approvals (here: the newer rejected), 061 applies again and builds the index.
+"${PSQL[@]}" -c "UPDATE public.proposals SET status = 'rejected' WHERE id = '00000000-0000-4000-8000-0000000006a2'" >/dev/null
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
+"${PSQL[@]}" -At -c "SELECT indexdef FROM pg_indexes WHERE indexname = 'proposals_purge_one_open'" | grep -q "^CREATE UNIQUE INDEX" \
+  || { echo "✗ 061 did not build the index once the duplicates were decided"; exit 1; }
+"${PSQL[@]}" -c "DELETE FROM public.proposals WHERE id IN ('00000000-0000-4000-8000-0000000006a1', '00000000-0000-4000-8000-0000000006a2')" >/dev/null
+oid061=$("${PSQL[@]}" -At -c "SELECT 'public.proposals_purge_one_open'::regclass::oid")
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/061_feature_permissions_enforced.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT 'public.proposals_purge_one_open'::regclass::oid")" = "$oid061" ] \
+  || { echo "✗ applying 061 again rebuilt an index already as 061 defines it"; exit 1; }
+# A catalog that lacks a permission 061 grants: it raises, and grants and records nothing (C5).
+# Proved in a transaction that is rolled back: the permission is renamed away for the attempt.
+missing061=$(mktemp)
+"${PSQL[@]}" -At >"$missing061" 2>&1 <<SQL || true
+BEGIN;
+UPDATE public.permissions SET code = 'can_translate_hidden' WHERE code = 'can_translate';
+DELETE FROM public.applied_migrations WHERE filename = '061_feature_permissions_enforced.sql';
+\i $ROOT/supabase/migrations/061_feature_permissions_enforced.sql
+ROLLBACK;
+SQL
+grep -q "061: permissions missing from the catalog: {can_translate}" "$missing061" \
+  || { echo "✗ 061 did not refuse a catalog without can_translate:"; cat "$missing061"; rm -f "$missing061"; exit 1; }
+rm -f "$missing061"
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.applied_migrations WHERE filename = '061_feature_permissions_enforced.sql'")" = "1" ] \
+  || { echo "✗ the refused 061 attempt was not rolled back"; exit 1; }
+
+step "062: config.expire-approvals' enabled setting on and no tenant override of it; applied again sets it on, deletes an override made since and withdraws the approvals pending for it (audited); recorded"
+"${PSQL[@]}" <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.platform_config
+                  WHERE key = 'jobs.config.expire-approvals.enabled' AND value = 'true'::jsonb) THEN
+    RAISE EXCEPTION '062: jobs.config.expire-approvals.enabled is not on';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tenant_config_overrides
+              WHERE key = 'jobs.config.expire-approvals.enabled') THEN
+    RAISE EXCEPTION '062: a tenant override of jobs.config.expire-approvals.enabled remains';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.applied_migrations
+                  WHERE filename = '062_expire_approvals_required.sql') THEN
+    RAISE EXCEPTION '062 is not recorded in applied_migrations';
+  END IF;
+END $$;
+-- Turned off by hand, and overridden by a tenant, since: applying 062 again puts both right.
+UPDATE public.platform_config SET value = 'false'::jsonb WHERE key = 'jobs.config.expire-approvals.enabled';
+INSERT INTO public.tenant_config_overrides (tenant_id, key, value)
+  VALUES ('00000000-0000-4000-8000-000000000001', 'jobs.config.expire-approvals.enabled', 'false'::jsonb);
+-- And approvals filed to turn it off (round 19, I-1), each pending — withdrawn — and one approved
+-- and not yet applied, left to the job: a tenant's, and a row with no tenant (made by hand: every
+-- approval the code files carries its tenant, a platform default's the operator's) — withdrawn
+-- with the note, without an audit record.
+INSERT INTO public.config_pending_approvals
+    (config_key, current_value, proposed_value, change_comment, tenant_id, scope, status)
+  VALUES ('jobs.config.expire-approvals.enabled', 'true', 'false', 'replay-062-tenant',
+          '00000000-0000-4000-8000-000000000001', 'tenant', 'pending'),
+         ('jobs.config.expire-approvals.enabled', 'true', 'false', 'replay-062-platform',
+          null, 'platform', 'pending'),
+         ('jobs.config.expire-approvals.enabled', 'true', 'false', 'replay-062-approved',
+          '00000000-0000-4000-8000-000000000001', 'platform', 'approved');
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/062_expire_approvals_required.sql" >/dev/null
+# The note is the code's (platform/jobs/required-schedule.ts requiredJobWithdrawalNote) and 062's.
+note062='withdrawn by the system: "jobs.config.expire-approvals.enabled" turns on a job that is now required — always on, and set only as the platform default (migration 062)'
+[ "$("${PSQL[@]}" -At -c "SELECT string_agg(change_comment || '=' || status::text || '/' || (reviewed_by IS NULL)::text || '/' || coalesce((review_comment = \$n\$$note062\$n\$)::text, '-'), ',' ORDER BY change_comment) FROM public.config_pending_approvals WHERE change_comment LIKE 'replay-062-%'")" \
+  = "replay-062-approved=approved/true/-,replay-062-platform=rejected/true/true,replay-062-tenant=rejected/true/true" ] \
+  || { echo "✗ applying 062 again did not withdraw (only) the pending approvals of config.expire-approvals' enabled setting"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.audit_log a JOIN public.config_pending_approvals c ON a.details->'holdIds' ? c.id::text WHERE c.change_comment LIKE 'replay-062-%' AND a.tenant_id = '00000000-0000-4000-8000-000000000001' AND a.details->>'type' = 'approval_withdrawn' AND a.details->>'reason' = 'refused'")" = "1" ] \
+  || { echo "✗ applying 062 again did not audit the tenant's withdrawn approval (approval_withdrawn, reason refused) once"; exit 1; }
+"${PSQL[@]}" -c "DELETE FROM public.config_pending_approvals WHERE change_comment LIKE 'replay-062-%'" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'jobs.config.expire-approvals.enabled'")" = "true" ] \
+  || { echo "✗ applying 062 again left config.expire-approvals turned off"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.tenant_config_overrides WHERE key = 'jobs.config.expire-approvals.enabled'")" = "0" ] \
+  || { echo "✗ applying 062 again left a tenant override of config.expire-approvals' enabled setting"; exit 1; }
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.applied_migrations WHERE filename = '062_expire_approvals_required.sql'")" = "1" ] \
+  || { echo "✗ applying 062 again recorded it twice"; exit 1; }
+
+step "an app's own migrations marked idempotent: applied again change nothing"
+# A consuming app's migration (not in supabase/platform-migrations.json) that carries the line
+# `-- replay: applied again changes nothing` is applied a second time here and the database's
+# shape compared (snapshot, above) — the app's re-apply check, in the one replay both run.
+app_reapplied=0
+for path in "$ROOT"/supabase/migrations/*.sql; do
+  f=$(basename "$path")
+  grep -q "\"$f\"" "$ROOT/supabase/platform-migrations.json" && continue
+  grep -q '^-- replay: applied again changes nothing$' "$path" || continue
+  before=$(snapshot)
+  "${PSQL[@]}" --single-transaction -f "$path" >/dev/null 2>&1 \
+    || { echo "✗ $f failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$path" >/dev/null; exit 1; }
+  after=$(snapshot)
+  if [ "$before" != "$after" ]; then
+    echo "✗ applying $f a second time changed the database:"
+    diff <(echo "$before") <(echo "$after") || true
+    exit 1
+  fi
+  app_reapplied=$((app_reapplied + 1))
+done
+echo "  ($app_reapplied app migration(s) re-applied)"
 
 step "tenancy: signed in as app_tenant, the role cannot be left (ADR-053 D4)"
 # SET ROLE is checked against the role that signed in, so this needs a real app_tenant login —

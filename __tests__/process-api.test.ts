@@ -37,6 +37,15 @@ jest.mock("@/platform/auth/account-status-guard", () => ({
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfig: jest.fn(),
 }));
+// The feature's permission (translate → can_translate, TASK-194): the caller's role has it.
+jest.mock("@/platform/auth/permissions-cache", () => ({
+  ...jest.requireActual("@/platform/auth/permissions-cache"),
+  hasCachedPermission: async () => true,
+  // By the account and, for a guest, the guest role (TASK-194 round 1, C2/C3).
+  hasAccountPermission: async () => true,
+  hasGuestPermission: async () => true,
+  accountPermissionStanding: async () => "held",
+}));
 
 const mockGetConfig = getConfig as jest.MockedFunction<typeof getConfig>;
 

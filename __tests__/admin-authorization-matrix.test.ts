@@ -10,6 +10,10 @@
  *      — the second path is held to the first path's rule (TASK-145, audit X-1).
  *   3. Guards name their permission as a literal or a same-file constant, so this test can read
  *      it; a computed permission is listed here with the test that covers it.
+ *   4. The reverse of 1 (TASK-194, audit C-4): every permission in the catalog is enforced
+ *      somewhere — a guard, a tool map, a feature (platform/auth/feature-permissions.ts), or a
+ *      requirePermission / hasCachedPermission / holds call — or is listed as reserved, with the
+ *      reason. Five were granted and checked by nothing, so taking one away changed nothing.
  *
  * The catalog comes from scripts/role-catalog.cjs, which the migration replay checks against a
  * real database.
@@ -28,6 +32,8 @@ import {
 } from "@/app/api/admin/ai/tool-permissions";
 import { PANEL_TOOL_SCHEMAS, SHARED_TOOLS } from "@/app/api/admin/ai/tool-schemas";
 import { tierPermission } from "@/platform/admin/governed-config";
+import { FEATURE_PERMISSIONS } from "@/platform/auth/feature-permissions";
+import { productionSources } from "./helpers/route-policy";
 
 const GUARD =
   /\b(adminGuard|requireAdmin)\(\s*request\s*,\s*("([a-z_]+)"|([A-Za-z_]\w*))/g;
@@ -86,6 +92,31 @@ const REQUIRED: [string, string][] = [
   [tierPermission("safety"), "governed config write, safety tier"],
 ];
 
+/**
+ * Catalog permissions no code enforces yet, each with why. A reserved permission grants nothing:
+ * when the feature it names is built, its route enforces it and the entry goes.
+ */
+const RESERVED_PERMISSIONS: Readonly<Record<string, string>> = {
+  can_play:
+    "Gameplay: no route provides it yet (the apps' games are not built). Seeded for the roles and tiers that will be given it; the game routes enforce it when they exist.",
+  can_create_group:
+    "Player groups: no route provides them yet. Seeded for the roles and tiers that will be given it; the group routes enforce it when they exist.",
+};
+
+/** Permission literals passed to a permission check anywhere in the production sources. */
+function checkedLiterals(): Set<string> {
+  const out = new Set<string>();
+  const call =
+    /\b(?:requirePermission|hasCachedPermission|holds|requireAdmin|adminGuard)\(\s*[\w.]+\s*,\s*"([a-z_]+)"/g;
+  // Comments removed: a usage example in a doc comment enforces nothing.
+  const code = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  for (const f of productionSources()) {
+    for (const m of code(read(f)).matchAll(call)) out.add(m[1]);
+  }
+  return out;
+}
+
 describe("admin authorization matrix", () => {
   it("finds the admin guards (self-test)", () => {
     expect(GUARDS.length).toBeGreaterThan(20);
@@ -111,6 +142,27 @@ describe("admin authorization matrix", () => {
       ([p, where]) => `${p} (${where})`
     );
     expect(missing).toEqual([]);
+  });
+
+  it("enforces every catalog permission, or lists it as reserved with the reason (C-4)", () => {
+    const enforced = new Set([
+      ...REQUIRED.map(([p]) => p),
+      ...Object.values(FEATURE_PERMISSIONS),
+      ...checkedLiterals(),
+    ]);
+    const unenforced = PERMISSION_CATALOG.filter((p) => !enforced.has(p)).sort();
+    expect(unenforced).toEqual(Object.keys(RESERVED_PERMISSIONS).sort());
+    for (const [p, why] of Object.entries(RESERVED_PERMISSIONS)) {
+      expect({
+        p,
+        inCatalog: PERMISSION_CATALOG.includes(p),
+        why: why.length > 40,
+      }).toEqual({
+        p,
+        inCatalog: true,
+        why: true,
+      });
+    }
   });
 
   it("requires only permissions some real role holds", () => {
@@ -170,6 +222,7 @@ describe("admin authorization matrix", () => {
     set_approval_policy: "app/api/admin/approval-policy/route.ts",
     set_capability_mapping: "app/api/admin/capability-mapping/route.ts",
     search: "app/api/admin/ai/execute/route.ts",
+    purge_user_data: "app/api/admin/gdpr/route.ts",
   };
 
   it("maps every command-bar action to its admin page", () => {

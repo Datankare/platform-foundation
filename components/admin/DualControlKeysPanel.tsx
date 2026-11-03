@@ -12,8 +12,14 @@
 
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "@/platform/auth/api-fetch";
+import { readRefusal } from "@/platform/errors/refusal";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 
-interface ConfigAiResult {
+/** The panel's words, from the catalog (round 13, nit 6). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.dual_control.${key}`, values);
+
+export interface ConfigAiResult {
   success?: boolean;
   held?: boolean;
   data?: {
@@ -21,8 +27,45 @@ interface ConfigAiResult {
     applied?: boolean;
     pendingApproval?: boolean;
     proposalId?: string;
+    /** Filed for two-person approval (a config approval, round 12 I-1); its id, its error. */
+    requiresApproval?: boolean;
+    approval?: { id?: string } | null;
+    approvalError?: string;
   } | null;
   error?: string;
+  /** A refusal's registry code (round 15, nit 4: a lost commit reads the list again). */
+  code?: string;
+}
+
+/** Whether a reply says the change waits on another admin: a runtime hold, or a config approval. */
+export function isPending(result: ConfigAiResult): boolean {
+  return (
+    result.held === true ||
+    result.data?.pendingApproval === true ||
+    (result.data?.requiresApproval === true && !result.data.approvalError)
+  );
+}
+
+/**
+ * What a reply of the config route says (round 11, item 1). A refusal (any status not ok) reads
+ * as the shared handler words it, with its code — never a bare status, and never as pending,
+ * whatever its body says (round 15, I-2: a refused filing kept `requiresApproval`). Otherwise the
+ * tool's own result: a pending change (202: held, or filed for two-person approval — round 12,
+ * I-1; `isPending`), or an applied one.
+ */
+export async function readConfigAiResult(res: Response): Promise<ConfigAiResult> {
+  let body: unknown = null;
+  try {
+    body = await (typeof res.clone === "function" ? res.clone() : res).json();
+  } catch {
+    // Not JSON (a proxy's page): no held state; the refusal below says so.
+  }
+  const result = (body && typeof body === "object" ? body : {}) as ConfigAiResult;
+  if (!res.ok) {
+    const refused = await readRefusal(res);
+    return { success: false, error: refused.message, code: refused.code };
+  }
+  return result;
 }
 
 async function callConfigAi(
@@ -34,7 +77,7 @@ async function callConfigAi(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ toolId, input }),
   });
-  return (await res.json().catch(() => ({}))) as ConfigAiResult;
+  return readConfigAiResult(res);
 }
 
 function readKeys(): Promise<ConfigAiResult> {
@@ -77,15 +120,27 @@ export function DualControlKeysPanel() {
       changeComment: change,
       confirmed: true,
     });
-    if (res.held || res.data?.pendingApproval) {
-      const ref = res.data?.proposalId ? ` (proposal ${res.data.proposalId})` : "";
+    // Waiting on another admin — a runtime hold, or two-person approval (round 12, I-1: it read
+    // as "Change applied." with the list updated, though nothing had changed).
+    if (isPending(res)) {
+      const id = res.data?.proposalId ?? res.data?.approval?.id;
       setNotice(
-        `Change held for approval${ref} — an independent approver must clear it in Approvals.`
+        t("held", {
+          id: id ?? "none",
+          kind: res.data?.proposalId ? "proposal" : "approval",
+        })
       );
     } else if (res.success === false || res.error) {
-      setError(res.error ?? "The change could not be applied.");
+      setError(res.error ?? t("not_applied"));
+      // The commit was lost: it may have applied (round 15, nit 4) — read the list again, so
+      // what is shown is what it is.
+      if (res.code === "admin.write_indeterminate") {
+        const now = await readKeys();
+        const value = now.data?.value;
+        if (Array.isArray(value)) setKeys(value as string[]);
+      }
     } else {
-      setNotice("Change applied.");
+      setNotice(t("applied"));
       setKeys(next);
     }
     setBusy(false);
@@ -95,7 +150,7 @@ export function DualControlKeysPanel() {
     const k = newKey.trim();
     if (!k) return;
     if (keys.includes(k)) {
-      setError(`"${k}" is already dual-controlled.`);
+      setError(t("already", { key: k }));
       return;
     }
     setNewKey("");
@@ -111,10 +166,7 @@ export function DualControlKeysPanel() {
 
   return (
     <div className="bg-[#111827] rounded-xl border border-gray-800 p-5">
-      <p className="text-sm text-gray-400 mb-4">
-        Keys that require an independent approver before a change applies. Editing this
-        set is itself dual-controlled — changes here are held for approval.
-      </p>
+      <p className="text-sm text-gray-400 mb-4">{t("intro")}</p>
       {notice ? (
         <p className="text-xs text-green-300 mb-3" role="status">
           {notice}
@@ -126,7 +178,7 @@ export function DualControlKeysPanel() {
         </p>
       ) : null}
       {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-gray-400">{t("loading")}</p>
       ) : (
         <ul className="space-y-2 mb-4">
           {keys.map((k) => (
@@ -139,15 +191,15 @@ export function DualControlKeysPanel() {
                 type="button"
                 disabled={busy}
                 onClick={() => remove(k)}
-                aria-label={`Remove ${k}`}
+                aria-label={t("remove_label", { key: k })}
                 className="px-2 py-1 text-xs rounded bg-gray-800 border border-gray-700 text-gray-300 disabled:opacity-50"
               >
-                Remove
+                {t("remove")}
               </button>
             </li>
           ))}
           {keys.length === 0 ? (
-            <li className="text-sm text-gray-400">No keys are dual-controlled.</li>
+            <li className="text-sm text-gray-400">{t("empty")}</li>
           ) : null}
         </ul>
       )}
@@ -156,8 +208,8 @@ export function DualControlKeysPanel() {
           type="text"
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
-          placeholder="config key to add (e.g. moderation.escalation_sla_hours)"
-          aria-label="Config key to add to dual-control"
+          placeholder={t("add_placeholder")}
+          aria-label={t("add_label")}
           className="flex-1 px-3 py-2 text-sm rounded bg-[#0a0f1e] border border-gray-800 text-gray-200"
         />
         <button
@@ -166,7 +218,7 @@ export function DualControlKeysPanel() {
           onClick={add}
           className="px-3 py-2 text-sm rounded bg-green-800/40 border border-green-700 text-green-200 disabled:opacity-50"
         >
-          Add
+          {t("add")}
         </button>
       </div>
     </div>

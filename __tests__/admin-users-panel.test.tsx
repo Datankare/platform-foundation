@@ -439,16 +439,19 @@ describe("erase account data", () => {
     const panel = openRow("Ann");
     fireEvent.click(within(panel).getByRole("button", { name: t("erase") }));
     fireEvent.click(within(panel).getByRole("button", { name: t("erase_cancel") }));
+    // Only the read of a pending erasure (round 1, A6) — no erasure sent.
     expect(
-      fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/admin/gdpr"))
+      fetchMock.mock.calls.some(
+        ([u, init]) => String(u).startsWith("/api/admin/gdpr") && init?.method === "POST"
+      )
     ).toBe(false);
   });
 
   it("confirmed: erased — sent as an admin-action erasure of that account", async () => {
     const panel = await erase();
     expect(await within(panel).findByText(t("erased"))).toBeDefined();
-    const call = fetchMock.mock.calls.find(([u]) =>
-      String(u).startsWith("/api/admin/gdpr")
+    const call = fetchMock.mock.calls.find(
+      ([u, init]) => String(u).startsWith("/api/admin/gdpr") && init?.method === "POST"
     )!;
     expect(JSON.parse(String(call[1].body))).toEqual({
       userId: user().id,
@@ -462,6 +465,43 @@ describe("erase account data", () => {
     expect(listCalls()).toHaveLength(1);
     fireEvent.click(within(panel).getByRole("button", { name: t("close") }));
     await waitFor(() => expect(listCalls()).toHaveLength(2));
+  });
+
+  // TASK-194 round 1, A6: an erasure already waiting for approval is shown after a reload, and
+  // no second one is offered.
+  it("an erasure pending approval is shown when the panel opens, with no erase button", async () => {
+    onErase = (u, init) =>
+      !init?.method || init.method === "GET"
+        ? respond(200, {
+            pending: { proposalId: "p-1", createdAt: "2026-10-29T00:00:00Z" },
+          })
+        : respond(409, { code: "admin.erasure_pending" });
+    await shown();
+    const panel = openRow("Ann");
+    expect(await within(panel).findByText(t("erase_pending"))).toBeDefined();
+    expect(within(panel).queryByRole("button", { name: t("erase") })).toBeNull();
+    const read = fetchMock.mock.calls.find(([u]) =>
+      String(u).startsWith("/api/admin/gdpr?")
+    )!;
+    expect(String(read[0])).toBe(
+      `/api/admin/gdpr?userId=${encodeURIComponent(user().id)}`
+    );
+  });
+
+  it("no erasure pending: the erase button is offered", async () => {
+    onErase = (u, init) =>
+      !init?.method || init.method === "GET"
+        ? respond(200, { pending: null })
+        : respond(200, { status: "completed" });
+    await shown();
+    const panel = openRow("Ann");
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/admin/gdpr?"))
+      ).toBe(true)
+    );
+    expect(within(panel).getByRole("button", { name: t("erase") })).toBeDefined();
+    expect(within(panel).queryByText(t("erase_pending"))).toBeNull();
   });
 
   it("an incomplete purge is never shown as erased", async () => {
@@ -551,7 +591,9 @@ describe("focus and the selected row (TASK-185 review)", () => {
       expect(within(panel).getByRole("button", { name: t("erase") })).toHaveFocus()
     );
     expect(
-      fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/admin/gdpr"))
+      fetchMock.mock.calls.some(
+        ([u, init]) => String(u).startsWith("/api/admin/gdpr") && init?.method === "POST"
+      )
     ).toBe(false);
   });
 

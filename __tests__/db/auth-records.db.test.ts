@@ -476,6 +476,44 @@ dbDescribe(`${SUITE} entitlements`, () => {
       );
       expect(out).toMatchObject({ success: false, error: "auth.role_self_change" });
     });
+
+    it("refuses an id in any other spelling Postgres reads — no hyphens, braces (round 3, finding 4)", async () => {
+      const id = await t.user("self-spelling");
+      const admin = asAdmin(id, [catalogName(RUN, "perk")]);
+      for (const spelling of [id.replace(/-/g, ""), `{${id}}`]) {
+        for (const change of [grantEntitlement, revokeEntitlement] as const) {
+          const out = await t.run(() =>
+            change({
+              userId: spelling,
+              entitlementGroupId: groups.plain,
+              grantedBy: admin,
+              revokedBy: admin,
+            } as never)
+          );
+          expect([spelling, out.success, out.error]).toEqual([
+            spelling,
+            false,
+            "request.invalid_value",
+          ]);
+        }
+      }
+    });
+
+    it("refuses it with the admin's own id in upper case too (round 2, finding 9)", async () => {
+      const id = await t.user("self-upper");
+      const admin = asAdmin(id, [catalogName(RUN, "perk")]);
+      for (const change of [grantEntitlement, revokeEntitlement] as const) {
+        const out = await t.run(() =>
+          change({
+            userId: id.toUpperCase(),
+            entitlementGroupId: groups.plain,
+            grantedBy: admin,
+            revokedBy: admin,
+          } as never)
+        );
+        expect(out).toMatchObject({ success: false, error: "auth.role_self_change" });
+      }
+    });
   });
 });
 

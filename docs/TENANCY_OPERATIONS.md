@@ -327,6 +327,102 @@ operators change it, for one tenant or as the default. A tenant's own value can 
 platform default. Each tenant's agents together are capped at
 `agent.budget.tenant_max_cost_per_day` (default 100 USD), above each agent's own cap.
 
+### Dual control needs a second approver; the first safety approver (TASK-194 round 1, A2)
+
+An account's erasure is always held for a second holder of `admin_purge_user_data`; a role change
+(and every action in `admin.dual_control_actions`) for a second administrator who may make it.
+**A deployment with one administrator cannot complete either**: the approval needs a second
+account, held by a different person. `super_admin` and `safety_approver` hold
+`admin_purge_user_data` (migration 061), so an erasure needs two distinct holders of it — the
+requester and an approver who is not the requester — each a `super_admin` or a `safety_approver`
+(two super_admins, two safety approvers, or one of each).
+
+A deployment whose only administrator is one `super_admin` cannot assign the first
+`safety_approver` in the app either — that role change is itself held for a second
+administrator. That one assignment is a documented, one-time bootstrap, as the first
+`super_admin` is: an operator runs this in the SQL Editor (as the project's `postgres` user),
+after the person has signed in once (their account exists) and with their address and the
+tenant's slug in place of the two values. It refuses when the tenant already has a safety
+approver (assign further ones in the app — **Users** — approved there), when no single account
+has that address, and a `super_admin`'s account; it records the change in the audit log
+(`admin_action`, `role_bootstrap`) in the same transaction. The new role is in effect within a
+minute (the permissions cache), or when the person signs in again.
+
+```sql
+begin;
+set local lock_timeout = '5s';
+do $$
+declare
+  v_tenant constant text := 'default';               -- the tenant's slug
+  v_email  constant text := 'approver@example.com';  -- the person who becomes the safety approver
+  v_tenant_id uuid;
+  v_role uuid;
+  v_user uuid;
+  v_from text;
+  v_found int;
+begin
+  select id into v_tenant_id from public.tenants where slug = v_tenant;
+  if v_tenant_id is null then raise exception 'no tenant %', v_tenant; end if;
+  select id into v_role from public.roles where name = 'safety_approver';
+  if v_role is null then raise exception 'no safety_approver role'; end if;
+  if exists (select 1 from public.users
+              where tenant_id = v_tenant_id and role_id = v_role and deleted_at is null) then
+    raise exception 'the tenant already has a safety approver: assign others in the app';
+  end if;
+  select count(*) into v_found from public.users
+   where tenant_id = v_tenant_id and lower(btrim(email)) = lower(btrim(v_email))
+     and deleted_at is null;
+  if v_found <> 1 then
+    raise exception '% accounts with address % in tenant %', v_found, v_email, v_tenant;
+  end if;
+  select u.id, r.name into v_user, v_from
+    from public.users u left join public.roles r on r.id = u.role_id
+   where u.tenant_id = v_tenant_id and lower(btrim(u.email)) = lower(btrim(v_email))
+     and u.deleted_at is null;
+  if v_from = 'super_admin' then
+    raise exception 'a super_admin is not made the safety approver (choose another person)';
+  end if;
+  update public.users set role_id = v_role where id = v_user;
+  insert into public.audit_log (tenant_id, action, actor_id, target_id, details)
+  values (v_tenant_id, 'admin_action', null, v_user,
+          jsonb_build_object('type', 'role_bootstrap', 'role', 'safety_approver',
+                             'from_role', v_from,
+                             'procedure', 'TENANCY_OPERATIONS: the first safety approver'));
+end $$;
+commit;
+```
+
+Check — it must return `safety_approver` and one `role_bootstrap` record:
+
+```sql
+select r.name from public.users u join public.roles r on r.id = u.role_id
+ where lower(btrim(u.email)) = lower(btrim('approver@example.com')) and u.deleted_at is null;
+select count(*) from public.audit_log where details->>'type' = 'role_bootstrap';
+```
+
+### Resetting two-step verification (operator-assisted, TASK-194)
+
+Turning two-step verification off, or replacing an enrolled authenticator, needs a step-up: the
+account's password and a current code (`auth.step_up_required`). A member who signs in through
+single sign-on (Google or another provider, the `identities` attribute set) may have no password
+in the pool: their step-up answers `auth.step_up_unavailable` ("Your account signs in through
+single sign-on, so two-step verification could not be confirmed with a password… ask an
+administrator to reset two-step verification for you. Nothing was changed.") and the factor
+stays. A member who lost the authenticator is in the same place. There is no in-app reset — the
+step-up is not bypassed from the app — so recovery is this procedure, outside it:
+
+1. A linked account that has a pool password: the member resets the password (**Forgot
+   password**) and steps up with it. Only when that is not possible, go on.
+2. An operator confirms the request came from the member through a channel other than the one
+   it arrived on (their organization's directory, a call to a number already on record).
+3. A second operator approves it, in the team's change record, before anything is changed.
+4. In a shell (the AWS credentials in the environment, never in a file), the operator clears
+   the factor:
+   `aws cognito-idp admin-set-user-mfa-preference --user-pool-id <pool> --username <pool username> --software-token-mfa-settings Enabled=false,PreferredMfa=false`
+5. The member enrols again (first-time enrolment needs no step-up) and signs in with the new
+   factor. The change record names both operators, the account's `sub` and the time; CloudTrail
+   holds the Cognito call (the app's audit log does not — the app did not make the change).
+
 ### The role catalog
 
 Roles, permissions and entitlement groups are shared by every tenant. In a shared deployment only

@@ -7,6 +7,7 @@ import { registerAuthProvider } from "@/platform/auth/config";
 import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { requireActor, requireAuth } from "@/platform/auth/middleware";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
+import { RESTRICTED_MARKER } from "@/platform/auth/restricted-marker";
 import { mintGuestToken, newGuestId } from "@/platform/auth/guest-token";
 import { checkAccountStatus } from "@/platform/auth/account-status-guard";
 import { checkCoppaGate } from "@/platform/auth/coppa-gate";
@@ -23,6 +24,28 @@ jest.mock("@/platform/auth/account-status-guard", () => ({
 const mockStatus = checkAccountStatus as jest.MockedFunction<typeof checkAccountStatus>;
 jest.mock("@/platform/auth/coppa-gate", () => ({ checkCoppaGate: jest.fn() }));
 const mockCoppa = checkCoppaGate as jest.MockedFunction<typeof checkCoppaGate>;
+// The feature permission (TASK-194, C-4): the caller's role grants it unless a test says not.
+const mockHeld = jest.fn(async (_sub: string, _permission: string) => true);
+// By the account (round 1, C3): the subject and the account id the identity is bound to.
+const mockAccountHeld = jest.fn(
+  async (_sub: string, _account: string, _p: string) => true
+);
+// The role could not be read (round 2, N3).
+const mockUnreadable = { value: false };
+// A guest's, from the guest role (round 1, C2).
+const mockGuestHeld = jest.fn(async (_permission: string) => true);
+jest.mock("@/platform/auth/permissions-cache", () => ({
+  ...jest.requireActual("@/platform/auth/permissions-cache"),
+  hasCachedPermission: (sub: string, permission: string) => mockHeld(sub, permission),
+  accountPermissionStanding: async (sub: string, account: string, permission: string) => {
+    if (mockUnreadable.value) return "unknown";
+    return (await mockAccountHeld(sub, account, permission)) &&
+      (await mockHeld(sub, permission))
+      ? "held"
+      : "lacking";
+  },
+  hasGuestPermission: (permission: string) => mockGuestHeld(permission),
+}));
 
 function req(token?: string): NextRequest {
   const headers = new Headers();
@@ -42,6 +65,13 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  mockHeld.mockClear();
+  mockHeld.mockResolvedValue(true);
+  mockAccountHeld.mockClear();
+  mockAccountHeld.mockResolvedValue(true);
+  mockGuestHeld.mockClear();
+  mockGuestHeld.mockResolvedValue(true);
+  mockUnreadable.value = false;
   mockStatus.mockReset();
   mockStatus.mockResolvedValue({
     allowed: true,
@@ -129,6 +159,93 @@ describe("guest namespace (D4)", () => {
 });
 
 describe("requireActorWithStatus", () => {
+  // TASK-194, audit C-4: a feature that maps to a permission needs it, from the caller's role.
+  it.each([
+    ["translate", "can_translate"],
+    ["view_profile", "can_view_profile"],
+    ["update_profile", "can_edit_profile"],
+  ])(
+    "refuses %s to a user whose role lacks %s (403 auth.permission_denied)",
+    async (feature, permission) => {
+      mockHeld.mockResolvedValue(false);
+      const r = await requireActorWithStatus(req(userToken), feature, {
+        allowGuests: false,
+      });
+      expect(r.error?.status).toBe(403);
+      expect(await r.error?.json()).toMatchObject({
+        code: "auth.permission_denied",
+        params: { permission },
+      });
+      expect(mockHeld).toHaveBeenCalledWith(expect.any(String), permission);
+    }
+  );
+
+  it("asks no permission of a feature that maps to none", async () => {
+    mockHeld.mockResolvedValue(false);
+    mockGuestHeld.mockResolvedValue(false);
+    const r = await requireActorWithStatus(req(userToken), "stream", {
+      allowGuests: false,
+    });
+    expect(r.actor?.kind).toBe("user");
+    expect(mockHeld).not.toHaveBeenCalled();
+    const { token } = await mintGuestToken();
+    const g = await requireActorWithStatus(req(token), "stream", { allowGuests: true });
+    expect(g.actor?.kind).toBe("guest");
+    expect(mockGuestHeld).not.toHaveBeenCalled();
+  });
+
+  // Round 1, C3: resolved by the account the identity is bound to, not only the subject.
+  it("resolves a user's permission by their account id", async () => {
+    await requireActorWithStatus(req(userToken), "translate", { allowGuests: false });
+    expect(mockAccountHeld).toHaveBeenCalledWith(userId, userId, "can_translate");
+  });
+
+  // Round 1, C2: a guest acts under the guest role; taking can_translate from it takes effect.
+  it("refuses a guest the feature when the guest role lacks its permission", async () => {
+    mockGuestHeld.mockResolvedValue(false);
+    const { token } = await mintGuestToken();
+    const r = await requireActorWithStatus(req(token), "translate", {
+      allowGuests: true,
+    });
+    expect(r.error?.status).toBe(403);
+    expect(await r.error?.json()).toMatchObject({
+      code: "auth.permission_denied",
+      params: { permission: "can_translate" },
+    });
+    expect(mockGuestHeld).toHaveBeenCalledWith("can_translate");
+  });
+
+  // Round 1, C2: refused as themselves, a user is marked so the browser cannot go on as a guest.
+  it("marks a user refused a feature's permission, so no guest token follows", async () => {
+    mockHeld.mockResolvedValue(false);
+    const r = await requireActorWithStatus(req(userToken), "translate", {
+      allowGuests: true,
+    });
+
+    expect(r.error?.status).toBe(403);
+    expect(r.error?.cookies.get(RESTRICTED_MARKER)?.value).toBe("1");
+  });
+
+  // Round 2, N3: only a definite refusal, and only where a guest would get the feature.
+  it("marks nothing when the role cannot be read: 503, not a refusal", async () => {
+    mockUnreadable.value = true;
+    const r = await requireActorWithStatus(req(userToken), "translate", {
+      allowGuests: true,
+    });
+    expect(r.error?.status).toBe(503);
+    expect((await r.error?.json()).code).toBe("service.unavailable");
+    expect(r.error?.cookies.get(RESTRICTED_MARKER)).toBeUndefined();
+  });
+
+  it("marks nothing for a refusal on a route guests cannot use (can_edit_profile)", async () => {
+    mockHeld.mockResolvedValue(false);
+    const r = await requireActorWithStatus(req(userToken), "update_profile", {
+      allowGuests: false,
+    });
+    expect(r.error?.status).toBe(403);
+    expect(r.error?.cookies.get(RESTRICTED_MARKER)).toBeUndefined();
+  });
+
   it("checks account status for users", async () => {
     const r = await requireActorWithStatus(req(userToken), "translate", {
       allowGuests: true,

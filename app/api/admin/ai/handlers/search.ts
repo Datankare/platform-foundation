@@ -71,7 +71,7 @@ import { likeTerm } from "@/lib/pagination";
 import { logger } from "@/lib/logger";
 import { SEARCHABLE_TABLES } from "../tool-permissions";
 import { USER_STATUS_SQL } from "@/app/api/admin/users/listing";
-import { refusal, type ActionResult, type SearchCell, type SearchTable } from "./shared";
+import { coded, type ActionResult, type SearchCell, type SearchTable } from "./shared";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -269,7 +269,7 @@ type Parsed = { ok: true; filters: Filters } | Refused;
 
 /**
  * The input's filters for `table`, each checked by the shared check (../search-filters.ts);
- * anything else in the input is refused (`request.invalid_value`), never ignored.
+ * anything else in the input is refused (`request.unknown_input`), never ignored.
  */
 export function parseSearchFilters(
   table: SearchableTable,
@@ -277,11 +277,13 @@ export function parseSearchFilters(
 ): Parsed {
   const parsed = parseSearchFilterInput(table, input);
   if (parsed.ok) return parsed;
+  // A key that is no filter of the table is no input of the search: request.unknown_input, as
+  // every other action answers one (round 12, nit 3); a filter's bad value, invalid_value.
   return {
     ok: false,
-    result: refusal({
-      code: "request.invalid_value",
-      params: { field: parsed.field, allowed: parsed.allowed },
+    result: coded(parsed.unknownKey ? "request.unknown_input" : "request.invalid_value", {
+      field: parsed.field,
+      allowed: [...parsed.allowed],
     }),
   };
 }
@@ -353,15 +355,15 @@ export async function handleSearch(
 ): Promise<ActionResult> {
   const table = String(input.table ?? "");
   if (!Object.prototype.hasOwnProperty.call(SEARCHABLE_TABLES, table)) {
-    return refusal({
-      code: "request.invalid_value",
-      params: { field: "table", allowed: Object.keys(SEARCHABLE_TABLES).join(", ") },
+    return coded("request.invalid_value", {
+      field: "table",
+      allowed: Object.keys(SEARCHABLE_TABLES),
     });
   }
   const searched = table as SearchableTable;
   const permission = SEARCHABLE_TABLES[searched];
   if (!holds(admin, permission)) {
-    return refusal({ code: "auth.permission_denied", params: { permission } });
+    return coded("auth.permission_denied", { permission });
   }
 
   const parsed = parseSearchFilters(searched, input);
@@ -386,10 +388,7 @@ export async function handleSearch(
       error: err instanceof Error ? err.message : String(err),
       route: "app/api/admin/ai/handlers/search",
     });
-    return {
-      success: false,
-      error: renderMessage("screens.admin_console.search.failed"),
-    };
+    return coded("service.unavailable", { service: "search" });
   }
 
   const columns = SEARCH_COLUMNS[searched];

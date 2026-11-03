@@ -97,9 +97,12 @@ describe("handleSetCapabilityMapping", () => {
       { capability: "summarize", features: ["x"] },
       ACTOR
     );
+    // Coded (rebase round 2, finding 2): the map could not be read, nothing was changed.
     expect(r).toEqual({
       success: false,
-      error: "The capability map could not be read, so nothing was changed.",
+      error: "service.unavailable",
+      code: "service.unavailable",
+      params: { service: "capabilities" },
     });
     expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
@@ -118,7 +121,7 @@ describe("handleSetCapabilityMapping", () => {
     expect(writeGovernedConfig).not.toHaveBeenCalled();
   });
 
-  it("returns the store error on write failure", async () => {
+  it("reports a write failure coded, the store's text logged, never returned", async () => {
     getConfig.mockResolvedValue([]);
     writeGovernedConfig.mockResolvedValue({
       kind: "failed",
@@ -134,7 +137,10 @@ describe("handleSetCapabilityMapping", () => {
       { capability: "x", features: ["y"] },
       ACTOR
     );
-    expect(r.success).toBe(false);
-    expect(r.error).toBe("write failed");
+    expect(r).toMatchObject({
+      success: false,
+      error: "admin.action_failed",
+      code: "admin.action_failed",
+    });
   });
 });

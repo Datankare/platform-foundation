@@ -33,6 +33,7 @@ import type {
 } from "./review-types";
 import type { AccountStatus, ModerationResult, ModerationAction } from "./types";
 import type { ExplanationChain } from "@/platform/rag/types";
+import { sameId } from "@/platform/auth/same-id";
 
 // ---------------------------------------------------------------------------
 // Source → priority (P6: compile-time exhaustive map, not a switch)
@@ -305,7 +306,7 @@ export async function unclaimItem(
       errorParams: { status: item.status },
     };
   }
-  if (item.claimedBy !== reviewerId) {
+  if (!sameId(item.claimedBy, reviewerId)) {
     return {
       success: false,
       error: "Only the claiming reviewer can unclaim",
@@ -369,7 +370,7 @@ export async function resolveItem(input: ResolveInput): Promise<ReviewResult> {
       errorParams: { status: item.status },
     };
   }
-  if (item.claimedBy !== input.reviewerId) {
+  if (!sameId(item.claimedBy, input.reviewerId)) {
     return {
       success: false,
       error: "Only the claiming reviewer can resolve",
@@ -470,7 +471,7 @@ function reapExpectation(item: ReviewQueueItem): ReviewUpdateExpectation {
 
 /** A moderator never reviews a case about their own account (audit X-6). */
 function isSelfReview(item: ReviewQueueItem, reviewerId: string): boolean {
-  return item.targetUserId === reviewerId;
+  return sameId(item.targetUserId, reviewerId);
 }
 
 const SELF_REVIEW: ReviewResult = {
@@ -555,8 +556,8 @@ async function applyOverturnSideEffects(
   try {
     const strikeStore = getStrikeStore();
     const strikes = await strikeStore.getActiveStrikes(item.targetUserId);
-    const relatedStrike = strikes.find(
-      (s) => s.guardianDecisionId === item.moderationResult.trajectoryId
+    const relatedStrike = strikes.find((s) =>
+      sameId(s.guardianDecisionId, item.moderationResult.trajectoryId)
     );
     if (relatedStrike) {
       const expired = await strikeStore.expireStrike(relatedStrike.id);
@@ -681,7 +682,7 @@ async function restoreAccountStatus(
       const change = await latestStatusChange(tx, item.targetUserId);
       const inForce =
         change !== null &&
-        change.guardianDecisionId === decisionId &&
+        sameId(change.guardianDecisionId, decisionId) &&
         change.newStatus === current.account_status &&
         typeof change.previousStatus === "string" &&
         SEVERITY.includes(change.previousStatus as AccountStatus);

@@ -2,13 +2,19 @@
  * platform/auth/restricted-marker.ts — A restricted account cannot continue as a guest (X-20)
  *
  * A banned or suspended user could sign out and carry on as a guest, minting a new guest token
- * whenever its allowance ran out. Two things now stand in the way:
+ * whenever its allowance ran out. These now stand in the way:
  *
  *   - when a request is refused because its account is banned or suspended, the response marks
  *     the browser (an httpOnly cookie for the auth routes, 30 days); the guest route refuses a new
  *     guest token to a marked browser;
  *   - the guest route refuses a request that carries a signed-in user's token whose account is
- *     not in good standing (and marks it).
+ *     not in good standing (and marks it);
+ *   - (TASK-194 rounds 1–2, C2/N3) when a signed-in user is refused a feature's permission on a
+ *     route that also serves guests (translate: /api/process), the refusal marks the browser too,
+ *     so they do not get as a guest the feature their own role lacks. Only a definite refusal — a
+ *     role read and found without the permission — marks; a permission that could not be read
+ *     (503) never does, and neither does a refusal on a route guests cannot use (the profile
+ *     routes: can_edit_profile).
  *
  * A marker is a cookie, so a user who clears cookies is no longer marked: what then bounds them is
  * the per-address allowance every guest shares (GUEST_PAID_PER_ADDRESS, platform/auth/

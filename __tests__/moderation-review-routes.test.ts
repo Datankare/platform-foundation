@@ -30,6 +30,9 @@ jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
 
+// The real audit module writes through a fake platform/data (helpers/fake-data.ts): a submission
+// is recorded before it is filed (TASK-194, audit C-9).
+jest.mock("@/platform/data", () => require("./helpers/fake-data").fakeDataModule());
 jest.mock("@/platform/moderation/review-service", () => ({
   getQueue: jest.fn(),
   getQueueStats: jest.fn(),
@@ -50,6 +53,7 @@ import {
   resolveItem,
 } from "@/platform/moderation/review-service";
 import { GET, POST } from "@/app/api/moderation/review/route";
+import { fakeData } from "./helpers/fake-data";
 import { PATCH } from "@/app/api/moderation/review/[id]/route";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -93,6 +97,7 @@ function patchCtx(id: string) {
 }
 
 beforeEach(() => {
+  fakeData().reset();
   jest.clearAllMocks();
 });
 
@@ -217,6 +222,30 @@ describe("POST /api/moderation/review", () => {
         requestId: "test-req-id",
       })
     );
+    // TASK-194, audit C-9: the submission names the verified moderator who filed it.
+    expect(fakeData().audit.at(-1)).toMatchObject({
+      action: "admin_action",
+      actor_id: CALLERS.moderator.userId,
+      target_id: TARGET,
+      details: expect.objectContaining({
+        type: "review_submitted",
+        source: "escalation",
+      }),
+    });
+  });
+
+  it("files nothing when the submission cannot be recorded (503)", async () => {
+    fakeData().failAudit = true;
+    const res = await POST(
+      jsonRequest("POST", {
+        source: "escalation",
+        moderationResult: mr("escalate"),
+        targetUserId: TARGET,
+      })
+    );
+    expect(res.status).toBe(503);
+    expect(submitForReview).not.toHaveBeenCalled();
+    fakeData().failAudit = false;
   });
 
   it("returns 400 when required fields are missing", async () => {

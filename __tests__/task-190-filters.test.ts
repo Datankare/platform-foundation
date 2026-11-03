@@ -154,6 +154,33 @@ describe("TASK-190: one list of filters and one check, three callers", () => {
       expect(body.params).toEqual(search.result.params);
     }
   });
+
+  it("allowed is a list, in the Users list's refusal and in the filters' (round 5, item 5)", async () => {
+    for (const [name, raw] of [
+      ["role", "a".repeat(65)],
+      ["status", "nope"],
+      ["text", "a".repeat(101)],
+    ] as const) {
+      const res = await usersGET(
+        req(`/api/admin/users?${new URLSearchParams({ [name]: raw })}`)
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(Array.isArray(body.params.allowed)).toBe(true);
+      const search = parseSearchFilters("users", { [name]: raw });
+      expect(search.ok).toBe(false);
+      if (!search.ok) {
+        expect(Array.isArray(search.result.params?.allowed)).toBe(true);
+      }
+    }
+    // A repeated parameter, and a filter the table does not take.
+    const twice = await usersGET(req("/api/admin/users?status=active&status=restricted"));
+    expect(Array.isArray((await twice.json()).params.allowed)).toBe(true);
+    const unknown = parseSearchFilters("roles", { status: "active" });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok)
+      expect(unknown.result.params?.allowed).toEqual(["table", "query", "text"]);
+  });
 });
 
 describe("TASK-190: the Users list takes the users filters as bound parameters", () => {

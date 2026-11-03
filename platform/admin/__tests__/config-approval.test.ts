@@ -30,6 +30,7 @@ jest.mock("@/platform/data", () => ({ withTenantTx: (fn: unknown) => mockTx(fn) 
 
 // ── Imports ─────────────────────────────────────────────────────────────
 
+import { logger } from "@/lib/logger";
 import {
   isApprovalRequired,
   requestApproval,
@@ -100,7 +101,18 @@ describe("when the database fails", () => {
       requestedBy: "00000000-0000-4000-8000-000000000001",
       changeComment: "c",
     });
-    expect(r).toEqual({ success: false, error: "db down" });
+    // Coded (TASK-194 round 13, I-C): the service is unavailable. Its text is logged, never
+    // returned (round 14, item 12: it reached the client as data.error / data.approvalError).
+    expect(r).toEqual({
+      success: false,
+      error: "The approval store is unavailable.",
+      errorCode: "service.unavailable",
+      errorParams: { service: "config" },
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: "db down" })
+    );
   });
 
   it("a review reports the failure and decides nothing", async () => {
@@ -109,7 +121,18 @@ describe("when the database fails", () => {
       "00000000-0000-4000-8000-000000000002",
       "ok"
     );
-    expect(r).toEqual({ success: false, error: "db down" });
+    // Coded (TASK-194 round 13, I-C): the service is unavailable. Its text is logged, never
+    // returned (round 14, item 12: it reached the client as data.error / data.approvalError).
+    expect(r).toEqual({
+      success: false,
+      error: "The approval store is unavailable.",
+      errorCode: "service.unavailable",
+      errorParams: { service: "config" },
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: "db down" })
+    );
   });
 
   it("reads answer empty, never throw", async () => {

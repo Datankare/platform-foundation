@@ -44,6 +44,40 @@ describe("handleSetApprovalPolicy", () => {
     expect(fakeData().audit).toHaveLength(1);
   });
 
+  // Round 11 (the input-keys audit): default_approver, which the schema requires, was dropped.
+  // Round 12 (I-2): applied, it may only be a person — an action no rule matches may be
+  // restricted — so another is refused, before anything is stored.
+  it("sets a person as the default approver, and records it", async () => {
+    const r = await handleSetApprovalPolicy(
+      { default_approver: "user", rules: [] },
+      ACTOR
+    );
+    expect(r.success).toBe(true);
+    expect(setRules).toHaveBeenCalledWith([], ACTOR, "user");
+    expect(fakeData().audit[0].details).toMatchObject({ default_approver: "user" });
+  });
+
+  it.each(["agent", "system", "anyone"])(
+    "refuses %s as the default approver: nothing stored, nothing recorded",
+    async (bad) => {
+      const r = await handleSetApprovalPolicy(
+        { default_approver: bad, rules: [] },
+        ACTOR
+      );
+      expect(r).toMatchObject({
+        code: "request.invalid_value",
+        params: { field: "default_approver", allowed: ["user"] },
+      });
+      expect(setRules).not.toHaveBeenCalled();
+      expect(fakeData().audit).toHaveLength(0);
+    }
+  );
+
+  it("keeps the current default approver when given none", async () => {
+    await handleSetApprovalPolicy({ rules: [] }, ACTOR);
+    expect(setRules).toHaveBeenCalledWith([], ACTOR, undefined);
+  });
+
   it("omits effects when empty", async () => {
     await handleSetApprovalPolicy(
       {
@@ -67,14 +101,18 @@ describe("handleSetApprovalPolicy", () => {
     expect(setRules.mock.calls[0][0]).toEqual([]);
   });
 
-  it("returns the store error on failure", async () => {
+  it("reports a store failure coded, its text logged, never returned (rebase round 2, 2)", async () => {
     setRules.mockRejectedValue(new Error("version conflict"));
     const r = await handleSetApprovalPolicy(
       { default_approver: "user", rules: [] },
       ACTOR
     );
-    expect(r.success).toBe(false);
-    expect(r.error).toBe("version conflict");
+    expect(r).toMatchObject({
+      success: false,
+      error: "admin.action_failed",
+      code: "admin.action_failed",
+    });
+    expect(JSON.stringify(r)).not.toContain("version conflict");
   });
 });
 

@@ -124,6 +124,232 @@ Then
 answers `false` and `f`. It inserts one row of `platform_config` (the governed switch above
 `AIRequest.promptCache`, off) and takes no lock beyond it; run again, it keeps an operator's value.
 The code works without it: an absent setting reads as off.
+The code works without it: an absent setting reads as off.
+
+**Release candidate (TASK-194):** `061_feature_permissions_enforced.sql`, after 060, on its own,
+**before the code** — the code enforces `can_translate`, `can_view_profile` and `can_edit_profile`,
+and 061 grants the three to every role that exists, so no account loses a feature; it also grants
+`admin_purge_user_data` to `safety_approver` (round 1, A2), and creates the partial unique index
+`proposals_purge_one_open` — one open erasure per account (round 2; a SHARE lock on `proposals`, a
+small table, while it is built). Paste and run it as one run (the SQL
+Editor runs a pasted script as one transaction); it refuses — raises, grants nothing — when a
+permission it grants is missing from the catalog.
+
+**Before it (round 3, L2):** the index cannot be built while an account has two open erasure holds.
+This must return no rows:
+
+```sql
+select tenant_id, lower(payload->>'userId') as account, count(*) as holds,
+       array_agg(id || ' (' || status || ')' order by created_at) as hold_ids
+  from public.proposals
+ where label = 'purge_user_data'
+   and status in ('proposed', 'approved', 'executing', 'indeterminate')
+ group by 1, 2 having count(*) > 1;
+```
+
+If it returns any, keep the oldest hold of each account (the first of `hold_ids`) and decide the
+others in **Approvals** — proposed or approved: reject it; executing: wait for its run to end, then
+decide it by its new status; indeterminate: verify whether its erasure took effect (the approvals
+runbook's checks: its trajectory step, the audit records with its `holdId`): it did, mark it
+executed; it did not, withdraw it — never approve it again, which runs a second erasure. Run the
+query again until it returns nothing. Then:
+
+```bash
+pbcopy < supabase/migrations/061_feature_permissions_enforced.sql
+```
+
+Then
+`select count(*) from public.roles r, public.permissions p where p.code in ('can_translate', 'can_view_profile', 'can_edit_profile') and not exists (select 1 from public.role_permissions rp where rp.role_id = r.id and rp.permission_id = p.id);`
+answers 0, and
+`select count(*) from public.role_permissions rp join public.roles r on r.id = rp.role_id join public.permissions p on p.id = rp.permission_id where r.name = 'safety_approver' and p.code = 'admin_purge_user_data';`
+answers 1, and
+`select indexdef from pg_indexes where indexname = 'proposals_purge_one_open';`
+answers `CREATE UNIQUE INDEX proposals_purge_one_open ON public.proposals USING btree (tenant_id, lower((payload ->> 'userId'::text))) WHERE …`.
+It changes rows of `role_permissions` and adds that one index; its grants run only on its first
+run: applied again it grants nothing (its `applied_migrations` row is the guard), so a permission
+an administrator removed since stays removed, and the index is left as it is — unless it has
+another definition (a development database that applied a draft of 061 without `lower()`, or
+not unique): then it is dropped and built again (TASK-199). An account with more than one open
+erasure hold — what the pre-check above finds — makes 061 refuse, naming each account and its
+holds oldest first, each with its status, and change nothing; it never picks which erasure stands
+(a newer hold may be the one approved or running). Keep the oldest of each and decide the others
+in Approvals — proposed or approved: reject it; executing: wait for its run to end, then decide it
+by its new status; indeterminate: verify whether its erasure took effect: it did, mark it
+executed; it did not, withdraw it — never approve it again, which runs a second erasure — then
+apply 061 again.
+
+A development database that applied a draft of 061 from before review round 1 (no release base
+did) has its `applied_migrations` row, so applying 061 now creates the one-open-erasure index but
+grants nothing: if the safety_approver check above answers 0 there, run 061's
+`safety_approver` insert with its `and not exists (…)` lines left out, once.
+
+**Release candidate (TASK-194, round 18):** `062_expire_approvals_required.sql`, after 061, on its
+own. The approval-expiry job (`config.expire-approvals`) is required now — it alone settles an
+approval whose outcome is being checked and lists undecided runs: its `enabled` setting is ignored
+by the scheduler, and every config write refuses to set it off or to give a tenant its own value of
+it (409 `jobs.schedule_required`; round 19) — the Jobs screen and
+`PATCH /api/operator/jobs/schedules/[kind]`, the config page, an operator's tenant settings, the
+config assistant (`update_config`, `request_approval`), a held change's approval and an approved
+two-person change's apply (withdrawn by the system, reason `refused`). Its interval may still be
+changed, within its bounds. 062 sets that setting on, deletes any tenant's override of it and
+withdraws every two-person approval still pending for it (audited `approval_withdrawn`, reason
+`refused`, in its tenant's log):
+
+```bash
+pbcopy < supabase/migrations/062_expire_approvals_required.sql
+```
+
+Then
+`select value from public.platform_config where key = 'jobs.config.expire-approvals.enabled';`
+answers `true`, and
+`select count(*) from public.tenant_config_overrides where key = 'jobs.config.expire-approvals.enabled';`
+answers 0, and
+`select count(*) from public.config_pending_approvals where config_key = 'jobs.config.expire-approvals.enabled' and status = 'pending';`
+answers 0. Applied again it sets the same, deletes an override made since and withdraws an approval
+filed since. A runtime hold of such a change, filed before 062, is withdrawn by the system when
+approved (`HoldResumeResult` adds `refused`: an app switching on its `kind` handles it — it is
+answered with its code and `withdrawn: true`). A stale runtime hold is answered `withdrawn: true`
+too, and both are withdrawn by the system (`system:held-change-refused`; the decider is the audit
+record's `foundBy`) — only when the run's claim was given back: a claim kept answers
+`approvals.indeterminate`, as any run whose outcome is unknown (round 21). A job of an app's own may declare `schedule.required`
+too (`JobSchedule`): every config write then refuses its `enabled` key the same way.
+
+**A consumer's own code (TASK-194):** an AuthProvider of its own implements
+`confirmCurrentFactor(accessToken, password, totpCode | null)` — the step-up, and with `null` a
+password-only proof for an account with no second factor (refusing one that has a factor); a route
+that needs a step-up reuses `confirmStepUp` from `platform/auth/mfa-routes.ts`.
+`APP_ROUTE_POLICY.publicRoutes` and `rateLimitExempt` are keyed per method (`"app/api/x/route.ts
+POST"`), and `reservedFeatures` lists any FEATURE_PERMISSIONS key no app route guards on, with the
+reason. A test mock of `platform/auth/permissions-cache` also stands in `hasAccountPermission` and
+`hasGuestPermission` (the guard resolves by the account, and a guest by the `guest` role). A
+`ProposalStore` of its own takes `resolveIndeterminate(id, "rejected", decidedBy, note)` too (round
+5): an undecided run verified not to have taken effect, withdrawn without running — `indeterminate`
+→ `rejected`, `decidedBy`, the time and the note recorded, the run token cleared (the shared
+contract, `__tests__/contract/proposal-store-contract.ts`, checks it). The approvals decision takes
+`"withdraw"` for it (`POST /api/admin/approvals/[id]` and the operator route; **Approvals** shows
+"Did not — withdraw it"). A session or turn order naming one participant twice, in any spelling of
+their id, is refused (`createSession`, `initTurnState`). Round 6: `resolveUndecidedHeldAction` takes
+`resolution: "rejected"` (a workflow's undecided step withdrawn: the workflow ends, recorded) — an
+app's own approval route offers it as `withdraw`; the account a held action acts on answers
+`admin.self_target` to a rejection and a withdrawal too; the `approval_decision` audit record
+carries `note` and `approvedBy`. Round 7: that record names the held action's account as its target;
+`PendingApproval.noEligibleDecider` marks an undecided hold no one in its tenant may decide (a
+platform operator decides it, in that tenant); an app's own audit record carrying a person's free
+text names its subject (`__tests__/audit-details-schema.test.ts`). Round 8: a re-approval of an
+undecided duplicate answers `approvals.duplicate_undecided` (409; a screen of yours that decides
+holds handles it); `noEligibleDecider` is given only with a viewer. Round 9: `HoldAuthority.resume`
+is `@external` — an app's own `audited()` act that calls it passes `{ external: true }`;
+`PURGE_REASONS` is exported from `platform/gdpr/types.ts`; an app's own action about an account
+takes free text only under an audit text key, which the erasure strips from its run's steps and
+its hold. Round 10: a command-bar action's input, and a config-assistant tool's, may carry only its
+schema's keys (refused for any other; `update_config` and `reset_config` name
+`confirmed`); an app's own `HoldAuthority` that has approver rules gives `approverRuleCheck`
+(load a hold's facts once, then decide each candidate in memory — `ApproverRule`, `facts` and
+`decide`): `noEligibleDecider` weighs a hold's rules only through it, never through
+`approverRuleRefusal` alone. Round 11 (as corrected in round 12): an input key no schema names is
+refused at every depth, in two forms — on `POST /api/admin/ai/execute` (the command bar), the
+plan's result for that action, `results[i].code` `request.unknown_input`, in a 200 (the plan stops
+there); on `POST /api/admin/config-ai/execute`, a 400 with `code` `request.unknown_input`. Its
+params: `field` (the key's path, `rules[1].note`) and `allowed` (the keys named there); where
+nothing may be set (an object given for a string) the code is `request.unknown_input_none`, with
+`field` only. A key the server sets for that tool (`held_current_role_id`; `heldPrevious`,
+`expectPrevious`, the operator flags) is `request.field_not_accepted`, never dropped. A search's
+filter its table does not take is `request.unknown_input` too (it was `request.invalid_value` of
+`filters`). `update_config` and `request_approval` name `scope`. A change waiting on another admin
+is 202: on the users, entitlements and gdpr routes (a hold, as before); on
+`POST /api/admin/ai/execute`, a plan that stopped at a held action (it was 200); on
+`POST /api/admin/config-ai/execute`, a runtime hold (`held`; it was 422) and — round 12 — a
+change filed for two-person approval (`data.requiresApproval` with no `data.approvalError`; it was
+422). A screen of yours reads that state from the body before it tests the status. An
+`ApproverRule` may give `beforeFacts` — what is decided before any read.
+
+Round 12 (as corrected in round 13) — the approval policy. A restricted action — by risk or by
+effect — is always approved by a person, whatever the policy says ("restricted ⇒ person": the
+ADR-030 amendment of 2026-10-31 and the ADR-040 addendum): `resolveApprover` returns `"user"` for it
+before it reads the policy. While `GATING_THRESHOLD` is `restricted` every hold is restricted, so
+`set_approval_policy` changes who approves no current hold; its rules decide only for actions
+below `restricted`, in an app that lowers the threshold — the command bar and **Approvals** say so.
+`default_approver` is optional: absent, the current default stands; given, it must be `"user"` —
+the default decides an action no rule matches, and a person there means that lowering the
+threshold never hands an unnamed action to an agent (an agent approves only what a rule names).
+`ApprovalPolicyStore.setRules(rules, decidedBy, defaultApprover?)` — an app's own store calls
+`approvalPolicyProblem(rules, defaultApprover)` and refuses what it names; absent, it carries the
+current default forward, but never one that check refuses. A stored default other than `"user"`
+— only ever set by hand in `agent_approval_policy` — is applied as `"user"`, logged (its value
+and version), and not carried into the next version (it was applied, to restricted actions no
+rule matched as well): a deployment that set one by hand gets stricter approval, never weaker. A
+held `set_approval_policy` shows its rules and default to its approver
+(`PendingApproval.summary.approvalPolicy`).
+
+Rounds 12 to 14 — a held config change is held only as its run would take it. A dual-controlled
+`update_config`, `request_approval` or `reset_config` is refused now, never held, when its run
+would refuse it: a key with no entry (round 13: `admin.target_not_found` — `reset_config` was held
+before; `update_config` and `request_approval` were refused uncoded before), a value its entry
+refuses, or a place it may not be written (`admin.config_scope_refused` — a platform default by a
+tenant admin, a key that governs the platform). A value its entry refuses is
+`admin.config_invalid_value` everywhere — the config page, Jobs schedules, the command bar and
+`POST /api/admin/config-ai/execute` (round 14; it was `request.invalid_value` with the entry's
+English reasons as `allowed`, or an uncoded 422): `params` are `key` and a structured `reason`
+(`type` with `expected`, `below_min` with `min`, `above_max` with `max`, `not_allowed`,
+`not_serializable`, `too_large` with `max`, else `other`), worded by the message; a screen of yours
+shows `message`, and the English reasons are no longer in the body. Every refusal of
+`POST /api/admin/config-ai/execute` carries a registry `code`, `params` and `message` (round 13; a
+refusal had none) and answers its registry status (round 14; it answered 422 for every refusal):
+404 `admin.target_not_found`, 403 `admin.config_scope_refused`, 409 `approvals.already_pending`
+(a change to the key already waits) and `approvals.stale`, 503 `service.unavailable` (the audit
+log or the approval store unavailable) and `admin.write_indeterminate` (a write whose commit is
+unknown), 422 `admin.config_invalid_value`, 500 `admin.action_failed` only when the failure has no
+code. A request, approval or rejection that did not go through no longer answers 200. The same
+codes reach the config page, Jobs schedules and the command bar (round 14; each answered
+`admin.action_failed` or `internal.error`, a 500, before), and the decision on an approved hold
+whose run failed (round 15: it answered `approvals.run_failed` for every failure). A refusal body
+no longer carries the store's own error text (`data.error`, `data.approvalError`,
+`data.applyError`, `data.validationErrors`), nor a refused filing's `data.requiresApproval` and
+`data.approval` (round 15: a reader took it as pending). A value an enum does not take carries
+its list (`allowed`).
+
+Round 15 — an approved run's failure, said. `Tool.reportsFailure` may return a coded failure,
+`{ reason, code, params }` (`RunFailure`, platform/kernel), as well as a reason: the pipeline's
+`ApprovedRunFailedError` carries it (`failure`), and `POST /api/admin/approvals/[id]` answers the
+run's own code — 409 `approvals.already_pending` (decide the waiting change first), 503
+`service.unavailable`, 409 `approvals.requester_lacks_permission { permission, reason }` (the
+requester no longer holds the action's permission — `lacks` — or is no longer an administrator
+here — `removed`; round 17: it was `auth.permission_denied`, which read as the approver's own) —
+else `approvals.run_failed`; its body says `approvalKept`. A run whose
+claim was not given back answers 409 `approvals.indeterminate` with `approvalKept: false` and
+`undecidedWithinMinutes` (round 17; the bound is the lease, the job's interval as the platform
+schedules it and a tick): since round 16 that includes a run whose write lost its commit
+(`admin.write_indeterminate`, `LOST_COMMIT_CODE`) — it may stand, so its claim is kept and the
+approval-expiry job marks it undecided after its lease, for a person to mark executed or withdraw
+(round 15 released it, and approving again ran it a second time). The decision's audit record of
+such a run is `indeterminate`, never `failed`.
+A tool of yours that returns a string is unchanged. A two-person config approval whose apply
+fails (`approveAndApply`) is coded as a config write is: a lost commit 503
+`admin.write_indeterminate` — the approval left approved and unapplied, for the apply recovery to
+decide from the change's history (it was reopened: approving it again could apply it twice), the
+body saying `settling: true` and `settlesWithinMinutes` (the apply lease, plus
+`config.expire-approvals`' interval as scheduled, plus a job tick — 75 by default;
+`POST /api/admin/config-ai/execute`'s `approve_change` carries the same in its `data`, round 17); a value its
+entry now refuses 422 `admin.config_invalid_value`, or a stale change 409 `approvals.stale` —
+withdrawn by the system (`withdrawn: true`; round 16: the row — no reviewer, the note naming the
+system and the approver — and an `approval_withdrawn` audit record, reason `refused` or `stale`,
+in one transaction; it was an unaudited update that read as the approver's rejection); the audit
+log unavailable 503 `service.unavailable` — reopened; else 500 `admin.action_failed` — reopened
+(each answered 503 `service.unavailable { service: "config" }`). A change approved and not yet
+known to be applied blocks a new request for its key — 409 `approvals.settling { key, minutes }` (round 17: it answered `approvals.already_pending`, which asked the requester to decide a
+change no one can decide); the approval-expiry job settles it, an apply that took effect but could
+not be marked applied included. An
+app's own `apply` callback may return `errorCode`/`errorParams` (`IncompleteWrite`,
+platform/admin/write-failure).
+
+**Dual control needs a second approver account.** An erasure is always held for a second holder of
+`admin_purge_user_data` — the requester and an approver, two distinct holders, each a `super_admin`
+or a `safety_approver` (round 2, N5) —, a role change for a second administrator: a deployment with
+one administrator completes neither. Give a second person an approver account — in the app
+(**Users** → change role), approved by an existing approver, or, when the only administrator is one
+`super_admin`, the one-time bootstrap of the first `safety_approver` in
+[TENANCY_OPERATIONS](TENANCY_OPERATIONS.md) ("Dual control needs a second approver; the first safety
+approver"), whose exact SQL and check are there.
 
 **Release candidate (TASK-192):** `059_roles_sort_order.sql`, after 058, on its own:
 
@@ -545,7 +771,7 @@ TENANCY_OPERATIONS §6.6 for each address — `email_verified` is `true` for bot
 | Power-reducing changes to `agent.trusted_agents` and `agent.capability_features` are applied at once by one admin holding `config_manage_safety` (review 11 M-2): a suspension, a scope subset, a lower `maxTokenTtl`, a whole mapping removed — strict diff, compare-and-set, audited (`power_reduction_applied`), alerted (`config.power_reduced`); no two-person approval. Anything else is held as before. `POST /api/operator/tenants/[id]/agents/suspend` `{ reason }` suspends every agent of a tenant (`agents_emergency_suspended`; `admin.kill_switch_failed`). `setConfigWithHistory` takes `{ expectPrevious }` (compare-and-set) as an eighth argument                                                                                                                                                                                                                                                                                                                                                                                             | Admins: `suspend_agent` and the other reductions now answer applied, not held. Operators: the kill switch route; reactivation stays held                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Smaller (review 11 L-1 – L-6): stored-JSON limits count strings and keys by their length; erasure's last-resort redaction keeps the content (`{"_redacted", "text"}` / `["_redacted: …", text]`); the command bar's search returns the 20 newest rows, skipping (and naming) only those too large; `audited()` writes its attempt and failure records in their own transaction; `platform/data` adds `withSeparateTenantTx`, `withSavepoint`, `inTransaction`; a request waits at most 1 s in all for signing keys; `VALKEY_URL` with a malformed percent-escape or a user without a password is refused at boot (`config.valkey_url_invalid`)                                                                                                                                                                                                                                                                                                                                                                                                                  | An app test that mocks `@/platform/data` without spreading the real module: add `withSeparateTenantTx` (and `inTransaction`) or spread it. Container deployments: check `VALKEY_URL`                                                                                                                                                                                                                                                                                                                                                                   |
 | A capability mapping removed, emptied, or all removed is held for a second admin (review 12 H1): only a required feature added to an existing mapping is applied by one admin. The contract for evaluating `agent.capability_features`: a capability ABSENT from the map is NOT allowed (never "no features required"), a malformed map allows nothing — `platform/agents/capability-features.ts` (`evaluateCapabilityFeatures`, `requiredFeatures`), kit `__tests__/contract/capability-features-contract.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | **Playform:** make `lib/agent-capabilities.ts` `evaluateCapability` fail closed for an absent capability (or call `evaluateCapabilityFeatures`), and run `runCapabilityFeaturesContract` against it in a test. A command-bar removal now answers `held`                                                                                                                                                                                                                                                                                                |
-| A held config change records the value it replaces (review 12 H2): `heldPrevious` on a runtime hold's payload (set by the platform; one a caller sends is discarded), `current_value` on a two-person approval. An approval applies it only onto that value (`setConfigWithHistory` / `clearTenantConfig` `expectPrevious`); changed since: nothing applied, the hold withdrawn, `approvals.stale` (409). A hold with no recorded value (made before this release) is refused the same way. The kill switch and every unheld power reduction withdraw the pending holds on their key (audited `approval_withdrawn`, reason `superseded`); `suspendAllAgents` returns `withdrawn`                                                                                                                                                                                                                                                                                                                                                                                | Admin UIs: show `approvals.stale` as "the setting changed — ask again" (the catalog has the text). Re-request any hold pending from before this release. An app that applies a held config change itself passes `expectPrevious`                                                                                                                                                                                                                                                                                                                       |
+| A held config change records the value it replaces (review 12 H2): `heldPrevious` on a runtime hold's payload (set by the platform; one a caller sends is discarded), `current_value` on a two-person approval. An approval applies it only onto that value (`setConfigWithHistory` / `clearTenantConfig` `expectPrevious`); changed since: nothing applied, `approvals.stale` (409), the hold withdrawn by the system when the withdrawal lands (`withdrawn: true`). A hold with no recorded value (made before this release) is refused the same way. The kill switch and every unheld power reduction withdraw the pending holds on their key (audited `approval_withdrawn`, reason `superseded`); `suspendAllAgents` returns `withdrawn`                                                                                                                                                                                                                                                                                                                    | Admin UIs: show `approvals.stale` with the catalog's text ("What this change would replace changed after it was requested, so nothing was changed. Request the change again." — a setting or a role), and read the list again. Re-request any hold pending from before this release. An app that applies a held config change itself passes `expectPrevious`                                                                                                                                                                                           |
 | Trajectory chains (review 12 M1, M2): every append goes to the chain's tail (`agent_trajectories.chain_root_id` and the chain guard trigger, 052 — hostile rows refused); a chain holds at most `agent.trajectory_max_segments` segments (default 20; safety tier, operator-only, dual-controlled — seeded once per key), past which the action is refused before it runs: `request.trajectory_chain_full` (409). `TrajectoryStore` adds `chainTail` and `chainSegment` (required), `assertRoomForStep(id, options?)`; `TrajectoryQuery.withoutSteps`; `trajectoryChainPages` pages a chain; `latestTrajectorySegment` reads the tail alone; `loadSession` reads only the tail                                                                                                                                                                                                                                                                                                                                                                                  | A custom `TrajectoryStore`: implement `chainTail` / `chainSegment` and append to the tail (the kit checks it). A reader of a session's whole history: page it with `trajectoryChainPages` rather than holding `readTrajectoryChain`. A session refused with `request.trajectory_chain_full` starts a new one. Where 052 was applied before this change, apply 052 again (idempotent, review 13 L4): it adds `agent.trajectory_max_segments` to `config.dual_control_keys`, and leaves off a key an operator removed                                    |
 | Smaller (review 12 L1 – L7): `audited()` inside a transaction writes `rolled_back` after a rollback (`onRollback`, platform/data; `attemptId`, `holdId`, `operationId` on the records; `platform/kernel/audit-correlation.ts`) and takes `{ recordSuccess }`; stored-JSON limits measure a `toJSON` value as what it writes; the kill switch is audited attempted → succeeded                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | failed; a one-admin reduction is recorded before it is written, fail closed; a tenant's config compare-and-set takes the platform lock first; recovery and chain walks end on a cycle; a change of `agent.trusted_agents` / `agent.capability_features` is published to every instance's config cache (`publishConfigInvalidation`, alert `config.invalidation_unpublished`); `POST /api/admin/agents/suspend` (`config_manage_safety`) is the kill switch in every deployment mode; `mark_executed` refuses the requester (`approvals.self_approval`) | An app test that mocks `@/platform/data` without spreading the real module: add `onRollback` or spread it. Admin UIs: offer the single-tenant kill switch to `config_manage_safety` holders (runbook) |
 | Review 13: an approved reset applies only while the platform default it inherits is the one recorded at request time (`approvals.stale` otherwise; a held reset from before this release is stale); a stamped key's stamp read waits at most 200 ms and a circuit breaker stops asking a failing shared cache (alert `cache.stamp_breaker_open`); a reduction withdraws only the holds of its scope, in batches (audit `approval_withdrawn` carries `holdIds`, `scope`, `count`; alert `approvals.withdrawal_incomplete`); the kill switch run when nothing is active publishes the invalidation again (`republished`); a continued trajectory segment's step count never changes and its continuation's insert locks it; 052 records the dual-control keys it seeded (`config_dual_control_seeded`); a commit lost with its connection is audited `indeterminate`; the agent-registry and capability-mapping views answer 503 when the key cannot be read                                                                                                      | Monitoring: alert on `cache.stamp_breaker_open` and `approvals.withdrawal_incomplete`. Admin UIs: show `republished` and an `indeterminate` audit outcome. Where 052 ran before this change, re-apply 052 (idempotent): `agent.trajectory_max_segments` is then dual-controlled without a hand edit                                                                                                                                                                                                                                                    |

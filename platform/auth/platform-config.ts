@@ -48,9 +48,11 @@ import {
   type Tx,
 } from "@/platform/data";
 import { peekTenant } from "@/platform/tenancy/context";
+import { refusesRequiredSchedule } from "@/platform/jobs/required-schedule";
 import type {
   ConfigValueType,
   ConfigValidationResult,
+  ConfigValueRefusal,
   EnhancedConfigEntry,
   PermissionTier,
   ConfigHistoryRecord,
@@ -568,19 +570,28 @@ export function validateConfigValue(
   proposedValue: unknown
 ): ConfigValidationResult {
   const errors: string[] = [];
+  // The first reason, structured (round 14, item 2): what the screens say.
+  let refusal: ConfigValueRefusal | undefined;
+  const refuse = (text: string, why: ConfigValueRefusal) => {
+    errors.push(text);
+    refusal ??= why;
+  };
+  const typeRefused = (text: string) =>
+    refuse(text, { reason: "type", expected: entry.valueType });
 
   // S3: Enforce max size to prevent unbounded storage
   try {
     const serialized = JSON.stringify(proposedValue);
     if (serialized.length > MAX_CONFIG_VALUE_BYTES) {
-      errors.push(
-        `Value size ${serialized.length} bytes exceeds maximum ${MAX_CONFIG_VALUE_BYTES} bytes`
+      refuse(
+        `Value size ${serialized.length} bytes exceeds maximum ${MAX_CONFIG_VALUE_BYTES} bytes`,
+        { reason: "too_large", max: MAX_CONFIG_VALUE_BYTES }
       );
-      return { valid: false, errors };
+      return { valid: false, errors, refusal };
     }
   } catch {
-    errors.push("Value cannot be serialized to JSON");
-    return { valid: false, errors };
+    refuse("Value cannot be serialized to JSON", { reason: "not_serializable" });
+    return { valid: false, errors, refusal };
   }
 
   // TASK-147: every case decides on the value's own type — no String() or Number() of an
@@ -598,14 +609,20 @@ export function validateConfigValue(
             ? Number(proposedValue.trim())
             : NaN;
       if (!Number.isFinite(num)) {
-        errors.push(`Value must be a number, got: ${typeof proposedValue}`);
+        typeRefused(`Value must be a number, got: ${typeof proposedValue}`);
         break;
       }
       if (entry.minValue !== null && num < entry.minValue) {
-        errors.push(`Value ${num} is below minimum ${entry.minValue}`);
+        refuse(`Value ${num} is below minimum ${entry.minValue}`, {
+          reason: "below_min",
+          min: entry.minValue,
+        });
       }
       if (entry.maxValue !== null && num > entry.maxValue) {
-        errors.push(`Value ${num} exceeds maximum ${entry.maxValue}`);
+        refuse(`Value ${num} exceeds maximum ${entry.maxValue}`, {
+          reason: "above_max",
+          max: entry.maxValue,
+        });
       }
       value = num;
       break;
@@ -616,17 +633,24 @@ export function validateConfigValue(
         value = proposedValue === "true";
         break;
       }
-      errors.push(`Value must be a boolean (true/false), got: ${typeof proposedValue}`);
+      typeRefused(`Value must be a boolean (true/false), got: ${typeof proposedValue}`);
       break;
     }
     case "string_enum": {
       if (typeof proposedValue !== "string") {
-        errors.push(`Value must be text, got: ${typeof proposedValue}`);
+        // Its list, when it has one (round 15, I-8); with none, any text: refused as not text.
+        refuse(
+          `Value must be text, got: ${typeof proposedValue}`,
+          entry.allowedValues !== null
+            ? { reason: "type", expected: "string_enum", allowed: entry.allowedValues }
+            : { reason: "type", expected: "string" }
+        );
         break;
       }
       if (entry.allowedValues !== null && !entry.allowedValues.includes(proposedValue)) {
-        errors.push(
-          `Value "${proposedValue}" is not in allowed values: ${entry.allowedValues.join(", ")}`
+        refuse(
+          `Value "${proposedValue}" is not in allowed values: ${entry.allowedValues.join(", ")}`,
+          { reason: "not_allowed", allowed: entry.allowedValues }
         );
       }
       break;
@@ -637,18 +661,18 @@ export function validateConfigValue(
         try {
           const parsed: unknown = JSON.parse(proposedValue);
           if (Array.isArray(parsed)) value = parsed;
-          else errors.push("Value must be a JSON array");
+          else typeRefused("Value must be a JSON array");
         } catch {
-          errors.push("Value must be a valid JSON array");
+          typeRefused("Value must be a valid JSON array");
         }
       } else {
-        errors.push("Value must be a JSON array");
+        typeRefused("Value must be a JSON array");
       }
       break;
     }
     case "string": {
       if (typeof proposedValue !== "string") {
-        errors.push(
+        typeRefused(
           `Value must be text, got: ${proposedValue === null ? "null" : typeof proposedValue}`
         );
       }
@@ -656,7 +680,9 @@ export function validateConfigValue(
     }
   }
 
-  return errors.length === 0 ? { valid: true, errors, value } : { valid: false, errors };
+  return errors.length === 0
+    ? { valid: true, errors, value }
+    : { valid: false, errors, refusal };
 }
 
 // ── History Operations ──────────────────────────────────────────────────
@@ -739,7 +765,10 @@ export interface ConfigWriteTarget {
   readonly operator: boolean;
 }
 
-/** The default target: the platform default (single-tenant deployments, existing callers). */
+/**
+ * The platform default as a target (single-tenant deployments' administrators). Passed
+ * explicitly: setConfigWithHistory has no default target (TASK-194, audit C-12).
+ */
 export const PLATFORM_DEFAULT_TARGET: ConfigWriteTarget = Object.freeze({
   scope: "platform",
   operator: false,
@@ -748,7 +777,17 @@ export const PLATFORM_DEFAULT_TARGET: ConfigWriteTarget = Object.freeze({
 type WriteResult = {
   success: boolean;
   error?: string;
+  /**
+   * The registry code of a refusal the store gives itself (round 19, I-1): a required schedule's
+   * `enabled` key set off, or set for a tenant (`jobs.schedule_required`). Nothing was changed.
+   */
+  errorCode?: "jobs.schedule_required";
+  errorParams?: Readonly<Record<string, never>>;
   validationErrors?: readonly string[];
+  /** A value its entry refuses, structured (round 14, item 2). */
+  valueRefusal?: ConfigValueRefusal;
+  /** The audit log could not record it, so nothing was changed (round 14, item 3). */
+  auditUnavailable?: boolean;
   historyWriteFailed?: boolean;
   /**
    * A compare-and-set found the value it replaces changed since it was read (review 11 M-2,
@@ -818,8 +857,12 @@ export async function setConfigWithHistory(
   changeComment: string,
   changeSource: ConfigChangeSource = "config_agent",
   /** A5: Pass a pre-loaded entry to avoid redundant DB round trip */
-  preloadedEntry?: EnhancedConfigEntry,
-  target: ConfigWriteTarget = PLATFORM_DEFAULT_TARGET,
+  preloadedEntry: EnhancedConfigEntry | undefined,
+  /**
+   * Where the change goes — always the caller's explicit choice (TASK-194, audit C-12): the
+   * platform default is written on the owner connection, so it is never a default argument.
+   */
+  target: ConfigWriteTarget,
   options: {
     /**
      * Compare-and-set (review 11 M-2): write only if the value being replaced — the target's, read
@@ -851,10 +894,21 @@ export async function setConfigWithHistory(
       success: false,
       error: "Validation failed",
       validationErrors: validation.errors,
+      valueRefusal: validation.refusal,
     };
   }
   // Stored as the type the setting names ("50" from a form is stored as 50).
   value = validation.value;
+
+  // A required job's enabled key is never set off, nor for a tenant (round 19, I-1).
+  if (await refusesRequiredSchedule(key, value, target.scope)) {
+    return {
+      success: false,
+      error: `"${key}" turns on a required job: it is always on, and cannot be turned off or set for one tenant.`,
+      errorCode: "jobs.schedule_required",
+      errorParams: {},
+    };
+  }
 
   const tenant = peekTenant();
   if (target.scope === "tenant") {
@@ -996,6 +1050,7 @@ export async function setConfigWithHistory(
       return {
         success: false,
         error: "The audit log is unavailable, so the value was not changed.",
+        auditUnavailable: true,
       };
     }
     throw err;
@@ -1129,6 +1184,7 @@ export async function clearTenantConfig(
       return {
         success: false,
         error: "The audit log is unavailable, so the value was not changed.",
+        auditUnavailable: true,
       };
     }
     throw err;

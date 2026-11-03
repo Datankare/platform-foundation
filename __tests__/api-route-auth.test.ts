@@ -10,6 +10,11 @@
  * An app's own verifier wrappers and public routes are declared in
  * platform/route-policy/app-route-policy.ts (TASK-136); each wrapper must itself call a platform
  * verifier, directly or through another declared wrapper.
+ *
+ * Per method, not per file (TASK-194, audit C-11): a file passed when any of its methods verified,
+ * so an `export const DELETE` that only rate limits, added beside a verified POST, passed. Each
+ * exported method is read with the compiler API (helpers/route-methods.ts): its own body must call
+ * a verifier, and await nothing but a limiter before it.
  */
 
 import { APP_ROUTE_POLICY } from "@/platform/route-policy/app-route-policy";
@@ -20,6 +25,7 @@ import {
   read,
   resolveDeclared,
 } from "./helpers/route-policy";
+import { routeMethods, verificationProblem } from "./helpers/route-methods";
 
 /**
  * The platform's verifiers: token signature, guest signature, admin permission — or, for the
@@ -34,33 +40,37 @@ const PLATFORM_VERIFIERS = [
   "requireJobTick",
 ];
 
-/** The platform's routes with no verifier, by design. Each needs a reason. */
+/**
+ * The platform's route methods with no verifier, by design ("file METHOD"). Each needs a reason.
+ */
 const PLATFORM_PUBLIC: Readonly<Record<string, string>> = {
-  "app/api/health/route.ts":
+  "app/api/health/route.ts GET":
     "The combined health report for existing monitors; names and statuses only, no user data.",
-  "app/api/health/live/route.ts":
+  "app/api/health/live/route.ts GET":
     "Liveness for orchestrators (ADR-056 D4): the process answers; no dependency, no user data.",
-  "app/api/health/ready/route.ts":
+  "app/api/health/ready/route.ts GET":
     "Readiness for load balancers and the deploy smoke test (ADR-056 D4); names and statuses only.",
-  "app/api/features/route.ts":
+  "app/api/features/route.ts GET":
     "Which optional features exist; read by the sign-in screen.",
-  "app/api/auth/sign-in/route.ts": "Establishes the session.",
-  "app/api/auth/sign-up/route.ts": "Creates the account.",
-  "app/api/auth/sign-out/route.ts":
+  "app/api/auth/sign-in/route.ts POST": "Establishes the session.",
+  "app/api/auth/sign-up/route.ts POST": "Creates the account.",
+  "app/api/auth/sign-out/route.ts POST":
     "Ends the session; revokes only the tokens it is given (bearer and refresh cookie).",
-  "app/api/auth/refresh/route.ts":
+  "app/api/auth/refresh/route.ts POST":
     "Renews the session; the httpOnly refresh cookie is the credential, checked by the provider.",
-  "app/api/auth/guest/route.ts": "Mints a signed guest token (ADR-050 D4).",
-  "app/api/auth/forgot-password/route.ts": "Account recovery before sign-in.",
-  "app/api/auth/confirm-forgot-password/route.ts": "Account recovery before sign-in.",
-  "app/api/auth/verify-email/route.ts": "Email verification before first sign-in.",
-  "app/api/auth/resend-verification/route.ts": "Email verification before first sign-in.",
-  "app/api/auth/mfa-challenge/route.ts":
+  "app/api/auth/guest/route.ts POST": "Mints a signed guest token (ADR-050 D4).",
+  "app/api/auth/forgot-password/route.ts POST": "Account recovery before sign-in.",
+  "app/api/auth/confirm-forgot-password/route.ts POST":
+    "Account recovery before sign-in.",
+  "app/api/auth/verify-email/route.ts POST": "Email verification before first sign-in.",
+  "app/api/auth/resend-verification/route.ts POST":
+    "Email verification before first sign-in.",
+  "app/api/auth/mfa-challenge/route.ts POST":
     "Second step of sign-in; the challenge session is the credential.",
-  "app/api/auth/new-password-challenge/route.ts":
+  "app/api/auth/new-password-challenge/route.ts POST":
     "Forced password change during sign-in; the challenge session is the credential.",
-  "app/api/auth/sso/[provider]/route.ts": "Starts hosted sign-in (state + PKCE).",
-  "app/api/auth/sso/callback/route.ts":
+  "app/api/auth/sso/[provider]/route.ts GET": "Starts hosted sign-in (state + PKCE).",
+  "app/api/auth/sso/callback/route.ts POST":
     "Completes hosted sign-in; verifies state and PKCE.",
 };
 
@@ -70,6 +80,11 @@ const PUBLIC: Readonly<Record<string, string>> = {
   ...APP_ROUTE_POLICY.publicRoutes,
 };
 const VERIFIERS = resolveDeclared(PLATFORM_VERIFIERS, APP_ROUTE_POLICY.verifiers);
+/** What a method may await before it verifies: the limiters (ADR-052). */
+const LIMITERS = resolveDeclared(
+  ["enforceRateLimit"],
+  APP_ROUTE_POLICY.limiters
+).accepted;
 
 describe("API route caller verification (TASK-133)", () => {
   it("finds a plausible number of routes (self-test before any absence counts)", () => {
@@ -80,18 +95,33 @@ describe("API route caller verification (TASK-133)", () => {
     expect(VERIFIERS.problems).toEqual([]);
   });
 
-  it("every route verifies its caller or is public by design", () => {
-    const unverified = ROUTES.filter(
-      (f) => !PUBLIC[f] && callCount(read(f), VERIFIERS.accepted) === 0
-    );
+  it("every method of every route verifies its caller first, or the route is public by design", () => {
+    const unverified: string[] = [];
+    let methods = 0;
+    for (const f of ROUTES) {
+      const found = routeMethods(read(f), f);
+      if (found.length === 0) unverified.push(`${f}: no exported method found`);
+      for (const m of found) {
+        // Public per (file, method) (TASK-194 round 1, A4): a method added beside a public one
+        // is not public with it.
+        if (PUBLIC[`${f} ${m.method}`]) continue;
+        methods += 1;
+        const problem = verificationProblem(m, VERIFIERS.accepted, LIMITERS);
+        if (problem) unverified.push(`${f} ${m.method}: ${problem}`);
+      }
+    }
     expect(unverified).toEqual([]);
+    expect(methods).toBeGreaterThan(ROUTES.length - Object.keys(PUBLIC).length - 1);
   });
 
-  it("lists no public route that does not exist, and gives each a reason", () => {
+  it("lists no public method that does not exist, and gives each a reason", () => {
+    const all = ROUTES.flatMap((f) =>
+      routeMethods(read(f), f).map((m) => `${f} ${m.method}`)
+    );
     for (const [f, reason] of Object.entries(PUBLIC)) {
       expect({
         f,
-        exists: ROUTES.includes(f),
+        exists: all.includes(f),
         hasReason: reason.trim().length > 10,
       }).toEqual({
         f,
@@ -103,6 +133,49 @@ describe("API route caller verification (TASK-133)", () => {
 });
 
 describe("route verification — self-tests of the checker", () => {
+  const problems = (src: string) =>
+    routeMethods(src).map((m) => [
+      m.method,
+      verificationProblem(m, PLATFORM_VERIFIERS, ["enforceRateLimit"]),
+    ]);
+
+  it("judges each method by its own body: a verified POST does not cover an added DELETE (C-11)", () => {
+    const src =
+      "export const POST = tenantRoute(async function POST(request) {\n" +
+      "  const g = await requireAdmin(request, 'admin_manage_roles'); return g; });\n" +
+      "export const DELETE = tenantRoute(async function DELETE(request) {\n" +
+      "  const l = await enforceRateLimit(request, R); return new Response('open'); });";
+    expect(callCount(src, PLATFORM_VERIFIERS)).toBe(1); // the old file-level count passed it
+    expect(problems(src)).toEqual([
+      ["POST", null],
+      ["DELETE", "calls no verifier"],
+    ]);
+  });
+
+  it("refuses work awaited before the caller is verified; a limiter first is allowed", () => {
+    const src =
+      "export async function GET(request) { await enforceRateLimit(request, R);\n" +
+      "  const a = await requireAuth(request); }\n" +
+      "export async function POST(request) { const body = await readJsonObject(request);\n" +
+      "  const a = await requireAuth(request); }";
+    expect(problems(src)).toEqual([
+      ["GET", null],
+      ["POST", "awaits readJsonObject before verifying"],
+    ]);
+  });
+
+  it("follows a method into the same file's helper, and reads a named handler", () => {
+    const src =
+      "async function guard(request) { return requireAdmin(request, 'x'); }\n" +
+      "async function handle(request) { const g = await guard(request); return g; }\n" +
+      "export const GET = tenantRoute(handle);\n" +
+      "export { PUT } from './elsewhere';";
+    expect(problems(src)).toEqual([
+      ["GET", null],
+      ["PUT", "its body could not be read"],
+    ]);
+  });
+
   it("catches a route with no verifier", () => {
     expect(
       callCount(

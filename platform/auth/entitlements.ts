@@ -27,6 +27,7 @@ import {
   type VerifiedAdmin,
 } from "@/platform/auth/role-governance";
 import type { Tx } from "@/platform/data";
+import { hasCanonicalUuidShape, sameId } from "@/platform/auth/same-id";
 
 export interface EntitlementGrant {
   userId: string;
@@ -60,7 +61,9 @@ async function checkRules(
   userId: string,
   groupId: string
 ): Promise<void> {
-  if (userId === admin.userId) {
+  // `userId` has the canonical UUID shape here: grantEntitlement and revokeEntitlement, its only
+  // callers, refuse any other before anything runs (round 3, finding 4).
+  if (sameId(userId, admin.userId)) {
     throw new EntitlementRuleError({ code: "auth.role_self_change", params: {} });
   }
   if (!UUID_RE.test(groupId)) return; // no such group: the write itself refuses it
@@ -94,6 +97,10 @@ async function failure(write: () => Promise<unknown>): Promise<string | undefine
 export async function grantEntitlement(
   grant: EntitlementGrant
 ): Promise<{ success: boolean; error?: string }> {
+  // A user id with the canonical UUID shape (any case), before anything is recorded (round 3,
+  // finding 4).
+  if (!hasCanonicalUuidShape(grant.userId))
+    return { success: false, error: "request.invalid_value" };
   try {
     // Recorded before the grant takes effect; no record, no grant (Adversarial Validation, 6).
     return await audited(
@@ -158,6 +165,11 @@ export async function grantEntitlement(
 export async function revokeEntitlement(
   revoke: EntitlementRevoke
 ): Promise<{ success: boolean; error?: string }> {
+  // A user id with the canonical UUID shape (any case), before anything is recorded (round 3,
+  // finding 4).
+  if (!hasCanonicalUuidShape(revoke.userId)) {
+    return { success: false, error: "request.invalid_value" };
+  }
   try {
     return await audited(
       {

@@ -77,7 +77,14 @@ function checkSchedule(kind: string, schedule: JobSchedule): JobSchedule {
       `a schedule needs whole minutes min ≤ default ≤ max, within 1–${MAX_INTERVAL_MINUTES}`
     );
   }
+  if (schedule.required !== undefined && typeof schedule.required !== "boolean") {
+    throw new JobDefinitionError(kind, "required is true or false");
+  }
   if (schedule.tenantOptOutKey !== undefined) {
+    // A tenant's opt-out would turn it off for that tenant (TASK-194 round 19).
+    if (schedule.required) {
+      throw new JobDefinitionError(kind, "a required schedule has no tenant opt-out");
+    }
     if (scope !== "each-tenant") {
       throw new JobDefinitionError(
         kind,

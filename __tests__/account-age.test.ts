@@ -47,6 +47,15 @@ jest.mock("@/platform/auth/account-status-guard", () => ({
 jest.mock("@/platform/auth/coppa-gate", () => ({
   checkCoppaGate: async () => ({ allowed: true }),
 }));
+// The feature's permission (update_profile → can_edit_profile, TASK-194): the user's role has it.
+jest.mock("@/platform/auth/permissions-cache", () => ({
+  ...jest.requireActual("@/platform/auth/permissions-cache"),
+  hasCachedPermission: async () => true,
+  // By the account and, for a guest, the guest role (TASK-194 round 1, C2/C3).
+  hasAccountPermission: async () => true,
+  hasGuestPermission: async () => true,
+  accountPermissionStanding: async () => "held",
+}));
 
 import { resetRateLimiter } from "@/platform/rate-limit";
 import { POST as signUp } from "@/app/api/auth/sign-up/route";

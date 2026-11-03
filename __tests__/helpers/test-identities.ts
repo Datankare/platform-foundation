@@ -169,6 +169,23 @@ export function mockPermissionsCache(): any {
       async (sub: string, code: string) =>
         (await lookup(sub))?.permissions.includes(code) ?? false
     ),
+    // By the account (TASK-194 round 1, C3): the identity registered for the subject.
+    getCachedAccountPermissions: jest.fn((sub: string) => lookup(sub)),
+    hasAccountPermission: jest.fn(
+      async (sub: string, _accountId: string, code: string) =>
+        (await lookup(sub))?.permissions.includes(code) ?? false
+    ),
+    accountPermissionStanding: jest.fn(
+      async (sub: string, _accountId: string, code: string) => {
+        const found = await lookup(sub);
+        if (!found) return "unknown";
+        return found.permissions.includes(code) ? "held" : "lacking";
+      }
+    ),
+    // A guest acts under the guest role (round 1, C2): the catalog's.
+    hasGuestPermission: jest.fn(async (code: string) =>
+      (ROLE_PERMISSIONS.guest ?? []).includes(code)
+    ),
     invalidatePermissions: jest.fn(),
   };
 }

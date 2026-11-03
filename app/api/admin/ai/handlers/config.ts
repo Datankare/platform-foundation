@@ -10,7 +10,8 @@ import {
   getGlobalPasswordPolicy,
   saveGlobalPasswordPolicy,
 } from "@/platform/auth/password-policy";
-import { runAudited, type ActionResult } from "./shared";
+import { logger } from "@/lib/logger";
+import { coded, runAudited, type ActionResult } from "./shared";
 
 const FIELDS: Readonly<Record<string, string>> = {
   min_length: "minLength",
@@ -34,12 +35,10 @@ export async function handleUpdatePasswordPolicy(
   const current = await getGlobalPasswordPolicy();
   const applied = applyPasswordPolicyChange(current, change);
   if ("field" in applied) {
-    return {
-      success: false,
-      error: `${applied.field} must be ${applied.allowed}`,
-      code: "request.invalid_value",
-      params: { field: applied.field, allowed: applied.allowed },
-    };
+    return coded("request.invalid_value", {
+      field: applied.field,
+      allowed: [applied.allowed],
+    });
   }
 
   return runAudited(
@@ -55,7 +54,14 @@ export async function handleUpdatePasswordPolicy(
     },
     async () => {
       const saved = await saveGlobalPasswordPolicy(applied.policy);
-      if (!saved.success) return { success: false, error: saved.error };
+      if (!saved.success) {
+        // Its text is logged, never returned (TASK-199).
+        logger.error("Password policy could not be saved", {
+          error: saved.error,
+          route: "app/api/admin/ai/handlers/config",
+        });
+        return coded("admin.action_failed");
+      }
       return { success: true, result: "Password policy updated" };
     }
   );

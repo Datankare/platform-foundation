@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { ROLE_PERMISSIONS } from "../helpers/test-identities";
 import { Client } from "pg";
 import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { setTenantDirectory, CachedTenantDirectory } from "@/platform/tenancy/directory";
@@ -61,7 +62,17 @@ function lifecycleHooks(): void {
     await connectTestDatabase();
     setTenantDirectory(new CachedTenantDirectory(new PostgresTenantDirectory()));
     home = await createTestTenant();
-    op1 = { userId: await home.user("op1") };
+    const op1Id = await home.user("op1");
+    // A verified super_admin operator: the role rules apply to them (audit C-5).
+    op1 = {
+      userId: op1Id,
+      admin: {
+        userId: op1Id,
+        sub: `sub-${op1Id}`,
+        roleName: "super_admin",
+        permissions: ROLE_PERMISSIONS.super_admin,
+      },
+    };
     op2 = { userId: await home.user("op2") };
   });
 
@@ -394,6 +405,48 @@ dbDescribe("tenant lifecycle: one account, one outcome (ADR-053 D7)", () => {
     });
     expect(await roleName(a)).not.toBe("admin");
     expect(await roleName(b)).not.toBe("admin");
+  });
+
+  // TASK-194, audit C-5: the role rules apply to the operator, through the one role writer.
+  it("never demotes a super_admin by making them a tenant's administrator", async () => {
+    const t = await provision();
+    const peer = randomUUID();
+    await withOwnerTx("tenant-lifecycle", (tx) =>
+      tx.query(
+        "insert into users (id, cognito_sub, email, email_verified, role_id, tenant_id) select $1::uuid, $1::uuid, 'peer.operator@example.com', true, id, $2::uuid from roles where name = 'super_admin'",
+        [peer, t.id]
+      )
+    );
+    await expect(
+      asOp(() => makeTenantAdmin(op1, t.id, "peer.operator@example.com"))
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "tenant.role_refused",
+      refusal: { code: "auth.role_database_only", params: { role: "super_admin" } },
+    });
+    expect(await roleName(peer)).toBe("super_admin");
+  });
+
+  it("never changes the operator's own role, and refuses an operator it cannot verify", async () => {
+    const t = await provision();
+    const self = randomUUID();
+    await withOwnerTx("tenant-lifecycle", (tx) =>
+      tx.query(
+        "insert into users (id, cognito_sub, email, email_verified, role_id, tenant_id) select $1::uuid, $1::uuid, 'self.op@example.com', true, id, $2::uuid from roles where is_default",
+        [self, t.id]
+      )
+    );
+    const asSelf: Operator = { userId: self, admin: { ...op1.admin!, userId: self } };
+    await expect(
+      asOp(() => makeTenantAdmin(asSelf, t.id, "self.op@example.com"))
+    ).resolves.toMatchObject({
+      code: "tenant.role_refused",
+      refusal: { code: "auth.role_self_change" },
+    });
+    await expect(
+      asOp(() => makeTenantAdmin({ userId: op1.userId }, t.id, "self.op@example.com"))
+    ).resolves.toMatchObject({ ok: false, code: "tenant.invalid" });
+    expect(await roleName(self)).not.toBe("admin");
   });
 
   it("promotes only the live, verified account: a deleted one is ignored, an unverified refused", async () => {

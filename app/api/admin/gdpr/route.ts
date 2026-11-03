@@ -12,36 +12,79 @@
  *   Erases the account and every platform table that holds its data (platform/auth/user-data.ts,
  *   through createPlatformPurgePipeline); a dry run counts the rows. A purge that does not
  *   complete answers with its steps and is recorded as failed (audit X-15).
- *   Returns: PurgeResult
+ *   Returns: a dry run's PurgeResult at once; an erasure is held (202 { held, proposalId }) for a
+ *   second admin who holds admin_purge_user_data — not the requester, not the account erased — to
+ *   approve in Approvals, and then runs once as its requester (TASK-194, audit C-6: one admin
+ *   could erase any non-super_admin account irreversibly, while a reversible role change was
+ *   dual-controlled). The rules and the run are the governed action purge_user_data
+ *   (app/api/admin/ai/handlers/purge.ts), always held (command-bar.ts ALWAYS_HELD_ACTIONS).
  *   Tenancy: the target must be a user of the request's tenant (ADR-053 D5) — a soft-deleted one
  *   included, since erasing a deleted account is the common case — or the route answers 404
  *   admin.target_not_found before any purge step runs, whatever each purge handler would scope
  *   itself to. The protected-role check reads it in the same tenant transaction.
+ *   Round 1 (TASK-194, A1/A6): the request is recorded when it is made (admin_action
+ *   `gdpr_purge_requested`, before the hold; no record, no hold — 503), and an account has at
+ *   most one open erasure hold: a second request answers 409 admin.erasure_pending — checked
+ *   here, and kept by the database for two requests made at once (061's partial unique index
+ *   proposals_purge_one_open, round 2).
+ *
+ * GET /api/admin/gdpr?userId=<id>
+ *   Requires: admin_purge_user_data. `{ pending: { proposalId, createdAt } | null }` — the open
+ *   erasure hold on the account, so the Users screen says "erasure pending approval" after a
+ *   reload (A6); a hold whose period ran out is not pending (rebase I-3).
+ *   Rebase I-3: the open hold is the one the index counts (openErasureHold); a lapsed one
+ *   (holdLapsed) is withdrawn by the system — recorded, as a decision on it would — and the new
+ *   request held.
  *
  * @module app/api/admin/gdpr
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
-import { auditedResponse } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
-import { createPlatformPurgePipeline } from "@/platform/gdpr";
-import type { PurgeRequest } from "@/platform/gdpr";
-import { apiError, readJsonObject } from "@/platform/errors";
-import { withTenantTx } from "@/platform/data";
-import { findRole } from "@/platform/auth/role-lookup";
-import { PROTECTED_ROLES } from "@/platform/auth/role-governance";
+import { apiError, internalError, readJsonObject, isErrorCode } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { withTrajectory } from "@/platform/agents/trajectory-closure";
+import {
+  COMMAND_BAR_ACTOR_ID,
+  isErasureHoldConflict,
+  openErasureHold,
+  runCommandBarAction,
+} from "@/app/api/admin/ai/command-bar";
+import { AuditWriteError, recordAudit } from "@/platform/auth/audit";
+import { withdrawLapsedHold } from "@/platform/admin/lapsed-hold";
+import { approvalExpiryDays } from "@/platform/admin/hold-expiry";
+import {
+  checkPurgeUserData,
+  handlePurgeUserData,
+  PURGE_REASONS,
+} from "@/app/api/admin/ai/handlers/purge";
+import type { ActionResult } from "@/app/api/admin/ai/handlers";
+import { withTenantTx } from "@/platform/data";
 
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Valid purge reasons */
-const VALID_REASONS = new Set([
-  "user-request",
-  "admin-action",
-  "account-deletion",
-  "legal-order",
-]);
+/**
+ * Whether a purge answered with its PurgeResult: it ran — completed, or not completed
+ * (admin.purge_incomplete: its steps say which failed) — rather than being refused.
+ */
+function hasPurgeResult(
+  result: ActionResult & { purge?: unknown }
+): result is ActionResult & { purge: object } {
+  return (
+    typeof result.purge === "object" &&
+    result.purge !== null &&
+    (!result.code || result.code === "admin.purge_incomplete")
+  );
+}
+
+/** A refused or failed action as its coded answer. */
+function refusedResponse(result: ActionResult, request: NextRequest): NextResponse {
+  if (result.code && isErrorCode(result.code)) {
+    return apiError(result.code, { params: result.params ?? {}, request });
+  }
+  return apiError("internal.error", { request });
+}
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // Rate limited, verified, permission and account standing checked (requireAdmin).
@@ -66,101 +109,191 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
       request,
     });
   }
-
-  if (!body.reason || !VALID_REASONS.has(body.reason)) {
+  if (!body.reason || !(PURGE_REASONS as readonly string[]).includes(body.reason)) {
     return apiError("request.invalid_value", {
-      params: { field: "reason", allowed: Array.from(VALID_REASONS) },
+      params: { field: "reason", allowed: [...PURGE_REASONS] },
       request,
     });
   }
+  if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+    return apiError("request.invalid_value", {
+      params: { field: "dryRun", allowed: ["true", "false"] },
+      request,
+    });
+  }
+  const input = {
+    // One spelling of the account (round 3, L1): an upper-case id is the same account, and the
+    // one-open-erasure index compares lower case.
+    userId: body.userId.toLowerCase(),
+    reason: body.reason,
+    dryRun: body.dryRun === true,
+  };
 
   // Not one's own account, and not a protected role's: erasing another super_admin, or oneself,
-  // through the admin route is refused (release review, Sprint 7X).
-  if (body.userId === admin.userId) {
-    return apiError("admin.self_target", { request });
-  }
-  // The target is looked up in this tenant only (ADR-053 D5), deleted accounts included.
-  let target: { readonly roleName: string | null } | null;
+  // through the admin route is refused (release review, Sprint 7X). The target is looked up in
+  // this tenant only (ADR-053 D5), deleted accounts included.
+  let exists: boolean;
   try {
-    target = await withTenantTx(async (tx) => {
-      const { rows } = await tx.query<{ role_id: string | null }>(
-        "select role_id from users where id = $1::uuid",
-        [body.userId]
-      );
-      if (!rows[0]) return null;
-      const role = rows[0].role_id ? await findRole(tx, { id: rows[0].role_id }) : null;
-      return { roleName: role?.name ?? null };
+    const refused = await checkPurgeUserData(input, admin);
+    if (refused) return refusedResponse(refused, request);
+    exists = await withTenantTx(async (tx) => {
+      const { rows } = await tx.query("select 1 from users where id = $1::uuid", [
+        input.userId,
+      ]);
+      return rows.length > 0;
     });
   } catch {
     return apiError("service.unavailable", { params: { service: "roles" }, request });
   }
-  if (!target) {
+  if (!exists) {
     // Not this tenant's user (or no user at all): nothing is purged, anywhere.
     return apiError("admin.target_not_found", { params: { target: "user" }, request });
   }
-  if (target.roleName && PROTECTED_ROLES.includes(target.roleName)) {
-    return apiError("auth.role_protected", {
-      params: { role: target.roleName },
-      request,
-    });
-  }
-
-  const purgeRequest: PurgeRequest = {
-    userId: body.userId,
-    requestedBy: admin.userId,
-    reason: body.reason as PurgeRequest["reason"],
-    dryRun: body.dryRun ?? false,
-  };
 
   logger.info("GDPR purge initiated", {
-    targetId: purgeRequest.userId,
-    requestedBy: purgeRequest.requestedBy,
-    reason: purgeRequest.reason,
-    dryRun: purgeRequest.dryRun,
+    targetId: input.userId,
+    requestedBy: admin.userId,
+    reason: input.reason,
+    dryRun: input.dryRun,
   });
 
   try {
-    // The platform's handler erases the account and every platform table that holds its data
-    // (audit X-15: before, the pipeline had no handler and nothing was erased).
-    const pipeline = createPlatformPurgePipeline(admin.userId);
-
-    // An irreversible erasure is recorded before it runs; with no record it does not run.
-    return await auditedResponse(
-      {
-        action: purgeRequest.dryRun ? "gdpr_purge_dry_run" : "gdpr_purge_executed",
-        actorId: admin.userId,
-        targetId: purgeRequest.userId,
-        details: { reason: purgeRequest.reason },
-      },
-      async () => {
-        const result = await pipeline.execute(purgeRequest);
-        if (result.status === "failed" && result.steps.length === 0) {
-          return {
-            success: false,
-            error: "no purge handlers registered",
-            response: apiError("service.unavailable", {
-              params: { service: "gdpr_purge" },
-              request,
-            }),
-          };
+    // A dry run counts and changes nothing: it answers at once, recorded as a dry run.
+    if (input.dryRun) {
+      const result = await handlePurgeUserData(input, admin);
+      // A coded refusal (audit unavailable, no handler ran) is that answer; otherwise the
+      // pipeline's result, completed or not (its status says which — one that did not complete
+      // carries admin.purge_incomplete, and the Users screen reads its steps: round 3, I-3).
+      if (hasPurgeResult(result)) return NextResponse.json(result.purge);
+      return refusedResponse(result, request);
+    }
+    // One open erasure per account (A6): a second request is refused, the first one stands.
+    let open: Awaited<ReturnType<typeof openErasureHold>>;
+    try {
+      open = await openErasureHold(input.userId);
+    } catch {
+      return apiError("service.unavailable", {
+        params: { service: "approvals" },
+        request,
+      });
+    }
+    // A hold whose period ran out (holdLapsed: undecided, or approved and never run) no longer
+    // stands: it is withdrawn by the system, recorded as a decision on it would be, and the new
+    // request goes on (rebase I-3: the index, 061, still counts it until then). Any other open
+    // hold refuses the request.
+    if (open?.lapsed) {
+      try {
+        await withdrawLapsedHold({
+          proposal: open.proposal,
+          days: await approvalExpiryDays(),
+          source: "runtime",
+          foundBy: admin.userId,
+        });
+      } catch (err) {
+        if (err instanceof AuditWriteError) {
+          return apiError("service.unavailable", {
+            params: { service: "audit" },
+            request,
+          });
         }
-        return {
-          success: result.status === "completed",
-          ...(result.status === "completed" ? {} : { error: `purge ${result.status}` }),
-          response: NextResponse.json(result),
-        };
+        return apiError("service.unavailable", {
+          params: { service: "approvals" },
+          request,
+        });
+      }
+    } else if (open) {
+      return apiError("admin.erasure_pending", { request });
+    }
+    // Recorded when it is asked for (A1), before the hold: no record, no hold.
+    try {
+      await recordAudit({
+        action: "admin_action",
+        actorId: admin.userId,
+        targetId: input.userId,
+        details: {
+          type: "gdpr_purge_requested",
+          purgeReason: input.reason,
+          outcome: "attempted",
+        },
+      });
+    } catch {
+      return apiError("service.unavailable", { params: { service: "audit" }, request });
+    }
+    // The erasure itself is held for a second admin (always: ALWAYS_HELD_ACTIONS). Its
+    // trajectory is ended with the request (TASK-193) — unless held, when the hold's decision,
+    // withdrawal or expiry ends it.
+    const outcome = await withTrajectory(
+      {
+        subject: { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+        trigger: "admin-gdpr:purge_user_data",
+        scopeType: "platform",
       },
-      () => apiError("service.unavailable", { params: { service: "audit" }, request }),
-      // The purge runs every registered module's erasure hook, which may reach outside the
-      // database (review 14 L-6).
-      { external: true }
+      (trajectoryId) =>
+        runCommandBarAction({
+          tool: "purge_user_data",
+          input,
+          admin,
+          trajectoryId,
+          stepIndex: 0,
+        }),
+      (o) =>
+        o.kind === "ran" && (o.result.success || o.result.held) ? "completed" : "failed"
     );
+    if (outcome.kind === "held") {
+      return NextResponse.json(
+        { success: false, held: true, proposalId: outcome.proposalId },
+        { status: 202 }
+      );
+    }
+    // Ran (only were it ever unheld): its outcome, as a dry run's is shown.
+    const ran = outcome.result as ActionResult & { purge?: unknown };
+    return hasPurgeResult(ran)
+      ? NextResponse.json(ran.purge)
+      : refusedResponse(ran, request);
   } catch (error) {
-    logger.error("GDPR purge failed", {
-      error: error instanceof Error ? error.message : "Unknown error",
-      targetId: purgeRequest.userId,
-    });
+    // Two requests at once: the database kept one open erasure for the account (round 2, A6).
+    // The request recorded above is closed as refused (round 3), so no record claims a hold.
+    if (isErasureHoldConflict(error)) {
+      await recordAudit({
+        action: "admin_action",
+        actorId: admin.userId,
+        targetId: input.userId,
+        details: {
+          type: "gdpr_purge_requested",
+          purgeReason: input.reason,
+          outcome: "refused",
+          code: "admin.erasure_pending",
+        },
+      }).catch(() => undefined);
+      return apiError("admin.erasure_pending", { request });
+    }
+    return internalError(error, { request, context: "GDPR purge failed" });
+  }
+});
 
-    return apiError("internal.error", { request });
+/** The open erasure hold on an account, for the Users screen (A6). */
+export const GET = tenantRoute(async function GET(request: NextRequest) {
+  // Rate limited, verified, permission and account standing checked (requireAdmin).
+  const verified = await requireAdmin(request, "admin_purge_user_data");
+  if (verified.error) return verified.error;
+  const userId = (request.nextUrl.searchParams.get("userId") ?? "").toLowerCase();
+  if (!USER_ID.test(userId)) {
+    return apiError("request.invalid_value", {
+      params: { field: "userId", allowed: ["a user id"] },
+      request,
+    });
+  }
+  try {
+    // Pending as the Approvals list offers it (rebase I-3): a lapsed hold is not — the next
+    // request withdraws it.
+    const open = await openErasureHold(userId);
+    return NextResponse.json({
+      pending:
+        open && !open.lapsed
+          ? { proposalId: open.proposalId, createdAt: open.createdAt }
+          : null,
+    });
+  } catch {
+    return apiError("service.unavailable", { params: { service: "approvals" }, request });
   }
 });

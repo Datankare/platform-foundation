@@ -2,6 +2,7 @@
 
 import React from "react";
 import { renderMessage } from "@/platform/errors/messages";
+import { isErrorCode, messageKey, type ErrorCode } from "@/platform/errors/registry";
 import {
   formatDate,
   fullTimestamp,
@@ -30,6 +31,11 @@ interface ExecutionResult {
   table?: SearchResultTable;
   error?: string;
   /**
+   * A failure's code of the error-code contract, and its params (TASK-199): shown as its message.
+   */
+  code?: string;
+  params?: Readonly<Record<string, string | number>>;
+  /**
    * A users search the Users screen applied to its own list (TASK-190 — one list, not two): the
    * row says the matches are in the list below, with no second table and no count of its own
    * (round 1, item 2: the list is the one answer).
@@ -42,6 +48,19 @@ interface ExecutionResult {
    * those it had before the plan, or an earlier users search's of the same plan (round 2, N-3).
    */
   keptFilters?: "previous" | "earlier";
+}
+
+/**
+ * A failure as the admin reads it (TASK-199; rebase round 2, finding 2): its code's catalog
+ * message with its params; a result from before codes, its text.
+ */
+function failureText(r: ExecutionResult): string | undefined {
+  return r.code && isErrorCode(r.code)
+    ? renderMessage(
+        messageKey(r.code as ErrorCode),
+        r.params ? { ...r.params } : undefined
+      )
+    : r.error;
 }
 
 const t = (key: string, values?: Record<string, string | number>) =>
@@ -262,7 +281,7 @@ export default function ExecutionResultsPanel({
                     })
                   ) : (
                     <>
-                      {r.success || r.held ? (r.result ?? r.error) : r.error}
+                      {r.success || r.held ? (r.result ?? r.error) : failureText(r)}
                       {!r.success && r.keptFilters
                         ? ` ${t(r.keptFilters === "earlier" ? "users_kept_earlier" : "users_kept_filters")}`
                         : null}

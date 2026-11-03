@@ -31,6 +31,10 @@ than contractual commitments.
 
 - **Tracked debt.** Every consciously deferred security item is recorded with a severity, a plan
   and a deadline in [`docs/SECURITY_DEBT.md`](docs/SECURITY_DEBT.md).
+- **Step-up for second-factor changes covers the app's routes only.** Turning off or replacing a
+  second factor through the app needs the password and a current code; direct Cognito calls with a
+  stolen access token remain possible until server-side sessions (batch S9) — an accepted residual,
+  `docs/SECURITY_DEBT.md` SEC-016.
 - **Automated checks on every change.** CodeQL and Semgrep static analysis, a production
   dependency audit that blocks merges, a full-history secret scan (gitleaks), and GitHub secret
   scanning with push protection.

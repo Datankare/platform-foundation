@@ -61,6 +61,86 @@ export async function resolvePermissions(
   }
 }
 
+/**
+ * The permissions of the role named `roleName` — its own and those it inherits — or null when the
+ * role is not found or the read fails (fail closed). A guest has no account but acts under the
+ * `guest` role (TASK-194 round 1, C2): removing can_translate from guest takes effect for guests.
+ */
+export async function resolveRolePermissions(
+  roleName: string
+): Promise<EffectivePermissions | null> {
+  try {
+    return await withTenantTx(async (tx) => {
+      const role = await tx.query<{ id: string }>(
+        "select id from roles where name = $1",
+        [roleName]
+      );
+      if (role.rows.length !== 1) return null;
+      return resolveRoleCodes(tx, role.rows[0].id, roleName, "");
+    });
+  } catch (err) {
+    logger.warn("Role permission resolution failed", {
+      roleName,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/auth/permissions",
+    });
+    return null;
+  }
+}
+
+/**
+ * Resolve the permissions of the account `userId` (users.id) — by the account, not the identity
+ * (TASK-194 round 1, C3): an account whose cognito_sub is null (a legacy row) or that was re-linked
+ * to a new identity is found by its id. Null when it is not found (or deleted) or a read fails.
+ */
+export async function resolveAccountPermissions(
+  userId: string
+): Promise<EffectivePermissions | null> {
+  try {
+    return await withTenantTx(async (tx) => {
+      const users = await tx.query<{ id: string; role_id: string }>(
+        "select id, role_id from users where id = $1::uuid and deleted_at is null",
+        [userId]
+      );
+      const user = users.rows.length === 1 ? users.rows[0] : undefined;
+      if (!user) return null;
+      return resolveFor(tx, user);
+    });
+  } catch (err) {
+    logger.warn("Permission resolution failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/auth/permissions",
+    });
+    return null;
+  }
+}
+
+/** A role's own and inherited permission codes (steps 3–4 and 6), in `tx`. */
+async function resolveRoleCodes(
+  tx: Tx,
+  roleId: string,
+  roleName: string,
+  userId: string
+): Promise<EffectivePermissions> {
+  const rolePerms = await tx.query<{ code: string }>(
+    `select p.code from permissions p where p.id in (
+       select rp.permission_id from role_permissions rp where rp.role_id = $1
+       union
+       select rp.permission_id from role_permissions rp
+         join role_inheritance ri on ri.inherits_from_id = rp.role_id
+        where ri.role_id = $1)`,
+    [roleId]
+  );
+  return {
+    userId,
+    roleId,
+    roleName,
+    permissions: rolePerms.rows.map((r) => r.code),
+    entitlementGroups: [],
+  };
+}
+
 /** Steps 2–6 for a found user, in the same transaction. */
 async function resolveFor(
   tx: Tx,

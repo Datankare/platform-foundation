@@ -104,7 +104,11 @@ describe("agents handlers", () => {
     ]);
     const res = await handleRegisterAgent({ agent_id: "a1" }, admin);
     expect(res.success).toBe(false);
-    expect(res.error).toMatch(/already registered/);
+    // Coded (rebase round 2, finding 2): no free text reaches the screen.
+    expect(res).toMatchObject({
+      error: "admin.already_exists",
+      code: "admin.already_exists",
+    });
   });
 
   it("surfaces a governed-write failure", async () => {
@@ -112,7 +116,11 @@ describe("agents handlers", () => {
     mockWrite.mockResolvedValue(failed("gate closed"));
     const res = await handleRegisterAgent({ agent_id: "a1" }, admin);
     expect(res.success).toBe(false);
-    expect(res.error).toBe("gate closed");
+    // The write's own text is logged, never returned (rebase round 2, finding 2).
+    expect(res).toMatchObject({
+      error: "admin.action_failed",
+      code: "admin.action_failed",
+    });
   });
 
   it("suspends and reactivates an agent", async () => {
@@ -223,7 +231,11 @@ describe("config handlers (password policy)", () => {
       error: "down",
     });
     const res = await handleUpdatePasswordPolicy({ min_length: 14 }, ACTOR);
-    expect(res).toMatchObject({ success: false, error: "down" });
+    expect(res).toMatchObject({
+      success: false,
+      error: "admin.action_failed",
+      code: "admin.action_failed",
+    });
     expect(fakeData().audit.map((r) => r.details.outcome)).toEqual([
       "attempted",
       "failed",
@@ -268,7 +280,9 @@ describe("entitlements handler", () => {
     );
     expect(res).toMatchObject({
       success: false,
-      error: "The change could not be saved: the database is unavailable or refused it.",
+      error: "service.unavailable",
+      code: "service.unavailable",
+      params: { service: "database" },
     });
     expect(JSON.stringify(res)).not.toContain("dup");
   });
@@ -353,7 +367,9 @@ describe("restrictions handlers", () => {
     const res = await handleBlockUserFeature({ user_id: USER, feature: "chat" }, ACTOR);
     expect(res).toMatchObject({
       success: false,
-      error: "The change could not be saved: the database is unavailable or refused it.",
+      error: "service.unavailable",
+      code: "service.unavailable",
+      params: { service: "database" },
     });
     expect(fakeData().audit.map((r) => r.details.outcome)).toEqual([
       "attempted",
@@ -368,7 +384,9 @@ describe("restrictions handlers", () => {
     const res = await handleUnblockUserFeature({ user_id: USER, feature: "chat" }, ACTOR);
     expect(res).toMatchObject({
       success: false,
-      error: "The change could not be saved: the database is unavailable or refused it.",
+      error: "service.unavailable",
+      code: "service.unavailable",
+      params: { service: "database" },
     });
   });
 
@@ -404,7 +422,11 @@ describe("search handler", () => {
     };
     const res = await handleSearch({ table: "users" }, admin);
     expect(res.success).toBe(false);
-    expect(res.error).toMatch(/^The search could not be run/);
+    expect(res).toMatchObject({
+      error: "service.unavailable",
+      code: "service.unavailable",
+      params: { service: "search" },
+    });
     expect(res.error).not.toMatch(/bad/);
   });
 });

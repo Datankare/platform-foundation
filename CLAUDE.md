@@ -26,6 +26,9 @@ or Upstash for the shared cache; Jest with ts-jest; Semgrep, CodeQL and gitleaks
   ([API_ERRORS](docs/API_ERRORS.md), generated); every word on a screen comes from `messages/`.
 - **Registers:** work and defects go in [TASKS](docs/TASKS.md), deferred security items in
   [SECURITY_DEBT](docs/SECURITY_DEBT.md), every new doc in the [docs index](docs/README.md).
+- **Width:** code is formatted by Prettier at its `printWidth` (`.prettierrc`); comments and
+  Markdown prose, which Prettier leaves as written, wrap at 100 characters — except a line that
+  is one command, URL or table row, kept whole.
 
 ## Standing rules
 

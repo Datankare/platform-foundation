@@ -46,6 +46,37 @@
  */
 
 import type { Tx } from "@/platform/data";
+import { AUDIT_TEXT_KEYS } from "@/platform/auth/audit-details";
+import { PURGE_REASONS } from "@/platform/gdpr/types";
+
+/**
+ * The schema's free-text keys as a SQL text array (TASK-194 rebase, I-1): built from
+ * AUDIT_TEXT_KEYS, so the erasure's list cannot drift from the schema. Each key is a plain
+ * identifier — checked here, so nothing but a key's own letters reaches the statement.
+ */
+const AUDIT_TEXT_ARRAY = `array[${AUDIT_TEXT_KEYS.map((k) => {
+  if (!/^[a-z_]\w*$/i.test(k)) {
+    throw new Error(`audit text key ${JSON.stringify(k)} is not a plain identifier`);
+  }
+  return `'${k}'`;
+}).join(", ")}]`;
+
+/**
+ * An erasure's listed reasons as a SQL text array (round 9, I-3): the only reason an erasure hold
+ * about the account keeps (platform/gdpr/types.ts PURGE_REASONS) — any other is free text.
+ */
+const PURGE_REASON_ARRAY = `array[${PURGE_REASONS.map((r) => {
+  if (!/^[a-z-]+$/.test(r))
+    throw new Error(`purge reason ${JSON.stringify(r)} is not a plain code`);
+  return `'${r}'`;
+}).join(", ")}]::text[]`;
+
+/**
+ * The user's id as a LIKE pattern for "anywhere in this text" (round 10, P-A): a cheap prefilter
+ * before a statement looks inside a run's steps. A UUID has no LIKE metacharacters, but a
+ * backslash, `%` and `_` are escaped all the same.
+ */
+const LIKE_ID = `'%' || replace(replace(replace($1::text, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'`;
 
 /**
  * One table's part of a user's data. Every statement is fixed SQL with the user id as `$1` (and,
@@ -264,6 +295,23 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     exportReason:
       "another account's proposed action about the user; what it did, once carried out, is in the user's profile and audit trail",
   },
+  // Round 8, item 3: the run of a decided hold about the account records the decision in a step
+  // (gating.ts endHeldTrajectory: its output's `note`, the decider's or the run's text); that
+  // note is replaced — the step itself stands. Before proposalsAbout replaces the id it is found
+  // by.
+  {
+    name: "heldAboutStepNotes",
+    table: "agent_trajectories",
+    action: "anonymise",
+    reason:
+      "the run of a decided hold about the account stands; the note written about the account in its steps is erased",
+    columns: [],
+    count:
+      "select count(*)::int as n from agent_trajectories a where jsonb_typeof(a.steps) = 'array' and exists (select 1 from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))",
+    erase:
+      "update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) then jsonb_set(s.step, '{output,note}', to_jsonb('erased with the account it was about'::text)) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where jsonb_typeof(a.steps) = 'array' and exists (select 1 from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))) and exists (select 1 from jsonb_array_elements(a.steps) s(step) where s.step->'output' ? 'note' and s.step->>'proposalId' in (select p.id::text from proposals p where p.trajectory_id = a.id::text and jsonb_path_exists(p.payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text))))",
+    exportReason: "another account's held action about the user (proposalsAbout)",
+  },
   {
     name: "proposalsAbout",
     table: "proposals",
@@ -279,8 +327,11 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     ],
     count:
       "select count(*)::int as n from proposals where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text",
-    erase:
-      "update proposals set payload = regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb, effects = regexp_replace(effects::text, $1::text, 'erased', 'gi')::jsonb, decision_note = regexp_replace(decision_note, $1::text, 'erased', 'gi'), last_run_error = regexp_replace(last_run_error, $1::text, 'erased', 'gi'), actor_identity = regexp_replace(actor_identity::text, $1::text, 'erased', 'gi')::jsonb where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text",
+    // Round 8, item 3: a decided hold about the account (its id a value in the payload) loses the
+    // free text written about it — the decider's note, and the requester's reason (a
+    // restriction's; an erasure's reason is a listed code, PURGE_REASONS, and stays) — not only
+    // the id in them.
+    erase: `update proposals set payload = case when jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and jsonb_typeof(payload) = 'object' then regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb - (case when label = 'purge_user_data' and payload->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) else regexp_replace(payload::text, $1::text, 'erased', 'gi')::jsonb end, effects = regexp_replace(effects::text, $1::text, 'erased', 'gi')::jsonb, decision_note = case when decision_note is not null and jsonb_path_exists(payload, '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) then 'erased with the account it was about' else regexp_replace(decision_note, $1::text, 'erased', 'gi') end, last_run_error = regexp_replace(last_run_error, $1::text, 'erased', 'gi'), actor_identity = regexp_replace(actor_identity::text, $1::text, 'erased', 'gi')::jsonb where payload::text ~* $1::text or effects::text ~* $1::text or coalesce(decision_note, '') ~* $1::text or coalesce(last_run_error, '') ~* $1::text or coalesce(actor_identity::text, '') ~* $1::text`,
     exportReason:
       "another account's decided action about the user; its effect is in the user's profile and audit trail",
   },
@@ -318,6 +369,34 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
   // they took part in (review 8 L2: every step that merely mentioned their id was exported, so
   // anyone could fill another user's export to the size cap by writing runs naming them; another
   // person's step about the user is that person's record, not the user's data).
+  // Round 9, I-1: a run's step about the account keeps no free text about it. Two writers record an
+  // action's input as a step's input: a held action's proposal step (action-pipeline proposeAction:
+  // its payload), and an agent run's step (agents/runtime.ts: what its workflow returned as the
+  // step's input) — a restriction's reason among them. (A tool run, held or not, records only its
+  // tool's id — tool-invoker's stepInput — and every other step only its ids.) Every step whose
+  // input names the account anywhere (its id a value there: an account the step acts on, or the
+  // actor who took it) loses its free-text keys — the audit schema's text keys (AUDIT_TEXT_KEYS),
+  // one register for both — except an erasure's listed reason (PURGE_REASONS). Round 10, N-B: that
+  // is the rule on purpose — the erased user's own steps and another person's steps about them
+  // alike, since text beside the id may be about them; it may erase text about someone else in the
+  // same step (over-erasure, the safe direction), never keep text about them. A step that does not
+  // name them is left as it is. Matched by the step's own input, so a hold deleted
+  // (proposalsHeldAbout) or decided, and a run with no hold at all, are all covered; before
+  // trajectorySteps replaces the id it is found by. (Not at the source: the approved run's own step
+  // records the same input, and rows written before stand — the erasure is the one place that
+  // reaches all of them.) Each statement first prefilters on the id anywhere in the steps' text
+  // (LIKE_ID, round 10, P-A).
+  {
+    name: "stepFreeText",
+    table: "agent_trajectories",
+    action: "anonymise",
+    reason:
+      "a run's step about the account stands; the free text written about the account in its input is erased",
+    columns: [],
+    count: `select count(*)::int as n from agent_trajectories a where jsonb_typeof(a.steps) = 'array' and a.steps::text ilike ${LIKE_ID} and exists (select 1 from jsonb_array_elements(a.steps) s(step) where jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end))`,
+    erase: `update agent_trajectories a set steps = (select coalesce(jsonb_agg(case when jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end) then jsonb_set(s.step, '{input}', (s.step->'input') - (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end)) else s.step end order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n)) where jsonb_typeof(a.steps) = 'array' and a.steps::text ilike ${LIKE_ID} and exists (select 1 from jsonb_array_elements(a.steps) s(step) where jsonb_typeof(s.step->'input') = 'object' and jsonb_path_exists(s.step->'input', '$.** ? (@ == $u)', jsonb_build_object('u', $1::text)) and (s.step->'input') ?| (case when s.step->>'action' = 'purge_user_data' and s.step->'input'->>'reason' = any(${PURGE_REASON_ARRAY}) then array_remove(${AUDIT_TEXT_ARRAY}, 'reason') else ${AUDIT_TEXT_ARRAY} end))`,
+    exportReason: "the run's steps the user took are exported as trajectorySteps",
+  },
   {
     name: "trajectorySteps",
     table: "agent_trajectories",
@@ -325,10 +404,8 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     reason:
       "a run others took part in stands for them; the user's id in its steps is replaced",
     columns: ["agent_trajectories.steps", "agent_trajectories.scope_id"],
-    count:
-      "select count(*)::int as n from agent_trajectories where (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))",
-    erase:
-      "update agent_trajectories set steps = regexp_replace(steps::text, $1::text, 'erased', 'gi')::jsonb, scope_id = case when scope_id = $1::text then 'erased' else scope_id end where (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))",
+    count: `select count(*)::int as n from agent_trajectories where (steps::text ilike ${LIKE_ID} or scope_id = $1::text) and (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))`,
+    erase: `update agent_trajectories set steps = regexp_replace(steps::text, $1::text, 'erased', 'gi')::jsonb, scope_id = case when scope_id = $1::text then 'erased' else scope_id end where (steps::text ilike ${LIKE_ID} or scope_id = $1::text) and (steps::text ~* $1::text or scope_id = $1::text) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))`,
     exportSql:
       "select to_jsonb(t) - '_k' as r, t._k::text as k from (select id, segment, previous_trajectory_id, trigger, started_at, (select coalesce(jsonb_agg(s.step order by s.n), '[]'::jsonb) from jsonb_array_elements(a.steps) with ordinality as s(step, n) where s.step->'actor'->>'actorId' = $1::text) as steps, a.ctid as _k from agent_trajectories a where (a.steps @> jsonb_build_array(jsonb_build_object('actor', jsonb_build_object('actorId', $1::text))) and not coalesce(scope_type = 'user' and scope_id = $1, false) and not (subject_kind = 'session' and subject_id in (select id from app_sessions where meta->'participants' @> jsonb_build_array(jsonb_build_object('actorId', $1::text)) and jsonb_array_length(meta->'participants') = 1))) and a.ctid > $3::tid order by a.ctid limit $2::int) t",
   },
@@ -524,7 +601,7 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
   // user_id / userId it names: review round 1, item 6) — never from a record that only names it as
   // the requester or approver of an act about someone else, whose text is about that someone. The
   // record of the act stands (AUDIT_TEXT_KEYS, platform/auth/audit-details.ts; the list here is
-  // held equal to it by __tests__/audit-details-schema.test.ts). Before the id is replaced below.
+  // built from it: AUDIT_TEXT_ARRAY). Before the id is replaced below.
   {
     name: "auditText",
     table: "audit_log",
@@ -532,10 +609,8 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = [
     columns: [],
     reason:
       "the record of an act about the account stands; the free text written about the account in it is erased",
-    count:
-      "select count(*)::int as n from audit_log where (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']",
-    erase:
-      "update audit_log set details = (details - array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']) || jsonb_build_object('textErased', true) where (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']",
+    count: `select count(*)::int as n from audit_log where (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| ${AUDIT_TEXT_ARRAY}`,
+    erase: `update audit_log set details = (details - ${AUDIT_TEXT_ARRAY}) || jsonb_build_object('textErased', true) where (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| ${AUDIT_TEXT_ARRAY}`,
     exportReason: "exported as auditLog by data-export (auditRowsForUser)",
   },
   // Review 8 M3: audit_log.details was claimed by auditLog, whose erasure never touched it — an
@@ -922,7 +997,7 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
  * tenant's erasure (gdpr-deletion.ts eraseMentionsInOtherTenants, the gdpr.retention-purge job):
  * the free text of a record about the account (its target, or the user_id / userId it names) is
  * erased, and then every mention of its id becomes "erased", in every tenant. The text keys are
- * AUDIT_TEXT_KEYS (held equal by __tests__/audit-details-schema.test.ts).
+ * AUDIT_TEXT_KEYS (built from it: AUDIT_TEXT_ARRAY).
  *
  * Cost (review round 1, item 6): no index serves a match inside details, so each erased account
  * costs one read of the whole audit_log, every tenant's — once per account, by the job, never a
@@ -932,7 +1007,7 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
 export const CROSS_TENANT_ERASURE: readonly string[] = [
   // The free text of a record about the account (review round 1, item 6) — first, while its id
   // still says which records those are.
-  "update audit_log set details = (details - array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']) || jsonb_build_object('textErased', true) where ctid >= $2::tid and ctid < $3::tid and (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| array['reason', 'deviceName', 'cause', 'changeComment', 'note', 'reviewerNotes']",
+  `update audit_log set details = (details - ${AUDIT_TEXT_ARRAY}) || jsonb_build_object('textErased', true) where ctid >= $2::tid and ctid < $3::tid and (target_id = $1::uuid or details->>'user_id' = $1::text or details->>'userId' = $1::text) and details ?| ${AUDIT_TEXT_ARRAY}`,
   // Every mention of its id, in any record.
   "update audit_log set details = regexp_replace(details::text, $1::text, 'erased', 'gi')::jsonb where ctid >= $2::tid and ctid < $3::tid and details::text ~* $1::text",
 ];

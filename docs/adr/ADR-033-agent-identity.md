@@ -121,3 +121,26 @@ these patterns are documented for agent developers in `docs/AGENT_DELEGATION_GUI
   were ever on the header path, so the retirement was a clean removal with no migration
   window. An unconfigured signing key now fails closed (no agent calls) rather than falling
   back to a header.
+
+## Addendum — TASK-194 (October 2026): the issuer authenticates the agent
+
+Rung 2 named a "standing agent credential + per-invocation user-delegation binding". The binding
+shipped; the credential did not: the consumer's issuer (Playform's `lib/agent-delegation.ts`)
+authenticated only the user at consent and at exchange, so any signed-in user could mint a
+delegation token as any active registered agent, and `TrustedAgent.owner` was never consulted
+(audit C-7). Decided:
+
+- **A client credential per agent and tenant**, issued by an administrator with the registry's
+  permission (`admin_manage_agents`), shown once, stored as its hash only, rotated by issuing
+  again. The agent presents it on the request and on the exchange; a user's session alone never
+  obtains anything in an agent's name.
+- **The agent makes the request** (a pushed request: agent, user, scope, PKCE challenge recorded
+  server-side) and **the user consents to that record** — the consent screen reads it from the
+  server, never from its URL (audit E-118). The agent then exchanges the consented request with
+  its credential and the PKCE verifier. Every step stays on the user's live session (the
+  proxy's credential gate, and the T9 binding at use).
+- **`owner` decides who may delegate**: `first-party` (the platform's own agents) to any user of
+  the tenant; any other value names the one account whose agent it is.
+
+The platform holds no issuer, so the mechanism is the consumer's; this records the rule an issuer
+must follow. Playform's implementation: `docs/AGENT_DELEGATION_GUIDE.md`.

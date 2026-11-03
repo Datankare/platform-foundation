@@ -45,12 +45,13 @@ import { withOwnerTx } from "@/platform/data";
 import { peekTenant, runWithTenant } from "@/platform/tenancy/context";
 import { audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
-import { CONFIG_HOLD_TOOLS, proposalConfigKey } from "@/platform/admin/hold-keys";
+import { CONFIG_HOLD_TOOLS, configToolTargetKey } from "@/platform/admin/hold-keys";
 import { withdrawPendingApprovalsForKey } from "@/platform/admin/config-approval";
 import { isSharedDeployment } from "@/platform/admin/config-scope";
 import { raiseAlert } from "@/platform/observability/alert";
 import type { ConfigScope } from "@/platform/admin/types";
 import type { ProposalRecord, ProposalStore } from "@/platform/kernel/types";
+import { sameId } from "@/platform/auth/same-id";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -109,7 +110,7 @@ export async function withdrawSupersededHolds(
     let others: string[] = [];
     try {
       others = (await tenantsHoldingPlatformScope(key)).filter(
-        (id) => id !== current.tenantId
+        (id) => !sameId(id, current.tenantId)
       );
     } catch (err) {
       incomplete = true;
@@ -223,7 +224,7 @@ async function withdrawInTenant(
       const batch = page.filter(
         (p) =>
           CONFIG_HOLD_TOOLS.has(p.label) &&
-          proposalConfigKey(p.payload) === key &&
+          configToolTargetKey(p.label, p.payload) === key &&
           (p.status === "proposed" || p.status === "approved") &&
           holdScope(p) === scope
       );

@@ -28,6 +28,7 @@ const provider = {
   setupMfa: jest.fn(),
   verifyMfaSetup: jest.fn(),
   disableMfa: jest.fn(),
+  confirmCurrentFactor: jest.fn(),
 };
 jest.mock("@/platform/auth/config", () => ({
   getAuthProvider: () => provider,
@@ -455,6 +456,16 @@ describe("MFA enrolment (A-9)", () => {
   });
 
   it("setup returns the authenticator secret, uncached", async () => {
+    // A first enrolment: the account has no factor yet (re-enrolment needs a step-up,
+    // __tests__/mfa-step-up.test.ts — TASK-194).
+    provider.verifyToken.mockResolvedValue({
+      sub: USER,
+      email: "a@b.c",
+      emailVerified: true,
+      mfaEnabled: false,
+      iat: 0,
+      exp: 9_999_999_999,
+    });
     provider.setupMfa.mockResolvedValue({
       success: true,
       secretCode: "SECRET",
@@ -516,8 +527,15 @@ describe("MFA enrolment (A-9)", () => {
   });
 
   it("disable turns MFA off and records it", async () => {
+    // TASK-194, audit C-3: removing the factor needs proof of it — this asserted a token alone did.
+    provider.confirmCurrentFactor.mockResolvedValue({ success: true });
     provider.disableMfa.mockResolvedValue({ success: true });
-    const res = await mfaDisable(req("/api/auth/mfa/disable", { headers: bearer }));
+    const res = await mfaDisable(
+      req("/api/auth/mfa/disable", {
+        headers: bearer,
+        body: { password: "p", currentCode: "123456" },
+      })
+    );
     expect(res.status).toBe(200);
     expect(mockRecordAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "mfa_disabled", actorId: USER })

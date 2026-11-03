@@ -55,6 +55,7 @@ import {
   announceSessionEnd,
   handleRefusal,
   networkRefusal,
+  readRefusal,
   type Refusal,
 } from "@/platform/errors/refusal";
 
@@ -332,6 +333,14 @@ export default function AdminPage() {
         }
         setCurrentPlan(null);
         if (openPanel !== null) await refreshData(openPanel);
+      } else {
+        // The plan refused as a whole (no result per action — its shape, the caller, a limit):
+        // said as the shared handler words it, never dropped silently (round 11, item 1). A held
+        // plan is 202, read above with its results.
+        const refusal = await readRefusal(res);
+        setResults([
+          { tool: actions[0]?.tool ?? "", success: false, error: refusal.message },
+        ]);
       }
     } finally {
       setIsExecuting(false);

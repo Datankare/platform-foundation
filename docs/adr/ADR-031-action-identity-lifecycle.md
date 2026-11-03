@@ -254,6 +254,7 @@ compare-and-set and was swallowed — and "approve again" ran the effect a secon
     indeterminate --complete(token)--> executed          (the run itself, should it end)
     indeterminate --mark_executed (a person)--> executed
     indeterminate --reapprove (a person, fresh approval)--> approved
+    indeterminate --withdraw (a person, verified not applied; never run)--> rejected
 
 - **A claim's generation.** `claim` mints a run token; `complete` and `release` move the claim only
   with it. A run never ends a claim it no longer holds. A completion that does not land is raised

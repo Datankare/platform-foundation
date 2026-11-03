@@ -3,8 +3,9 @@
 /**
  * components/admin/JobsPanels.tsx — the operators' Jobs console (ADR-056 D2, D3)
  *
- *   OperatorJobsView   operators (platform_operate): every recurring job — turn it on or off,
- *                      change its interval, run it now, see its last run and outcome — and the
+ *   OperatorJobsView   operators (platform_operate): every recurring job — turn it on or off
+ *                      (a required one is always on: shown so, no switch), change its
+ *                      interval, run it now, see its last run and outcome — and the
  *                      dead-lettered jobs, to replay or discard
  *   TenantJobsList     a tenant's administrators: their own tenant's recent jobs, read-only
  *
@@ -100,6 +101,8 @@ export interface ScheduleRow {
   minIntervalMinutes: number;
   maxIntervalMinutes: number;
   tenantOptOutKey: string | null;
+  /** Cannot be turned off (TASK-194 round 18): no "Turn off". */
+  required?: boolean;
   state: ScheduleState | null;
 }
 
@@ -297,26 +300,31 @@ function ScheduleRowView({
       </td>
       <td className={td}>
         <div className="flex flex-wrap gap-1">
-          <button
-            className={quiet}
-            aria-label={toggleLabel}
-            disabled={busy}
-            onClick={() =>
-              ask({
-                label: toggleLabel,
-                submit: (reason) =>
-                  void act(toggleLabel, base, {
-                    method: "PATCH",
-                    body: JSON.stringify({
-                      enabled: !row.enabled,
-                      changeComment: reason,
+          {/* A required schedule is always on: no toggle (TASK-194 round 18). */}
+          {row.required ? (
+            <span className="text-xs text-gray-400 self-center">{t("required")}</span>
+          ) : (
+            <button
+              className={quiet}
+              aria-label={toggleLabel}
+              disabled={busy}
+              onClick={() =>
+                ask({
+                  label: toggleLabel,
+                  submit: (reason) =>
+                    void act(toggleLabel, base, {
+                      method: "PATCH",
+                      body: JSON.stringify({
+                        enabled: !row.enabled,
+                        changeComment: reason,
+                      }),
                     }),
-                  }),
-              })
-            }
-          >
-            {t(row.enabled ? "turn_off" : "turn_on")}
-          </button>
+                })
+              }
+            >
+              {t(row.enabled ? "turn_off" : "turn_on")}
+            </button>
+          )}
           <button
             className={quiet}
             aria-label={t("run_now_label", named)}

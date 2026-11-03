@@ -12,6 +12,7 @@ import { runProposalStoreContract } from "../contract/proposal-store-contract";
 import { runTenantIsolationContract } from "../contract/tenant-isolation-contract";
 import { proposalIsolation } from "../helpers/store-isolation-fixtures";
 import { PostgresProposalStore } from "@/platform/agents/postgres-proposal-store";
+import { PostgresTrajectoryStore } from "@/platform/agents/postgres-trajectory-store";
 import { withOwnerTx, withTenantTx } from "@/platform/data";
 import {
   expireLapsedApprovedHolds,
@@ -61,6 +62,25 @@ dbDescribe("PostgresProposalStore", () => {
         );
         await recoverStaleRuns(tx, 60, { tenantIds: [kitTenant.id] });
       });
+    },
+    // A trajectory of this tenant carrying the run's commitment step (round 17), as the recovery
+    // reads it.
+    trajectoryWithCommitment: async (operationId) => {
+      const trajectories = inTenant(new PostgresTrajectoryStore(), kitTenant);
+      const t = await trajectories.create(
+        { kind: "agent", id: "guardian" } as never,
+        "kit",
+        "platform"
+      );
+      await trajectories.addStep(t.trajectory.trajectoryId, {
+        operationId,
+        boundary: "commitment",
+        toolId: "delete_everything",
+        input: {},
+        output: {},
+        timestamp: new Date().toISOString(),
+      } as never);
+      return t.trajectory.trajectoryId;
     },
   });
 

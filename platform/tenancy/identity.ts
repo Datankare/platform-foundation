@@ -34,6 +34,7 @@ import {
 } from "@/platform/auth/token-verification";
 import { peekTenant } from "./context";
 import type { ErrorCode } from "@/platform/errors/registry";
+import { sameId } from "@/platform/auth/same-id";
 
 export type IdentityTenantRefusal =
   "tenant.mismatch" | "auth.signups_closed" | "service.unavailable";
@@ -124,7 +125,7 @@ export async function ensureIdentityTenant(
   if (!payload) return { ok: false, code: "service.unavailable" };
 
   if (payload.tenantId !== undefined) {
-    return payload.tenantId === tenant.tenantId
+    return sameId(payload.tenantId, tenant.tenantId)
       ? { ok: true }
       : { ok: false, code: "tenant.mismatch" };
   }

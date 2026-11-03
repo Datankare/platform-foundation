@@ -3,11 +3,21 @@
  *
  *   1. requireActor() — a signed-in user, or a signed guest where the route opts in
  *   2. checkAccountStatus(userId, feature) — users only
- *   3. checkCoppaGate(userId, feature) — users only: a consent-gated feature is refused to an
+ *   3. the feature's permission (featurePermission(feature); platform/auth/feature-permissions.ts;
+ *      TASK-194, audit C-4: the feature permissions were granted and never checked) — a user's
+ *      from their account's role and entitlements, resolved by the account (users.id, round 1
+ *      C3: a legacy row without a subject, a re-linked account); a guest's from the `guest`
+ *      role (round 1 C2: removing can_translate from guest takes effect for guests). A signed-in
+ *      user definitely refused a feature's permission on a route that serves guests is marked so
+ *      the browser cannot continue as a guest instead (round 1 C2, as for a banned account:
+ *      platform/auth/restricted-marker.ts); a role that cannot be read is 503 and marks nothing
+ *      (round 2, N3).
+ *   4. checkCoppaGate(userId, feature) — users only: a consent-gated feature is refused to an
  *      account whose age is unverified, or a child's without parental consent (audit X-16)
  *
  * Guests have no account, so there is no account status to check; their usage is bounded by
- * the governed guest allowance (7A B1), enforced by the route before any paid call. This is
+ * the governed guest allowance (7A B1), enforced by the route before any paid call, and by the
+ * guest role's feature permissions (step 3). This is
  * the platform form of a consumer's `requireAuthWithStatus`; consumers adopt it with an
  * explicit `allowGuests` per route.
  *
@@ -24,6 +34,11 @@ import {
   type Actor,
   type ActorOptions,
 } from "@/platform/auth/middleware";
+import { featurePermission } from "@/platform/auth/feature-permissions";
+import {
+  accountPermissionStanding,
+  hasGuestPermission,
+} from "@/platform/auth/permissions-cache";
 import {
   ACCOUNT_STATUS_REFUSAL_CODES,
   checkAccountStatus,
@@ -48,7 +63,21 @@ export async function requireActorWithStatus(
   if (result.error) return { error: result.error };
 
   const { actor } = result;
-  if (actor.kind === "guest") return { actor };
+  if (actor.kind === "guest") {
+    // The guest role's permission for the feature (round 1, C2).
+    const permission = featurePermission(feature);
+    if (permission && !(await hasGuestPermission(permission))) {
+      logger.info("Actor guard: guest refused by the guest role's permission", {
+        feature,
+        permission,
+        route: request.nextUrl.pathname,
+      });
+      return {
+        error: apiError("auth.permission_denied", { params: { permission }, request }),
+      };
+    }
+    return { actor };
+  }
 
   // The token's email seeds the user's row on first use (TASK-117) — stored verified only when
   // a trusted source verified it (review 16 L8: never an untrusted provider's claim).
@@ -78,6 +107,37 @@ export async function requireActorWithStatus(
     if (NO_GUEST_STATUSES.has(status.accountStatus ?? "")) markRestricted(refusal);
     return { error: refusal };
   }
+  // The feature's permission, from the caller's role and entitlements (audit C-4).
+  const permission = featurePermission(feature);
+  const standing = permission
+    ? await accountPermissionStanding(actor.user.sub, actor.id, permission)
+    : "held";
+  if (standing === "unknown") {
+    // The role could not be read: unavailable — never a refusal that marks the browser (N3).
+    return {
+      error: apiError("service.unavailable", {
+        params: { service: "permissions" },
+        request,
+      }),
+    };
+  }
+  if (standing === "lacking" && permission) {
+    logger.info("Actor guard: access denied by the feature's permission", {
+      userId: actor.id,
+      feature,
+      permission,
+      route: request.nextUrl.pathname,
+    });
+    const refusal = apiError("auth.permission_denied", {
+      params: { permission },
+      request,
+    });
+    // Refused as themselves, the user does not get the feature as a guest instead (C2) — marked
+    // only where a guest would get it: a route that serves guests (round 2, N3; the profile
+    // routes do not, so a refused can_edit_profile marks nothing).
+    if (options.allowGuests) markRestricted(refusal);
+    return { error: refusal };
+  }
   // Age and consent (COPPA), for every signed-in user on every route that names its feature.
   const coppa = await checkCoppaGate(actor.id, feature);
   if (!coppa.allowed) {
@@ -105,6 +165,7 @@ export async function requireActorWithStatus(
 /** Everything requireActorWithStatus can refuse with: the caller, its account, its age. */
 export const ACTOR_GUARD_REFUSAL_CODES = [
   ...(AUTH_REFUSAL_CODES ?? []),
+  "auth.permission_denied",
   ...(ACCOUNT_STATUS_REFUSAL_CODES ?? []),
   ...(COPPA_REFUSAL_CODES ?? []),
 ] as const satisfies readonly ErrorCode[];

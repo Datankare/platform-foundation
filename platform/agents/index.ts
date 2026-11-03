@@ -150,6 +150,9 @@ export {
   InMemoryApprovalPolicyStore,
   DEFAULT_APPROVAL_POLICY,
   approvalRulesProblem,
+  approvalPolicyProblem,
+  APPROVERS,
+  POLICY_DEFAULT_APPROVERS,
 } from "./approval-policy-store";
 export { PostgresApprovalPolicyStore } from "./postgres-approval-policy-store";
 export type {

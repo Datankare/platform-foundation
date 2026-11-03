@@ -9,6 +9,10 @@
  * An app's own limiter wrappers and exemptions are declared in
  * platform/route-policy/app-route-policy.ts (TASK-136); each wrapper must itself call
  * enforceRateLimit, directly or through another declared wrapper.
+ *
+ * Per method (TASK-194, audit C-11): limiter calls were counted against the file's handlers, so one
+ * method calling two limiters covered a method calling none. Each exported method's own body (and
+ * the same file's helpers it calls, helpers/route-methods.ts) must call a limiter.
  */
 
 import { APP_ROUTE_POLICY } from "@/platform/route-policy/app-route-policy";
@@ -19,18 +23,23 @@ import {
   read,
   resolveDeclared,
 } from "./helpers/route-policy";
+import { methodCalls, routeMethods } from "./helpers/route-methods";
 
 const PLATFORM_LIMITERS = ["enforceRateLimit", "adminGuard", "requireAdmin"];
 
-/** The platform's routes not rate limited, by design. Each needs a reason. */
+/**
+ * The platform's route methods not rate limited, by design ("file METHOD"). Each needs a reason.
+ */
 const PLATFORM_EXEMPT: Readonly<Record<string, string>> = {
-  "app/api/health/route.ts":
+  "app/api/health/route.ts GET":
     "Liveness must not depend on the limiter's own store; it reads no user data, and its one paid probe (song ID) runs at most once per 15 minutes per instance (CachedHealthProbe, audit X-13).",
-  "app/api/health/live/route.ts":
+  "app/api/health/live/route.ts GET":
     "Liveness asks nothing of any dependency — the limiter's store included — by definition (ADR-056 D4); it reads nothing.",
-  "app/api/health/ready/route.ts":
+  "app/api/health/ready/route.ts GET":
     "Readiness must not depend on the limiter's own store (ADR-056 D4); it reads no user data, and its one paid probe (song ID) is cached per instance (audit X-13).",
-  "app/api/internal/jobs/tick/route.ts":
+  "app/api/internal/jobs/tick/route.ts GET":
+    "The host's scheduler, not a user: the CRON_SECRET is checked first, in constant time, and each tick is bounded by its time budget; the limiter would need a tenant this caller does not have (ADR-056 D2).",
+  "app/api/internal/jobs/tick/route.ts POST":
     "The host's scheduler, not a user: the CRON_SECRET is checked first, in constant time, and each tick is bounded by its time budget; the limiter would need a tenant this caller does not have (ADR-056 D2).",
 };
 
@@ -50,19 +59,31 @@ describe("API route rate limiting (ADR-052)", () => {
     expect(LIMITERS.problems).toEqual([]);
   });
 
-  it("every handler in every route is rate limited, or the route is exempt", () => {
-    const missing = ROUTES.filter((f) => !EXEMPT[f]).filter((f) => {
-      const src = read(f);
-      return callCount(src, LIMITERS.accepted) < handlerCount(src);
-    });
+  // Exempt per (file, method) (TASK-194 round 1, A4): a new method added to an exempt route's
+  // file is not exempt with it.
+  const METHODS = ROUTES.flatMap((f) =>
+    routeMethods(read(f), f).map((m) => `${f} ${m.method}`)
+  );
+
+  it("every method of every route is rate limited, or the method is exempt", () => {
+    const missing: string[] = [];
+    for (const f of ROUTES) {
+      const methods = routeMethods(read(f), f);
+      if (methods.length === 0) missing.push(`${f}: no exported method found`);
+      for (const m of methods) {
+        if (EXEMPT[`${f} ${m.method}`]) continue;
+        if (!m.readable || !methodCalls(m, LIMITERS.accepted))
+          missing.push(`${f} ${m.method}`);
+      }
+    }
     expect(missing).toEqual([]);
   });
 
-  it("lists no exempt route that does not exist, and gives each a reason", () => {
+  it("lists no exempt method that does not exist, and gives each a reason", () => {
     for (const [f, reason] of Object.entries(EXEMPT)) {
       expect({
         f,
-        exists: ROUTES.includes(f),
+        exists: METHODS.includes(f),
         hasReason: reason.trim().length > 10,
       }).toEqual({
         f,
@@ -70,6 +91,20 @@ describe("API route rate limiting (ADR-052)", () => {
         hasReason: true,
       });
     }
+  });
+
+  it("the checker judges each method: two limiters in one method do not cover another (C-11)", () => {
+    const src =
+      "export async function GET(request) { await enforceRateLimit(request, A);\n" +
+      "  await enforceRateLimit(request, B); }\n" +
+      "export async function POST() { return new Response('open'); }";
+    expect(callCount(src, PLATFORM_LIMITERS)).toBe(handlerCount(src)); // the old count passed it
+    expect(
+      routeMethods(src).map((m) => [m.method, methodCalls(m, PLATFORM_LIMITERS)])
+    ).toEqual([
+      ["GET", true],
+      ["POST", false],
+    ]);
   });
 
   it("the checker catches a handler without a limit", () => {

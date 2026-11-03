@@ -30,7 +30,12 @@
  * @module platform/admin
  */
 
-import { dispatchConfigTool } from "@/platform/admin/config-handlers";
+import {
+  codedConfigFailure,
+  dispatchConfigTool,
+  type InvalidValueParams,
+} from "@/platform/admin/config-handlers";
+import type { ErrorCode } from "@/platform/errors/registry";
 import { getEnhancedConfig } from "@/platform/auth/platform-config";
 import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
 import { isOperator, resolveConfigTarget } from "@/platform/admin/config-scope";
@@ -57,10 +62,35 @@ export type GovernedConfigOutcome =
   | { readonly kind: "not_found" }
   | { readonly kind: "refused"; readonly permission: string }
   | { readonly kind: "refused_scope"; readonly reason: string }
-  | { readonly kind: "invalid"; readonly errors: readonly string[] }
+  /**
+   * A value its entry refuses: `params` are `admin.config_invalid_value`'s (the key and the
+   * structured reason, round 14 item 2); `errors` the entry's English reasons, for the log.
+   */
+  | {
+      readonly kind: "invalid";
+      readonly errors: readonly string[];
+      readonly params: InvalidValueParams;
+    }
   | { readonly kind: "applied"; readonly result: ConfigToolResult }
   | { readonly kind: "pending"; readonly result: ConfigToolResult }
-  | { readonly kind: "failed"; readonly result: ConfigToolResult };
+  /**
+   * It did not go through. `code`/`params`: its registry code when the result carries one — a
+   * change already waiting (`approvals.already_pending`), the audit log unavailable, a stale or
+   * lost commit (round 14, item 1: the code was dropped here, and every surface answered 500 or
+   * `admin.action_failed`); absent, the caller answers its generic failure.
+   */
+  | {
+      readonly kind: "failed";
+      readonly result: ConfigToolResult;
+      readonly code?: ErrorCode;
+      readonly params?: Readonly<Record<string, string | number | readonly string[]>>;
+    };
+
+/** A failed outcome, with the result's code when it has one (round 14, item 1). */
+function failed(result: ConfigToolResult): GovernedConfigOutcome {
+  const coded = codedConfigFailure(result);
+  return coded ? { kind: "failed", result, ...coded } : { kind: "failed", result };
+}
 
 /** Apply, hold or refuse one config change on behalf of a verified admin. */
 export async function writeGovernedConfig(
@@ -91,13 +121,28 @@ export async function writeGovernedConfig(
   const data = (result.data ?? {}) as {
     applied?: boolean;
     requiresApproval?: boolean;
+    approvalError?: string;
     validationErrors?: string[];
   };
-  if (data.validationErrors?.length)
-    return { kind: "invalid", errors: data.validationErrors };
-  if (result.success && data.requiresApproval) return { kind: "pending", result };
+  const coded = codedConfigFailure(result);
+  if (
+    coded?.code === "admin.config_invalid_value" ||
+    (!coded && data.validationErrors?.length)
+  )
+    return {
+      kind: "invalid",
+      errors: data.validationErrors ?? [],
+      params:
+        coded?.code === "admin.config_invalid_value"
+          ? (coded.params as unknown as InvalidValueParams)
+          : { key: change.key, reason: "other" },
+    };
+  // Pending only when it was filed (round 13, P-1): a filing refused (a change to the key already
+  // waiting) is a failure, never reported as pending.
+  if (result.success && data.requiresApproval && !data.approvalError)
+    return { kind: "pending", result };
   if (result.success && data.applied) return { kind: "applied", result };
-  return { kind: "failed", result };
+  return failed(result);
 }
 
 export interface GovernedConfigReset {
@@ -134,17 +179,27 @@ export async function resetGovernedConfig(
     context
   );
   if (result.held) return { kind: "pending", result };
-  const data = (result.data ?? {}) as { applied?: boolean; requiresApproval?: boolean };
-  if (result.success && data.requiresApproval) return { kind: "pending", result };
+  const data = (result.data ?? {}) as {
+    applied?: boolean;
+    requiresApproval?: boolean;
+    approvalError?: string;
+  };
+  if (result.success && data.requiresApproval && !data.approvalError)
+    return { kind: "pending", result };
   if (result.success && data.applied) return { kind: "applied", result };
-  return { kind: "failed", result };
+  return failed(result);
 }
 
 /** A short reason for a failed outcome, for logs and command-bar replies. */
 export function describeFailure(result: ConfigToolResult): string {
-  const data = (result.data ?? {}) as { error?: string; validationErrors?: string[] };
+  const data = (result.data ?? {}) as {
+    error?: string;
+    approvalError?: string;
+    validationErrors?: string[];
+  };
   return (
     result.error ??
+    data.approvalError ??
     data.error ??
     (data.validationErrors?.length
       ? data.validationErrors.join("; ")

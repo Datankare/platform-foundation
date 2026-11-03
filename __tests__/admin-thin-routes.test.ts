@@ -25,7 +25,11 @@ jest.mock("@/platform/agents", () => ({
   buildCapabilities: jest.fn(() => ({ capabilities: [] })),
 }));
 jest.mock("@/platform/providers/registry", () => ({
-  getActiveProviders: jest.fn(() => ({})),
+  getActiveProviders: jest.fn(() => ({
+    ai: "anthropic",
+    cache: "valkey",
+    store: "postgres",
+  })),
 }));
 
 import { NextRequest } from "next/server";
@@ -125,6 +129,17 @@ describe("GET /api/admin/capabilities", () => {
     expect(
       (await capabilitiesGET(req("/api/admin/capabilities", "moderator"))).status
     ).toBe(403);
+  });
+  // TASK-194, audit C-10: the providers as /api/agent/capabilities shows them — no plumbing.
+  it("names only the providers capabilities use, never the platform's plumbing", async () => {
+    const { buildCapabilities } = jest.requireMock("@/platform/agents");
+    const { capabilitySelections } = jest.requireActual("@/platform/agents/capabilities");
+    await capabilitiesGET(req("/api/admin/capabilities"));
+    const providers = buildCapabilities.mock.calls.at(-1)[1];
+    expect(providers).toEqual(
+      capabilitySelections({ ai: "anthropic", cache: "valkey", store: "postgres" })
+    );
+    expect(Object.keys(providers)).not.toContain("cache");
   });
 });
 

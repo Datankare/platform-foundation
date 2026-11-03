@@ -16,6 +16,7 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req-test",
 }));
 
+import { FEATURE_PERMISSION_CODES } from "@/platform/auth/feature-permissions";
 import { randomUUID } from "node:crypto";
 import { withOwnerTx } from "@/platform/data";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
@@ -122,7 +123,13 @@ dbDescribe(
       const roleName = catalogName(RUN, "fresh");
       await t.run(() =>
         handleCreateRole(
-          { name: roleName, display_name: "Fresh", permissions: [cat.codes.y] },
+          {
+            name: roleName,
+            display_name: "Fresh",
+            permissions: [cat.codes.y],
+            // Exactly the one permission (a new role has the feature ones by default, TASK-194).
+            without_feature_permissions: [...FEATURE_PERMISSION_CODES],
+          },
           operator
         )
       );

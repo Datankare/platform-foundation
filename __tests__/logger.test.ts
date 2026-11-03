@@ -185,6 +185,13 @@ describe("logger", () => {
       { items: [{ phone: "sentinel-phone-555" }] },
       "sentinel-phone",
     ],
+    // TASK-194 round 1, B7: the delegation and step-up secrets.
+    ["an agent's client secret", { clientSecret: "sentinel-cs-1" }, "sentinel-cs-1"],
+    ["a client_secret", { body: { client_secret: "sentinel-cs-2" } }, "sentinel-cs-2"],
+    ["a PKCE verifier", { codeVerifier: "sentinel-cv-1" }, "sentinel-cv-1"],
+    ["a code_verifier", { code_verifier: "sentinel-cv-2" }, "sentinel-cv-2"],
+    ["a step-up code", { currentCode: "sentinel-totp" }, "sentinel-totp"],
+    ["a step-up password", { password: "sentinel-pw" }, "sentinel-pw"],
   ])("never writes %s to the log (ring 6)", (_label, fields, secret) => {
     process.env.LOG_LEVEL = "error";
     logger.error("leak attempt", fields as never);

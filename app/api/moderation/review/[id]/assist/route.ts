@@ -17,6 +17,7 @@ import { getReviewQueueStore } from "@/platform/moderation/review-store";
 import { generateReviewRecommendation } from "@/platform/moderation/review-assist";
 import { apiError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { sameId } from "@/platform/auth/same-id";
 
 const MODERATE_PERMISSION = "can_moderate";
 
@@ -37,7 +38,7 @@ export const POST = tenantRoute(async function POST(
       return apiError("moderation.review_item_not_found", { request });
     }
     // No assist on a case about the moderator's own account (as claim and resolve).
-    if (item.targetUserId === admin.userId) {
+    if (sameId(item.targetUserId, admin.userId)) {
       return apiError("moderation.self_review", { request });
     }
     // A paid model call: counted against the moderator's daily quota (release review).

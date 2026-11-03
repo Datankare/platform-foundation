@@ -39,13 +39,16 @@ import {
   listConfig,
   listEnhancedConfig,
   setConfigWithHistory,
+  PLATFORM_DEFAULT_TARGET,
 } from "@/platform/auth/platform-config";
 import {
+  APPLY_LEASE_SECONDS,
   approveAndApply,
   approveChange,
   countPendingApprovals,
   getApproval,
   listApprovals,
+  recoverUnappliedApprovals,
   rejectChange,
   requestApproval,
 } from "@/platform/admin/config-approval";
@@ -310,7 +313,15 @@ dbDescribe(`${SUITE} a tenant's own values (shared deployment)`, () => {
 dbDescribe(`${SUITE} a single-tenant deployment`, () => {
   it("its administrators change the platform default, as before tenancy, and see the history", async () => {
     const r = await single(a, () =>
-      setConfigWithHistory(LOCKED, true, ua, "single admin", "admin_ui")
+      setConfigWithHistory(
+        LOCKED,
+        true,
+        ua,
+        "single admin",
+        "admin_ui",
+        undefined,
+        PLATFORM_DEFAULT_TARGET
+      )
     );
     expect(r.success).toBe(true);
     await expect(single(a, () => getConfig(LOCKED))).resolves.toBe(true);
@@ -540,5 +551,190 @@ dbDescribe(`${SUITE} two-person approval`, () => {
     await expect(b.run(() => getApproval("not-a-uuid"))).resolves.toBeNull();
     const bad = await b.run(() => approveChange("not-a-uuid", ub2, "x"));
     expect(bad.errorCode).toBe("approvals.hold_not_found");
+  });
+});
+
+dbDescribe(`${SUITE} an apply that lost its commit (TASK-194 round 16)`, () => {
+  // Round 16, item 4: an apply that lost its commit is left approved and unapplied — never
+  // reopened, never withdrawn — and the apply recovery settles it from the change's own history:
+  // applied when the reviewer's write of exactly this change is there, reopened when it is not.
+  it.each([
+    ["the write landed: marked applied", true],
+    ["the write did not land: reopened", false],
+  ])("a lost commit settles by its history — %s", async (_name, landed) => {
+    const req = await a.run(() =>
+      requestApproval({
+        configKey: LOCKED,
+        currentValue: false,
+        proposedValue: true,
+        requestedBy: ua,
+        changeComment: `lost commit ${landed}`,
+      })
+    );
+    const id = req.record!.id;
+    const out = await a.run(() =>
+      approveAndApply(id, ua2, "ok", async () => ({
+        success: false,
+        error: "The commit was lost: the change may or may not have applied.",
+        indeterminate: true,
+      }))
+    );
+    expect(out).toMatchObject({
+      success: false,
+      errorCode: "admin.write_indeterminate",
+      settling: true,
+    });
+    // Left as it is: approved, not applied, its reviewer kept.
+    await expect(a.run(() => getApproval(id))).resolves.toMatchObject({
+      status: "approved",
+      reviewedBy: ua2,
+    });
+    await withOwnerTx("operator", async (tx) => {
+      const { rows } = await tx.query<{ tenant_id: string; scope: string }>(
+        "select tenant_id, scope from config_pending_approvals where id = $1::uuid",
+        [id]
+      );
+      // Past the apply lease.
+      await tx.query(
+        "update config_pending_approvals set reviewed_at = now() - interval '1 hour' where id = $1::uuid",
+        [id]
+      );
+      if (landed)
+        await tx.query(
+          `insert into platform_config_history
+             (config_key, previous_value, new_value, changed_by, change_comment, tenant_id, scope, created_at)
+           values ($1, 'false'::jsonb, 'true'::jsonb, $2::uuid, 'Approved: lost', $3, $4, now() - interval '50 minutes')`,
+          [LOCKED, ua2, rows[0].tenant_id, rows[0].scope]
+        );
+      await recoverUnappliedApprovals(tx, APPLY_LEASE_SECONDS, { tenantIds: [a.id] });
+    });
+    const after = await withOwnerTx("operator", (tx) =>
+      tx.query<{ status: string; applied: boolean }>(
+        "select status::text, applied_at is not null as applied from config_pending_approvals where id = $1::uuid",
+        [id]
+      )
+    );
+    expect(after.rows[0]).toEqual(
+      landed
+        ? { status: "approved", applied: true }
+        : { status: "pending", applied: false }
+    );
+    if (!landed) await a.run(() => rejectChange(id, ua2, "cleanup"));
+    await withOwnerTx("operator", (tx) =>
+      tx.query(
+        "delete from platform_config_history where change_comment = 'Approved: lost'"
+      )
+    );
+  });
+
+  // Round 16, R-d: a change approved and not yet known to be applied is still open — a second
+  // request for the key is refused as already pending, never filed beside it.
+  it("an approved change not yet applied blocks a new request for the key", async () => {
+    const req = await a.run(() =>
+      requestApproval({
+        configKey: LOCKED,
+        currentValue: false,
+        proposedValue: true,
+        requestedBy: ua,
+        changeComment: "settling",
+      })
+    );
+    const id = req.record!.id;
+    await a.run(() =>
+      approveAndApply(id, ua2, "ok", async () => ({
+        success: false,
+        error: "lost",
+        indeterminate: true,
+      }))
+    );
+    const second = await a.run(() =>
+      requestApproval({
+        configKey: LOCKED,
+        currentValue: false,
+        proposedValue: true,
+        requestedBy: ua3,
+        changeComment: "beside it",
+      })
+    );
+    // Its own code (round 17, I-2: already_pending told the requester to decide a change no one
+    // can decide): it is being settled — and when, by the job's bound.
+    expect(second).toMatchObject({
+      success: false,
+      errorCode: "approvals.settling",
+      errorParams: { key: LOCKED, minutes: expect.any(Number) },
+    });
+    await withOwnerTx("operator", (tx) =>
+      tx.query(
+        "update config_pending_approvals set status = 'rejected' where id = $1::uuid",
+        [id]
+      )
+    );
+  });
+
+  // Round 17, I-2: an apply that took effect but could not be marked applied (markApplied is best
+  // effort) blocks the key only until the recovery — its way out: the reviewer's write is in the
+  // history, so it is marked applied, and the key takes a new request again.
+  it("an applied change not marked applied: settling until the recovery marks it — then free", async () => {
+    const req = await a.run(() =>
+      requestApproval({
+        configKey: LOCKED,
+        currentValue: false,
+        proposedValue: true,
+        requestedBy: ua,
+        changeComment: "applied, not marked",
+      })
+    );
+    const id = req.record!.id;
+    await a.run(() => approveAndApply(id, ua2, "ok", async () => ({ success: true })));
+    await withOwnerTx("operator", async (tx) => {
+      // As if markApplied had failed: the change applied, its row not marked.
+      await tx.query(
+        "update config_pending_approvals set applied_at = null where id = $1::uuid",
+        [id]
+      );
+    });
+    const blocked = await a.run(() =>
+      requestApproval({
+        configKey: LOCKED,
+        currentValue: true,
+        proposedValue: false,
+        requestedBy: ua3,
+        changeComment: "next",
+      })
+    );
+    expect(blocked.errorCode).toBe("approvals.settling");
+    await withOwnerTx("operator", async (tx) => {
+      const { rows } = await tx.query<{ tenant_id: string; scope: string }>(
+        "select tenant_id, scope from config_pending_approvals where id = $1::uuid",
+        [id]
+      );
+      await tx.query(
+        "update config_pending_approvals set reviewed_at = now() - interval '1 hour' where id = $1::uuid",
+        [id]
+      );
+      await tx.query(
+        `insert into platform_config_history
+           (config_key, previous_value, new_value, changed_by, change_comment, tenant_id, scope, created_at)
+         values ($1, 'false'::jsonb, 'true'::jsonb, $2::uuid, 'Approved: lost', $3, $4, now() - interval '50 minutes')`,
+        [LOCKED, ua2, rows[0].tenant_id, rows[0].scope]
+      );
+      await recoverUnappliedApprovals(tx, APPLY_LEASE_SECONDS, { tenantIds: [a.id] });
+    });
+    const free = await a.run(() =>
+      requestApproval({
+        configKey: LOCKED,
+        currentValue: true,
+        proposedValue: false,
+        requestedBy: ua3,
+        changeComment: "next",
+      })
+    );
+    expect(free.success).toBe(true);
+    await a.run(() => rejectChange(free.record!.id, ua3, "cleanup"));
+    await withOwnerTx("operator", (tx) =>
+      tx.query(
+        "delete from platform_config_history where change_comment = 'Approved: lost'"
+      )
+    );
   });
 });
