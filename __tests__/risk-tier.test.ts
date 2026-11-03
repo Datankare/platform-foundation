@@ -6,6 +6,8 @@
  * CI's review-tier job runs it. The patterns are the repository's own (scripts/risk-tiers.json,
  * and a consuming app's scripts/risk-tiers.app.json when present); the hostile cases are the ways
  * a change could read as a lower tier than it is.
+ *
+ * @not-guard: behaviour tests of the risk-tier classifier, which classifies and refuses nothing
  */
 import { execFileSync, spawnSync } from "child_process";
 import {
@@ -91,6 +93,11 @@ describe("the risk tier of a change (paths)", () => {
     [["docs/templates/sync-from-foundation.yml"], "High"],
     [["REVIEW.md"], "High"],
     [["scripts/risk-tiers.json"], "High"],
+    [["scripts/process-check.mjs"], "High"],
+    [["scripts/fetch-wrappers.app.json"], "High"],
+    [[".github/CODEOWNERS"], "High"],
+    [[".github/sync-config.json"], "High"],
+    [[".github/workflows/sync-from-foundation.yml"], "High"],
     [[".env.example"], "High"],
     [["app/api/account/delete/route.ts"], "High"],
     [["platform/rate-limit/daily-quota.ts"], "High"],

@@ -5,6 +5,8 @@
  * __tests__/id-equality.test.ts — authorization never compares ids with `===` (TASK-194 rebase,
  * round 2, finding 9)
  *
+ * @guard an id compared in a case it may not be stored in
+ *
  * The self-change rule compared `userId === admin.userId`: the admin's own id in upper case is
  * the same account to Postgres and passed. Every id comparison in the authorization code goes
  * through platform/auth/same-id.ts sameId. This scan reads the authorization code (AUTHZ) and
@@ -224,7 +226,7 @@ describe("ids are compared with sameId in authorization code (rebase round 2, fi
     expect(sameId(id, `{${id}`)).toBe(false);
   });
 
-  it("catches a planted comparison: one-sided and two-sided case folds, a uid (round 4, item 3)", () => {
+  it("[self-test] catches a planted comparison: one-sided and two-sided case folds, a uid (round 4, item 3)", () => {
     const planted = [
       "if (a.userId.toLowerCase() === b) {}",
       "if (account.toLowerCase() === userId) {}",

@@ -1,6 +1,8 @@
 /**
  * __tests__/api-route-paid-quota.test.ts — every paid call is counted against a daily quota (audit X-12)
  *
+ * @guard a paid route that makes the call before counting the daily quota
+ *
  * The per-minute limit bounds bursts, not spend. A route that makes a paid provider call must
  * call enforceDailyPaidQuota, with the verified actor, before its first paid call — or be listed
  * as exempt with the reason. The app declares its own paid functions (and exemptions) in
@@ -145,7 +147,7 @@ describe("daily paid-request quota on every paid route (audit X-12)", () => {
       "the quota after the paid call",
       "export async function POST(r) { await textToSpeech(t); await enforceDailyPaidQuota(r, id); }",
     ],
-  ])("the checker catches %s", (_label, src) => {
+  ])("[self-test] the checker catches %s", (_label, src) => {
     expect(quotaProblem(src)).not.toBeNull();
   });
 

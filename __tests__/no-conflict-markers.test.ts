@@ -1,6 +1,8 @@
 /**
  * __tests__/no-conflict-markers.test.ts
  *
+ * @guard a committed merge-conflict marker
+ *
  * Sprint 7 — gate guard: no committed merge-conflict markers.
  *
  * The standard quality gate is blind to conflict markers in files nothing
@@ -75,6 +77,18 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
+/** The lines of a file that start with a conflict marker. */
+function markerLines(path: string, content: string): string[] {
+  if (!MARKERS.some((m) => content.includes(m))) return [];
+  return content
+    .split("\n")
+    .flatMap((line, i) =>
+      MARKERS.some((m) => line.startsWith(m))
+        ? [`${path}:${i + 1} ${line.slice(0, 40)}`]
+        : []
+    );
+}
+
 describe("repository hygiene", () => {
   it("contains no committed merge-conflict markers", () => {
     const offenders: string[] = [];
@@ -91,16 +105,23 @@ describe("repository hygiene", () => {
       } finally {
         closeSync(fd);
       }
-      if (!MARKERS.some((m) => content.includes(m))) continue;
-
-      const lines = content.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        if (MARKERS.some((m) => lines[i].startsWith(m))) {
-          offenders.push(`${relative(ROOT, path)}:${i + 1} ${lines[i].slice(0, 40)}`);
-        }
-      }
+      offenders.push(...markerLines(relative(ROOT, path), content));
     }
 
     expect(offenders).toEqual([]);
+  });
+
+  it("[self-test] reports a planted conflict, and not a marker inside a line", () => {
+    const planted = [
+      "a",
+      MARKERS[0] + "HEAD",
+      "b",
+      MARKERS[1] + "branch",
+      `x ${MARKERS[0]}`,
+    ].join("\n");
+    expect(markerLines("lib/planted.ts", planted)).toEqual([
+      `lib/planted.ts:2 ${MARKERS[0]}HEAD`,
+      `lib/planted.ts:4 ${MARKERS[1]}branch`,
+    ]);
   });
 });

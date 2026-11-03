@@ -7,6 +7,8 @@
  * line, so a value whose first line was valid passed — and its next line reached $GITHUB_OUTPUT
  * as an output of its own. The check is now of the whole value, and a newline or carriage return
  * is refused outright.
+ *
+ * @not-guard: reads the load-test workflow to pin the command it runs; an instance check, not a scan
  */
 import { spawnSync } from "child_process";
 import { readFileSync } from "fs";

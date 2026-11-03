@@ -8,6 +8,8 @@
  * whatever content the mirror held under it. Now every pull is by digest, the digest comes from
  * Docker Hub (or the pin) and never from the mirror, a pin that differs from Docker Hub fails, a
  * pulled image that is not the digest fails, and with no digest to trust nothing is pulled.
+ *
+ * @not-guard: behaviour tests of the base-image pull script; it refuses nothing
  */
 import { spawnSync } from "child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";

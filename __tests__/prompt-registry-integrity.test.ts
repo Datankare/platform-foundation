@@ -1,6 +1,8 @@
 /**
  * prompt-registry-integrity.test.ts — ADR-038 D7 enforcement (Sprint 4).
  *
+ * @guard a prompt source file not in the registry, or a registration with no file
+ *
  * The prompt registry (listPrompts) is the single source of truth for what prompts exist, so
  * the eval harness (ADR-038) scopes to it. Every prompt source file — prompts/<domain>/<name>-v<N>.ts
  * — must therefore be registered (the core's prompts, or a registered module's — ADR-054 D4), and
@@ -52,9 +54,23 @@ function promptFiles(dir: string): string[] {
 // The registry key a prompt file declares: the first quoted `name: "..."` (the config's name;
 // the interface `name: string;` further down has no quotes and does not match).
 function declaredName(file: string): string | null {
-  const src = readFileSync(file, "utf-8");
+  return nameIn(readFileSync(file, "utf-8"));
+}
+
+function nameIn(src: string): string | null {
   const m = src.match(/name:\s*"([a-z0-9-]+)"/);
   return m ? m[1] : null;
+}
+
+/** Prompt files whose declared name is not registered. */
+function unregistered(
+  sources: readonly { path: string; text: string }[],
+  registered: ReadonlySet<string>
+): string[] {
+  return sources.flatMap(({ path, text }) => {
+    const name = nameIn(text);
+    return name && !registered.has(name) ? [`${path} (name: "${name}")`] : [];
+  });
 }
 
 describe("prompt registry integrity (ADR-038 D7)", () => {
@@ -75,19 +91,28 @@ describe("prompt registry integrity (ADR-038 D7)", () => {
     );
   });
 
-  it("self-test: an unregistered name is recognized as missing", () => {
-    expect(registered.has("nonexistent-prompt")).toBe(false);
+  it("[self-test] reports a planted prompt file whose name is not registered", () => {
+    const planted = [
+      {
+        path: "prompts/planted/stray-v1.ts",
+        text: 'export const C = { name: "stray-prompt" };',
+      },
+      {
+        path: "prompts/safety/classify-v1.ts",
+        text: 'export const C = { name: "safety-classify" };',
+      },
+    ];
+    expect(unregistered(planted, registered)).toEqual([
+      'prompts/planted/stray-v1.ts (name: "stray-prompt")',
+    ]);
   });
 
   it("every prompt source file is registered (core or module prompt)", () => {
-    const missing: string[] = [];
-    for (const file of files) {
-      const name = declaredName(file);
-      if (name && !registered.has(name)) {
-        missing.push(`${file.slice(ROOT.length + 1)} (name: "${name}")`);
-      }
-    }
-    expect(missing).toEqual([]);
+    const sources = files.map((file) => ({
+      path: file.slice(ROOT.length + 1),
+      text: readFileSync(file, "utf-8"),
+    }));
+    expect(unregistered(sources, registered)).toEqual([]);
   });
 
   it("every registered prompt has a source file (no phantom registrations)", () => {

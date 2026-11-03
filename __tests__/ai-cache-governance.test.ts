@@ -2,6 +2,8 @@
  * TASK-186 — prompt caching after review: the governed gate, cache tokens in persistent metrics,
  * and every cost-recording caller billing the whole usage.
  *
+ * @guard a cost-recording caller that drops the prompt cache's token counts
+ *
  *   - ai.prompt_cache_enabled (default off) and the request's promptCache must both be true;
  *     a setting that cannot be read is off.
  *   - obs.metrics.record carries cacheReadTokens and cacheWriteTokens (ai_metrics.values is
@@ -203,30 +205,50 @@ describe("every caller that prices its own call passes the whole usage", () => {
       return /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [p] : [];
     });
   }
+  type Call = { file: string; line: number; node: ts.CallExpression };
+  function estimateCalls(file: string, text: string): Call[] {
+    if (!text.includes("estimateCost(")) return [];
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const found: Call[] = [];
+    const visit = (n: ts.Node) => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === "estimateCost"
+      ) {
+        found.push({
+          file,
+          line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1,
+          node: n,
+        });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return found;
+  }
+  /** Calls that do not pass a tier and a whole usage. */
+  function badCalls(list: readonly Call[]): string[] {
+    return list.flatMap(({ file, line, node }) => {
+      const where = `${file}:${line}`;
+      if (node.arguments.length !== 2)
+        return [`${where}: ${node.arguments.length} arguments`];
+      const usage = node.arguments[1];
+      if (ts.isObjectLiteralExpression(usage)) {
+        const names = usage.properties.map((p) => p.name?.getText() ?? "");
+        const missing = ["cacheReadTokens", "cacheWriteTokens"].filter(
+          (k) => !names.includes(k)
+        );
+        return missing.length > 0
+          ? [`${where}: usage without ${missing.join(", ")}`]
+          : [];
+      }
+      return [];
+    });
+  }
   const calls = ["platform", "app", "lib", "prompts"]
     .flatMap((d) => (existsSync(join(ROOT, d)) ? sources(join(ROOT, d)) : []))
-    .flatMap((file) => {
-      const text = readFileSync(file, "utf8");
-      if (!text.includes("estimateCost(")) return [];
-      const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-      const found: { file: string; line: number; node: ts.CallExpression }[] = [];
-      const visit = (n: ts.Node) => {
-        if (
-          ts.isCallExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === "estimateCost"
-        ) {
-          found.push({
-            file: relative(ROOT, file),
-            line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1,
-            node: n,
-          });
-        }
-        ts.forEachChild(n, visit);
-      };
-      visit(sf);
-      return found;
-    });
+    .flatMap((file) => estimateCalls(relative(ROOT, file), readFileSync(file, "utf8")));
 
   it("finds the known callers (self-test)", () => {
     const files = new Set(calls.map((c) => c.file));
@@ -244,23 +266,19 @@ describe("every caller that prices its own call passes the whole usage", () => {
   });
 
   it("each call passes a tier and a usage; a usage built by hand names both cache counts", () => {
-    const bad = calls.flatMap(({ file, line, node }) => {
-      const where = `${file}:${line}`;
-      if (node.arguments.length !== 2)
-        return [`${where}: ${node.arguments.length} arguments`];
-      const usage = node.arguments[1];
-      if (ts.isObjectLiteralExpression(usage)) {
-        const names = usage.properties.map((p) => p.name?.getText() ?? "");
-        const missing = ["cacheReadTokens", "cacheWriteTokens"].filter(
-          (k) => !names.includes(k)
-        );
-        return missing.length > 0
-          ? [`${where}: usage without ${missing.join(", ")}`]
-          : [];
-      }
-      return [];
-    });
-    expect(bad).toEqual([]);
+    expect(badCalls(calls)).toEqual([]);
+  });
+
+  it("[self-test] reports a planted caller that drops the cache counts", () => {
+    const planted = [
+      'const a = estimateCost("standard", { inputTokens: 1, outputTokens: 2 });',
+      'const b = estimateCost("standard", response.usage);',
+      "const c = estimateCost(usage);",
+    ].join("\n");
+    expect(badCalls(estimateCalls("platform/planted.ts", planted))).toEqual([
+      "platform/planted.ts:1: usage without cacheReadTokens, cacheWriteTokens",
+      "platform/planted.ts:3: 1 arguments",
+    ]);
   });
 });
 

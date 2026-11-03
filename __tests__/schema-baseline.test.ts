@@ -1,6 +1,8 @@
 /**
  * __tests__/schema-baseline.test.ts — TASK-091
  *
+ * @guard a schema baseline out of step with the migrations, or a table without row-level security
+ *
  * Source checks on supabase/baseline/000_baseline.sql. The CI job "Migration replay" executes
  * it; these keep its contract honest without a database:
  *   - it refuses to run over an existing schema;
@@ -42,6 +44,20 @@ const isRecorded = (f: string) => RECORDED.includes(f);
 const IS_PLATFORM =
   JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8")).name ===
   "platform-foundation";
+
+/** Tables a migration creates without enabling row-level security on them. */
+function tablesWithoutRls(sql: string): string[] {
+  const tables = [
+    ...sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(\w+)/gi),
+  ].map((m) => m[1]);
+  return tables.filter(
+    (t) =>
+      !new RegExp(
+        `alter\\s+table\\s+(?:public\\.)?${t}\\s+enable\\s+row\\s+level\\s+security`,
+        "i"
+      ).test(sql)
+  );
+}
 
 describe("schema baseline (TASK-091)", () => {
   it("declares what it covers", () => {
@@ -100,18 +116,22 @@ describe("schema baseline (TASK-091)", () => {
   });
 
   it("every migration the baseline does not record enables row-level security on its tables", () => {
-    for (const f of migrations.filter((m) => !isRecorded(m))) {
-      const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
-      const tables = [
-        ...sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(\w+)/gi),
-      ].map((m) => m[1]);
-      for (const t of tables) {
-        const rls = new RegExp(
-          `alter\\s+table\\s+(?:public\\.)?${t}\\s+enable\\s+row\\s+level\\s+security`,
-          "i"
-        );
-        expect({ f, t, rls: rls.test(sql) }).toEqual({ f, t, rls: true });
-      }
-    }
+    const missing = migrations
+      .filter((m) => !isRecorded(m))
+      .flatMap((f) =>
+        tablesWithoutRls(readFileSync(join(MIGRATIONS_DIR, f), "utf-8")).map(
+          (t) => `${f}: ${t}`
+        )
+      );
+    expect(missing).toEqual([]);
+  });
+
+  it("[self-test] reports a planted table created without row-level security", () => {
+    const planted = [
+      "create table if not exists public.planted_a (id uuid);",
+      "alter table public.planted_a enable row level security;",
+      "create table planted_b (id uuid);",
+    ].join("\n");
+    expect(tablesWithoutRls(planted)).toEqual(["planted_b"]);
   });
 });

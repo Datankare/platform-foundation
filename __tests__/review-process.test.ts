@@ -5,6 +5,8 @@
  * The AI-engineering review process (TASK-183, docs/AI_ENGINEERING.md) — what can be held by a
  * test is held here, in every repository that takes the platform's tests:
  *
+ * @guard a review process file or workflow that drifts from what the process requires
+ *
  *   - CLAUDE.md carries the standing rules, and stays short;
  *   - REVIEW.md states each area's failure and the review rules;
  *   - every reviewer eval case is indexed and has the parts a score needs;
@@ -62,6 +64,19 @@ describe("CLAUDE.md", () => {
     ["verify before claiming", /Verify before claiming/],
     ["match effort to stakes", /Match effort to stakes[\s\S]*pre-launch/],
     ["the review protocol before handover", /AI_ENGINEERING\.md\) §3/],
+    [
+      "the enforced engineering process (TASK-200)",
+      /enforced, not optional \(TASK-200\)[\s\S]*Design check[\s\S]*Self-review[\s\S]*process-check\.mjs/,
+    ],
+    [
+      "the task group a subject ends with, and the threat model (TASK-200)",
+      /ends its subject with[\s\S]*\(TASK-nnn\)[\s\S]*Threat model/,
+    ],
+    ["how a gate is reviewed (TASK-200)", /REVIEW\.md 18–24/],
+    [
+      "a threat model names only actors that exist (TASK-200 round 7)",
+      /only actors that exist[\s\S]*absent actor is out of scope/,
+    ],
   ])("states %s", (_name, re) => {
     expect(text).toMatch(re);
   });
@@ -99,7 +114,36 @@ describe("REVIEW.md", () => {
     expect(text).toContain('"Nothing to fix."');
     // TASK-197 round 3: a PR too large to diff is reviewed by an admin, merged by the bypass.
     expect(text).toMatch(/has not been reviewed\*\*[\s\S]*admin\s+bypass/);
+    // TASK-200: the engineering process's blocking rules, the ones no machine checks.
+    for (const rule of [
+      "Every caller moves with its response",
+      "The design check is true",
+      "No existing tenant is weakened",
+      "Hostile tests can fail",
+      "Tested against real responses",
+      "Guards can fail",
+      "Inputs are the schema's",
+      "The self-review was done",
+      // TASK-200 round 5: how a gate or a security boundary is reviewed.
+      "A threat model before code",
+      "Three lenses a round",
+      "Fix the class",
+      "The stop rule",
+    ])
+      expect(text).toContain(`**${rule}.**`);
+    for (const rule of [
+      "A coverage table from each reviewer:",
+      "The fixer attacks its own fix**",
+      "Mutation testing runs on gate and security code**",
+    ])
+      expect(text).toContain(rule);
+    // TASK-200 round 7: a threat model names only actors that exist for the repository.
+    expect(text).toMatch(
+      /actors that really\s+exist[\s\S]*out of scope, not a\s+residual/
+    );
     for (const skipped of [
+      "fake-fetch-baseline.json",
+      "body-schema-baseline.json",
       "platform/modules/platform-paths.json",
       "package-lock.json",
       "coverage-baseline.json",
@@ -381,7 +425,7 @@ describe("the security review gate (TASK-197)", () => {
     expect(r.out).toContain("left no readable result");
   });
 
-  it("findings still block, and a clean scan passes", async () => {
+  it("[self-test] findings still block, and a clean scan passes", async () => {
     const found = await runGate({
       scanned: { findings: [{ severity: "HIGH" }] },
       findings: "1",
@@ -405,6 +449,7 @@ describe("the security review gate (TASK-197)", () => {
 describe("the PR template asks for the evidence", () => {
   const text = read(".github/pull_request_template.md");
   it.each([
+    "Design check and self-review",
     "Risk tier",
     "Testing",
     "Security",
@@ -424,6 +469,23 @@ describe("the acknowledgements", () => {
     expect(text).toMatch(/claude\.dev Blog, 15 October 2026/);
     expect(text).toContain("https://claude.dev/blog/solving-code-review-at-anthropic/");
   });
+  it("credits the practices the engineering process adopts (TASK-200): title and author", () => {
+    for (const credit of [
+      /Gary Klein\*\*, _Performing a Project Premortem_ \(Harvard Business Review, September 2007\)/,
+      /Atul Gawande\*\*, _The Checklist\s+Manifesto_/,
+      /Ian Robinson\*\*, _Consumer-Driven Contracts: A Service Evolution Pattern_/,
+      /Alexis King\*\*, _Parse, don't validate_ \(2019/,
+      /Kent Beck\*\*, _Test-Driven Development: By Example_ \(Addison-Wesley, 2002\)/,
+    ])
+      expect(text).toMatch(credit);
+    expect(text).toMatch(
+      /## 3a\. The engineering process: enforced, not optional \(TASK-200\)/
+    );
+    // TASK-200 round 7: the lesson, and the check as a catcher of our own mistakes.
+    expect(text).toMatch(/actors that really exist[\s\S]*out of scope, not a residual/);
+    expect(text).toMatch(/catches \*\*our own mistakes\*\*/);
+  });
+
   it("points to ASSURANCE §7 for the formal-verification source rather than copying it", () => {
     expect(text).toMatch(/\[ASSURANCE\]\(ASSURANCE\.md\) §7/);
     expect(text).not.toMatch(/Keane Lucas/);

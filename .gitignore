@@ -60,3 +60,7 @@ SESSION_HANDOFF_*.md
 
 # jest results a CI pass writes for the job's failure upload (TASK-198): never part of the tree
 /jest-results-*.json
+
+# mutation testing (stryker.config.mjs, TASK-200)
+/.stryker-tmp/
+/reports/mutation/

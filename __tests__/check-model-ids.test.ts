@@ -5,6 +5,8 @@
  * the run, a Google voice no longer offered fails it (TASK-197), the
  * key and response bodies are never printed, and without a key the check is skipped (exit 0) —
  * unless MODEL_CHECK_REQUIRED is "true", when it fails.
+ *
+ * @guard a model the platform names that is missing, retired, deprecated or refuses its request
  */
 import { execFileSync, spawn } from "child_process";
 import { createServer, type Server } from "http";
@@ -180,7 +182,7 @@ describe("check-model-ids", () => {
     expect(r.out).not.toContain("forged");
   });
 
-  it("fails when one ID does not resolve, naming it, never printing the key or the body", async () => {
+  it("[self-test] fails when one ID does not resolve, naming it, never printing the key or the body", async () => {
     const [first, ...rest] = ids;
     const r = await withApi({ models: Object.fromEntries(rest.map((id) => [id, {}])) });
     expect(r.code).toBe(1);

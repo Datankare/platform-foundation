@@ -1,6 +1,8 @@
 /**
  * __tests__/task-register-integrity.test.ts
  *
+ * @guard a task register entry missing a field, a duplicate id, a dangling reference
+ *
  * The task register is the artifact the next sprint plans against, so it being wrong is
  * worse than it being absent. These assertions run on every commit.
  *
@@ -22,11 +24,11 @@ interface Entry {
   body: string;
 }
 
-function entries(): Entry[] {
+function entries(text: string = TASKS): Entry[] {
   const out: Entry[] = [];
   const rx = /### (TASK-\d+) — ([^\n]+)\n([\s\S]*?)(?=\n### |\n## |$)/g;
   let m: RegExpExecArray | null;
-  while ((m = rx.exec(TASKS)) !== null) {
+  while ((m = rx.exec(text)) !== null) {
     out.push({ id: m[1], title: m[2], body: m[3] });
   }
   return out;
@@ -35,6 +37,19 @@ function entries(): Entry[] {
 function field(body: string, key: string): string {
   const m = body.match(new RegExp(`\\*\\*${key}\\*\\*\\s*\\|\\s*([^|]+)\\|`));
   return m ? m[1].trim() : "";
+}
+
+const REQUIRED_FIELDS = ["Type", "Severity", "Phase", "Status", "Logged"];
+
+/** Entries missing a required field, and ids used twice. */
+function registerFindings(list: readonly Entry[]): string[] {
+  const ids = list.map((e) => e.id);
+  return [
+    ...ids.filter((id, i) => ids.indexOf(id) !== i).map((id) => `${id}: duplicate id`),
+    ...list.flatMap((e) =>
+      REQUIRED_FIELDS.filter((k) => !field(e.body, k)).map((k) => `${e.id}: no ${k}`)
+    ),
+  ];
 }
 
 describe("task register integrity", () => {
@@ -46,21 +61,29 @@ describe("task register integrity", () => {
     expect(all.length).toBeGreaterThan(25);
   });
 
-  it("has no duplicate task ids", () => {
-    const ids = all.map((e) => e.id);
-    expect(new Set(ids).size).toBe(ids.length);
+  it("[self-test] reports a planted entry without a status, and a duplicate id", () => {
+    const row = (k: string, v: string) => `| **${k}** | ${v} |`;
+    const entry = (id: string, fields: string[]) =>
+      [`### ${id} — Planted`, "", "| Field | Detail |", "| --- | --- |", ...fields].join(
+        "\n"
+      );
+    const full = REQUIRED_FIELDS.map((k) => row(k, "x"));
+    const planted = [
+      entry("TASK-901", full),
+      entry(
+        "TASK-902",
+        full.filter((l) => !l.includes("Status"))
+      ),
+      entry("TASK-901", full),
+    ].join("\n\n");
+    expect(registerFindings(entries(planted))).toEqual([
+      "TASK-901: duplicate id",
+      "TASK-902: no Status",
+    ]);
   });
 
-  it("gives every entry the required fields", () => {
-    const missing = all
-      .map((e) => ({
-        id: e.id,
-        absent: ["Type", "Severity", "Phase", "Status", "Logged"].filter(
-          (k) => !field(e.body, k)
-        ),
-      }))
-      .filter((r) => r.absent.length > 0);
-    expect(missing).toEqual([]);
+  it("has no duplicate task ids, and gives every entry the required fields", () => {
+    expect(registerFindings(all)).toEqual([]);
   });
 
   it("matches each entry's ID field to its heading", () => {

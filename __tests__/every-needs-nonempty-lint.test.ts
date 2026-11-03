@@ -2,10 +2,12 @@
  * __tests__/every-needs-nonempty-lint.test.ts — the lint rule behind TASK-198 D-19
  * (eslint-rules/every-needs-nonempty.cjs): `expect(xs.every(…)).toBe(true)` must come with an
  * assertion that xs is not empty, in the same test.
+ *
+ * @guard an every() assertion that passes on an empty list
  */
 import { readFileSync } from "fs";
 import { join } from "path";
-import { RuleTester } from "eslint";
+import { Linter, RuleTester } from "eslint";
 import * as tsParser from "@typescript-eslint/parser";
 
 const rule = require("../eslint-rules/every-needs-nonempty.cjs");
@@ -80,6 +82,30 @@ describe("pf-tests/every-needs-nonempty", () => {
       ],
     });
   }
+
+  it("[self-test] reports a planted every() over a list that may be empty", () => {
+    const linter = new Linter({ configType: "flat" });
+    const lint = (code: string) =>
+      linter
+        .verify(code, [
+          {
+            languageOptions: {
+              parser: tsParser,
+              ecmaVersion: 2022,
+              sourceType: "module",
+            },
+            plugins: { planted: { rules: { "every-needs-nonempty": rule } } },
+            rules: { "planted/every-needs-nonempty": "error" },
+          },
+        ])
+        .map((m) => m.ruleId);
+    expect(lint(inTest("expect(xs.every((x) => x.ok)).toBe(true);"))).toEqual([
+      "planted/every-needs-nonempty",
+    ]);
+    expect(
+      lint(inTest("expect(xs).toHaveLength(1);\nexpect(xs.every(f)).toBe(true);"))
+    ).toEqual([]);
+  });
 
   it("is on, as an error, for the test files in the lint configuration", () => {
     // Read as text: loading eslint.config.mjs needs ESM support jest is not run with.

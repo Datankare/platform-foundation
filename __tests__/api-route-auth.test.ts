@@ -1,6 +1,8 @@
 /**
  * __tests__/api-route-auth.test.ts — Every API route verifies its caller
  *
+ * @guard a route method that does not verify its caller first
+ *
  * The proxy (proxy.ts) only checks that credentials are PRESENT on /api/* and leaves
  * verification to the route handler. A handler that forgets to verify is therefore open to any
  * request carrying "Authorization: Bearer <anything>" — which is how /api/stream ran
@@ -139,7 +141,7 @@ describe("route verification — self-tests of the checker", () => {
       verificationProblem(m, PLATFORM_VERIFIERS, ["enforceRateLimit"]),
     ]);
 
-  it("judges each method by its own body: a verified POST does not cover an added DELETE (C-11)", () => {
+  it("[self-test] judges each method by its own body: a verified POST does not cover an added DELETE (C-11)", () => {
     const src =
       "export const POST = tenantRoute(async function POST(request) {\n" +
       "  const g = await requireAdmin(request, 'admin_manage_roles'); return g; });\n" +

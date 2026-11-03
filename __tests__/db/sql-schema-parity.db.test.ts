@@ -5,6 +5,8 @@
  * __tests__/db/sql-schema-parity.db.test.ts — every SQL statement the code sends is valid
  * against the migrated schema (TASK-067, ADR-053 D4)
  *
+ * @guard a SQL statement in the code the real schema would refuse
+ *
  * Replaces scripts/schema-parity.mjs, which read PostgREST calls out of the source and compared
  * column names with CREATE TABLE text. The stores now send SQL, so the check asks Postgres
  * itself: each statement found in the production sources is planned against the replayed
@@ -119,22 +121,15 @@ dbDescribe("SQL schema parity — every statement plans against the migrations",
     }
   });
 
-  it("refuses what production would refuse (self-test)", async () => {
-    for (const bad of [
-      "select no_such_column from tenants",
-      "insert into tenant_config_overrides (key, no_such_column) values ($1, $2)",
-      "select * from no_such_table",
-      "insert into tenants (id, slug, name) values ($1, $2, $3) on conflict (name) do nothing",
-    ]) {
-      await expect(client.query(`explain (generic_plan) ${bad}`)).rejects.toThrow();
-    }
-  });
-
-  it("every statement is valid against the schema", async () => {
+  /**
+   * Each statement the schema refuses, as `file:line: error` — planned (`explain (generic_plan)`)
+   * or, for LOCK, run, in one transaction rolled back, each behind its own savepoint.
+   */
+  async function invalidStatements(found: readonly Found[]): Promise<string[]> {
     const failures: string[] = [];
     await client.query("begin");
     try {
-      for (const [i, f] of FOUND.entries()) {
+      for (const [i, f] of found.entries()) {
         await client.query(`savepoint s${i}`);
         try {
           if (/^\s*lock\s/i.test(f.text)) {
@@ -154,6 +149,28 @@ dbDescribe("SQL schema parity — every statement plans against the migrations",
     } finally {
       await client.query("rollback");
     }
+    return failures;
+  }
+
+  it("[self-test] refuses what production would refuse", async () => {
+    const planted = [
+      "select no_such_column from tenants",
+      "insert into tenant_config_overrides (key, no_such_column) values ($1, $2)",
+      "select * from no_such_table",
+      "insert into tenants (id, slug, name) values ($1, $2, $3) on conflict (name) do nothing",
+      "select id from tenants where id = $1",
+    ].map((text, i) => ({ file: "planted.ts", line: i + 1, text }));
+    const failures = await invalidStatements(planted);
+    expect(failures.map((f) => f.split(":").slice(0, 2).join(":"))).toEqual([
+      "planted.ts:1",
+      "planted.ts:2",
+      "planted.ts:3",
+      "planted.ts:4",
+    ]);
+  });
+
+  it("every statement is valid against the schema", async () => {
+    const failures = await invalidStatements(FOUND);
     expect(failures).toEqual([]);
   });
 });

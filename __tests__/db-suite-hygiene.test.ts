@@ -2,6 +2,8 @@
  * __tests__/db-suite-hygiene.test.ts — what a database suite may do to the shared database
  * (TASK-198: D-14, D-15, D-18)
  *
+ * @guard a database suite that writes seeded rows, shortens timeouts or plans on sampled statistics
+ *
  * Every suite under __tests__/db runs in parallel with the others against ONE replayed database
  * (CI's three Layer 1 passes, and locally). Statically, over each of them:
  *
@@ -233,7 +235,7 @@ describe("database suites on the shared database (TASK-198)", () => {
       expect(seeded).toContain(k);
   });
 
-  it("self-test: finds seeded writes, short suite-wide timeouts and plans on sampled statistics", () => {
+  it("[self-test] finds seeded writes, short suite-wide timeouts and plans on sampled statistics", () => {
     const found = suiteFindings(
       `
       const KEY = "signups_enabled";

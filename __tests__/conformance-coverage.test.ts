@@ -1,6 +1,8 @@
 /**
  * __tests__/conformance-coverage.test.ts
  *
+ * @guard a provider slot with no conformance kit
+ *
  * Meta-test (ADR-027): the conformance convention enforces itself.
  *
  * Walks the LIVE provider registry via getActiveProviders() and asserts every
@@ -54,6 +56,17 @@ function composedManifest(): Record<string, OwnedEntry> {
   return out;
 }
 
+/** Registry slots with no runnable registry kit in the manifest. */
+function slotsWithoutKit(
+  slots: readonly string[],
+  manifest: Readonly<Record<string, ConformanceEntry>>
+): string[] {
+  return slots.filter((slot) => {
+    const entry = manifest[slot];
+    return !entry || entry.kind !== "registry" || typeof entry.kit !== "function";
+  });
+}
+
 describe("provider conformance coverage (ADR-027)", () => {
   const registrySlots = Object.keys(getActiveProviders());
   const manifest = composedManifest();
@@ -63,6 +76,16 @@ describe("provider conformance coverage (ADR-027)", () => {
     expect(entry).toBeDefined();
     expect(entry.kind).toBe("registry");
     expect(typeof entry.kit).toBe("function");
+  });
+
+  it("the same check finds no slot without a kit", () => {
+    expect(slotsWithoutKit(registrySlots, manifest)).toEqual([]);
+  });
+
+  it("[self-test] reports a planted registry slot that has no conformance kit", () => {
+    expect(slotsWithoutKit([...registrySlots, "plantedStore"], manifest)).toEqual([
+      "plantedStore",
+    ]);
   });
 
   it("every manifest entry references a runnable kit", () => {

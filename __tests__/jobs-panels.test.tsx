@@ -13,6 +13,7 @@ import {
   TenantJobsList,
   type JobsData,
 } from "@/components/admin/JobsPanels";
+import { routeAnswer } from "@/__tests__/fixtures/route-responses";
 
 // axe-core is installed with @axe-core/playwright (the e2e audits); here it runs in jsdom.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -164,7 +165,11 @@ describe("OperatorJobsView", () => {
 
   it("asks for a reason inline before turning a schedule off — never window.prompt", async () => {
     const prompt = jest.spyOn(window, "prompt");
-    answers([200, { success: true }], [200, DATA]);
+    // The routes' own answers (TASK-200 rule 3: __tests__/route-fixtures.test.ts makes them).
+    answers(
+      routeAnswer("PATCH /api/operator/jobs/schedules/[kind] — turned off"),
+      routeAnswer("GET /api/operator/jobs — an operator")
+    );
     render(<OperatorJobsView data={DATA} />);
     fireEvent.click(
       screen.getByRole("button", { name: "Turn off moderation.escalation-reaper" })
@@ -195,7 +200,14 @@ describe("OperatorJobsView", () => {
   });
 
   it("says when a change is held for a second operator", async () => {
-    answers([202, { success: true, pending: true }], [200, DATA]);
+    // The route's own held answer is `success: false, pending: true` — not the hand-written
+    // `success: true` this test used before TASK-200.
+    answers(
+      routeAnswer(
+        "PATCH /api/operator/jobs/schedules/[kind] — held for a second operator"
+      ),
+      routeAnswer("GET /api/operator/jobs — an operator")
+    );
     render(<OperatorJobsView data={DATA} />);
     fireEvent.click(screen.getByRole("button", { name: "Turn on social.curator" }));
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "back on" } });

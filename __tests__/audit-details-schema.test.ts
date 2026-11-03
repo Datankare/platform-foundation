@@ -5,6 +5,8 @@
  * __tests__/audit-details-schema.test.ts — what an audit record's details may hold, held to every
  * call site (TASK-193, audit A-2, A-3, A-4; the schema: platform/auth/audit-details.ts)
  *
+ * @guard an audit record that carries free text or no subject
+ *
  * An audit record outlives the account it is about, so its details are allowlisted per action
  * (per `type` for admin_action), each key with a kind; no kind holds a raw address, and free text
  * is erased with the account. This test reads every call site (the TypeScript compiler API): each
@@ -617,7 +619,7 @@ describe("free text names the account it is about (round 7, I-1)", () => {
     expect(sites.filter((x) => (x.freeText ?? []).length > 0).length).toBeGreaterThan(5);
   });
 
-  it("reports a planted record with free text and no subject — an audited entry and a recorded() call (round 8, item 4)", () => {
+  it("[self-test] reports a planted record with free text and no subject — an audited entry and a recorded() call (round 8, item 4)", () => {
     const planted = scanText(
       "planted.ts",
       [

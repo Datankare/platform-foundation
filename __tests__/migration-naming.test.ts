@@ -1,6 +1,8 @@
 /**
  * __tests__/migration-naming.test.ts — Platform and app migrations never collide (TASK-158)
  *
+ * @guard a migration misnamed, out of range, unlisted or colliding with another
+ *
  * The platform's migrations are NNN_<name>.sql, each listed in supabase/platform-migrations.json.
  * An app's are NNN<letter>_<app>_<name>.sql (052a_playform_…): they sort after the platform's NNN
  * and before NNN+1, so the platform can keep numbering without colliding with any app. "app" (the
@@ -184,7 +186,7 @@ describe("migration naming (TASK-158)", () => {
     }
   });
 
-  it("self-test: the consumer checks catch a fixture app's misnamed, out-of-range or missing migrations", () => {
+  it("[self-test] the consumer checks catch a fixture app's misnamed, out-of-range or missing migrations", () => {
     // One past the platform's latest migration, whatever it is (the platform adds migrations).
     const beyond = `${String(LATEST(PLATFORM) + 1).padStart(3, "0")}a_fixture_beyond.sql`;
     const cases: [object, string[], RegExp][] = [

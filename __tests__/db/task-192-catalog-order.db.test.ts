@@ -6,6 +6,13 @@
  * permissions by category, then display name — the order platform/auth/catalog-order.ts defines,
  * read through the routes and the command bar as the screens read them.
  *
+ * @not-guard: runs migration 059 against a database and checks the order; reads the migration to execute it
+ *
+ * hostile:role n/a: ordering only; every role's refusal on these routes is route-role-matrix.db's
+ * hostile:self n/a: ordering only; no route here acts on an account
+ * hostile:store-down n/a: ordering only; the routes' read failures are admin-read-failures'
+ * hostile:id-spelling n/a: ordering only; these routes read lists and take no id
+ *
  * Suites share one database and add roles of their own while this runs, so every order is checked
  * on the rows this suite knows (the seeded roles and its own), never on the whole list.
  */

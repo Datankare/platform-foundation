@@ -2,6 +2,8 @@
  * __tests__/input-keys-guard.test.ts — every input key a handler reads is its tool schema's, or
  * one the server sets (TASK-194 round 11, item 2 and item 3; round 12, I-3 and nit 6)
  *
+ * @guard a handler reading an input key its tool schema does not name
+ *
  * The command bar and the config assistant refuse any input key their tool's schema does not name
  * (platform/admin/input-keys.ts, at every depth). A handler that reads a key its schema omits is
  * then a legitimate input refused — round 10 omitted P10's `confirmed`, and then `scope`, which
@@ -161,7 +163,7 @@ function commandBarStarts(
 }
 
 describe("every key a handler reads is its schema's, or the server's (round 11, item 2)", () => {
-  it("reads the code (self-test): a key a handler reads that its schema omits is caught", () => {
+  it("[self-test] reads the code: a key a handler reads that its schema omits is caught", () => {
     const fns = functionsOf([CONFIG_FILE]);
     const update = CONFIG_TOOLS.find((t) => t.id === "update_config")!;
     const props = { ...(update.inputSchema as InputSchemaNode).properties };

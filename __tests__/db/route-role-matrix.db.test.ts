@@ -4,6 +4,8 @@
 /**
  * The route-level role matrix, against the replayed database (TASK-146)
  *
+ * @guard a privileged route method the role matrix does not call as every role
+ *
  * Every privileged route — administration, operation, moderation, a user's own data rights —
  * called as every role of the real catalog (and as nobody, as a suspended super_admin, and as a
  * super_admin who signed in with a password only) in a test tenant, its transactions running
@@ -27,6 +29,11 @@
  * validation, so the handlers behind it went unexercised) reach each handler past its shape
  * checks, aimed at targets that do not exist or belong to the test tenant, so nothing outside it
  * changes; they are answered by the handler's own rules, never a 500 or a guard's refusal.
+ *
+ * Hostile cases (TASK-200 rule 6): every role, as [hostile:role]; malformed, padded and empty ids
+ * in generated bodies, as [hostile:id-spelling].
+ * hostile:self n/a: each route is called on the test tenant's targets, never the caller's own; self-targeting is each route's own test (purge-self-target, mfa-step-up)
+ * hostile:store-down n/a: the replayed database is what this suite runs against and stays up; a store failing is each route's own test (admin-read-failures)
  */
 
 jest.mock("@/lib/logger", () => ({
@@ -767,6 +774,41 @@ const CALLERS = [...Object.keys(ROLE_PERMISSIONS), ...SPECIAL];
  */
 const PROPERTY_PARTS = [1, 2, 3, 4] as const;
 
+/** `METHOD path` for each method of a route file, as the matrix names them. */
+function methodKeys(file: string, text: string): string[] {
+  const path = file.replace(/^app\/api\//, "").replace(/\/route\.ts$/, "");
+  return routeMethods(text, file).map((m) => `${m.method} ${path}`);
+}
+
+/** The matrix's routes, by `METHOD path` with their parameters as the files name them. */
+function coveredKeys(): Set<string> {
+  return new Set(
+    ROUTES.map(
+      (r) =>
+        `${r.method} ${r.path
+          .replace(
+            `/approvals/${ID}`,
+            r.path.startsWith("operator/") ? "/approvals/[approvalId]" : "/approvals/[id]"
+          )
+          .replace(`schedules/${ID}`, "schedules/[kind]")
+          .replace(`erasures/${ID}`, "erasures/[userId]")
+          .replaceAll(ID, "[id]")}`
+    )
+  );
+}
+
+describe("route role matrix coverage (self-test, no database)", () => {
+  it("[self-test] reports a planted method of a privileged route the matrix does not call", () => {
+    const planted =
+      "export async function GET(request: Request) { return requireAdmin(request, 'x'); }\n" +
+      "export async function DELETE(request: Request) { return requireAdmin(request, 'x'); }";
+    const keys = methodKeys("app/api/admin/planted/route.ts", planted);
+    expect(keys).toEqual(["GET admin/planted", "DELETE admin/planted"]);
+    const covered = new Set([...coveredKeys(), "GET admin/planted"]);
+    expect(keys.filter((k) => !covered.has(k))).toEqual(["DELETE admin/planted"]);
+  });
+});
+
 dbDescribe("route role matrix (TASK-146, Postgres)", () => {
   it("covers every method of every privileged route (TASK-194, audit C-11: not just each file)", () => {
     // A new admin, moderation or account route — or a new method on one — must be added.
@@ -779,11 +821,8 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
       for (const name of readdirSync(dir)) {
         const p = join(dir, name);
         if (statSync(p).isDirectory()) walk(p);
-        else if (name === "route.ts") {
-          const path = p.replace(/^app\/api\//, "").replace(/\/route\.ts$/, "");
-          for (const m of routeMethods(readFileSync(p, "utf8"), p))
-            found.push(`${m.method} ${path}`);
-        }
+        else if (name === "route.ts")
+          found.push(...methodKeys(p, readFileSync(p, "utf8")));
       }
     };
     for (const root of [
@@ -793,21 +832,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
       "app/api/account",
     ])
       walk(root);
-    const covered = new Set(
-      ROUTES.map(
-        (r) =>
-          `${r.method} ${r.path
-            .replace(
-              `/approvals/${ID}`,
-              r.path.startsWith("operator/")
-                ? "/approvals/[approvalId]"
-                : "/approvals/[id]"
-            )
-            .replace(`schedules/${ID}`, "schedules/[kind]")
-            .replace(`erasures/${ID}`, "erasures/[userId]")
-            .replaceAll(ID, "[id]")}`
-      )
-    );
+    const covered = coveredKeys();
     expect(found.length).toBeGreaterThan(40);
     expect(found.filter((p) => !covered.has(p)).sort()).toEqual([]);
   });
@@ -816,7 +841,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
     "%s",
     (_name, route) => {
       it.each(CALLERS)(
-        "as %s: refused exactly when it lacks the permission; never a 500",
+        "[hostile:role] as %s: refused exactly when it lacks the permission; never a 500",
         async (caller) => {
           const before = await auditCount();
           const res = await call(route, caller);
@@ -835,7 +860,7 @@ dbDescribe("route role matrix (TASK-146, Postgres)", () => {
 
       if (route.method !== "GET") {
         it.each(PROPERTY_PARTS)(
-          `property (part %i of ${PROPERTY_PARTS.length}): any generated body is answered without a 500, for every caller let through (TASK-147)`,
+          `[hostile:id-spelling] property (part %i of ${PROPERTY_PARTS.length}): any generated body (malformed, padded and empty ids among its values) is answered without a 500, for every caller let through (TASK-147)`,
           async (part) => {
             const through = CALLERS.filter((c) => allowed(route, c));
             await fc.assert(

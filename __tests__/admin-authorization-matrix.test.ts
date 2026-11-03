@@ -1,6 +1,8 @@
 /**
  * __tests__/admin-authorization-matrix.test.ts — Every admin path maps to a real permission
  *
+ * @guard a permission the code requires that no role holds, or one nothing enforces
+ *
  * Adversarial Validation (CONTRIBUTING.md) practices 2 and 8, made mechanical:
  *
  *   1. Every permission the code requires exists in the catalog the migrations create, and some
@@ -51,7 +53,13 @@ interface Guard {
 }
 
 function guardsIn(route: string): { guards: Guard[]; unresolved: string[] } {
-  const src = read(route);
+  return guardsInSource(route, read(route));
+}
+
+function guardsInSource(
+  route: string,
+  src: string
+): { guards: Guard[]; unresolved: string[] } {
   const guards: Guard[] = [];
   const unresolved: string[] = [];
   for (const m of src.matchAll(GUARD)) {
@@ -121,6 +129,17 @@ describe("admin authorization matrix", () => {
   it("finds the admin guards (self-test)", () => {
     expect(GUARDS.length).toBeGreaterThan(20);
     expect(PERMISSION_CATALOG.length).toBeGreaterThan(10);
+  });
+
+  it("[self-test] reports a planted guard: an unknown permission, and one it cannot read", () => {
+    const planted = [
+      'const a = await adminGuard(request, "no_such_permission");',
+      "const b = await requireAdmin(request, PERMISSION_FROM_ELSEWHERE);",
+    ].join("\n");
+    const found = guardsInSource("app/api/planted/route.ts", planted);
+    expect(found.unresolved).toEqual(["PERMISSION_FROM_ELSEWHERE"]);
+    expect(found.guards.map((g) => g.permission)).toEqual(["no_such_permission"]);
+    expect(PERMISSION_CATALOG).not.toContain("no_such_permission");
   });
 
   it("resolves every guard's permission, or lists why it is computed", () => {

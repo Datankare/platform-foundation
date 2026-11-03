@@ -6,6 +6,8 @@
  * arguments and missing settings by name only (never a value), and refuses a malformed pool id
  * before reaching the pool or the database. The command's behaviour is __tests__/identity-relink
  * (unit) and __tests__/db/identity-relink.db.test.ts (Postgres).
+ *
+ * @not-guard: behaviour tests of the operator's re-link command; it refuses nothing
  */
 import { execFile, type ExecFileException } from "child_process";
 import { readFileSync } from "fs";

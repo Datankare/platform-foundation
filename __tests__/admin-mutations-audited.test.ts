@@ -2,6 +2,8 @@
  * __tests__/admin-mutations-audited.test.ts — every staff change knows who made it, and records it
  * (TASK-194, audit C-9)
  *
+ * @guard a staff change that does not know who acts, or records nothing
+ *
  * POST /api/moderation/review filed an escalation behind adminGuard, which throws the verified
  * identity away, and wrote no audit record: a moderator's made-up escalation, whose reasoning
  * text then steered the reviewer-assist model shown to another moderator, named no one. Every
@@ -53,14 +55,30 @@ const NO_RECORD: Readonly<Record<string, string>> = {
 const GRAPH = buildCallGraph();
 const RECORDS = reaching(GRAPH, AUDIT_WRITERS, OPAQUE);
 
-const STAFF: { route: string; method: string; calls: readonly string[] }[] = [];
-for (const file of apiRoutes()) {
-  for (const m of routeMethods(readFileSync(file, "utf8"), file)) {
-    if (m.method === "GET") continue;
-    if (m.calls.includes("requireAdmin") || m.calls.includes("adminGuard"))
-      STAFF.push({ route: `${file} ${m.method}`, method: m.method, calls: m.calls });
-  }
+interface Staff {
+  route: string;
+  method: string;
+  calls: readonly string[];
 }
+
+/** The non-GET methods of a route file that call a staff guard. */
+function staffMethods(file: string, text: string): Staff[] {
+  return routeMethods(text, file)
+    .filter((m) => m.method !== "GET")
+    .filter((m) => m.calls.includes("requireAdmin") || m.calls.includes("adminGuard"))
+    .map((m) => ({ route: `${file} ${m.method}`, method: m.method, calls: m.calls }));
+}
+
+/** Staff methods that reach no audit writer and are not listed as changing nothing. */
+function unrecorded(staff: readonly Staff[], records: ReadonlySet<string>): string[] {
+  return staff
+    .filter((s) => !NO_RECORD[s.route] && !s.calls.some((c) => records.has(c)))
+    .map((s) => s.route);
+}
+
+const STAFF: Staff[] = apiRoutes().flatMap((file) =>
+  staffMethods(file, readFileSync(file, "utf8"))
+);
 
 describe("staff changes name their actor and are recorded (TASK-194, C-9)", () => {
   it("finds the staff methods and the writers (self-test)", () => {
@@ -76,10 +94,34 @@ describe("staff changes name their actor and are recorded (TASK-194, C-9)", () =
   });
 
   it("every staff change reaches an audit writer, or is listed as changing nothing", () => {
-    const unrecorded = STAFF.filter(
-      (s) => !NO_RECORD[s.route] && !s.calls.some((c) => RECORDS.has(c))
-    ).map((s) => s.route);
-    expect(unrecorded).toEqual([]);
+    expect(unrecorded(STAFF, RECORDS)).toEqual([]);
+  });
+
+  it("[self-test] reports a planted staff change that records nothing, and an adminGuard one", () => {
+    const route = [
+      "export async function POST(request: Request) {",
+      '  const actor = await requireAdmin(request, "users_manage");',
+      "  await changeQuietly(actor);",
+      "}",
+      "export async function DELETE(request: Request) {",
+      '  await adminGuard(request, "users_manage");',
+      "  await changeAndRecord();",
+      "}",
+    ].join("\n");
+    const helpers = [
+      "export async function changeQuietly(a: unknown) { await store.update(a); }",
+      "export async function changeAndRecord() { await writeAuditLog({}); }",
+    ].join("\n");
+    const staff = staffMethods("app/api/planted/route.ts", route);
+    const graph = buildCallGraph([
+      { path: "app/api/planted/route.ts", text: route },
+      { path: "platform/planted.ts", text: helpers },
+    ]);
+    const records = reaching(graph, AUDIT_WRITERS, OPAQUE);
+    expect(unrecorded(staff, records)).toEqual(["app/api/planted/route.ts POST"]);
+    expect(
+      staff.filter((s) => s.calls.includes("adminGuard")).map((s) => s.route)
+    ).toEqual(["app/api/planted/route.ts DELETE"]);
   });
 
   it("lists only staff methods that exist and record nothing, each with its reason", () => {

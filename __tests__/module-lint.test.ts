@@ -1,6 +1,8 @@
 /**
  * __tests__/module-lint.test.ts — The lint rule draws the core/module boundary (ADR-054 D3)
  *
+ * @guard an import across the core/module boundary the manifest forbids
+ *
  * Lints fixture sources as if they were files in the tree — virtual files, nothing is written —
  * with the repository's own eslint.config.mjs, and asserts what import/no-restricted-paths
  * reports. Covers every import form the boundary must see (`@/` aliases, relative paths,
@@ -124,10 +126,19 @@ interface LintOutput {
 }
 
 let output: LintOutput;
-const messagesFor = new Map<string, string[]>();
+let fixtures: readonly { name: string; filePath: string; code: string }[] = [];
+
+/** The boundary rule's messages for a fixture by name, from ESLint's run over every fixture. */
+function ruleMessages(name: string): string[] {
+  const i = fixtures.findIndex((f) => f.name === name);
+  if (i < 0) throw new Error(`no lint fixture named ${name}`);
+  return output.results[i].messages
+    .filter((m) => m.ruleId === RULE)
+    .map((m) => m.message);
+}
 
 beforeAll(() => {
-  const fixtures = [...CORE_BREACHES, ...OTHERS];
+  fixtures = [...CORE_BREACHES, ...OTHERS];
   const stdout = execFileSync(
     process.execPath,
     [join(process.cwd(), "__tests__/helpers/eslint-fixtures.cjs")],
@@ -141,12 +152,6 @@ beforeAll(() => {
     }
   );
   output = JSON.parse(stdout.toString("utf8"));
-  fixtures.forEach((f, i) => {
-    messagesFor.set(
-      f.name,
-      output.results[i].messages.filter((m) => m.ruleId === RULE).map((m) => m.message)
-    );
-  });
 }, 120_000);
 
 describe("import/no-restricted-paths (ADR-054 D3)", () => {
@@ -174,9 +179,9 @@ describe("import/no-restricted-paths (ADR-054 D3)", () => {
   });
 
   it.each(CORE_BREACHES.map((f) => [f.name]))(
-    "refuses a core file importing a module through %s",
+    "[self-test] refuses a core file importing a module through %s",
     (name) => {
-      const messages = messagesFor.get(name) ?? [];
+      const messages = ruleMessages(name);
       expect(messages).toHaveLength(1);
       expect(messages[0]).toMatch(/The core never imports a product module/);
     }
@@ -192,7 +197,7 @@ describe("import/no-restricted-paths (ADR-054 D3)", () => {
     ["audio-convert → song-id (undeclared)", /Module "song-id" is outside it/],
     ["social test → translation", /Module "translation" is outside it/],
   ])("refuses %s", (name, pattern) => {
-    expect(messagesFor.get(name)).toEqual([expect.stringMatching(pattern)]);
+    expect(ruleMessages(name)).toEqual([expect.stringMatching(pattern)]);
   });
 
   it.each([
@@ -203,6 +208,6 @@ describe("import/no-restricted-paths (ADR-054 D3)", () => {
     ["song-id → audio-convert (declared)"],
     ["social test → social"],
   ])("allows %s", (name) => {
-    expect(messagesFor.get(name)).toEqual([]);
+    expect(ruleMessages(name)).toEqual([]);
   });
 });

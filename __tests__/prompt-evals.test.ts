@@ -1,6 +1,8 @@
 /**
  * prompt-evals.test.ts — ADR-038 conformance meta-test (D4 gate + D5 taxonomy + D7 completeness).
  *
+ * @guard a registered prompt without an eval suite, or a suite missing its required cases
+ *
  * The gating deterministic lane plus the comprehensiveness rules, mechanically enforced:
  *   - every registered prompt has a suite or is explicitly PENDING_EVAL (which must shrink to []);
  *   - each suite's deterministic cases all pass (parse each recorded fixture through the prompt's
@@ -48,6 +50,20 @@ function promptFileFor(name: string): string | null {
   return null;
 }
 
+/** Registered prompts with no suite and no exemption. */
+function unaccountedPrompts(
+  registered: readonly string[],
+  covered: ReadonlySet<string>
+): string[] {
+  return registered.filter(
+    (p) =>
+      !covered.has(p) &&
+      !TOOL_USE_EXEMPT.includes(p) &&
+      !FREE_TEXT_EXEMPT.includes(p) &&
+      !PENDING_EVAL.includes(p)
+  );
+}
+
 describe("prompt eval harness conformance (ADR-038)", () => {
   // The core's suites and the registered modules' (jest.setup registers the app's modules).
   const EVAL_SUITES = listEvalSuites();
@@ -55,14 +71,14 @@ describe("prompt eval harness conformance (ADR-038)", () => {
   const registered = listPrompts();
 
   it("every registered prompt is covered by a suite or an exemption (nothing lingers)", () => {
-    const unaccounted = registered.filter(
-      (p) =>
-        !covered.has(p) &&
-        !TOOL_USE_EXEMPT.includes(p) &&
-        !FREE_TEXT_EXEMPT.includes(p) &&
-        !PENDING_EVAL.includes(p)
-    );
-    expect(unaccounted).toEqual([]);
+    expect(unaccountedPrompts(registered, covered)).toEqual([]);
+  });
+
+  it("[self-test] reports a planted prompt with no suite and no exemption", () => {
+    expect(unaccountedPrompts([...registered, "planted-prompt-v9"], covered)).toEqual([
+      "planted-prompt-v9",
+    ]);
+    expect(unionMembers('export type K = "a" | "b";', "K")).toEqual(["a", "b"]);
   });
 
   it("PENDING_EVAL is drained", () => {

@@ -1,6 +1,8 @@
 /**
  * __tests__/module-migrations.test.ts — Each module owns its migrations (ADR-054 D5)
  *
+ * @guard a module migration misnamed, unlisted, or listed and missing
+ *
  * A module's migrations are named NNN_<module>_<name>.sql (the module id as written, e.g.
  * 050_song-id_lyrics.sql) and listed in its manifest entry; a migration whose name names a module
  * must be that module's. A fresh replay (scripts/migration-replay.sh) applies the core's
@@ -110,7 +112,7 @@ describe("module migrations (ADR-054 D5)", () => {
     );
   });
 
-  it("refuses a module migration that is listed but missing", () => {
+  it("[self-test] refuses a module migration that is listed but missing", () => {
     const broken = JSON.parse(JSON.stringify(MANIFEST));
     broken.modules.games.migrations = ["supabase/migrations/099_games_missing.sql"];
     expect(() => mm.replayOrder(broken, FILES)).toThrow(

@@ -1,6 +1,8 @@
 /**
  * __tests__/latent-modules-unreached.test.ts — no route reaches the latent modules (audit X-25)
  *
+ * @guard a route that reaches a latent module (social, realtime, rag outside its wiring)
+ *
  * The October 2026 audit found issues in modules no route reaches yet — social, realtime and
  * retrieval — and left them to Wave 3, to be fixed before any route reaches them. This holds
  * that line: it follows every runtime import (not `import type`) from every API route, and fails
@@ -9,7 +11,17 @@
  * knowledge base). Nothing outside platform/rag may call retrieval or ingestion.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { dirname, join, relative } from "path";
 
 const ROOT = process.cwd();
@@ -59,9 +71,9 @@ function routes(dir: string): string[] {
 }
 
 /** Every latent-module file a route reaches, with the file that imported it. */
-function reached(): { target: string; via: string; route: string }[] {
+function reached(root: string = ROOT): { target: string; via: string; route: string }[] {
   const hits: { target: string; via: string; route: string }[] = [];
-  for (const route of routes(join(ROOT, "app/api"))) {
+  for (const route of routes(join(root, "app/api"))) {
     const seen = new Set([route]);
     const queue = [route];
     while (queue.length) {
@@ -70,12 +82,12 @@ function reached(): { target: string; via: string; route: string }[] {
         const target = resolveSpec(file, spec);
         if (!target || seen.has(target)) continue;
         seen.add(target);
-        const rel = relative(ROOT, target);
+        const rel = relative(root, target);
         if (/^platform\/(?:social|realtime|rag)\//.test(rel)) {
           hits.push({
             target: rel,
-            via: relative(ROOT, file),
-            route: relative(ROOT, route),
+            via: relative(root, file),
+            route: relative(root, route),
           });
           continue;
         }
@@ -92,6 +104,25 @@ describe("latent modules (X-25) are not reached by any route", () => {
   it("self-test: the walker follows imports from the routes", () => {
     // The registry's boot wiring reaches platform/rag — the walker must see that much.
     expect(hits.some((h) => h.target.startsWith("platform/rag/"))).toBe(true);
+  });
+
+  it("[self-test] reports a planted route that reaches platform/social through a helper", () => {
+    const dir = mkdtempSync(join(tmpdir(), "latent-"));
+    const put = (rel: string, text: string) => {
+      mkdirSync(dirname(join(dir, rel)), { recursive: true });
+      writeFileSync(join(dir, rel), text);
+    };
+    put("app/api/planted/route.ts", 'import { help } from "../../../lib/helper";\n');
+    put("lib/helper.ts", 'import { group } from "../platform/social/group";\n');
+    put("platform/social/group.ts", "export const group = 1;\n");
+    expect(reached(dir)).toEqual([
+      {
+        target: "platform/social/group.ts",
+        via: "lib/helper.ts",
+        route: "app/api/planted/route.ts",
+      },
+    ]);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("no route reaches platform/social or platform/realtime", () => {

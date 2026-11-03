@@ -28,6 +28,21 @@ The formal-verification plan has its own source, credited in [ASSURANCE](ASSURAN
 repeated here: _LLMs are making formal software verification feasible at a much larger scale_
 (Anthropic Frontier Red Team, with Theorem, 22 October 2026).
 
+The engineering process of §3a (TASK-200) adapts these, each named where it is used there:
+
+- the design check asks, before the code, what would make the change fail — the **premortem** of
+  **Gary Klein**, _Performing a Project Premortem_ (Harvard Business Review, September 2007) — in
+  the form of a checklist with required answers, after **Atul Gawande**, _The Checklist
+  Manifesto_ (Metropolitan Books, 2009);
+- the consumer sweep and the screen tests' fixtures made by the real route handlers follow
+  **Ian Robinson**, _Consumer-Driven Contracts: A Service Evolution Pattern_ (martinfowler.com,
+  2006): a provider's change is checked against what its consumers rely on;
+- schema-first inputs follow **Alexis King**, _Parse, don't validate_ (2019,
+  <https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/>): the boundary turns the
+  input into a declared shape before anything reads it;
+- every guard proves it can fail is the rule of a test seen failing before it is trusted, from
+  **Kent Beck**, _Test-Driven Development: By Example_ (Addison-Wesley, 2002).
+
 ## 2. The article's practices, and what this repository does with each
 
 | Practice in the article                                                                 | Here                       | How, here                                                                                                                                                                                                                                                     | Why                                                                                                                                                                                                                                                |
@@ -98,6 +113,189 @@ the evidence that it ran is the PR's "Review rounds" section. The checks that CI
    would be. The owner decides.
 10. **High only:** an independent adversarial review by an agent that did not build the change
     (the [audit brief](audits/BRIEF.md)), then the owner's explicit approval at promotion.
+
+## 3a. The engineering process: enforced, not optional (TASK-200)
+
+**Why.** The access-control batch (TASK-194) took 23 independent review rounds. Its findings came
+back to six causes: a fix tested only against a mock response the real route never returns; a
+changed status, code or shape whose callers and screens were not all updated; a guard test that
+could never fail; questions not asked before the code — who can reach the path, what a race does,
+what happens when a dependency is down, what an erasure leaves behind, what each screen shows for
+each response; a change that could weaken an existing tenant's protection (applying a value that
+had been ignored); a handler reading an input its schema does not declare. Each became a rule.
+None is optional or best effort: **what a machine can check fails the build; the rest is a
+blocking rule in REVIEW.md** (rules 10–17, and 18–24 for how a change is reviewed).
+
+| Rule                         | What it requires                                                                                                                                                                                                              | Enforced by (fails on a planted violation)                                                                                                                                                                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Design check              | The task's TASKS entry carries a **Design check**: reach (roles, operator, agents, guests), races, each dependency down, erasure leftovers, every screen × every response, journeys touched, "weakens a tenant's protection?" | `scripts/process-check.mjs` (CI **Layer 0f**, both repositories): a code commit or merge naming no task; an entry without the block, a field missing or unanswered; an entry the change does not touch — `__tests__/process-check.test.ts`. REVIEW.md 11–12 |
+| 2. Consumer sweep            | A changed status, code or shape updates every caller and screen                                                                                                                                                               | Codes: `refusal-coverage` (every code a route returns is handled by every screen that calls it). Statuses: `route-status-registry` (a hand-built error status is the registry's). Shape: REVIEW.md 10, the design check's _Screens × responses_             |
+| 3. No fake-only screen tests | A screen test answers fetch with a route's own reply                                                                                                                                                                          | `route-fixtures` makes `__tests__/fixtures/route-responses.json` by calling the route handlers and fails on drift; `fake-fetch-bodies` counts hand-written bodies against `fake-fetch-baseline.json` (R-81; never raised: process-check). REVIEW.md 14      |
+| 4. Every guard can fail      | A scan is tagged `@guard <class>` and has a `[self-test]` that plants a violation and asserts it is reported                                                                                                                  | `guard-self-tests`: an untagged scan, a guard with no running `[self-test]` that calls the scan with an input. REVIEW.md 15                                                                                                                                 |
+| 5. Schema first              | A route reads its JSON body with `readJsonBody(request, SCHEMA)`, unknown keys refused before any field is read                                                                                                               | `api-route-body-schema` against `body-schema-baseline.json` (R-82; never raised: process-check); an open schema node without `openBecause` read closed; S1's `input-keys-guard` for the command bar and config tools. REVIEW.md 16                          |
+| 6. Hostile tests by default  | A route test file added or changed names `[hostile:role]`, `[hostile:self]`, `[hostile:store-down]` and `[hostile:id-spelling]` cases, or waives one with a reason                                                            | `scripts/process-check.mjs`, on the files the change touches (old files are not all failed at once). REVIEW.md 13                                                                                                                                           |
+| 7. Self-review recorded      | The entry's **Self-review** lists the consumers checked and the hostile re-read                                                                                                                                               | `scripts/process-check.mjs`. REVIEW.md 17                                                                                                                                                                                                                   |
+
+**The blocks.** In the task's entry, each a bold line and a list, every field four words or more
+that is no placeholder: it does not start with a marker (`TBD`, `TODO`, `FIXME`, `XXX`, `n/a`, an
+ellipsis, "to be decided") and holds no unfilled template slot (`<describe …>`, `<reason>`) — read
+with its code spans taken out, so prose may name a marker or quote a waiver's syntax. A task whose change touches a high-tier path — a gate or
+a security boundary: the `high` paths of `scripts/risk-tiers.json` at the merge base, and always
+`.github/`, the risk tiers, this check's own files, `REVIEW.md`, `CLAUDE.md`, `.gitattributes` —
+also carries a **Threat model** (REVIEW.md 18), written and agreed before the code:
+
+```markdown
+**Design check**
+
+- **Reach:** …
+- **Races:** …
+- **Dependencies down:** …
+- **Erasure leftovers:** …
+- **Screens × responses:** …
+- **Journeys touched:** …
+- **Weakens a tenant's protection?** …
+
+**Self-review**
+
+- **Consumers checked:** …
+- **Hostile re-read:** …
+
+**Threat model**
+
+- **Boundary:** …
+- **Bypasses:** …
+- **Forgeries:** …
+- **Legitimate flows:** …
+- **Agreed before code:** …
+```
+
+**What it is for.** The check catches **our own mistakes** — a commit without its task, an entry
+without its blocks, a baseline raised, a route test without its hostile cases — not an attacker.
+These repositories have one person who can push (the owner); outsiders are kept out by GitHub: 2FA,
+branch rulesets (no force-push or deletion of `main`, `staging`, `develop`; `v*` tags admin-only)
+and the owner merging every pull request. Protections against a pull request author without owner
+rights were built and then removed (TASK-200, "Deliberately not built"): that actor does not exist
+here, and each such protection's trigger to build it again is a second contributor with push or
+pull-request rights.
+
+**How CI knows the task.** The commit subject names it in the task group it ends with —
+`(TASK-nnn)`, `(TASK-1, TASK-2)`, Playform's `(platform TASK-nnn)`, a squash merge's ` (#n)` after it
+allowed; a `TASK-nnn` anywhere else in the subject is a mention and names nothing (a revert,
+`Revert "<subject>"`, names its reverted subject's group). The entry is in `docs/TASKS.md` or in a
+register the app names in `scripts/process-check.app.json` (`taskRegisters`: Playform's
+`docs/PLAYFORM_TASKS.md`, sync-excluded with its config, so a sync that overwrites `TASKS.md` with
+platform-foundation's never removes an app's entry; a register is a markdown file that is neither
+code nor one of the process's own files). A commit touching the process's own files — the script and
+its app settings, the risk tiers, `.github/CODEOWNERS` and the workflows (an ordinary change that
+names its task, none special) — names its task as a code commit does. A commit pushed without its
+task (develop takes no force-push, so its subject cannot change) is adopted by its task's entry with
+a line `**Commits:** <sha, seven hex or more>` (a whole hex word, at the start of the commit's sha);
+the finding says so. An app's `(platform TASK-nnn)` names platform-foundation's task: its entry,
+synced into `docs/TASKS.md`, must be complete, and the app's work is recorded in an entry of the
+app's own register that references `platform TASK-nnn` and that the change touches — that entry, the
+app's own, carries the **Threat model** when the change touches a high-tier path — so the sync comes
+first, then the app's commit. Not judged: a sync commit, by its subject alone
+(`chore(sync): inherit platform-foundation <ref> @ <40-hex sha>`, a squash's ` (#n)` allowed — the
+platform's commits were judged where they were made), and a commit authored by `dependabot[bot]`
+and committed by it or GitHub (it cannot name a task; one a person amended is judged); a route test
+file in either is still held to its hostile cases. Never amend an app's own change into a sync
+commit: its subject alone exempts it. A revert of a revert (`Reapply "…"`, git 2.43+) is a revert. The check
+reads every commit from the merge base of the base and the head — a pull request's base branch and
+its own head (never the synthetic merge CI checks out), a push's `before` — to the head; after a
+force-push, since the merge base with `origin/staging`, and it says so. A commit is judged unless it
+was made before the rule: an ancestor of the first commit that brought `scripts/process-check.mjs`
+into the head's history. A merge is judged by what it changes itself: what differs from git's own
+re-merge of its parents (`git show --remerge-diff`). A clean merge changes nothing, even of a file
+both parents edited; an evil merge or a conflict's resolution touching code needs a task in its
+subject. An octopus merge is judged by the paths whose result differs from every parent; a git older
+than 2.36 refuses a two-parent merge rather than guess. A true revert (`Revert "…"`, "This reverts
+commit <sha>.") is the exact inverse of one commit already on the base, or of one earlier in the same
+range (judged there: the pair is a net no-op): it changes exactly the files that commit changed (a
+merged pull request: against its first parent, as GitHub's Revert button does), each still as that
+commit left it and each back to what it was before it. It needs no task, and passes when it touches
+the entry, removes it, or leaves it exactly as it was before the reverted commit. A partial revert, a
+revert over a later edit, or one of a commit outside the base and the range is judged as any commit,
+and its finding says what passes. The task registers are left out of the file-for-file test (nearly
+every commit edits one); the entry is judged on its own. Run it locally:
+`node scripts/process-check.mjs --base origin/develop`.
+
+**The baselines never loosen.** The same check compares each ratchet baseline at the head with the
+later of the merge base and the rule's first commit (a baseline raised before the rule existed is its
+starting point — a first promotion carries such commits): `body-schema-baseline.json` and `fake-fetch-baseline.json` (no count above the base's,
+per file or in total), `open-input-register.json` (no open input node added, the count not
+above), `refusal-coverage-baseline.json` (no gap added, the count not above),
+`screen-literal-baseline.json` (the count not above) and `coverage-baseline.json` (each floor there
+and none below the base's; the margin not above). A file git sees renamed keeps its key's count under
+its new name (a gap its caller or route under the new one), never more. A key re-keyed by hand (a file
+split, or renamed below git's similarity threshold) passes only with evidence and when nothing rises:
+a new key in a counts baseline or the register only when a key of the base went with its file
+(deleted, or renamed by git, in the change), the total does not rise and no existing key rises; a new
+gap only when it takes the route and code of a removed gap whose caller went, and the gaps are no more
+than before. `journey-exemptions.json` is compared by its own test
+(`JOURNEY_BASE`). A file the base does not have yet is not compared (the change that introduces it).
+So a scan widened to find more of what it counts fixes what it found in the same change: its
+baseline cannot rise to make room. The script and the workflows are High tier; the baselines are not
+(they change with routine work, and rule 4 already holds their direction).
+`workflow-hygiene` checks that CI still runs the step (a deep checkout, then
+`node scripts/process-check.mjs --base …` with no `continue-on-error` or `if:`): a guard against our
+own slip, not against a change written to defeat it.
+
+**The hostile tags.** The title of a running `it(…)`, `test(…)` or `describe(…)` carries
+`[hostile:role]` (a role that must be refused), `[hostile:self]` (the actor aiming at itself),
+`[hostile:store-down]` (a store or dependency failing) and `[hostile:id-spelling]` (an id in another
+case, padded, or malformed) — a tag in a comment, a skipped or `.todo` test does not count; a
+template title counts by its static text. A case that cannot apply is waived on a line of a real
+comment (not text in a string or template): `hostile:<tag> n/a: <why, four words or more>`, the
+reason on that line. A route test file is one that imports an `app/api/…/route` module (a quoted or
+a template-literal specifier), or imports a test helper (`__tests__/helpers/…`) that does.
+
+**Schema first, with no open door.** `readJsonBody(request, SCHEMA)` never reads the body itself as
+open: a top-level `{}` takes no key, marked or not. Below the top, an open node — no type,
+properties, items or enum — takes any keys only when it says why, `openBecause: "<four words or
+more>"`, and every such node is listed with its reason in `open-input-register.json`
+(`open-input-register` guard; the register never grows against the base). Unmarked, it is read
+closed. The body-schema scan sees a read under any name: an import alias,
+`errors.readJsonObject(…)`, `.json()` on any request-typed parameter or a name bound to one,
+`request.clone().json()`, `new Response(request.body).json()`, `JSON.parse(await request.text())`.
+
+**What no machine checks, and why.** Whether a design-check or threat-model answer is true (and
+whether the threat model came before the code), and whether a route's `[hostile:…]` test fails
+without the code it guards (mutation testing runs on the gate's own code, below, not on every
+route); whether every caller handles a changed body _shape_ (TypeScript catches a typed caller, not
+a screen reading `res.json()` as `unknown`); whether a change weakens an existing tenant (a judgement
+on intent). These are REVIEW.md rules 10–17, each an Important finding.
+
+**How a change to a gate is reviewed (REVIEW.md 18–24, blocking).** TASK-200 itself took five
+review rounds; these are what those rounds kept teaching.
+
+1. **A threat model before code** for any gate or security boundary — its boundary, the bypasses
+   and forgeries it must refuse, the legitimate flows it must pass — agreed with the owner before
+   the first commit. Mechanised in part: process-check refuses a task touching a high-tier path
+   whose entry has no complete **Threat model** block; that it came first is the reviewer's to
+   check. A threat model names actors that really exist for these repositories: today the owner
+   (the only person who can push), the agents working for him, and the users and tenants of the
+   running system. A finding that depends on an actor who does not exist — a pull request author
+   without owner rights, while there is none — is out of scope, not a residual. (The practice is
+   described at length in Adam Shostack, _Threat Modeling: Designing for Security_, Wiley, 2014.)
+2. **Three lenses each round**, run in parallel by separate reviewers: security bypass, legitimate
+   flows, and test validity with mutation.
+3. **A coverage table from each reviewer:** what it covered — each changed file or rule, the attacks
+   or flows tried, the result — so a gap in the review is visible.
+4. **Fix the class.** A finding is fixed across its whole class, every sibling form, and the fix says
+   how the class was searched.
+5. **Attack your own fix.** The fixer tries to get past each fix before handing it back and writes the
+   attempts down, in the entry's Self-review.
+6. **Mutation testing on gate and security code — a manual check.** `scripts/process-check.mjs` is
+   mutated by StrykerJS (`stryker.config.mjs`, `@stryker-mutator/core` pinned exactly): run it by
+   hand (`npm run test:mutation`) whenever `process-check.mjs` changes; the score must be 90% or
+   more. An equivalent mutant is marked in the script with its reason (or, when its line also holds
+   a mutant a test kills, left to survive and listed in the Self-review). The runner is a fast
+   built-ins-only suite (`__tests__/process-check.mutation.mjs`) that drives the script in-process
+   over cached git fixtures, stopping at its first failing case: the jest suite spawns the script
+   per case and is too slow per mutant. (Mutation testing goes back to DeMillo, Lipton and Sayward,
+   "Hints on Test Data Selection: Help for the Practicing Programmer", IEEE Computer, 1978.)
+7. **The stop rule.** A round with no Important (or Low) finding ends the review; a Nit fixed after it
+   is verified by a test, not by another round.
 
 ## 4. Risk tiers
 
@@ -307,4 +505,6 @@ No milestone has been recorded yet; the first is the one that carries TASK-183.
 - In Playform, the live journey check (`docs/LIVE_JOURNEY_CHECK.md` there, in the private Playform repository) is the evidence for a
   user-facing feature: real users through the real identity pool on each playform-dev deployment.
 
-_Last updated: October 27, 2026 (TASK-183)_
+_Last updated: November 1, 2026 (TASK-200 — the engineering process, §3a)_
+
+_Previously updated: October 27, 2026 (TASK-183)_

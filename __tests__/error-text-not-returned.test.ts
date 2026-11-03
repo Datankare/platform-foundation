@@ -5,6 +5,8 @@
  * __tests__/error-text-not-returned.test.ts — a caught error's own text is logged, never returned
  * (TASK-194 round 14, item 12)
  *
+ * @guard a caught error's text returned to a caller or logged as data
+ *
  * An error's message can name a table, a constraint, a host or a stack's detail; a result field
  * carrying it reaches an answer (config-approval returned `err.message` to the config route). In
  * platform/admin and app/api, every use of a caught error's `.message` or `String(err)` in a
@@ -191,7 +193,7 @@ export function returnedErrorText(file: string, text: string): string[] {
 }
 
 describe("a caught error's text is logged, never returned (round 14, item 12)", () => {
-  it("catches the planted forms (self-test)", () => {
+  it("[self-test] catches the planted forms", () => {
     const planted = [
       "async function a() { try { x(); } catch (err) { return { success: false, error: err instanceof Error ? err.message : 'x' }; } }",
       "async function b() { try { x(); } catch (err) { logger.error('x', { error: err instanceof Error ? err.message : String(err) }); return { success: false }; } }",

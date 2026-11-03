@@ -1,6 +1,8 @@
 /**
  * __tests__/roadmap-consistency.test.ts
  *
+ * @guard a phase whose summary status disagrees with its section
+ *
  * Sprint 7 (item B) — ROADMAP integrity gate.
  *
  * Enforces that docs/ROADMAP.md cannot silently drift: each phase's status
@@ -78,6 +80,22 @@ function titleOf(md: string): string {
   return m ? m[1].trim() : "";
 }
 
+/** Phases whose summary marker differs from their section header's. */
+function markerMismatches(md: string): string[] {
+  const headers = parseHeaders(md);
+  const mismatches: string[] = [];
+  for (const [id, row] of parseSummary(md)) {
+    const header = headers.get(id);
+    if (!header || !header.marker || !row.marker) continue;
+    if (header.marker !== row.marker) {
+      mismatches.push(
+        `Phase ${id}: summary "${row.marker}" vs header "${header.marker}"`
+      );
+    }
+  }
+  return mismatches;
+}
+
 describe("ROADMAP.md consistency", () => {
   const md = readFileSync(ROADMAP_PATH, "utf8");
   const summary = parseSummary(md);
@@ -91,17 +109,18 @@ describe("ROADMAP.md consistency", () => {
   });
 
   it("Phase Summary status markers match the section headers", () => {
-    const mismatches: string[] = [];
-    for (const [id, row] of summary) {
-      const header = headers.get(id);
-      if (!header || !header.marker || !row.marker) continue;
-      if (header.marker !== row.marker) {
-        mismatches.push(
-          `Phase ${id}: summary "${row.marker}" vs header "${header.marker}"`
-        );
-      }
-    }
-    expect(mismatches).toEqual([]);
+    expect(markerMismatches(md)).toEqual([]);
+  });
+
+  it("[self-test] reports a planted phase marked done in the summary but in progress below", () => {
+    const planted = [
+      "# Roadmap",
+      "## Phase Summary",
+      "| Phase | Name | Status |",
+      "| 7 | Planted | ✅ |",
+      "## Phase 7 — Planted 🔄",
+    ].join("\n");
+    expect(markerMismatches(planted)).toEqual(['Phase 7: summary "✅" vs header "🔄"']);
   });
 
   const isConsumerOverlay = /playform/i.test(titleOf(md));

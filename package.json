@@ -17,6 +17,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:core": "PF_TEST_MODULES=none jest -c jest.core.config.cjs",
+    "test:mutation": "stryker run",
     "typecheck": "tsc --noEmit",
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
     "test:e2e": "playwright test",
@@ -44,6 +45,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
+    "@stryker-mutator/core": "10.0.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

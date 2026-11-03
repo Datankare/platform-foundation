@@ -1,6 +1,8 @@
 /**
  * __tests__/rate-rules-routes.test.ts — Every route still finds its rate rule (ADR-052, ADR-054 D4)
  *
+ * @guard a route naming a rate rule that is not in the inventory
+ *
  * The core's rules stay in DEFAULT_RULES; a module's rules moved to the module (song-id:
  * SONG_IDENTIFY_RULE). A route that names DEFAULT_RULES.X must find X there, and a rule a route
  * imports from anywhere else must be one the core or a registered module declares — so a route
@@ -16,6 +18,14 @@ import { sourceFiles } from "./helpers/import-graph";
 const ROOT = process.cwd();
 const routes = sourceFiles(join(ROOT, "app/api")).filter((f) => /\/route\.ts$/.test(f));
 
+/** DEFAULT_RULES keys a route names that do not exist. */
+function unknownDefaultRules(file: string, text: string): string[] {
+  return [...text.matchAll(/DEFAULT_RULES\.(\w+)/g)]
+    .map((m) => m[1])
+    .filter((key) => !(key in DEFAULT_RULES))
+    .map((key) => `${file}: DEFAULT_RULES.${key}`);
+}
+
 describe("rate rules per route", () => {
   it("self-test: finds the routes and their rule references", () => {
     expect(routes.length).toBeGreaterThan(40);
@@ -29,12 +39,18 @@ describe("rate rules per route", () => {
 
   it("every DEFAULT_RULES.X a route names exists", () => {
     const missing = routes.flatMap((f) =>
-      [...readFileSync(join(ROOT, f), "utf8").matchAll(/DEFAULT_RULES\.(\w+)/g)]
-        .map((m) => m[1])
-        .filter((key) => !(key in DEFAULT_RULES))
-        .map((key) => `${f}: DEFAULT_RULES.${key}`)
+      unknownDefaultRules(f, readFileSync(join(ROOT, f), "utf8"))
     );
     expect(missing).toEqual([]);
+  });
+
+  it("[self-test] reports a planted route naming a rule that does not exist", () => {
+    const planted =
+      "await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);\n" +
+      "await enforceRateLimit(request, DEFAULT_RULES.NO_SUCH_RULE);";
+    expect(unknownDefaultRules("app/api/planted/route.ts", planted)).toEqual([
+      "app/api/planted/route.ts: DEFAULT_RULES.NO_SUCH_RULE",
+    ]);
   });
 
   it("every *_RULE a route imports is in the inventory (core or a registered module)", () => {

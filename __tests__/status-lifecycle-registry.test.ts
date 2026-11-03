@@ -5,6 +5,8 @@
  * __tests__/status-lifecycle-registry.test.ts — the status-lifecycle register holds to the code
  * (TASK-193; the register: platform/assurance/status-lifecycle.ts)
  *
+ * @guard a status value with no way out: no reaper job, no reason it rests
+ *
  * Every state of every status column is classified there. This test holds each classification to
  * the code: a reaper names a job kind the platform runs and a function that exists, tagged
  * `@scheduled <kind>` (or the job runner itself); a bound is a governed setting a migration seeds,
@@ -59,6 +61,17 @@ function docOf(src: string, name: string): string | undefined {
   return open >= 0 ? before.slice(open) : "";
 }
 
+/** States neither reaped nor explained. */
+function unexplainedStates(list: readonly [string, string, StateLifecycle][]): string[] {
+  return list
+    .filter(([, , l]) => !("reaper" in l))
+    .filter(([, , l]) => {
+      const why = "rest" in l ? l.rest : "reason" in l ? l.reason : "";
+      return why.trim().length < 10;
+    })
+    .map(([c, s]) => `${c}=${s}`);
+}
+
 describe("the status-lifecycle register (TASK-193)", () => {
   it("covers the columns the audit found without a way out (self-test)", () => {
     expect(Object.keys(STATUS_LIFECYCLE)).toEqual(
@@ -107,17 +120,25 @@ describe("the status-lifecycle register (TASK-193)", () => {
   );
 
   it("every state that is not reaped says why", () => {
-    const missing = entries
-      .filter(([, , l]) => !("reaper" in l))
-      .filter(([, , l]) => {
-        const why = "rest" in l ? l.rest : "reason" in l ? l.reason : "";
-        return why.trim().length < 10;
-      })
-      .map(([c, s]) => `${c}=${s}`);
-    expect(missing).toEqual([]);
+    expect(unexplainedStates(entries)).toEqual([]);
     for (const [column, why] of Object.entries(NOT_A_LIFECYCLE)) {
       expect([column, why.length > 10]).toEqual([column, true]);
     }
+  });
+
+  it("[self-test] reports a planted state that is neither reaped nor explained, and an untagged reaper", () => {
+    const planted = [
+      ["planted.status", "stuck", { rest: "" } as unknown as StateLifecycle],
+      [
+        "planted.status",
+        "done",
+        { rest: "Terminal: kept as the record." } as StateLifecycle,
+      ],
+    ] as [string, string, StateLifecycle][];
+    expect(unexplainedStates(planted)).toEqual(["planted.status=stuck"]);
+    const src = "/**\n * Sweeps.\n */\nexport async function sweep() {}";
+    expect(docOf(src, "sweep")?.includes("@scheduled planted.sweep")).toBe(false);
+    expect(docOf(src, "missing")).toBeUndefined();
   });
 
   it("a reaped state a person normally ends first says who, and where (review round 1, L6)", () => {

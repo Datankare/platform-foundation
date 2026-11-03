@@ -2,6 +2,8 @@
  * TASK-197 (audit D-11): scripts/migration-parity.mjs compares what each live database applied
  * with the repository — by name, and from 063 by checksum, so a migration edited after it was
  * applied is drift. Run against a local server standing in for the database's REST API.
+ *
+ * @guard a live database whose applied migrations differ from the repository's
  */
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
@@ -90,7 +92,7 @@ describe("migration parity (TASK-197, audit D-11)", () => {
     expect(r.out).toMatch(/recorded without a checksum \(before 063\)/);
   });
 
-  it("fails, naming it, when a migration changed after it was applied", async () => {
+  it("[self-test] fails, naming it, when a migration changed after it was applied", async () => {
     const rows = recordAll();
     const target = rows.find((r) => r.filename.startsWith("063_"))!;
     target.checksum = `sha256:${"1".repeat(64)}`;

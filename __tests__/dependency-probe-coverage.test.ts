@@ -2,6 +2,8 @@
  * TASK-197 (audit D-2): every external dependency a provider selection reaches has a readiness
  * probe, or a stated reason it has none.
  *
+ * @guard a provider selection whose external dependency has no readiness probe and no reason
+ *
  * Readiness checked the database, the cache and the Cognito pool's shape. A revoked AI key, an
  * exhausted credit balance, a retired model (TASK-186), a restricted Google key and a rotated
  * rate-limit token all left it "ready": nothing probed them, and nothing required it. Now:
@@ -105,20 +107,53 @@ function probesFor(setting: string, selection: string) {
   return [...required, ...degradedOnly];
 }
 
-describe("every dependency a selection reaches has a readiness probe (TASK-197, audit D-2)", () => {
-  it("covers every module slot's every selection, and nothing it does not have", () => {
-    const missing: string[] = [];
-    const extra: string[] = [];
-    for (const m of getModules()) {
-      for (const slot of m.providers) {
-        for (const v of slot.values) {
-          if (!slot.coverage?.[v]) missing.push(`${m.id}.${slot.slot}=${v}`);
-        }
-        for (const k of Object.keys(slot.coverage ?? {})) {
-          if (!slot.values.includes(k)) extra.push(`${m.id}.${slot.slot}=${k}`);
-        }
+interface SlotLike {
+  readonly slot: string;
+  readonly values: readonly string[];
+  readonly coverage?: Readonly<Record<string, unknown>>;
+}
+
+/** Selections a slot offers with no coverage entry, and coverage for selections it lacks. */
+function coverageFindings(
+  modules: readonly { id: string; providers: readonly SlotLike[] }[]
+) {
+  const missing: string[] = [];
+  const extra: string[] = [];
+  for (const m of modules) {
+    for (const slot of m.providers) {
+      for (const v of slot.values) {
+        if (!slot.coverage?.[v]) missing.push(`${m.id}.${slot.slot}=${v}`);
+      }
+      for (const k of Object.keys(slot.coverage ?? {})) {
+        if (!slot.values.includes(k)) extra.push(`${m.id}.${slot.slot}=${k}`);
       }
     }
+  }
+  return { missing, extra };
+}
+
+describe("every dependency a selection reaches has a readiness probe (TASK-197, audit D-2)", () => {
+  it("[self-test] reports a planted selection with no probe and no exemption", () => {
+    const planted = [
+      {
+        id: "planted",
+        providers: [
+          {
+            slot: "plantedStore",
+            values: ["memory", "remote"],
+            coverage: { memory: { exempt: "in process" }, gone: { probe: "x" } },
+          },
+        ],
+      },
+    ];
+    expect(coverageFindings(planted)).toEqual({
+      missing: ["planted.plantedStore=remote"],
+      extra: ["planted.plantedStore=gone"],
+    });
+  });
+
+  it("covers every module slot's every selection, and nothing it does not have", () => {
+    const { missing, extra } = coverageFindings(getModules());
     // Under `npm run test:core` (PF_TEST_MODULES=none) no module is registered: the core's rows
     // are still checked below.
     if (process.env.PF_TEST_MODULES !== "none")

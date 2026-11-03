@@ -1,0 +1,220 @@
+{
+  "GET /api/operator/jobs — an operator": {
+    "status": 200,
+    "body": {
+      "schedules": [
+        {
+          "kind": "moderation.escalation-reaper",
+          "description": "Applies the configured remedy to escalations left over their SLA without a decision (ADR-041).",
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 15,
+          "minIntervalMinutes": 5,
+          "maxIntervalMinutes": 60,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.moderation.escalation-reaper.enabled",
+            "interval": "jobs.moderation.escalation-reaper.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "moderation.release-claims",
+          "description": "Returns review items whose claim timed out to the queue.",
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 15,
+          "minIntervalMinutes": 5,
+          "maxIntervalMinutes": 120,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.moderation.release-claims.enabled",
+            "interval": "jobs.moderation.release-claims.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "moderation.expire-strikes",
+          "description": "Marks strikes past their expiry as expired.",
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 60,
+          "minIntervalMinutes": 15,
+          "maxIntervalMinutes": 1440,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.moderation.expire-strikes.enabled",
+            "interval": "jobs.moderation.expire-strikes.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "accounts.expire-restrictions",
+          "description": "Steps restricted or suspended accounts whose end date has passed down to warned.",
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 60,
+          "minIntervalMinutes": 15,
+          "maxIntervalMinutes": 1440,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.accounts.expire-restrictions.enabled",
+            "interval": "jobs.accounts.expire-restrictions.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "gdpr.retention-purge",
+          "description": "Completes the erasure (hard purge) of accounts whose GDPR retention period has passed.",
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": true,
+          "enabled": true,
+          "intervalMinutes": 1440,
+          "minIntervalMinutes": 60,
+          "maxIntervalMinutes": 1440,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.gdpr.retention-purge.enabled",
+            "interval": "jobs.gdpr.retention-purge.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "agents.trajectory-retention",
+          "description": "Ends open agent trajectories with no activity for agent.trajectory.abandon_after_hours and no open hold, then deletes completed and failed ones older than agent.trajectory.retention_days.",
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": true,
+          "enabled": true,
+          "intervalMinutes": 1440,
+          "minIntervalMinutes": 60,
+          "maxIntervalMinutes": 10080,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.agents.trajectory-retention.enabled",
+            "interval": "jobs.agents.trajectory-retention.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "config.expire-approvals",
+          "description": "Marks pending configuration approvals past their expiry as expired, settles approvals whose outcome is being checked, and lists undecided runs for a person.",
+          "owner": "core",
+          "scope": "platform",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 60,
+          "minIntervalMinutes": 15,
+          "maxIntervalMinutes": 1440,
+          "tenantOptOutKey": null,
+          "required": true,
+          "settings": {
+            "enabled": "jobs.config.expire-approvals.enabled",
+            "interval": "jobs.config.expire-approvals.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "tenancy.purge-due",
+          "description": "Purges the data of deleted tenants whose purge time has passed.",
+          "owner": "core",
+          "scope": "platform",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 60,
+          "minIntervalMinutes": 15,
+          "maxIntervalMinutes": 1440,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.tenancy.purge-due.enabled",
+            "interval": "jobs.tenancy.purge-due.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "jobs.prune",
+          "description": "Deletes succeeded jobs older than jobs.retention_days; dead jobs stay until an operator acts.",
+          "owner": "core",
+          "scope": "platform",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 1440,
+          "minIntervalMinutes": 60,
+          "maxIntervalMinutes": 10080,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.jobs.prune.enabled",
+            "interval": "jobs.jobs.prune.interval_minutes"
+          },
+          "state": null
+        },
+        {
+          "kind": "test.sched",
+          "description": "A recurring test job.",
+          "owner": "app",
+          "scope": "platform",
+          "runsForSuspended": false,
+          "enabled": true,
+          "intervalMinutes": 10,
+          "minIntervalMinutes": 5,
+          "maxIntervalMinutes": 60,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.test.sched.enabled",
+            "interval": "jobs.test.sched.interval_minutes"
+          },
+          "state": null
+        }
+      ],
+      "deadLetters": []
+    }
+  },
+  "GET /api/operator/jobs — a tenant admin": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "platform_operate"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "PATCH /api/operator/jobs/schedules/[kind] — turned off": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "key": "jobs.test.sched.enabled",
+      "value": false
+    }
+  },
+  "PATCH /api/operator/jobs/schedules/[kind] — held for a second operator": {
+    "status": 202,
+    "body": {
+      "success": false,
+      "held": true,
+      "pending": true,
+      "key": "jobs.test.sched.interval_minutes",
+      "approval": null
+    }
+  }
+}

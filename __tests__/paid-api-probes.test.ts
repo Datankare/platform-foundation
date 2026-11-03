@@ -1,6 +1,8 @@
 /**
  * TASK-197 (audit D-2, D-3, D-7): the readiness probes for paid dependencies.
  *
+ * @not-guard: behaviour tests of the paid probes; reads the two health routes to pin one call
+ *
  * LLMProviderHealthProbe's empty-body POST answered 400 for a retired model or an exhausted
  * balance — and was reported healthy. These probes make the provider's cheapest real call with
  * the deployed credential: success is healthy; a refused key, an exhausted quota, a retired model

@@ -2,6 +2,8 @@
  * __tests__/real-clock-bounds.test.ts — no per-commit test's verdict depends on how the runner
  * schedules the CPU (TASK-198, D-13)
  *
+ * @guard a per-commit test whose verdict depends on the real clock
+ *
  * TASK-191: the "Core without modules" pass failed once and passed on the rerun. One cause,
  * reproduced 1 in 8 runs under two CPU burners: R13-M2's "opens after 5 failures" ran on a real
  * clock, and a heartbeat more than 100 ms late (a GC pause, another worker) made a cache failure
@@ -182,7 +184,7 @@ export function clockFindings(source: string, name = "x.test.ts"): ClockFinding[
 }
 
 describe("real-clock bounds in per-commit tests (TASK-198, D-13)", () => {
-  it("self-test: finds elapsed upper bounds and busy loops, and spares the fake clock", () => {
+  it("[self-test] finds elapsed upper bounds and busy loops, and spares the fake clock", () => {
     const found = clockFindings(`
       it("a", async () => {
         const started = Date.now();

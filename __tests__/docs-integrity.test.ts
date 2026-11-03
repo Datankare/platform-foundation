@@ -1,6 +1,8 @@
 /**
  * __tests__/docs-integrity.test.ts
  *
+ * @guard documentation that drifts from the files: ADR references, counts, env vars, the index
+ *
  * The consumer-facing documentation is how anyone adopts, configures, and reasons about the
  * platform, so it being wrong or stale is a real defect — not cosmetic. These assertions run
  * on every commit and are the guardrail that keeps the docs from silently drifting behind the
@@ -132,7 +134,7 @@ describe("docs integrity — README counts match the filesystem (Gotcha 85)", ()
     ).toEqual(["63", "64"]);
   });
 
-  it("the migration-count pattern finds a count however it is worded", () => {
+  it("[self-test] the migration-count pattern finds a count however it is worded", () => {
     expect(countsIn(readme).length).toBeGreaterThan(0); // the README's own
     for (const planted of [
       "63 migrations",

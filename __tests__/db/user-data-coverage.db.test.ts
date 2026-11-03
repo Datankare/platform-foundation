@@ -5,6 +5,8 @@
  * Erasure and export cover every table that holds a user's data (audit X-15, E-7, E-8, RR-23),
  * against the replayed database.
  *
+ * @guard a table or column holding a user's data that erasure and export do not cover
+ *
  *   - Every table of the schema is classified: in the register (platform/auth/user-data.ts) or in
  *     NO_USER_DATA with its reason. A new table that is neither fails here, so it cannot hold
  *     users' data the erasure does not know about. An app inherits this test unchanged: its own
@@ -519,7 +521,7 @@ describe(`${SUITE}: an app inherits the classification unchanged`, () => {
     expect(isAppColumn("users.status_changed_by", d)).toBe(false);
   });
 
-  it("still fails an app table nobody declares", () => {
+  it("[self-test] still fails an app table nobody declares", () => {
     expect(unclassifiedTables(["users", "quiz_scores"], d)).toEqual(["quiz_scores"]);
     expect(isAppColumn("quiz_scores.user_id", d)).toBe(false);
   });

@@ -3,6 +3,8 @@
  * app's `app.*` codes, D1) are generated from the registry and catalog and never drift.
  * The generator pads tables as Prettier does, so the file also passes format:check.
  * Regenerate: UPDATE_API_ERRORS_DOC=1 npx jest __tests__/api-errors-doc.test.ts
+ *
+ * @guard a generated error reference that drifts from the registry and catalog
  */
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -14,6 +16,15 @@ import {
 
 const DOCS = join(__dirname, "..", "docs");
 
+/** The lines of a generated doc that differ from what the registry renders (1-based). */
+function driftLines(actual: string, want: string): number[] {
+  const a = actual.split("\n");
+  const w = want.split("\n");
+  return Array.from({ length: Math.max(a.length, w.length) }, (_, i) => i)
+    .filter((i) => a[i] !== w[i])
+    .map((i) => i + 1);
+}
+
 describe.each([
   ["API_ERRORS.md", renderApiErrorsDoc],
   ["APP_API_ERRORS.md", renderAppApiErrorsDoc],
@@ -22,7 +33,19 @@ describe.each([
     const path = join(DOCS, file);
     const want = render() + "\n";
     if (process.env.UPDATE_API_ERRORS_DOC === "1") writeFileSync(path, want);
+    expect(driftLines(readFileSync(path, "utf8"), want)).toEqual([]);
     expect(readFileSync(path, "utf8")).toBe(want);
+  });
+
+  it("[self-test] reports a planted hand edit of the generated file", () => {
+    const want = render() + "\n";
+    const lines = want.split("\n");
+    const row = Math.max(
+      lines.findIndex((l) => l.startsWith("| `")),
+      0
+    );
+    lines[row] = `${lines[row]} (edited by hand)`;
+    expect(driftLines(lines.join("\n"), want)).toEqual([row + 1]);
   });
 });
 

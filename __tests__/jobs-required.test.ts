@@ -5,6 +5,8 @@
  * __tests__/jobs-required.test.ts — a required schedule runs whatever its enabled setting says
  * (TASK-194 round 18)
  *
+ * @not-guard: reads migration 062 to pin one note's wording; an instance check, not a scan
+ *
  * config.expire-approvals settles approvals whose outcome is being checked and lists undecided
  * runs for a person; nothing else does. It is required: its `enabled` setting is ignored (a value
  * set off by hand, or by a tenant, before migration 062 still runs it), and every other job's is

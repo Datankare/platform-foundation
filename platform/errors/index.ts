@@ -18,8 +18,8 @@ export type {
   ErrorParamSpec,
 } from "./registry";
 export { apiError, apiErrorBody, errorFromResult, internalError } from "./respond";
-export { readJsonObject, requireTextFields } from "./request-body";
-export type { JsonObjectResult } from "./request-body";
+export { readJsonBody, readJsonObject, requireTextFields } from "./request-body";
+export type { InputSchemaNode, JsonObjectResult } from "./request-body";
 export type { ApiErrorBody, ApiErrorOptions, CodedFailure, ErrorParams } from "./respond";
 export {
   APP_NAMESPACES,

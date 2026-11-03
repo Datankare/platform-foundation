@@ -6076,7 +6076,569 @@ sign-in's does (`mfa-step-up`, kept by the details schema); the migration guide'
 test asserts the alert, its credential register names the dev Environment and
 `deploy-smoke.yml` for every live-journey secret.
 
-_Last updated: November 1, 2026 (TASK-197 rebased onto TASK-194; its migration renumbered 063)_
+### TASK-200 — The engineering process, enforced: design check, consumer sweep, real responses, guards that can fail, schema-first inputs, hostile tests, self-review
+
+| Field        | Detail                                                                   |
+| ------------ | ------------------------------------------------------------------------ |
+| **ID**       | TASK-200                                                                 |
+| **Type**     | Process (CI checks, guards and review rules)                             |
+| **Severity** | High                                                                     |
+| **Phase**    | Phase 5                                                                  |
+| **Target**   | v6.0.0 (RC)                                                              |
+| **Status**   | Fixed on develop (the engineering-process batch of the 2026-10-29 sweep) |
+| **Logged**   | 2026-11-01 (owner, after TASK-194's 23 review rounds)                    |
+
+**Why.** The access-control batch (TASK-194) took 23 independent review rounds. Its findings came
+back to six causes: fixes tested only against hand-written mock responses the real route never
+returns; a changed return shape, status or code without every caller and screen updated; guard
+tests that could never fail; questions not asked up front (who can reach a path, a race, a
+dependency down, what an erasure leaves, what each screen shows for each response); behaviour
+changes that could weaken an existing tenant's protection; handlers reading inputs that are not in
+their schema. The owner's rule: none of this is optional or best effort. What a machine can check
+fails the build; the rest is a blocking rule in REVIEW.md (rules 10–17). The process is
+[AI_ENGINEERING](AI_ENGINEERING.md) §3a; the lesson is Gotcha 80 in
+[ENGINEERING_LEARNINGS](ENGINEERING_LEARNINGS.md).
+
+| Rule                        | Mechanism                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Shown failing on a planted violation                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Design check per change  | `scripts/process-check.mjs`, CI **Layer 0f** on every push and pull request in both repositories (Playform's static job fetches the history). It catches our own mistakes; it is not a tamper-proof gate (one owner pushes: see _Deliberately not built_ below). A commit (a merge by its own change against git's re-merge) touching `platform/`, `app/`, `lib/`, `components/`, `hooks/`, `proxy.ts` or the process's own files (the check, the risk tiers, CODEOWNERS, any workflow) names a `TASK-nnn` in its subject's trailing group, or its entry adopts it (`**Commits:** <sha>`); each named entry has a complete **Design check** and is touched by the change; a High-tier change's entry has a **Threat model**; a true revert needs no task. Every commit but the ancestors of the one that brought the script is judged; ratchet baselines never grow against the later of the merge base and that commit. A sync (subject `chore(sync)… @ <full sha>`) and a commit authored by `dependabot[bot]` are not judged | `process-check.test.ts` (scratch repositories): no task in the subject; a block missing, a field missing, a placeholder; an entry the change does not touch; a task with no entry; a workflow change with no task; an evil merge; a partial revert; each baseline raised; a sync subject with a short sha; a human's commit under a bump subject              |
+| 2. Consumer sweep           | Codes: `refusal-coverage` already refused a route code a calling screen does not handle (baseline only shrinks); its scan is now a function with a planted-gap `[self-test]`. Statuses: new `route-status-registry` — a hand-built error status is `ERROR_CODES[code].status` for the body's own code (through a const or spread, the const of its own scope) or the literal the registry gives the body's `apiErrorBody` code, and an init it cannot read (not a literal, or a spread that may set the status) is refused; seven answers by design listed with why (health and readiness, a probe's stub, two forwarded or success-only statuses). Shape: REVIEW.md rule 10 and the design check's _Screens × responses_                                                                                                                                                                                                                                                                                                       | `refusal-coverage` `[self-test]`: a screen that leaves a platform code and an app code unhandled; `route-status-registry` `[self-test]`s: a 401 on `auth.permission_denied`, an uncoded 500, an unreadable status; the registry's status for another code; `init`, `{ ...opts }`, a spread after the status; another function's const                         |
+| 3. No fake-only tests       | `route-fixtures.test.ts` calls the real route handlers (through the real guard, only the stores below stubbed) and writes `__tests__/fixtures/route-responses.json`, failing on drift; screen tests take `routeAnswer(…)` from `__tests__/fixtures/route-responses.ts`. `fake-fetch-bodies.test.ts` (scan: `helpers/fake-fetch-scan.ts`) counts every hand-written body in a component test that replaces fetch, against `fake-fetch-baseline.json` (per repository, a reason per file, never raised: process-check). A test that defines fetch or mocks a client fetch wrapper (`apiFetch`, `fetchWithProvisioningRetry`) counts too                                                                                                                                                                                                                                                                                                                                                                                           | `[self-test]`s: each body form (a `json` member, `Response.json`, `new Response(JSON.stringify(…))`, a reply helper's literal, a tuple, a same-file const) counted and a fixture not; each new way of replacing fetch; a file over its count, a count not lowered; `route-fixtures`: a held answer edited to success, a fixture missing, one no handler makes |
+| 4. Every guard can fail     | `guard-self-tests.test.ts`: a guard is tagged `@guard <class>` and has a test named `[self-test] …` that runs (not skipped, todo or failing), asserts, and calls with an input a function the file defines or imports (the scan; the proxy's limit is in its header); a test file that reads the repository's files or uses the scan helpers is a guard unless `@not-guard: <why>`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Run on the base tree: 78 files reported (every scan untagged). Its own `[self-test]`s: a guard with no self-test, one with no assertion, an untagged scan, a bare `@not-guard`; a skipped, todo, failing or x-prefixed self-test; `expect(1).toBe(1)`, a built-in, a function of the test's own                                                               |
+| 5. Schema-first inputs      | `readJsonBody(request, SCHEMA)` (platform/errors/request-body.ts): the body's keys checked against the route's declared schema, at every depth, before any field is read (`request.unknown_input`, `request.unknown_input_none`). `api-route-body-schema.test.ts` refuses `readJsonObject` (an alias, a namespace), `.json()` on any request-typed name or its clone, or a schema-less `readJsonBody` beyond `body-schema-baseline.json` (per repository, never raised: process-check). An open schema node (`{}`) is read closed unless marked `openBecause`                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Run with an empty baseline: 41 files over (PF). `[self-test]`s: the three forms, an alias, a namespace, any request parameter, a clone, a bracket read reported, a schema'd read and a response's `.json()` not; `readJsonBody(request, {})` and nested `{}` refuse every key                                                                                 |
+| 6. Hostile tests by default | `scripts/process-check.mjs`: a route test file (one that imports an `app/api/…/route` module, quoted or by template literal) added or changed in the range names `[hostile:role]`, `[hostile:self]`, `[hostile:store-down]` and `[hostile:id-spelling]` in running test titles, or waives one on a comment line `hostile:<tag> n/a: <a reason of four words or more, on that line>` — diff-aware, so old files are not all failed at once                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `process-check.test.ts`: a route test missing two tags; a waiver without a reason; a bare waiver taking the next line as its reason; a tag in a comment, `it.skip`, `xit`, `it.todo`; a template-literal import                                                                                                                                               |
+| 7. Self-review recorded     | The entry's **Self-review** (consumers checked, hostile re-read), enforced as rule 1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `process-check.test.ts`: an entry without the block                                                                                                                                                                                                                                                                                                           |
+
+**Every existing guard proves it can fail.** 70 guards in platform-foundation (75 in Playform, its
+own five included) are tagged `@guard`; 40 already planted a violation and were named
+`[self-test]`, 30 had only a count ("finds a plausible number…") or nothing and got a planted
+`[self-test]` now, their scan made a function where it was inline (admin-authorization-matrix,
+admin-mutations-audited, ai-cache-governance, api-errors-doc, command-bar-governance,
+conformance-coverage, coverage-ignore-policy, dependency-probe-coverage, every-needs-nonempty-lint,
+journey-coverage, latent-modules-unreached, mfa-step-up, migration-tracking, module-manifest,
+no-conflict-markers, prompt-evals, prompt-registry-integrity, property-tests-configured,
+r10-one-hold, rate-rules-routes, read-data-families, refusal-coverage (its gap scan),
+roadmap-consistency, route-role-matrix.db, schema-baseline, singleton-key-coverage, source-hygiene,
+status-lifecycle-registry, task-register-integrity, tool-boundary-coverage; in Playform also
+e2e-journey-integrity, e2e-live-admin-sections, playform-runbook-order). None is allowlisted. Files
+that read the repository but scan for nothing are `@not-guard` with why (11 in platform-foundation,
+15 in Playform). The six new guards bring the count to 76 (Playform 81).
+
+**Baselines** (each only shrinks — a file over its count fails its guard, and the file itself is never raised: process-check compares it with the merge base; filed as R-81 and R-82 in the sweep's residuals):
+
+- `fake-fetch-baseline.json` — platform-foundation 198 hand-written bodies in 19 files on the base;
+  the Jobs console's two held/applied tests now answer with the real routes' replies
+  (`jobs-panels.test.tsx`, 8 → 6), so **196 in 19 files**. Playform: the same 196 plus its own
+  `playform-refusals` (9) and `spike-app-features` (2), 207 in 21 files (209 on the base) — and,
+  since review round 1 counts a test that mocks a client fetch wrapper, `agent-console-approval`
+  (23) and `use-translate-session` (18), which answer through a mocked `apiFetch`: 248 in 23
+  files; and since round 2 reads Playform's own wrappers, `agent-authorize-screen` (5, a mocked
+  `playformApiFetch`): **253 in 24 files** (R-83). The real held answer is `success: false, pending: true` — the hand-written body
+  had `success: true`.
+- `body-schema-baseline.json` — **41** schemaless body reads in 41 files (platform-foundation);
+  **53** in 52 files (Playform: its translate, agent and delegation routes).
+
+**Not mechanised, and why** (REVIEW.md rules 10–17, each Important): whether a design-check answer
+is true; whether a `[hostile:…]` test fails without the code it guards (mutation testing, not run
+per commit); whether every caller handles a changed body _shape_ (TypeScript sees a typed caller,
+not a screen reading `res.json()` as `unknown`); whether a change weakens an existing tenant (a
+judgement on intent). Credits for the adopted practices (Klein, Gawande, Robinson, King, Beck) are
+in AI_ENGINEERING §1.
+
+**Playform.** The shared files byte for byte; its own `ci.yml` (Layer 0f in the static job, which
+now fetches the history), PR template, CLAUDE.md, REVIEW.md, sync excludes (the two baselines) and
+baselines; its own guards tagged, three given a planted `[self-test]`.
+
+**Review round 1 (fixed in this change).** Important: (1) a commit that deleted the script went
+unjudged when a later one restored it — now every commit descending from the one that brought the
+script is judged, and one deleting or emptying it, or dropping its `ci.yml` step, is itself a finding
+(`workflow-hygiene` and `process-check.test.ts` refuse a head without them, since the step would not
+run); (2) a bare `hostile:<tag> n/a:` took the next line as its reason, and a tag in a comment
+counted — the reason must be on the waiver's own comment line, four words or more, and a tag counts
+only in a running `it`/`test`/`describe` title; (3) a template-literal route import was not a route
+test — now it is, which made `route-role-matrix.db` (changed here) need its tags: `[hostile:role]`,
+`[hostile:id-spelling]`, and reasoned waivers for self and store-down; (4) baselines could be raised
+by hand — process-check compares `body-schema-`, `fake-fetch-`, `refusal-coverage-`,
+`screen-literal-` (counts never rise, no file or gap added) and `coverage-baseline.json` (floors only
+rise) with the merge base, and the script and the two new baselines are High tier; (5) the schema
+rule held with `readJsonBody(request, {})` — an open node is now read closed unless marked
+`openBecause: "<why>"` (the command bar's two open values keep their own path-pinned rule, their tool
+schemas unmarked), the test's own `max: {}` typed, and the scan sees aliases, namespaces, any
+request-typed parameter and `request.clone().json()`. Low/Nit: (6) merges are judged by their own
+`--cc` change; (7) a sync commit is skipped only when every file is a synced path — PF's
+`platform-paths.json` gained `platformTree` (replaced in round 2: see below) — and a sync-titled PR
+whose squash is not a pure sync names its task; (8) a `[self-test]` counts only when it runs and calls
+the guard's scan with an input (six existing guards refactored so their self-test and production
+test share the scan: `no-stubbed-guards`, `sql-schema-parity.db`, `module-lint`, and three regex
+scans recognised as such), `helpers/fake-fetch-scan` is a scan; (9) `route-fixtures` compares through
+`fixtureDrift`, planted with a held answer edited to success; (10) `route-status-registry` checks the
+registry's status is for the body's own code, refuses an unreadable init or a spread that may set the
+status, and scopes consts; (11) `fake-fetch-scan` counts `Object.defineProperty(global, "fetch", …)`
+and a mocked `apiFetch` / `fetchWithProvisioningRetry`; (12) `task-register-integrity`
+(`registerFindings`), `journey-coverage` (`uncovered`) and, in Playform, `e2e-live-admin-sections`
+(`sectionFindings`: set semantics, duplicates and the floor of six) and `playform-runbook-order`
+(`runbookFindings`, its self-test on the real runbook against the real replay) share one comparison
+with their self-tests; (13) Playform's `e2e-journey-integrity` sees the unquoted `[role=alert]`, each
+planted line asserting its own finding, `notification-error` planted; (14) CLAUDE.md names
+`proxy.ts` and says any `TASK-nnn` in the subject counts, as the script does. Each new or changed
+check was run against its planted violation with the old code and seen to fail.
+
+**Review round 2 (fixed in this change).** Important: (I-1) `diff-tree --cc` listed a file both
+parents touched even in a clean merge, so a pull request's synthetic merge, a promotion or a
+back-merge failed — a merge is now judged against git's own re-merge (`show --remerge-diff`; the
+`@@@` hunks of `--cc -p` on a git before 2.36), and a pull request at its own head
+(`pull_request.head.sha`); (I-2) a sync could whitelist the app's own file through
+`platform-paths.json`, which it can edit — a sync is now skipped only when every touched file's blob
+equals platform-foundation's at the full sha its subject names (fetched objects-only from the sync
+config's `source`, or `$PROCESS_CHECK_PF_REPO` in tests), each deleted file is absent there and none
+is excluded; anything else, a short or unknown sha or no reach, is judged (fail closed). The sync
+workflow's pull request title carries the full sha (Playform's workflow and the template);
+`platformTree` is gone; `platform-paths.json` is High tier. Low: (L-1) the body itself is never
+open, and every `openBecause` is listed with its reason in `open-input-register.json` (new guard
+`open-input-register`; the register never grows); (L-2) an app lists its own fetch wrappers in
+`scripts/fetch-wrappers.app.json` — Playform's `playformApiFetch` and `guestFetch` — and the scan
+counts their mocks (Playform: `agent-authorize-screen`, 5 more, R-83); (L-3) a commit is judged
+unless an ancestor of the commit that brought the rule, so an unrelated history merged in later is
+judged; (L-4) a file git sees renamed keeps its baseline count, or gap, under its new name; (L-5)
+all six baselines and the base workflow are High tier, the coverage margin never rises. Nits: a
+waiver counts only in a real comment (a small lexer strips strings and templates — the script now
+uses Node's built-ins only), a template title by its static parts; the body scan sees
+`JSON.parse(await request.text())` and `new Response(request.body).json()`; the fake-fetch scan
+`(global as any).fetch =`, `(globalThis as …).fetch =` and `global["fetch"] =`; an error body sent
+with no status or a success status is refused. And: (R-84, fixed) the base branch's copy of the check
+judges every pull request (`.github/workflows/process-check-base.yml`, `pull_request_target`: the
+base checked out, the head fetched as objects only, no npm, no head code, a read-only token, no
+secret; `workflow-hygiene` refuses a version that checks out or runs the head, and a softened
+step); the owner's `process-check-override` label passes a pull request that fixes the check
+itself; `.github/CODEOWNERS` names @RamanSud on the script, the baselines, the workflows and the
+risk tiers. (Residuals fixed now) reverts pass by touching, removing or exactly restoring their
+entry, and reverting TASK-200 still fails; `edited` re-runs both checks on a retitled pull request;
+a test that drives a route through a `__tests__/helpers/` module that imports it is a route test.
+Each new or changed check was run against its planted violation with the round-1 code and seen to
+fail.
+
+**Review round 3 (fixed in this change).** Important: (I-A) a sync could still be forged — the
+`source` came from the pull request's own commits, and a public platform-foundation's pull request
+refs make any blob fetchable by sha — so platform-foundation's URL is fixed in the script
+(`PF_URL`; `$PROCESS_CHECK_PF_REPO` only in tests), the sync config's excludes are also read at the
+range's base, and the synced sha must be on a protected ref (`main`, `staging`, `develop`, a `v*`
+tag; a sha only on `refs/pull/*` fails); a route test in a pure sync is still held to its hostile
+cases; `.github/sync-config.json`, `.github/scripts/` and `docs/templates/` are in CODEOWNERS (all
+High tier); (I-B) a "true revert" could restore a commit from outside the judged history — revert
+leniency now needs the reverted commit on the range's base. Low: (L-a) an octopus merge (which
+`--remerge-diff` skips) is read by its `@@@` hunks; (L-b) a later push removes the override label
+before judging (the job's only write, `pull-requests: write`); triage access can label too,
+documented; (L-c) `pull_request_target` runs the default branch's copy of the workflow (`main`), so
+the check runs once this is on `main` — an owner step below; the script it runs is always the
+base's; (L-d) the open-input scan reads string, computed and shorthand keys and refuses, in a schema
+object, a spread or an unresolved key (it cannot be registered). Nits: the lexer refuses templates
+nested deeper than 200 with a finding, not a stack overflow; the base-check guard refuses an event
+or head-ref expression in a script, a merge ref anywhere and a pull ref outside a fetch; the
+pull-request-title finding is neutral about squash merges (Playform merges commits); Playform's
+Layer 0f comment updated. Residual fixed: GitHub's Revert of a merged pull request (`-m 1`) passes
+when the merge is on the base and the revert undoes exactly its first-parent change. Each was run
+against its planted violation with the round-2 code and seen to fail.
+
+**Review round 4 (fixed in this change).** Important: (1) the octopus path read `diff --cc`
+headers, which git quotes for a non-ASCII name, and flagged a file added on one branch — a merge's
+own paths are now those whose result blob differs from every parent (`ls-tree -r -z`, read
+NUL-separated, as every path in the script is); a two-parent merge keeps `--remerge-diff`, which
+finds every such path without the false finding on a file both sides edited, and a git older than
+2.36 refuses it rather than guess; (2) a "true revert" could reset a file to before an old merge,
+undoing a later fix — a true revert is now the exact inverse: the same files the reverted commit
+changed against its first parent, each unchanged since that commit and each back to its state before
+it; anything partial or over a later edit is an ordinary commit; (3) the override label could be
+raced by a queued run — it is gone: an owner of `scripts/process-check.mjs` by the base's
+CODEOWNERS approves exactly the head commit with a review carrying `process-check-override: <reason>`
+and re-runs the check; the run reads the pull request live, fails as superseded if its head moved
+on, and passes on the override only through `overrideVerdict` (pure, self-tested: a stale commit, a
+non-owner, no reason, changes requested, a moved head, a valid one); the job is read-only again
+(`pull-requests: read`), the guard refuses any write, an event label or a missing live-head check.
+Low: (5) the platform-foundation fetch is timed (120 s; Layer 0f and the base job 15 minutes),
+bounded (`--filter=blob:none`) and tried once per run; it still fails closed. (This round also said
+nothing was fetched lazily after it: wrong — `remote.pf.partialclonefilter` stayed set, and git
+fetched a missing commit on demand, a pull request's included; corrected in round 5.) Residuals: a git older than 2.36 (above); the protected refs are trusted only as far as
+platform-foundation's rulesets protect them (owner step 4). Each was run against its planted
+violation with the round-3 code and seen to fail (the two-parent quoted-path merge, already right,
+is kept as a regression test).
+
+**Review round 5 (fixed in this change; three parallel reviewers: security, legitimate flows,
+mutation testing).** Security: (A1) a sole owner cannot approve their own pull request, so the
+override has a second path — an owner's pull request comment with a line exactly
+`process-check-override <the head's 40-hex sha>: <reason of four words or more>`, never edited,
+read live from the issue-comments API (`issues: read`); `overrideVerdict` covers both, each condition
+self-tested; GitHub's admin bypass of the required check is the documented last resort; (A2) the
+owner steps below drop "Require review from Code Owners"; (A3) round 4's "no lazy fetch" was false
+(above) — `remote.pf.partialclonefilter` is unset too, and the test fixture is now a real
+partial-clone server (`file://`, `uploadpack.allowFilter`, `uploadpack.allowAnySHA1InWant`) whose
+served packs are counted: a sync naming a commit only on `refs/pull/*` makes one fetch, not two;
+(A4) CODEOWNERS is read as GitHub reads it — `**/x`, `a/**/b`, `?`, a leading `/`, a directory, an
+inline `#` comment, the last match wins — and a line the check cannot read refuses every override;
+(A5) a tree entry is compared by mode and object (an executable bit, a symlink, a submodule's
+commit) in an octopus merge, a true revert and a sync; (A6) the base-check guard counts `gh api
+-f/-F/--field/--raw-field/--input` (and curl bodies, `--method=`, a continued line) as writes.
+Flows: (B1) an app's own register (`scripts/process-check.app.json` `taskRegisters`; Playform's
+`docs/PLAYFORM_TASKS.md`, sync-excluded with its config, root-anchored; no Playform-only entry
+existed to move — its TASKS.md was platform-foundation's); (B2) a pull request whose every
+code-changing commit is a true revert is not judged by its title (GitHub's default
+`Revert "feat… (TASK-nnn)"`, or none); (B4) a failed platform-foundation fetch is tried once more,
+then a finding — "platform-foundation unreachable — re-run the check" — still failing closed; (B5) a
+sync of deletions only passes, and the sync bot asks for the deletions amended into the sync commit;
+(B6) a squash merge's ` (#n)` after the sha is allowed; (B7) a baseline re-keyed by hand passes while
+nothing rises (counts and the register: no total rise, no existing key up; gaps: a removed gap's
+route and code, no more gaps); (B8) only the task group a subject ends with names a task (CLAUDE.md
+says so); (B9) a retitled pull request is judged by `process-check-title.yml` alone and `ci.yml` no
+longer runs on `edited` — not the `if: github.event.action != 'edited'` asked for, because a job
+skipped by `if:` posts a "skipped" check on the same head, which branch protection reads as passing
+and would mask an earlier failure. Nits: `--end-of-options` and `--` on every git call (except
+`ls-tree`, which reads a `--` as a path — the mutation suite caught that regression in this round);
+`scripts/load-test-target.sh` is executable in both repositories, and a sync of that mode-only
+change passes; the force-push message says what to do. Mutation: (C1) the tests that passed for the
+wrong reason now fail for the right one — the exclude case without the config edit, the bad and
+short sha over platform-foundation's exact bytes, the off-base revert without a task, each judged
+sync asserting its own reason; the placeholder list now matters (a placeholder inside a four-word
+answer: `TBD`, `TODO`, `n/a`, a `<describe …>` slot, an ellipsis, "to be decided"); (C2) the
+check's own `runsCheck` refuses the whole class of a step that cannot fail — `|| exit 0`, `|| :`,
+`|| echo`, `fi || true`, `&`, `set +e`, a `trap`, an `exit 0` or `exec` before the check, another
+shell, an echoed command, `continue-on-error` of
+`${{ true }}` or `"true"`, an `if:`, an `if` without a failing `else` (the base workflow's override
+moved into its `else`); (C3) StrykerJS 10.0.0 (pinned) mutates `scripts/process-check.mjs` against
+`__tests__/process-check.mutation.mjs` (`stryker.config.mjs`, `break` at 90%;
+`.github/workflows/mutation.yml` when the gate's files change), scored on the round-6 code (below). The reviewer's own list of
+surviving mutants (S1…W9) was not available here; the run targets Stryker's own survivors. The
+mutation suite found five defects the jest suite had not: a check after `echo "x";` was read as
+echoed; a helper directory (`helpers/e/index.ts`) was read as the helper's text (a tree, not a
+blob); a lone `*/` comment line kept a `/`; `fi || true` and an `if` without a failing `else`
+passed as a step that can fail. Process (REVIEW.md 18–24, AI_ENGINEERING §3a, CLAUDE.md): a threat
+model before code — mechanised: a task whose change touches a high-tier path needs a complete
+**Threat model** block; three lenses a round, a coverage table each; fix the class; attack your own
+fix; mutation testing on gate code; the stop rule. Each new or changed check was run against its
+planted violation with the round-4 code (or a sabotaged copy) and seen to fail.
+
+**Review round 6 (fixed in this change; security and flows).** The class behind each finding was
+fixed, not the instance. (R1, heuristics replaced by exact matches) SEC-I1: whether a workflow still
+runs the check is no longer guessed from patterns — `CHECK_STEPS` in the script holds the sha256 of
+each check step's canonical text (the workflow's top level, the job's own keys, the step: `if`,
+`shell`, `env`, the whole `run` with its arguments; indentation kept relative, comments and blank
+lines dropped), and a commit whose step differs from it is a finding (an intended change is the
+owner's override, then a change of the list, with its task) — so `--base "$PR_HEAD"`,
+`set +o pipefail` with `| tee`, `shell: sh` with `| cat`, quoted keys, odd indentation, a job
+needing a skipped one, a decoy job, a function, a heredoc, a step `env`, a changed trigger each
+fail; `node scripts/process-check.mjs --check-step <workflow>` prints a hash. SEC-I2: `ci.yml` is
+one of the check's own files (a commit to it names its task). FLOW-I1: a placeholder is an answer
+that starts with a marker or holds an unfilled template slot, code spans taken out — prose may name
+`todo` or a `hostile:<tag> n/a` waiver; this entry is a test case of its own. FLOW-I4: a commit that
+only bumps pinned actions (`uses: owner/repo@<40 hex> # vN`, the same action) is no gate change, so
+Dependabot needs no task; anything more is judged. (R2, one script) SEC-I5, FLOW-L6: Playform's
+`scripts/process-check.mjs` is platform-foundation's byte for byte (its settings are in
+`scripts/process-check.app.json`), `scripts/process-check.sha256` records its hash, and a test in
+both repositories compares them and refuses an exclude of either. (R3, sync trust) SEC-I3: a sync's
+sha must descend from the last sync's (the nearest sync subject with a full sha, else the sync
+config's `lastSynced` — Playform's records `958460a`), and every platform-foundation file the app
+does not exclude must be platform-foundation's in the commit's tree, not only the files it touches;
+SEC-I4: a deletion is the platform's only for a file it had at the sync before and no longer has;
+SEC-L1: `$PROCESS_CHECK_PF_REPO` is gone — tests give `checkRange` a `pfUrl` the CLI cannot set
+(`__tests__/helpers/process-check-run.mjs`); FLOW-L1: the Playform sync workflow's `chmod +x` is
+gone (rsync keeps modes). (R4, a way out of every failure) FLOW-I2: a pushed commit that named no
+task is adopted by a `**Commits:** <sha>` line in its task's entry, and the finding says so; FLOW-I3:
+a true revert's file-for-file test leaves the task registers out (its entry is judged on its own);
+FLOW-I5: an app's `(platform TASK-nnn)` needs platform-foundation's entry (synced, complete) and an
+entry of the app's own register that references `platform TASK-nnn`, touched — sync first, then the
+app's commit; FLOW-I6: CI's Layer 0f no longer reads the title (a retitle could not re-run it): the
+base's check alone judges it, and `process-check-title.yml` is removed; FLOW-I7: the owner steps
+below; FLOW-L5: a push whose base a force-push dropped is judged from the merge base with
+`origin/staging`, and the warning says so; SEC-L2: a baseline key is re-keyed only when a key it
+replaces went with its file (deleted, or renamed by git), and the total does not rise. (R5) FLOW-L2:
+a finding says why — a sync subject's "not a pure sync: …" with each file and its reason, a threat
+model's "the change touches <path>, a high-tier path"; FLOW-L3: CLAUDE.md states the high-tier rule
+and links `scripts/risk-tiers.json`; FLOW-L4: a refused override prints the comment line to paste,
+the head's sha filled in. Each fixture of both reviews is a regression test (`process-check.test.ts`,
+`process-check.mutation.mjs`, `workflow-hygiene.test.ts`), each seen failing against the round-5
+script. The round-5 paragraph above names `process-check-title.yml` and pattern-judged steps:
+both are superseded here. Mutation testing (Stryker on the round-6 code, every mutant run in four
+line-range chunks, then incremental): 99.23% — 3041 mutants, 2910 killed, 55 timed out, 23
+equivalent ones surviving (listed in the Self-review), 53 marked equivalent in the script with their
+reason. The 380 survivors of the earlier runs over round 6's first code (122, 93 of a run stopped
+at the session's limit, 103 and 62) and the 43 of the final full run were each killed by a new
+case (six, each saying what it kills), removed by simpler code, or read and found equivalent.
+Bounded (the coordinator's follow-up): Stryker runs incrementally from the committed
+`reports/stryker-incremental.json` — measured on two cores, 46 s with nothing changed, 9–13 min
+after this round's last edits (68–238 mutants re-run), against 2 h 46 min for every mutant (chunks
+of 41, 15, 77 and 33 min); the suite stops at its first failing case (a killed mutant costs the
+cases up to it, not the whole suite's 45 s); the job
+has `timeout-minutes: 240` and writes its time to the job summary; the check refuses a committed
+report whose copy of the script is not the head's (and CI runs every mutant when the suite or the
+config changed, since Stryker's command runner cannot see a test change).
+
+**Review round 7 and the owner's cut (fixed in this change).** The owner cut TASK-200 back to
+catching our own mistakes. It is no longer a tamper-proof gate: one person can push to these
+repositories (the owner), outsiders are kept out by GitHub's 2FA and rulesets, and the owner merges
+every pull request. Round 7's findings that needed an actor who does not exist (a second author
+forging a sync record, a mutation report, a pin bump or a sibling step of the check's job) are out of
+scope, not residuals; the machinery they attacked is removed (_Deliberately not built_ below).
+Fixed: (flows-I1) ratchet baselines are compared with the later of the merge base and the commit
+that brought in the script, so raises made before the rule do not fail the first promotion
+(platform-foundation develop→staging gave `screen-literal-baseline.json: count 312, the base has
+287`; Playform 350 against 342) — the promotion is a regression case in both suites, and the check
+passes on the real develop→staging and develop→main ranges of both repositories; (flows-I3) a revert
+whose target is earlier in the same range, and judged there, is a true revert: the pair is a net
+no-op, and an entry it removes or restores passes; a `Revert "…"` that is not one says how to make it
+one; (flows-I4) for an app's `(platform TASK-nnn)` the Threat model of a high-tier change comes from
+the app's entry that references `platform TASK-nnn`, never from platform-foundation's synced entry
+(Playform's `docs/PLAYFORM_TASKS.md` says so). From the tests review: a `**Commits:**`
+hex inside a commit's sha but not at its start, or glued to other characters, adopts nothing (two
+cases); a register on a gate or code path (`scripts/process-check-notes.md`) is not a register, so
+a revert of it alone is judged (survivor 2098); a baseline gap with an empty caller is no key
+(the caller regex needs one, its `disable` removed with the case); five wrong `Stryker disable`s
+(the `hasPath` stdio and the text cache) removed, their mutants killed; the jest usage test asserts
+the usage line. Superseded by the cut (described in the round-5 and round-6 paragraphs above,
+removed now): the base's check (`process-check-base.yml`, `pull_request_target`) and every judgement
+of a pull request's title; both overrides; `CHECK_STEPS` and the exact-match step rule; the pin-bump
+exemption; the mutation workflow, its committed incremental report and its stale-report check (the
+round-6 score of 99.23% was of code since deleted); and the sync-forgery machinery. Mutation testing
+is now a manual check (`npm run test:mutation`, by hand whenever `scripts/process-check.mjs` changes,
+at least 90%): the final full run (round 8's script and suite, every mutant, two cores, the race
+fixed) scored **97.79%** — 1,942 mutants: 1,848 killed, 51 timed out, 43 survived — in **68 min
+17 s**. The round-6 and round-7 scores were measured while two workers raced on a shared fixture
+(round 8) and may be inflated.
+
+**Review round 8, final (fixed in this change).** Flows: (I-1) baselines are compared with the merge
+base when it already has the rule, else with the rule's first commit — a promotion's merge base is
+the old staging or main tip, a merge develop does not have, so the pushes to staging and main and
+the pull request staging → main after the first promotion now pass (cases in both suites, on
+merge-based fixtures; and the real refs); (I-2) the baselines and `platform-paths.json` are no
+longer High tier (they change with routine work; rule 4 already holds their direction); (I-3) git's
+`Reapply "…"` (a revert of a revert, git 2.43+) is a revert; (L-1) a platform task named plainly in
+an app says to use `(platform TASK-nnn)` and the app's register, and Playform's CLAUDE.md states it
+and `**Commits:**` adoption; (L-4, L-5) a change carried in a sync commit is listed as not caught,
+the sync workflow and template say a sync is exempt by its subject alone, and PLAYFORM_SYNC says
+never to amend into one; a commit authored by Dependabot is exempt only as Dependabot or GitHub
+committed it (one amended by hand is judged); the no-entry and baseline-added findings name their
+remedy. Tests: the mutation suite's CLI case writes its summary in a directory of its own (two
+Stryker workers raced on the shared fixture); cases for one hostile tag missing, a baseline lowered
+after the rule then raised below the rule's value, a head before the rule, a true revert that
+restores code but not its entry (its `Stryker disable` removed), an incomplete platform entry,
+`platform TASK-2001` against `TASK-200`, a route test in a sync commit, a sync ref with a space,
+Dependabot's exact name; `guard-self-tests`' no-assertion case imports its scan and asserts the
+message, and a file tagged both ways; the fake-fetch and open-input count checks planted. A live
+sync bug, fixed with it: Playform syncs from platform-foundation's `main`, held at v5.1.1
+(`3236c51`, 23 October) while every batch went to `develop`, so each daily run proposed rolling
+Playform back (pull request #600: 462 files, −31,898 lines, CI red) and opened a new pull request
+for the same sha without closing the old ones (seven; the owner closed them and disabled the
+workflow). The sync workflow (Playform's, and the template) now opens nothing when a sync pull
+request for the same sha is open, and a new one closes every older `auto-sync/*` one with a comment
+and deletes its branch (REST via `gh api`; `workflow-hygiene` runs the step with a stub `gh`);
+PLAYFORM_SYNC says the sync stays paused while platform-foundation's `develop` is ahead of `main`;
+Gotcha 81 records the lesson; owner step 4 re-enables it.
+
+**Owner steps** (GitHub settings; not in the repository), in platform-foundation and Playform:
+(1) rulesets: no force-push and no deletion on `main`, `staging` and `develop`; a tag ruleset for
+`v*` (creation, update and deletion restricted to admins); (2) **CI Pipeline** a required status
+check on `staging` and `main` only — never on `develop`, where day-to-day commits are pushed
+directly; (3) 2FA on for the owner's account; (4) after the final promotion — once
+platform-foundation v6.0.0 is on `main` — re-enable Playform's sync:
+`gh workflow enable sync-from-foundation.yml -R Datankare/playform`, then
+`gh workflow run sync-from-foundation.yml -R Datankare/playform`; verify that a sync pull request
+opens with a small diff and green CI, or that the run reports up to date
+(`gh run list -R Datankare/playform --workflow sync-from-foundation.yml --limit 1`). A pushed commit on `develop` that named no task is
+fixed by adopting it (`**Commits:** <sha>` in its task's entry), never by a force-push.
+
+**Deliberately not built (single-owner threat model).** Each protection below guarded against an
+actor these repositories do not have: someone other than the owner able to push or open a pull
+request. The trigger to build each is the same: **adding another contributor with push or PR
+rights**. Until then, each would cost runs and upkeep and catch nothing the owner's own review does
+not.
+
+| Protection, not built                                                                                                                                                  | What it would stop                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| The base branch's copy judging each pull request (`pull_request_target`), and judging pull request titles                                                              | A pull request weakening the check that then judges it, or a squash titled off-task                                 |
+| An override by an owner's review or comment, bound to the head's sha                                                                                                   | A false positive of the base's check (no base's check, nothing to override)                                         |
+| Exact-match check steps (`CHECK_STEPS`) and the soft-step heuristics                                                                                                   | A contributor's subtle edit of the check's job (a sibling step, `NODE_OPTIONS`)                                     |
+| The pin-bump exemption for `uses:` lines                                                                                                                               | Dependabot's bumps needing a task (now exempt by its author, `dependabot[bot]`)                                     |
+| The workflows as special gate paths (a `ci.yml` change is an ordinary change naming a task)                                                                            | A contributor's workflow edit passing as unrelated                                                                  |
+| The mutation workflow, a committed incremental report and its stale-report check                                                                                       | A contributor's forged or stale mutation score                                                                      |
+| Sync verification: platform-foundation fetched, protected refs, ancestry and descent, blob and mode equality, deletion rules, `lastSynced`, the script's hash identity | A contributor's app change, rollback or edited script passing as a sync (a sync is now exempt by its subject alone) |
+
+**Design check**
+
+- **Reach:** CI and the test suite only. No route, screen, role, operator, agent or guest path
+  changes; `readJsonBody` is new and no route calls it yet; the process check reads git history in
+  CI and runs nothing from the change under test beyond what CI already runs.
+- **Races:** none at run time. In CI each push or pull request checks its own range; two checks
+  share nothing but read-only git objects.
+- **Dependencies down:** git history missing: a shallow clone fails the step; a force-push's lost
+  `before` falls back to the merge base with `origin/staging`, with a warning (round 6). No network,
+  no database.
+- **Erasure leftovers:** none: nothing is stored. The route fixtures hold the test's synthetic
+  schedules and codes, no person.
+- **Screens × responses:** no screen changes. The Jobs console's tests now take the real PATCH
+  answers (200 applied, 202 held: `success: false, pending: true`) and the real GET; the console
+  shows "done" and "held for a second operator's approval" for them (the tests pass unchanged).
+- **Journeys touched:** none: no page or route changes, `journey-exemptions.json` unchanged.
+- **Weakens a tenant's protection?** No: no run-time code path changes; `readJsonBody` only adds a
+  refusal, where a route adopts it, and no rule is relaxed (every baseline only shrinks).
+
+**Threat model**
+
+- **Boundary:** CI Layer 0f, on every push and pull request, between a change and `develop`,
+  `staging` and `main`; its own files and its baselines. The actors that exist: the owner (the only
+  account that pushes or merges, with 2FA), working by hand or through an AI agent; Dependabot
+  (opens bump pull requests); the sync workflow (opens sync pull requests in Playform). Outsiders
+  cannot push: GitHub's 2FA and rulesets keep them out, and the owner merges every pull request.
+- **Bypasses** (our own mistakes, by hand or by an agent): a subject without its task, or naming one
+  only in passing; an entry without its blocks, or not touched; a placeholder answer; a high-tier
+  change without a Threat model; the script or its step dropped or softened by accident
+  (`|| true`, `continue-on-error`, `if:`); a merge or a revert carrying code of its own; a baseline
+  raised or re-keyed upward; a hostile tag missing from a route test.
+- **Forgeries:** none in scope. Each needs an actor who does not exist (a second author forging a
+  sync, a mutation report, an override or the check's job); such a finding is out of scope, not a
+  residual (_Deliberately not built_ above). A mistaken sync subject is caught as far as its form: a
+  short sha or a human's commit under a bump subject is judged.
+- **Legitimate flows:** direct pushes to `develop` naming their task; merge commits and the owner's
+  promotions (the first included); GitHub's Revert button, and a revert of a commit earlier in the
+  same range; a sync, exempt by its subject; a Dependabot bump, exempt as Dependabot or GitHub committed it; Playform's own
+  register and `(platform TASK-nnn)`; a force-pushed base (judged from the merge base, with a
+  warning).
+- **Agreed before code:** round 5's block was written after four rounds of code and recorded the
+  owner's round-5 brief; this one records the owner's round-7 decision, given before the cut. REVIEW.md
+  18 applies from the next change to a gate.
+
+**Self-review**
+
+- **Consumers checked:** every caller of `readJsonObject` (unchanged, counted in each baseline);
+  `platform/admin/input-keys.ts`'s consumers — `readJsonBody`, the command bar
+  (`app/api/admin/ai/command-bar.ts`), the config assistant (`config-ai/execute`) and
+  `input-keys-guard` — the strict reading applies to `readJsonBody` alone, the command bar's two open
+  values unchanged; `scripts/module-manifest.cjs`'s readers of `platform-paths.json`
+  (unchanged in the end: round 2 dropped `platformTree`; round 7 made a sync exempt by its subject
+  alone); both repositories' `ci.yml` (the step, against `workflow-hygiene`'s new
+  check); Playform's sync excludes and its 81 files PF does not ship; the 76 guards (81 in Playform)
+  against the stricter `[self-test]` rule; `review-process` against CLAUDE.md, REVIEW.md and the
+  PR template; the Jobs console against the real replies.
+- **Hostile re-read:** tried to pass each check without doing the work: a subject without its task;
+  an old task's entry without blocks; a placeholder or a three-word answer; an entry not touched; a
+  hand-written body moved into a const, a tuple, a mocked `apiFetch` or a defined `fetch`; a fixture
+  edited by hand; `readJsonBody(request, {})` or a nested `{}`; a read through an alias, a namespace,
+  another parameter name or a clone; a bare waiver, a tag in a comment or a skipped test; a
+  template-literal route import; the script deleted and restored, or stubbed; the CI step dropped and
+  restored; an evil merge; a baseline raised, a file or gap added, a floor lowered; a sync subject on
+  the app's own file, on an excluded file with its exclude dropped, on a file only the commit's own
+  manifest lists; (removed by round 7's cut: a sync PR title over the app's change); a self-test skipped, todo, failing or
+  `expect(1).toBe(1)`; the registry's status for another code; an init it cannot read; (round 2) a
+  clean merge of a file both sides edited, an evil merge, a conflict resolved without a task; a
+  sync listing its own new file in the manifest, or listing it first and changing it after, a file
+  differing from platform-foundation's blob, a bad sha; a top-level `openBecause`; a mocked
+  `playformApiFetch`; an orphan history merged in; a baselined file renamed with its count raised; a
+  margin raised; a step made `|| true` or `continue-on-error`; a waiver inside a template; a pull
+  request weakening the check (then the base's copy judged it; removed by round 7's cut). Each is
+  refused by a test above, seen failing against the old code. Flows checked: Dependabot (no code
+  path: not judged); a revert of a code commit (named by its subject's task, as before) and of this
+  rule (refused: it deletes the script); a merge from develop (clean: nothing; a conflict's
+  resolution touching code needs a task in the merge subject); a pure sync (skipped); a first push
+  (`HEAD^1`). Known consequence: a scan widened to find more cannot raise its baseline — what it finds
+  is fixed in the same change. Residuals: R-83 (Playform's two newly counted screen tests), R-84 (the
+  check runs the head's own copy of itself — fixed in round 2).
+- **Round 5, each fix attacked (REVIEW.md 22):** (A1) a comment by a non-owner, by a docs-only
+  owner, edited a second later, without `created_at`, naming another head, a short or upper-case
+  sha, indented or quoted, with a three-word reason, and a CODEOWNERS whose last line gives the
+  script to someone else or that the check cannot read — each refused; (A3) a sync naming a commit
+  only on `refs/pull/1/head` of a server that would hand it over — one pack served, the commit
+  missing, judged; with any one of the three settings left set, a second pack (seen failing);
+  (A4) `* @other` then `**/scripts/process-check.mjs @owner`, and the reverse; `!`, `[`, `\`, an
+  owner without `@` — refused; (A5) a merge that only sets `+x`, swaps a file for a symlink to the
+  same bytes, or moves a submodule; a revert that restores the bytes but not the mode; a sync of a
+  platform file made executable, or a symlink to its bytes — each judged; (A6) `-f`, `-F`,
+  `--field`, `--raw-field`, `--input`, `-fbody=x`, a field on a continued line, `--method=PATCH`,
+  `-X patch`, curl `-d` and `--request DELETE` — each refused; (B2) a revert pull request with a
+  commit of its own beside the revert — its title judged; (B5) a "deletion" of a file
+  platform-foundation still has — judged; (B6) ` (#x)`, ` #41`, ` (#41) more`, `(#41)` after the
+  sha — judged; (B7) a split that raises the total, a re-key that raises an existing key, a second
+  gap with a removed gap's tail — each refused; (B8) `as TASK-nnn said`, `(TASK-nnn) for now`,
+  `(see TASK-nnn)` — none names a task; (C2) every soft form in the list above, and the failing ones
+  (`|| exit 1`, `|| { …; exit 1; }`, `2>&1`, `shell: bash`, an `else` running the override) kept;
+  threat model: a task touching `lib/auth/**` (a high area), `.github/`, `REVIEW.md`, `CLAUDE.md`,
+  `.gitattributes`, the risk tiers or the check's files without the block, and with the tier lowered
+  in the same change — each refused; a revert of such a commit, and `docs/REVIEW.md`, not.
+- **Round 6, each fix attacked (REVIEW.md 22):** (SEC-I1) the step weakened 23 ways against the real
+  workflows — dropped, `--base "$PR_HEAD"`, `|| true`, pipefail off with `| tee`, `shell: sh` with
+  `| cat`, a quoted `if` or `continue-on-error`, `-   name:` indentation hiding an `if`, `needs` on a
+  skipped job, a decoy job before it, a function, a heredoc, `set +e`, a `trap`, `exit 0` first,
+  `continue-on-error`, a step `env`, the `pull_request` trigger renamed, a default shell, the base
+  workflow's `|| :`, its override replaced by `exit 0`, `issues: write`, the file removed — each a
+  finding; a comment, a blank line, trailing spaces or another step's edit is not (a key moved under
+  another is: the indentation is kept). (SEC-I2) a `ci.yml`-only commit with no task — refused.
+  (SEC-I3) a sync to an older protected sha after a newer one; a sync naming the newer sha that
+  brings one of its two changed files; no recorded last sync — each judged. (SEC-I4) the app's own
+  `lib/route-guard.ts` deleted under a sync subject; a platform file still in platform-foundation
+  deleted — judged; a deletion pushed apart from its sync, naming the same sha — passes (the sync
+  before it had the file). (SEC-L1) the CLI with `$PROCESS_CHECK_PF_REPO` set to a test
+  platform-foundation and github.com routed nowhere: out of reach, the variable unread. (SEC-L2) a
+  key swapped for another while its file stays, a gap moved to a caller that is not a rename —
+  refused. (FLOW-I1) this entry's own blocks; "skipped, todo or failing", a code-span `<reason>` —
+  answered; `<who>` in prose, "TODO:" or "n/a" first — refused. (FLOW-I2) a `Commits` line with a
+  6-hex prefix, or a sha only mentioned in prose — no adoption. (FLOW-I3) the Revert button after
+  another task edited the register — a true revert. (FLOW-I4) a bump that also renames the
+  workflow, swaps the action's owner, unpins it or drops the line — judged. (FLOW-I5) an app entry
+  that does not reference the task, none touched, a platform entry not yet synced (incomplete),
+  `(platform TASK-200, TASK-200)` (named plainly too: its own entry must be touched) — each judged.
+  (FLOW-I6) the title no longer reaches Layer 0f (`--pr-title`, `pull_request.title` absent).
+  (FLOW-L4) a refused override's output carries the exact line. Hostile re-read of this round's own
+  code: a `defaults:` placed after the `jobs:` block, an `if: false` placed after the job's steps,
+  a `name:` line inside another step's script, steps at the same indentation as `steps:` — each
+  read as YAML reads it (the first two are now changes of the canonical text); a `**Commits:**`
+  quoted in prose or a code span adopts nothing (only the line itself). (Stryker bounded) a committed
+  report whose copy of the script differs by a byte, one that is not JSON, one scoring 50% or with
+  no mutants — each a finding; a push changing only the suite or the Stryker config, a missing
+  report, a base the runner cannot resolve, a dispatch or the weekly run — each a full run, not an
+  incremental one (`workflow-hygiene.test.ts`, the mode step run with a stub `npx`). The 23
+  surviving mutants of the round-6 code (much of it removed by round 7's cut), each read and found equivalent: `<` → `<=` at the end of a text in the lexer
+  (five loops: past the end every test fails alike), in `nameStatus` (pairs) and for a skipped
+  describe's end (never a test's start); the `git --version` and platform caches (asked again, the
+  same answer); `^` of a tree entry (it starts with its mode); four partial-clone settings (git
+  writes them itself on a filtered fetch); `platformAt(null)` (no files either); a failed
+  `rev-parse` read as `""` (on no base); a revert of registers only (never judged); the rethrows
+  after `LexError`, `MergeUnjudgeable` and `CodeownersError` (corrected in round 7: `changes()` calls
+  git, which can throw there too, for example on a missing blob during `--remerge-diff`; the verdict
+  is the same, exit 1 either way, and only the output differs); `force`
+  on removing an existing directory; `target !== null` (git knows no "null"); the test-file filter
+  (`isRouteTest` reads only test files). A mutant is marked in the script only when every mutant of
+  its mutator on that line is equivalent (the comment silences them all): marking these would hide
+  killed ones.
+- **Round 7 and the cut, each fix attacked (REVIEW.md 22):** (flows-I1) the first promotion
+  develop→staging and develop→main of both repositories, on the real refs, and a fixture raising a
+  baseline before the rule's commit — pass; a raise after it — refused. (flows-I3) `git revert` of a
+  commit earlier in the range — a net no-op, no task, notes it; a partial revert of it (one file
+  left) — judged, and the message names the remedy. (flows-I4) an app commit naming
+  `platform TASK-nnn` over `.github/workflows/deploy.yml` with an app entry lacking the Threat model —
+  refused; with it — passes. Adoption: the commit's sha whole and by its start adopts; a hex inside
+  it, or glued to letters — not. Exemptions: a sync subject with a short sha, and a human's commit
+  titled as Dependabot's (`ci: bump … (dependabot[bot])`) — each judged; a commit authored by
+  `dependabot[bot]` — not. The CLI: `--pr-title`, `--override` and any unknown flag — exit 2 with
+  the usage line. Hostile re-read of the cut: no code reads a title, the platform-foundation
+  repository, `lastSynced` or a mutation report any more (`workflow-hygiene` asserts the base's check
+  is gone and no step passes `--pr-title`); a `ci.yml`-only change still needs a task; the step
+  disabled by `continue-on-error` or an `if:` is still a finding.
+- **Round 8, each fix attacked (REVIEW.md 22), and the final run's survivors:** each round-8 fix was
+  seen killing its hand mutant (the merge base or the rule's commit swapped or forced, `ruled(head)`
+  forced, `Reapply` dropped from either pattern, `missing.length > 1`, a bogus revert sha, `\b`
+  dropped from the platform ref, the platform entry's completeness dropped, Dependabot by author
+  alone or by prefix, `\S+` widened). The sync step was run with a stub `gh`: the same sha open
+  (full or short) opens nothing; other shas are closed with a comment and their branches deleted.
+  The 43 survivors of the final run, read: equivalent — `<` → `<=` at a text's end in the lexer
+  (five) and for a skipped describe's end; `hasPath`'s stdio (stderr captured or ignored, never
+  shown); the text cache and the `git --version` cache bypassed (the same answer read again, seven
+  on line 811, one each on 813 and 844); not proven equivalent, filed for the next change to the
+  check (R-93 in the sweep's residuals) — the `ls-tree` anchor (1016), a failed `git` read as `""`
+  (1033), the empty-undone guard (1086), the `LexError`/`MergeUnjudgeable` rethrows (1116, 1429),
+  the removed-entry continue (1172), the app-entry `gaps.every` (1212, four), the app message's
+  register join (1220), the deleted-set filter (1264), the pre-rule list (1324), the test-file
+  filter (1437), `target !== null` (1460, 1462), the in-range revert's bookkeeping and note (1473,
+  1498 ×2, 1502 ×2), the name-status pair loop (830–831, three), the octopus guard (881) and the
+  CLI's missing value (1547).
+
+_Last updated: November 2, 2026 (TASK-200 — the engineering process, enforced; the owner's single-owner cut)_
+
+_Previously updated: November 1, 2026 (TASK-197 rebased onto TASK-194; its migration renumbered 063)_
 
 _Previously updated: November 1, 2026 (TASK-194: the focused verification, round 23, fixed)_
 

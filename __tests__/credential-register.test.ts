@@ -2,6 +2,8 @@
  * TASK-197 (audit D-6): every credential is recorded with its expiry, and an expiry is caught
  * before it arrives.
  *
+ * @guard a secret with no register row, or a credential near or past its expiry
+ *
  *   - the register (docs/credential-register.json — each repository keeps its own) has a row
  *     for every secret a workflow reads, and every row is well formed (a scan, not a list);
  *   - scripts/check-credential-expiry.mjs fails on a credential within the lead time or past
@@ -100,7 +102,7 @@ describe("the credential register (TASK-197, audit D-6)", () => {
     expect(register().credentials.length).toBeGreaterThan(0);
   });
 
-  it("fails on a credential within the lead time, or past it, naming where it lives", () => {
+  it("[self-test] fails on a credential within the lead time, or past it, naming where it lives", () => {
     const soon = check({ leadDays: 30, credentials: [row(day(10))] });
     expect(soon.code).toBe(1);
     expect(soon.out).toContain("::error::SOME_KEY expires on");

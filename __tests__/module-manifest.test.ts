@@ -1,6 +1,8 @@
 /**
  * __tests__/module-manifest.test.ts — platform/modules/manifest.json is true (ADR-054 D6)
  *
+ * @guard a module manifest that does not match the files, the definitions or the lint boundary
+ *
  * The manifest — the platform's merged with the app's (platform/modules/app-manifest.json,
  * TASK-157) — says where each module's files are today; the lint boundary, the boundary test,
  * the conformance composition, the migration replay and (Sprint 7S) the consumer sync all read
@@ -119,17 +121,32 @@ describe("module manifest (ADR-054 D6)", () => {
     }
   });
 
-  it("no file is in two modules' zones", () => {
+  /** Files two modules' zones both hold. */
+  const doubleZoned = (zones: readonly [string, readonly string[]][]): string[] => {
     const owner = new Map<string, string>();
     const twice: string[] = [];
-    for (const id of IDS) {
-      for (const file of zoneFiles(id)) {
+    for (const [id, files] of zones) {
+      for (const file of files) {
         const first = owner.get(file);
         if (first) twice.push(`${file}: ${first} and ${id}`);
         owner.set(file, id);
       }
     }
-    expect(twice).toEqual([]);
+    return twice;
+  };
+
+  it("no file is in two modules' zones", () => {
+    expect(doubleZoned(IDS.map((id: string) => [id, zoneFiles(id)]))).toEqual([]);
+  });
+
+  it("[self-test] reports a planted file that two modules both claim, and an unknown path", () => {
+    expect(
+      doubleZoned([
+        ["voice", ["platform/voice/a.ts", "platform/shared/b.ts"]],
+        ["social", ["platform/social/c.ts", "platform/shared/b.ts"]],
+      ])
+    ).toEqual(["platform/shared/b.ts: voice and social"]);
+    expect(mm.zoneOf(MANIFEST, "platform/planted/unlisted.ts")).toBeNull();
   });
 
   it("every file in a module directory is listed by exactly one module (bijection)", () => {

@@ -1,6 +1,8 @@
 /**
  * __tests__/tool-boundary-coverage.test.ts
  *
+ * @guard a config tool with no boundary classification
+ *
  * TASK-064. Every registered config tool must have a boundary classification.
  *
  * An unlisted tool is the only way executeConfigTool's fallback fires, and the fallback now
@@ -13,10 +15,36 @@
 import { CONFIG_TOOLS } from "@/platform/admin/config-handlers";
 import { TOOL_BOUNDARIES } from "@/platform/admin/types";
 
+/** Tool ids with no boundary, and boundaries naming no tool. */
+function boundaryFindings(
+  ids: readonly string[],
+  boundaries: Readonly<Record<string, string>>
+) {
+  return [
+    ...ids.filter((id) => !boundaries[id]).map((id) => `${id}: unclassified`),
+    ...Object.keys(boundaries)
+      .filter((id) => !ids.includes(id))
+      .map((id) => `${id}: not a registered tool`),
+  ];
+}
+
 describe("tool boundary coverage", () => {
   it("finds the tools it means to (self-test before any absence counts)", () => {
     // Gotcha 64: an absence check that passes because it found nothing proves nothing.
     expect(CONFIG_TOOLS.length).toBeGreaterThan(5);
+  });
+
+  it("[self-test] reports a planted unclassified tool and a stale classification", () => {
+    const ids = [...CONFIG_TOOLS.map((t) => t.id), "planted_tool"];
+    expect(
+      boundaryFindings(ids, { ...TOOL_BOUNDARIES, stale_tool: "cognition" })
+    ).toEqual(["planted_tool: unclassified", "stale_tool: not a registered tool"]);
+    expect(
+      boundaryFindings(
+        CONFIG_TOOLS.map((t) => t.id),
+        TOOL_BOUNDARIES
+      )
+    ).toEqual([]);
   });
 
   it("classifies every registered tool", () => {

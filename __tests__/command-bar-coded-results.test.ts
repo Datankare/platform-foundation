@@ -5,6 +5,8 @@
  * __tests__/command-bar-coded-results.test.ts — every failed command-bar result carries a code of
  * the error-code contract (TASK-199; TASK-194 rebase review round 2, finding 2)
  *
+ * @guard a command-bar failure that is not a coded result with its params
+ *
  * What a command-bar action returns reaches POST /api/admin/ai/execute and the admin's screen.
  * A refusal's free text ("User not found", `Role "x" not found`, a database's message) is no
  * answer a screen can translate or act on, and a caught exception's text can leak a table or a
@@ -437,7 +439,7 @@ describe("command-bar results are coded (TASK-199; rebase round 2, finding 2)", 
   });
 
   // Round 5, item 9: the scan over planted source — each rule catches what it means to.
-  it("catches a planted kind mismatch: a list given as a string (round 5, item 9)", () => {
+  it("[self-test] catches a planted kind mismatch: a list given as a string (round 5, item 9)", () => {
     const planted = scanSource(
       "planted.ts",
       [

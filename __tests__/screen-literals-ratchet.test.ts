@@ -8,6 +8,8 @@
  * literals, and moving strings into the catalog means lowering the baseline in the same commit.
  * Sprint 7B takes it to zero.
  *
+ * @guard English text on a screen that is not from the message catalog
+ *
  * The baseline file is per repository (a consumer keeps its own; it is not synced).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
@@ -128,7 +130,7 @@ describe("screen literals — ratchet (ADR-051, TASK-110)", () => {
     expect({ count: allSites().length }).toEqual({ count: baseline.count });
   });
 
-  it("finds text, labels and attributes; ignores expressions (self-test)", () => {
+  it("[self-test] finds text, labels and attributes; ignores expressions", () => {
     const sf = ts.createSourceFile(
       "probe.tsx",
       'const a = <div title="Hello" data-x="y">Save {name} <input placeholder="Email" alt={t("k")} /></div>;',

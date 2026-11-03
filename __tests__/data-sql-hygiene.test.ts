@@ -4,6 +4,8 @@
 /**
  * __tests__/data-sql-hygiene.test.ts — data access stays inside its rules (ADR-053 D4)
  *
+ * @guard database access outside platform/data, SQL built from values, an unlisted owner transaction
+ *
  *  1. Only platform/data talks to the Postgres driver.
  *  2. Only platform/data sets the tenant (app.tenant_id); a stray set_config elsewhere could put a
  *     transaction in another tenant (__tests__/db proves that the setting is what isolates).
@@ -169,7 +171,7 @@ describe("data access hygiene (ADR-053 D4)", () => {
     expect(scan.lenderCallers).toEqual({ "b.ts": ["exec", "run"] });
   });
 
-  it("recognises SQL built from values (self-test)", () => {
+  it("[self-test] recognises SQL built from values", () => {
     const re = SQL_FROM_VALUES;
     expect(re.test("tx.query(`select ${x}`)")).toBe(true);
     expect(re.test('tx.query("select " + x)')).toBe(true);

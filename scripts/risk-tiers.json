@@ -91,7 +91,12 @@
         "scripts/sustainability-gate.sh",
         "eslint.config.mjs",
         "eslint-rules/**",
-        "journey-exemptions.json"
+        "journey-exemptions.json",
+        "scripts/process-check.mjs",
+        "scripts/process-check.app.json",
+        "stryker.config.mjs",
+        "__tests__/process-check.mutation.mjs",
+        "scripts/fetch-wrappers.app.json"
       ],
       "content": ["\\bpull_request_target\\b"]
     },

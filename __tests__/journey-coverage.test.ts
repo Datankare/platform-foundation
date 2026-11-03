@@ -2,6 +2,8 @@
  * __tests__/journey-coverage.test.ts — every screen and route has a journey, or says why not
  * (TASK-198, D-21)
  *
+ * @guard a page or API route with no journey and no exemption, or an exemption added
+ *
  * The AI command bar's retired model (TASK-186) reached users because no journey ran that path
  * with real providers, and nothing said so. Here, statically, for this repository (a consumer runs
  * the same file over its own app and journeys):
@@ -186,12 +188,23 @@ export function reaches(named: string, unit: string): boolean {
   return match(0, 0);
 }
 
+/** The units no journey reaches and no exemption names: what the coverage check refuses. */
+export function uncovered(
+  all: readonly string[],
+  covered: ReadonlySet<string>,
+  exempt: Readonly<Record<string, string>>
+): string[] {
+  return all.filter((u) => !covered.has(u) && !exempt[u]);
+}
+
 /** The units some e2e test or live journey reaches. */
-export function coveredUnits(all: readonly string[]): Set<string> {
-  const sources = ["e2e", "e2e-live"]
+export function coveredUnits(
+  all: readonly string[],
+  sources: readonly (readonly [string, string])[] = ["e2e", "e2e-live"]
     .flatMap((d) => walk(join(ROOT, d)))
     .filter((f) => /\.tsx?$/.test(f))
-    .map((f) => [f, readFileSync(f, "utf8")] as const);
+    .map((f) => [f, readFileSync(f, "utf8")] as const)
+): Set<string> {
   const named = sources.flatMap(([f, text]) => namedPaths(text, f));
   return new Set(all.filter((u) => named.some((p) => reaches(p, u))));
 }
@@ -240,6 +253,15 @@ describe("journey coverage (TASK-198, D-21)", () => {
   });
 
   const all = units();
+  it("[self-test] reports a planted page no journey names and that has no exemption", () => {
+    const units = ["/planted", "/api/planted/[id]", "/exempted"];
+    const covered = coveredUnits(units, [
+      ["e2e/planted.spec.ts", 'await page.request.get("/api/planted/42");'],
+    ]);
+    const exempt: Record<string, string> = { "/exempted": "no journey: planted" };
+    expect(uncovered(units, covered, exempt)).toEqual(["/planted"]);
+  });
+
   it("finds the pages and the API routes", () => {
     expect(all).toContain("/");
     expect(all).toContain("/admin");
@@ -250,7 +272,7 @@ describe("journey coverage (TASK-198, D-21)", () => {
     const file = readExemptions();
     const covered = coveredUnits(all);
     const exempt = file.exemptions;
-    const missing = all.filter((u) => !covered.has(u) && !exempt[u]);
+    const missing = uncovered(all, covered, exempt);
     expect(
       missing.map(
         (u) =>

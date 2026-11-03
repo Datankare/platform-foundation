@@ -2,6 +2,8 @@
  * __tests__/feature-permissions-enforced.test.ts — every feature permission is guarded somewhere,
  * or reserved with a reason (TASK-194 round 1, finding C4)
  *
+ * @guard a feature permission no guard checks and no reservation explains
+ *
  * FEATURE_PERMISSIONS maps a feature to the permission it needs; the guard (requireActorWithStatus,
  * or an app's declared verifier) enforces it for the feature it is called with. A mapping no route
  * names is a permission an administrator can grant and take away to no effect — the defect C-4
@@ -102,7 +104,7 @@ describe("feature permissions are guarded or reserved (TASK-194 round 1, C4)", (
     expect(stale).toEqual([]);
   });
 
-  it("counts a literal or a const, and only the guard's feature argument (self-test)", () => {
+  it("[self-test] counts a literal or a const, and only the guard's feature argument", () => {
     const found = guardedFeatures(
       [
         {

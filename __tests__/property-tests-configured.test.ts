@@ -1,6 +1,8 @@
 /**
  * __tests__/property-tests-configured.test.ts — every property test obeys the fuzz job's run count
  *
+ * @guard a property test that sets its own run count or seed, or skips the shared configuration
+ *
  * The scheduled fuzz job raises FC_NUM_RUNS to search far harder than a commit can afford. A
  * property test that does not take its parameters from helpers/fuzz.ts silently runs the default
  * count there too, so the job would claim a depth it did not reach.
@@ -38,9 +40,40 @@ const PROPERTY = ALL.filter((f) =>
   /^import[\s\S]*?from\s*["']fast-check["']/m.test(readFileSync(f, "utf-8"))
 );
 
+/** What a property test's source does that the fuzz job cannot control. */
+function propertyFindings(file: string, text: string): string[] {
+  if (!/^import[\s\S]*?from\s*["']fast-check["']/m.test(text)) return [];
+  const out: string[] = [];
+  if (!/fc\.configureGlobal\(fuzzParams\(\)\)/.test(text))
+    out.push(`${file}: not configured`);
+  if (/\bnumRuns\s*:/.test(text)) out.push(`${file}: sets numRuns`);
+  if (/\bseed\s*:/.test(text)) out.push(`${file}: sets a seed`);
+  return out;
+}
+
 describe("property tests", () => {
   it("finds the property tests (self-test)", () => {
     expect(PROPERTY.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("[self-test] reports a planted property test with its own run count and seed", () => {
+    // Built so this file does not read as a property test itself.
+    const planted = [
+      `import fc from "${"fast-"}check";`,
+      "fc.assert(fc.property(fc.nat(), (n) => n >= 0), { numRuns: 5, seed: 42 });",
+    ].join("\n");
+    expect(propertyFindings("__tests__/planted.test.ts", planted)).toEqual([
+      "__tests__/planted.test.ts: not configured",
+      "__tests__/planted.test.ts: sets numRuns",
+      "__tests__/planted.test.ts: sets a seed",
+    ]);
+    expect(propertyFindings("__tests__/plain.test.ts", "it('x', () => {});")).toEqual([]);
+  });
+
+  it("the same scan finds nothing in the repository's property tests", () => {
+    expect(
+      PROPERTY.flatMap((f) => propertyFindings(f, readFileSync(f, "utf-8")))
+    ).toEqual([]);
   });
 
   it("each takes its run count from helpers/fuzz.ts", () => {

@@ -1,0 +1,82 @@
+{
+  "$comment": "TASK-200 rule 3: hand-written response bodies in screen tests, per file, with why. Only shrinks: a file over its count fails (__tests__/fake-fetch-bodies.test.ts), and the file is never raised by hand — no count above the base branch's, no file added (scripts/process-check.mjs, CI Layer 0f). Each repository keeps its own.",
+  "count": 196,
+  "files": {
+    "__tests__/admin-console-first-section.test.tsx": {
+      "count": 12,
+      "reason": "Bodies written by hand for /api/admin/agent-registry, /api/admin/approval-policy, /api/admin/approvals, /api/admin/audit and 11 more; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/admin-console-refused.test.tsx": {
+      "count": 4,
+      "reason": "Bodies written by hand for /api/admin/session; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/admin-console-sign-out.test.tsx": {
+      "count": 6,
+      "reason": "Bodies written by hand for /api/admin/approvals, /api/admin/session, /api/auth/sign-out; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/admin-ui-components.test.tsx": {
+      "count": 2,
+      "reason": "Bodies written by hand for the screen's API calls; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/admin-users-panel.test.tsx": {
+      "count": 24,
+      "reason": "Bodies written by hand for /api/admin/gdpr, /api/admin/users; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/agent-kill-switch-panel.test.tsx": {
+      "count": 10,
+      "reason": "Bodies written by hand for /api/admin/agents/suspend, /api/operator/tenants/t; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/appeal-form.test.tsx": {
+      "count": 2,
+      "reason": "Bodies written by hand for /api/moderation/appeals; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/auth-context-hydration.test.tsx": {
+      "count": 3,
+      "reason": "Bodies written by hand for /api/auth/refresh; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/auth-context.test.tsx": {
+      "count": 1,
+      "reason": "Bodies written by hand for /api/auth/sign-out; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/auth-page-client.test.tsx": {
+      "count": 1,
+      "reason": "Bodies written by hand for /api/auth/sign-in; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/auth-page.test.tsx": {
+      "count": 1,
+      "reason": "Bodies written by hand for /api/auth/guest, /api/features; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/dual-control-keys-panel.test.tsx": {
+      "count": 12,
+      "reason": "Bodies written by hand for the screen's API calls; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/held-actions-panel.test.tsx": {
+      "count": 12,
+      "reason": "Bodies written by hand for /api/admin/approvals, /api/admin/approvals/p1; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/jobs-panels.test.tsx": {
+      "count": 6,
+      "reason": "Bodies written by hand for /api/operator/jobs, /api/operator/jobs/dead/11111111-1111-4111-8111-111111111111, /api/operator/jobs/schedules/moderation.escalation-reaper, /api/operator/jobs/schedules/social.curator/run; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/mfa-enrollment.test.tsx": {
+      "count": 9,
+      "reason": "Bodies written by hand for /api/auth/mfa/setup, /api/auth/mfa/verify; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/r14-admin-unavailable.test.tsx": {
+      "count": 4,
+      "reason": "Bodies written by hand for /api/admin/session, /api/admin/users; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/review-dashboard.test.tsx": {
+      "count": 32,
+      "reason": "Bodies written by hand for /api/moderation/review/review-1/assist; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/task-190-one-list.test.tsx": {
+      "count": 23,
+      "reason": "Bodies written by hand for /api/admin/ai, /api/admin/ai/execute, /api/admin/approvals, /api/admin/session and 1 more; written before TASK-200, to be replaced with route fixtures (R-81)."
+    },
+    "__tests__/tenancy-panels.test.tsx": {
+      "count": 32,
+      "reason": "Bodies written by hand for /api/admin/config, /api/admin/tenant, /api/operator/deletions/req-1, /api/operator/purge and 7 more; written before TASK-200, to be replaced with route fixtures (R-81)."
+    }
+  }
+}

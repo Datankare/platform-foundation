@@ -1,6 +1,8 @@
 /**
  * __tests__/role-writes.test.ts — a user's role changes only through assignUserRole (TASK-194, C-5)
  *
+ * @guard a write of a user's role outside the one audited writer
+ *
  * The role rules were wired into the admin pages and the command bar, while the operator's
  * "make administrator" set users.role_id on its own, with no rule: one operator could demote a
  * super_admin by making their address a tenant's admin. Now every statement that changes
@@ -65,7 +67,7 @@ describe("users.role_id changes only through assignUserRole (TASK-194, C-5)", ()
     expect(offenders(files)).toEqual({ updates: [], inserts: [] });
   });
 
-  it("recognises a role write in any literal form (self-test)", () => {
+  it("[self-test] recognises a role write in any literal form", () => {
     expect(
       offenders([
         { path: "a.ts", text: 'q("update users set role_id = $2 where id = $1")' },

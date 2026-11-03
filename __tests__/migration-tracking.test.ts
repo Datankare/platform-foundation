@@ -1,6 +1,8 @@
 /**
  * __tests__/migration-tracking.test.ts
  *
+ * @guard a migration that does not record itself, or its checksum, in applied_migrations
+ *
  * Every migration must record itself in public.applied_migrations (migration 025).
  *
  * Without this the convention decays the moment attention moves on — which is how three
@@ -24,6 +26,15 @@ function migrationNumber(name: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** Why a migration does not record itself in applied_migrations, or null when it does. */
+function trackingProblem(file: string, sql: string): string | null {
+  if (!/insert\s+into\s+(?:public\.)?applied_migrations/i.test(sql))
+    return `${file}: no insert into applied_migrations`;
+  // The filename must appear, so a copy-pasted insert naming another migration fails.
+  if (!sql.includes(file)) return `${file}: its insert does not name the file`;
+  return null;
+}
+
 describe("migration tracking (TASK-065)", () => {
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
@@ -42,10 +53,26 @@ describe("migration tracking (TASK-065)", () => {
   });
 
   it.each(trackable)("%s records itself in applied_migrations", (file) => {
-    const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf-8");
-    expect(sql).toMatch(/insert\s+into\s+(?:public\.)?applied_migrations/i);
-    // The filename must appear, so a copy-pasted insert naming another migration fails.
-    expect(sql).toContain(file);
+    expect(
+      trackingProblem(file, readFileSync(join(MIGRATIONS_DIR, file), "utf-8"))
+    ).toBeNull();
+  });
+
+  it("[self-test] reports a planted migration that records nothing, or records another file", () => {
+    expect(trackingProblem("099_planted.sql", "create table t (a int);")).toBe(
+      "099_planted.sql: no insert into applied_migrations"
+    );
+    const copied =
+      "insert into public.applied_migrations (filename) values ('098_other.sql');";
+    expect(trackingProblem("099_planted.sql", copied)).toBe(
+      "099_planted.sql: its insert does not name the file"
+    );
+    expect(
+      trackingProblem(
+        "099_planted.sql",
+        "insert into applied_migrations (filename) values ('099_planted.sql');"
+      )
+    ).toBeNull();
   });
 });
 

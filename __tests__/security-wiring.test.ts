@@ -1,6 +1,8 @@
 /**
  * __tests__/security-wiring.test.ts — every security control is called, or listed as not (audit 2026-10)
  *
+ * @guard a security control built and never called by production code
+ *
  * The audit's most common failure was a control built, tested and never called: tests passed
  * because they called it; no production path did. This finds every exported security control in
  * the security modules — by name (check…, enforce…, require…, screen…, verify…, validate…,
@@ -122,7 +124,7 @@ describe("security wiring (audit 2026-10: built, tested, never called)", () => {
     );
   });
 
-  it("an import or a re-export is not a use", () => {
+  it("[self-test] an import or a re-export is not a use", () => {
     const src = stripNonCode(
       'import { hardPurgeUser } from "x";\nexport { softDeleteUser } from "y";\nconst a = 1;'
     );

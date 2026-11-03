@@ -5,6 +5,8 @@
  * __tests__/external-erasure-registry.test.ts — every store outside the database that holds an
  * erased person is erased, its outcome recorded, and retried until done (TASK-193, audit B-8, D-9)
  *
+ * @not-guard: behaviour tests of the erasure register; reads three named files to pin their calls
+ *
  * The register is platform/gdpr/external-erasure.ts. Before, the sign-in identity was deleted
  * only by the self-service route, with the user's own token, once: an admin or retention erasure
  * never deleted it, and a failed call was logged and forgotten. Here:

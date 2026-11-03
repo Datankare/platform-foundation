@@ -20,10 +20,86 @@ standard tier on Sonnet 5.5 with governed prompt caching (#461, #462, TASK-186),
 command bar's search limited to what the admin pages show (TASK-189), and one list on the Users
 screen (TASK-190), and roles and permissions in a logical order (TASK-192), and every lifecycle
 closed and every erasure completed (TASK-193), and the sweep's access-control batch (TASK-194),
-and external dependency failures coded, probed and alerted (TASK-197). Deploy: migrations 053,
+and external dependency failures coded, probed and alerted (TASK-197), and the engineering process
+enforced in CI (TASK-200). Deploy: migrations 053,
 054, 055, 056, 057, 058, 059, 060, 061, 062 and 063 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
 code. Consumer steps: §1b, the ten "Release candidate" rows.
+
+- **The engineering process, enforced (TASK-200).** CI's Layer 0f (`scripts/process-check.mjs`)
+  fails a code commit whose task entry lacks a complete Design check and Self-review, and a route
+  test file changed without its `[hostile:…]` cases; every repository scan is a `@guard` with a
+  planted-violation `[self-test]` (`guard-self-tests`); screen tests answer fetch with fixtures the
+  real route handlers produce (`__tests__/fixtures/route-responses`), hand-written bodies counted
+  down in `fake-fetch-baseline.json`; `readJsonBody(request, SCHEMA)` reads a JSON body against a
+  declared schema, refusing unknown keys, schemaless reads counted down in
+  `body-schema-baseline.json`; a hand-built error status is the registry's
+  (`route-status-registry`, for the body's own code; an init it cannot read is refused). The check
+  judges every commit after the rule — one that deletes the script, though restored later, and a
+  merge by what it changes against git's re-merge — and refuses a commit that deletes, empties or
+  softens the script or its CI steps; it refuses a ratchet baseline raised by hand against the merge
+  base (`body-schema-`, `fake-fetch-`, `refusal-coverage-`, `screen-literal-` and
+  `coverage-baseline.json` — floors only rise, the margin never — and `open-input-register.json`);
+  an app's sync commit is reported, not judged, only when every file it touches is byte for byte
+  platform-foundation's at the sha it names, fetched. `readJsonBody` reads an open schema node (`{}`) closed
+  unless it says why (`openBecause`, below the top only, each in `open-input-register.json`). A
+  `[self-test]` counts only when it runs (not skipped) and calls the guard's scan with an input.
+  Review round 2: a merge is judged against git's re-merge (`--remerge-diff`), so a clean merge of a
+  file both sides edited passes; a pull request is judged at its own head, and again by the **base
+  branch's** copy of the check (`.github/workflows/process-check-base.yml`, `pull_request_target`,
+  nothing of the head run; an owner's override review for a fix to the check itself); a sync commit is skipped only when every file equals platform-foundation's at the full
+  sha its subject names, fetched (the sync workflow's pull request title now carries the full sha;
+  no manifest the commit can edit decides it); reverts, route tests through a helper and renamed baselined files are
+  handled; the coverage margin never rises; `.github/CODEOWNERS`. Review round 3: a synced sha must
+  be on platform-foundation's protected branches or `v*` tags, its URL fixed in the script; true
+  reverts only of commits on the base (GitHub's Revert of a merged pull request included); octopus
+  merges read; the base check runs from the default branch's workflow file (`main`): turn its
+  required status check on after promotion. Review round 4: a merge's own paths read NUL-separated
+  (octopus: differing from every parent; git 2.36+ required); a true revert is an exact inverse; the
+  override is an owner's review of the exact head (`process-check-override: <why>`), read live, not a
+  label; the platform-foundation fetch is timed and bounded; protect its branches and `v*` tags.
+  Review round 5: a sole owner overrides by an unedited pull request comment
+  `process-check-override <head sha>: <why>` (Code Owners' review is not required; the admin bypass is
+  the last resort); CODEOWNERS read as GitHub reads it; the fetch never lazy (every partial-clone
+  setting switched off), retried once, then "platform-foundation unreachable — re-run"; modes,
+  symlinks and submodules compared; an app's own task register (`scripts/process-check.app.json`);
+  only the task group a subject ends with names a task; a revert-only pull request's title, a
+  deletion-only sync, a squash's `(#n)` and a baseline re-keyed without rising pass; a retitled pull
+  request judged by `process-check-title.yml`; a gate's task carries a **Threat model**; StrykerJS
+  mutation testing of the check (`npm run test:mutation`, `mutation.yml`, 90% to pass). Review round
+  6: a check step must equal its canonical copy (`CHECK_STEPS`, by hash) — no pattern judges it —
+  and `ci.yml` is one of the check's own files; a sync descends from the last one (a sync subject's
+  sha, or `lastSynced` in the sync config) and its whole tree is platform-foundation's; deletions
+  only of files platform-foundation dropped; a pushed commit is adopted by `**Commits:** <sha>`; a
+  Dependabot pin bump needs no task; an app's `(platform TASK-nnn)` is recorded in its own register;
+  a true revert ignores the registers; Layer 0f no longer reads the title (the base's check does;
+  `process-check-title.yml` removed); a force-pushed branch is judged since the last promotion;
+  findings say why; required checks on `staging` and `main` only; mutation testing runs
+  incrementally from the committed `reports/stryker-incremental.json` (the check refuses a stale one
+  or a score below 90%), fully on dispatch, weekly and when the suite or config changes, its time in
+  the job summary. Then the owner's cut (round 7): the check catches our own mistakes and is no
+  longer a tamper-proof gate — one owner pushes. The base's check and every title judgement, both
+  overrides, `CHECK_STEPS`, the pin-bump exemption, the mutation workflow with its committed report
+  and stale-report check, and the sync verification (the platform-foundation fetch, descent, blob
+  equality, deletion rules, `lastSynced`, the script's hash) are removed; TASK-200 lists each under
+  _Deliberately not built_ with the trigger to build it (another contributor with push or PR rights).
+  A sync is exempt by its subject (`chore(sync)… @ <full sha>`), a Dependabot commit by its author;
+  any workflow change names a task; baselines compare from the later of the merge base and the rule's
+  first commit (the first promotion passes); a revert of a commit earlier in the range is a net no-op;
+  an app's `platform TASK-nnn` takes its Threat model from the app's own entry; mutation testing is a
+  manual check (`npm run test:mutation`, by hand whenever the script changes, at least 90%). Round 8:
+  the pushes to staging and main after the first promotion pass; the baselines and
+  `platform-paths.json` are not High tier; `Reapply "…"` is a revert; a Dependabot commit a person
+  amended is judged; the sync template opens one pull request at a time (none for a sha already
+  open; a new one closes the older ones) — Gotcha 81. REVIEW.md
+  rules 10–17 block on
+  the rest, and 18–24 set how a gate is reviewed
+  ([AI_ENGINEERING](AI_ENGINEERING.md) §3a). Consumer steps: add Layer 0f to your own `ci.yml`
+  (with the history fetched), sync-exclude `/fake-fetch-baseline.json` and
+  `/body-schema-baseline.json` and create your own with your counts, tag your own scans `@guard`
+  with a `[self-test]` (or `@not-guard: <why>`); copy a `.github/CODEOWNERS`, sync-exclude `/open-input-register.json` and keep your own, list your
+  own fetch wrappers in `scripts/fetch-wrappers.app.json`, and put the full sha in your sync pull
+  request's title (`docs/templates/sync-from-foundation.yml`).
 
 - **External dependencies: failures coded, probed and alerted (TASK-197, audit D).** A stream that
   carries an `error` event or ends before `message_stop` is a failure (`service.unavailable`),

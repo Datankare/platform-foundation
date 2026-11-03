@@ -2,6 +2,8 @@
  * __tests__/audited-external-guard.test.ts — every audited() call site carries the flag its act
  * needs (review 13 L5, review 14 L-6)
  *
+ * @guard an audited() call whose external flag does not match what its act reaches
+ *
  * An act audited inside a transaction must be database-only: a rollback undoes its writes, and
  * the `rolled_back` record audited() then writes is true only of them. An act that reaches outside
  * the database passes `{ external: true }`, and audited() refuses it inside an open transaction.
@@ -131,7 +133,7 @@ describe("the scan (self-tests on synthetic sources)", () => {
     ).toEqual([]);
   });
 
-  it("swapping the flag between the two calls fails — on both", () => {
+  it("[self-test] swapping the flag between the two calls fails — on both", () => {
     const findings = run([
       HELPERS,
       BARREL,

@@ -2,6 +2,8 @@
  * __tests__/irreversible-routes.test.ts — every irreversible route is dual-controlled or says why
  * not (TASK-194, audit C-6)
  *
+ * @guard an irreversible route effect that is not dual-controlled or accepted with a reason
+ *
  * An account's erasure (POST /api/admin/gdpr) took one admin, while a reversible role change took
  * two: dual control covered only the command bar's actions, and the erasure was a direct route.
  * This is the route-effect registry. The irreversible effects are named below; every function
@@ -230,7 +232,7 @@ describe("irreversible routes are dual-controlled or accepted single-actor (TASK
         )
       ).toEqual([]);
     });
-    it("fails the same call with the guard removed, or in the else branch", () => {
+    it("[self-test] fails the same call with the guard removed, or in the else branch", () => {
       expect(
         unguardedCalls(
           route("await handlePurgeUserData(input, admin);"),

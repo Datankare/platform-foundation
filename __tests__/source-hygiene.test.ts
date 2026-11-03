@@ -4,6 +4,8 @@ import path from "path";
 /**
  * Source hygiene gate.
  *
+ * @guard identifiers minted with Math.random, escaped template placeholders
+ *
  * Two defect classes reached main during Phase 5 Sprint 1 because nothing in CI
  * could see them:
  *
@@ -71,15 +73,25 @@ function scan(
     if (rel === SELF) continue;
     if (opts.exemptDirs?.includes(rel.split("/")[0])) continue;
 
-    const lines = fs.readFileSync(file, "utf8").split("\n");
-    lines.forEach((text, idx) => {
-      if (!text.includes(needle)) return;
-      const trimmed = text.trim();
-      if (opts.skipComments && (trimmed.startsWith("*") || trimmed.startsWith("//")))
-        return;
-      hits.push({ file: rel, line: idx + 1, text: trimmed });
-    });
+    hits.push(...scanText(rel, fs.readFileSync(file, "utf8"), needle, opts));
   }
+  return hits;
+}
+
+function scanText(
+  rel: string,
+  source: string,
+  needle: string,
+  opts: { skipComments?: boolean } = {}
+): Hit[] {
+  const hits: Hit[] = [];
+  source.split("\n").forEach((text, idx) => {
+    if (!text.includes(needle)) return;
+    const trimmed = text.trim();
+    if (opts.skipComments && (trimmed.startsWith("*") || trimmed.startsWith("//")))
+      return;
+    hits.push({ file: rel, line: idx + 1, text: trimmed });
+  });
   return hits;
 }
 
@@ -88,6 +100,20 @@ function format(hits: Hit[]): string {
 }
 
 describe("source hygiene", () => {
+  it("[self-test] reports a planted Math.random id and an escaped placeholder", () => {
+    const planted = [
+      "// Math.random in a comment is not a use",
+      "const id = Math.random().toString(36);",
+      "const msg = `Hello \\${name}`;",
+    ].join("\n");
+    expect(
+      scanText("lib/planted.ts", planted, "Math.random", { skipComments: true }).map(
+        (h) => h.line
+      )
+    ).toEqual([2]);
+    expect(scanText("lib/planted.ts", planted, "\\${").map((h) => h.line)).toEqual([3]);
+  });
+
   it("scanner can find a control string (self-test)", () => {
     // If this fails, every other assertion in this file is meaningless: a broken
     // scanner reports a clean tree. Assert the instrument before the measurement.

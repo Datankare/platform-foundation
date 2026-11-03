@@ -1,6 +1,8 @@
 /**
  * __tests__/api-route-rate-limit.test.ts — Every API route is rate limited (ADR-052, TASK-134)
  *
+ * @guard a route method without a rate limit
+ *
  * The shared limiter existed for months while no route called it (TASK-134). This test makes the
  * rule mechanical: each route handler must call enforceRateLimit, or adminGuard or requireAdmin
  * (which call it),
@@ -107,7 +109,7 @@ describe("API route rate limiting (ADR-052)", () => {
     ]);
   });
 
-  it("the checker catches a handler without a limit", () => {
+  it("[self-test] the checker catches a handler without a limit", () => {
     const src =
       "export async function GET(request) { const l = await enforceRateLimit(request, R); }\n" +
       "export async function POST() { return new Response('open'); }";

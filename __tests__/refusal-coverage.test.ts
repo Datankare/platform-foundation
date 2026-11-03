@@ -2,6 +2,8 @@
  * TASK-181 — refusal coverage: every refusal a route can return is handled by every screen that
  * calls it.
  *
+ * @guard a refusal code a screen that calls the route does not handle
+ *
  * Statically, for this repository (a consuming app runs the same file over its own routes and
  * screens — they live in the same directories):
  *
@@ -199,27 +201,31 @@ function callerFiles(): string[] {
   ];
 }
 
-export function gaps(): string[] {
-  const all = routes(guardTable(guardModules()));
+/** The (caller, route, code) pairs one caller leaves unhandled. */
+export function callerGaps(path: string, text: string, all: readonly Route[]): string[] {
   const out = new Set<string>();
-  for (const file of callerFiles()) {
-    const text = read(file);
-    const literals = apiLiterals(text, file);
-    if (literals.length === 0) continue;
-    const shared = usesSharedHandler(text);
-    const own = new Set(handledCodes(text));
-    for (const literal of literals) {
-      const route = matchRoute(literal, all);
-      if (!route) continue;
-      for (const code of route.codes) {
-        const covered =
-          own.has(code) ||
-          (shared && Object.prototype.hasOwnProperty.call(REFUSAL_HANDLERS, code));
-        if (!covered) out.add(`${rel(file)} -> ${route.path} : ${code}`);
-      }
+  const literals = apiLiterals(text, path);
+  if (literals.length === 0) return [];
+  const shared = usesSharedHandler(text);
+  const own = new Set(handledCodes(text));
+  for (const literal of literals) {
+    const route = matchRoute(literal, all);
+    if (!route) continue;
+    for (const code of route.codes) {
+      const covered =
+        own.has(code) ||
+        (shared && Object.prototype.hasOwnProperty.call(REFUSAL_HANDLERS, code));
+      if (!covered) out.add(`${path} -> ${route.path} : ${code}`);
     }
   }
-  return [...out].sort();
+  return [...out];
+}
+
+export function gaps(): string[] {
+  const all = routes(guardTable(guardModules()));
+  return [
+    ...new Set(callerFiles().flatMap((f) => callerGaps(rel(f), read(f), all))),
+  ].sort();
 }
 
 // ── The banned pattern ──────────────────────────────────────────────────────────────────────
@@ -335,7 +341,28 @@ describe("refusal coverage (TASK-181)", () => {
     expect(sites).toEqual([]);
   });
 
-  it("recognises the banned pattern (self-test)", () => {
+  it("[self-test] reports a planted screen that does not handle a code its route returns", () => {
+    const route: Route = {
+      path: "/api/planted/[id]",
+      segments: ["api", "planted", "[id]"],
+      codes: ["auth.permission_denied", "app.planted.refused"],
+    };
+    const screen =
+      "const r = await apiFetch(`/api/planted/${id}`); if (!r.ok) setError(true);";
+    expect(callerGaps("components/Planted.tsx", screen, [route])).toEqual([
+      "components/Planted.tsx -> /api/planted/[id] : auth.permission_denied",
+      "components/Planted.tsx -> /api/planted/[id] : app.planted.refused",
+    ]);
+    // The shared handler decides every platform code; an app code needs HANDLED_CODES.
+    const shared = `${screen} const x = readRefusal(r);`;
+    expect(callerGaps("components/Planted.tsx", shared, [route])).toEqual([
+      "components/Planted.tsx -> /api/planted/[id] : app.planted.refused",
+    ]);
+    const listed = `${shared} const HANDLED_CODES = ["app.planted.refused"];`;
+    expect(callerGaps("components/Planted.tsx", listed, [route])).toEqual([]);
+  });
+
+  it("[self-test] recognises the banned pattern", () => {
     expect(
       literalErrorReturns(
         'async function f(){ if (!res.ok) { return { items: [], error: "Nope" }; } if (!r.ok) return { error: msg }; }'

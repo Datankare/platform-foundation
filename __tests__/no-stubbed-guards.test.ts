@@ -1,6 +1,8 @@
 /**
  * __tests__/no-stubbed-guards.test.ts — No test replaces the guard it relies on
  *
+ * @guard a test that mocks or spies on the guard it relies on
+ *
  * Adversarial Validation practice 5 (CONTRIBUTING.md): a test that asserts authorization never
  * stubs the guard it asserts. In October 2026 every admin route test mocked adminGuard to allow,
  * so a moderator reaching super_admin through the command bar passed every test (TASK-145,
@@ -36,6 +38,23 @@ const GUARDS = [
   ]),
 ];
 
+/**
+ * Whether a test's source mocks or spies on a guard: by its alias or by any relative path ending
+ * in the module's name, and with jest.spyOn on the module object (release review: a relative path
+ * or a spy evaded the check).
+ */
+function stubs(guard: string, src: string): boolean {
+  const moduleName = escapeRegExp(guard.split("/").pop() as string);
+  const path = `(?:${escapeRegExp(guard)}|(?:\\.{1,2}/)+(?:[\\w.-]+/)*${moduleName})`;
+  const mock = new RegExp(
+    `jest\\.(?:mock|doMock|unstable_mockModule|requireMock)\\(\\s*["'\`]${path}["'\`]`
+  );
+  const spy = new RegExp(`import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["'\`]${path}["'\`]`);
+  if (mock.test(src)) return true;
+  const ns = spy.exec(src)?.[1];
+  return ns !== undefined && new RegExp(`jest\\.spyOn\\(\\s*${ns}\\b`).test(src);
+}
+
 function testFiles(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
@@ -63,23 +82,11 @@ describe("no stubbed guards", () => {
   });
 
   it.each(GUARDS)("no test mocks or spies on %s", (guard) => {
-    // By its alias or by any relative path ending in the module's name, and with jest.spyOn on
-    // the module object (release review: a relative path or a spy evaded the check).
-    const moduleName = escapeRegExp(guard.split("/").pop() as string);
-    const path = `(?:${escapeRegExp(guard)}|(?:\\.{1,2}/)+(?:[\\w.-]+/)*${moduleName})`;
-    const mock = new RegExp(
-      `jest\\.(?:mock|doMock|unstable_mockModule|requireMock)\\(\\s*["'\`]${path}["'\`]`
+    const offenders = FILES.filter(
+      (f) =>
+        f !== "__tests__/no-stubbed-guards.test.ts" &&
+        stubs(guard, readFileSync(join(ROOT, f), "utf-8"))
     );
-    const spy = new RegExp(
-      `import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["'\`]${path}["'\`]`
-    );
-    const offenders = FILES.filter((f) => {
-      if (f === "__tests__/no-stubbed-guards.test.ts") return false;
-      const src = readFileSync(join(ROOT, f), "utf-8");
-      if (mock.test(src)) return true;
-      const ns = spy.exec(src)?.[1];
-      return ns !== undefined && new RegExp(`jest\\.spyOn\\(\\s*${ns}\\b`).test(src);
-    });
     expect(offenders).toEqual([]);
   });
 
@@ -98,12 +105,22 @@ describe("no stubbed guards", () => {
     expect(GUARDS).toEqual(expect.arrayContaining(APP_GUARDS));
   });
 
-  it("the check catches a relative-path mock and a spy", () => {
-    const moduleName = "admin-guard";
-    const path = `(?:@/platform/auth/admin-guard|(?:\\.{1,2}/)+(?:[\\w.-]+/)*${moduleName})`;
-    const mock = new RegExp(`jest\\.(?:mock|doMock)\\(\\s*["'\`]${path}["'\`]`);
-    expect(mock.test('jest.mock("../admin-guard", () => ({}))')).toBe(true);
-    expect(mock.test('jest.mock("../../platform/auth/admin-guard")')).toBe(true);
-    expect(mock.test('jest.mock("../admin-guard-helpers")')).toBe(false);
+  it("[self-test] the check catches a relative-path mock and a spy", () => {
+    const guard = "@/platform/auth/admin-guard";
+    expect(stubs(guard, 'jest.mock("../admin-guard", () => ({}))')).toBe(true);
+    expect(stubs(guard, 'jest.mock("../../platform/auth/admin-guard")')).toBe(true);
+    expect(stubs(guard, 'jest.doMock("@/platform/auth/admin-guard", () => ({}))')).toBe(
+      true
+    );
+    expect(
+      stubs(
+        guard,
+        'import * as g from "../platform/auth/admin-guard";\njest.spyOn(g, "requireAdmin");'
+      )
+    ).toBe(true);
+    expect(stubs(guard, 'jest.mock("../admin-guard-helpers")')).toBe(false);
+    expect(
+      stubs(guard, 'import * as g from "../admin-guard";\ng.requireAdmin(req);')
+    ).toBe(false);
   });
 });

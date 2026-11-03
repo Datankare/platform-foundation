@@ -2,6 +2,8 @@
  * __tests__/token-verification.test.ts — a verified access token, remembered briefly
  * (platform/auth/token-verification.ts)
  *
+ * @not-guard: behaviour tests of token verification; reads one guard file to pin one call
+ *
  * Cognito's GetUser was called on every request, one AWS call each, under a per-account rate
  * quota: exhausted, every request failed. The outcome is now remembered in the shared cache,
  * keyed by a hash of the token, for a short governed window never past the token's expiry;

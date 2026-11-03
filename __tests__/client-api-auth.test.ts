@@ -1,6 +1,8 @@
 /**
  * __tests__/client-api-auth.test.ts — screens call the API as the signed-in user
  *
+ * @guard a browser call to the API that bypasses apiFetch
+ *
  * Every authenticated route reads the caller from `Authorization: Bearer` (platform/auth/
  * middleware.ts). A screen that called `fetch("/api/…")` sent no token and was refused with 401 —
  * the whole admin console, the review dashboard, appeals and the main screen did, until
@@ -52,7 +54,7 @@ describe("screens call the API as the signed-in user", () => {
     expect(CLIENT).toContain("app/admin/page.tsx");
   });
 
-  it("recognises a bare fetch and nothing else (self-test)", () => {
+  it("[self-test] recognises a bare fetch and nothing else", () => {
     expect(BARE_FETCH.test('await fetch("/api/x")')).toBe(true);
     expect(BARE_FETCH.test("const r = fetch(url)")).toBe(true);
     expect(BARE_FETCH.test('await apiFetch("/api/x")')).toBe(false);

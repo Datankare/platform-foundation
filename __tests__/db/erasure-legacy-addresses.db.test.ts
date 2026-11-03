@@ -5,6 +5,8 @@
  * The operator step for accounts erased before v6.0.0 (review 8 L1):
  * supabase/optional/redact_orphan_addresses.sql, run as documented in docs/MIGRATION_v5_to_v6.md.
  *
+ * @not-guard: runs one migration's redaction against a database; reads the migration to execute it
+ *
  * An account soft-deleted by an earlier version had its address nulled without the replacement
  * the soft delete now makes, and the address is recorded nowhere, so the purge cannot find its
  * mentions. The step lists every whole-value address that is no live account's, and redacts each

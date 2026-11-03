@@ -2,6 +2,11 @@
  * __tests__/mfa-step-up.test.ts — changing a second factor needs proof of the current one
  * (TASK-194, audit C-3)
  *
+ * @guard an MFA route that changes a factor without step-up, or is not classified
+ *
+ * hostile:self n/a: every MFA route acts on the caller's own account; there is no other target
+ * hostile:id-spelling n/a: the routes take no id; the account is the verified token's subject
+ *
  * A bearer access token alone turned off a staff member's second factor (/api/auth/mfa/disable)
  * or re-enrolled it to another authenticator (/setup on an enrolled account), and with a phished
  * password an attacker then passed requireAdmin's MFA check for good. Every MFA route is listed:
@@ -109,7 +114,29 @@ beforeEach(() => {
   );
 });
 
+/** MFA routes neither factor-changing nor listed as not, and listed routes that are gone. */
+function classificationFindings(found: readonly string[]): string[] {
+  const listed = [
+    ...Object.keys(FACTOR_CHANGING_ROUTES),
+    ...Object.keys(NOT_FACTOR_CHANGING),
+  ];
+  return [
+    ...found.filter((r) => !listed.includes(r)).map((r) => `${r}: not classified`),
+    ...listed.filter((r) => !found.includes(r)).map((r) => `${r}: listed, not a route`),
+  ];
+}
+
 describe("every MFA route is classified (self-test of the list)", () => {
+  it("[self-test] reports a planted MFA route nobody classified", () => {
+    const listed = [
+      ...Object.keys(FACTOR_CHANGING_ROUTES),
+      ...Object.keys(NOT_FACTOR_CHANGING),
+    ];
+    expect(
+      classificationFindings([...listed, "app/api/auth/mfa/planted/route.ts"])
+    ).toEqual(["app/api/auth/mfa/planted/route.ts: not classified"]);
+  });
+
   it("lists each route under app/api/auth/mfa exactly once", () => {
     const dir = join(process.cwd(), "app/api/auth/mfa");
     const found = readdirSync(dir)
@@ -117,6 +144,7 @@ describe("every MFA route is classified (self-test of the list)", () => {
       .map((d) => `app/api/auth/mfa/${d}/route.ts`)
       .sort();
     expect(found.length).toBeGreaterThan(2);
+    expect(classificationFindings(found)).toEqual([]);
     expect(
       [...Object.keys(FACTOR_CHANGING_ROUTES), ...Object.keys(NOT_FACTOR_CHANGING)].sort()
     ).toEqual(found);
@@ -176,6 +204,14 @@ describe.each(Object.keys(FACTOR_CHANGING_ROUTES))("%s (factor-changing)", (rout
       "123456"
     );
     expect(CHANGE[route]).toHaveBeenCalledWith("access-1");
+  });
+
+  it("[hostile:store-down] the identity provider failing during the step-up: coded, nothing changed", async () => {
+    provider.confirmCurrentFactor.mockRejectedValueOnce(new Error("pool unreachable"));
+    const res = await call({ password: "right", currentCode: "123456" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe("internal.error");
+    expect(CHANGE[route]).not.toHaveBeenCalled();
   });
 
   it("holds an account whose factor state is unknown to the step-up (fail closed)", async () => {
@@ -256,7 +292,7 @@ describe("confirmStepUp, reused", () => {
     );
   });
 
-  it("no password, or no bearer: refused before the provider", async () => {
+  it("[hostile:role] no password, or no bearer: refused before the provider", async () => {
     for (const over of [
       { allowPasswordOnly: true, password: "" },
       { allowPasswordOnly: true, password: 5 },

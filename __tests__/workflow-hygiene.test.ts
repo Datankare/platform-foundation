@@ -1,6 +1,8 @@
 /**
  * __tests__/workflow-hygiene.test.ts — the repository's GitHub workflows (audit H-9, H-10, H-12)
  *
+ * @guard a workflow that weakens a gate: an expression in a script, a bare exclude, an unpinned action
+ *
  * Runs in every repository that takes the platform's tests, over that repository's own
  * workflows (a consumer's sync workflow included).
  *
@@ -30,7 +32,17 @@
  */
 
 import { spawnSync } from "child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import {
   LineCounter,
@@ -354,7 +366,7 @@ describe("workflow hygiene", () => {
     );
   });
 
-  it("self-test: finds expressions in run blocks, and only there", () => {
+  it("[self-test] finds expressions in run blocks, and only there", () => {
     const sample = [
       "jobs:",
       "  a:",
@@ -654,10 +666,48 @@ interface Step {
   readonly with?: Record<string, unknown>;
 }
 interface Workflow {
+  readonly on?: unknown;
+  readonly permissions?: unknown;
+  readonly defaults?: { readonly run?: { readonly shell?: unknown } };
   readonly jobs?: Record<
     string,
-    { readonly steps?: Step[]; readonly env?: Record<string, unknown> }
+    {
+      readonly steps?: Step[];
+      readonly env?: Record<string, unknown>;
+      readonly permissions?: unknown;
+      readonly "continue-on-error"?: unknown;
+      readonly if?: unknown;
+      readonly defaults?: { readonly run?: { readonly shell?: unknown } };
+    }
   >;
+}
+
+/** Whether a script line runs the engineering-process check (not an echo or a comment). */
+const runsCheckLine = (l: string) =>
+  !/^\s*(?:echo|#)/.test(l) && /\bnode scripts\/process-check\.mjs --base\b/.test(l);
+
+/**
+ * Whether a workflow runs the engineering-process check (TASK-200): a job with a deep checkout
+ * (`fetch-depth: 0`, the history the check reads) and a later step running
+ * `node scripts/process-check.mjs --base …`, with no `continue-on-error` or `if:` on the step or
+ * its job. It catches our own mistake of dropping or disabling the step; it is no tamper-proofing
+ * (TASK-200, "Deliberately not built").
+ */
+export function runsProcessCheck(workflow: Workflow): boolean {
+  const soft = (v: unknown) => v !== undefined && v !== false && v !== "false";
+  return Object.values(workflow.jobs ?? {}).some((job) => {
+    if (soft(job["continue-on-error"]) || job.if !== undefined) return false;
+    const steps = job.steps ?? [];
+    const deep = steps.findIndex(
+      (st) =>
+        /actions\/checkout@/.test(st.uses ?? "") &&
+        String(st.with?.["fetch-depth"]) === "0"
+    );
+    const at = steps.findIndex((st) => (st.run ?? "").split("\n").some(runsCheckLine));
+    if (deep < 0 || at <= deep) return false;
+    const step = steps[at] as Step & { "continue-on-error"?: unknown };
+    return !soft(step["continue-on-error"]) && step.if === undefined;
+  });
 }
 
 /** The package.json scripts that run jest (`test`, `test:coverage`, …), by name. */
@@ -958,6 +1008,38 @@ describe("fail on absence (TASK-198, D-16, D-20)", () => {
     expect(alert?.if).toMatch(/failure\(\)[\s\S]*schedule/);
   });
 
+  it("CI runs the engineering-process check with the history (TASK-200)", () => {
+    expect(runsProcessCheck(load(".github/workflows/ci.yml"))).toBe(true);
+  });
+
+  it("[self-test] a CI workflow without the process check, or without the history, is refused", () => {
+    const checkout = { uses: "actions/checkout@abc", with: { "fetch-depth": 0 } };
+    const step = { run: 'set -e\nnode scripts/process-check.mjs --base "$base"' };
+    expect(runsProcessCheck({ jobs: { ci: { steps: [checkout, step] } } })).toBe(true);
+    expect(runsProcessCheck({ jobs: { ci: { steps: [checkout] } } })).toBe(false);
+    expect(
+      runsProcessCheck({
+        jobs: { ci: { steps: [{ uses: "actions/checkout@abc" }, step] } },
+      })
+    ).toBe(false);
+    expect(
+      runsProcessCheck({
+        jobs: {
+          ci: {
+            steps: [checkout, { run: "echo node scripts/process-check.mjs --base x" }],
+          },
+        },
+      })
+    ).toBe(false);
+    expect(
+      runsProcessCheck({
+        jobs: {
+          ci: { steps: [checkout, { run: "# node scripts/process-check.mjs --base x" }] },
+        },
+      })
+    ).toBe(false);
+  });
+
   it("CI compares the journey exemptions with the base branch, before its jest passes (TASK-198 round 1)", () => {
     const jobs = Object.values(load(".github/workflows/ci.yml").jobs ?? {});
     const found = jobs.filter((j) => {
@@ -1001,6 +1083,192 @@ describe("fail on absence (TASK-198, D-16, D-20)", () => {
       expect(reason.length).toBeGreaterThan(40);
       if (!steps.has(step)) continue;
       expect([step, all.includes(step)]).toEqual([step, true]);
+    }
+  });
+});
+
+describe("the engineering-process workflows (TASK-200)", () => {
+  it("[self-test] a disabled process-check step is refused: continue-on-error or an if", () => {
+    const checkout = { uses: "actions/checkout@abc", with: { "fetch-depth": 0 } };
+    const run = 'set -e\nnode scripts/process-check.mjs --base "$base"';
+    const step = (st: Partial<Step> & Record<string, unknown>, job: object = {}) =>
+      runsProcessCheck({
+        jobs: { ci: { ...job, steps: [checkout, { run, ...st } as Step] } },
+      });
+    expect([
+      step({ "continue-on-error": true }),
+      step({}, { "continue-on-error": true }),
+      step({ if: "false" }),
+      step({}, { if: "false" }),
+    ]).toEqual([false, false, false, false]);
+    expect([step({}), step({ "continue-on-error": false })]).toEqual([true, true]);
+  });
+});
+
+describe("the engineering-process step: no title read, a force-push survived (TASK-200)", () => {
+  it("Layer 0f judges a pull request at its head, never its title; after a force-push, since the last promotion", () => {
+    expect(
+      existsSync(join(process.cwd(), ".github/workflows/process-check-base.yml"))
+    ).toBe(false);
+    const ciText = readFileSync(join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+    expect(ciText).not.toMatch(/--pr-title|pull_request\.title/);
+    expect(ciText).toMatch(
+      /if ! git rev-parse --verify -q "\$base\^\{commit\}"[^\n]*\n[^\n]*\n\s*base=\$\(git merge-base HEAD origin\/staging\)/
+    );
+    expect(ciText).toMatch(
+      /::warning::the push's base is gone \(a force-push\): judging every commit since the last promotion/
+    );
+  });
+});
+
+describe("the sync opens one pull request at a time (TASK-200, round 8)", () => {
+  /** The sync workflows here: the template, and an app's own copy when it has one. */
+  const files = [
+    "docs/templates/sync-from-foundation.yml",
+    ".github/workflows/sync-from-foundation.yml",
+  ].filter((f) => existsSync(join(process.cwd(), f)));
+  const openStep = (file: string) => {
+    const wf = parseDocument(
+      readFileSync(join(process.cwd(), file), "utf8")
+    ).toJS() as Workflow;
+    const step = (wf.jobs?.sync?.steps ?? []).find(
+      (s) => s.name === "Open the pull request"
+    );
+    return step;
+  };
+
+  it("finds the template (and an app's copy), the same step in each, with the rights it needs", () => {
+    expect(files).toContain("docs/templates/sync-from-foundation.yml");
+    const runs = files.map((f) => openStep(f)?.run ?? "");
+    expect(runs[0]).not.toBe("");
+    expect(new Set(runs).size).toBe(1);
+    for (const f of files) {
+      const wf = parseDocument(
+        readFileSync(join(process.cwd(), f), "utf8")
+      ).toJS() as Workflow;
+      expect([f, wf.permissions]).toMatchObject([
+        f,
+        { contents: "write", "pull-requests": "write" },
+      ]);
+      // REST only: gh api, and gh pr for the new pull request; no GraphQL.
+      expect(openStep(f)?.run).not.toMatch(/\bgraphql\b/);
+    }
+  });
+
+  it("[self-test] an open sync pull request for the same sha: nothing new; a new one supersedes the rest", () => {
+    const run = openStep(files[0])?.run ?? "";
+    const dir = mkdtempSync(join(tmpdir(), "sync-pr-"));
+    const bin = join(dir, "bin");
+    const target = join(dir, "target");
+    const origin = join(dir, "origin.git");
+    mkdirSync(bin);
+    // A stub gh: records each call; the open pull requests list is GH_OPEN (as --jq prints it).
+    writeFileSync(
+      join(bin, "gh"),
+      [
+        "#!/bin/bash",
+        'echo "$*" >> "$GH_LOG"',
+        'if [ "$1 $2" = "pr create" ]; then echo "https://github.com/o/r/pull/42"; fi',
+        'if [ "$1 $2" = "api --paginate" ]; then printf "%b" "$GH_OPEN"; fi',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    };
+    const git = (...args: string[]) =>
+      spawnSync("git", ["-C", target, ...args], { encoding: "utf8", env });
+    spawnSync("git", ["init", "-q", "--bare", origin]);
+    mkdirSync(target);
+    git("init", "-q", "-b", "develop");
+    writeFileSync(join(target, "a.txt"), "a\n");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    git("remote", "add", "origin", origin);
+    const sha = "abcdef1".padEnd(40, "0");
+    const sync = (open: string, changed = true) => {
+      git("checkout", "-q", "-f", "develop");
+      git("clean", "-qfd");
+      if (changed) writeFileSync(join(target, "b.txt"), "b\n");
+      const log = join(dir, "gh.log");
+      const summary = join(dir, "summary.md");
+      writeFileSync(log, "");
+      writeFileSync(summary, "");
+      const r = spawnSync("bash", ["-c", run], {
+        cwd: dir,
+        encoding: "utf8",
+        env: {
+          ...env,
+          PATH: `${bin}:${process.env.PATH}`,
+          GH_LOG: log,
+          GH_OPEN: open,
+          GH_REPO: "o/r",
+          SOURCE: "o/pf",
+          REF: "main",
+          SHA: sha,
+          GITHUB_STEP_SUMMARY: summary,
+        },
+      });
+      return {
+        status: r.status,
+        calls: readFileSync(log, "utf8").trim().split("\n").filter(Boolean),
+        summary: readFileSync(summary, "utf8"),
+      };
+    };
+    try {
+      // Nothing changed: up to date, no call at all.
+      expect(sync("", false)).toEqual({
+        status: 0,
+        calls: [],
+        summary: `Up to date with o/pf main @ ${sha}\n`,
+      });
+      // An open sync pull request for this sha (full or short in its title): nothing new.
+      for (const title of [`@ ${sha}`, "@ abcdef1"]) {
+        const same = sync(
+          `7\tauto-sync/foundation-1\tchore(sync): inherit platform-foundation main ${title}\n`
+        );
+        expect(same.status).toBe(0);
+        expect(same.calls).toHaveLength(1);
+        expect(same.calls[0]).toMatch(/^api --paginate repos\/o\/r\/pulls\?state=open/);
+        expect(same.summary).toBe(
+          "Sync pull request #7 is already open for o/pf @ abcdef1: nothing new opened\n"
+        );
+      }
+      // Older sync pull requests (another sha), and another branch's that is no sync's: the new
+      // one is opened, each older sync closed with a comment and its branch deleted.
+      const older = [
+        `7\tauto-sync/foundation-1\tchore(sync): inherit platform-foundation main @ ${"1".repeat(40)}`,
+        `8\tauto-sync/foundation-2\tchore(sync): inherit platform-foundation main @ 2222222`,
+      ].join("\n");
+      const fresh = sync(`${older}\n`);
+      expect(fresh.status).toBe(0);
+      expect(fresh.calls.slice(1, 2)[0]).toMatch(
+        /^pr create --base develop --head auto-sync\/foundation-/
+      );
+      expect(fresh.calls.slice(2)).toEqual([
+        "api -X POST repos/o/r/issues/7/comments -f body=Superseded by #42.",
+        "api -X PATCH repos/o/r/pulls/7 -f state=closed",
+        "api -X DELETE repos/o/r/git/refs/heads/auto-sync/foundation-1",
+        "api -X POST repos/o/r/issues/8/comments -f body=Superseded by #42.",
+        "api -X PATCH repos/o/r/pulls/8 -f state=closed",
+        "api -X DELETE repos/o/r/git/refs/heads/auto-sync/foundation-2",
+      ]);
+      expect(fresh.summary).toContain(
+        "Opened sync pull request #42 for o/pf main @ abcdef1\n"
+      );
+      expect(fresh.summary).toContain(
+        "Closed #8 (auto-sync/foundation-2): superseded by #42\n"
+      );
+      // None open: the new one alone.
+      expect(sync("").calls.filter((c) => /^api -X/.test(c))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

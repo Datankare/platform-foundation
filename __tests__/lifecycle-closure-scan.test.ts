@@ -5,6 +5,8 @@
  * __tests__/lifecycle-closure-scan.test.ts — every trajectory opened is ended, and every decision
  * that ends a hold ends its trajectory (TASK-193, audit B-1, B-2, A-1)
  *
+ * @guard a trajectory opened and never ended, or a hold ended without its trajectory
+ *
  * TASK-193 was filed because the command bar created a trajectory and never ended it; the audit
  * found the same at every caller of invokeTool (it records steps, never a status) and on every
  * decision path but a plain rejection. Nothing failed: the checks tested that retention existed,
@@ -328,7 +330,7 @@ describe("every trajectory opened is ended, every hold ended ends its trajectory
     );
   });
 
-  it("tells a hold's trajectory from another, and a second trajectory inside withTrajectory (round 1, L6)", () => {
+  it("[self-test] tells a hold's trajectory from another, and a second trajectory inside withTrajectory (round 1, L6)", () => {
     const fixture = scanSources([
       [
         "fixture/second.ts",

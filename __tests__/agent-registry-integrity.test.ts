@@ -1,6 +1,8 @@
 /**
  * agent-registry-integrity.test.ts — ADR-039 D5 enforcement (Sprint 3d).
  *
+ * @guard agent runs that bypass the registry or build a trajectory by hand
+ *
  * Makes the registry-unification invariants binding:
  *   1. Roster completeness — every registered agent (listAgents) is documented in
  *      AGENT_ARCHITECTURE.md, so the doc can't fall behind the code.
@@ -69,7 +71,7 @@ function scanBespoke(roots: readonly string[]): string[] {
 describe("agent registry integrity (ADR-039 D5)", () => {
   beforeAll(() => registerPlatformAgents());
 
-  it("self-test: the bespoke detector fires on hand-rolled trajectories, not on runtime calls", () => {
+  it("[self-test] the bespoke detector fires on hand-rolled trajectories, not on runtime calls", () => {
     expect(BESPOKE.test("const s = makeStep(0, 'a', 'cognition', {}, {}, 0, 0);")).toBe(
       true
     );

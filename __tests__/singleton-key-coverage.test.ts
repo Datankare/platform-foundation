@@ -1,6 +1,8 @@
 /**
  * __tests__/singleton-key-coverage.test.ts
  *
+ * @guard a process-wide singleton that a provider reset neither clears nor exempts
+ *
  * resetProviders() clears providerSingletonKeys(): the core's CORE_PROVIDER_SINGLETON_KEYS and
  * each registered module slot's declared singletonKeys (ADR-054 D4). Those lists are maintained
  * by hand, so a singleton added later and forgotten is a singleton that leaks between tests —
@@ -80,6 +82,16 @@ const EXEMPT: Record<string, string> = {
     "The app's registered modules (ADR-054 D4). Registered before initProviders() and cleared by resetModuleRegistry(), never by resetProviders() — the module set outlives a provider reset.",
 };
 
+/** `const SOMETHING_KEY = "platform.x.y";` — the shape every conversion produced. */
+function keysIn(src: string): string[] {
+  return [...src.matchAll(/const\s+\w*KEY\s*=\s*"(platform\.[\w.]+)"/g)].map((m) => m[1]);
+}
+
+/** Declared keys neither reset nor exempt. */
+function unaccounted(declared: readonly string[]): string[] {
+  return declared.filter((k) => !PROVIDER_SINGLETON_KEYS.includes(k) && !(k in EXEMPT));
+}
+
 function singletonKeysDeclaredInSource(): string[] {
   const found = new Set<string>();
   const walk = (dir: string): void => {
@@ -92,11 +104,7 @@ function singletonKeysDeclaredInSource(): string[] {
       }
       if (!entry.name.endsWith(".ts") || entry.name.includes(".test.")) continue;
       if (!inThisApp(p.slice(ROOT.length + 1))) continue;
-      const src = readFileSync(p, "utf-8");
-      // `const SOMETHING_KEY = "platform.x.y";` — the shape every conversion produced.
-      for (const m of src.matchAll(/const\s+\w*KEY\s*=\s*"(platform\.[\w.]+)"/g)) {
-        found.add(m[1]);
-      }
+      keysIn(readFileSync(p, "utf-8")).forEach((k) => found.add(k));
     }
   };
   walk(join(ROOT, "platform"));
@@ -114,10 +122,16 @@ describe("singleton key coverage", () => {
   });
 
   it("accounts for every declared key: reset list or explicit exemption", () => {
-    const unaccounted = declared.filter(
-      (k) => !PROVIDER_SINGLETON_KEYS.includes(k) && !(k in EXEMPT)
-    );
-    expect(unaccounted).toEqual([]);
+    expect(unaccounted(declared)).toEqual([]);
+  });
+
+  it("[self-test] reports a planted singleton key that nothing resets or exempts", () => {
+    const planted =
+      'const PLANTED_KEY = "platform.planted.store";\nconst OTHER = "platform.x";';
+    expect(keysIn(planted)).toEqual(["platform.planted.store"]);
+    expect(unaccounted([...declared, ...keysIn(planted)])).toEqual([
+      "platform.planted.store",
+    ]);
   });
 
   it("lists no key that does not exist in the source", () => {

@@ -1,6 +1,8 @@
 /**
  * __tests__/api-route-json-body.test.ts — routes read JSON bodies through readJsonObject (audit I-4/I-5)
  *
+ * @guard a route that parses its body without readJsonObject
+ *
  * `request.json()` returns null, arrays and numbers for well-formed JSON; routes that
  * destructured the result crashed into uncoded 500s, which the monkey run (scripts/monkey) found
  * on three routes the unit tests never sent a null body to. Every route now reads its body with
@@ -22,7 +24,7 @@ describe("JSON request bodies", () => {
     expect(direct).toEqual([]);
   });
 
-  it("the checker sees a direct call", () => {
+  it("[self-test] the checker sees a direct call", () => {
     expect(/\brequest\.json\(\)/.test(code("const b = await request.json();"))).toBe(
       true
     );

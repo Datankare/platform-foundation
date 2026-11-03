@@ -49,8 +49,65 @@ acknowledgement (TASK-197; [AI_ENGINEERING](docs/AI_ENGINEERING.md) §4.3).
 7. **CLAUDE.md:** flag code that breaks a convention in it, and any line in it that is out of date.
 8. **Skip generated paths:** `platform/modules/platform-paths.json`, `package-lock.json`, the
    baselines (`coverage-baseline.json`, `refusal-coverage-baseline.json`,
-   `screen-literal-baseline.json`, `journey-exemptions.json`) and the generated error docs
-   (`docs/API_ERRORS.md`, `docs/APP_API_ERRORS.md`). One exception: a baseline that loosens (a
-   gap added, a floor lowered, an exemption added) weakens a gate and is a finding.
+   `screen-literal-baseline.json`, `journey-exemptions.json`, `fake-fetch-baseline.json`,
+   `body-schema-baseline.json`), the route fixtures (`__tests__/fixtures/route-responses.json`)
+   and the generated error docs (`docs/API_ERRORS.md`, `docs/APP_API_ERRORS.md`). One exception: a baseline that loosens (a
+   gap added, a floor lowered, an exemption added) weakens a gate and is a finding (process-check
+   refuses one that rises; TASK-200). The baselines and `platform-paths.json` are not High tier
+   (they change with routine work); the check's script and the workflows are.
 9. **The summary opens with a count** — "2 Important, 1 Nit, 0 Pre-existing." — and when there
    is nothing to fix it says so plainly: "Nothing to fix."
+
+## Blocking rules — the engineering process (TASK-200)
+
+Each finding under these rules is **Important** and blocks the change. They are what TASK-194's 23
+review rounds kept finding; what a machine can check, CI checks
+([AI_ENGINEERING](docs/AI_ENGINEERING.md) §3a), and these are the rest.
+
+10. **Every caller moves with its response.** A change to a response's status, code or shape lists
+    every caller and screen in its TASKS entry's design check (_Screens × responses_) and updates
+    each in the same change. A caller the list misses is a finding. (Codes and statuses are checked
+    by `refusal-coverage` and `route-status-registry`; a body's shape is not.)
+11. **The design check is true.** Read its answers against the code: who can reach the path (each
+    role, the operator, an agent, a guest), what a race does, what each dependency down does, what
+    an erasure leaves behind, what each screen shows for each response, which journeys change. A
+    wrong or hand-waved answer is a finding.
+12. **No existing tenant is weakened.** A change that could lower an existing tenant's protection
+    — applying a value that had been ignored, widening a default, dropping a check a tenant relied
+    on — says so in the design check and carries a test of that tenant's case.
+13. **Hostile tests can fail.** Each `[hostile:…]` test fails without the code it guards; a
+    `hostile:<tag> n/a:` waiver's reason is true.
+14. **Tested against real responses.** A fix is tested against what the real route answers (a route
+    fixture or the route itself), never a body written for the test.
+15. **Guards can fail.** A new or changed scan's `[self-test]` plants the violation the scan is for
+    and asserts that it is reported.
+16. **Inputs are the schema's.** A handler reads only fields its schema declares; a route reads its
+    body with `readJsonBody(request, SCHEMA)`.
+17. **The self-review was done.** The Self-review block names the consumers actually checked and
+    what the hostile re-read found.
+
+## Blocking rules — how a gate is reviewed (TASK-200)
+
+A change to a gate or a security boundary (a High-tier path) is reviewed this way; each breach is
+**Important** ([AI_ENGINEERING](docs/AI_ENGINEERING.md) §3a).
+
+18. **A threat model before code.** The entry's **Threat model** — boundary, bypasses, forgeries,
+    legitimate flows — was agreed with the owner before the first commit (process-check refuses an
+    entry without it; whether it came first is the reviewer's to check). It names actors that really
+    exist for this repository — the owner (the only person who can push), the agents working for
+    him, the running system's users and tenants. A finding that depends on an actor who does not
+    exist (a pull request author without owner rights, while there is none) is out of scope, not a
+    residual.
+19. **Three lenses a round.** Each review round runs three reviewers in parallel: security bypass,
+    legitimate flows, and test validity with mutation.
+20. **A coverage table from each reviewer:** each changed file or rule, the attacks or flows tried,
+    the result. A round without the three tables has not happened.
+21. **Fix the class.** Each finding is fixed across its whole class, and the fix says how the class
+    was searched.
+22. **The fixer attacks its own fix** and writes the attempts in the Self-review.
+23. **Mutation testing runs on gate and security code** (`stryker.config.mjs`, by hand —
+    `npm run test:mutation` — whenever `scripts/process-check.mjs` changes): the score stays at 90%
+    or more; an equivalent mutant is marked with its reason, or (when its line also
+    holds a mutant a test kills) left to survive and listed in the Self-review.
+24. **The stop rule.** A round with no Important (or Low) finding ends the review; a Nit fixed after
+    it is verified by a test.

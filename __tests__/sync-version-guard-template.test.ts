@@ -6,6 +6,8 @@
  * alert fires) on a missing or malformed version. Hostile cases: older, equal, numerically larger
  * but lexically smaller (6.10.0 vs 6.9.0), leading zeros, two version lines, a pre-release suffix,
  * no file, and wrong arguments.
+ *
+ * @guard a sync that would revert an app to an older platform
  */
 import { execFileSync } from "child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -54,7 +56,7 @@ describe("sync-version-guard.sh", () => {
     );
   });
 
-  it("an older source (main behind develop) does not sync: exit 0, proceed=false, a notice", () => {
+  it("[self-test] an older source (main behind develop) does not sync: exit 0, proceed=false, a notice", () => {
     const r = guard(checkout("s", v("5.4.0")), checkout("t", v("6.0.0")));
     expect(r).toMatchObject({ code: 0, out: "proceed=false\n" });
   });

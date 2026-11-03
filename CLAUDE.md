@@ -50,6 +50,26 @@ or Upstash for the shared cache; Jest with ts-jest; Semgrep, CodeQL and gitleaks
 - **Match effort to stakes.** The platform is pre-launch: before building new machinery, ask
   whether the problem matters now, and say what the simpler path would be.
 
+## The engineering process — enforced, not optional (TASK-200)
+
+CI fails on each; REVIEW.md blocks on the rest ([AI_ENGINEERING](docs/AI_ENGINEERING.md) §3a).
+
+- **Design check first.** A commit (or a merge's own change) touching `platform/`, `app/`, `lib/`,
+  `components/`, `hooks/`, `proxy.ts`, workflows or the check's files ends its subject with its
+  task group, `(TASK-nnn)` — a `TASK-nnn` elsewhere names nothing; a pushed one is adopted by a
+  `**Commits:** <sha>` line — and edits that [TASKS](docs/TASKS.md) entry: **Design check**,
+  **Self-review** and, when it touches a high-tier path ([risk-tiers](scripts/risk-tiers.json)
+  `high`, and always `.github/`, CLAUDE.md, REVIEW.md, `.gitattributes`, the risk tiers and the
+  check's files), a **Threat model** (`scripts/process-check.mjs`).
+- **Callers move with a response;** an error status is the registry's. **Screen tests** answer
+  fetch from `__tests__/fixtures/route-responses`, not bodies written by hand. **Bodies** are read
+  with `readJsonBody(request, SCHEMA)`. **Route tests** carry `[hostile:role]`, `[hostile:self]`,
+  `[hostile:store-down]`, `[hostile:id-spelling]` in test titles, or a reasoned waiver. **Every
+  guard** is `@guard` with a `[self-test]` that runs its scan. **Baselines** never rise.
+- **Review of a gate** (REVIEW.md 18–24): threat model before code, naming only actors that exist
+  (one owner pushes; a finding needing an absent actor is out of scope); three lenses with coverage
+  tables; fix the class; attack your fix; `npm run test:mutation` by hand (≥90%); stop when clean.
+
 ## Non-goals
 
 - Not an app: the screens here are reference implementations for apps to adopt or replace.
@@ -65,4 +85,5 @@ its risk tier sets (`node scripts/risk-tier.mjs --base origin/develop`), then th
 ```zsh
 npm run format:check && npm run typecheck && npx eslint . --max-warnings 0 && npm test
 node scripts/module-manifest.cjs --check
+node scripts/process-check.mjs --base origin/develop
 ```

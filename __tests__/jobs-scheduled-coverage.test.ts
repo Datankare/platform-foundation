@@ -5,6 +5,8 @@
  * __tests__/jobs-scheduled-coverage.test.ts — every timed duty is a registered job
  * (ADR-056 D3, TASK-141)
  *
+ * @guard a timed duty that is not a registered, scheduled and seeded job
+ *
  * The defect this closes: functions documented as scheduled (the escalation reaper, claim
  * release, strike expiry, the GDPR purge, the scheduled agents) that nothing ran. Now a function
  * that runs on a schedule says so with a JSDoc tag — `@scheduled <kind>` — and this test fails:
@@ -177,7 +179,7 @@ describe("every timed duty is a registered job (ADR-056 D3)", () => {
 });
 
 describe("the scan itself (self-tests)", () => {
-  it("reads tags from block and line comments, and finds untagged descriptions", () => {
+  it("[self-test] reads tags from block and line comments, and finds untagged descriptions", () => {
     const src =
       "/**\n * Sweep.\n *\n * @scheduled a.b-c\n */\nfunction x() {}\n// runs on a schedule\nconst y = 1;";
     const blocks = commentBlocks(src);

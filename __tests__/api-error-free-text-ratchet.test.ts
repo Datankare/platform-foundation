@@ -3,6 +3,8 @@
  * free text. A NextResponse.json / Response.json body with an `error` field and no `code`,
  * anywhere in app/api, platform, lib or the root request proxy (proxy.ts), fails CI. Errors go through apiError(),
  * internalError(), errorFromResult() or authResultResponse() (platform/errors, platform/auth).
+ *
+ * @guard an API error body without a registered code
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, relative } from "path";
@@ -64,7 +66,7 @@ describe("API errors — no free text (ADR-051, TASK-109)", () => {
     expect(freeTextErrorSites()).toEqual([]);
   });
 
-  it("the scan finds a free-text error when one exists (self-test)", () => {
+  it("[self-test] the scan finds a free-text error when one exists", () => {
     const sf = ts.createSourceFile(
       "probe.ts",
       'NextResponse.json({ error: "x" }, { status: 400 });',

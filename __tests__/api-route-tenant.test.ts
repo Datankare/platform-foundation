@@ -4,6 +4,8 @@
 /**
  * __tests__/api-route-tenant.test.ts — every API route runs in its own tenant scope (ADR-053 D3)
  *
+ * @guard a route handler not run in a tenant scope
+ *
  * The tenant is established by the route's rate limit and verifier, which are helpers the
  * handler awaits; they can only fill a scope created around the whole handler. So every exported
  * handler is `export const METHOD = tenantRoute(…)` — or an app wrapper declared in
@@ -44,7 +46,7 @@ describe("API routes run in a tenant scope (ADR-053 D3)", () => {
     expect(unwrapped).toEqual([]);
   });
 
-  it("recognises both forms, so an unwrapped handler is counted (self-test)", () => {
+  it("[self-test] recognises both forms, so an unwrapped handler is counted", () => {
     const plain =
       "export async function GET(r: Request) {}\nexport const POST = tenantRoute(async () => {});";
     expect(handlerCount(plain)).toBe(2);

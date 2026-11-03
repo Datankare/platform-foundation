@@ -1,6 +1,8 @@
 /**
  * TASK-197 (audit D-4, D-5): every failed answer from an external dependency is recorded.
  *
+ * @guard an external call's failure branch that reports nothing
+ *
  * A Google 403 (key restricted, billing off), an exhausted quota or a rotated token ended as a
  * plain Error: the route answered 500 `internal.error` and wrote one log line, so nobody learned
  * that a credential or a plan had to be fixed. The rule now: an external call that fails reports
@@ -358,7 +360,7 @@ describe("external failures are recorded (TASK-197, audit D-4/D-5)", () => {
     }
   });
 
-  it("the scan sees each kind of failed answer, and a branch that reports on only one path", () => {
+  it("[self-test] the scan sees each kind of failed answer, and a branch that reports on only one path", () => {
     const text = [
       "async function a(){ const r = await fetchWithTimeout(u); if (!r.ok) { throw new Error('x'); } }",
       "async function b(){ const r = await fetch(u); if (r.ok === false) throw externalFailure('s','credential','m'); }",

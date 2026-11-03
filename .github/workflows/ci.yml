@@ -5,6 +5,7 @@ on:
     branches: [main, staging, develop]
   pull_request:
     branches: [main, staging, develop]
+    types: [opened, synchronize, reopened]
 
 # Least privilege (audit H-5): read the code, nothing else.
 permissions:
@@ -64,6 +65,42 @@ jobs:
 
       - name: Layer 0e — Override audit (TASK-070)
         run: npm run overrides:audit
+
+      # TASK-200: the engineering process, enforced — it catches our own mistakes (one person can
+      # push; GitHub's rulesets and 2FA keep others out). A code, workflow or process-file commit (a
+      # merge by its own change) names its task, whose entry carries a complete Design check and
+      # Self-review (a Threat model on a high-tier path) and is touched by the change; a route test
+      # file the change adds or edits has its hostile cases; no ratchet baseline loosens. Sync
+      # commits (by subject) and Dependabot's are not judged. A pull request is judged at its own head.
+      # Commits made before the rule are not judged (scripts/process-check.mjs; AI_ENGINEERING §3a).
+      - name: Layer 0f — Engineering process (TASK-200)
+        timeout-minutes: 15
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          # The pull request's own head, not the synthetic merge CI checks out (whose merge with the
+          # base is not the change's).
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BASE_REF" ]; then
+            base="origin/$BASE_REF"
+          elif [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            base="$PUSH_BEFORE"
+          else
+            base="HEAD^1"
+          fi
+          if ! git rev-parse --verify -q "$base^{commit}" >/dev/null; then
+            # A force-push dropped the push's base: judge every commit since the last promotion.
+            base=$(git merge-base HEAD origin/staging) || { echo "::error::the push's base is gone (a force-push) and the branch shares no history with origin/staging: run node scripts/process-check.mjs --base <the last commit you trust> locally"; exit 1; }
+            echo "::warning::the push's base is gone (a force-push): judging every commit since the last promotion (the merge base with origin/staging, $base)"
+          fi
+          if [ -n "$BASE_REF" ]; then
+            git rev-parse --verify -q "$PR_HEAD^{commit}" >/dev/null || { echo "::error::the pull request's head $PR_HEAD is not in the checkout"; exit 1; }
+            node scripts/process-check.mjs --base "$base" --head "$PR_HEAD"
+          else
+            node scripts/process-check.mjs --base "$base"
+          fi
 
       - name: Install Postgres 17 + pgvector (apt.postgresql.org)
         run: |

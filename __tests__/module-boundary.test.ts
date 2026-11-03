@@ -1,6 +1,8 @@
 /**
  * __tests__/module-boundary.test.ts — The core never imports a module (ADR-054 D3), in CI
  *
+ * @guard a core file that imports a product module
+ *
  * Walks every import in the tree (helpers/import-graph.ts — the same edges the boundary survey
  * of October 2026 counted: declarations, import(), require(), jest.mock and requireActual) and
  * classifies both ends by platform/modules/manifest.json:
@@ -95,7 +97,7 @@ describe("core/module boundary (ADR-054 D3)", () => {
     ]);
   });
 
-  it("self-test: a core file importing a module is a breach; a composition root's is not", () => {
+  it("[self-test] a core file importing a module is a breach; a composition root's is not", () => {
     const core: ImportEdge = {
       from: "platform/agents/registry.ts",
       specifier: "@/platform/social",

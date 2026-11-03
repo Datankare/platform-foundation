@@ -1,0 +1,19 @@
+# TASK-200: the engineering process's own files and their owner, for visibility. Code Owners'
+# review is NOT required: GitHub forbids approving one's own pull request, and the owner is the sole
+# author (docs/TASKS.md, TASK-200 owner steps). No check reads this file. @RamanSud is the owner's
+# GitHub login (the commit history: 3880306+RamanSud@users.noreply.github.com).
+/scripts/process-check.mjs @RamanSud
+/stryker.config.mjs @RamanSud
+/__tests__/process-check.mutation.mjs @RamanSud
+/scripts/risk-tiers*.json @RamanSud
+/scripts/risk-tier.mjs @RamanSud
+/scripts/coverage-ratchet.mjs @RamanSud
+/.github/workflows/ @RamanSud
+/.github/CODEOWNERS @RamanSud
+/.github/sync-config.json @RamanSud
+/.github/scripts/ @RamanSud
+/docs/templates/ @RamanSud
+/*-baseline.json @RamanSud
+/journey-exemptions.json @RamanSud
+/open-input-register.json @RamanSud
+/platform/modules/platform-paths.json @RamanSud

@@ -2,6 +2,8 @@
  * __tests__/command-bar-governance.test.ts — an action's rules bind its approver too (TASK-194,
  * C-2)
  *
+ * @guard a command-bar approver not held to every rule its action's handler applies
+ *
  * The approval decision asked an approver only for the action's page permission; the rules a
  * handler applies beyond it — the role-governance rules and an erasure's own — ran for the
  * requester alone. Now each such action names its rules in APPROVER_RULES (command-bar.ts), which
@@ -33,16 +35,16 @@ const RULES = [
 const DIR = join(process.cwd(), "app/api/admin/ai/handlers");
 
 /** name → the identifiers its body references, for every top-level function of the handlers. */
-function functionRefs(): Map<string, { file: string; refs: Set<string> }> {
-  const out = new Map<string, { file: string; refs: Set<string> }>();
-  for (const name of readdirSync(DIR).filter((n) => n.endsWith(".ts"))) {
-    const file = join(DIR, name);
-    const sf = ts.createSourceFile(
-      file,
-      readFileSync(file, "utf8"),
-      ts.ScriptTarget.Latest,
-      true
-    );
+type Fns = Map<string, { file: string; refs: Set<string> }>;
+
+function functionRefs(
+  sources: readonly { name: string; text: string }[] = readdirSync(DIR)
+    .filter((n) => n.endsWith(".ts"))
+    .map((name) => ({ name, text: readFileSync(join(DIR, name), "utf8") }))
+): Fns {
+  const out: Fns = new Map();
+  for (const { name, text } of sources) {
+    const sf = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true);
     const refsOf = (node: ts.Node) => {
       const refs = new Set<string>();
       const visit = (n: ts.Node) => {
@@ -67,17 +69,17 @@ function functionRefs(): Map<string, { file: string; refs: Set<string> }> {
 const FNS = functionRefs();
 
 /** The rules `fn` reaches, through the functions of its file it references (each once). */
-function rulesReached(fn: string): Set<string> {
+function rulesReached(fn: string, fns: Fns = FNS): Set<string> {
   const reached = new Set<string>();
   const seen = new Set<string>();
   const walk = (name: string, file?: string) => {
     if (seen.has(name)) return;
     seen.add(name);
-    const def = FNS.get(name);
+    const def = fns.get(name);
     if (!def || (file && def.file !== file)) return;
     for (const r of def.refs) {
       if (RULES.includes(r)) reached.add(r);
-      else if (FNS.get(r)?.file === def.file) walk(r, def.file);
+      else if (fns.get(r)?.file === def.file) walk(r, def.file);
     }
   };
   walk(fn);
@@ -103,6 +105,25 @@ describe("every action's rules bind its approver (TASK-194, C-2)", () => {
     expect(rulesReached("handleCreateRole").has("mayChangePlatformCatalog")).toBe(true);
     expect(rulesReached("handlePurgeUserData").has("PROTECTED_ROLES")).toBe(true);
     expect(rulesReached("handleSearch").size).toBe(0);
+  });
+
+  it("[self-test] reports a planted approver that skips a rule its handler applies", () => {
+    const fns = functionRefs([
+      {
+        name: "planted.ts",
+        text: [
+          "export async function handleGrant(i) { checkRoleAssignment(i); return grantIt(i); }",
+          "function grantIt(i) { return checkPermissionGrant(i); }",
+          "export function decideGrant(f) { return checkRoleAssignment(f); }",
+        ].join("\n"),
+      },
+    ]);
+    const handler = rulesReached("handleGrant", fns);
+    const approver = rulesReached("decideGrant", fns);
+    expect([...handler].sort()).toEqual(["checkPermissionGrant", "checkRoleAssignment"]);
+    expect([...handler].filter((r) => !approver.has(r))).toEqual([
+      "checkPermissionGrant",
+    ]);
   });
 
   it.each(Object.keys(COMMAND_BAR_HANDLERS))(

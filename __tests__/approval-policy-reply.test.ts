@@ -1,6 +1,8 @@
 /**
  * The command bar's reply to set_approval_policy comes from the catalog (round 14, item 11:
  * CLAUDE.md "every word on a screen comes from messages/").
+ *
+ * @not-guard: pins one handler's reply to the catalog by reading that one file; an instance check, not a scan
  */
 
 import { readFileSync } from "fs";

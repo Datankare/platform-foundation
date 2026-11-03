@@ -6,6 +6,13 @@
 
 <!-- The business/architecture reason — which ADR, roadmap item, or principle drives this. -->
 
+## Design check and self-review
+
+<!-- In the task's entry in docs/TASKS.md (TASK-200; CI's Layer 0f fails without them): the
+     Design check — reach, races, dependencies down, erasure leftovers, screens × responses,
+     journeys touched, weakens a tenant's protection? — and the Self-review — consumers checked,
+     hostile re-read. Name the task here and end the title with it: (TASK-nnn). -->
+
 ## Risk tier
 
 <!-- Low / Medium / High, and the reason: paste the review-tier job's reasons, or the output of

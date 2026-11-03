@@ -1,6 +1,8 @@
 /**
  * __tests__/postgrest-url-encoding.test.ts — no value reaches a PostgREST filter unencoded (audit E-16, F-17)
  *
+ * @guard a value interpolated into a PostgREST filter unencoded
+ *
  * Stores that call the REST API directly built URLs like `?id=eq.${id}`. An id containing `&`
  * adds a filter; `#` truncates the URL and drops every filter after it — in the social store,
  * "remove one member" became "remove all members". Every value interpolated into a filter, in a
@@ -84,7 +86,7 @@ describe("PostgREST URL encoding", () => {
     expect(scan("f.ts", src).hits).toHaveLength(1);
   });
 
-  it("the checker accepts an encoded value, and refuses any interpolated string filter", () => {
+  it("[self-test] the checker accepts an encoded value, and refuses any interpolated string filter", () => {
     expect(scan("f.ts", "`?id=eq.${encodeURIComponent(groupId)}`").hits).toEqual([]);
     expect(scan("f.ts", "q.or(`actor_id.eq.${userId}`);").hits.length).toBeGreaterThan(0);
     expect(scan("f.ts", "q.filter(`x`, `${op}`, v);").hits.length).toBe(0);

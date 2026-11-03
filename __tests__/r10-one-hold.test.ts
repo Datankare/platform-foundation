@@ -2,6 +2,10 @@
  * __tests__/r10-one-hold.test.ts — One hold per change, and an approval a failure does not burn
  * (review 10 H1, H2, H3)
  *
+ * @guard a command-bar handler that writes governed config without being declared a config write
+ *
+ * hostile:id-spelling n/a: the approvals are the ids this test's own holds return; id-equality covers spelling
+ *
  * The reviewer's proofs (review10/__tests__/r10/approval.test.ts), now asserting the fixed
  * behaviour, with the real pipeline, proposal store, approvals route and config handlers:
  *
@@ -182,7 +186,7 @@ beforeEach(() => {
 });
 
 describe("r10 H1: who may clear a write to a safety-tier dual-controlled key — the key's rules", () => {
-  it("the reviewer's case: the command bar's change is held under the key's rules; an approver without config_manage_safety cannot clear it", async () => {
+  it("[hostile:role] the reviewer's case: the command bar's change is held under the key's rules; an approver without config_manage_safety cannot clear it", async () => {
     store.set("agent.trusted_agents", []);
     const held = await run("super_admin", "register_agent", {
       agent_id: "agent:evil",
@@ -243,7 +247,7 @@ describe("r10 H1: who may clear a write to a safety-tier dual-controlled key —
     expect(writes).toHaveLength(1);
   });
 
-  it("the requester cannot approve their own held change", async () => {
+  it("[hostile:self] the requester cannot approve their own held change", async () => {
     const held = await run("super_admin", "set_capability_mapping", {
       capability: "c",
       features: ["f"],
@@ -386,7 +390,7 @@ describe("r10 H2: a failure after the claim keeps the approval", () => {
     return held.proposalId as string;
   }
 
-  it("the reviewer's case: a transient write failure answers truthfully, keeps the approval, and the retry applies once", async () => {
+  it("[hostile:store-down] the reviewer's case: a transient write failure answers truthfully, keeps the approval, and the retry applies once", async () => {
     const id = await heldChange();
     failWrite = 1;
     const first = await approve(id, second);
@@ -486,21 +490,34 @@ describe("r10 invariant: no action is both held as an action and a governed conf
     }
   });
 
+  /** The exported handlers of a handler file that writes governed config. */
+  const configWriterNames = (file: string, src: string): string[] => {
+    if (
+      !/\b(?:writeGovernedConfig|resetGovernedConfig|dispatchConfigTool|setConfigWithHistory)\b/.test(
+        src
+      )
+    )
+      return [];
+    if (file === "shared.ts") return []; // types and the outcome mapping only
+    return [...src.matchAll(/export async function (\w+)/g)].map((m) => m[1]);
+  };
+
+  it("[self-test] reports a planted handler that writes config, and not one that does not", () => {
+    const writes =
+      "export async function handlePlanted(i) { await writeGovernedConfig(i); }";
+    const reads = "export async function handleRead(i) { return readConfig(i); }";
+    expect(configWriterNames("planted.ts", writes)).toEqual(["handlePlanted"]);
+    expect(configWriterNames("read.ts", reads)).toEqual([]);
+    // Undeclared, it would be held as an action: the declared list does not name it.
+    expect(configWrites).not.toContain("planted");
+  });
+
   it("every handler that writes governed config is declared a config write (so it is never held as an action)", () => {
     const dir = join(ROOT, "app/api/admin/ai/handlers");
     const writers = new Set<unknown>();
     for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
-      const src = readFileSync(join(dir, file), "utf8");
-      if (
-        !/\b(?:writeGovernedConfig|resetGovernedConfig|dispatchConfigTool|setConfigWithHistory)\b/.test(
-          src
-        )
-      )
-        continue;
-      if (file === "shared.ts") continue; // types and the outcome mapping only
-      for (const m of src.matchAll(/export async function (\w+)/g)) {
-        writers.add((handlers as Record<string, unknown>)[m[1]]);
-      }
+      for (const name of configWriterNames(file, readFileSync(join(dir, file), "utf8")))
+        writers.add((handlers as Record<string, unknown>)[name]);
     }
     const declaredWriters = Object.entries(COMMAND_BAR_HANDLERS)
       .filter(([, fn]) => writers.has(fn))

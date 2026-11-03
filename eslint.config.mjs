@@ -22,7 +22,16 @@ if (!importPlugin)
 
 const eslintConfig = [
   {
-    ignores: ["coverage/**", ".next/**", "node_modules/**", "next-env.d.ts", "k6/**"],
+    ignores: [
+      "coverage/**",
+      ".next/**",
+      "node_modules/**",
+      "next-env.d.ts",
+      "k6/**",
+      // Stryker's sandbox and report (stryker.config.mjs, TASK-200).
+      ".stryker-tmp/**",
+      "reports/**",
+    ],
   },
   ...nextVitals,
   ...nextTypescript,

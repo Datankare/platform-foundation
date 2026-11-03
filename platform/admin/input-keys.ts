@@ -15,6 +15,15 @@
  *                    entry's value (update_config `value`, request_approval `proposedValue`), whose
  *                    shape is the entry's own; __tests__/input-keys-guard.test.ts allows only those
  *
+ * A route body (platform/errors/request-body.ts, readJsonBody — TASK-200, rule 5) is stricter: an
+ * open node below the top is open only when it says why — `openBecause: "<why, four words or
+ * more>"` (isMarkedOpen), each listed with its reason in open-input-register.json
+ * (__tests__/open-input-register.test.ts). One that does not (a field declared `{}`) is read closed
+ * (closeUnmarkedOpen): no key under it is named, so every key is refused. The body itself is never
+ * open: a top-level open node is read closed, marked or not. The command bar and the config assistant keep the rule above (their two open values
+ * are pinned by path in __tests__/input-keys-guard.test.ts, and their schemas, sent to the model
+ * as tool definitions, carry no marker).
+ *
  * Keys only: the values are the handlers' to check, as before. Chosen over setting
  * `additionalProperties: false` throughout and validating each input with the schema validator:
  * that would also enforce every type, bound and required field at the boundary, refusing inputs
@@ -29,6 +38,11 @@ export interface InputSchemaNode {
   readonly items?: InputSchemaNode;
   readonly enum?: unknown;
   readonly description?: string;
+  /**
+   * A route body schema's open node says why its value is the caller's own shape (four words or
+   * more); without it, readJsonBody reads the node closed (TASK-200, rule 5).
+   */
+  readonly openBecause?: string;
 }
 
 /** A key the schema does not name: its path, and the keys named where it was found. */
@@ -46,6 +60,67 @@ export function isOpenNode(node: InputSchemaNode | undefined): boolean {
     node.items === undefined &&
     node.enum === undefined
   );
+}
+
+/** Whether an open node says why it is open: `openBecause` of four words or more (TASK-200). */
+export function isMarkedOpen(node: InputSchemaNode | undefined): boolean {
+  return (
+    isOpenNode(node) &&
+    typeof node?.openBecause === "string" &&
+    node.openBecause.trim().split(/\s+/).filter(Boolean).length >= 4
+  );
+}
+
+/** What an unmarked open node is read as in a route body: an object that names no key. */
+const CLOSED: InputSchemaNode = Object.freeze({ type: "object", properties: {} });
+
+const closedCache = new WeakMap<InputSchemaNode, InputSchemaNode>();
+
+/**
+ * The schema as a route body reads it (TASK-200, rule 5: a body schema of `{}` took every key): the
+ * top never open — an open top node, marked or not, is read closed — and below it every open node
+ * that does not say why (isMarkedOpen) read closed. Marked open nodes below the top, and every other
+ * node, are kept as they are. The same schema object gives the same result.
+ */
+export function closeUnmarkedOpen(schema: InputSchemaNode): InputSchemaNode {
+  // The body itself: never open, whatever it says.
+  return isOpenNode(schema) ? CLOSED : closeBelow(schema);
+}
+
+function closeBelow(schema: InputSchemaNode): InputSchemaNode {
+  const cached = closedCache.get(schema);
+  if (cached) return cached;
+  let out: InputSchemaNode;
+  if (isOpenNode(schema)) {
+    out = isMarkedOpen(schema) ? schema : CLOSED;
+  } else {
+    const properties = schema.properties
+      ? Object.fromEntries(
+          Object.entries(schema.properties).map(([k, v]) => [k, closeBelow(v)])
+        )
+      : undefined;
+    out = {
+      ...schema,
+      ...(properties ? { properties } : {}),
+      ...(schema.items ? { items: closeBelow(schema.items) } : {}),
+    };
+  }
+  closedCache.set(schema, out);
+  return out;
+}
+
+/**
+ * The paths of a route body schema's open nodes that are read closed ("" for the top, which always
+ * is): unmarked, or the top.
+ */
+export function unmarkedOpenNodes(schema: InputSchemaNode, path = ""): string[] {
+  if (isOpenNode(schema)) return path !== "" && isMarkedOpen(schema) ? [] : [path];
+  return [
+    ...Object.entries(schema.properties ?? {}).flatMap(([k, v]) =>
+      unmarkedOpenNodes(v, path === "" ? k : `${path}.${k}`)
+    ),
+    ...(schema.items ? unmarkedOpenNodes(schema.items, `${path}[]`) : []),
+  ];
 }
 
 /** The first key of `value` that `schema` does not name, at any depth; null when there is none. */

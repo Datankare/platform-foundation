@@ -104,23 +104,49 @@ jobs:
         if: steps.guard.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ secrets.FOUNDATION_SYNC_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           SOURCE: ${{ steps.config.outputs.source }}
           REF: ${{ steps.resolve.outputs.resolved_ref }}
           SHA: ${{ steps.sync.outputs.sha }}
+        # One sync pull request at a time (TASK-200): a run whose platform sha already has an open
+        # sync pull request opens nothing; a new one closes every older one (REST only: gh api).
         run: |
           set -euo pipefail
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
           cd target
           if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
-            echo "Up to date with $SOURCE $REF @ $SHA"
+            echo "Up to date with $SOURCE $REF @ $SHA" | tee -a "$SUMMARY"
             exit 0
           fi
+          OPEN=$(gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.ref | startswith("auto-sync/")) | [.number, .head.ref, .title] | @tsv')
+          SHORT="${SHA:0:7}"
+          while IFS=$'\t' read -r NUM HEAD TITLE; do
+            [ -n "$NUM" ] || continue
+            if [[ "$TITLE" =~ @\ ${SHORT}[0-9a-f]*$ ]]; then
+              echo "Sync pull request #$NUM is already open for $SOURCE @ $SHORT: nothing new opened" | tee -a "$SUMMARY"
+              exit 0
+            fi
+          done <<< "$OPEN"
           BRANCH="auto-sync/foundation-$(date +%Y%m%d-%H%M%S)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add -A
+          # The full sha in the subject and the title (TASK-200): the process check exempts a sync by
+          # this subject alone, and verifies nothing else — so the commit holds the rsync's output only.
           git commit -m "chore(sync): inherit platform-foundation $REF @ $SHA"
           git push origin "$BRANCH"
-          gh pr create --base develop --head "$BRANCH" \
-            --title "chore(sync): inherit platform-foundation $REF @ ${SHA:0:7}" \
-            --body "Automated pull from \`$SOURCE@$SHA\` (ref \`$REF\`). No --delete: remove files the platform deleted by hand. Run every gate before merging."
+          URL=$(gh pr create --base develop --head "$BRANCH" \
+            --title "chore(sync): inherit platform-foundation $REF @ $SHA" \
+            --body "Automated pull from \`$SOURCE@$SHA\` (ref \`$REF\`). No --delete: remove the files the platform deleted by hand and amend the deletions into the sync commit (or push them as a chore(sync) commit of deletions only, naming the same sha). Never amend the app's own change into it: the process check exempts a sync by its subject alone. Run every gate before merging.")
+          NEW="${URL##*/}"
+          echo "Opened sync pull request #$NEW for $SOURCE $REF @ $SHORT" | tee -a "$SUMMARY"
+          # Every older sync pull request is superseded: closed with a comment, its branch deleted.
+          while IFS=$'\t' read -r NUM HEAD TITLE; do
+            [ -n "$NUM" ] && [ "$NUM" != "$NEW" ] || continue
+            gh api -X POST "repos/$GH_REPO/issues/$NUM/comments" -f body="Superseded by #$NEW." >/dev/null
+            gh api -X PATCH "repos/$GH_REPO/pulls/$NUM" -f state=closed >/dev/null
+            gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$HEAD" >/dev/null || echo "Branch $HEAD already gone"
+            echo "Closed #$NUM ($HEAD): superseded by #$NEW" | tee -a "$SUMMARY"
+          done <<< "$OPEN"

@@ -281,8 +281,18 @@ sync.
   platform fixes from reaching it.
 - **Deletions are manual.** The sync adds and updates; it does **not** delete. If the platform
   renames or removes a file (e.g. splits a module into a directory), the corresponding stale
-  file must be removed in the consumer on the sync branch before merging. Check for orphaned
-  files after any platform refactor.
+  file must be removed in the consumer on the sync branch before merging — amended into the sync
+  commit, or pushed as a `chore(sync)` commit of deletions only naming the same sha; either is a
+  sync to the engineering-process check, by its subject (TASK-200). Check for orphaned files after any
+  platform refactor.
+- **Its own task register.** A consumer whose tasks are not the platform's keeps them in its own
+  register — `scripts/process-check.app.json` `{ "taskRegisters": ["docs/<APP>_TASKS.md"] }`, both
+  excluded from the sync (root-anchored) — so a sync that brings the platform's `docs/TASKS.md`
+  never drops the consumer's entries (TASK-200).
+- **A sync, by its subject.** The engineering-process check does not judge a commit whose subject is
+  a sync's — `chore(sync)… @ <the full platform sha>` — and judges one naming a short sha. It does not
+  verify the files against the platform: with one owner pushing, a sync is trusted by its form
+  (TASK-200, _Deliberately not built_).
 
 ### Assurance comes with the sync
 

@@ -1,0 +1,5 @@
+{
+  "$comment": "TASK-200 (review round 2): every open node of an input schema (a value of the caller's own shape, `openBecause: \"<why>\"`), as `<file>#<path>` with its reason (__tests__/open-input-register.test.ts). The body of a route is never open. Never grows: no key added, the count not above the base branch's (scripts/process-check.mjs). Each repository keeps its own.",
+  "count": 0,
+  "entries": {}
+}
