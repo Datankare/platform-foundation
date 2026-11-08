@@ -470,8 +470,10 @@ describe("the results row of a users search on the Users screen: one line, no ta
         .getAllByRole("columnheader")
         .map((h) => h.textContent)
     ).toEqual(["Action", "Actor", "Target", "Created"]);
-    expect(within(grid).getByText("aaaaaaaa")).toHaveAttribute("title", ACTOR);
-    expect(within(grid).getByText("bbbbbbbb")).toHaveAttribute("title", TARGET);
+    // TASK-202 (N-63): an id with no name beside it is shown whole (an audit search's own
+    // answer names it by address in its actor column — handlers/search.ts withAccountNames).
+    expect(within(grid).getByText(ACTOR)).toHaveAttribute("title", ACTOR);
+    expect(within(grid).getByText(TARGET)).toHaveAttribute("title", TARGET);
     expect(within(grid).queryByText(MOD_ID)).toBeNull();
     rerender(<ExecutionResultsPanel results={[audit]} showIds onDismiss={jest.fn()} />);
     grid = screen.getByRole("table", { name: "Search results from audit_log" });

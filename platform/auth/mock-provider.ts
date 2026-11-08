@@ -37,6 +37,26 @@ const MOCK_REFRESH_TOKEN = "mock-refresh-token";
 const MOCK_SESSION_ID = "mock-session";
 const MOCK_GUEST_ID = "mock-guest-001";
 
+/**
+ * Further test-double identities, by token (TASK-202): the E2E admin journeys need two
+ * administrators — one asks for a change, a different one approves it (dual control never lets
+ * the requester approve). Each signs in with a second factor, as staff must (audit A-9). Only the
+ * test double knows them: a deployment never runs it (ADR-050 D1 — the environment contract
+ * refuses the mock provider off the ci and local hosts).
+ */
+export const MOCK_EXTRA_IDENTITIES: Readonly<
+  Record<string, { readonly sub: string; readonly email: string }>
+> = {
+  "mock-access-token:admin-a": {
+    sub: "e2e00000-0000-4000-8000-00000000000a",
+    email: "admin-a@e2e.test",
+  },
+  "mock-access-token:admin-b": {
+    sub: "e2e00000-0000-4000-8000-00000000000b",
+    email: "admin-b@e2e.test",
+  },
+};
+
 export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthProvider {
   // ADR-053 D2: the tenant each user is assigned, as a provider attribute would hold it.
   const tenants = new Map<string, string>();
@@ -86,6 +106,25 @@ export function createMockAuthProvider(overrides?: Partial<AuthProvider>): AuthP
     },
 
     async verifyToken(accessToken: AuthToken): Promise<TokenPayload | null> {
+      const extra = Object.prototype.hasOwnProperty.call(
+        MOCK_EXTRA_IDENTITIES,
+        accessToken
+      )
+        ? MOCK_EXTRA_IDENTITIES[accessToken]
+        : undefined;
+      if (extra) {
+        return {
+          sub: extra.sub,
+          email: extra.email,
+          emailVerified: true,
+          identityProviders: [],
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          sessionId: `${MOCK_SESSION_ID}:${extra.sub}`,
+          mfaEnabled: true,
+          ...(tenants.has(extra.sub) ? { tenantId: tenants.get(extra.sub) } : {}),
+        };
+      }
       if (accessToken === MOCK_ACCESS_TOKEN) {
         return {
           sub: MOCK_USER_ID,

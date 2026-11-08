@@ -72,15 +72,21 @@ export function changesTheList(outcome: DecisionOutcome): boolean {
  * `approvalKept` absent (a config approval, or no run): only the codes that say more themselves.
  */
 export function refusedDecisionText(
-  label: string,
+  tool: string,
   refused: { readonly code: string; readonly message: string },
-  outcome: DecisionOutcome = {}
+  outcome: DecisionOutcome = {},
+  /**
+   * What the held change is, as the screen names it (TASK-202, N-62: "update_config…" named the
+   * tool); the tool's id when the screen has no better words.
+   */
+  what: string = tool
 ): string | undefined {
+  const label = what;
   const reason = refused.message;
   // An undecided duplicate is not approved again (round 6, I-2): what to do instead.
   // The catalog's message is generic; for an erasure the panel names it (round 9, N-1).
   if (refused.code === "approvals.duplicate_undecided")
-    return label === "purge_user_data"
+    return tool === "purge_user_data"
       ? t("result_duplicate_undecided", { label })
       : `${label}: ${reason}`;
   if (outcome.withdrawn === true)
@@ -103,7 +109,7 @@ export function refusedDecisionText(
     });
   if (outcome.approvalKept === false)
     return t(
-      CONFIG_HOLD_TOOLS.has(label)
+      CONFIG_HOLD_TOOLS.has(tool)
         ? "result_approved_undecided_config"
         : "result_approved_undecided",
       { label, ...when(outcome.undecidedWithinMinutes) }

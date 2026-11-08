@@ -73,7 +73,7 @@ export default function AdminPromptBar({
       /* justified */
       // Network failure — shown to user via onPlanReceived
       onPlanReceived({
-        message: "Failed to connect to AI service",
+        message: renderMessage("screens.admin_console.plan.connect_failed"),
         actions: [],
       });
     } finally {
@@ -110,7 +110,7 @@ export default function AdminPromptBar({
   return (
     <div className="mb-6">
       <div className="flex gap-2">
-        <div className="flex-1 relative">
+        <div className="flex-1 min-w-0 relative">
           <input
             ref={inputRef}
             type="text"
@@ -118,7 +118,11 @@ export default function AdminPromptBar({
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={disabled || isThinking}
-            placeholder={isThinking ? "Thinking..." : placeholder}
+            placeholder={
+              isThinking
+                ? renderMessage("screens.admin_console.plan.thinking")
+                : placeholder
+            }
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50 pr-10"
           />
           {isThinking && (
@@ -132,7 +136,7 @@ export default function AdminPromptBar({
           disabled={!prompt.trim() || isThinking || disabled}
           className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-5 py-3 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Run
+          {renderMessage("screens.admin_console.plan.run")}
         </button>
       </div>
       {refusal && (

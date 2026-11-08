@@ -6780,7 +6780,215 @@ matrix.os }}`, `runs-on: { group: … }`, `ubuntu-22.04`, a job with no `runs-on
   codename check on this Ubuntu 24.04 host passes and on a faked `resolute` fails with its message;
   the parity step's branches run with each combination of secrets.
 
-_Last updated: November 7, 2026 (TASK-201 — runner images pinned, Supabase secret keys, the security-review action re-checked)_
+### TASK-202 — The admin console made usable: edit settings, decide approvals seeing what changes, people by address, results that stay, forms for agents and erasures
+
+| Field        | Detail                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-202                                                                                    |
+| **Type**     | Defect (the admin console could not be used by a person without code)                       |
+| **Severity** | High (an approver decided changes blind; a setting could only be changed from a console)    |
+| **Phase**    | Phase 5                                                                                     |
+| **Target**   | v6.0.0 (RC)                                                                                 |
+| **Status**   | Fixed on develop (sub-batch 55b of the residuals batch)                                     |
+| **Logged**   | 2026-11-07 (the owner's first walk through the console: N-60 to N-66, N-69; S3-E19, S3-E21) |
+
+The owner walked the console on 2026-11-07 and could not do the job on it: Platform config could
+only search (he changed a setting from the browser console); Approvals showed a tool's name and a
+requester's id, so he approved blind; a decision's result vanished after six seconds and read
+"update_config…"; people were named by raw ids ("User c408… assigned", audit actors and targets,
+requesters, per-account blocks); tables ran past the window and cut values with "…" and no way to
+read them; one search returned three unrelated tables; Trusted agents had no form; no screen showed
+an erasure waiting on the two-operator attestation. Every test passed: none asked whether a person
+could complete the task on screen. Fixed, each on the governed path that already existed:
+
+- **N-60 — Platform config edits a setting.** `components/admin/PlatformConfigPanel.tsx` lists every
+  setting (`GET /api/admin/config?enhanced=true`), filtered on the screen; a row opens its panel —
+  key, what it does, tier (and who may change it), type, current value, platform default, range or
+  allowed values, last change — and an edit form read by the setting's type (`config-value.ts`: an
+  on/off switch, a number checked against its range, a choice of its allowed values, a JSON list
+  checked before it is sent) with a required comment. It submits `update_config`, confirmed, to
+  `POST /api/admin/config-ai/execute`, as the Dual control panel does; the result says
+  "Applied: … is now …" or "Held for approval by <a safety approver or super admin | an
+  administrator or super admin> other than you", and stays until dismissed. An admin without the
+  tier's permission (`config_manage_standard`, `config_manage_safety` — the route's own rule) sees
+  no edit button and is told which permission it needs.
+- **N-61 — Approvals show what is decided.** `GET /api/admin/approvals` now answers, per hold:
+  `requestedBy` — the requester (the person an agent acted for: `actor.onBehalfOf`, else the actor)
+  resolved to address and role in the tenant's transaction (`platform/admin/account-names.ts`), or
+  `erased` / `unknown`, never an id; `change` — a config change's key, value now (the hold's
+  recorded `heldPrevious`, an approval's `currentValue`) and after, scope and action; `comment` —
+  the requester's change comment. `change` and `comment` go only to a viewer who could decide the
+  hold, as the summary already did (round 2, N2). The command bar's summaries now also name a role
+  action's role and the permissions it grants or takes away (`permissionsGranted`,
+  `permissionsRemoved`: catalog codes only, read from the database — a role change's from the two
+  roles), an entitlement group's code and on/off. The panel (`HeldActionsPanel.tsx`) shows one card
+  per hold: what (a setting's key with now → after, a list's added and removed items; an account by
+  address with its role from → to and the permissions; an erasure's account), who asked (address
+  and role), when, their reason, who may approve; Approve and Reject each open a confirm step that
+  repeats what and who. Tenant scoping, the permission checks and the approver rules are unchanged.
+- **N-62 — Results stay and name the change.** `ResultList.tsx`: every change and decision on these
+  screens lists its result — applied, held for approval (by whom), or not done (the catalog's
+  reason) — named by what changed, never a tool's id, until its own Dismiss. A decision's 200 says
+  whether it applied (`applied`, `pendingApproval`; a two-person approval's 200 is its apply), and
+  `refusedDecisionText` takes the hold's words (`what`) while keeping its rules by tool.
+- **N-63 — People by address.** Each place a grep of `components/admin`, `app/admin` and the
+  handlers found (ids cut with `slice(0, 8)` or `slice(0, 12)`, `requester`, `actorId`, `user_id`,
+  `created_by`, results built from an id):
+  the role-change result ("User <id> assigned to …") and the restriction results ("… for user
+  <id>") — now "Role changed to …" with the account by address beside it (`ActionResult.account`,
+  added by the execute route for the screen only, never in the recorded step); the audit log's actor
+  and target (`GET /api/admin/audit` names each; the search tool's audit rows gain `actor` and
+  `target`, `withAccountNames`, screen only); the approvals requester; the per-account blocks'
+  account and blocker (`GET /api/admin/per-account`); the confirm step's account
+  (`POST /api/admin/ai` answers `accounts`, by action, for actions the admin may run); a summary
+  target without an address ("Account: u-2"); the operators' tenant settings, whose held changes
+  named the requester and the tool by id (`TenancyPanels.tsx`, from the same listing, read in the
+  target tenant). An id is shown only as a detail (Show details, or an id that names no account).
+- **N-64 — Tables fit.** The shell is a sidebar from `md` up and a section picker on a phone; the
+  content never widens the page (`min-w-0`); every table scrolls in its own panel; a cut value has a
+  "Show all" button (`ExpandableText.tsx`) instead of a tooltip a touch screen never shows. Checked
+  at 1280 px and 390 px by the E2E walk (no horizontal page scroll).
+- **N-65 — A search reads its screen.** `app/api/admin/ai/search-scope.ts`: the planner's searches
+  of tables outside the section's own are dropped unless the request names the table, and the plan
+  says which (`scopedOut`); Platform config's own filter reads nothing from the server.
+- **N-66 — Trusted agents has forms.** `TrustedAgentsPanel.tsx`: register (id, owner, scope, token
+  ceiling), edit scope or ceiling (one change at a time — each is held and approved on its own),
+  suspend or reactivate after a confirm, each through `POST /api/admin/ai/execute` with one
+  `register_agent` / `set_agent_scope` / `set_agent_ttl` / `suspend_agent` action; held or applied,
+  said and kept.
+- **S3-E19 — Erasures.** `GET /api/operator/erasures` (operators: `platform_operate`;
+  `platform/gdpr/erasure-status.ts`, owner transaction purpose `operator`, read-only) lists every
+  open erasure across tenants — its data purge, each external step (done, attempts,
+  `poolUnverified`), an open attestation request and who asked, an attestation that closed it — and
+  the operators who could attest; the Erasures section (after Approvals) shows them and asks,
+  approves or rejects the attestation on the existing route. When no operator other than the
+  requester exists it says "No eligible second operator: see single-owner dual control" and offers
+  no request no one could approve. The attestation rules are unchanged (sub-batch 55c's).
+- **S3-E21 — Dead panels deleted.** `AdminConfigPanels.tsx`, `AdminDataPanels.tsx` and
+  `AdminPasswordPanel.tsx` were imported and tested nowhere (and duplicated live panels): deleted,
+  with their coverage-ignore entries; so was `PlatformConfigDataView`, exported and used nowhere.
+- **N-69 — The usability lens.** REVIEW.md rule 25 (a fourth lens for a screen: complete the task on
+  screen, see what is decided, people by address, results that stay, fits 1280 and 390 px) and
+  CLAUDE.md's handover: an admin change is walked in a browser on a production build first.
+
+Every new word on these screens is in `messages/en.json`; the screen-literal baseline falls from 312
+to 232 (Playform 350 to 270). E2E: `e2e/admin-console.spec.ts` walks the fixed flows as two
+administrators on the production build and the replayed database — Playform's CI runs it
+(TASK-5001); platform-foundation's CI runs no Playwright job (a workflow change, outside this
+sub-batch), so its copy is the same file, run in Playform. The test double gains two administrators
+(`MOCK_EXTRA_IDENTITIES`, refused off the ci and local hosts as the whole provider is).
+
+Not done here, found on the way (filed for their batches): S3-E20 — the admin console's main files
+are still excluded from coverage (`package.json` `coveragePathIgnorePatterns`); the approvals list's
+"why held" text is still built in English on the server (`pending-approvals.ts` `reason`); the
+command bar's `assigned`-style results of other handlers (agents' "Registered agent <id>") name an
+agent, not a person, and stay.
+
+**Design check**
+
+- **Reach:** admins of a tenant (the approvals list: `can_access_admin`; config edits: the key's
+  tier permission; agents: `admin_manage_agents`; per-account: `admin_manage_account_restrictions`;
+  audit: `admin_view_audit`), operators (`platform_operate`: the erasures list and the attestation),
+  the command bar's planner and executor. Guests, users without an admin role and agents reach none
+  (the guards are unchanged; the new route is `requireAdmin(…, "platform_operate")`). The mock
+  provider's two new identities exist only where the test double runs (ci, local).
+- **Races:** a hold decided while a viewer reads the list: the decision route is unchanged (409 as
+  before), and the panel reads the list again when the answer says the row changed. A setting
+  changed between opening the panel and submitting: the governed write validates and records
+  against the value it finds, and a held change applies only onto the value it was held against
+  (review 12 H2, unchanged). Names are read after the rows: an account erased in between is named as
+  erased or not found, never by id.
+- **Dependencies down:** the names read fails: rows are listed with `requestedBy: unknown` and no
+  account names (never an id, never a failed list); the erasures read fails: a coded 500 and the
+  panel's "could not be read" (no partial list); the config re-read after a change fails: the result
+  says so and that the list may show the old value; the planner's account read fails: the plan is
+  answered without names (the confirm shows what was asked, as before).
+- **Erasure leftovers:** nothing new is stored. Names are read at request time from `users` (an
+  erased account has no address, so it is named "erased"); the recorded step of a command-bar action
+  keeps the id in its input as before and gains no address (the account is added to the screen's
+  copy only); the audit search's address columns are the screen's only (`searchStepRecord` keeps
+  ids and counts).
+- **Screens × responses:** `GET /api/admin/approvals` (+ `requestedBy`, `change`, `comment`;
+  callers: HeldActionsPanel; TenancyPanels through `GET /api/operator/tenants/[id]/approvals`, the
+  same listing; the planner's context — unchanged fields only, no viewer: no names);
+  `GET /api/admin/audit` (+ `actor`, `target`: AuditDataView); `GET /api/admin/per-account`
+  (+ `user`, `created_by_account`: PerAccountRestrictionsDataView); `POST /api/admin/ai`
+  (+ `plan.scopedOut`, `plan.accounts`: ActionConfirmPanel via app/admin/page.tsx);
+  `POST /api/admin/ai/execute` (+ `results[].account`, audit rows' `actor`/`target` columns, the
+  role and restriction result texts without ids: ExecutionResultsPanel, TrustedAgentsPanel, the
+  Users screen's hand-off reads only search tables); `GET /api/operator/erasures` (new:
+  ErasuresPanel); the attestation route (unchanged: ErasuresPanel);
+  `POST /api/admin/config-ai/execute` (unchanged: PlatformConfigPanel, DualControlKeysPanel);
+  `POST /api/admin/approvals/[id]` (unchanged: HeldActionsPanel, TenancyPanels'
+  `refusedDecisionText`, the page's planned decision). Every caller routes refusals through
+  `readRefusal` (`refusal-coverage` passes with no new gap).
+- **Journeys touched:** the admin console (`/admin`) and its sections — Platform config, Approvals,
+  Trusted agents, Erasures, Audit log, Per-account, the command bar's confirm and results; the E2E
+  walk covers `/admin`, the session, config, config assistant, approvals, agent registry, command
+  bar, audit and erasures routes and the attestation route (journey exemptions 74 → 65; Playform
+  56 → 52); Playform's live Journey C reads Platform config and Erasures too.
+- **Weakens a tenant's protection?** No. No permission, guard, approver rule, tenant scope or
+  attestation rule changes; the new values go to the viewers the summary already went to (a hold's
+  values and comment only to one who could decide it); names are read in the tenant's own
+  transaction, so another tenant's account is never named; the erasures read is operators' only.
+  Tested: a non-decider sees no values or comment; another tenant's account is not named; a tenant
+  admin is refused the erasures read.
+
+**Threat model**
+
+- **Boundary:** the admin and operator API routes this changes (approvals list, audit, per-account,
+  the planner and executor, the new erasures read) and the test double's identities, between a
+  signed-in administrator or operator and the tenant's data. Actors that exist: the owner (the only
+  person who pushes), his agents, the running system's administrators, operators and users, and the
+  tenants.
+- **Bypasses:** reading another tenant's names through a hold or audit row naming its ids (names are
+  read under row-level security — test); a non-decider reading a held change's values (`decider`
+  gate — test); a tenant admin reading erasures across tenants (`platform_operate` — test); an id in
+  another spelling escaping the "own request" or "requester" checks (`sameId` — tests); the planner
+  naming an account for an action the admin may not run (`holds` check — test); the mock identities
+  reaching a deployment (the environment contract refuses the mock provider off ci/local, ADR-050
+  D1 — unchanged).
+- **Forgeries:** a crafted `requester` or `actor` in a hold cannot choose a name: names come only
+  from `users` by id or subject in the tenant; a client cannot send `scopedOut` or `accounts` to the
+  executor (they are the planner's answer, display only; the executor checks every action again).
+  Forgeries needing an actor who does not exist (a second author of the code) are out of scope.
+- **Legitimate flows:** an admin changes a standard setting (applied) and a dual-controlled one
+  (held); a second admin approves it, seeing key, values, requester and reason; an admin registers,
+  edits and suspends an agent; an operator asks for an attestation and a second operator approves
+  it; a single-owner deployment sees why no second operator can; every screen at 1280 px and 390 px.
+- **Agreed before code:** written from the owner's brief for sub-batch 55b (2026-11-07: the ten
+  items, the governed paths to use, "do not change the attestation rules"); no commit exists before
+  this entry, and the owner reviews it with the change before it is committed.
+
+**Self-review**
+
+- **Consumers checked:** every caller of the changed responses (the list in Screens × responses);
+  `refusedDecisionText`'s two callers (HeldActionsPanel, TenancyPanels — the old signature still
+  works); `heldActionSummary`'s consumers (the approvals list; `heldTargetAccount` in the decision
+  route — unchanged); the tests that asserted the old texts and layout (shell, sign-out, confirm,
+  results, search grid, approvals, summaries, eligibility, the audit route, the route matrix, the
+  live journeys' "Admin Panel" and "Sign Out" in Playform); the dead files' references
+  (`platform-paths.json`, `package.json`); both repositories' baselines (screen literals down,
+  journey exemptions down, fake-fetch unchanged — the new screen tests answer from route fixtures
+  produced by the real handlers).
+- **Hostile re-read:** tried to see a value or comment as a non-decider (refused by the `decider`
+  gate — test); to name another tenant's account through an audit row and a hold (null — test); to
+  get an address into a recorded step (the account is added after `runCommandBarAction` returns;
+  `stepRecordOf` unchanged); to make the panel show an id when names fail (`unknown`, test); to make
+  "own request" miss an upper-case id or a subject (`sameId` — test; a non-UUID subject in another
+  case is another operator, as `sameId` rules); to pass a JSON object to a list setting, a number
+  out of range, an empty comment (refused before sending — tests; the server validates again); a
+  search scoped out by a lookalike word ("auditor", "settingsx": not names — test); the section key
+  "constructor" (`hasOwnProperty` — test); the browser's own validation bubble hiding the panel's
+  reasons (`noValidate`, found by the test). Found by walking it on the production build and fixed:
+  a requester's role shown as stored ("Super Admin", now read as the Users screen reads one); the
+  console's header naming the role by its id ("super_admin"); "why held" in the server's own terms
+  ("Held at effectiveRisk "restricted" (effects: stateWrite)", now the catalog's words, the detail
+  behind Details); the audit log's action broken mid-word.
+
+_Last updated: November 7, 2026 (TASK-202 — the admin console made usable: the owner's walk of 2026-11-07)_
+
+_Previously updated: November 7, 2026 (TASK-201 — runner images pinned, Supabase secret keys, the security-review action re-checked)_
 
 _Previously updated: November 2, 2026 (TASK-200 — the engineering process, enforced; the owner's single-owner cut)_
 

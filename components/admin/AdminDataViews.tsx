@@ -19,10 +19,13 @@ import {
   permissionCategoryLabel,
 } from "@/components/admin/admin-format";
 import { groupPermissions } from "@/platform/auth/catalog-order";
+import { ExpandableText } from "@/components/admin/ExpandableText";
+import { personText } from "@/components/admin/people";
 
 const thClass =
   "text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800";
-const tdClass = "py-3 px-4 text-gray-300 border-b border-gray-800/50";
+const tdClass =
+  "py-3 px-4 text-gray-300 border-b border-gray-800/50 align-top break-words";
 
 function clampHighlight(seconds: number): number {
   return Math.max(
@@ -43,7 +46,7 @@ function DataTable({
   isEmpty: boolean;
 }) {
   return (
-    <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+    <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-x-auto">
       <table className="w-full text-sm text-left border-collapse">
         <thead>
           <tr>
@@ -159,7 +162,7 @@ export function RolesDataView({ data }: { data: any }) {
   }
 
   return (
-    <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+    <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-x-auto">
       <table className="w-full text-sm text-left border-collapse">
         <thead>
           <tr>
@@ -247,7 +250,7 @@ export function RolesDataView({ data }: { data: any }) {
                                 >
                                   {permissionCategoryLabel(g.category)}
                                 </h3>
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                   {g.permissions.map((p) => (
                                     <div
                                       key={p.code}
@@ -329,25 +332,63 @@ export function EntitlementsDataView({ data }: { data: any }) {
 
 // ── Audit Data View ─────────────────────────────────────────────────────
 
+/** An audit row's actor or target (GET /api/admin/audit names each account; TASK-202, N-63). */
+interface AuditPerson {
+  readonly email: string | null;
+  readonly role?: string | null;
+  readonly erased?: boolean;
+}
+
+const at = (key: string) => renderMessage(`screens.admin_console.audit.${key}`);
+
+/**
+ * Who, by address — never by id (N-63): an account of this tenant by its address; an id that
+ * names no account (a setting, a role, an agent) as a detail; none as a dash.
+ */
+function AuditWho({ person, id }: { person?: AuditPerson | null; id?: string | null }) {
+  if (person) return <span className="break-words">{personText(person)}</span>;
+  if (!id) return <>{at("none")}</>;
+  return (
+    <span className="break-all text-gray-400">
+      {renderMessage("screens.admin_console.people.id", { id })}
+    </span>
+  );
+}
+
 export function AuditDataView({ data }: { data: any }) {
   const entries = data?.entries || [];
   return (
     <DataTable
-      headers={["Time", "Action", "Actor", "Details"]}
+      headers={[
+        at("col_time"),
+        at("col_action"),
+        at("col_actor"),
+        at("col_target"),
+        at("col_details"),
+      ]}
       isEmpty={entries.length === 0}
-      emptyMessage="No audit entries found."
+      emptyMessage={at("empty")}
     >
       {entries.map((e: any) => (
         <tr key={e.id}>
-          <td className={`${tdClass} text-xs`}>
+          <td className={`${tdClass} text-xs whitespace-nowrap`}>
             <AdminDate iso={e.createdAt} withTime />
           </td>
-          <td className={tdClass}>
+          <td className={`${tdClass} whitespace-nowrap`}>
             <code className="text-xs">{e.action}</code>
           </td>
-          <td className={`${tdClass} text-xs`}>{e.actorId?.slice(0, 8) || "—"}</td>
-          <td className={`${tdClass} text-xs text-gray-400 max-w-xs truncate`}>
-            {e.details}
+          <td className={`${tdClass} text-xs`} data-actor="true">
+            <AuditWho person={e.actor} id={e.actorId} />
+          </td>
+          <td className={`${tdClass} text-xs`} data-target="true">
+            <AuditWho person={e.target} id={e.targetId} />
+          </td>
+          <td className={`${tdClass} text-xs text-gray-400 min-w-[12rem]`}>
+            <ExpandableText
+              text={String(e.details ?? "")}
+              column={at("col_details")}
+              mono
+            />
           </td>
         </tr>
       ))}
@@ -391,69 +432,6 @@ export function PasswordPolicyDataView({ data }: { data: any }) {
   );
 }
 
-export function PlatformConfigDataView({
-  data,
-}: {
-  data: {
-    entries?: {
-      key: string;
-      value: unknown;
-      description: string | null;
-      category: string;
-      updatedAt: string;
-    }[];
-  };
-}) {
-  if (!data.entries) return <p className="text-gray-400">Loading...</p>;
-  if (data.entries.length === 0)
-    return <p className="text-gray-400">No config entries found</p>;
-
-  // Group by category
-  type ConfigEntries = NonNullable<typeof data.entries>;
-  const grouped: Record<string, ConfigEntries> = {};
-  for (const entry of data.entries) {
-    if (!grouped[entry.category]) grouped[entry.category] = [];
-    grouped[entry.category].push(entry);
-  }
-
-  return (
-    <div className="space-y-6">
-      {Object.entries(grouped).map(([category, entries]) => (
-        <div key={category}>
-          <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-2">
-            {category}
-          </h3>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-400 border-b border-gray-700">
-                <th className="text-left py-1 pr-4">Key</th>
-                <th className="text-left py-1 pr-4">Value</th>
-                <th className="text-left py-1">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry) => (
-                <tr
-                  key={entry.key}
-                  className="border-b border-gray-800 hover:bg-gray-800/50"
-                >
-                  <td className="py-2 pr-4 font-mono text-blue-300">{entry.key}</td>
-                  <td className="py-2 pr-4 font-mono">
-                    {typeof entry.value === "string"
-                      ? entry.value
-                      : JSON.stringify(entry.value)}
-                  </td>
-                  <td className="py-2 text-gray-400">{entry.description || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ── Agent governance (Sprint 3c U4/U6) ──────────────────────────────────
 
 /**
@@ -471,125 +449,44 @@ function panelState(data: unknown, field: string): "loading" | "unavailable" | "
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export function TrustedAgentsDataView({ data }: { data: any }) {
-  // Review 14 L-1: not read yet, or not readable, is never shown as "no agents".
-  const state = panelState(data, "agents");
-  const pairs: [string, any][] = state === "ready" ? data.agents : [];
-  return (
-    <div>
-      <h2 className="text-xl font-bold text-white mb-6">Trusted agents</h2>
-      {state === "loading" ? (
-        <p className="text-gray-400 text-sm">
-          {renderMessage("screens.admin_console.loading")}
-        </p>
-      ) : state === "unavailable" ? (
-        <PanelUnavailable panel="Trusted agents" />
-      ) : pairs.length === 0 ? (
-        <p className="text-gray-400 text-sm">
-          {renderMessage("screens.admin_console.no_agents")}
-        </p>
-      ) : (
-        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
-          <table className="w-full text-sm text-left border-collapse">
-            <thead>
-              <tr>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Agent
-                </th>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Owner
-                </th>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Scope
-                </th>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Status
-                </th>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Token ceiling
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {pairs.map(([id, rec]) => (
-                <tr key={id}>
-                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50 font-mono text-xs">
-                    {id}
-                  </td>
-                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
-                    {rec.owner}
-                  </td>
-                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
-                    {(rec.scopes || []).join(", ")}
-                  </td>
-                  <td className="py-3 px-4 border-b border-gray-800/50">
-                    <span
-                      className={
-                        rec.status === "active" ? "text-green-400" : "text-red-400"
-                      }
-                    >
-                      {rec.status}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
-                    {rec.maxTokenTtl ? `${rec.maxTokenTtl}s` : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
+/** The Trusted agents screen, with its forms (TASK-202, N-66): TrustedAgentsPanel. */
+export { TrustedAgentsPanel as TrustedAgentsDataView } from "@/components/admin/TrustedAgentsPanel";
 
+const pa = (key: string) => renderMessage(`screens.admin_console.per_account.${key}`);
+
+/** A blocked account and who blocked it, by address (TASK-202, N-63). */
 export function PerAccountRestrictionsDataView({ data }: { data: any }) {
   const rows: any[] = Array.isArray(data?.restrictions) ? data.restrictions : [];
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-6">Per-account feature control</h2>
+      <h2 className="text-xl font-bold text-white mb-6">{pa("title")}</h2>
       {rows.length === 0 ? (
-        <p className="text-gray-400 text-sm">No per-account blocks in effect.</p>
+        <p className="text-gray-400 text-sm">{pa("empty")}</p>
       ) : (
-        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
-          <table className="w-full text-sm text-left border-collapse">
-            <thead>
-              <tr>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  User
-                </th>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Blocked feature
-                </th>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Reason
-                </th>
-                <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  By
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td className="py-3 px-4 text-gray-200 border-b border-gray-800/50">
-                    {r.user_id}
-                  </td>
-                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50 font-mono text-xs">
-                    {r.feature}
-                  </td>
-                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
-                    {r.reason || "—"}
-                  </td>
-                  <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
-                    {r.created_by}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          headers={[pa("col_user"), pa("col_feature"), pa("col_reason"), pa("col_by")]}
+          isEmpty={false}
+          emptyMessage={pa("empty")}
+        >
+          {rows.map((r, i) => (
+            <tr key={i}>
+              <td className={`${tdClass} text-gray-200`} data-account="true">
+                <AuditWho person={r.user} id={r.user_id} />
+              </td>
+              <td className={`${tdClass} font-mono text-xs`}>{r.feature}</td>
+              <td className={tdClass}>
+                {r.reason ? (
+                  <ExpandableText text={String(r.reason)} column={pa("col_reason")} />
+                ) : (
+                  pa("none")
+                )}
+              </td>
+              <td className={tdClass}>
+                <AuditWho person={r.created_by_account} id={r.created_by} />
+              </td>
+            </tr>
+          ))}
+        </DataTable>
       )}
     </div>
   );
@@ -618,7 +515,7 @@ export function ApprovalPolicyDataView({ data }: { data: any }) {
               No rules — the default approver handles every action.
             </p>
           ) : (
-            <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+            <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-x-auto">
               <table className="w-full text-sm text-left border-collapse">
                 <thead>
                   <tr>
@@ -669,7 +566,7 @@ export function CapabilitiesDataView({ data }: { data: any }) {
       {goals.length === 0 ? (
         <p className="text-gray-400 text-sm">No capabilities registered.</p>
       ) : (
-        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-x-auto">
           <table className="w-full text-sm text-left border-collapse">
             <thead>
               <tr>
@@ -740,7 +637,7 @@ export function CapabilityMappingDataView({ data }: { data: any }) {
           {renderMessage("screens.admin_console.no_mappings")}
         </p>
       ) : (
-        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-hidden">
+        <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-x-auto">
           <table className="w-full text-sm text-left border-collapse">
             <thead>
               <tr>

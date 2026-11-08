@@ -54,13 +54,18 @@ describe("the approvals list shows each held action's summary (A1)", () => {
       (n) => n.textContent
     );
     expect(lines).toEqual([
-      "Account: someone@example.test",
       "Reason: legal-order",
-      "Account: u-2",
       "Role: free → moderator",
-      "Account: not found",
       "Feature: translate",
     ]);
+    // The account is in each hold's one-line what, by address — never by its id (TASK-202,
+    // N-63: "Account: u-2" named an account by id).
+    expect(screen.getByText("Erase the account someone@example.test")).toBeDefined();
+    expect(screen.getByText("Role of an account with no address")).toBeDefined();
+    expect(
+      screen.getByText("Block “translate” for an account that is no longer found")
+    ).toBeDefined();
+    expect(document.body.textContent).not.toContain("u-2");
   });
 
   it("a hold with no summary shows only its reason", () => {

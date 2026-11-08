@@ -20,7 +20,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
-import { PANEL_CONTEXT_PERMISSIONS, toolPermission } from "./tool-permissions";
+import {
+  ADMIN_TOOL_PERMISSIONS,
+  PANEL_CONTEXT_PERMISSIONS,
+  toolPermission,
+  type AdminToolId,
+} from "./tool-permissions";
+import { scopeSearches } from "./search-scope";
+import { ACCOUNT_TARGET_FIELD, heldTargetAccount } from "./held-summary";
+import { withAccountIdsNormalised } from "./command-bar";
 import { withTenantTx, type Tx } from "@/platform/data";
 import { logger, generateRequestId } from "@/lib/logger";
 import { getOrchestrator } from "@/platform/ai";
@@ -121,6 +129,36 @@ async function getContextForPanel(panel: string, admin: VerifiedAdmin): Promise<
   return "";
 }
 
+/**
+ * The account each account-targeting action of a plan names (ACCOUNT_TARGET_FIELD), by the
+ * action's index: its address (null once erased) — only for an action the admin may run (its own
+ * page permission), and only an account of this tenant (read in its transaction). An action whose
+ * account is not found, or cannot be read, has none: the confirm step then says so.
+ */
+async function planAccounts(
+  actions: readonly { tool: string; input: Record<string, unknown> }[],
+  admin: VerifiedAdmin
+): Promise<Record<number, { email: string | null; found: boolean }>> {
+  const out: Record<number, { email: string | null; found: boolean }> = {};
+  for (let i = 0; i < actions.length; i += 1) {
+    const tool = actions[i].tool as AdminToolId;
+    if (!Object.prototype.hasOwnProperty.call(ACCOUNT_TARGET_FIELD, tool)) continue;
+    if (!holds(admin, ADMIN_TOOL_PERMISSIONS[tool])) continue;
+    try {
+      const found = await heldTargetAccount(
+        tool,
+        withAccountIdsNormalised(tool, actions[i].input ?? {})
+      );
+      out[i] = found
+        ? { email: found.email, found: true }
+        : { email: null, found: false };
+    } catch {
+      // Unreadable: the confirm step shows what was asked, as before.
+    }
+  }
+  return out;
+}
+
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const verified = await requireAdmin(request, "can_access_admin");
   if (verified.error) return verified.error;
@@ -192,7 +230,20 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ plan });
+    // A search reads the screen it was asked on, unless the request names another table
+    // (TASK-202, N-65): the plan keeps the others out, and says which.
+    const scoped = scopeSearches(panel, prompt, plan.actions);
+    // The accounts the plan acts on, by address (TASK-202, N-63): the confirm step names each
+    // as a person reads it, never by the id the planner put in.
+    const accounts = await planAccounts(scoped.actions, admin);
+    return NextResponse.json({
+      plan: {
+        ...plan,
+        actions: scoped.actions,
+        ...(scoped.dropped.length ? { scopedOut: scoped.dropped } : {}),
+        ...(Object.keys(accounts).length ? { accounts } : {}),
+      },
+    });
   } catch (err) {
     // The model declining the request is not an outage: retrying it is declined again.
     if (isAIRefusalError(err)) {

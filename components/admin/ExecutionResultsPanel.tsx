@@ -3,6 +3,8 @@
 import React from "react";
 import { renderMessage } from "@/platform/errors/messages";
 import { isErrorCode, messageKey, type ErrorCode } from "@/platform/errors/registry";
+import { ExpandableText } from "@/components/admin/ExpandableText";
+import { personText } from "@/components/admin/people";
 import {
   formatDate,
   fullTimestamp,
@@ -48,6 +50,8 @@ interface ExecutionResult {
    * those it had before the plan, or an earlier users search's of the same plan (round 2, N-3).
    */
   keptFilters?: "previous" | "earlier";
+  /** The account the action acted on, by address (TASK-202, N-63): the execute route's. */
+  account?: { readonly id: string; readonly email: string | null };
 }
 
 /**
@@ -81,6 +85,15 @@ const DATE_COLUMNS: ReadonlySet<string> = new Set([
   "updated_at",
 ]);
 
+/** An action's name in words (TASK-202, N-62: the screen named the tool, "update_config"). */
+export function toolLabel(tool: string): string {
+  const key = `screens.admin_console.tools.${tool}`;
+  const text = renderMessage(key);
+  return text === key
+    ? renderMessage("screens.admin_console.tools.unknown", { tool })
+    : text;
+}
+
 /**
  * The id column — hidden unless "Show details" is on (TASK-190: the owner's decision; only admins
  * and super-admins are offered the toggle, and only they are sent the column: round 1, S-L1).
@@ -89,7 +102,10 @@ const DATE_COLUMNS: ReadonlySet<string> = new Set([
  */
 export const isIdColumn = (column: string): boolean => column === "id";
 
-/** A reference to another row (actor_id, target_id): shown short, as on the Audit log page. */
+/**
+ * A reference to another row (actor_id, target_id): a detail, shown only with "Show details" —
+ * an audit search names its actor and target by address in their own columns (TASK-202, N-63).
+ */
 const isReferenceColumn = (column: string): boolean =>
   column !== "id" && column.endsWith("_id");
 
@@ -117,7 +133,7 @@ export function shownCell(
     return { text: formatDate(value), title: fullTimestamp(value) };
   }
   if (isReferenceColumn(column) && typeof value === "string") {
-    return { text: value.slice(0, 8), title: value };
+    return { text: value, title: value };
   }
   if (table === "users" && column === "role") {
     // The cell holds the role's display name, else its stored name: read as the Users list reads
@@ -149,9 +165,18 @@ export function SearchResultGrid({
   // The columns shown, by their index in each row: the ids only with "Show details".
   const shown = table.columns
     .map((column, index) => ({ column, index }))
-    .filter(({ column }) => showIds || !isIdColumn(column));
+    .filter(
+      ({ column }) =>
+        showIds ||
+        (!isIdColumn(column) &&
+          // A reference id is a detail when the table names it by address (an audit search).
+          !(
+            isReferenceColumn(column) &&
+            table.columns.includes(column.replace(/_id$/, ""))
+          ))
+    );
   return (
-    <div className="mt-2 max-h-80 overflow-auto rounded border border-gray-800">
+    <div className="mt-2 max-h-96 max-w-full overflow-auto rounded border border-gray-800">
       <table
         className="w-full text-xs text-left border-collapse"
         aria-label={t("table_label", { table: table.table })}
@@ -179,13 +204,15 @@ export function SearchResultGrid({
                     key={column}
                     className="py-1 px-2 border-b border-gray-800/50 text-gray-300 align-top"
                   >
-                    {/* A long value is cut to the column, in full on hover (round 1: a table
-                        cell ignores max-width, so the cut is on an inner block). */}
-                    <div
-                      className="max-w-xs truncate whitespace-nowrap"
-                      title={cell.title}
-                    >
-                      {cell.text}
+                    {/* A long value is cut, with a button that shows all of it (TASK-202,
+                        N-64: the cut was "…" with the value only in a tooltip). */}
+                    <div className="max-w-xs min-w-[6rem]">
+                      <ExpandableText
+                        text={cell.text}
+                        title={cell.title}
+                        column={heading(column)}
+                        limit={60}
+                      />
                     </div>
                   </td>
                 );
@@ -225,20 +252,20 @@ export default function ExecutionResultsPanel({
       }`}
     >
       <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">
-        Execution Results
+        {renderMessage("screens.admin_console.results.title")}
       </p>
-      <div className="bg-[#0a0f1e] rounded-lg overflow-hidden">
+      <div className="bg-[#0a0f1e] rounded-lg overflow-x-auto">
         <table className="w-full text-sm text-left border-collapse">
           <thead>
             <tr>
               <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800 w-8">
-                Status
+                {renderMessage("screens.admin_console.results.col_status")}
               </th>
               <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800 w-40">
-                Action
+                {renderMessage("screens.admin_console.results.col_action")}
               </th>
               <th className="text-xs text-gray-400 uppercase py-2 px-3 border-b border-gray-800">
-                Result
+                {renderMessage("screens.admin_console.results.col_result")}
               </th>
             </tr>
           </thead>
@@ -255,19 +282,28 @@ export default function ExecutionResultsPanel({
                           : "text-red-400"
                     }
                   >
-                    {r.success ? "✓" : r.held ? "…" : "✕"}
+                    <span aria-hidden="true">{r.success ? "✓" : r.held ? "…" : "✕"}</span>
+                    <span className="sr-only">
+                      {renderMessage(
+                        `screens.admin_console.results.${
+                          r.success ? "done" : r.held ? "held" : "failed"
+                        }`
+                      )}
+                    </span>
                   </span>
                 </td>
                 <td className="py-2 px-3 border-b border-gray-800/50">
-                  <code
+                  <span
                     className={`text-xs px-1.5 py-0.5 rounded ${
                       r.success
                         ? "bg-green-900/20 text-green-400"
-                        : "bg-red-900/20 text-red-400"
+                        : r.held
+                          ? "bg-blue-900/20 text-blue-300"
+                          : "bg-red-900/20 text-red-400"
                     }`}
                   >
-                    {r.tool}
-                  </code>
+                    {toolLabel(r.tool)}
+                  </span>
                 </td>
                 <td className="py-2 px-3 border-b border-gray-800/50 text-sm text-gray-300">
                   {r.success && r.listed && r.table ? (
@@ -282,6 +318,20 @@ export default function ExecutionResultsPanel({
                   ) : (
                     <>
                       {r.success || r.held ? (r.result ?? r.error) : failureText(r)}
+                      {r.account ? (
+                        <span className="block text-xs text-gray-300" data-account="true">
+                          {renderMessage("screens.admin_console.results.account", {
+                            account: personText({ email: r.account.email }),
+                          })}
+                          {showIds ? (
+                            <span className="ml-2 text-gray-400">
+                              {renderMessage("screens.admin_console.people.id", {
+                                id: r.account.id,
+                              })}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
                       {!r.success && r.keptFilters
                         ? ` ${t(r.keptFilters === "earlier" ? "users_kept_earlier" : "users_kept_filters")}`
                         : null}
@@ -300,7 +350,7 @@ export default function ExecutionResultsPanel({
         onClick={onDismiss}
         className="mt-3 text-sm text-gray-400 hover:text-gray-300 transition"
       >
-        Dismiss
+        {renderMessage("screens.admin_console.results.dismiss")}
       </button>
     </div>
   );

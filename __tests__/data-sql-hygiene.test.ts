@@ -57,6 +57,8 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "the operator command re-linking accounts to a new identity pool: the address's accounts in whichever tenant holds them, changed with their audit record in one transaction (TASK-174)",
   "platform/gdpr/erasure-attestation.ts":
     "two operators attesting an external erasure the system cannot verify, on the erased account's tenant's record (TASK-193 round 1)",
+  "platform/gdpr/erasure-status.ts":
+    "the operators' Erasures view: the open erasures across tenants and the operators who may attest them, read-only, behind GET /api/operator/erasures (platform_operate; TASK-202, S3-E19)",
   "platform/auth/identity-relink-command.ts":
     "the operator's re-link command (scripts/relink-identities): calls relinkIdentities, which lends the owner transaction only to its `onChunk` hook — the command passes none (found by the round 1 scan, A5: a hook reached through an object parameter)",
   "platform/jobs/postgres-store.ts":

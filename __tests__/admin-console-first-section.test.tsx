@@ -16,7 +16,7 @@
  */
 import React from "react";
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const push = jest.fn();
 const replace = jest.fn();
@@ -159,7 +159,7 @@ describe("the console's first panel (TASK-184)", () => {
     await noRefusedRead();
     // Only the sections it may open are offered; the second one reads its own route.
     expect(screen.queryByText("Roles")).toBeNull();
-    fireEvent.click(screen.getByText("Tenant"));
+    fireEvent.click(within(screen.getByRole("navigation")).getByText("Tenant"));
     await waitFor(() =>
       expect(panelReads()).toEqual(["/api/admin/approvals", "/api/admin/tenant"])
     );

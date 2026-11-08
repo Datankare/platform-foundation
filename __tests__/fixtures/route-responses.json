@@ -216,5 +216,353 @@
       "key": "jobs.test.sched.interval_minutes",
       "approval": null
     }
+  },
+  "GET /api/admin/config — every setting, with its metadata": {
+    "status": 200,
+    "body": {
+      "entries": [
+        {
+          "key": "moderation.strike_ban_threshold",
+          "value": 5,
+          "description": "Strikes before an account is banned.",
+          "category": "moderation",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": 5,
+          "valueType": "number",
+          "minValue": 1,
+          "maxValue": 20,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": true,
+          "overridden": false,
+          "platformValue": 5
+        },
+        {
+          "key": "default_language",
+          "value": "en",
+          "description": "The language a new account starts with.",
+          "category": "general",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": "en",
+          "valueType": "string_enum",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": ["en", "fr", "es"],
+          "permissionTier": "standard",
+          "tenantOverridable": true,
+          "overridden": false,
+          "platformValue": "en"
+        },
+        {
+          "key": "config.dual_control_keys",
+          "value": ["signups_enabled", "config.dual_control_keys"],
+          "description": "Keys that need an independent approver before a change applies.",
+          "category": "config",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": ["signups_enabled", "config.dual_control_keys"],
+          "valueType": "json_array",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": false,
+          "overridden": false,
+          "platformValue": ["signups_enabled", "config.dual_control_keys"]
+        },
+        {
+          "key": "signups_enabled",
+          "value": true,
+          "description": "Whether new accounts may sign up.",
+          "category": "auth",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "defaultValue": true,
+          "valueType": "boolean",
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "permissionTier": "safety",
+          "tenantOverridable": true,
+          "overridden": false,
+          "platformValue": true
+        }
+      ],
+      "enhanced": true
+    }
+  },
+  "POST /api/admin/config-ai/execute — update_config applied": {
+    "status": 200,
+    "body": {
+      "toolId": "update_config",
+      "success": true,
+      "data": {
+        "applied": true,
+        "changeRequest": {
+          "key": "default_language",
+          "currentValue": "en",
+          "proposedValue": "fr",
+          "impact": "Changing \"default_language\" from \"en\" to \"fr\".",
+          "affectedUsers": "Varies by setting",
+          "reversible": true,
+          "permissionTier": "standard",
+          "requiresApproval": false,
+          "changeComment": "French by default"
+        }
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — update_config held for approval": {
+    "status": 202,
+    "body": {
+      "toolId": "update_config",
+      "success": false,
+      "held": true,
+      "data": {
+        "pendingApproval": true,
+        "proposalId": "00000000-0000-4000-8000-0000000000ff",
+        "operationId": "operationId-fixed",
+        "requiredApprover": "user"
+      },
+      "approval": {
+        "proposalId": "00000000-0000-4000-8000-0000000000ff",
+        "operationId": "operationId-fixed",
+        "requiredApprover": "user"
+      },
+      "durationMs": 0,
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "POST /api/admin/config-ai/execute — update_config refused (out of range)": {
+    "status": 422,
+    "body": {
+      "toolId": "update_config",
+      "data": {
+        "applied": false,
+        "errorCode": "admin.config_invalid_value",
+        "errorParams": {
+          "key": "moderation.strike_ban_threshold",
+          "reason": "above_max",
+          "max": 20
+        }
+      },
+      "durationMs": 0,
+      "code": "admin.config_invalid_value",
+      "message": "moderation.strike_ban_threshold must be at most 20.",
+      "params": {
+        "key": "moderation.strike_ban_threshold",
+        "reason": "above_max",
+        "max": 20
+      },
+      "success": false,
+      "error": "moderation.strike_ban_threshold must be at most 20.",
+      "trajectoryId": "trajectoryId-fixed",
+      "agentId": "agentId-fixed",
+      "steps": []
+    }
+  },
+  "GET /api/admin/approvals — held changes, to a second admin who may decide them": {
+    "status": 200,
+    "body": {
+      "approvals": [
+        {
+          "source": "runtime",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "update_config",
+          "configKey": "config.dual_control_keys",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "config_manage_safety",
+          "effectiveRisk": "restricted",
+          "effects": ["stateWrite"],
+          "state": "held",
+          "change": {
+            "key": "config.dual_control_keys",
+            "action": "set",
+            "before": ["signups_enabled", "config.dual_control_keys"],
+            "after": ["signups_enabled", "config.dual_control_keys", "default_language"]
+          },
+          "comment": "Hold language changes too",
+          "reason": "Held at effectiveRisk \"restricted\" (effects: stateWrite) — needs an independent approver.",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        },
+        {
+          "source": "config-approval",
+          "id": "00000000-0000-4000-8000-0000000000ff",
+          "label": "moderation.strike_ban_threshold",
+          "configKey": "moderation.strike_ban_threshold",
+          "requester": "00000000-0000-4000-9000-97a91570000b",
+          "requiredPermission": "config_manage_safety",
+          "state": "held",
+          "change": {
+            "key": "moderation.strike_ban_threshold",
+            "action": "set",
+            "before": 5,
+            "after": 7,
+            "scope": "tenant"
+          },
+          "comment": "Fewer bans for first offences",
+          "reason": "Safety-tier change to \"moderation.strike_ban_threshold\" awaiting a second approver.",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test",
+            "role": "Super admin"
+          }
+        }
+      ],
+      "requestId": "req-test"
+    }
+  },
+  "GET /api/admin/agent-registry — the registry": {
+    "status": 200,
+    "body": {
+      "agents": [
+        [
+          "agent:research",
+          {
+            "owner": "first-party",
+            "scopes": ["translate"],
+            "status": "active",
+            "maxTokenTtl": 300
+          }
+        ]
+      ]
+    }
+  },
+  "POST /api/admin/ai/execute — register_agent held for approval": {
+    "status": 202,
+    "body": {
+      "results": [
+        {
+          "tool": "register_agent",
+          "success": false,
+          "held": true,
+          "result": "Registered agent agent:e2e-helper — held for approval (agent.trusted_agents is under dual control) before it takes effect",
+          "error": "Held for approval; it has not taken effect"
+        }
+      ]
+    }
+  },
+  "POST /api/admin/ai/execute — register_agent applied": {
+    "status": 200,
+    "body": {
+      "results": [
+        {
+          "tool": "register_agent",
+          "success": true,
+          "result": "Registered agent agent:e2e-helper"
+        }
+      ]
+    }
+  },
+  "GET /api/admin/config — refused (no administrative access)": {
+    "status": 403,
+    "body": {
+      "code": "auth.permission_denied",
+      "message": "You do not have permission to do this.",
+      "params": {
+        "permission": "config_view"
+      },
+      "success": false,
+      "error": "You do not have permission to do this."
+    }
+  },
+  "POST /api/admin/ai/execute — set_agent_scope refused (no admin_manage_agents)": {
+    "status": 200,
+    "body": {
+      "results": [
+        {
+          "tool": "set_agent_scope",
+          "success": false,
+          "error": "auth.permission_denied",
+          "code": "auth.permission_denied",
+          "params": {
+            "permission": "admin_manage_agents"
+          }
+        }
+      ]
+    }
+  },
+  "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — refused (own request)": {
+    "status": 403,
+    "body": {
+      "code": "tenant.self_approval",
+      "message": "Another operator must approve a deletion you requested.",
+      "params": {},
+      "success": false,
+      "error": "Another operator must approve a deletion you requested."
+    }
+  },
+  "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — approved": {
+    "status": 200,
+    "body": {
+      "result": {
+        "doneAt": "2026-01-01T00:00:00.000Z",
+        "attempts": 4,
+        "attested": {
+          "by": "00000000-0000-4000-9000-3e7b6d300010",
+          "requestedBy": "00000000-0000-4000-9000-97a91570000b",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "deleted_in_old_pool"
+        }
+      }
+    }
+  },
+  "GET /api/operator/erasures — an unverifiable identity, one operator": {
+    "status": 200,
+    "body": {
+      "operators": 1,
+      "reasons": ["pool_decommissioned", "deleted_in_old_pool", "identity_never_existed"],
+      "erasures": [
+        {
+          "tenantId": "aaaaaaaa-0000-4000-8000-00000000000a",
+          "tenantSlug": "default",
+          "userId": "0f0fc9b2-0000-4000-8000-000000000001",
+          "requestedBy": {
+            "kind": "account",
+            "email": "requester@example.test"
+          },
+          "softDeletedAt": "2026-01-01T00:00:00.000Z",
+          "purgeAfter": "2026-01-01T00:00:00.000Z",
+          "purgedAt": null,
+          "purgeAttempts": 0,
+          "purgeRetryAt": null,
+          "purgeFailing": false,
+          "steps": [
+            {
+              "store": "identity-provider",
+              "done": false,
+              "attempts": 4,
+              "poolUnverified": true
+            }
+          ],
+          "secondOperator": false
+        }
+      ]
+    }
+  },
+  "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — asked": {
+    "status": 201,
+    "body": {
+      "result": {
+        "attempts": 4,
+        "poolUnverified": true,
+        "attestationRequest": {
+          "by": "00000000-0000-4000-9000-97a91570000b",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "deleted_in_old_pool",
+          "expiresAt": "2026-01-01T00:00:00.000Z"
+        }
+      }
+    }
   }
 }

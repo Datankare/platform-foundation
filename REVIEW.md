@@ -99,7 +99,8 @@ A change to a gate or a security boundary (a High-tier path) is reviewed this wa
     exist (a pull request author without owner rights, while there is none) is out of scope, not a
     residual.
 19. **Three lenses a round.** Each review round runs three reviewers in parallel: security bypass,
-    legitimate flows, and test validity with mutation.
+    legitimate flows, and test validity with mutation — and, for a change to a screen, a fourth:
+    usability (rule 25).
 20. **A coverage table from each reviewer:** each changed file or rule, the attacks or flows tried,
     the result. A round without the three tables has not happened.
 21. **Fix the class.** Each finding is fixed across its whole class, and the fix says how the class
@@ -111,3 +112,29 @@ A change to a gate or a security boundary (a High-tier path) is reviewed this wa
     holds a mutant a test kills) left to survive and listed in the Self-review.
 24. **The stop rule.** A round with no Important (or Low) finding ends the review; a Nit fixed after
     it is verified by a test.
+
+## Blocking rule — the usability lens (TASK-202)
+
+The owner's first walk through the admin console (2026-11-07) found a config screen that could only
+search, approvals decided blind (a tool's name and a requester's id), results that vanished after
+seconds, people named by raw ids and tables wider than the window. Every test passed: no reviewer
+had asked whether a person could do the job on screen. Each breach is **Important**.
+
+25. **The usability lens.** A change to a screen (`app/**/page.tsx`, `components/`, `messages/`)
+    is reviewed by a reviewer who asks, for each task the screen exists for, and says so in a
+    coverage table (rule 20):
+    - **Can a person complete it on screen** — without code, SQL, the browser console or a typed
+      command the screen does not explain? Every action the screen offers has its form; every
+      refusal says what to do next.
+    - **Do they see what they are deciding?** An approval, a confirm or an edit shows what changes:
+      the setting and its value now and after, the account and the role from → to, the
+      permissions granted — repeated at the confirm step.
+    - **Is every person named by address?** Never a raw id, except as a secondary detail.
+    - **Do results persist?** Applied, held for approval (by whom), or refused (why) — named by
+      what changed, never by a tool's id, and kept until dismissed.
+    - **Does it fit?** At 1280 px and at 390 px the page does not scroll sideways; a wide table
+      scrolls in its own panel; a cut value can be shown whole.
+
+    The change's author walks each changed admin flow in a browser against a production build
+    (`npm run build && npm run start` on a seeded database) before calling it done, and keeps the
+    screenshots with the change's record (CLAUDE.md, "Admin changes are walked").

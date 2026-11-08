@@ -63,6 +63,12 @@ export type ActionResult = {
    * stand (an invalidation) runs all the same.
    */
   indeterminate?: boolean;
+  /**
+   * The account the action acted on, as the admin's screen names it (TASK-202, N-63): its address
+   * — null once erased — and its id as a secondary detail. Added by the execute route for the
+   * screen only; never part of the action's recorded step (which outlives the account).
+   */
+  account?: { readonly id: string; readonly email: string | null };
 };
 
 /**

@@ -3,7 +3,7 @@
  */
 import React from "react";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { HeldActionsPanel, RESULT_MS } from "@/components/admin/HeldActionsPanel";
+import { HeldActionsPanel } from "@/components/admin/HeldActionsPanel";
 import { renderMessage } from "@/platform/errors/messages";
 import type { PendingApproval } from "@/platform/admin/pending-approvals";
 
@@ -44,21 +44,28 @@ function resolveFetch(status: number, body: unknown) {
   } as unknown as Response);
 }
 
-const approveBtn = "Approve config.set moderation.strike_ban_threshold";
+const approveBtn = "Approve: config.set moderation.strike_ban_threshold";
+
+/** Approve (or reject) a row: its button, then the confirm step's (TASK-202, N-61). */
+function decideRow(name: string, confirm = "Approve and apply") {
+  fireEvent.click(screen.getByRole("button", { name }));
+  fireEvent.click(screen.getByRole("button", { name: confirm }));
+}
 
 describe("HeldActionsPanel — ADR-040 040a/040c", () => {
-  it("renders a row per hold with approve/reject controls", () => {
+  it("renders a card per hold with approve/reject controls", () => {
     render(<HeldActionsPanel data={{ approvals: holds }} />);
     expect(screen.getByText(/strike_ban_threshold/)).toBeDefined();
-    expect(screen.getByText("Runtime hold")).toBeDefined();
+    // Why it waits, in words (TASK-202, N-61): no state → a dual-controlled change.
+    expect(screen.getAllByText(/Under dual control/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: approveBtn })).toBeDefined();
-    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
   });
 
   it("approves a hold through the decision route and removes the row", async () => {
     resolveFetch(200, { decision: "approve", outcome: "approved" });
     render(<HeldActionsPanel data={{ approvals: holds }} />);
-    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    decideRow(approveBtn);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/approvals/p1",
@@ -72,11 +79,11 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   it("an approval says it took effect, announced, then shows the empty list (TASK-186)", async () => {
     resolveFetch(200, { decision: "approve", outcome: "approved", applied: true });
     render(<HeldActionsPanel data={{ approvals: [holds[0]] }} />);
-    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    decideRow(approveBtn);
     const status = await screen.findByRole("status");
     await waitFor(() =>
       expect(status.textContent).toContain(
-        "Approved: config.set moderation.strike_ban_threshold took effect."
+        "Approved: config.set moderation.strike_ban_threshold. It took effect."
       )
     );
     expect(status.getAttribute("aria-live")).toBe("polite");
@@ -86,23 +93,21 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     expect(screen.getByRole("status").textContent).toBe("");
   });
 
-  it("the result goes by itself after a few seconds", async () => {
+  it("the result stays until dismissed (TASK-202, N-62: it went by itself after seconds)", async () => {
     jest.useFakeTimers();
     try {
       resolveFetch(200, { decision: "reject" });
       render(<HeldActionsPanel data={{ approvals: [holds[0]] }} />);
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: "Reject config.set moderation.strike_ban_threshold",
-        })
-      );
+      decideRow("Reject: config.set moderation.strike_ban_threshold", "Reject it");
       await waitFor(() =>
-        expect(screen.getByRole("status").textContent).toContain("Rejected: config.set")
+        expect(screen.getByRole("status").textContent).toContain(
+          "Rejected: config.set moderation.strike_ban_threshold. Nothing was changed."
+        )
       );
       act(() => {
-        jest.advanceTimersByTime(RESULT_MS + 10);
+        jest.advanceTimersByTime(10 * 60_000);
       });
-      expect(screen.getByRole("status").textContent).toBe("");
+      expect(screen.getByRole("status").textContent).toContain("Rejected: config.set");
     } finally {
       jest.useRealTimers();
     }
@@ -116,7 +121,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
       pendingApproval: { id: "x" },
     });
     render(<HeldActionsPanel data={{ approvals: holds }} />);
-    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    decideRow(approveBtn);
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toMatch(
         /waits for a second approval/
@@ -127,7 +132,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
   it("approved but the run failed: the reason, through the refusal handler; the row stays", async () => {
     resolveFetch(502, { code: "approvals.run_failed", params: {} });
     render(<HeldActionsPanel data={{ approvals: holds }} />);
-    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    decideRow(approveBtn);
     const reason = renderMessage("errors.approvals.run_failed");
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain(
@@ -167,7 +172,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
         approvalKept: true,
       });
       render(<HeldActionsPanel data={{ approvals: holds }} />);
-      fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+      decideRow(approveBtn);
       await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(next));
       expect(screen.getByRole("status").textContent).toContain(
         renderMessage(`errors.${code}`, params)
@@ -185,10 +190,17 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
       error: "Self-approval is not permitted; an independent approver must clear this.",
     });
     render(<HeldActionsPanel data={{ approvals: holds }} />);
-    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    decideRow(approveBtn);
     await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
-    expect(screen.getByText(/Self-approval is not permitted/)).toBeDefined();
-    expect(screen.getByText(/strike_ban_threshold/)).toBeDefined();
+    // Said at the row and in the results, which stay (TASK-202, N-62).
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /Self-approval is not permitted/
+    );
+    expect(screen.getByRole("status").textContent).toMatch(
+      /Self-approval is not permitted/
+    );
+    // The row stays.
+    expect(screen.getByRole("button", { name: approveBtn })).toBeDefined();
   });
 
   it("replaces its rows when the page passes fresh data (no stale first render)", () => {
@@ -216,7 +228,7 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     const status = await screen.findByRole("status");
     await waitFor(() =>
       expect(status.textContent).toContain(
-        `Withdrawn: ${undecided.label} did not take effect and will not run.`
+        `Withdrawn: ${undecided.label}. It will not run.`
       )
     );
   });
@@ -234,19 +246,19 @@ describe("HeldActionsPanel — ADR-040 040a/040c", () => {
     render(<HeldActionsPanel data={{ approvals: [undecided] }} />);
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve purge_user_data again: verified that it did not take effect",
+        name: "Approve Erase an account again: verified that it did not take effect",
       })
     );
     const status = await screen.findByRole("status");
     await waitFor(() =>
       expect(status.textContent).toContain(
-        "purge_user_data: another erasure of this account is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it."
+        "Erase an account: another erasure of this account is open, so this one is not approved again. Mark it executed if it took effect; if it did not, withdraw it."
       )
     );
     // The row stays, with its Withdraw control.
     expect(
       screen.getByRole("button", {
-        name: "Withdraw purge_user_data: verified that it did not take effect; it will not run",
+        name: "Withdraw Erase an account: verified that it did not take effect; it will not run",
       })
     ).toBeDefined();
   });
@@ -398,7 +410,7 @@ describe("HeldActionsPanel — what became of the approval (TASK-194 round 16)",
         json: async () => ({ approvals: [holds[1]] }),
       } as unknown as Response);
     render(<HeldActionsPanel data={{ approvals: holds }} />);
-    fireEvent.click(screen.getByRole("button", { name: approveBtn }));
+    decideRow(approveBtn);
     await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(said));
     expect(screen.getByRole("status").textContent).not.toMatch(
       /approve it again to retry/

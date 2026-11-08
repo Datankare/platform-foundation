@@ -20,6 +20,8 @@ import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { TenantJobsList, type JobRow } from "@/components/admin/JobsPanels";
 import { AgentKillSwitch } from "@/components/admin/AgentKillSwitchPanel";
+import type { PendingApproval } from "@/platform/admin/pending-approvals";
+import { describeWhat, requesterText } from "./HeldActionsPanel";
 import {
   changesTheList,
   refusedDecisionText,
@@ -867,18 +869,12 @@ interface TenantConfigEntry {
   permissionTier: string;
 }
 
-interface HeldChange {
-  source: "runtime" | "config-approval";
-  id: string;
-  label: string;
-  requester: string;
-  requiredPermission: string;
-  reason?: string;
-  /** Its approved run's outcome is unknown: decided by its outcome (review 11 H-1). */
-  undecided?: boolean;
-  /** No one in the tenant may decide it (round 7, I-3): the operator does, here. */
-  noEligibleDecider?: boolean;
-}
+/**
+ * A held change of the tenant, as GET /api/operator/tenants/[id]/approvals lists it (the
+ * Approvals screen's listing, read in that tenant): named by what it changes and who asked, by
+ * address (TASK-202, N-61, N-63 — the operator saw the tool's id and the requester's id).
+ */
+type HeldChange = PendingApproval;
 
 /** An undecided run's three decisions, as the Approvals screen names them (screens.held). */
 const UNDECIDED_DECISIONS = [
@@ -1006,8 +1002,8 @@ export function OperatorTenantSettings({
       if (r.ok) {
         setStatus({
           text: r.body.pending
-            ? t("held", { key: h.label })
-            : t("done", { label: h.label }),
+            ? t("held", { key: describeWhat(h) })
+            : t("done", { label: describeWhat(h) }),
           tone: "ok",
         });
         await load();
@@ -1017,9 +1013,13 @@ export function OperatorTenantSettings({
       const said = refusedDecisionText(
         h.label,
         { code: typeof r.body.code === "string" ? r.body.code : "", message: reason },
-        r.body as DecisionOutcome
+        r.body as DecisionOutcome,
+        describeWhat(h)
       );
-      setStatus({ text: said ?? t("failed", { label: h.label, reason }), tone: "error" });
+      setStatus({
+        text: said ?? t("failed", { label: describeWhat(h), reason }),
+        tone: "error",
+      });
       if (changesTheList(r.body as DecisionOutcome)) await load();
     } finally {
       setBusy(false);
@@ -1054,10 +1054,10 @@ export function OperatorTenantSettings({
                 key={`${h.source}:${h.id}`}
                 className="flex flex-wrap gap-2 items-center"
               >
-                <span className="font-mono text-blue-300">{h.label}</span>
+                <span className="text-blue-300 break-words">{describeWhat(h)}</span>
                 <span className="text-gray-400">
                   {t("held_by", {
-                    requester: h.requester,
+                    requester: requesterText(h),
                     permission: h.requiredPermission,
                   })}
                 </span>
@@ -1071,7 +1071,7 @@ export function OperatorTenantSettings({
                         key={decision}
                         className={quiet}
                         aria-label={renderMessage(`screens.held.${label}`, {
-                          label: h.label,
+                          label: describeWhat(h),
                         })}
                         disabled={busy}
                         onClick={() => void decide(h, decision)}
@@ -1084,7 +1084,7 @@ export function OperatorTenantSettings({
                   <>
                     <button
                       className={quiet}
-                      aria-label={t("approve_held_label", { label: h.label })}
+                      aria-label={t("approve_held_label", { label: describeWhat(h) })}
                       disabled={busy}
                       onClick={() => void decide(h, "approve")}
                     >
@@ -1092,7 +1092,7 @@ export function OperatorTenantSettings({
                     </button>
                     <button
                       className={quiet}
-                      aria-label={t("reject_held_label", { label: h.label })}
+                      aria-label={t("reject_held_label", { label: describeWhat(h) })}
                       disabled={busy}
                       onClick={() => void decide(h, "reject")}
                     >

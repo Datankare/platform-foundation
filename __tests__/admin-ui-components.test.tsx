@@ -52,7 +52,8 @@ describe("ActionConfirmPanel", () => {
         isExecuting={false}
       />
     );
-    expect(screen.getByText(/Create role "Moderator" with permissions/)).toBeDefined();
+    // In the catalog's words (TASK-202): curly quotes, the permissions listed.
+    expect(screen.getByText(/Create role “Moderator” with /)).toBeDefined();
   });
 
   it("renders confirm button with action count", () => {
@@ -108,10 +109,10 @@ describe("ActionConfirmPanel", () => {
         isExecuting={false}
       />
     );
-    expect(screen.getByText("⚠ Destructive")).toBeDefined();
+    expect(screen.getByText("⚠ Cannot be undone")).toBeDefined();
   });
 
-  it("shows Executing... when isExecuting", () => {
+  it("shows Running… when isExecuting", () => {
     render(
       <ActionConfirmPanel
         plan={basePlan}
@@ -120,7 +121,60 @@ describe("ActionConfirmPanel", () => {
         isExecuting={true}
       />
     );
-    expect(screen.getByText("Executing...")).toBeDefined();
+    expect(screen.getByText("Running…")).toBeDefined();
+  });
+
+  it("names an account by the address the planner route read, never the id it put in (TASK-202, N-63)", () => {
+    const id = "0b7c1d2e-3f40-4a51-8b62-7c83d94ea5f6";
+    render(
+      <ActionConfirmPanel
+        plan={{
+          message: "Blocking translate.",
+          actions: [
+            { tool: "block_user_feature", input: { user_id: id, feature: "translate" } },
+          ],
+          accounts: { 0: { email: "member@example.test", found: true } },
+        }}
+        onConfirm={jest.fn()}
+        onCancel={jest.fn()}
+        isExecuting={false}
+      />
+    );
+    expect(screen.getByText(/Block “translate” for member@example\.test/)).toBeDefined();
+    expect(screen.queryByText(new RegExp(id))).toBeNull();
+  });
+
+  it("an account the route found in no tenant of this one: said, never the id", () => {
+    const id = "0b7c1d2e-3f40-4a51-8b62-7c83d94ea5f6";
+    render(
+      <ActionConfirmPanel
+        plan={{
+          message: "",
+          actions: [{ tool: "purge_user_data", input: { userId: id } }],
+          accounts: { 0: { email: null, found: false } },
+        }}
+        onConfirm={jest.fn()}
+        onCancel={jest.fn()}
+        isExecuting={false}
+      />
+    );
+    expect(screen.getByText("Erase an account not found in this tenant")).toBeDefined();
+  });
+
+  it("says which searches were left out, and how to ask for one (TASK-202, N-65)", () => {
+    render(
+      <ActionConfirmPanel
+        plan={{
+          message: "Searching the settings.",
+          actions: [{ tool: "search", input: { table: "platform_config" } }],
+          scopedOut: ["permissions", "audit_log"],
+        }}
+        onConfirm={jest.fn()}
+        onCancel={jest.fn()}
+        isExecuting={false}
+      />
+    );
+    expect(screen.getByText(/Not searched: permissions and audit_log/)).toBeDefined();
   });
 
   it("shows Dismiss for plans with no actions", () => {

@@ -688,11 +688,13 @@ export async function handleChangeUserRole(
                     : "current role",
             });
           }
-          // The account's id, never the identifier typed (TASK-193, audit A-2: an address in the
-          // step outlived the account's erasure — only a whole-string address is replaced).
+          // Never the identifier typed (TASK-193, audit A-2: an address in the step outlived the
+          // account's erasure), nor the account's id (TASK-202, N-63: a person reads an address):
+          // the screen names the account by its address (ActionResult.account, added by the
+          // execute route for the screen only); the step keeps the id in its input.
           return {
             success: true,
-            result: `User ${now.target.id} assigned to "${now.to.name}"`,
+            result: `Role changed to "${now.to.name}"`,
           };
         })
       );

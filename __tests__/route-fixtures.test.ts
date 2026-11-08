@@ -55,6 +55,50 @@ jest.mock("@/platform/admin/governed-config", () => {
   return { ...actual, writeGovernedConfig: (...a: unknown[]) => mockWrite(...a) };
 });
 
+// TASK-202: the settings, approvals and names the admin console's fixtures read — the stores
+// beneath the routes, stubbed per producer; by default each is the real function.
+const mockCfg: Record<string, jest.Mock> = {};
+jest.mock("@/platform/auth/platform-config", () => {
+  const actual = jest.requireActual("@/platform/auth/platform-config");
+  const wrapped: Record<string, unknown> = { ...actual };
+  for (const name of [
+    "getEnhancedConfig",
+    "listEnhancedConfig",
+    "getConfigOrThrow",
+    "setConfigWithHistory",
+    "getPermissionTier",
+  ]) {
+    mockCfg[name] = jest.fn((...a: unknown[]) => actual[name](...a));
+    wrapped[name] = (...a: unknown[]) => mockCfg[name](...a);
+  }
+  return wrapped;
+});
+const mockListApprovals = jest.fn();
+jest.mock("@/platform/admin/config-approval", () => {
+  const actual = jest.requireActual("@/platform/admin/config-approval");
+  return { ...actual, listApprovals: (...a: unknown[]) => mockListApprovals(...a) };
+});
+const mockNames = jest.fn();
+jest.mock("@/platform/admin/account-names", () => {
+  const actual = jest.requireActual("@/platform/admin/account-names");
+  return { ...actual, namedAccounts: (...a: unknown[]) => mockNames(...a) };
+});
+const mockErasures = jest.fn();
+const mockAttest = jest.fn();
+const mockDecide = jest.fn();
+jest.mock("@/platform/gdpr/erasure-status", () => {
+  const actual = jest.requireActual("@/platform/gdpr/erasure-status");
+  return { ...actual, listOpenErasures: (...a: unknown[]) => mockErasures(...a) };
+});
+jest.mock("@/platform/gdpr/erasure-attestation", () => {
+  const actual = jest.requireActual("@/platform/gdpr/erasure-attestation");
+  return {
+    ...actual,
+    requestErasureAttestation: (...a: unknown[]) => mockAttest(...a),
+    decideErasureAttestation: (...a: unknown[]) => mockDecide(...a),
+  };
+});
+
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -70,6 +114,16 @@ import {
   setJobStore,
 } from "@/platform/jobs";
 import { normaliseBody, type RouteFixture } from "./fixtures/route-responses";
+import { authAs as _authAs, identityFor } from "@/__tests__/helpers/test-identities";
+import { GET as configGET } from "@/app/api/admin/config/route";
+import { POST as configAiPOST } from "@/app/api/admin/config-ai/execute/route";
+import { GET as approvalsGET } from "@/app/api/admin/approvals/route";
+import { POST as executePOST } from "@/app/api/admin/ai/execute/route";
+import { GET as agentRegistryGET } from "@/app/api/admin/agent-registry/route";
+import { GET as erasuresGET } from "@/app/api/operator/erasures/route";
+import { POST as attestationPOST } from "@/app/api/operator/tenants/[id]/erasures/[userId]/attestation/route";
+import { resetProposalStore } from "@/platform/agents/proposal-store";
+import type { EnhancedConfigEntry } from "@/platform/admin/types";
 
 const FILE = join(__dirname, "fixtures", "route-responses.json");
 const TENANT = "aaaaaaaa-0000-4000-8000-00000000000a";
@@ -77,12 +131,15 @@ const TENANT = "aaaaaaaa-0000-4000-8000-00000000000a";
 function req(
   url: string,
   method: string,
-  caller: CallerName,
+  caller: CallerName | ReturnType<typeof identityFor>,
   body?: unknown
 ): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
     method,
-    headers: { ...authAs(caller), "content-type": "application/json" },
+    headers: {
+      ...(typeof caller === "string" ? authAs(caller) : _authAs(caller)),
+      "content-type": "application/json",
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
@@ -108,6 +165,194 @@ async function recordJobs(res: Response): Promise<RouteFixture> {
 }
 
 const kind = (k: string) => ({ params: Promise.resolve({ kind: k }) });
+
+// ── TASK-202: the admin console's screens ─────────────────────────────────────────────────────
+
+/** A second super admin: the one who approves what the first asked. */
+const APPROVER = identityFor("super_admin", { name: "fixture-approver" });
+
+const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A body with its run-specific values fixed: every generated id (a hold's, a trajectory's, an
+ * operation's), the config route's trajectory, agent and steps.
+ */
+function stable(value: unknown, key = ""): unknown {
+  if (typeof value === "string") {
+    if (UUID_ANY.test(value) && !/^0{8}-/.test(value) && !value.startsWith("aaaaaaaa"))
+      return "00000000-0000-4000-8000-0000000000ff";
+    if (key === "trajectoryId" || key === "agentId" || key === "operationId")
+      return `${key}-fixed`;
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((v) => stable(v));
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        k === "steps" || k === "durationMs" ? (Array.isArray(v) ? [] : 0) : stable(v, k),
+      ])
+    );
+  return value;
+}
+
+async function recordStable(res: Response): Promise<RouteFixture> {
+  const f = await record(res);
+  return { ...f, body: stable(f.body) };
+}
+
+/** Settings as the config store lists them (the shapes the screens read). */
+const SETTING: Record<string, EnhancedConfigEntry> = {
+  number: {
+    key: "moderation.strike_ban_threshold",
+    value: 5,
+    description: "Strikes before an account is banned.",
+    category: "moderation",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    defaultValue: 5,
+    valueType: "number",
+    minValue: 1,
+    maxValue: 20,
+    allowedValues: null,
+    permissionTier: "safety",
+    tenantOverridable: true,
+    overridden: false,
+    platformValue: 5,
+  },
+  standard: {
+    key: "default_language",
+    value: "en",
+    description: "The language a new account starts with.",
+    category: "general",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    defaultValue: "en",
+    valueType: "string_enum",
+    minValue: null,
+    maxValue: null,
+    allowedValues: ["en", "fr", "es"],
+    permissionTier: "standard",
+    tenantOverridable: true,
+    overridden: false,
+    platformValue: "en",
+  },
+  list: {
+    key: "config.dual_control_keys",
+    value: ["signups_enabled", "config.dual_control_keys"],
+    description: "Keys that need an independent approver before a change applies.",
+    category: "config",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    defaultValue: ["signups_enabled", "config.dual_control_keys"],
+    valueType: "json_array",
+    minValue: null,
+    maxValue: null,
+    allowedValues: null,
+    permissionTier: "safety",
+    tenantOverridable: false,
+    overridden: false,
+    platformValue: ["signups_enabled", "config.dual_control_keys"],
+  },
+  toggle: {
+    key: "signups_enabled",
+    value: true,
+    description: "Whether new accounts may sign up.",
+    category: "auth",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    defaultValue: true,
+    valueType: "boolean",
+    minValue: null,
+    maxValue: null,
+    allowedValues: null,
+    permissionTier: "safety",
+    tenantOverridable: true,
+    overridden: false,
+    platformValue: true,
+  },
+};
+
+/** The config store as these producers see it: these settings, this dual-control list. */
+function settings(dualControlled: readonly string[]): void {
+  mockCfg.getEnhancedConfig.mockImplementation(async (key: string) =>
+    Object.values(SETTING).find((e) => e.key === key)
+  );
+  mockCfg.listEnhancedConfig.mockImplementation(async () => Object.values(SETTING));
+  mockCfg.getPermissionTier.mockImplementation(
+    async (key: string) =>
+      Object.values(SETTING).find((e) => e.key === key)?.permissionTier ?? "safety"
+  );
+  mockCfg.getConfigOrThrow.mockImplementation(async (key: string) => {
+    if (key === "config.dual_control_keys") return dualControlled;
+    if (key === "agent.trusted_agents")
+      return [
+        [
+          "agent:research",
+          {
+            owner: "first-party",
+            scopes: ["translate"],
+            status: "active",
+            maxTokenTtl: 300,
+          },
+        ],
+      ];
+    if (key === "config.require_two_person_approval") return false;
+    throw new Error(`no ${key} here`);
+  });
+  mockCfg.setConfigWithHistory.mockImplementation(async () => ({ success: true }));
+}
+
+const updateConfig = (key: string, value: unknown, comment: string) =>
+  configAiPOST(
+    req("/api/admin/config-ai/execute", "POST", "super_admin", {
+      toolId: "update_config",
+      input: { key, value, changeComment: comment, confirmed: true },
+    })
+  );
+
+/** The names the approvals and audit read: the requester by address and role. */
+function names(): void {
+  mockNames.mockImplementation(async (ids: readonly (string | null | undefined)[]) => {
+    const requester = (ids as string[]).find(
+      (i) => i && i.startsWith("00000000-0000-4000-9000")
+    );
+    return new Map(
+      requester
+        ? [
+            [
+              requester,
+              {
+                id: requester,
+                email: "requester@example.test",
+                role: "Super admin",
+                erased: false,
+              },
+            ],
+          ]
+        : []
+    );
+  });
+}
+
+const OPEN_ERASURES = {
+  operators: 1,
+  reasons: ["pool_decommissioned", "deleted_in_old_pool", "identity_never_existed"],
+  erasures: [
+    {
+      tenantId: "aaaaaaaa-0000-4000-8000-00000000000a",
+      tenantSlug: "default",
+      userId: "0f0fc9b2-0000-4000-8000-000000000001",
+      requestedBy: { kind: "account", email: "requester@example.test" },
+      softDeletedAt: "2026-01-01T00:00:00.000Z",
+      purgeAfter: "2026-01-01T00:00:00.000Z",
+      purgedAt: null,
+      purgeAttempts: 0,
+      purgeRetryAt: null,
+      purgeFailing: false,
+      steps: [
+        { store: "identity-provider", done: false, attempts: 4, poolUnverified: true },
+      ],
+      secondOperator: false,
+    },
+  ],
+};
 
 /** Each fixture: its name, and how the real handler is called to produce it. */
 const PRODUCERS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
@@ -142,6 +387,217 @@ const PRODUCERS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
       )
     );
   },
+  "GET /api/admin/config — every setting, with its metadata": async () => {
+    settings([]);
+    return record(
+      await configGET(req("/api/admin/config?enhanced=true", "GET", "super_admin"))
+    );
+  },
+  "POST /api/admin/config-ai/execute — update_config applied": async () => {
+    settings([]);
+    return recordStable(
+      await updateConfig("default_language", "fr", "French by default")
+    );
+  },
+  "POST /api/admin/config-ai/execute — update_config held for approval": async () => {
+    settings(["moderation.strike_ban_threshold"]);
+    return recordStable(
+      await updateConfig(
+        "moderation.strike_ban_threshold",
+        7,
+        "Fewer bans for first offences"
+      )
+    );
+  },
+  "POST /api/admin/config-ai/execute — update_config refused (out of range)":
+    async () => {
+      settings([]);
+      return recordStable(
+        await updateConfig("moderation.strike_ban_threshold", 99, "too many")
+      );
+    },
+  "GET /api/admin/approvals — held changes, to a second admin who may decide them":
+    async () => {
+      settings(["config.dual_control_keys"]);
+      names();
+      // A held change to a list (dual control), asked through the config route…
+      await updateConfig(
+        "config.dual_control_keys",
+        ["signups_enabled", "config.dual_control_keys", "default_language"],
+        "Hold language changes too"
+      );
+      // …and a two-person approval of a safety setting.
+      mockListApprovals.mockResolvedValueOnce([
+        {
+          id: "0a1b2c3d-0000-4000-8000-0000000000a1",
+          configKey: "moderation.strike_ban_threshold",
+          currentValue: 5,
+          proposedValue: 7,
+          requestedBy: identityFor("super_admin").userId,
+          changeComment: "Fewer bans for first offences",
+          impactSummary: null,
+          status: "pending",
+          reviewedBy: null,
+          reviewComment: null,
+          reviewedAt: null,
+          expiresAt: "2026-01-08T00:00:00.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          scope: "tenant",
+          action: "set",
+        },
+      ]);
+      return recordStable(
+        await approvalsGET(req("/api/admin/approvals", "GET", APPROVER))
+      );
+    },
+  "GET /api/admin/agent-registry — the registry": async () => {
+    settings([]);
+    return record(
+      await agentRegistryGET(req("/api/admin/agent-registry", "GET", "super_admin"))
+    );
+  },
+  "POST /api/admin/ai/execute — register_agent held for approval": async () => {
+    settings(["agent.trusted_agents"]);
+    mockWrite.mockResolvedValueOnce({
+      kind: "pending",
+      result: { success: true, held: true },
+    });
+    return recordStable(
+      await executePOST(
+        req("/api/admin/ai/execute", "POST", "super_admin", {
+          actions: [
+            {
+              tool: "register_agent",
+              input: {
+                agent_id: "agent:e2e-helper",
+                scopes: ["translate"],
+                max_token_ttl: 120,
+              },
+            },
+          ],
+        })
+      )
+    );
+  },
+  "POST /api/admin/ai/execute — register_agent applied": async () => {
+    settings([]);
+    mockWrite.mockResolvedValueOnce({ kind: "applied", result: { success: true } });
+    return recordStable(
+      await executePOST(
+        req("/api/admin/ai/execute", "POST", "super_admin", {
+          actions: [{ tool: "register_agent", input: { agent_id: "agent:e2e-helper" } }],
+        })
+      )
+    );
+  },
+  "GET /api/admin/config — refused (no administrative access)": async () => {
+    settings([]);
+    return record(await configGET(req("/api/admin/config?enhanced=true", "GET", "free")));
+  },
+  "POST /api/admin/ai/execute — set_agent_scope refused (no admin_manage_agents)":
+    async () =>
+      recordStable(
+        await executePOST(
+          req("/api/admin/ai/execute", "POST", "moderator", {
+            actions: [
+              {
+                tool: "set_agent_scope",
+                input: { agent_id: "agent:research", scopes: [] },
+              },
+            ],
+          })
+        )
+      ),
+  "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — refused (own request)":
+    async () => {
+      mockDecide.mockResolvedValueOnce({
+        ok: false,
+        code: "tenant.self_approval",
+        message: "A different operator must approve an attestation you asked for.",
+      });
+      const tenant = OPEN_ERASURES.erasures[0].tenantId;
+      const user = OPEN_ERASURES.erasures[0].userId;
+      return record(
+        await attestationPOST(
+          req(
+            `/api/operator/tenants/${tenant}/erasures/${user}/attestation`,
+            "POST",
+            "super_admin",
+            {
+              decision: "approve",
+            }
+          ),
+          { params: Promise.resolve({ id: tenant, userId: user }) }
+        )
+      );
+    },
+  "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — approved":
+    async () => {
+      mockDecide.mockResolvedValueOnce({
+        ok: true,
+        value: {
+          doneAt: "2026-01-01T00:00:00.000Z",
+          attempts: 4,
+          attested: {
+            by: APPROVER.userId,
+            requestedBy: identityFor("super_admin").userId,
+            at: "2026-01-01T00:00:00.000Z",
+            reason: "deleted_in_old_pool",
+          },
+        },
+      });
+      const tenant = OPEN_ERASURES.erasures[0].tenantId;
+      const user = OPEN_ERASURES.erasures[0].userId;
+      return record(
+        await attestationPOST(
+          req(
+            `/api/operator/tenants/${tenant}/erasures/${user}/attestation`,
+            "POST",
+            APPROVER,
+            {
+              decision: "approve",
+              note: "checked",
+            }
+          ),
+          { params: Promise.resolve({ id: tenant, userId: user }) }
+        )
+      );
+    },
+  "GET /api/operator/erasures — an unverifiable identity, one operator": async () => {
+    mockErasures.mockResolvedValueOnce(OPEN_ERASURES);
+    return record(await erasuresGET(req("/api/operator/erasures", "GET", "super_admin")));
+  },
+  "POST /api/operator/tenants/[id]/erasures/[userId]/attestation — asked": async () => {
+    mockAttest.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        attempts: 4,
+        poolUnverified: true,
+        attestationRequest: {
+          by: identityFor("super_admin").userId,
+          at: "2026-01-01T00:00:00.000Z",
+          reason: "deleted_in_old_pool",
+          expiresAt: "2026-01-08T00:00:00.000Z",
+        },
+      },
+    });
+    const tenant = OPEN_ERASURES.erasures[0].tenantId;
+    const user = OPEN_ERASURES.erasures[0].userId;
+    return record(
+      await attestationPOST(
+        req(
+          `/api/operator/tenants/${tenant}/erasures/${user}/attestation`,
+          "POST",
+          "super_admin",
+          {
+            reason: "deleted_in_old_pool",
+            note: "absent from both pools",
+          }
+        ),
+        { params: Promise.resolve({ id: tenant, userId: user }) }
+      )
+    );
+  },
 };
 
 /**
@@ -169,6 +625,8 @@ async function produceAll(): Promise<Record<string, RouteFixture>> {
   const produced: Record<string, RouteFixture> = {};
   for (const [name, produce] of Object.entries(PRODUCERS)) {
     produced[name] = await produce();
+    resetProposalStore();
+    resetConfigMocks();
     resetJobRegistry();
     resetJobStore();
     freshJobs();
@@ -189,8 +647,22 @@ function freshJobs(): void {
   });
 }
 
+/** Each config store stub back to the real function; the approvals, names and erasures empty. */
+function resetConfigMocks(): void {
+  const actual = jest.requireActual("@/platform/auth/platform-config");
+  for (const [name, fn] of Object.entries(mockCfg))
+    fn.mockImplementation((...a: unknown[]) => actual[name](...a));
+  mockListApprovals.mockReset().mockResolvedValue([]);
+  mockNames.mockReset().mockResolvedValue(new Map());
+  mockErasures.mockReset();
+  mockAttest.mockReset();
+  mockDecide.mockReset();
+}
+
 beforeEach(() => {
   mockWrite.mockReset();
+  resetProposalStore();
+  resetConfigMocks();
   freshJobs();
 });
 afterEach(() => {

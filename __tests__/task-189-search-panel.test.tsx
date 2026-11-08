@@ -10,7 +10,7 @@
  */
 
 import React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
 import ActionConfirmPanel from "@/components/admin/ActionConfirmPanel";
 import { describeSearch } from "@/components/admin/search-description";
@@ -105,10 +105,13 @@ describe("TASK-189 round 1: long values and JSON values", () => {
         onDismiss={jest.fn()}
       />
     );
+    // TASK-202 (N-64): cut, with a button that shows it whole (a tooltip alone was the only way
+    // to read it, which a touch screen and a keyboard never show); whole in its title still.
     const shown = screen.getByTitle(long);
-    expect(shown.tagName).toBe("DIV");
-    expect(shown.className).toMatch(/\btruncate\b/);
-    expect(shown.className).toMatch(/\bmax-w-xs\b/);
+    expect(shown.textContent).not.toContain(long);
+    expect(shown.closest("div")?.className).toMatch(/\bmax-w-xs\b/);
+    fireEvent.click(screen.getByRole("button", { name: "Show the whole Description" }));
+    expect(screen.getByTitle(long).textContent).toContain(long);
   });
 
   it("a config value's JSON text is shown as it is, never as yes/no", () => {

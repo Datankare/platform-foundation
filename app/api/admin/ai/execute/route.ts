@@ -20,14 +20,34 @@ import {
   codedResult,
   isErasureHoldConflict,
   runCommandBarAction,
+  withAccountIdsNormalised,
   type ActionResult as BarResult,
 } from "@/app/api/admin/ai/command-bar";
+import { heldTargetAccount } from "@/app/api/admin/ai/held-summary";
+import { withAccountNames } from "@/app/api/admin/ai/handlers/search";
 import { withTrajectory } from "@/platform/agents/trajectory-closure";
 import { apiError, readJsonObject } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 /** Held for a second admin's approval: `held`, with the hold's id (ActionResult, review 9 H1). */
 type ActionResult = BarResult;
+
+/**
+ * The account an account-targeting action names (ACCOUNT_TARGET_FIELD), as the screen shows it:
+ * its address (null once erased) and id — undefined when the action names none, the account is
+ * not found, or it cannot be read (the result line then stands alone).
+ */
+async function namedTarget(
+  tool: AdminToolId,
+  input: Record<string, unknown>
+): Promise<{ id: string; email: string | null } | undefined> {
+  try {
+    const found = await heldTargetAccount(tool, withAccountIdsNormalised(tool, input));
+    return found ? { id: found.id, email: found.email } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The most actions one confirmed plan may carry (audit B-19). */
 const MAX_ACTIONS = 20;
@@ -154,7 +174,15 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
         }
       }
       // Only a code of the contract reaches the screen (rebase round 2, finding 2).
-      results.push({ tool: action.tool, ...codedResult(tool, result) });
+      // An audit search names its actors and targets by address (N-63), for the screen only.
+      const shown = await withAccountNames(codedResult(tool, result)).catch(() =>
+        codedResult(tool, result)
+      );
+      // The account it acted on, by address (TASK-202, N-63): for the screen only — the step
+      // was recorded above, without it.
+      const account =
+        shown.success || shown.held ? await namedTarget(tool, toolInput) : undefined;
+      results.push({ tool: action.tool, ...shown, ...(account ? { account } : {}) });
       if (!result.success) break;
     }
   };

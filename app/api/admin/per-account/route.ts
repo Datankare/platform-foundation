@@ -13,6 +13,7 @@ import { adminGuard } from "@/platform/auth/admin-guard";
 import { withTenantTx } from "@/platform/data";
 import { internalError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { namedAccounts } from "@/platform/admin/account-names";
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
   const denied = await adminGuard(request, "admin_manage_account_restrictions");
@@ -33,8 +34,19 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
           limit 200`
       )
     );
+    // The blocked account and who blocked it, by address (TASK-202, N-63).
+    const accounts = await namedAccounts(rows.flatMap((r) => [r.user_id, r.created_by]));
+    const named = (id: string) => {
+      const found = accounts.get(id);
+      return found ? { email: found.email, erased: found.erased } : null;
+    };
     return NextResponse.json({
-      restrictions: rows.map((r) => ({ ...r, created_at: r.created_at.toISOString() })),
+      restrictions: rows.map((r) => ({
+        ...r,
+        created_at: r.created_at.toISOString(),
+        user: named(r.user_id),
+        created_by_account: named(r.created_by),
+      })),
     });
   } catch (error) {
     return internalError(error, { request, context: "Admin per-account query failed" });

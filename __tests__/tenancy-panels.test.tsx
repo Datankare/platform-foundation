@@ -526,6 +526,11 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     expect(screen.getByText("operators only · safety")).toBeDefined();
     expect(screen.getByText("its administrators may set this")).toBeDefined();
     expect(screen.getByText("Waiting for approval")).toBeDefined();
+    // The requester is never named by id (TASK-202, N-63): a listing that names none says so.
+    expect(document.body.textContent).not.toContain("op-1");
+    expect(
+      screen.getByText(/requested by an account not found in this tenant/)
+    ).toBeDefined();
     // Filter narrows the list.
     fireEvent.change(screen.getByLabelText("Filter"), { target: { value: "budget" } });
     expect(screen.queryByText("max_devices_per_player")).toBeNull();
@@ -669,21 +674,22 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
       )
     ).toBeDefined();
     expect(
-      screen.queryByRole("button", { name: "Approve the held change purge_user_data" })
+      screen.queryByRole("button", { name: "Approve the held change Erase an account" })
     ).toBeNull();
     expect(
       screen.getByRole("button", {
-        name: "Mark purge_user_data executed: verified that it took effect",
+        // Named in words (TASK-202, N-62): the tool's id was the label.
+        name: "Mark Erase an account executed: verified that it took effect",
       })
     ).toBeDefined();
     expect(
       screen.getByRole("button", {
-        name: "Approve purge_user_data again: verified that it did not take effect",
+        name: "Approve Erase an account again: verified that it did not take effect",
       })
     ).toBeDefined();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Withdraw purge_user_data: verified that it did not take effect; it will not run",
+        name: "Withdraw Erase an account: verified that it did not take effect; it will not run",
       })
     );
     await waitFor(() =>
@@ -724,13 +730,13 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     await open();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Approve purge_user_data again: verified that it did not take effect",
+        name: "Approve Erase an account again: verified that it did not take effect",
       })
     );
     // As the Approvals panel says it (round 17: one reader): an erasure's duplicate is named.
     await screen.findByText(
       renderMessage("screens.held.result_duplicate_undecided", {
-        label: "purge_user_data",
+        label: "Erase an account",
       })
     );
     expect(

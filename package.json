@@ -126,10 +126,7 @@
       "platform/auth/index.ts",
       "app/admin/page.tsx",
       "components/admin/ActionConfirmPanel.tsx",
-      "components/admin/AdminConfigPanels.tsx",
-      "components/admin/AdminDataPanels.tsx",
       "components/admin/AdminDataViews.tsx",
-      "components/admin/AdminPasswordPanel.tsx",
       "components/admin/AdminPromptBar.tsx",
       "components/admin/ExecutionResultsPanel.tsx"
     ],

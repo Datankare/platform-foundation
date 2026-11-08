@@ -73,14 +73,14 @@ CI fails on each; REVIEW.md blocks on the rest ([AI_ENGINEERING](docs/AI_ENGINEE
 ## Non-goals
 
 - Not an app: the screens here are reference implementations for apps to adopt or replace.
-- No deployment of its own: it is proven in CI and through the apps that deploy it
-  ([ASSURANCE](docs/ASSURANCE.md) §6).
+- No deployment of its own: proven in CI and in the apps ([ASSURANCE](docs/ASSURANCE.md) §6).
 - No feature built for a single app: an app's own behaviour lives in the app.
 
 ## Before handing a change to the owner
 
 Run the per-change review protocol ([AI_ENGINEERING](docs/AI_ENGINEERING.md) §3) at the depth
-its risk tier sets (`node scripts/risk-tier.mjs --base origin/develop`), then the gates:
+its risk tier sets (`node scripts/risk-tier.mjs --base origin/develop`); walk an admin change in a
+browser on a production build first (REVIEW.md 25); then the gates:
 
 ```zsh
 npm run format:check && npm run typecheck && npx eslint . --max-warnings 0 && npm test

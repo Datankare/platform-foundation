@@ -3,7 +3,7 @@
  */
 
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import AdminShell from "@/components/admin/AdminShell";
 import type { AdminSection } from "@/components/admin/AdminShell";
 
@@ -26,16 +26,25 @@ describe("AdminShell", () => {
 
   it("renders Admin Panel title", () => {
     render(<AdminShell {...mockProps} />);
-    expect(screen.getByText("Admin Panel")).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Admin panel" })).toBeDefined();
   });
 
   it("renders all nav items when all permissions granted", () => {
     render(<AdminShell {...mockProps} />);
-    expect(screen.getByText("Users")).toBeDefined();
-    expect(screen.getByText("Roles")).toBeDefined();
-    expect(screen.getByText("Entitlements")).toBeDefined();
-    expect(screen.getByText("Audit log")).toBeDefined();
-    expect(screen.getByText("Password policy")).toBeDefined();
+    // The sidebar (desktop) and the picker (phone) list the same sections (TASK-202, N-64).
+    const nav = within(screen.getByRole("navigation"));
+    const picker = within(screen.getByRole("combobox"));
+    for (const name of [
+      "Users",
+      "Roles",
+      "Entitlements",
+      "Audit log",
+      "Password policy",
+      "Erasures",
+    ]) {
+      expect(nav.getByText(name)).toBeDefined();
+      expect(picker.getByRole("option", { name })).toBeDefined();
+    }
   });
 
   it("hides nav items when permission denied", () => {
@@ -50,14 +59,28 @@ describe("AdminShell", () => {
 
   it("switches section on nav click", () => {
     render(<AdminShell {...mockProps} />);
-    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(within(screen.getByRole("navigation")).getByText("Roles"));
     expect(screen.getByTestId("content").textContent).toBe("roles");
   });
 
   it("calls onSignOut", () => {
     render(<AdminShell {...mockProps} />);
-    fireEvent.click(screen.getByText("Sign Out"));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(mockProps.onSignOut).toHaveBeenCalled();
+  });
+
+  it("on a phone, the picker switches section (TASK-202, N-64)", () => {
+    render(<AdminShell {...mockProps} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Admin sections" }), {
+      target: { value: "audit" },
+    });
+    expect(screen.getByTestId("content").textContent).toBe("audit");
+    expect(
+      within(screen.getByRole("navigation"))
+        .getByText("Audit log")
+        .closest("button")
+        ?.getAttribute("aria-current")
+    ).toBe("page");
   });
 
   it("defaults to first visible section", () => {

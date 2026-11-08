@@ -78,7 +78,7 @@ async function openConsole() {
       <AdminPage />
     </AuthContextProvider>
   );
-  return screen.findByRole("button", { name: "Sign Out" });
+  return screen.findByRole("button", { name: "Sign out" });
 }
 
 beforeEach(() => {

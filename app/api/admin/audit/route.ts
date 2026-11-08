@@ -15,6 +15,16 @@ import { internalError } from "@/platform/errors";
 import { AUDIT_ACTIONS } from "@/platform/auth/audit";
 import { pageParams } from "@/lib/pagination";
 import { tenantRoute } from "@/platform/tenancy/route";
+import { namedAccounts, type NamedAccount } from "@/platform/admin/account-names";
+
+/**
+ * A row's actor or target as the screen names it (TASK-202, N-63): an account of this tenant by
+ * its address (null once erased) and role; anything else — an id that is no account (a role, a
+ * setting, an agent) — is absent, and the screen shows the row's id as a detail.
+ */
+function shownAccount(found: NamedAccount | undefined) {
+  return found ? { email: found.email, role: found.role, erased: found.erased } : null;
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -87,11 +97,15 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     return internalError(error, { request, context: "Admin audit query failed" });
   }
 
+  // Every actor and target of the page, named in one read (N-63).
+  const accounts = await namedAccounts(rows.flatMap((r) => [r.actor_id, r.target_id]));
   const entries = rows.map((row) => ({
     id: row.id,
     action: row.action,
     actorId: row.actor_id,
     targetId: row.target_id,
+    actor: shownAccount(row.actor_id ? accounts.get(row.actor_id) : undefined),
+    target: shownAccount(row.target_id ? accounts.get(row.target_id) : undefined),
     details: JSON.stringify(row.details),
     createdAt: row.created_at.toISOString(),
   }));

@@ -18,11 +18,13 @@ import type { EffectType, RiskLevel, ProposalRecord } from "@/platform/kernel/ty
 import type { ConfigApprovalRecord } from "@/platform/admin/types";
 import { getProposalStore } from "@/platform/agents/proposal-store";
 import { listApprovals } from "@/platform/admin/config-approval";
-import { getPermissionTier } from "@/platform/auth/platform-config";
 import { authorityFor, type HoldAuthority } from "@/platform/admin/hold-authority";
 import { approvalExpiryDays, holdLapsed } from "@/platform/admin/hold-expiry";
 import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
 import { withTenantTx } from "@/platform/data";
+import { CONFIG_HOLD_TOOLS } from "@/platform/admin/hold-keys";
+import { namedAccounts, type NamedAccount } from "@/platform/admin/account-names";
+import { getEnhancedConfig, getPermissionTier } from "@/platform/auth/platform-config";
 
 export { proposalConfigKey } from "@/platform/admin/hold-authority";
 
@@ -52,6 +54,23 @@ export interface HeldActionSummary {
   readonly roleChangedSince?: { readonly now: string | null };
   readonly feature?: string;
   /**
+   * The role a held role action names (TASK-202, N-61): the role created, deleted, copied, or
+   * whose permissions change; for a role change, the role it moves the account to is `toRole`.
+   */
+  readonly role?: string;
+  /**
+   * The permissions a held action grants (TASK-202, N-61): a role created with, added to a role,
+   * an entitlement group created with — or, for a role change, those the new role holds that the
+   * account's role now does not. Only codes of the permission catalog; at most 100.
+   */
+  readonly permissionsGranted?: readonly string[];
+  /** The permissions a held action takes away (a role's removed, a role change's lost). */
+  readonly permissionsRemoved?: readonly string[];
+  /** The entitlement group a held action creates, or turns on or off (its code). */
+  readonly group?: string;
+  /** A held entitlement group turned on (true) or off (false). */
+  readonly active?: boolean;
+  /**
    * A held approval-policy change (round 12, I-2 (d)): the rules it would store, in order, and
    * the default approver it would set (absent: the current one stands) — only listed values.
    */
@@ -64,6 +83,38 @@ export interface HeldActionSummary {
     readonly defaultApprover?: string;
   };
 }
+
+/**
+ * Who asked for a held change, as a person reads it (TASK-202, N-61): an account by its address
+ * and role — never its id; an erased account as erased; an agent or the system by kind. Resolved
+ * on the server from the hold's requester (the person an agent acted for, else the actor).
+ */
+export type RequesterView =
+  | {
+      readonly kind: "account";
+      readonly email: string | null;
+      readonly role: string | null;
+    }
+  | { readonly kind: "erased" }
+  | { readonly kind: "unknown" };
+
+/**
+ * What a held config change would do (TASK-202, N-61): the key, the value it replaces and the
+ * value it would set (a reset: the platform default it would follow again), and where it goes.
+ * Given only to a viewer who could decide it, like the summary (round 2, N2).
+ */
+export interface ConfigChangeView {
+  readonly key: string;
+  readonly action: "set" | "reset";
+  /** The value it replaces, when known (a hold records it; an approval stores it). */
+  readonly before?: unknown;
+  /** The value it would set (a reset: the default it would follow). */
+  readonly after?: unknown;
+  readonly scope?: "platform" | "tenant";
+}
+
+/** The longest change comment shown with a hold (the request's own bound is larger). */
+export const COMMENT_SHOWN_MAX = 500;
 
 /** A unified, source-agnostic view of one held change awaiting an independent approver. */
 export interface PendingApproval {
@@ -104,7 +155,70 @@ export interface PendingApproval {
    * a viewer holding `requiredPermission` (round 2, N2).
    */
   readonly summary?: HeldActionSummary;
+  /**
+   * Where the hold stands (TASK-202, N-61), for the screen's own words: waiting for its approver
+   * (`held`), approved and its run failed (`retry`: approving again retries it), or approved and
+   * its outcome unknown (`undecided`). `reason` keeps the server's detail.
+   */
+  readonly state?: "held" | "retry" | "undecided";
+  /** Who asked, by address and role (N-61) — to every viewer of the queue. */
+  readonly requestedBy?: RequesterView;
+  /** A held config change's key and values (N-61) — only to a viewer who could decide it. */
+  readonly change?: ConfigChangeView;
+  /** The requester's own comment on the change (N-61) — only to a viewer who could decide it. */
+  readonly comment?: string;
   readonly createdAt: string;
+}
+
+/** The requester as the screen names it, from the accounts read for the listing. */
+function requesterView(
+  accounts: ReadonlyMap<string, NamedAccount>,
+  requester: string
+): RequesterView {
+  const found = accounts.get(requester);
+  if (!found) return { kind: "unknown" };
+  if (found.erased) return { kind: "erased" };
+  return { kind: "account", email: found.email, role: found.role };
+}
+
+const shownComment = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim().length > 0
+    ? v.trim().slice(0, COMMENT_SHOWN_MAX)
+    : undefined;
+
+/**
+ * A held config change's key and values (a runtime hold of update_config or reset_config): the
+ * value it replaces as recorded when it was held (heldPrevious), else the value now; the value it
+ * would set — a reset's, the platform default. Undefined when the hold names no key, or the key
+ * is not a setting (an unknown key: the run refuses it, and there is nothing to compare).
+ */
+async function heldConfigChange(
+  p: ProposalRecord
+): Promise<ConfigChangeView | undefined> {
+  if (!CONFIG_HOLD_TOOLS.has(p.label)) return undefined;
+  const key = p.payload["key"];
+  if (typeof key !== "string" || !key) return undefined;
+  const entry = await getEnhancedConfig(key).catch(() => undefined);
+  if (!entry) return undefined;
+  const requested = p.payload["scope"];
+  const scope =
+    requested === "platform" || requested === "tenant" ? requested : undefined;
+  const held = p.payload["heldPrevious"];
+  const before =
+    held && typeof held === "object" && "value" in (held as Record<string, unknown>)
+      ? (held as { value: unknown }).value
+      : scope === "platform"
+        ? entry.platformValue
+        : entry.value;
+  return p.label === "reset_config"
+    ? { key, action: "reset", before, after: entry.platformValue, scope: "tenant" }
+    : {
+        key,
+        action: "set",
+        before,
+        after: p.payload["value"],
+        ...(scope ? { scope } : {}),
+      };
 }
 
 /** Map a permission_tier to the permission that governs its edit (and thus its approval). */
@@ -335,10 +449,16 @@ export async function listPendingApprovals(
       const configKey = typeof k === "string" ? k : undefined;
       const requiredPermission = await authority.requiredPermission(p);
       // Only to a viewer who could decide it (N2). Unreadable: listed without it.
+      const decider = !!viewer && holds(viewer, requiredPermission);
       const summary =
-        authority.summary && viewer && holds(viewer, requiredPermission)
+        authority.summary && decider
           ? await authority.summary(p).catch(() => undefined)
           : undefined;
+      // A held config change's values and comment (N-61): to a viewer who could decide it.
+      const change = decider
+        ? await heldConfigChange(p).catch(() => undefined)
+        : undefined;
+      const comment = decider ? shownComment(p.payload["changeComment"]) : undefined;
       return {
         source: "runtime",
         id: p.proposalId,
@@ -350,7 +470,15 @@ export async function listPendingApprovals(
         effectiveRisk: p.effectiveRisk,
         effects: p.effects,
         ...(p.status === "indeterminate" ? { undecided: true } : {}),
+        state:
+          p.status === "indeterminate"
+            ? "undecided"
+            : p.status === "approved"
+              ? "retry"
+              : "held",
         ...(summary ? { summary } : {}),
+        ...(change ? { change } : {}),
+        ...(comment ? { comment } : {}),
         reason:
           p.status === "indeterminate"
             ? `Approved and being applied when its run stopped answering: whether it took effect is unknown${
@@ -369,18 +497,37 @@ export async function listPendingApprovals(
   );
 
   const config = await Promise.all(
-    configApprovals.map(async (c): Promise<PendingApproval> => ({
-      source: "config-approval",
-      id: c.id,
-      label: c.configKey,
-      configKey: c.configKey,
-      requester: c.requestedBy ?? "unknown",
-      requiredPermission: await requiredPermissionForKey(c.configKey),
-      reason:
-        c.impactSummary?.trim() ||
-        `Safety-tier change to "${c.configKey}" awaiting a second approver.`,
-      createdAt: c.createdAt,
-    }))
+    configApprovals.map(async (c): Promise<PendingApproval> => {
+      const requiredPermission = await requiredPermissionForKey(c.configKey);
+      // Its values and comment (N-61): to a viewer who could decide it, as a hold's summary.
+      const decider = !!viewer && holds(viewer, requiredPermission);
+      const comment = decider ? shownComment(c.changeComment) : undefined;
+      return {
+        source: "config-approval",
+        id: c.id,
+        label: c.configKey,
+        configKey: c.configKey,
+        requester: c.requestedBy ?? "unknown",
+        requiredPermission,
+        state: "held",
+        ...(decider
+          ? {
+              change: {
+                key: c.configKey,
+                action: c.action,
+                before: c.currentValue,
+                after: c.proposedValue,
+                scope: c.scope,
+              },
+            }
+          : {}),
+        ...(comment ? { comment } : {}),
+        reason:
+          c.impactSummary?.trim() ||
+          `Safety-tier change to "${c.configKey}" awaiting a second approver.`,
+        createdAt: c.createdAt,
+      };
+    })
   );
 
   // Who may decide the undecided ones (round 7, I-3): for a viewer only — the Approvals screens,
@@ -405,5 +552,14 @@ export async function listPendingApprovals(
     stuck.has(r.id) ? { ...r, noEligibleDecider: true as const } : r
   );
 
-  return [...marked, ...config].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // Who asked, by address (N-61): one read for every requester, for a viewer only (the screens;
+  // the command bar's context names none).
+  const all = [...marked, ...config];
+  const accounts = viewer
+    ? await namedAccounts(all.map((a) => a.requester))
+    : new Map<string, NamedAccount>();
+  const named = viewer
+    ? all.map((a) => ({ ...a, requestedBy: requesterView(accounts, a.requester) }))
+    : all;
+  return named.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

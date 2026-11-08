@@ -27,7 +27,6 @@ import {
   EntitlementsDataView,
   AuditDataView,
   PasswordPolicyDataView,
-  TrustedAgentsDataView,
   PerAccountRestrictionsDataView,
   ApprovalPolicyDataView,
   CapabilitiesDataView,
@@ -39,11 +38,15 @@ import {
 } from "@/components/admin/TenancyPanels";
 import { OperatorJobsView } from "@/components/admin/JobsPanels";
 import { AdminKillSwitchView } from "@/components/admin/AgentKillSwitchPanel";
+import { PlatformConfigPanel } from "@/components/admin/PlatformConfigPanel";
+import { TrustedAgentsPanel } from "@/components/admin/TrustedAgentsPanel";
+import { ErasuresPanel } from "@/components/admin/ErasuresPanel";
 import { renderMessage } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { useAuth } from "@/platform/auth/context";
 import MfaEnrollment from "@/components/admin/MfaEnrollment";
 import { leaveConsole } from "@/components/admin/leave-console";
+import { readableRole } from "@/components/admin/admin-format";
 import {
   isPanelUnavailable,
   PANEL_UNAVAILABLE,
@@ -97,6 +100,10 @@ function permissionCheck(granted: readonly string[]): (code: string) => boolean 
 interface ActionPlan {
   message: string;
   actions: { tool: string; input: Record<string, unknown> }[];
+  /** Searches left out: not this screen's tables, and not named (TASK-202, N-65). */
+  scopedOut?: string[];
+  /** Each account-targeting action's account, by its index (TASK-202, N-63). */
+  accounts?: Record<number, { email: string | null; found: boolean }>;
 }
 
 interface ExecutionResult {
@@ -121,6 +128,10 @@ const ENDPOINTS: Record<string, string> = {
   entitlements: "/api/admin/entitlements",
   audit: "/api/admin/audit?offset=0",
   approvals: "/api/admin/approvals",
+  // Every setting with its metadata, for the edit panel (TASK-202, N-60).
+  "platform-config": "/api/admin/config?enhanced=true",
+  // The open erasures, operators only (TASK-202, S3-E19).
+  erasures: "/api/operator/erasures",
   "password-policy": "/api/admin/password-policy",
   "agent-registry": "/api/admin/agent-registry",
   "per-account": "/api/admin/per-account",
@@ -147,14 +158,19 @@ async function fetchPanelData(panel: AdminSection): Promise<unknown> {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
+/** A section's view: its data, and — for the views that change something — the admin's permissions. */
+type DataViewProps = { data: any; hasPermission: (code: string) => boolean };
+
+const DATA_VIEWS: Record<string, React.FC<DataViewProps>> = {
   roles: RolesDataView,
   entitlements: EntitlementsDataView,
   audit: AuditDataView,
   approvals: HeldActionsPanel,
   "dual-control": DualControlKeysPanel,
   "password-policy": PasswordPolicyDataView,
-  "agent-registry": TrustedAgentsDataView,
+  "platform-config": PlatformConfigPanel,
+  "agent-registry": TrustedAgentsPanel,
+  erasures: ErasuresPanel,
   "per-account": PerAccountRestrictionsDataView,
   "approval-policy": ApprovalPolicyDataView,
   capabilities: CapabilitiesDataView,
@@ -167,6 +183,35 @@ const DATA_VIEWS: Record<string, React.FC<{ data: any }>> = {
 
 /** Sections that are a form of their own, with no command bar (the kill switch, TASK-172). */
 const NO_PROMPT_BAR: ReadonlySet<string> = new Set(["kill-switch"]);
+
+/**
+ * A planned approve/reject (ADR-040 040c), sent to the deterministic decision route — real admin
+ * identity and server-side enforcement — never the command-bar executor. Its answer in words
+ * (TASK-202, N-62): recorded, or the refusal's catalog message.
+ */
+async function decideFromPlan(decision: {
+  tool: string;
+  input: Record<string, unknown>;
+}): Promise<ExecutionResult> {
+  const id = String(decision.input.proposalId ?? "");
+  const res = await apiFetch(`/api/admin/approvals/${encodeURIComponent(id)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      decision: decision.tool === "approve_hold" ? "approve" : "reject",
+      source: decision.input.source,
+    }),
+  });
+  const refused = res.ok ? undefined : await readRefusal(res);
+  return {
+    tool: decision.tool,
+    success: res.ok,
+    result: res.ok
+      ? renderMessage("screens.admin_console.results.decision_recorded")
+      : undefined,
+    error: refused?.message,
+  };
+}
 
 export default function AdminPage() {
   const [currentPlan, setCurrentPlan] = useState<ActionPlan | null>(null);
@@ -289,24 +334,7 @@ export default function AdminPage() {
         (a) => a.tool === "approve_hold" || a.tool === "reject_hold"
       );
       if (decision) {
-        const id = String(decision.input.proposalId ?? "");
-        const res = await apiFetch(`/api/admin/approvals/${encodeURIComponent(id)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            decision: decision.tool === "approve_hold" ? "approve" : "reject",
-            source: decision.input.source,
-          }),
-        });
-        const body = await res.json().catch(() => ({}));
-        setResults([
-          {
-            tool: decision.tool,
-            success: res.ok,
-            result: res.ok ? "Decision recorded" : undefined,
-            error: res.ok ? undefined : (body.error ?? `Failed (${res.status})`),
-          },
-        ]);
+        setResults([await decideFromPlan(decision)]);
         setCurrentPlan(null);
         if (openPanel !== null) await refreshData(openPanel);
         return;
@@ -419,7 +447,7 @@ export default function AdminPage() {
           (isPanelUnavailable(panelData[section]) ? (
             <PanelUnavailable panel={title} onRetry={() => void refreshData(section)} />
           ) : (
-            <DataView data={panelData[section]} />
+            <DataView data={panelData[section]} hasPermission={allowed} />
           ))}
       </div>
     );
@@ -506,7 +534,12 @@ export default function AdminPage() {
 
   return (
     <AdminShell
-      adminName={session.roleName || "Administrator"}
+      adminName={
+        // The role as the Users screen reads one ("super_admin" → "Super admin").
+        session.roleName
+          ? readableRole(session.roleName, null)
+          : renderMessage("screens.admin_console.admin_fallback")
+      }
       hasPermission={permissionCheck(session.permissions)}
       onSignOut={() => {
         // The session ends — the server revokes it and this browser forgets its tokens — then a

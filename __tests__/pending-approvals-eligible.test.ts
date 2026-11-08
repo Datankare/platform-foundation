@@ -68,9 +68,14 @@ async function undecided(n: number): Promise<string[]> {
   return ids;
 }
 
-/** The statements that read who may decide (the users table). */
+/**
+ * The statements that read who may decide (the users table, with their permissions) — not the
+ * one that names the requesters by address (TASK-202, N-61: platform/admin/account-names.ts).
+ */
 const deciderReads = () =>
-  fakeData().statements.filter((s) => /\bfrom users\b/.test(s.sql));
+  fakeData().statements.filter(
+    (s) => /\bfrom users\b/.test(s.sql) && !/\bas erased\b/.test(s.sql)
+  );
 
 beforeEach(() => {
   fakeData().reset();

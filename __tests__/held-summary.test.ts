@@ -113,7 +113,14 @@ describe("held actions name their account (round 1, A1/A3)", () => {
         feature: "translate",
       })
     ).toEqual({ target: { notFound: true }, feature: "translate" });
-    expect(await heldActionSummary("create_role", { name: "x" })).toBeUndefined();
+    // A role action names its role (TASK-202, N-61); its permissions only as catalog codes —
+    // none here, where the catalog read answers no row.
+    expect(
+      await heldActionSummary("create_role", { name: "x", permissions: ["not a code"] })
+    ).toEqual({ role: "x" });
+    expect(
+      await heldActionSummary("update_password_policy", { min_length: 9 })
+    ).toBeUndefined();
   });
 });
 

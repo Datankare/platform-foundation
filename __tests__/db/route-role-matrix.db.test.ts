@@ -490,6 +490,8 @@ const ROUTES: readonly RouteCase[] = [
   op("deletions/" + ID, "POST", "deletions/[id]", () =>
     fc.record({ decision: fc.constantFrom("approve", "reject"), note: text(0) })
   ),
+  // The open erasures, across tenants (TASK-202, S3-E19): read-only.
+  op("erasures", "GET", "erasures"),
   op("jobs", "GET", "jobs"),
   op("jobs/dead/" + ID, "POST", "jobs/dead/[id]", () =>
     fc.record({ action: fc.constantFrom("replay", "discard") })

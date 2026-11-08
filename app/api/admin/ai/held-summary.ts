@@ -93,6 +93,37 @@ export async function heldTargetAccount(
 const text = (v: unknown): string | undefined =>
   typeof v === "string" && v.length > 0 ? v.slice(0, 200) : undefined;
 
+/** The most permission codes one summary lists. */
+const MAX_LISTED_PERMISSIONS = 100;
+
+/**
+ * The values of `v` that are permission codes of the catalog (TASK-202, N-61), in the order
+ * given, each once — never free text from the payload. A read error throws (the summary is then
+ * left out, as any summary that cannot be read).
+ */
+async function catalogCodes(v: unknown): Promise<string[]> {
+  if (!Array.isArray(v)) return [];
+  const asked = [
+    ...new Set(v.filter((x): x is string => typeof x === "string" && x.length <= 100)),
+  ].slice(0, MAX_LISTED_PERMISSIONS);
+  if (asked.length === 0) return [];
+  const { rows } = await withTenantTx((tx) =>
+    tx.query<{ code: string }>(
+      "select code from permissions where code = any($1::text[])",
+      [asked]
+    )
+  );
+  const known = new Set(rows.map((r) => r.code));
+  return asked.filter((c) => known.has(c));
+}
+
+/** A role's permissions, by its name (null: no such role). */
+async function rolePermissionsByName(name: unknown): Promise<readonly string[] | null> {
+  if (typeof name !== "string" || !name) return null;
+  const role = await withTenantTx((tx) => findRole(tx, { name }));
+  return role ? role.permissions : null;
+}
+
 const listed = (v: unknown, values: readonly string[]): string | undefined =>
   typeof v === "string" && values.includes(v) ? v : undefined;
 
@@ -160,11 +191,95 @@ export async function heldActionSummary(
         : (target?.roleName ?? undefined);
       const changedSince =
         snapshotted && target && !sameOptionalId(target.roleId ?? null, heldRoleId);
+      // What the move grants and takes away (N-61): the new role's permissions the role it was
+      // held against lacks, and the reverse — each a catalog code.
+      const fromId = snapshotted ? heldRoleId : (target?.roleId ?? null);
+      const fromPerms =
+        typeof fromId === "string"
+          ? ((await withTenantTx((tx) => findRole(tx, { id: fromId })))?.permissions ??
+            [])
+          : [];
+      const toPerms = await rolePermissionsByName(payload.new_role);
+      const granted = toPerms ? toPerms.filter((p) => !fromPerms.includes(p)) : [];
+      const removed = toPerms ? fromPerms.filter((p) => !toPerms.includes(p)) : [];
       return {
         ...base,
         ...(fromRole ? { fromRole } : {}),
         ...(text(payload.new_role) ? { toRole: text(payload.new_role) } : {}),
         ...(changedSince ? { roleChangedSince: { now: target.roleName ?? null } } : {}),
+        ...(granted.length
+          ? { permissionsGranted: granted.slice(0, MAX_LISTED_PERMISSIONS) }
+          : {}),
+        ...(removed.length
+          ? { permissionsRemoved: removed.slice(0, MAX_LISTED_PERMISSIONS) }
+          : {}),
+      };
+    }
+    case "create_role": {
+      const granted = await catalogCodes(payload.permissions);
+      return {
+        ...(text(payload.name) ? { role: text(payload.name) } : {}),
+        ...(granted.length ? { permissionsGranted: granted } : {}),
+      };
+    }
+    case "delete_role":
+      return text(payload.role_name) ? { role: text(payload.role_name) } : undefined;
+    case "duplicate_role": {
+      // A copy holds every permission of its source: those are what it grants.
+      const granted = (await rolePermissionsByName(payload.source_role)) ?? [];
+      return {
+        ...(text(payload.new_name) ? { role: text(payload.new_name) } : {}),
+        ...(text(payload.source_role) ? { fromRole: text(payload.source_role) } : {}),
+        ...(granted.length
+          ? { permissionsGranted: granted.slice(0, MAX_LISTED_PERMISSIONS) }
+          : {}),
+      };
+    }
+    case "assign_permissions": {
+      const granted = await catalogCodes(payload.add);
+      const removed = await catalogCodes(payload.remove);
+      return {
+        ...(text(payload.role_name) ? { role: text(payload.role_name) } : {}),
+        ...(granted.length ? { permissionsGranted: granted } : {}),
+        ...(removed.length ? { permissionsRemoved: removed } : {}),
+      };
+    }
+    case "create_entitlement_group": {
+      const granted = await catalogCodes(payload.permissions);
+      return {
+        ...(text(payload.code) ? { group: text(payload.code) } : {}),
+        ...(granted.length ? { permissionsGranted: granted } : {}),
+      };
+    }
+    case "set_entitlement_group_active": {
+      // The group by its code (a stored value, never the payload's text) and what it grants.
+      const id = payload.group_id;
+      const group =
+        typeof id === "string" && UUID.test(id)
+          ? (
+              await withTenantTx((tx) =>
+                tx.query<{ code: string; permissions: string[] | null }>(
+                  `select g.code, array_agg(p.code order by p.code)
+                            filter (where p.code is not null) as permissions
+                     from entitlement_groups g
+                     left join entitlement_permissions ep on ep.entitlement_group_id = g.id
+                     left join permissions p on p.id = ep.permission_id
+                    where g.id = $1::uuid
+                    group by g.code`,
+                  [id]
+                )
+              )
+            ).rows[0]
+          : undefined;
+      const perms = (group?.permissions ?? []).slice(0, MAX_LISTED_PERMISSIONS);
+      return {
+        ...(group ? { group: group.code } : {}),
+        ...(typeof payload.is_active === "boolean" ? { active: payload.is_active } : {}),
+        ...(perms.length
+          ? payload.is_active === false
+            ? { permissionsRemoved: perms }
+            : { permissionsGranted: perms }
+          : {}),
       };
     }
     case "block_user_feature":

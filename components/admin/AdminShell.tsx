@@ -16,6 +16,7 @@ export type AdminSection =
   | "capabilities"
   | "capability-mapping"
   | "approvals"
+  | "erasures"
   | "dual-control"
   | "tenant"
   | "tenants"
@@ -72,6 +73,14 @@ const NAV_ITEMS: {
     label: section("approvals"),
     icon: "✅",
     permission: "can_access_admin",
+  },
+  {
+    // The open erasures and their two-operator attestation (TASK-202, S3-E19): operators only, as
+    // the read and the attestation route.
+    section: "erasures",
+    label: section("erasures"),
+    icon: "🧹",
+    permission: "platform_operate",
   },
   {
     section: "dual-control",
@@ -201,47 +210,75 @@ export default function AdminShell({
     onSectionChange?.(activeSection);
   }, [activeSection, onSectionChange]);
 
+  const choose = (next: AdminSection) => {
+    setActiveSection(next);
+    onSectionChange?.(next);
+  };
+
+  // One layout from a phone to a desktop (TASK-202, N-64): the sections in a sidebar from md up,
+  // and in a picker above the content on a narrow screen; the content never widens the page —
+  // a wide table scrolls inside its own panel.
   return (
-    <div className="min-h-screen bg-[#0a0f1e] flex">
+    <div className="min-h-screen bg-[#0a0f1e] flex flex-col md:flex-row">
       {/* Sidebar */}
-      <aside className="w-64 bg-[#111827] border-r border-gray-800 flex flex-col">
-        <div className="p-6 border-b border-gray-800">
-          <h1 className="text-lg font-bold text-white">Admin Panel</h1>
-          <p className="text-xs text-gray-400 mt-1">{adminName}</p>
+      <aside className="w-full md:w-64 md:shrink-0 bg-[#111827] border-b md:border-b-0 md:border-r border-gray-800 flex flex-col">
+        <div className="p-4 md:p-6 border-b border-gray-800 flex items-center justify-between gap-3 md:block">
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold text-white">
+              {renderMessage("screens.admin_console.panel_title")}
+            </h1>
+            <p className="text-xs text-gray-400 mt-1 truncate">{adminName}</p>
+          </div>
+          <button
+            onClick={onSignOut}
+            className="shrink-0 text-sm text-gray-400 hover:text-gray-200 transition md:mt-3"
+          >
+            {renderMessage("screens.admin_console.sign_out")}
+          </button>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1">
+        <div className="p-4 md:hidden">
+          <label htmlFor="admin-section-picker" className="sr-only">
+            {renderMessage("screens.admin_console.nav_label")}
+          </label>
+          <select
+            id="admin-section-picker"
+            value={activeSection ?? ""}
+            onChange={(e) => choose(e.target.value as AdminSection)}
+            className="w-full rounded border border-gray-700 bg-[#0a0f1e] px-3 py-2 text-sm text-gray-100"
+          >
+            {visibleItems.map((item) => (
+              <option key={item.section} value={item.section}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <nav
+          aria-label={renderMessage("screens.admin_console.nav_label")}
+          className="hidden md:block flex-1 p-4 space-y-1"
+        >
           {visibleItems.map((item) => (
             <button
               key={item.section}
-              onClick={() => {
-                setActiveSection(item.section);
-                onSectionChange?.(item.section);
-              }}
+              onClick={() => choose(item.section)}
+              aria-current={activeSection === item.section ? "page" : undefined}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition ${
                 activeSection === item.section
                   ? "bg-blue-600/20 text-blue-400"
                   : "text-gray-400 hover:text-gray-300 hover:bg-gray-800/50"
               }`}
             >
-              <span>{item.icon}</span>
+              <span aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
             </button>
           ))}
         </nav>
-
-        <div className="p-4 border-t border-gray-800">
-          <button
-            onClick={onSignOut}
-            className="w-full text-sm text-gray-400 hover:text-gray-200 transition"
-          >
-            Sign Out
-          </button>
-        </div>
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 p-8">
+      <main className="flex-1 min-w-0 p-4 md:p-8">
         {activeSection !== null && children(activeSection)}
       </main>
     </div>

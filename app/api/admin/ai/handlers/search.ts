@@ -72,6 +72,7 @@ import { logger } from "@/lib/logger";
 import { SEARCHABLE_TABLES } from "../tool-permissions";
 import { USER_STATUS_SQL } from "@/app/api/admin/users/listing";
 import { coded, type ActionResult, type SearchCell, type SearchTable } from "./shared";
+import { namedAccounts } from "@/platform/admin/account-names";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -439,6 +440,47 @@ export function searchResultFor(
       ...table,
       columns: table.columns.filter(keep),
       rows: table.rows.map((row) => row.filter(keep)),
+    },
+  };
+}
+
+/**
+ * An audit search's rows with each actor and target named by address (TASK-202, N-63), for the
+ * admin's screen only — the recorded step keeps the rows' ids (searchStepRecord), never an
+ * address. Two columns, `actor` and `target`, go before the id columns they name: an account's
+ * address, "(erased)" for an erased one, null for an id that is no account of this tenant (the
+ * screen then shows the id as its detail). Any other result is returned as it is.
+ */
+export async function withAccountNames(result: ActionResult): Promise<ActionResult> {
+  const table = result.table;
+  if (!table || table.table !== "audit_log") return result;
+  const actorAt = table.columns.indexOf("actor_id");
+  const targetAt = table.columns.indexOf("target_id");
+  if (actorAt < 0 || targetAt < 0) return result;
+  const idOf = (v: SearchCell | undefined) => (typeof v === "string" ? v : null);
+  const accounts = await namedAccounts(
+    table.rows.flatMap((row) => [idOf(row[actorAt]), idOf(row[targetAt])])
+  );
+  const name = (v: SearchCell | undefined): SearchCell => {
+    const found = accounts.get(idOf(v) ?? "");
+    if (!found) return null;
+    return found.erased
+      ? renderMessage("screens.admin_console.people.erased")
+      : (found.email ?? null);
+  };
+  const at = Math.min(actorAt, targetAt);
+  const insert = <T>(list: readonly T[], a: T, b: T): T[] => [
+    ...list.slice(0, at),
+    a,
+    b,
+    ...list.slice(at),
+  ];
+  return {
+    ...result,
+    table: {
+      ...table,
+      columns: insert(table.columns, "actor", "target"),
+      rows: table.rows.map((row) => insert(row, name(row[actorAt]), name(row[targetAt]))),
     },
   };
 }

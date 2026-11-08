@@ -2,10 +2,16 @@
 
 import React, { useState } from "react";
 import { describeSearch } from "./search-description";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import { toolLabel } from "./ExecutionResultsPanel";
 
 interface ActionPlan {
   message: string;
   actions: { tool: string; input: Record<string, unknown> }[];
+  /** Searches the planner proposed outside this screen's tables, left out (TASK-202, N-65). */
+  scopedOut?: readonly string[];
+  /** Each account-targeting action's account, by index, as the planner route read it (N-63). */
+  accounts?: Readonly<Record<number, { email: string | null; found: boolean }>>;
 }
 
 interface ActionConfirmPanelProps {
@@ -17,71 +23,138 @@ interface ActionConfirmPanelProps {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-function describeAction(action: { tool: string; input: Record<string, any> }): string {
-  const { tool, input } = action;
+const d = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.admin_console.plan.describe.${key}`, values);
+const p = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.admin_console.plan.${key}`, values);
 
+/** A list in words, or "none". */
+function listed(v: unknown): string | string[] {
+  return Array.isArray(v) && v.length > 0 ? v.map(String) : p("none");
+}
+
+/** A text value, or "none" (the catalog's selects take it as their empty branch). */
+const textOr = (v: unknown): string =>
+  typeof v === "string" && v.trim() !== "" ? v : "none";
+
+/**
+ * An account as the confirm step names it (TASK-202, N-63): its address, as the planner route
+ * read it — never the id the planner put in. Not read: what was asked, as before.
+ */
+function accountName(
+  asked: unknown,
+  account: { email: string | null; found: boolean } | undefined
+): string {
+  if (account?.found)
+    return account.email ?? renderMessage("screens.admin_console.people.no_email");
+  if (account && !account.found)
+    return renderMessage("screens.admin_console.people.unknown");
+  return String(asked ?? "");
+}
+
+/** What an action does, in the catalog's words. */
+export function describeAction(
+  action: { tool: string; input: Record<string, any> },
+  account?: { email: string | null; found: boolean }
+): string {
+  const { tool, input } = action;
   switch (tool) {
     case "approve_hold":
-      return `Approve held change: ${input.summary || input.proposalId}`;
     case "reject_hold":
-      return `Reject held change: ${input.summary || input.proposalId}`;
-    case "create_role": {
-      const perms = input.permissions?.length
-        ? ` with permissions: ${input.permissions.join(", ")}`
-        : "";
-      return `Create role "${input.display_name || input.name}"${perms}`;
-    }
+      return d(tool, { what: String(input.summary || input.proposalId || "") });
+    case "create_role":
+      return d("create_role", {
+        role: String(input.display_name || input.name || ""),
+        permissions:
+          Array.isArray(input.permissions) && input.permissions.length
+            ? input.permissions.map(String)
+            : "none",
+      });
     case "delete_role":
-      return `Delete role "${input.role_name}"`;
+      return d("delete_role", { role: String(input.role_name ?? "") });
     case "duplicate_role":
-      return `Duplicate "${input.source_role}" as "${input.new_display_name || input.new_name}"`;
-    case "assign_permissions": {
-      const parts: string[] = [];
-      if (input.add?.length) parts.push(`add: ${input.add.join(", ")}`);
-      if (input.remove?.length) parts.push(`remove: ${input.remove.join(", ")}`);
-      return `Update permissions on "${input.role_name}" — ${parts.join("; ")}`;
-    }
+      return d("duplicate_role", {
+        source: String(input.source_role ?? ""),
+        role: String(input.new_display_name || input.new_name || ""),
+      });
+    case "assign_permissions":
+      return d("assign_permissions", {
+        role: String(input.role_name ?? ""),
+        add: listed(input.add),
+        remove: listed(input.remove),
+      });
     case "change_user_role":
-      return `Change "${input.user_identifier}" to role "${input.new_role}"`;
-    case "create_entitlement_group": {
-      const perms = input.permissions?.length
-        ? ` with: ${input.permissions.join(", ")}`
-        : "";
-      return `Create entitlement "${input.display_name || input.code}"${perms}`;
-    }
+      return d("change_user_role", {
+        account: accountName(input.user_identifier, account),
+        role: String(input.new_role ?? ""),
+      });
+    case "create_entitlement_group":
+      return d("create_entitlement_group", {
+        group: String(input.display_name || input.code || ""),
+        permissions:
+          Array.isArray(input.permissions) && input.permissions.length
+            ? input.permissions.map(String)
+            : "none",
+      });
     case "update_password_policy": {
       const changes: string[] = [];
-      if (input.min_length) changes.push(`min length: ${input.min_length}`);
+      if (input.min_length)
+        changes.push(d("policy_min_length", { value: input.min_length }));
       if (input.rotation_days !== undefined)
-        changes.push(`rotation: ${input.rotation_days} days`);
-      return `Update password policy — ${changes.join(", ") || "see details"}`;
+        changes.push(d("policy_rotation", { value: Number(input.rotation_days) }));
+      return d("update_password_policy", {
+        changes: changes.length ? changes : d("policy_other"),
+      });
     }
     case "register_agent":
-      return `Register agent "${input.agent_id}" (owner: ${input.owner || "first-party"}, scopes: ${(input.scopes || []).join(", ") || "none"})`;
+      return d("register_agent", {
+        agent: String(input.agent_id ?? ""),
+        owner: String(input.owner || "first-party"),
+        scopes: listed(input.scopes),
+      });
     case "suspend_agent":
       return input.reactivate
-        ? `Reactivate agent "${input.agent_id}"`
-        : `Suspend agent "${input.agent_id}" — it can no longer act on any capability`;
+        ? d("reactivate_agent", { agent: String(input.agent_id ?? "") })
+        : d("suspend_agent", { agent: String(input.agent_id ?? "") });
     case "set_agent_scope":
-      return `Set scope of "${input.agent_id}" to: ${(input.scopes || []).join(", ") || "none"}`;
+      return d("set_agent_scope", {
+        agent: String(input.agent_id ?? ""),
+        scopes: listed(input.scopes),
+      });
     case "set_agent_ttl":
-      return `Set token ceiling of "${input.agent_id}" to ${input.max_token_ttl}s`;
+      return d("set_agent_ttl", {
+        agent: String(input.agent_id ?? ""),
+        seconds: Number(input.max_token_ttl) || 0,
+      });
     case "block_user_feature":
-      return `Block "${input.feature}" for user ${input.user_id}${input.reason ? ` — reason: ${input.reason}` : ""} (their account standing is unchanged)`;
+      return d("block_user_feature", {
+        feature: String(input.feature ?? ""),
+        account: accountName(input.user_id, account),
+        reason: textOr(input.reason),
+      });
     case "unblock_user_feature":
-      return `Lift the "${input.feature}" block for user ${input.user_id}`;
-    case "set_approval_policy": {
-      const n = input.rules?.length || 0;
-      return `Set approval policy — default approver "${input.default_approver}", ${n} rule${n === 1 ? "" : "s"} (mints a new version)`;
-    }
+      return d("unblock_user_feature", {
+        feature: String(input.feature ?? ""),
+        account: accountName(input.user_id, account),
+      });
+    case "set_approval_policy":
+      return d("set_approval_policy", {
+        approver: String(input.default_approver ?? ""),
+        rules: Array.isArray(input.rules) ? input.rules.length : 0,
+      });
     case "set_capability_mapping":
       return input.remove
-        ? `Remove capability mapping "${input.capability}"`
-        : `Map capability "${input.capability}" to features: ${(input.features || []).join(", ") || "none"}`;
+        ? d("remove_mapping", { capability: String(input.capability ?? "") })
+        : d("set_mapping", {
+            capability: String(input.capability ?? ""),
+            features: listed(input.features),
+          });
+    case "purge_user_data":
+      return d("purge_user_data", { account: accountName(input.userId, account) });
     case "search":
       return describeSearch(input);
     default:
-      return `${tool}: ${JSON.stringify(input)}`;
+      return d("other", { tool });
   }
 }
 
@@ -118,19 +191,26 @@ export default function ActionConfirmPanel({
     <div className="bg-[#111827] rounded-xl border border-gray-800 p-5 mb-6">
       {/* AI Message */}
       <div className="mb-4">
-        <p className="text-sm text-gray-300 whitespace-pre-wrap">{plan.message}</p>
+        <p className="text-sm text-gray-300 whitespace-pre-wrap break-words">
+          {plan.message}
+        </p>
+        {plan.scopedOut && plan.scopedOut.length > 0 ? (
+          <p className="mt-2 text-xs text-gray-400" data-scoped-out="true">
+            {p("scoped_out", { tables: [...plan.scopedOut] })}
+          </p>
+        ) : null}
       </div>
 
       {/* Actions List */}
       {plan.actions.length > 0 && (
         <div className="mb-4">
           <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">
-            Proposed Actions
+            {p("proposed")}
           </p>
           <div className="space-y-2">
             {plan.actions.map((action, i) => {
               const isDestructive = destructiveTools.has(action.tool);
-              const description = describeAction(action);
+              const description = describeAction(action, plan.accounts?.[i]);
               return (
                 <label
                   key={i}
@@ -150,20 +230,20 @@ export default function ActionConfirmPanel({
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <code
+                      <span
                         className={`text-xs px-1.5 py-0.5 rounded ${
                           isDestructive
                             ? "bg-red-900/30 text-red-400"
                             : "bg-blue-900/30 text-blue-400"
                         }`}
                       >
-                        {action.tool}
-                      </code>
+                        {toolLabel(action.tool)}
+                      </span>
                       {isDestructive && (
-                        <span className="text-xs text-red-400">⚠ Destructive</span>
+                        <span className="text-xs text-red-400">⚠ {p("destructive")}</span>
                       )}
                     </div>
-                    <p className="text-sm text-gray-300">{description}</p>
+                    <p className="text-sm text-gray-300 break-words">{description}</p>
                   </div>
                 </label>
               );
@@ -174,7 +254,7 @@ export default function ActionConfirmPanel({
 
       {/* Confirm / Cancel */}
       {plan.actions.length > 0 && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={handleConfirm}
             disabled={selectedActions.size === 0 || isExecuting}
@@ -184,21 +264,17 @@ export default function ActionConfirmPanel({
                 : "bg-blue-600 hover:bg-blue-500 text-white"
             }`}
           >
-            {isExecuting
-              ? "Executing..."
-              : `Confirm ${selectedActions.size} action${selectedActions.size !== 1 ? "s" : ""}`}
+            {isExecuting ? p("executing") : p("confirm", { count: selectedActions.size })}
           </button>
           <button
             onClick={onCancel}
             disabled={isExecuting}
             className="text-sm text-gray-400 hover:text-gray-300 transition"
           >
-            Cancel
+            {p("cancel")}
           </button>
           {hasDestructive && (
-            <p className="text-xs text-red-400 ml-auto">
-              This includes destructive actions that cannot be undone.
-            </p>
+            <p className="text-xs text-red-400 ml-auto">{p("destructive_note")}</p>
           )}
         </div>
       )}
@@ -209,7 +285,7 @@ export default function ActionConfirmPanel({
           onClick={onCancel}
           className="text-sm text-gray-400 hover:text-gray-300 transition"
         >
-          Dismiss
+          {p("dismiss")}
         </button>
       )}
     </div>

@@ -341,7 +341,7 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
     expect(await roleOf(gone)).toBe(cat.roles.ops);
   });
 
-  it("refuses to change the admin's own role", async () => {
+  it("[hostile:self] refuses to change the admin's own role", async () => {
     const res = await a.run(() =>
       handleChangeUserRole(
         { user_identifier: email("admin"), new_role: cat.roleNames.ops },
@@ -427,7 +427,7 @@ dbDescribe(`${SUITE} handleChangeUserRole (command bar)`, () => {
     }
   );
 
-  it("changes nothing when the audit log is unavailable", async () => {
+  it("[hostile:store-down] changes nothing when the audit log is unavailable", async () => {
     const res = await a.run(() =>
       handleChangeUserRole(
         { user_identifier: alice, new_role: cat.roleNames.staff },
@@ -682,6 +682,9 @@ dbDescribe(`${SUITE} GET /api/admin/audit`, () => {
       action: "role_changed",
       actorId: actor,
       targetId: target,
+      // Named by address (TASK-202, N-63) when they are accounts of this tenant: these ids are not.
+      actor: null,
+      target: null,
       details: '{"n":1}',
       createdAt: "2026-01-01T00:00:00.000Z",
     });
@@ -691,6 +694,13 @@ dbDescribe(`${SUITE} GET /api/admin/audit`, () => {
     expect(
       (await entries(`/api/admin/audit?q=${actor}`)).map((e: { id: string }) => e.id)
     ).toEqual([ids.e3, ids.e1]);
+  });
+
+  it("[hostile:id-spelling] finds a user's records by their id in upper case, named by address or not at all (TASK-202)", async () => {
+    const found = await entries(`/api/admin/audit?q=${actor.toUpperCase()}`);
+    expect(found.map((e: { id: string }) => e.id)).toEqual([ids.e3, ids.e1]);
+    // These ids name no account of this tenant: no name, never another tenant's.
+    for (const e of found) expect([e.actor, e.target]).toEqual([null, null]);
   });
 
   it("finds records by action name", async () => {
@@ -715,7 +725,7 @@ dbDescribe(`${SUITE} GET /api/admin/audit`, () => {
     }
   );
 
-  it("refuses a caller without admin_view_audit", async () => {
+  it("[hostile:role] refuses a caller without admin_view_audit", async () => {
     const res = await auditGET(
       req("/api/admin/audit", suiteCaller("moderator", RUN), { tenant: t })
     );

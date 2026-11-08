@@ -1,6 +1,7 @@
 /**
  * @jest-environment node
  */
+// hostile:store-down n/a: the decision route's store failures are held-lost-commit.test.ts's
 /**
  * An approver satisfies the change's own rules — every held action × every catalog role as
  * approver, on Postgres (TASK-194, audits C-2 and C-6)
@@ -421,7 +422,7 @@ dbDescribe(
 
     // E-56 (server side): Approve and Reject shown to every admin-area holder are refused by the
     // server to one without the hold's permission — a rejection too.
-    it("refuses a moderator either decision on a hold whose permission they lack", async () => {
+    it("[hostile:role] refuses a moderator either decision on a hold whose permission they lack", async () => {
       const id = await hold("change_user_role", {
         user_identifier: await newUser("free"),
         new_role: "moderator",
@@ -587,7 +588,7 @@ dbDescribe(
       ]);
     });
 
-    it("lists a held role change with its target and both roles, and an approver never acts on their own account (A1, A3)", async () => {
+    it("[hostile:self] lists a held role change with its target and both roles, and an approver never acts on their own account (A1, A3)", async () => {
       const target = await insertUser(t, {
         roleId: roleIds.free,
         email: `promote-${RUN}@example.test`,
@@ -604,6 +605,9 @@ dbDescribe(
         target: { id: target, email: `promote-${RUN}@example.test` },
         fromRole: "free",
         toRole: "moderator",
+        // What the move grants and takes away (TASK-202, N-61), each a catalog code.
+        permissionsGranted: expect.arrayContaining(["can_moderate"]),
+        permissionsRemoved: expect.any(Array),
       });
       // Round 2, N2: neither a moderator nor a safety approver (no admin_manage_users) sees whose
       // account a held role change is for — only the label.
@@ -801,6 +805,8 @@ dbDescribe(
         target: { id: target },
         fromRole: "free",
         toRole: "moderator",
+        permissionsGranted: expect.arrayContaining(["can_moderate"]),
+        permissionsRemoved: expect.any(Array),
       });
       await withOwnerTx("operator", (tx) =>
         tx.query("update users set role_id = $2::uuid where id = $1::uuid", [
@@ -813,10 +819,12 @@ dbDescribe(
         fromRole: "free",
         toRole: "moderator",
         roleChangedSince: { now: "moderator" },
+        permissionsGranted: expect.arrayContaining(["can_moderate"]),
+        permissionsRemoved: expect.any(Array),
       });
     });
 
-    it("an account id in upper case is the same account at the command bar (TASK-199): the approver's own is refused", async () => {
+    it("[hostile:id-spelling] an account id in upper case is the same account at the command bar (TASK-199): the approver's own is refused", async () => {
       const own = await hold("block_user_feature", {
         user_id: approvers.super_admin.userId.toUpperCase(),
         feature: "translate",

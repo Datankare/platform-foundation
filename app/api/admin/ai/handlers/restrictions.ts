@@ -98,7 +98,7 @@ export async function handleBlockUserFeature(
             [userId, feature, input.reason ?? null, actorId]
           )
         );
-        return { success: true, result: `Blocked "${feature}" for user ${userId}` };
+        return { success: true, result: `Blocked "${feature}"` };
       })
   );
 }
@@ -134,7 +134,7 @@ export async function handleUnblockUserFeature(
             [userId, feature]
           )
         );
-        return { success: true, result: `Unblocked "${feature}" for user ${userId}` };
+        return { success: true, result: `Unblocked "${feature}"` };
       })
   );
 }
