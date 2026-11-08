@@ -90,6 +90,16 @@ export function registryEntries(source) {
  * is read and the hard-coded model re-verified (review round 1, L2). While the source still holds
  * `model`, the entry is a documented exception: a loud warning until `reviewBy`, a failure after
  * it. `verifiedAt` is the commit the string was confirmed at, by reading the source.
+ *
+ * `overridden` (TASK-201): a default model the action's source names that an input does override
+ * — not an exception, but held to the override: the workflow step that uses the action must set
+ * that input (`claude-model`) to a model, which the workflow-model check then holds to the
+ * registry. A step without it fails, naming the input. Re-verified at 0c6a49f on 2026-11-07, which
+ * is still the head of the action's `main` (no release tags): `claudecode/constants.py:8`
+ * `DEFAULT_CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL') or 'claude-opus-4-1-20250805'`, and
+ * `action.yml:189` sets `CLAUDE_MODEL: ${{ inputs.claude-model }}` — the scan
+ * (`github_action_audit.py:227`, `--model`) and the false-positive filter's calls use it; only
+ * `validate_api_access` keeps its own hard-coded model (`model`, above).
  */
 export const KNOWN_ACTION_MODELS = Object.freeze({
   "anthropics/claude-code-security-review": {
@@ -106,8 +116,50 @@ export const KNOWN_ACTION_MODELS = Object.freeze({
     upstream:
       "anthropics/claude-code-security-review: hard-coded retired validation model (issue to be filed by the owner — TASK-197)",
     reviewBy: "2026-12-31",
+    overridden: Object.freeze({
+      "claude-opus-4-1-20250805": {
+        file: "claudecode/constants.py",
+        input: "claude-model",
+        where:
+          "DEFAULT_CLAUDE_MODEL (constants.py:8 at 0c6a49f), read from CLAUDE_MODEL, which action.yml:189 sets from the claude-model input",
+      },
+    }),
   },
 });
+
+/**
+ * The value a workflow gives `input` in the `with:` of the step that uses `uses` (owner/repo@ref),
+ * as written (quotes removed), or null when that step does not set it. The step is the lines after
+ * its `uses:` line down to the next step (a `-` at the step's indentation or less) or a dedent
+ * past it.
+ */
+export function stepInput(text, uses, input) {
+  const lines = text.split("\n");
+  const out = [];
+  lines.forEach((line, i) => {
+    const m = line.match(/^([ \t]*)(-[ \t]*)?uses:[ \t]*([\w.-]+\/[\w./-]+@[\w.-]+)/);
+    if (!m || m[3] !== uses) return;
+    // The step's own indentation: its "-" (on this line, or the nearest line above that has one).
+    let stepIndent = m[2] !== undefined ? m[1].length : -1;
+    for (let k = i - 1; stepIndent < 0 && k >= 0; k--) {
+      const d = lines[k].match(/^([ \t]*)-[ \t]/);
+      if (d) stepIndent = d[1].length;
+    }
+    let value = null;
+    for (let k = i + 1; k < lines.length; k++) {
+      const l = lines[k];
+      if (/^\s*(?:#.*)?$/.test(l)) continue;
+      const indent = l.match(/^[ \t]*/)[0].length;
+      if (indent <= stepIndent) break;
+      const v = l.match(
+        new RegExp(`^[ \\t]*["']?${input}["']?[ \\t]*:[ \\t]*(.*?)[ \\t]*(?:#.*)?$`)
+      );
+      if (v) value = v[1].replace(/^["']|["']$/g, "");
+    }
+    out.push(value);
+  });
+  return out.length > 0 && out.every((v) => v !== null && v !== "") ? out[0] : null;
+}
 
 /** A YYYY-MM-DD that is a real calendar day (Date.parse rolls 2026-02-31 over into March). */
 export function isCalendarDate(text) {
@@ -289,13 +341,24 @@ export async function workflowProblems(dir, registryIds, now = Date.now()) {
         );
         continue;
       }
-      // The models its files hard-code: the recorded one is the exception; any other that is not
-      // a registry model was never recorded.
+      // The models its files hard-code: the recorded one is the exception; a default an input
+      // overrides passes only where the step sets that input (TASK-201); any other that is not a
+      // registry model was never recorded.
       const hardCoded =
         scanned.recorded === null ? [known.model] : [...scanned.models.keys()];
+      const overridden = known.overridden ?? {};
       for (const other of hardCoded.filter(
         (m) => m !== known.model && !registryIds.includes(m)
       )) {
+        const o = Object.hasOwn(overridden, other) ? overridden[other] : null;
+        if (o) {
+          if (!stepInput(text, uses, o.input)) {
+            problems.push(
+              `${f}: ${action}@${ref} defaults to ${other} in ${(scanned.models.get(other) ?? [o.file]).join(", ")} (${o.where}) — the step must set ${o.input}: to a registry model`
+            );
+          }
+          continue;
+        }
         problems.push(
           `${f}: ${action}@${ref} hard-codes ${other} in ${(scanned.models.get(other) ?? [known.file]).join(", ")}, which no exception records — re-verify and record it`
         );

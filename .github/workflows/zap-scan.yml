@@ -21,7 +21,7 @@ permissions:
 jobs:
   zap:
     name: ZAP baseline
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TARGET: ${{ inputs.target_url || vars.ZAP_TARGET_URL }}
     steps:

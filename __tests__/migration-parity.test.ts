@@ -2,6 +2,8 @@
  * TASK-197 (audit D-11): scripts/migration-parity.mjs compares what each live database applied
  * with the repository — by name, and from 063 by checksum, so a migration edited after it was
  * applied is drift. Run against a local server standing in for the database's REST API.
+ * TASK-201: it authenticates with a Supabase secret key (SUPABASE_SECRET_KEY, sb_secret_…), sent
+ * only as the apikey header; the legacy service_role JWT is no longer read.
  *
  * @guard a live database whose applied migrations differ from the repository's
  */
@@ -32,8 +34,16 @@ interface Row {
   checksum?: string | null;
 }
 
-function db(rows: Row[], withChecksumColumn = true): Promise<Server> {
+/** The headers of every request the stand-in database received (TASK-201). */
+const seen: Record<string, string | string[] | undefined>[] = [];
+
+/** A well-formed secret key, built at run time: a literal one reads as a leak to the secret scan. */
+const SECRET = ["sb", "secret", "TESTONLYabcdefghijklmnop"].join("_");
+
+function db(rows: Row[], withChecksumColumn = true, status = 200): Promise<Server> {
   const server = createServer((req, res) => {
+    seen.push(req.headers);
+    if (status !== 200) return res.writeHead(status).end("{}");
     const wantsChecksum = (req.url ?? "").includes("checksum");
     if (wantsChecksum && !withChecksumColumn) return res.writeHead(400).end("{}");
     res
@@ -49,7 +59,10 @@ function db(rows: Row[], withChecksumColumn = true): Promise<Server> {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
 }
 
-async function parity(server: Server): Promise<{ code: number | null; out: string }> {
+async function parity(
+  server: Server,
+  keys: Record<string, string> = { SUPABASE_SECRET_KEY: SECRET }
+): Promise<{ code: number | null; out: string }> {
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return new Promise((resolve) => {
     const child = spawn("node", [join(ROOT, "scripts/migration-parity.mjs"), "test"], {
@@ -57,7 +70,7 @@ async function parity(server: Server): Promise<{ code: number | null; out: strin
       env: {
         PATH: process.env.PATH ?? "",
         SUPABASE_URL: url,
-        SUPABASE_SERVICE_ROLE_KEY: "k",
+        ...keys,
       } as unknown as NodeJS.ProcessEnv,
     });
     let out = "";
@@ -75,10 +88,15 @@ const recordAll = (): Row[] =>
     checksum: stamped(f) ? checksum(f) : null,
   }));
 
-async function withDb(rows: Row[], withChecksumColumn = true) {
-  const server = await db(rows, withChecksumColumn);
+async function withDb(
+  rows: Row[],
+  withChecksumColumn = true,
+  keys?: Record<string, string>,
+  status = 200
+) {
+  const server = await db(rows, withChecksumColumn, status);
   try {
-    return await parity(server);
+    return await parity(server, keys);
   } finally {
     server.close();
   }
@@ -118,5 +136,69 @@ describe("migration parity (TASK-197, audit D-11)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("not recorded");
     expect(r.out).toContain("063_applied_migrations_checksum.sql");
+  });
+});
+
+describe("migration parity's key (TASK-201: Supabase secret keys)", () => {
+  // The legacy service_role JWT's form, built at run time (the secret scan).
+  const JWT = ["eyJhbGciOiJIUzI1NiJ9", "eyJyb2xlIjoic2VydmljZV9yb2xlIn0", "c2ln"].join(
+    "."
+  );
+
+  it("[self-test] sends the secret key as the apikey header only, never as a Bearer token", async () => {
+    seen.length = 0;
+    const r = await withDb(recordAll());
+    expect(r.code).toBe(0);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const headers of seen) {
+      expect(headers.apikey).toBe(SECRET);
+      expect(headers.authorization).toBeUndefined();
+    }
+    expect(r.out).not.toContain(SECRET);
+  });
+
+  it("stops, naming SUPABASE_SECRET_KEY, when only the legacy variable is set — and asks nothing", async () => {
+    seen.length = 0;
+    const r = await withDb(recordAll(), true, { SUPABASE_SERVICE_ROLE_KEY: JWT });
+    expect(r.code).toBe(2);
+    expect(r.out).toContain(
+      "SUPABASE_SERVICE_ROLE_KEY (the legacy service_role JWT) is no longer read"
+    );
+    expect(r.out).toContain("set it as SUPABASE_SECRET_KEY");
+    expect(r.out).not.toContain(JWT);
+    expect(seen).toEqual([]);
+  });
+
+  it.each([
+    ["the legacy JWT", JWT],
+    ["a publishable key", ["sb", "publishable", "TESTONLYabcdefghijklmnop"].join("_")],
+    ["a truncated secret key", ["sb", "secret", "abc"].join("_")],
+  ])(
+    "refuses %s under SUPABASE_SECRET_KEY without sending it or printing it",
+    async (_l, key) => {
+      seen.length = 0;
+      const r = await withDb(recordAll(), true, { SUPABASE_SECRET_KEY: key });
+      expect(r.code).toBe(2);
+      expect(r.out).toContain(
+        "SUPABASE_SECRET_KEY is not a Supabase secret key (sb_secret_…)"
+      );
+      expect(r.out).not.toContain(key);
+      expect(seen).toEqual([]);
+    }
+  );
+
+  it("says the key was refused (cannot check, exit 2) on 401 or 403 — never drift", async () => {
+    for (const status of [401, 403]) {
+      const r = await withDb(recordAll(), true, undefined, status);
+      expect(r.code).toBe(2);
+      expect(r.out).toContain(`the key was refused (HTTP ${status})`);
+      expect(r.out).not.toContain(SECRET);
+    }
+  });
+
+  it("requires the URL and the key", async () => {
+    const r = await withDb(recordAll(), true, {});
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("SUPABASE_URL and SUPABASE_SECRET_KEY are required");
   });
 });

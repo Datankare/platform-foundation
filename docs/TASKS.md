@@ -6636,7 +6636,153 @@ not.
   1498 ×2, 1502 ×2), the name-status pair loop (830–831, three), the octopus guard (881) and the
   CLI's missing value (1547).
 
-_Last updated: November 2, 2026 (TASK-200 — the engineering process, enforced; the owner's single-owner cut)_
+### TASK-201 — Deadlines before 2027: runner images pinned, Supabase secret keys, the security-review action re-checked
+
+| Field        | Detail                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------- |
+| **ID**       | TASK-201                                                                                |
+| **Type**     | Defect (CI runner drift; a retiring credential; a third-party action's pinned model)    |
+| **Severity** | High (every CI job moved at once by GitHub; Supabase deletes the legacy keys late 2026) |
+| **Phase**    | Phase 5                                                                                 |
+| **Target**   | v6.0.0 (RC)                                                                             |
+| **Status**   | Fixed on develop (sub-batch 55a of the residuals batch); owner steps below              |
+| **Logged**   | 2026-11-07 (the rebuilt residuals register: S2-C1, N-76, N-79)                          |
+
+Three items with dates outside our control, fixed together in both repositories.
+
+**1. Runner images (S2-C1).** Every job ran on `ubuntu-latest`, which GitHub began moving to Ubuntu
+26.04 on 2026-10-19, and the Postgres 17 + pgvector step built its apt source from
+`$(lsb_release -cs)`, so on the new image it would ask apt.postgresql.org for a release it may not
+publish — Layer 1, the migration replay, the container image job and Playform's E2E all depend on
+that step. Now every job (17 in platform-foundation, 22 in Playform, and the sync template) runs on
+`ubuntu-24.04`; the apt source names `${PGDG_CODENAME}-pgdg` from the step's
+`PGDG_CODENAME: noble`, and the step fails first, saying which, when the runner's
+`VERSION_CODENAME` (`/etc/os-release`) differs or apt.postgresql.org does not publish that release
+(a retried `curl -I` of its `Release` file). `workflow-hygiene` gains two guards: `runnerProblems`
+(a `-latest` label, an expression, no `runs-on`, a label list or group, or any image but
+`RUNNER_IMAGE`) and `pgdgProblems` (an apt source read from the runner, a `PGDG_CODENAME` other than
+`RUNNER_CODENAME`, or no check against the runner), each with a `[self-test]` planting every case.
+
+**2. Supabase secret keys (N-76).** Supabase is "deprecating the `anon` and `service_role` keys by
+the end of 2026" ([API keys](https://supabase.com/docs/guides/api/api-keys)); creating new keys
+does not revoke the legacy ones, which are disabled separately
+([migrating to the new API keys](https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys)).
+A secret key (`sb_secret_…`) is not a JWT, reaches the data as the `service_role` role and is sent
+"on the `apikey` header, not on `Authorization: Bearer`" (both pages, read 2026-11-07). The
+migration parity check sent the legacy JWT as both headers. Now:
+
+- `scripts/migration-parity.mjs` reads `SUPABASE_SECRET_KEY`, refuses a value that is not a secret
+  key (a JWT, a publishable key) before any request, sends it as `apikey` only, and answers a 401
+  or 403 as "the key was refused" (exit 2, cannot check — never drift). A run with only
+  `SUPABASE_SERVICE_ROLE_KEY` stops, naming the new variable. A clean cut, no transition: the old
+  variable is never sent.
+- `.github/workflows/migration-parity.yml` passes `secrets.SUPABASE_SECRET_KEY`; an environment
+  with only one of `SUPABASE_URL` and `SUPABASE_SECRET_KEY` fails, naming the other (whatever
+  `MIGRATION_PARITY_REQUIRED` says) — so an environment still holding only the legacy secret fails
+  rather than skipping; one with neither still skips with a notice (platform-foundation, which sets
+  neither today).
+- The environment contract declares `SUPABASE_SECRET_KEY` (shape `sb_secret_` and 16 or more of
+  `[A-Za-z0-9_-]`), required with `REALTIME_PROVIDER=supabase`; `SUPABASE_SERVICE_ROLE_KEY` is no
+  longer declared or shaped, and set alone with Realtime on Supabase the violation names the new
+  variable. No code path sends a Supabase key (Realtime takes its client from the app), so nothing
+  else moves.
+- ENV_REFERENCE, the providers README, ASSURANCE §4, TENANCY_OPERATIONS §1.4, `.env.example` and
+  both credential registers name the new key.
+
+**3. The security-review action (N-79, S3-E13).** Re-checked on 2026-11-07:
+`anthropics/claude-code-security-review` has no tag or release (`git ls-remote --tags`: none), and
+the pin `0c6a49f1fa56a1d472575da86a94dbc1edb78eda` is still the head of its `main`, so there is no
+newer commit to pin. In that source the scan's model is `DEFAULT_CLAUDE_MODEL =
+os.environ.get('CLAUDE_MODEL') or 'claude-opus-4-1-20250805'` (`claudecode/constants.py:8`), and
+`action.yml:189` sets `CLAUDE_MODEL` from the `claude-model` input, which the workflow already sets
+to the registry's standard model (`claude-sonnet-5-5`); only `validate_api_access` keeps the
+hard-coded `claude-3-5-haiku-20241022` (`claude_api_client.py:62`) — the known exception, unchanged,
+review-by 2026-12-31. Found doing this: with the action's full file list (CI reads it with the job's
+token) the model check failed on the default in `constants.py`, which no exception recorded — run
+here against the action's real source served locally, the old script exits 1. The exception now
+records that default as `overridden` by `claude-model`, and the check requires the step using the
+action to set that input (`stepInput`); a step without it fails, naming the input.
+
+**Owner steps** (in order; each with its check). Supabase: create a secret key per project
+(Settings → API Keys → "Publishable and secret API keys" → Create new API keys); set it as the
+`SUPABASE_SECRET_KEY` secret of the GitHub Environments `staging` and `production` in each
+repository that runs the parity check (Playform; platform-foundation has none to set), through a
+hidden prompt; promote, then run the parity workflow by hand and see it read the database (its
+output lists the comparison; a refused key says so); only then delete the old
+`SUPABASE_SERVICE_ROLE_KEY` secrets, remove `SUPABASE_SERVICE_ROLE_KEY` from any Vercel project that
+still has it, and, at the end of the promotion, deactivate the legacy keys in Supabase (Settings →
+API Keys; reversible). The security-review action: before 2026-12-31, decide whether to replace it,
+remove it, or extend the exception — no upstream commit fixes the validation model.
+
+**Playform.** The same shared files byte for byte; its own workflows (22 jobs, four Postgres
+steps, the parity workflow), credential register, LIVE_JOURNEY_CHECK §10, migration guide and
+release notes — Playform TASK-5002 in `docs/PLAYFORM_TASKS.md`.
+
+**Design check**
+
+- **Reach:** CI and the operator's tools only. The workflows' runner and Postgres step, the parity
+  script (run by the parity workflow against the live databases, read-only), the model check, and
+  the environment contract, which a deployment reads at boot — only for `REALTIME_PROVIDER=supabase`,
+  which no deployment selects today. No route, screen, role, agent or guest path changes.
+- **Races:** none. Each CI job installs its own Postgres; the parity check reads one table per
+  environment; two runs share nothing but read-only requests.
+- **Dependencies down:** apt.postgresql.org unreachable or without the release: the step fails
+  before installing, saying so. Supabase refusing the key: exit 2 "the key was refused", never
+  drift. The action's source unreadable: unverifiable, as before (a failure).
+- **Erasure leftovers:** none: nothing is stored. The parity check reads file names and checksums,
+  no person's data.
+- **Screens × responses:** no screen changes; no route answers differently. The contract's
+  violation text changes for a Realtime-on-Supabase deployment without the new key.
+- **Journeys touched:** none: no page or route changes, and `journey-exemptions.json` is unchanged.
+- **Weakens a tenant's protection?** No: the parity check keeps every comparison and fails on a
+  missing key where it used to skip only when the URL was absent too; the runner guard and the model
+  check only add refusals; the contract still requires a key where Realtime needs one.
+
+**Threat model**
+
+- **Boundary:** the CI workflows of both repositories (every job's runner image, the Postgres step,
+  the model check, the parity workflow) and the parity check's credential, between a change and
+  `develop`, `staging` and `main`. The actors that exist: the owner (the only account that pushes or
+  merges, with 2FA), by hand or through an AI agent; Dependabot; GitHub, which moves `-latest`
+  labels on its own schedule; Supabase, which retires the legacy keys.
+- **Bypasses** (our own mistakes): a job added on `ubuntu-latest`, a runner from an expression, or
+  the image changed without the apt source (the runner guards, and the step itself); a key sent as a
+  Bearer token or printed (refused shapes are never sent; no message carries a value — tests); a
+  parity run passing on nothing because only the old secret is set (it fails, naming the new one);
+  the action's default model silently used (the step must set `claude-model`).
+- **Forgeries:** none in scope: each needs an actor who does not exist for these repositories (a
+  second author editing a workflow or a secret); out of scope, not a residual.
+- **Legitimate flows:** a push or pull request running every layer on `ubuntu-24.04`; the weekly
+  and dispatched parity runs, with credentials (Playform) or without (platform-foundation, skipped
+  with a notice); Dependabot's bumps (no secrets: unchanged); the weekly model check, with the full
+  file list (token) or without it (only the recorded file).
+- **Agreed before code:** the owner's brief for sub-batch 55a (2026-11-07): pin `ubuntu-24.04` and
+  the codename with a guard; re-pin the action to its latest release or set `claude-model` and say
+  so; a clean cut to `SUPABASE_SECRET_KEY`, `apikey` only, with owner steps.
+
+**Self-review**
+
+- **Consumers checked:** every reader of `SUPABASE_SERVICE_ROLE_KEY` (`git grep`): the parity
+  script, its workflow, the contract and its tests, `rate-limit-registry.test.ts`, ENV_REFERENCE,
+  the providers README, ASSURANCE, TENANCY_OPERATIONS, `.env.example`, the credential registers;
+  the historical migration guides and ADRs are records and keep the old name. Every `runs-on`
+  (`grep -c`: 17 and 22 jobs, one template) and every apt source of apt.postgresql.org (3 and 4);
+  `credential-register.test.ts` (every secret a workflow reads has a row); `check-model-ids`'s
+  other callers (the model-registry workflow only).
+- **Hostile re-read:** tried to get past each change: `ubuntu-latest` in a label list, `${{
+matrix.os }}`, `runs-on: { group: … }`, `ubuntu-22.04`, a job with no `runs-on`; an apt source with
+  `$(lsb_release -cs)`, a literal `noble`, `PGDG_CODENAME: resolute`, no runner check — each refused
+  by a self-test, and each guard seen failing on a planted `ubuntu-latest` and `lsb_release` in the
+  real workflows; the parity script with the Bearer header restored and with the shape check off —
+  its tests fail; a JWT, a publishable key or a truncated key under the new name — refused, never
+  sent, never printed; the model check with a `claude-model` only on a later step, or set to a
+  non-registry model — refused. The changed shell steps were run here (see the batch notes): the
+  codename check on this Ubuntu 24.04 host passes and on a faked `resolute` fails with its message;
+  the parity step's branches run with each combination of secrets.
+
+_Last updated: November 7, 2026 (TASK-201 — runner images pinned, Supabase secret keys, the security-review action re-checked)_
+
+_Previously updated: November 2, 2026 (TASK-200 — the engineering process, enforced; the owner's single-owner cut)_
 
 _Previously updated: November 1, 2026 (TASK-197 rebased onto TASK-194; its migration renumbered 063)_
 

@@ -21,6 +21,8 @@ import {
 } from "@/platform/providers/environment-contract";
 
 const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2ln";
+/** A well-formed Supabase secret key (TASK-201), built at run time for the secret scan. */
+const SECRET_KEY = ["sb", "secret", "x".repeat(20)].join("_");
 const GUEST_SECRET = "a".repeat(64);
 const REQUEST_DB =
   "postgresql://app_tenant.abcdefghijklmnop:pw@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
@@ -39,7 +41,7 @@ function valid(extra: Record<string, string | undefined> = {}): EnvSource {
     NEXT_PUBLIC_COGNITO_REGION: "us-east-1",
     COGNITO_REGION: "us-east-1",
     SUPABASE_URL: "https://abcdefghijklmnop.supabase.co",
-    SUPABASE_SERVICE_ROLE_KEY: JWT,
+    SUPABASE_SECRET_KEY: SECRET_KEY,
     GUEST_TOKEN_SECRET: GUEST_SECRET,
     ERASURE_HASH_KEY: "e".repeat(64),
     REFRESH_COOKIE_KEY: "r".repeat(64),
@@ -443,17 +445,38 @@ describe("D2 — one source, declared shape", () => {
     ]);
   });
 
-  // Built at run time: a literal "sb_secret_…" reads as a leaked key to the secret scan.
-  it.each([["sb", "secret_abc123"].join("_"), "sb_publishable_abc123", "not-a-key"])(
-    "refuses a service-role key that is not the legacy JWT (%s)",
-    (key) => {
-      const v = checkEnvironmentContract(valid({ SUPABASE_SERVICE_ROLE_KEY: key }));
-      expect(v).toEqual([
-        expect.stringMatching(/^SUPABASE_SERVICE_ROLE_KEY has the wrong shape/),
-      ]);
-      expect(v[0]).not.toContain(key);
-    }
-  );
+  // TASK-201. Built at run time: a literal "sb_secret_…" reads as a leaked key to the secret scan.
+  it.each([
+    ["the legacy service_role JWT", JWT],
+    ["a publishable key", ["sb", "publishable", "abcdefghijklmnopqrst"].join("_")],
+    ["a truncated secret key", ["sb", "secret", "abc123"].join("_")],
+    ["a secret key with a space", `${SECRET_KEY} `],
+    ["not a key", "not-a-key"],
+  ])("refuses a Supabase key that is not a secret key (%s)", (_label, key) => {
+    const v = checkEnvironmentContract(valid({ SUPABASE_SECRET_KEY: key }));
+    expect(v).toEqual([
+      expect.stringMatching(/^SUPABASE_SECRET_KEY has the wrong shape/),
+    ]);
+    expect(v[0]).not.toContain(key.trim());
+  });
+
+  it("no longer reads the legacy SUPABASE_SERVICE_ROLE_KEY: set alone, it satisfies nothing (TASK-201)", () => {
+    expect(
+      checkEnvironmentContract(
+        valid({
+          REALTIME_PROVIDER: "supabase",
+          SUPABASE_SECRET_KEY: undefined,
+          SUPABASE_SERVICE_ROLE_KEY: JWT,
+        })
+      )
+    ).toEqual([
+      "SUPABASE_SECRET_KEY is required (REALTIME_PROVIDER=supabase) but not set — SUPABASE_SERVICE_ROLE_KEY (the legacy service_role JWT) is no longer read: create a secret key in Supabase → Settings → API Keys and set it as SUPABASE_SECRET_KEY",
+    ]);
+    // Without Realtime on Supabase nothing needs a key, and a leftover legacy value is not shaped.
+    expect(checkEnvironmentContract(valid({ SUPABASE_SERVICE_ROLE_KEY: "x" }))).toEqual(
+      []
+    );
+  });
 
   it("refuses an unknown AUTH_PROVIDER value", () => {
     const v = checkEnvironmentContract(valid({ AUTH_PROVIDER: "Cognito" }));
@@ -465,11 +488,11 @@ describe("D2 — one source, declared shape", () => {
   it("never puts a value in a message", () => {
     const v = checkEnvironmentContract(
       valid({
-        SUPABASE_SERVICE_ROLE_KEY: "sb_secret_TOPSECRET",
+        SUPABASE_SECRET_KEY: ["sb", "secret", "TOP SECRET VALUE"].join("_"),
         NEXT_PUBLIC_SUPABASE_URL: "x",
       })
     );
-    expect(v.join("\n")).not.toMatch(/TOPSECRET/);
+    expect(v.join("\n")).not.toMatch(/TOP SECRET VALUE/);
   });
 
   it("declares each name once, across canonical names and aliases", () => {
@@ -517,19 +540,19 @@ describe("required settings", () => {
       valid({
         REALTIME_PROVIDER: "supabase",
         SUPABASE_URL: undefined,
-        SUPABASE_SERVICE_ROLE_KEY: undefined,
+        SUPABASE_SECRET_KEY: undefined,
       })
     );
     expect(v).toEqual([
       "SUPABASE_URL is required (REALTIME_PROVIDER=supabase) but not set",
-      "SUPABASE_SERVICE_ROLE_KEY is required (REALTIME_PROVIDER=supabase) but not set",
+      "SUPABASE_SECRET_KEY is required (REALTIME_PROVIDER=supabase) but not set",
     ]);
   });
 
   it("a store on Supabase no longer needs the Supabase REST settings (ADR-053 D4)", () => {
     expect(
       checkEnvironmentContract(
-        valid({ SUPABASE_URL: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined })
+        valid({ SUPABASE_URL: undefined, SUPABASE_SECRET_KEY: undefined })
       )
     ).toEqual([]);
   });

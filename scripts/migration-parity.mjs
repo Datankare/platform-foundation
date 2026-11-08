@@ -13,7 +13,16 @@
  *     Migrations from 063 record their own checksum (scripts/migration-checksum.mjs); a record
  *     from before has none, and is counted, not compared.
  *
- * Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (read-only use; never printed).
+ * Env: SUPABASE_URL, SUPABASE_SECRET_KEY (read-only use; never printed).
+ *
+ * TASK-201: the key is a Supabase secret API key (sb_secret_…, created under Settings → API Keys),
+ * sent only as the `apikey` header — Supabase: "Send publishable and secret keys on the apikey
+ * header, not on Authorization: Bearer" (https://supabase.com/docs/guides/api/api-keys); a secret
+ * key is not a JWT, and it reaches the data as the service_role Postgres role. The legacy
+ * service_role JWT (SUPABASE_SERVICE_ROLE_KEY) is no longer read: Supabase retires the legacy keys
+ * by the end of 2026 (https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys).
+ * A run with only the legacy variable stops, naming the new one.
+ *
  * Usage: node scripts/migration-parity.mjs [label]
  * Exit: 0 in parity, 1 on drift, 2 when it cannot check.
  */
@@ -25,11 +34,26 @@ import { migrationChecksum } from "./migration-checksum.mjs";
 /** The migration that adds applied_migrations.checksum. */
 const CHECKSUM_MIGRATION = "063_applied_migrations_checksum.sql";
 
+/** A Supabase secret API key's form (the value is never printed). */
+const SECRET_KEY = /^sb_secret_[\w-]{16,}$/;
+
 const label = process.argv[2] ?? "database";
 const url = (process.env.SUPABASE_URL ?? "").replace(/\/$/, "");
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const key = process.env.SUPABASE_SECRET_KEY ?? "";
+if (!key && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    `${label}: SUPABASE_SERVICE_ROLE_KEY (the legacy service_role JWT) is no longer read — create a secret key (sb_secret_…) in Supabase → Settings → API Keys and set it as SUPABASE_SECRET_KEY`
+  );
+  process.exit(2);
+}
 if (!url || !key) {
-  console.error(`${label}: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required`);
+  console.error(`${label}: SUPABASE_URL and SUPABASE_SECRET_KEY are required`);
+  process.exit(2);
+}
+if (!SECRET_KEY.test(key)) {
+  console.error(
+    `${label}: SUPABASE_SECRET_KEY is not a Supabase secret key (sb_secret_…) — a legacy JWT or a publishable key is refused`
+  );
   process.exit(2);
 }
 
@@ -45,7 +69,8 @@ if (files.length < 10) {
 
 async function readRecords(select) {
   return fetch(`${url}/rest/v1/applied_migrations?select=${select}&limit=10000`, {
-    headers: { apikey: key, authorization: `Bearer ${key}` },
+    // The apikey header only: a secret key on Authorization: Bearer is parsed as a JWT (TASK-201).
+    headers: { apikey: key },
     signal: AbortSignal.timeout(20_000),
   });
 }
@@ -58,6 +83,12 @@ try {
     // A database before 063 has no checksum column (and 063 then shows as not recorded).
     hasChecksums = false;
     res = await readRecords("filename,confidence");
+  }
+  if (res.status === 401 || res.status === 403) {
+    console.error(
+      `${label}: the key was refused (HTTP ${res.status}) — SUPABASE_SECRET_KEY must be a current secret key of this project (Supabase → Settings → API Keys)`
+    );
+    process.exit(2);
   }
   if (!res.ok) {
     console.error(`${label}: applied_migrations could not be read (HTTP ${res.status})`);

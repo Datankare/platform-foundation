@@ -34,7 +34,7 @@ permissions:
 jobs:
   properties:
     name: Property tests (deep)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The scheduled run's failure alert opens or comments on an issue (TASK-198), as the sync's does.
     permissions:
       contents: read
@@ -119,7 +119,7 @@ jobs:
 
   monkey:
     name: Monkey run
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout

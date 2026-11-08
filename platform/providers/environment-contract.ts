@@ -124,11 +124,14 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     shapeHint: "https://<ref>.supabase.co — no path, no trailing slash",
   },
   {
-    name: "SUPABASE_SERVICE_ROLE_KEY",
+    // TASK-201: a Supabase secret API key (Settings → API Keys), sent only as the apikey header.
+    // The legacy service_role JWT (SUPABASE_SERVICE_ROLE_KEY) is not read: Supabase retires the
+    // legacy keys by the end of 2026 (supabase.com/docs/guides/api/api-keys).
+    name: "SUPABASE_SECRET_KEY",
     aliases: [],
-    shape: /^eyJ[\w-]*\.[\w-]+\.[\w-]+$/,
+    shape: /^sb_secret_[\w-]{16,}$/,
     shapeHint:
-      "the legacy service_role JWT (eyJ…), not an sb_secret_/sb_publishable_ key",
+      "a Supabase secret key (sb_secret_…, Settings → API Keys) — not the legacy service_role JWT, not a publishable key",
   },
   {
     name: "GUEST_TOKEN_SECRET",
@@ -1196,14 +1199,18 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
   }
 
   const selectors = SUPABASE_SELECTORS.filter((s) => raw(env, s) === "supabase");
-  // Realtime only: the data paths no longer use the REST API or the service-role key.
+  // Realtime only: the data paths no longer use the REST API or a Supabase API key.
   if (selectors.length > 0) {
     const by = selectors.map((s) => `${s}=supabase`).join(", ");
     if (getSupabaseUrl(env) === undefined) {
       violations.push(`SUPABASE_URL is required (${by}) but not set`);
     }
-    if (raw(env, "SUPABASE_SERVICE_ROLE_KEY") === undefined) {
-      violations.push(`SUPABASE_SERVICE_ROLE_KEY is required (${by}) but not set`);
+    if (raw(env, "SUPABASE_SECRET_KEY") === undefined) {
+      violations.push(
+        raw(env, "SUPABASE_SERVICE_ROLE_KEY") === undefined
+          ? `SUPABASE_SECRET_KEY is required (${by}) but not set`
+          : `SUPABASE_SECRET_KEY is required (${by}) but not set — SUPABASE_SERVICE_ROLE_KEY (the legacy service_role JWT) is no longer read: create a secret key in Supabase → Settings → API Keys and set it as SUPABASE_SECRET_KEY`
+      );
     }
   }
 

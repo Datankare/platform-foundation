@@ -15,7 +15,7 @@ permissions:
 jobs:
   semgrep:
     name: Semgrep Analysis
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       # Results go to the repository's code scanning (free for public repositories). The upload

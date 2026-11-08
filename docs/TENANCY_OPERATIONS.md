@@ -108,8 +108,9 @@ Optional: `DATABASE_POOL_MAX` (default 3; keep 1–3 on serverless hosts) and
 
 Every store selector that says `supabase` (e.g. `MODERATION_STORE=supabase`) now means the
 Postgres store reached through `DATABASE_URL`; `postgres` means the same. Nothing else to change.
-The Supabase REST API and the service-role key are no longer used for data; `SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY` remain only for Realtime (`REALTIME_PROVIDER=supabase`).
+The Supabase REST API and its keys are no longer used for data; `SUPABASE_URL` and
+`SUPABASE_SECRET_KEY` (a secret key, `sb_secret_…`, since TASK-201 — the legacy
+`SUPABASE_SERVICE_ROLE_KEY` is not read) remain only for Realtime (`REALTIME_PROVIDER=supabase`).
 
 ---
 

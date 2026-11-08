@@ -14,7 +14,7 @@ permissions:
 jobs:
   ci:
     name: CI Pipeline
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -103,12 +103,27 @@ jobs:
           fi
 
       - name: Install Postgres 17 + pgvector (apt.postgresql.org)
+        # TASK-201 (S2-C1): the apt source names its Ubuntu release, pinned with the runner image
+        # (runs-on: ubuntu-24.04 is noble), never read from the runner — a moved image would ask
+        # apt.postgresql.org for a release it may not publish. A runner of another release, or a
+        # release PGDG does not publish, fails here, saying which.
+        env:
+          PGDG_CODENAME: noble
         run: |
           set -euo pipefail
+          runner_codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-unknown}")
+          if [ "$runner_codename" != "$PGDG_CODENAME" ]; then
+            echo "::error::This runner is Ubuntu $runner_codename, but the Postgres apt source is pinned to $PGDG_CODENAME (runs-on: ubuntu-24.04). Change runs-on and PGDG_CODENAME together, to a release apt.postgresql.org publishes."
+            exit 1
+          fi
+          if ! curl -fsSI --retry 5 --retry-all-errors -o /dev/null "https://apt.postgresql.org/pub/repos/apt/dists/${PGDG_CODENAME}-pgdg/Release"; then
+            echo "::error::apt.postgresql.org does not publish ${PGDG_CODENAME}-pgdg (or cannot be reached): see https://apt.postgresql.org/pub/repos/apt/dists/"
+            exit 1
+          fi
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL --retry 5 --retry-all-errors -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${PGDG_CODENAME}-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get -o Acquire::Retries=5 update -qq
           sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
@@ -253,7 +268,7 @@ jobs:
   # security. Nothing else in CI executes migration SQL (Gotcha 100).
   migration-replay:
     name: Migration replay
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Postgres 17 + pgvector from the PostgreSQL project's own apt repository, on the runner —
     # not a Docker Hub image: anonymous pulls are rate-limited, and the limit failed this job
     # twice in a row on 2026-10-09 with nothing wrong in the code (TASK-122).
@@ -264,12 +279,27 @@ jobs:
           persist-credentials: false
 
       - name: Install Postgres 17 + pgvector (apt.postgresql.org)
+        # TASK-201 (S2-C1): the apt source names its Ubuntu release, pinned with the runner image
+        # (runs-on: ubuntu-24.04 is noble), never read from the runner — a moved image would ask
+        # apt.postgresql.org for a release it may not publish. A runner of another release, or a
+        # release PGDG does not publish, fails here, saying which.
+        env:
+          PGDG_CODENAME: noble
         run: |
           set -euo pipefail
+          runner_codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-unknown}")
+          if [ "$runner_codename" != "$PGDG_CODENAME" ]; then
+            echo "::error::This runner is Ubuntu $runner_codename, but the Postgres apt source is pinned to $PGDG_CODENAME (runs-on: ubuntu-24.04). Change runs-on and PGDG_CODENAME together, to a release apt.postgresql.org publishes."
+            exit 1
+          fi
+          if ! curl -fsSI --retry 5 --retry-all-errors -o /dev/null "https://apt.postgresql.org/pub/repos/apt/dists/${PGDG_CODENAME}-pgdg/Release"; then
+            echo "::error::apt.postgresql.org does not publish ${PGDG_CODENAME}-pgdg (or cannot be reached): see https://apt.postgresql.org/pub/repos/apt/dists/"
+            exit 1
+          fi
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL --retry 5 --retry-all-errors -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${PGDG_CODENAME}-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get -o Acquire::Retries=5 update -qq
           sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null
@@ -304,7 +334,7 @@ jobs:
   # Node base image is pulled with retries and Google's Docker Hub mirror as a fallback.
   container-image:
     name: Container image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       IMAGE: platform-foundation:ci
@@ -321,12 +351,27 @@ jobs:
           node-version: "24"
 
       - name: Install Postgres 17 + pgvector (apt.postgresql.org)
+        # TASK-201 (S2-C1): the apt source names its Ubuntu release, pinned with the runner image
+        # (runs-on: ubuntu-24.04 is noble), never read from the runner — a moved image would ask
+        # apt.postgresql.org for a release it may not publish. A runner of another release, or a
+        # release PGDG does not publish, fails here, saying which.
+        env:
+          PGDG_CODENAME: noble
         run: |
           set -euo pipefail
+          runner_codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-unknown}")
+          if [ "$runner_codename" != "$PGDG_CODENAME" ]; then
+            echo "::error::This runner is Ubuntu $runner_codename, but the Postgres apt source is pinned to $PGDG_CODENAME (runs-on: ubuntu-24.04). Change runs-on and PGDG_CODENAME together, to a release apt.postgresql.org publishes."
+            exit 1
+          fi
+          if ! curl -fsSI --retry 5 --retry-all-errors -o /dev/null "https://apt.postgresql.org/pub/repos/apt/dists/${PGDG_CODENAME}-pgdg/Release"; then
+            echo "::error::apt.postgresql.org does not publish ${PGDG_CODENAME}-pgdg (or cannot be reached): see https://apt.postgresql.org/pub/repos/apt/dists/"
+            exit 1
+          fi
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL --retry 5 --retry-all-errors -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${PGDG_CODENAME}-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get -o Acquire::Retries=5 update -qq
           sudo apt-get -o Acquire::Retries=5 install -y -qq postgresql-17 postgresql-17-pgvector >/dev/null

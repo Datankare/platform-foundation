@@ -19,7 +19,7 @@ permissions:
 jobs:
   promotion-path:
     name: Promotion path into main
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Reject non-promotion sources
         env:

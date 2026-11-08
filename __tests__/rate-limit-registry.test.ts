@@ -17,7 +17,8 @@ function setNodeEnv(v: string): void {
   });
 }
 
-const SERVICE_ROLE_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2ln";
+// A Supabase secret key's form (TASK-201), built at run time for the secret scan.
+const SUPABASE_SECRET = ["sb", "secret", "x".repeat(20)].join("_");
 const origEnv = { ...process.env };
 
 const realAuth = (): void => {
@@ -67,7 +68,7 @@ describe("rate limiter (ADR-052)", () => {
       process.env[v] = "supabase";
     }
     process.env.SUPABASE_URL = "https://example.supabase.co";
-    process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_JWT;
+    process.env.SUPABASE_SECRET_KEY = SUPABASE_SECRET;
     process.env.DATABASE_URL = "postgresql://u:p@db.example:5432/app"; // ADR-053 D4
     process.env.DATABASE_OWNER_URL = "postgresql://o:p@db.example:5432/app";
     delete process.env.NEXT_PUBLIC_SUPABASE_URL;

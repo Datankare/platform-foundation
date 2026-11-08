@@ -25,6 +25,11 @@
  *     `instrumentation.ts`, `cognito-*` — matches at any depth, so it silently keeps the platform's
  *     `platform/ai/instrumentation.ts` (or any future file of that name) out of the consumer.
  *     A root file is written `/package.json`.
+ *   - Every job runs on the pinned runner image, `ubuntu-24.04` (TASK-201, S2-C1): GitHub began
+ *     moving `ubuntu-latest` to Ubuntu 26.04 on 2026-10-19, which changes every job at once. A
+ *     `-latest` label, an expression, a missing `runs-on` or another image is refused; and the
+ *     Postgres apt source names the image's release (`PGDG_CODENAME: noble`), checked against the
+ *     runner, never `lsb_release -cs`.
  *
  * Each failure says what to change (TASK-160). platform-foundation's sync template
  * (docs/templates/sync-from-foundation.yml, docs/templates/sync-config.json) is held to the same
@@ -474,7 +479,7 @@ describe("workflow hygiene", () => {
       "on: pull_request_target",
       "jobs:",
       "  a:",
-      "    runs-on: ubuntu-latest",
+      "    runs-on: ubuntu-24.04",
       "    steps:",
       '      - { name: flow, run: "echo ${{ github.head_ref }}" }',
       "      - name: plain multi-line",
@@ -1270,5 +1275,199 @@ describe("the sync opens one pull request at a time (TASK-200, round 8)", () => 
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * TASK-201 (S2-C1): the runner image every job runs on, and the Ubuntu release the Postgres apt
+ * source (apt.postgresql.org) names for it. Changed together, in one commit, to a release PGDG
+ * publishes.
+ */
+export const RUNNER_IMAGE = "ubuntu-24.04";
+export const RUNNER_CODENAME = "noble";
+/** How the apt source names the release: the step's own PGDG_CODENAME (built: not a template). */
+const PGDG_SUITE = ["$", "{PGDG_CODENAME}-pgdg"].join("");
+
+/** A job's `runs-on` that is not the pinned image, as messages (a reusable workflow's has none). */
+export function runnerProblems(file: string, wf: Workflow): string[] {
+  const out: string[] = [];
+  for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+    const j = job as { "runs-on"?: unknown; uses?: unknown };
+    if (j.uses !== undefined && j["runs-on"] === undefined) continue;
+    const runsOn = j["runs-on"];
+    const labels =
+      typeof runsOn === "string"
+        ? [runsOn]
+        : Array.isArray(runsOn)
+          ? runsOn
+          : runsOn !== null && typeof runsOn === "object"
+            ? [runsOn]
+            : [];
+    const label = `${file} job ${id}`;
+    if (runsOn === undefined || labels.length === 0) {
+      out.push(`${label} has no runs-on: write runs-on: ${RUNNER_IMAGE}`);
+      continue;
+    }
+    for (const l of labels) {
+      if (typeof l !== "string") {
+        out.push(
+          `${label}: runs-on ${JSON.stringify(l)} names no image — write runs-on: ${RUNNER_IMAGE}`
+        );
+      } else if (/\$\{\{/.test(l)) {
+        out.push(
+          `${label}: runs-on "${l}" is an expression, so its image cannot be checked — write runs-on: ${RUNNER_IMAGE}`
+        );
+      } else if (/-latest$/.test(l)) {
+        out.push(
+          `${label}: runs-on "${l}" moves to a new image when GitHub moves the label (ubuntu-latest began moving to Ubuntu 26.04 on 2026-10-19) — write runs-on: ${RUNNER_IMAGE}`
+        );
+      } else if (l !== RUNNER_IMAGE) {
+        out.push(
+          `${label}: runs-on "${l}" is not the pinned image — write runs-on: ${RUNNER_IMAGE} (or move every job, RUNNER_IMAGE and PGDG_CODENAME together)`
+        );
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * A step that adds the apt.postgresql.org source, as messages, unless it names the release from
+ * its own `PGDG_CODENAME` (the pinned image's) and fails on a runner of another release.
+ */
+export function pgdgProblems(file: string, wf: Workflow): string[] {
+  const out: string[] = [];
+  for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+    for (const step of job.steps ?? []) {
+      const run = step.run ?? "";
+      const lines = run
+        .split("\n")
+        .filter(
+          (l) => /apt\.postgresql\.org\/pub\/repos\/apt\b/.test(l) && /\bdeb\b/.test(l)
+        );
+      if (lines.length === 0) continue;
+      const label = `${file} job ${id}, step "${step.name ?? ""}"`;
+      if (
+        /lsb_release|\/etc\/os-release[^\n]*-pgdg/.test(lines.join("\n")) ||
+        lines.some((l) => /\$\(/.test(l))
+      )
+        out.push(
+          `${label}: the apt source reads the release from the runner — name it with ${PGDG_SUITE}`
+        );
+      else if (!lines.every((l) => /\$\{?PGDG_CODENAME\}?-pgdg\b/.test(l)))
+        out.push(`${label}: the apt source must name ${PGDG_SUITE}`);
+      if (String(step.env?.PGDG_CODENAME ?? "") !== RUNNER_CODENAME)
+        out.push(
+          `${label}: env PGDG_CODENAME must be ${RUNNER_CODENAME} (the release of ${RUNNER_IMAGE})`
+        );
+      if (
+        !/\/etc\/os-release/.test(run) ||
+        !/VERSION_CODENAME/.test(run) ||
+        !/!=\s*"\$PGDG_CODENAME"[\s\S]*exit 1/.test(run)
+      )
+        out.push(
+          `${label}: compare the runner's VERSION_CODENAME (/etc/os-release) with $PGDG_CODENAME and exit 1 when they differ`
+        );
+    }
+  }
+  return out;
+}
+
+describe("runner images are pinned (TASK-201, S2-C1)", () => {
+  const load = (file: string): Workflow =>
+    parseDocument(readFileSync(join(process.cwd(), file), "utf8")).toJS() as Workflow;
+  const files = WORKFLOWS.filter((f) => !f.startsWith(".github/actions/"));
+
+  it("[self-test] refuses ubuntu-latest, an expression, no runs-on, another image; passes the pinned one and a reusable workflow", () => {
+    const wf = parseDocument(
+      [
+        "jobs:",
+        "  latest:",
+        "    runs-on: ubuntu-latest",
+        "  arm:",
+        "    runs-on: [self-hosted, ubuntu-latest]",
+        "  expr:",
+        "    runs-on: ${{ matrix.os }}",
+        "  none:",
+        "    steps: [{ run: x }]",
+        "  older:",
+        "    runs-on: ubuntu-22.04",
+        "  group:",
+        "    runs-on: { group: big }",
+        "  pinned:",
+        "    runs-on: ubuntu-24.04",
+        "  reuse:",
+        "    uses: ./.github/workflows/other.yml",
+      ].join("\n")
+    ).toJS() as Workflow;
+    expect(runnerProblems("w.yml", wf)).toEqual([
+      expect.stringMatching(
+        /^w\.yml job latest: runs-on "ubuntu-latest" moves to a new image/
+      ),
+      expect.stringMatching(
+        /^w\.yml job arm: runs-on "self-hosted" is not the pinned image/
+      ),
+      expect.stringMatching(/^w\.yml job arm: runs-on "ubuntu-latest" moves/),
+      expect.stringMatching(/^w\.yml job expr: runs-on ".*" is an expression/),
+      "w.yml job none has no runs-on: write runs-on: ubuntu-24.04",
+      expect.stringMatching(
+        /^w\.yml job older: runs-on "ubuntu-22\.04" is not the pinned image/
+      ),
+      expect.stringMatching(
+        /^w\.yml job group: runs-on \{"group":"big"\} names no image/
+      ),
+    ]);
+  });
+
+  it("[self-test] refuses a Postgres apt source read from the runner, or not checked against it", () => {
+    const deb = (release: string) =>
+      `echo "deb [signed-by=k] https://apt.postgresql.org/pub/repos/apt ${release}-pgdg main" | sudo tee x`;
+    const check =
+      'c=$(. /etc/os-release && echo "$VERSION_CODENAME")\nif [ "$c" != "$PGDG_CODENAME" ]; then\n  exit 1\nfi';
+    const job = (run: string, env?: Record<string, unknown>): Workflow => ({
+      jobs: { db: { steps: [{ name: "pg", run, env }] } },
+    });
+    expect(pgdgProblems("ci.yml", job(deb("$(lsb_release -cs)")))).toEqual([
+      expect.stringMatching(/reads the release from the runner/),
+      expect.stringMatching(/env PGDG_CODENAME must be noble/),
+      expect.stringMatching(/compare the runner's VERSION_CODENAME/),
+    ]);
+    expect(
+      pgdgProblems("ci.yml", job(`${check}\n${deb("noble")}`, { PGDG_CODENAME: "noble" }))
+    ).toEqual([expect.stringMatching(/must name \$\{PGDG_CODENAME\}-pgdg/)]);
+    expect(
+      pgdgProblems(
+        "ci.yml",
+        job(`${check}\n${deb("${PGDG_CODENAME}")}`, { PGDG_CODENAME: "resolute" })
+      )
+    ).toEqual([expect.stringMatching(/env PGDG_CODENAME must be noble/)]);
+    expect(
+      pgdgProblems("ci.yml", job(deb("${PGDG_CODENAME}"), { PGDG_CODENAME: "noble" }))
+    ).toEqual([expect.stringMatching(/compare the runner's VERSION_CODENAME/)]);
+    expect(
+      pgdgProblems(
+        "ci.yml",
+        job(`${check}\n${deb("${PGDG_CODENAME}")}`, { PGDG_CODENAME: "noble" })
+      )
+    ).toEqual([]);
+    expect(pgdgProblems("ci.yml", job("sudo apt-get install -y x"))).toEqual([]);
+  });
+
+  it("every job of every workflow (and template) runs on the pinned image", () => {
+    const jobs = files.flatMap((f) => Object.keys(load(f).jobs ?? {}));
+    expect(jobs.length).toBeGreaterThan(10);
+    expect(files.flatMap((f) => runnerProblems(f, load(f)))).toEqual([]);
+  });
+
+  it("every Postgres apt source names the pinned release and checks it against the runner", () => {
+    const steps = files.flatMap((f) =>
+      Object.values(load(f).jobs ?? {}).flatMap((j) =>
+        (j.steps ?? []).filter((s) =>
+          /apt\.postgresql\.org\/pub\/repos\/apt/.test(s.run ?? "")
+        )
+      )
+    );
+    expect(steps.length).toBeGreaterThan(0);
+    expect(files.flatMap((f) => pgdgProblems(f, load(f)))).toEqual([]);
   });
 });

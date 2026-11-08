@@ -73,17 +73,24 @@ The database is Postgres, reached directly through `platform/data`: see
 
 ### Supabase (Realtime only)
 
-No data path uses the Supabase REST API or the service-role key. These settings serve
+No data path uses the Supabase REST API or a Supabase key. These settings serve
 `REALTIME_PROVIDER=supabase` only.
 
-| Variable                    | Required                          | Default | Notes                                                                                                                     |
-| --------------------------- | --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_URL`              | With `REALTIME_PROVIDER=supabase` | —       | Project URL — the single source (ADR-050 D2). Shape `https://<ref>.supabase.co`: no path, no trailing slash.              |
-| `NEXT_PUBLIC_SUPABASE_URL`  | No (alias)                        | —       | Alias of `SUPABASE_URL`, read only when it is unset. In production it must not be set alone or disagree.                  |
-| `SUPABASE_SERVICE_ROLE_KEY` | With `REALTIME_PROVIDER=supabase` | —       | **Server-side only.** Never expose to the browser. Must be the legacy service_role JWT (`eyJ…`), not an `sb_secret_` key. |
+| Variable                   | Required                          | Default | Notes                                                                                                                                                                                                                                                            |
+| -------------------------- | --------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_URL`             | With `REALTIME_PROVIDER=supabase` | —       | Project URL — the single source (ADR-050 D2). Shape `https://<ref>.supabase.co`: no path, no trailing slash.                                                                                                                                                     |
+| `NEXT_PUBLIC_SUPABASE_URL` | No (alias)                        | —       | Alias of `SUPABASE_URL`, read only when it is unset. In production it must not be set alone or disagree.                                                                                                                                                         |
+| `SUPABASE_SECRET_KEY`      | With `REALTIME_PROVIDER=supabase` | —       | **Server-side only.** Never expose to the browser. A Supabase secret key (`sb_secret_…`, Settings → API Keys) — not the legacy service_role JWT, not a publishable key (TASK-201). A secret key goes only in the `apikey` header, never `Authorization: Bearer`. |
 
-Selecting `REALTIME_PROVIDER=supabase` makes `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+Selecting `REALTIME_PROVIDER=supabase` makes `SUPABASE_URL` and `SUPABASE_SECRET_KEY`
 required; in production boot refuses without them (ADR-050 D2).
+
+`SUPABASE_SERVICE_ROLE_KEY` (the legacy service_role JWT) is no longer read (TASK-201): Supabase
+retires the legacy `anon` and `service_role` keys by the end of 2026
+([API keys](https://supabase.com/docs/guides/api/api-keys),
+[migrating to the new API keys](https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys)).
+Set alone, the contract's violation and the migration parity check name `SUPABASE_SECRET_KEY`;
+remove the old value wherever it is set.
 
 ### Logging
 
@@ -112,7 +119,7 @@ before any provider initializes and refuses to start, naming every violation: te
 or set under two disagreeing names, a missing required setting, or a harness switch on a hosted
 deployment. The declared settings are `AUTH_PROVIDER`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`,
 `NEXT_PUBLIC_COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET`, `NEXT_PUBLIC_COGNITO_REGION`, `NEXT_PUBLIC_COGNITO_HOSTED_UI_DOMAIN`,
-`SSO_PROVIDERS`, `AUTH_TRUSTED_EMAIL_IDPS`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GUEST_TOKEN_SECRET`, `RATE_LIMIT_STORE`,
+`SSO_PROVIDERS`, `AUTH_TRUSTED_EMAIL_IDPS`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `GUEST_TOKEN_SECRET`, `RATE_LIMIT_STORE`,
 `TENANCY_MODE`, `TENANT_ID`, `DATABASE_URL`, `DATABASE_OWNER_URL`, `DATABASE_POOL_MAX`,
 `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_SSL`, `DATABASE_SSL_CA`, `TENANT_DIRECTORY_STORE`,
 `COGNITO_ADMIN_ACCESS_KEY_ID`, `COGNITO_ADMIN_SECRET_ACCESS_KEY`, `COGNITO_ADMIN_SESSION_TOKEN`,
@@ -311,7 +318,7 @@ when the app registers the module — translation (`TRANSLATION_PROVIDER`), voic
 
 Selecting `CACHE_PROVIDER=upstash` or `RATE_LIMIT_STORE=upstash` requires the two `UPSTASH_REDIS_REST_*` variables;
 `CACHE_PROVIDER=valkey` requires `VALKEY_URL` (`rediss://` in a deployment). Selecting
-`REALTIME_PROVIDER=supabase` requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (above).
+`REALTIME_PROVIDER=supabase` requires `SUPABASE_URL` and `SUPABASE_SECRET_KEY` (above).
 
 ---
 
@@ -489,7 +496,7 @@ as long as the maximum token lifetime.
 `NEXT_MANUAL_SIG_HANDLE` · `NEXT_PUBLIC_SUPABASE_URL` · `NODE_ENV` · `OPENAI_API_KEY` · `PROPOSAL_STORE` · `PROVENANCE_SIGNING_KEY` · `PROVENANCE_SIGNING_KEY_PREVIOUS` · `RATE_LIMIT_STORE` ·
 `REALTIME_PROVIDER` · `REFRESH_COOKIE_KEY` · `REFRESH_COOKIE_KEY_PREVIOUS` · `REVIEW_QUEUE_STORE` · `SENTRY_DSN` · `SHUTDOWN_DRAIN_SECONDS` ·
 `SHUTDOWN_TIMEOUT_SECONDS` · `SOCIAL_STORE` · `SONG_ID_PROVIDER` ·
-`SSO_PROVIDERS` · `STRIKE_STORE` · `STT_PROVIDER` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_URL` · `TENANCY_MODE` ·
+`SSO_PROVIDERS` · `STRIKE_STORE` · `STT_PROVIDER` · `SUPABASE_SECRET_KEY` · `SUPABASE_SERVICE_ROLE_KEY` (no longer read) · `SUPABASE_URL` · `TENANCY_MODE` ·
 `TENANT_DIRECTORY_STORE` · `TENANT_HOST_HEADER` · `TENANT_ID` · `TRAJECTORY_STORE` ·
 `TRANSLATION_PROVIDER` · `TRUSTED_PROXY_HOPS` · `TTS_PROVIDER` · `UPSTASH_REDIS_REST_TOKEN` ·
 `UPSTASH_REDIS_REST_URL` · `VALKEY_CA_CERT` · `VALKEY_URL` · `VERCEL` · `VERCEL_GIT_COMMIT_SHA`

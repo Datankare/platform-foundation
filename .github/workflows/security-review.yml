@@ -6,6 +6,9 @@ name: Security review
 #   - The action: anthropics/claude-code-security-review, pinned to the commit of its main branch
 #     merged on 2026-02-11 (the repository publishes no release tags). It never fails on findings
 #     itself; it reports a count, and the "Open findings block" step below fails on it.
+#     TASK-201 (2026-11-07): re-checked — no tag or release exists and this commit is still the
+#     head of main, so there is nothing newer to pin; its default model (claude-opus-4-1-20250805,
+#     constants.py:8) is overridden by `claude-model` below, which the model check now requires.
 #   - pull_request, never pull_request_target: GitHub gives a fork's pull request no secrets and a
 #     read-only token, so a fork can neither reach the key nor post as the repository. The scan
 #     also runs only when the PR's head is a branch of this repository — the action's README says
@@ -54,7 +57,7 @@ concurrency:
 jobs:
   security-review:
     name: security-review
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

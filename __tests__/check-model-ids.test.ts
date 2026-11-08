@@ -537,6 +537,107 @@ describe("the workflows' models and the pinned actions' (TASK-197, the 2026-10-2
     );
   });
 
+  // TASK-201: the action's default model (constants.py), which the claude-model input overrides,
+  // is no exception — the step must set the input; read in every source file at the pin.
+  it("[self-test] the action's overridden default passes only where the step sets claude-model", async () => {
+    const haiku = '            model="claude-3-5-haiku-20241022",\n';
+    const constants = {
+      "claudecode/constants.py":
+        "DEFAULT_CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL') or 'claude-opus-4-1-20250805'\n",
+    };
+    const server = await actionSourceServer({ [NEW]: haiku }, constants);
+    const check = (workflow: string) =>
+      run({
+        MODEL_CHECK_WORKFLOWS_DIR: workflows({ "security-review.yml": workflow }),
+        MODEL_CHECK_NOW: "2026-11-01T00:00:00Z",
+        MODEL_CHECK_ACTION_SOURCE_BASE: base(server),
+        MODEL_CHECK_ACTION_API_BASE: base(server),
+      });
+    const step = (withLines: string[]) =>
+      [
+        "    steps:",
+        "      - name: Claude Code security review",
+        `        uses: anthropics/claude-code-security-review@${NEW} # main`,
+        ...withLines,
+        "      - name: next",
+        "        with:",
+        `          claude-model: ${standard}`,
+      ].join("\n") + "\n";
+    try {
+      const set = await check(
+        step([
+          "        with:",
+          '          comment-pr: "true"',
+          `          claude-model: ${standard}`,
+        ])
+      );
+      expect(set.code).toBe(0);
+      expect(set.out).not.toContain("claude-opus-4-1-20250805");
+      // Not set on the step that uses the action — a later step's claude-model does not count.
+      const unset = await check(step(["        with:", '          comment-pr: "true"']));
+      expect(unset.code).toBe(1);
+      expect(unset.out).toContain(
+        `claude-code-security-review@${NEW} defaults to claude-opus-4-1-20250805`
+      );
+      expect(unset.out).toContain("the step must set claude-model: to a registry model");
+      // Set, but not to a registry model: the workflow-model check refuses it.
+      const wrong = await check(
+        step(["        with:", "          claude-model: claude-opus-4-1-20250805"])
+      );
+      expect(wrong.code).toBe(1);
+      expect(wrong.out).toContain("which is not a MODEL_REGISTRY model");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("stepInput reads the input of the step that uses the action, and no other step's", () => {
+    const uses = "o/a@" + "1".repeat(40);
+    const wf = (lines: string[]) => lines.join("\n");
+    const read = (text: string) =>
+      exported(
+        `m.stepInput(${JSON.stringify(text)}, ${JSON.stringify(uses)}, "claude-model")`
+      );
+    expect(
+      read(
+        wf([
+          "      - name: x",
+          `        uses: ${uses}`,
+          "        with:",
+          '          claude-model: "m-1" # c',
+        ])
+      )
+    ).toBe("m-1");
+    expect(
+      read(wf([`      - uses: ${uses}`, "        with:", "          claude-model: m-2"]))
+    ).toBe("m-2");
+    expect(
+      read(
+        wf([
+          `      - uses: ${uses}`,
+          "      - name: y",
+          "        with:",
+          "          claude-model: m-3",
+        ])
+      )
+    ).toBeNull();
+    expect(
+      read(wf([`      - uses: ${uses}`, "        with:", "          claude-model:"]))
+    ).toBeNull();
+    // Two steps using the action: each must set it.
+    expect(
+      read(
+        wf([
+          `      - uses: ${uses}`,
+          "        with:",
+          "          claude-model: m-4",
+          `      - uses: ${uses}`,
+        ])
+      )
+    ).toBeNull();
+    expect(read(wf(["      - uses: other/action@v1"]))).toBeNull();
+  });
+
   it("a model set from an expression or a variable is an unverifiable model reference (L3)", async () => {
     const dir = workflows({
       "a.yml":

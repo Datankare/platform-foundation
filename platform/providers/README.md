@@ -128,7 +128,7 @@ boot, naming every violation at once, when:
   build may opt in with `E2E_TEST_DOUBLE_AUTH=true`; `E2E_IN_MEMORY_STORES` does not cover auth;
 - a declared setting is mis-shaped, set only under an alias, or set under two names that disagree (D2) —
   `AUTH_PROVIDER`, the Cognito ids, `SUPABASE_URL` (`https://<ref>.supabase.co`), and
-  `SUPABASE_SERVICE_ROLE_KEY` (the legacy JWT), `GUEST_TOKEN_SECRET` (≥ 32 random bytes — required with a
+  `SUPABASE_SECRET_KEY` (a secret key, `sb_secret_…`; TASK-201), `GUEST_TOKEN_SECRET` (≥ 32 random bytes — required with a
   real auth provider: guest tokens are signed, D4), `ERASURE_HASH_KEY` and `REFRESH_COOKIE_KEY` (each
   ≥ 32 characters, required with a real auth provider — the refresh cookie is HMAC-signed, review 17
   M1), the `DATABASE_*` connection settings, `TENANCY_MODE`,
@@ -139,8 +139,9 @@ boot, naming every violation at once, when:
   - `DATABASE_URL` when any durable store (`DATABASE_SELECTORS`: every `*_STORE`, `EFFECT_LEDGER`) selects
     `postgres` or `supabase` — the same Postgres store, reached through `platform/data` as `app_tenant`
     (ADR-053 D4) — and `DATABASE_OWNER_URL` with it;
-  - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` only with `REALTIME_PROVIDER=supabase` (`SUPABASE_SELECTORS`):
-    Realtime is the one Supabase service left; no data path uses the REST API or the service-role key;
+  - `SUPABASE_URL` + `SUPABASE_SECRET_KEY` only with `REALTIME_PROVIDER=supabase` (`SUPABASE_SELECTORS`):
+    Realtime is the one Supabase service left; no data path uses the REST API or a Supabase key. The
+    legacy `SUPABASE_SERVICE_ROLE_KEY` is not read (TASK-201): set alone, the violation names the new one;
   - `TENANCY_MODE`: `single` needs `TENANT_ID`; `shared` needs `TENANT_DIRECTORY_STORE=postgres` and, with
     `cognito`, `COGNITO_ADMIN_ACCESS_KEY_ID` + `COGNITO_ADMIN_SECRET_ACCESS_KEY`;
   - `CACHE_PROVIDER`, and the two `UPSTASH_REDIS_REST_*` settings with `upstash` (cache or rate limit);

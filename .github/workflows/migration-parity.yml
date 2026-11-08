@@ -2,12 +2,15 @@ name: "Migration parity"
 
 # Weekly, and on demand: does each live database have exactly this branch's migrations
 # (scripts/migration-parity.mjs, audit X-24)? Credentials come from GitHub Environments named
-# "staging" and "production", each with SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets.
-# A repository without them (platform-foundation itself has no deployment) skips with a notice.
+# "staging" and "production", each with SUPABASE_URL and SUPABASE_SECRET_KEY secrets — a Supabase
+# secret API key (sb_secret_…, Settings → API Keys), sent only as the apikey header (TASK-201: the
+# legacy service_role JWT, SUPABASE_SERVICE_ROLE_KEY, is no longer read; Supabase retires it by the
+# end of 2026). A repository with neither (platform-foundation itself has no deployment) skips with
+# a notice; one with only one of the two fails, naming the other.
 # Protect both Environments: limit each one's deployment branches to `main`. GitHub runs this
 # workflow from the default branch (`main`) and the job then checks out the branch it compares,
-# so a limit of `staging` would refuse the staging run. The service-role key must not be readable
-# by a workflow dispatched from another branch; `main` takes changes only through reviewed PRs.
+# so a limit of `staging` would refuse the staging run. The secret key must not be readable by a
+# workflow dispatched from another branch; `main` takes changes only through reviewed PRs.
 
 on:
   schedule:
@@ -20,7 +23,7 @@ permissions:
 jobs:
   parity:
     name: Migration parity (${{ matrix.environment }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -45,10 +48,18 @@ jobs:
         # credentials fail the check instead of skipping it.
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           MIGRATION_PARITY_REQUIRED: ${{ vars.MIGRATION_PARITY_REQUIRED }}
         run: |
-          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+          if [ -n "$SUPABASE_URL" ] && [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "::error::The ${{ matrix.environment }} environment has SUPABASE_URL but no SUPABASE_SECRET_KEY: create a secret key (sb_secret_…) in Supabase → Settings → API Keys and set it as this environment's SUPABASE_SECRET_KEY secret. SUPABASE_SERVICE_ROLE_KEY is no longer read (TASK-201)."
+            exit 1
+          fi
+          if [ -z "$SUPABASE_URL" ] && [ -n "$SUPABASE_SECRET_KEY" ]; then
+            echo "::error::The ${{ matrix.environment }} environment has SUPABASE_SECRET_KEY but no SUPABASE_URL: set both, or neither."
+            exit 1
+          fi
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SECRET_KEY" ]; then
             if [ "$MIGRATION_PARITY_REQUIRED" = "true" ]; then
               echo "::error::No ${{ matrix.environment }} database credentials in this repository, and MIGRATION_PARITY_REQUIRED is true."
               exit 1

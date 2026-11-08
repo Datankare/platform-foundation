@@ -24,7 +24,7 @@ permissions:
 jobs:
   load-test:
     name: k6 Load Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
