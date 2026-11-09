@@ -29,7 +29,7 @@
     "jobs:worker": "node scripts/jobs-worker.mjs"
   },
   "dependencies": {
-    "@sentry/nextjs": "^11.9.0",
+    "@sentry/nextjs": "^11.10.0",
     "@supabase/supabase-js": "^2.117.2",
     "ajv": "8.20.0",
     "intl-messageformat": "12.1.4",
