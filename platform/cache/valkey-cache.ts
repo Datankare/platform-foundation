@@ -30,6 +30,8 @@ import type {
   CacheProvider,
   CacheSetOptions,
 } from "./types";
+import { PROBE_FAILED, logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 export interface ValkeyCacheConfig {
   /**
@@ -191,11 +193,12 @@ export class ValkeyCacheProvider implements CacheProvider {
         provider: this.name,
       };
     } catch (error) {
+      logCaught(logger, "Cache ping failed", error, { provider: this.name }, "warn");
       return {
         connected: false,
         latencyMs: Date.now() - start,
         provider: this.name,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: PROBE_FAILED,
       };
     }
   }

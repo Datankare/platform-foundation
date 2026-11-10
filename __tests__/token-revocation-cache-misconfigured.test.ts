@@ -53,17 +53,24 @@ describe("revocations with a shared cache that cannot even be made", () => {
 
 describe("review 16 M2: the strict variants say whether it was published", () => {
   it("publishTokenRevocation answers not published, with why — never throws", async () => {
+    // R-77: the answer says it was not written; why is in the log, not the answer.
     await expect(publishTokenRevocation("sub-1")).resolves.toEqual({
       published: false,
-      error: "UPSTASH_REDIS_REST_TOKEN is not set",
+      error: "the write did not complete",
     });
+    expect(logged.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: "UPSTASH_REDIS_REST_TOKEN is not set" })
+    );
   });
 
   it("publishInvalidation answers each stamp's outcome (the re-link command reports it per subject)", async () => {
     await expect(publishInvalidation("sub-1")).resolves.toEqual({
-      permissions: { published: false, error: "UPSTASH_REDIS_REST_TOKEN is not set" },
-      tokens: { published: false, error: "UPSTASH_REDIS_REST_TOKEN is not set" },
+      permissions: { published: false, error: "the write did not complete" },
+      tokens: { published: false, error: "the write did not complete" },
     });
+    const texts = JSON.stringify(logged.error.mock.calls);
+    expect(texts).toContain("UPSTASH_REDIS_REST_TOKEN is not set");
   });
 
   it("a cache that answers: published", async () => {

@@ -255,7 +255,8 @@ describe("executeAgent", () => {
 
       expect(result.success).toBe(false);
       expect(result.finalStatus).toBe("failed");
-      expect(result.error).toMatch(/on purpose/);
+      // R-77: the run says it failed; why is in the log, not the result.
+      expect(result.error).toBe("the run failed (the detail is in the log)");
       expect(result.stepsCompleted).toBe(1);
 
       const record = await store.getById(result.trajectoryId);

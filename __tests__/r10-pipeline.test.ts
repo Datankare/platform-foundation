@@ -41,6 +41,7 @@ import { InMemoryActivityStateStore } from "@/platform/app-framework/memory-stat
 import {
   ActionNotRecordedError,
   ApprovedRunFailedError,
+  RUN_RAISED,
   executeActionPipeline,
 } from "@/platform/action-pipeline";
 import {
@@ -233,7 +234,7 @@ describe("r10 M5: the limit is met before the effect, and a failure after it is 
         details: expect.objectContaining({
           type: "action_applied_not_recorded",
           tool: "big",
-          reason: "db down",
+          reason: RUN_RAISED,
         }),
       }),
     ]);
@@ -271,10 +272,12 @@ describe("r10 H2: an approved run claims its approval and ends the claim", () =>
     });
     const err = await runApproved(store, id, t).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApprovedRunFailedError);
-    expect(err).toMatchObject({ released: true, reason: "transient" });
+    // R-77: the run's reason is fixed (the audit and the approval are read on the console); the
+    // error's own text is logged (__tests__/caught-error-logged.test.ts).
+    expect(err).toMatchObject({ released: true, reason: RUN_RAISED });
     expect(await store.getById(id)).toMatchObject({
       status: "approved",
-      lastRunError: expect.stringContaining("transient"),
+      lastRunError: expect.stringContaining(RUN_RAISED),
     });
     await runApproved(store, id, t);
     expect((await store.getById(id))?.status).toBe("executed");

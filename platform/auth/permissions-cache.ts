@@ -45,6 +45,7 @@ import { getCache } from "@/platform/cache";
 import { readStamp } from "@/platform/cache/stamp-reader";
 import { inTransaction, onCommit } from "@/platform/data";
 import { logger } from "@/lib/logger";
+import { WRITE_FAILED } from "@/platform/observability/caught-error";
 import { randomUUID } from "node:crypto";
 import { sameId } from "@/platform/auth/same-id";
 
@@ -114,12 +115,11 @@ async function publishStampNow(key: string): Promise<PublishOutcome> {
     await getCache().set(key, randomUUID(), { ttlSeconds: STAMP_TTL_SECONDS });
     return { published: true };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
     logger.error("Permissions invalidation not published to other instances", {
-      error,
+      error: err instanceof Error ? err.message : String(err),
       route: "platform/auth/permissions-cache",
     });
-    return { published: false, error };
+    return { published: false, error: WRITE_FAILED };
   }
 }
 

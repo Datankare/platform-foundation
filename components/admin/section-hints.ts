@@ -43,7 +43,8 @@ const SECTION_HINTS: Readonly<Record<string, readonly SectionHint[]>> = {
 
 /** Every permission an example needs; an unknown tool needs one no one holds. */
 export function hintPermissions(hint: SectionHint): string[] {
-  const tool = toolPermission(hint.tool) ?? "(unknown tool)";
+  // An unknown tool needs a permission no role has: a code, never shown (TASK-205).
+  const tool = toolPermission(hint.tool) ?? "permission.unknown_tool";
   return hint.table ? [tool, SEARCHABLE_TABLES[hint.table]] : [tool];
 }
 

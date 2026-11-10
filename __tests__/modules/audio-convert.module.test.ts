@@ -124,7 +124,7 @@ describe("audio-convert module — readiness and health", () => {
     converter.errorToThrow = new Error("connect ECONNREFUSED");
     expect(await checkAudioConverterHealth(converter)).toMatchObject({
       healthy: false,
-      error: "connect ECONNREFUSED",
+      error: "the provider could not be reached", // R-77: the network's text is logged
     });
     converter.errorToThrow = new Error("unsupported format");
     expect(await checkAudioConverterHealth(converter)).toMatchObject({

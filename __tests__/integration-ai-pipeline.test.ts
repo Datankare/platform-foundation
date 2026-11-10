@@ -95,7 +95,12 @@ describe("AI Pipeline Integration", () => {
 
       expect(recordedMetrics).toHaveLength(1);
       expect(recordedMetrics[0].success).toBe(false);
-      expect(recordedMetrics[0].error).toContain("API down");
+      // R-77: the metric records the failure's class; the provider's text is logged.
+      expect(recordedMetrics[0].error).not.toContain("API down");
+      expect(jest.requireMock("@/lib/logger").logger.warn).toHaveBeenCalledWith(
+        "AI call failed",
+        expect.objectContaining({ error: expect.stringContaining("API down") })
+      );
     });
 
     it("circuit breaker trips after repeated failures", async () => {

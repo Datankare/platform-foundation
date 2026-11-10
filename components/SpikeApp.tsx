@@ -5,6 +5,12 @@ import { Translation } from "@/types";
 import { canSubmitText, getCharState, canClearText } from "@/lib/inputValidation";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { readRefusal } from "@/platform/errors/refusal";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import { languageName } from "@/components/language-name";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const msg = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.app.spike.${key}`, values);
 
 const MAX_CHARS = 100;
 
@@ -61,9 +67,7 @@ export default function SpikeApp() {
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognitionAPI) {
-      setError(
-        "Voice input is not supported in this browser. Please use Chrome or Edge."
-      );
+      setError(msg("voice_input_is_not_supported"));
       return;
     }
 
@@ -80,7 +84,7 @@ export default function SpikeApp() {
 
     recognition.onerror = () => {
       setIsRecording(false);
-      setError("Voice recognition failed. Please try again or type your input.");
+      setError(msg("voice_recognition_failed_please_try"));
     };
 
     recognition.onend = () => {
@@ -129,14 +133,14 @@ export default function SpikeApp() {
       const data = await response.json();
 
       if (!data.success) {
-        setError(data.error || "Something went wrong.");
+        setError(data.error || msg("something_went_wrong"));
       } else {
         setTranslations(data.translations || []);
       }
     } catch {
       /* justified */
       // API error — shown to user via setError
-      setError("Network error. Please check your connection and try again.");
+      setError(msg("network_error_please_check_your"));
     } finally {
       setIsLoading(false);
     }
@@ -161,7 +165,7 @@ export default function SpikeApp() {
     audio.onended = () => setPlayingIndex(null);
     audio.onerror = () => {
       setPlayingIndex(null);
-      setError("Audio playback failed.");
+      setError(msg("audio_playback_failed"));
     };
     audio.play();
   };
@@ -171,10 +175,11 @@ export default function SpikeApp() {
       <div className="w-full max-w-xl">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white tracking-tight mb-1">
-            PLAY<span className="text-blue-400">FORM</span>
+            {msg("brand_first")}
+            <span className="text-blue-400">{msg("brand_second")}</span>
           </h1>
           <p className="text-slate-400 text-sm tracking-widest uppercase">
-            Platform Validation Spike · v0.1
+            {msg("platform_validation_spike_v0_1")}
           </p>
         </div>
 
@@ -192,9 +197,9 @@ export default function SpikeApp() {
                   if (canSubmit) handleSubmit();
                 }
               }}
-              placeholder="Type something or use voice input..."
+              placeholder={msg("type_something_or_use_voice")}
               rows={3}
-              aria-label="Text input"
+              aria-label={msg("text_input")}
               aria-describedby="char-counter char-status"
               className={`w-full bg-slate-900/80 text-white placeholder-slate-500 rounded-xl px-4 py-3 text-base resize-none border focus:outline-none focus:ring-2 transition-all ${
                 isOverLimit
@@ -224,14 +229,14 @@ export default function SpikeApp() {
               aria-live="assertive"
               className="text-red-400 text-xs mb-3 text-center font-medium"
             >
-              ✗ Too long — please shorten to 100 characters or fewer
+              {msg("too_long_please_shorten_to")}
             </p>
           )}
 
           <div className="flex gap-3">
             <button
               onClick={isRecording ? stopRecording : startRecording}
-              aria-label={isRecording ? "Stop recording" : "Start voice input"}
+              aria-label={isRecording ? msg("stop_recording") : msg("start_voice_input")}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                 isRecording
                   ? "bg-red-500 hover:bg-red-600 text-white focus:ring-red-500 animate-pulse"
@@ -241,13 +246,13 @@ export default function SpikeApp() {
               <span className="text-lg" aria-hidden="true">
                 {isRecording ? "⏹" : "🎤"}
               </span>
-              {isRecording ? "Stop" : "Speak"}
+              {isRecording ? msg("stop") : msg("speak")}
             </button>
 
             <button
               onClick={handleClear}
               disabled={!canClear}
-              aria-label="Clear input"
+              aria-label={msg("clear_input")}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                 !canClear
                   ? "bg-slate-700 cursor-not-allowed text-slate-500 opacity-40"
@@ -255,13 +260,13 @@ export default function SpikeApp() {
               }`}
             >
               <span aria-hidden="true">✕</span>
-              Clear
+              {msg("clear")}
             </button>
 
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              aria-label="Submit and translate"
+              aria-label={msg("submit_and_translate")}
               aria-disabled={!canSubmit}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                 !canSubmit
@@ -274,19 +279,19 @@ export default function SpikeApp() {
                   <span className="animate-spin text-lg" aria-hidden="true">
                     ⟳
                   </span>
-                  Processing...
+                  {msg("processing")}
                 </>
               ) : (
                 <>
                   <span aria-hidden="true">▶</span>
-                  Translate &amp; Speak
+                  {msg("translate_and_speak")}
                 </>
               )}
             </button>
           </div>
 
           <p className="text-slate-500 text-xs mt-3 text-center">
-            Max 100 characters · SFW content only · Press Enter to submit
+            {msg("max_100_characters_sfw_content")}
           </p>
         </div>
 
@@ -301,7 +306,11 @@ export default function SpikeApp() {
         )}
 
         {translations.length > 0 && (
-          <div aria-label="Translation results" aria-live="polite" className="space-y-3">
+          <div
+            aria-label={msg("translation_results")}
+            aria-live="polite"
+            className="space-y-3"
+          >
             {translations.map((t, i) => (
               <div
                 key={t.languageCode}
@@ -311,7 +320,9 @@ export default function SpikeApp() {
                   <div className="text-2xl" aria-hidden="true">
                     {t.flag}
                   </div>
-                  <div className="text-slate-500 text-xs mt-0.5">{t.language}</div>
+                  <div className="text-slate-500 text-xs mt-0.5">
+                    {languageName(t.languageCode, t.language)}
+                  </div>
                 </div>
                 <p
                   lang={t.languageCode}
@@ -321,7 +332,9 @@ export default function SpikeApp() {
                 </p>
                 <button
                   onClick={() => playAudio(t.audioBase64, i)}
-                  aria-label={`Play ${t.language} audio`}
+                  aria-label={msg("play_language_audio", {
+                    language: languageName(t.languageCode, t.language),
+                  })}
                   disabled={playingIndex !== null && playingIndex !== i}
                   className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                     playingIndex === i
@@ -337,7 +350,7 @@ export default function SpikeApp() {
         )}
 
         <p className="text-center text-slate-600 text-xs mt-8">
-          Platform Foundation · Foundation as Fabric · Continuous Confidence
+          {msg("platform_foundation_foundation_as_fabric")}
         </p>
       </div>
     </main>

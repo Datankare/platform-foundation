@@ -6,7 +6,11 @@ import {
   isUnder13Unavailable,
   type AgeVerificationResult,
 } from "@/platform/auth/age";
-import { renderMessage } from "@/platform/errors/messages";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.age_gate.${key}`, values);
 
 interface AgeGateProps {
   onVerified: (result: AgeVerificationResult, dateOfBirth: string) => void;
@@ -44,22 +48,22 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
     const y = parseInt(year, 10);
 
     if (isNaN(m) || isNaN(d) || isNaN(y)) {
-      setError("Please enter a valid date");
+      setError(t("please_enter_a_valid_date"));
       return;
     }
 
     if (m < 1 || m > 12) {
-      setError("Month must be between 1 and 12");
+      setError(t("month_must_be_between_1"));
       return;
     }
 
     if (d < 1 || d > 31) {
-      setError("Day must be between 1 and 31");
+      setError(t("day_must_be_between_1"));
       return;
     }
 
     if (y < minYear || y > maxYear) {
-      setError("Please enter a valid year");
+      setError(t("please_enter_a_valid_year"));
       return;
     }
 
@@ -72,8 +76,8 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
     } catch (err) {
       setError(
         err instanceof RangeError && /future/.test(err.message)
-          ? "Date of birth cannot be in the future"
-          : "Please enter a valid date"
+          ? t("date_of_birth_cannot_be")
+          : t("please_enter_a_valid_date")
       );
       return;
     }
@@ -88,22 +92,22 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">Verify Your Age</h2>
+      <h2 className="text-xl font-bold text-white text-center">{t("verify_your_age")}</h2>
       <p className="text-sm text-gray-400 text-center">
-        Please enter your date of birth to continue.
+        {t("please_enter_your_date_of")}
       </p>
 
       <div className="flex gap-3">
         <div className="flex-1">
           <label htmlFor="age-month" className="block text-sm text-gray-400 mb-1.5">
-            Month
+            {t("month")}
           </label>
           <input
             id="age-month"
             type="text"
             inputMode="numeric"
             maxLength={2}
-            placeholder="MM"
+            placeholder={t("mm")}
             value={month}
             onChange={(e) => {
               const v = e.target.value.replace(/\D/g, "").slice(0, 2);
@@ -114,14 +118,14 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
         </div>
         <div className="flex-1">
           <label htmlFor="age-day" className="block text-sm text-gray-400 mb-1.5">
-            Day
+            {t("day")}
           </label>
           <input
             id="age-day"
             type="text"
             inputMode="numeric"
             maxLength={2}
-            placeholder="DD"
+            placeholder={t("dd")}
             value={day}
             onChange={(e) => {
               const v = e.target.value.replace(/\D/g, "").slice(0, 2);
@@ -132,14 +136,14 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
         </div>
         <div className="flex-1">
           <label htmlFor="age-year" className="block text-sm text-gray-400 mb-1.5">
-            Year
+            {t("year")}
           </label>
           <input
             id="age-year"
             type="text"
             inputMode="numeric"
             maxLength={4}
-            placeholder="YYYY"
+            placeholder={t("yyyy")}
             value={year}
             onChange={(e) => {
               const v = e.target.value.replace(/\D/g, "").slice(0, 4);
@@ -165,7 +169,7 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
         disabled={!isComplete}
         className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        Continue
+        {t("continue")}
       </button>
 
       <p className="text-center text-sm text-gray-400">
@@ -173,7 +177,7 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
           onClick={onCancel}
           className="text-blue-400 hover:text-blue-300 transition"
         >
-          Back to Sign In
+          {t("back_to_sign_in")}
         </button>
       </p>
     </div>

@@ -154,13 +154,13 @@ export function DualControlKeysPanel() {
       return;
     }
     setNewKey("");
-    void commit([...keys, k], `Add ${k} to dual-control`);
+    void commit([...keys, k], t("comment_add", { key: k }));
   }
 
   function remove(k: string) {
     void commit(
       keys.filter((x) => x !== k),
-      `Remove ${k} from dual-control`
+      t("comment_remove", { key: k })
     );
   }
 

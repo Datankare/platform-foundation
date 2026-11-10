@@ -12,6 +12,8 @@
 
 import type { ModerationAction } from "@/platform/moderation/types";
 import { screenContent } from "@/platform/moderation/middleware";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 /** The subset of a screening decision the RAG paths act on (provider-agnostic, ADR-043 D6). */
 export interface ScreenDecision {
@@ -49,7 +51,17 @@ export async function runInputScreen(
   try {
     return await screen(text, { requestId });
   } catch (error) {
-    const reasoning = error instanceof Error ? error.message : "screen error";
-    return { action: "escalate", reasoning: `fail-closed: ${reasoning}` };
+    // The screener's own text is logged; the decision's reasoning is fixed (R-77).
+    logCaught(
+      logger,
+      "Input screen failed: escalated",
+      error,
+      { requestId, route: "platform/rag/screen" },
+      "warn"
+    );
+    return {
+      action: "escalate",
+      reasoning: "fail-closed: the screen did not complete (the detail is in the log)",
+    };
   }
 }

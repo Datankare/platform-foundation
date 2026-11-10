@@ -66,6 +66,7 @@ import {
 } from "@/platform/providers/environment-contract";
 import { hasDatabase, withTenantTx, type Tx } from "@/platform/data";
 import { logger } from "@/lib/logger";
+import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { bindingOf } from "@/platform/auth/account-identity";
 
@@ -492,10 +493,16 @@ export async function provisionAccount(
               };
             });
           } catch (err) {
-            return {
-              created: false,
-              error: err instanceof Error ? err.message : String(err),
-            };
+            logCaught(
+              logger,
+              "User provisioning: the account could not be written",
+              err,
+              {
+                userId,
+                route: "platform/auth/user-provisioning",
+              }
+            );
+            return { created: false, error: WRITE_FAILED };
           }
         }
       );

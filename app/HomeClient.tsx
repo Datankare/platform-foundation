@@ -13,6 +13,11 @@ import { useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
 import AppHome from "@/platform/modules/app-home";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.home.${key}`, values);
 
 export default function HomeClient() {
   const router = useRouter();
@@ -33,7 +38,7 @@ export default function HomeClient() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-gray-500">Loading...</div>
+        <div className="text-gray-500">{t("loading")}</div>
       </div>
     );
   }
@@ -47,12 +52,12 @@ export default function HomeClient() {
         <div className="text-sm text-gray-600">
           {isGuest ? (
             <span>
-              Guest session —{" "}
+              {t("guest_session")}{" "}
               <button
                 onClick={() => router.push("/auth")}
                 className="text-blue-600 hover:underline"
               >
-                Sign in for full access
+                {t("sign_in_for_full_access")}
               </button>
             </span>
           ) : (
@@ -63,7 +68,7 @@ export default function HomeClient() {
           onClick={handleSignOut}
           className="rounded px-3 py-1 text-sm text-gray-600 hover:bg-gray-100"
         >
-          Sign Out
+          {t("sign_out")}
         </button>
       </div>
 

@@ -1,6 +1,11 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.new_password.${key}`, values);
 
 interface NewPasswordFormProps {
   onSubmit: (newPassword: string) => Promise<void>;
@@ -41,15 +46,17 @@ export default function NewPasswordForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">Set a New Password</h2>
+      <h2 className="text-xl font-bold text-white text-center">
+        {t("set_a_new_password")}
+      </h2>
       <p className="text-sm text-gray-400 text-center">
-        Your account requires a new password before you can continue.
+        {t("your_account_requires_a_new")}
       </p>
 
       <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">
         <div className="flex flex-col gap-3">
           <label htmlFor="new-password" className="sr-only">
-            New password
+            {t("new_password")}
           </label>
           <input
             ref={inputRef}
@@ -58,12 +65,12 @@ export default function NewPasswordForm({
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="New password"
+            placeholder={t("new_password")}
             disabled={isLoading}
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
           <label htmlFor="confirm-password" className="sr-only">
-            Confirm new password
+            {t("confirm_new_password")}
           </label>
           <input
             id="confirm-password"
@@ -71,16 +78,18 @@ export default function NewPasswordForm({
             autoComplete="new-password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            placeholder="Confirm new password"
+            placeholder={t("confirm_new_password")}
             disabled={isLoading}
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
         </div>
 
         {tooShort && (
-          <p className="text-xs text-gray-400">Password must be at least 8 characters.</p>
+          <p className="text-xs text-gray-400">{t("password_must_be_at_least")}</p>
         )}
-        {mismatch && <p className="text-xs text-gray-400">Passwords do not match.</p>}
+        {mismatch && (
+          <p className="text-xs text-gray-400">{t("passwords_do_not_match")}</p>
+        )}
 
         {error && (
           <div
@@ -97,7 +106,7 @@ export default function NewPasswordForm({
           disabled={!canSubmit}
           className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {isLoading ? "Setting password..." : "Set password & continue"}
+          {isLoading ? t("setting_password") : t("set_password_continue")}
         </button>
       </form>
 
@@ -106,7 +115,7 @@ export default function NewPasswordForm({
           onClick={onCancel}
           className="text-blue-400 hover:text-blue-300 transition"
         >
-          Cancel sign-in
+          {t("cancel_sign_in")}
         </button>
       </p>
     </div>

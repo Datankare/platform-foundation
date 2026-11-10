@@ -40,6 +40,9 @@ import { logger, generateRequestId } from "@/lib/logger";
  */
 export type PipelineIntent = "inform" | "checkpoint" | "propose" | "commit";
 
+/** A failed step's `error` in the result: the provider's own text is logged (R-77). */
+export const STEP_FAILED = "the step did not complete";
+
 const STEP_INTENT_MAP: Record<string, PipelineIntent> = {
   stt: "inform",
   safety: "checkpoint",
@@ -288,15 +291,14 @@ export class VoicePipeline {
 
         recordStep("stt", "success", Date.now() - sttStart);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        recordStep("stt", "failed", Date.now() - sttStart, false, message);
-
         logger.error("VoicePipeline STT failed", {
           requestId,
           trajectoryId,
-          error: message,
+          error: err instanceof Error ? err.message : String(err),
           route: "platform/voice/pipeline",
         });
+        // The step's result is returned: it says the step failed, never the provider's text (R-77).
+        recordStep("stt", "failed", Date.now() - sttStart, false, STEP_FAILED);
 
         return this.buildResult({
           success: false,
@@ -358,8 +360,13 @@ export class VoicePipeline {
 
         recordStep("safety", "success", Date.now() - safetyStart);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        recordStep("safety", "failed", Date.now() - safetyStart, false, message);
+        logger.error("VoicePipeline safety check failed", {
+          requestId,
+          trajectoryId,
+          error: err instanceof Error ? err.message : String(err),
+          route: "platform/voice/pipeline",
+        });
+        recordStep("safety", "failed", Date.now() - safetyStart, false, STEP_FAILED);
 
         // Fail closed (P3)
         return this.buildResult({
@@ -367,7 +374,7 @@ export class VoicePipeline {
           transcript,
           sourceLanguage,
           safetyPassed: false,
-          safetyReason: "Safety check error: " + message,
+          safetyReason: "Safety check error: the check did not complete",
           steps,
           totalLatencyMs: Date.now() - pipelineStart,
           requestId,
@@ -427,15 +434,14 @@ export class VoicePipeline {
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      recordStep("translate", "failed", Date.now() - translateStart, false, message);
-
       logger.error("VoicePipeline translate failed", {
         requestId,
         trajectoryId,
-        error: message,
+        error: err instanceof Error ? err.message : String(err),
         route: "platform/voice/pipeline",
       });
+      // The step's result is returned: it says the step failed, never the provider's text (R-77).
+      recordStep("translate", "failed", Date.now() - translateStart, false, STEP_FAILED);
 
       // Partial result: transcript available, translation failed
       return this.buildResult({
@@ -468,15 +474,14 @@ export class VoicePipeline {
 
         recordStep("tts", "success", Date.now() - ttsStart);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        recordStep("tts", "failed", Date.now() - ttsStart, false, message);
-
         logger.error("VoicePipeline TTS failed", {
           requestId,
           trajectoryId,
-          error: message,
+          error: err instanceof Error ? err.message : String(err),
           route: "platform/voice/pipeline",
         });
+        // The step's result is returned: it says the step failed, never the provider's text (R-77).
+        recordStep("tts", "failed", Date.now() - ttsStart, false, STEP_FAILED);
       }
     } else {
       recordStep("tts", "skipped", 0);

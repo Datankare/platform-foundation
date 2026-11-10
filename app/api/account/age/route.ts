@@ -48,7 +48,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     if (recorded.error === "audit unavailable") {
       return apiError("service.unavailable", { params: { service: "audit" }, request });
     }
-    if (recorded.error?.startsWith("the age is already recorded")) {
+    if (recorded.errorCode === "account.age_already_recorded") {
       return apiError("account.age_already_recorded", { request });
     }
     return apiError("service.unavailable", { params: { service: "accounts" }, request });

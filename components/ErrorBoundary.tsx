@@ -2,6 +2,11 @@
 
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { logger } from "@/lib/logger";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.error_boundary.${key}`, values);
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -72,10 +77,10 @@ export default class ErrorBoundary extends Component<
             <h1
               style={{ fontSize: "1.5rem", fontWeight: "bold", marginBottom: "0.5rem" }}
             >
-              Something went wrong
+              {t("something_went_wrong")}
             </h1>
             <p style={{ color: "#94a3b8", marginBottom: "1.5rem" }}>
-              An unexpected error occurred. Please refresh the page.
+              {t("an_unexpected_error_occurred_please")}
             </p>
             <button
               onClick={() => window.location.reload()}
@@ -89,7 +94,7 @@ export default class ErrorBoundary extends Component<
                 fontSize: "0.875rem",
               }}
             >
-              Refresh Page
+              {t("refresh_page")}
             </button>
           </div>
         </div>

@@ -385,11 +385,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/review-store",
       });
-      return {
-        success: false,
-        error: err instanceof Error ? `Submit failed: ${err.message}` : "Unknown error",
-        errorCode: "internal.error",
-      };
+      return { success: false, error: "Submit failed", errorCode: "internal.error" };
     }
   }
 
@@ -503,11 +499,12 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
             };
       });
     } catch (err) {
-      return {
-        success: false,
-        error: err instanceof Error ? `Update failed: ${err.message}` : "Unknown error",
-        errorCode: "internal.error",
-      };
+      logger.error("Review store: update failed", {
+        id,
+        error: err instanceof Error ? err.message : String(err),
+        route: "platform/moderation/review-store",
+      });
+      return { success: false, error: "Update failed", errorCode: "internal.error" };
     }
   }
 

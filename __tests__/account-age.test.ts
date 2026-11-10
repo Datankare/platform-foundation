@@ -187,6 +187,8 @@ describe("POST /api/auth/sign-up — date of birth", () => {
   });
 });
 
+// hostile:self n/a: the route takes no account id; it records only the caller's own age.
+// hostile:id-spelling n/a: the route reads no identifier from the request, only a date.
 describe("POST /api/account/age", () => {
   it.each(BAD_DATES)("refuses %s and records nothing", async (_l, dateOfBirth) => {
     const res = await declareAge(post("/api/account/age", { dateOfBirth }));
@@ -216,19 +218,30 @@ describe("POST /api/account/age", () => {
     mockRecordAge.mockResolvedValue({
       success: false,
       error: "the age is already recorded, or there is no such user",
+      errorCode: "account.age_already_recorded",
     });
     const res = await declareAge(post("/api/account/age", { dateOfBirth: yearsAgo(30) }));
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("account.age_already_recorded");
   });
 
-  it("answers 503 when the record cannot be written", async () => {
+  it("R-77: the answer follows the result's code, never its English text", async () => {
+    mockRecordAge.mockResolvedValue({
+      success: false,
+      error: "the age is already recorded, or there is no such user",
+    });
+    const res = await declareAge(post("/api/account/age", { dateOfBirth: yearsAgo(30) }));
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("service.unavailable");
+  });
+
+  it("[hostile:store-down] answers 503 when the record cannot be written", async () => {
     mockRecordAge.mockResolvedValue({ success: false, error: "audit unavailable" });
     const res = await declareAge(post("/api/account/age", { dateOfBirth: yearsAgo(30) }));
     expect(res.status).toBe(503);
   });
 
-  it("is for signed-in users only: a guest is refused and nothing is recorded", async () => {
+  it("[hostile:role] is for signed-in users only: a guest is refused and nothing is recorded", async () => {
     const { token } = await mintGuestToken();
     const res = await declareAge(
       post("/api/account/age", { dateOfBirth: yearsAgo(30) }, token)

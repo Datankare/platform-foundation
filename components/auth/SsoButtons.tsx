@@ -2,6 +2,11 @@
 
 import React, { useState } from "react";
 import type { SsoProvider } from "@/platform/auth/types";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.sso.${key}`, values);
 
 interface SsoButtonsProps {
   onSsoClick: (provider: SsoProvider) => Promise<void>;
@@ -9,30 +14,27 @@ interface SsoButtonsProps {
   enabledProviders?: SsoProvider[];
 }
 
+/** Each provider's look; its button text is the catalog's (screens.auth.sso.continue_with_*). */
 const SSO_PROVIDERS: {
   id: SsoProvider;
-  label: string;
   icon: string;
   bgColor: string;
   hoverColor: string;
 }[] = [
   {
     id: "google",
-    label: "Continue with Google",
     icon: "G",
     bgColor: "bg-white",
     hoverColor: "hover:bg-gray-100",
   },
   {
     id: "apple",
-    label: "Continue with Apple",
     icon: "\uF8FF",
     bgColor: "bg-black",
     hoverColor: "hover:bg-gray-900",
   },
   {
     id: "microsoft",
-    label: "Continue with Microsoft",
     icon: "\u2756",
     bgColor: "bg-[#2F2F2F]",
     hoverColor: "hover:bg-[#3F3F3F]",
@@ -78,7 +80,9 @@ export default function SsoButtons({
           <span className="text-lg" aria-hidden="true">
             {provider.icon}
           </span>
-          {loadingProvider === provider.id ? "Connecting..." : provider.label}
+          {loadingProvider === provider.id
+            ? t("connecting")
+            : t(`continue_with_${provider.id}`)}
         </button>
       ))}
     </div>

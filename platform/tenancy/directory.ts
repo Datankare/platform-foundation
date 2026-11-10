@@ -82,6 +82,15 @@ export interface TenantDirectory {
   rename(tenantId: string, name: string): Promise<TenantRecord | null>;
 }
 
+/** What a conflict says, by its code: fixed text, never a store's (R-77). */
+export const TENANT_CONFLICT_TEXT: Readonly<
+  Record<TenantDirectoryConflictError["code"], string>
+> = {
+  "tenant.exists": "Tenant id exists",
+  "tenant.slug_taken": "Tenant slug is taken",
+  "tenant.domain_taken": "Host is mapped",
+};
+
 export class TenantDirectoryConflictError extends Error {
   readonly code: "tenant.exists" | "tenant.slug_taken" | "tenant.domain_taken";
   constructor(code: TenantDirectoryConflictError["code"], message: string) {

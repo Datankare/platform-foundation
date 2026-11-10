@@ -1,11 +1,9 @@
 import React from "react";
 import type { ProfileVisibility } from "@/platform/auth/profile";
+import { renderMessage } from "@/platform/errors/messages";
 
-const VISIBILITY_OPTIONS: { value: ProfileVisibility; label: string }[] = [
-  { value: "private", label: "Private" },
-  { value: "friends", label: "Friends" },
-  { value: "public", label: "Public" },
-];
+/** The choices, in order; each one's text is the catalog's (screens.auth.visibility.*). */
+const VISIBILITY_OPTIONS: readonly ProfileVisibility[] = ["private", "friends", "public"];
 
 interface VisibilitySelectProps {
   value: ProfileVisibility;
@@ -30,9 +28,9 @@ export default function VisibilitySelect({
         onChange={(e) => onChange(e.target.value as ProfileVisibility)}
         className="bg-[#0a0f1e] border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
       >
-        {VISIBILITY_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
+        {VISIBILITY_OPTIONS.map((v) => (
+          <option key={v} value={v}>
+            {renderMessage(`screens.auth.visibility.${v}`)}
           </option>
         ))}
       </select>

@@ -1151,7 +1151,7 @@ export function checkEnvironmentContract(env: EnvSource): string[] {
         parseValkeyUrl(url, harnessAllowed);
       } catch (err) {
         if (!(err instanceof ValkeyUrlError)) throw err;
-        violations.push(`${err.message} (${err.code})`);
+        violations.push(`${err.violation} (${err.code})`);
       }
     }
   }

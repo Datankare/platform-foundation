@@ -101,7 +101,12 @@ describe("PurgePipeline", () => {
 
     expect(result.status).toBe("partial");
     expect(result.steps[1].success).toBe(false);
-    expect(result.steps[1].error).toBe("db:content failed");
+    // R-77: the step says it failed; the handler's own text is logged.
+    expect(result.steps[1].error).toBe("the call did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: "db:content failed" })
+    );
     // Other handlers still ran
     expect(result.steps[0].success).toBe(true);
     expect(result.steps[2].success).toBe(true);

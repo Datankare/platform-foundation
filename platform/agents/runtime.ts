@@ -27,6 +27,10 @@ import type { EffectLedger } from "@/platform/kernel";
 import type { BudgetTracker } from "./budget-tracker";
 import { getAgent } from "./registry";
 import { logger } from "@/lib/logger";
+import { logCaught } from "@/platform/observability/caught-error";
+
+/** A failed run's `error`: what failed is in the log (R-77). */
+export const AGENT_RUN_FAILED = "the run failed (the detail is in the log)";
 
 // ---------------------------------------------------------------------------
 // Step builder — what workflow functions return
@@ -304,7 +308,7 @@ export async function executeAgent(
       stepsCompleted: stepCount,
       totalCostUsd,
       finalStatus: "failed",
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: AGENT_RUN_FAILED,
     };
   }
 }
@@ -487,6 +491,10 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
       finalStatus: "completed",
     };
   } catch (err) {
+    logCaught(logger, "Agent resume failed", err, {
+      trajectoryId: args.trajectoryId,
+      route: "platform/agents/runtime",
+    });
     await trajectoryStore.updateStatus(args.trajectoryId, "failed");
     return {
       success: false,
@@ -494,7 +502,7 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
       stepsCompleted: stepCount,
       totalCostUsd,
       finalStatus: "failed",
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: AGENT_RUN_FAILED,
     };
   }
 }

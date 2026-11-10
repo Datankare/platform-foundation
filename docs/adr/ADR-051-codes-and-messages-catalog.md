@@ -31,6 +31,22 @@ _Implementation (7A A4a):_ `platform/errors/` — `registry.ts` (39 codes: statu
 
 _Implementation (7A A4b):_ every PF API error is coded (A4b-1 guards/admin/process, A4b-2 moderation/approvals with result codes, A4b-3 auth). Services, stores and the auth provider return `errorCode` (+ `errorParams`) with their results; routes answer with `apiError`, `internalError` (500s: detail to the log with a request id, never to the client), `errorFromResult` or `authResultResponse` (auth: challenges stay 200, failures get real statuses — no more 200-on-failure). No status is chosen by matching English. The free-text check is now a hard rule (D5 b). The screen-literal ratchet (D5 e) is a CI test counting JSX text and user-visible attribute literals against a per-repository `screen-literal-baseline.json` (PF: 297), lowered as strings move to the catalog; 7B takes it to zero. 45 codes.
 
+_Implementation (TASK-205, batch 55e, 2026-11-08):_ every screen literal is in the catalog — PF 232
+and Playform 270 sites, plus 39 and 50 strings a JSX expression shows (`{busy ? "Saving..." :
+"Save"}`) that the scan did not count until now. Shared screens use `messages/en.json`
+(`screens.auth.*`, `screens.admin_console.views`, `screens.review_dashboard`, `screens.appeal`,
+`screens.adaptive_input`, `screens.error_boundary`, `screens.home`); an app's own screens use its
+`messages/app/en.json` (`screens.app.*`). A sentence with a styled part stays one message (`{email}`,
+`{approver}`) and the part is placed where the translation puts it; numbers shown as they were
+(passed as text, so "2500" is not regrouped). The screen-literal baseline is 0 in both
+repositories, so any literal fails, and `__tests__/screen-literals-ratchet.test.ts` also checks
+that every catalog key a screen names exists. English is the only locale (D6), so English is the
+only translation each string needs. Text that reaches a screen indirectly — a table of labels, a
+default prop, a hook's notification, a language's name, a page's `metadata` — is in the catalog
+too, and `__tests__/screen-text-indirect.test.ts` holds it at 0: it follows every name in a text
+position to the literals it can hold, and reports words for a person anywhere in the screens' code
+outside the catalog.
+
 ## 3. Sequencing
 
 | Sprint            | Scope                                                                                                                                                                                                                                                                                                                       |

@@ -247,7 +247,11 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
         return response;
       } catch (err) {
         const latencyMs = Date.now() - startTime;
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
+        logger.warn("AI call failed", {
+          useCase: opts.useCase,
+          requestId: opts.requestId,
+          error: err instanceof Error ? err.message : String(err),
+        });
 
         // Only count transient errors against the circuit breaker
         const isTransient = err instanceof AIProviderError && err.kind === "transient";
@@ -255,7 +259,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           circuitBreaker.recordFailure();
         }
 
-        recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage, err);
+        recordFailureMetrics(effectiveRequest, opts, latencyMs, failureClass(err), err);
         throw err;
       }
     },
@@ -421,14 +425,13 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
         );
       } catch (err) {
         const latencyMs = Date.now() - startTime;
-        const errorMessage = err instanceof Error ? err.message : "Unknown error";
 
         const isTransient = err instanceof AIProviderError && err.kind === "transient";
         if (isTransient) {
           circuitBreaker.recordFailure();
         }
 
-        recordFailureMetrics(effectiveRequest, opts, latencyMs, errorMessage, err);
+        recordFailureMetrics(effectiveRequest, opts, latencyMs, failureClass(err), err);
 
         // No second, non-streamed call after a failed stream (audit C-20): the failed stream may
         // already have been billed, and a fallback made every failure two paid calls — one an
@@ -436,7 +439,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
         logger.info("Streaming failed; not retried as a second paid call", {
           useCase: opts.useCase,
           receivedText: totalText.length > 0,
-          error: errorMessage,
+          error: err instanceof Error ? err.message : String(err),
         });
         throw err;
       }
@@ -478,6 +481,17 @@ async function gatePromptCache(request: AIRequest): Promise<AIRequest> {
  * A failed call's metrics. A refusal was still billed: its usage (carried on the error) is
  * recorded with its cost; any other failure has none.
  */
+/**
+ * A failed call's class for its metrics record (R-77): the provider's own text is logged where it
+ * was caught; a metric carries `refused`, the provider error's kind and reason, or `error`.
+ */
+function failureClass(err: unknown): string {
+  if (isAIRefusalError(err)) return "refused";
+  if (err instanceof AIProviderError)
+    return err.reason ? `${err.kind}: ${err.reason}` : err.kind;
+  return "error";
+}
+
 function recordFailureMetrics(
   request: AIRequest,
   opts: OrchestratorOptions,

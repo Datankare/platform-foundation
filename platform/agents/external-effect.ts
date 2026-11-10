@@ -19,6 +19,16 @@ import type {
   ExternalEffectType,
 } from "@/platform/kernel";
 import { getEffectLedger, idempotencyKeyFor } from "./effect-ledger";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
+
+/** An error that leaves a sent call's outcome unknown (a timeout, an abort, a dropped socket). */
+const AMBIGUOUS = /timeout|timed out|abort|socket|econnreset|network/i;
+
+/** The ledger's reasons (R-77): the call's own text is logged. */
+export const EFFECT_UNKNOWN =
+  "the call may have taken effect: it timed out or its connection dropped (the detail is in the log)";
+export const EFFECT_FAILED = "the call failed (the detail is in the log)";
 
 export interface ExternalEffectArgs<T> {
   readonly operationId: string;
@@ -138,17 +148,25 @@ export async function performExternalEffect<T>(
     });
     return { status: "confirmed", result, entry: resolved ?? entry };
   } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
     // Ambiguity resolves to indeterminate, never to failure. A timeout after send is not a
     // failure — it is an unknown, and recording it as failure invites a retry that
     // double-fires.
-    const ambiguous = /timeout|timed out|abort|socket|econnreset|network/i.test(message);
-    const status = ambiguous ? "indeterminate" : "failed";
+    const status = AMBIGUOUS.test(err instanceof Error ? err.message : "")
+      ? "indeterminate"
+      : "failed";
+    // The ledger's entry is read by people (the admin console, reconciliation): it says which,
+    // and the call's own text goes to the log (R-77).
+    logCaught(logger, "External effect call failed", err, {
+      operationId: args.operationId,
+      effectKey: args.effectKey,
+      status,
+      route: "platform/agents/external-effect",
+    });
     const resolved = await ledger.resolve(args.operationId, args.effectKey, status, {
-      error: message,
+      error: status === "indeterminate" ? EFFECT_UNKNOWN : EFFECT_FAILED,
     });
     return status === "indeterminate"
       ? { status: "indeterminate", entry: resolved ?? entry }
-      : { status: "failed", error: message, entry: resolved ?? entry };
+      : { status: "failed", error: EFFECT_FAILED, entry: resolved ?? entry };
   }
 }

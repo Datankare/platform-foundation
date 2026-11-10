@@ -15,6 +15,11 @@
 
 import React, { useCallback, useRef } from "react";
 import type { InputMode, ConductorOutput, ActionItem } from "@/platform/input/types";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const msg = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.adaptive_input.${key}`, values);
 
 // ── Theme ─────────────────────────────────────────────────────────────
 
@@ -93,31 +98,12 @@ export interface AdaptiveInputProps {
 
 // ── Mode Configuration ────────────────────────────────────────────────
 
-const MODE_CONFIG: Record<
-  InputMode,
-  { label: string; ariaLabel: string; title: string }
-> = {
-  text: {
-    label: "Text",
-    ariaLabel: "Text input mode",
-    title: "Type or paste text to process",
-  },
-  speech: {
-    label: "Speech",
-    ariaLabel: "Speech input mode",
-    title: "Use your mic to speak — transcribed in real time",
-  },
-  music: {
-    label: "Music",
-    ariaLabel: "Music identification mode",
-    title: "Hold your mic near a song to identify it",
-  },
-  file: {
-    label: "File",
-    ariaLabel: "File upload mode",
-    title: "Upload audio, PDF, or text files to extract content",
-  },
-};
+/** A mode's pill text, from the catalog (screens.adaptive_input.mode_<mode>_*). */
+const modeConfig = (mode: InputMode) => ({
+  label: msg(`mode_${mode}_label`),
+  ariaLabel: msg(`mode_${mode}_aria`),
+  title: msg(`mode_${mode}_title`),
+});
 
 /** Pill order: text → speech → file → music */
 const MODES: InputMode[] = ["text", "speech", "file", "music"];
@@ -130,7 +116,7 @@ export default function AdaptiveInput({
   maxChars = 2500,
   isRecording = false,
   isProcessing = false,
-  placeholder = "Type, speak, or drop a file...",
+  placeholder = msg("default_placeholder"),
   disabled = false,
   variant = "light",
   onTextChange,
@@ -167,11 +153,11 @@ export default function AdaptiveInput({
       <div
         className="flex items-center gap-2 mb-3"
         role="group"
-        aria-label="Input mode selection"
+        aria-label={msg("input_mode_selection")}
       >
         {MODES.map((mode) => {
           const isActive = output.mode === mode;
-          const config = MODE_CONFIG[mode];
+          const config = modeConfig(mode);
           return (
             <button
               key={mode}
@@ -220,7 +206,7 @@ export default function AdaptiveInput({
           data-testid="listening-badge"
         >
           <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-          <span>Listening...</span>
+          <span>{msg("listening")}</span>
         </div>
       )}
 
@@ -236,7 +222,7 @@ export default function AdaptiveInput({
           maxLength={maxChars + 100}
           rows={4}
           className={`w-full px-4 py-3 pr-20 resize-none rounded-lg bg-transparent ${t.textarea} focus:outline-none disabled:opacity-50`}
-          aria-label="Input text"
+          aria-label={msg("input_text")}
           data-testid="input-textarea"
         />
 
@@ -246,7 +232,7 @@ export default function AdaptiveInput({
             type="button"
             onClick={onMicToggle}
             disabled={disabled}
-            aria-label={isRecording ? "Stop recording" : "Start recording"}
+            aria-label={isRecording ? msg("stop_recording") : msg("start_recording")}
             aria-pressed={isRecording}
             className={`p-2 rounded-md transition-colors ${
               isRecording ? t.micRecording : t.micDefault
@@ -259,7 +245,7 @@ export default function AdaptiveInput({
             type="button"
             onClick={handleUploadClick}
             disabled={disabled}
-            aria-label="Upload file"
+            aria-label={msg("upload_file")}
             className={`p-2 rounded-md ${t.uploadBtn} transition-colors ${
               disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
             }`}
@@ -282,7 +268,10 @@ export default function AdaptiveInput({
       <div
         className="mt-1 text-right text-xs"
         role="status"
-        aria-label={`${charCount} of ${maxChars} characters used`}
+        aria-label={msg("characters_used", {
+          count: String(charCount),
+          max: String(maxChars),
+        })}
         data-testid="char-counter"
       >
         <span className={isOverLimit ? "text-red-500" : t.counterNormal}>
@@ -298,7 +287,7 @@ export default function AdaptiveInput({
         <div
           className="flex gap-2 mt-3"
           role="group"
-          aria-label="Available actions"
+          aria-label={msg("available_actions")}
           data-testid="action-buttons"
         >
           {actions.map((action: ActionItem) => (
@@ -333,7 +322,7 @@ export default function AdaptiveInput({
           aria-busy="true"
           data-testid="processing-indicator"
         >
-          Processing...
+          {msg("processing")}
         </div>
       )}
     </div>

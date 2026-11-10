@@ -403,7 +403,8 @@ describe("updateCoppaEnforcement", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("update failed");
+    // R-77: a fixed text; the store's own is logged.
+    expect(result.error).toBe("the write did not complete");
   });
 
   it("returns error on exception", async () => {
@@ -417,6 +418,10 @@ describe("updateCoppaEnforcement", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("crash");
+    expect(result.error).toBe("the write did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      "COPPA enforcement update error",
+      expect.objectContaining({ error: "crash" })
+    );
   });
 });

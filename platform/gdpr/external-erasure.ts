@@ -23,6 +23,13 @@
  * @module platform/gdpr
  */
 
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
+
+/** An external store's step that failed: its own text is logged (R-77; read on the console). */
+export const ERASURE_STEP_FAILED =
+  "the store's erasure did not complete (the detail is in the log)";
+
 /** Who the erased person was, as the external stores know them. */
 export interface ErasureSubject {
   /** The account's id (users.id). */
@@ -165,10 +172,11 @@ export const IDENTITY_ERASURE: ExternalErasure = {
       }
       return { done: true };
     } catch (err) {
-      return {
-        done: false,
-        error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
-      };
+      logCaught(logger, "External erasure: the identity could not be deleted", err, {
+        store: "identity",
+        route: "platform/gdpr/external-erasure",
+      });
+      return { done: false, error: ERASURE_STEP_FAILED };
     }
   },
 };
@@ -244,12 +252,13 @@ export async function runExternalErasures(
   const pending: string[] = [];
   for (const store of listExternalErasures()) {
     if (outcomes[store.name]?.doneAt) continue;
-    const r = await store
-      .erase(subject)
-      .catch((err: unknown): ExternalErasureOutcome => ({
-        done: false,
-        error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
-      }));
+    const r = await store.erase(subject).catch((err: unknown): ExternalErasureOutcome => {
+      logCaught(logger, "External erasure failed", err, {
+        store: store.name,
+        route: "platform/gdpr/external-erasure",
+      });
+      return { done: false, error: ERASURE_STEP_FAILED };
+    });
     const attempts = (outcomes[store.name]?.attempts ?? 0) + 1;
     if (r.done) {
       outcomes[store.name] = { doneAt: new Date(now()).toISOString(), attempts };

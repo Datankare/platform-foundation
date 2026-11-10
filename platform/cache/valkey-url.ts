@@ -20,9 +20,15 @@
 /** A VALKEY_URL the platform will not use; `code` names it for the boot report. */
 export class ValkeyUrlError extends Error {
   readonly code = "config.valkey_url_invalid";
+  /** The violation, in this module's words (never the URL's secret parts): safe to show (R-77). */
+  readonly violation: string;
   constructor(reason: string) {
-    super(reason.startsWith("'") ? `VALKEY_URL${reason}` : `VALKEY_URL ${reason}`);
+    const violation = reason.startsWith("'")
+      ? `VALKEY_URL${reason}`
+      : `VALKEY_URL ${reason}`;
+    super(violation);
     this.name = "ValkeyUrlError";
+    this.violation = violation;
   }
 }
 

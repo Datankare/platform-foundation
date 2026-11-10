@@ -30,6 +30,7 @@ import {
   type InputScreen,
 } from "./screen";
 import { logger, generateRequestId } from "@/lib/logger";
+import { READ_FAILED } from "@/platform/observability/caught-error";
 
 /**
  * Result from a retrieval operation, including explainability data.
@@ -138,13 +139,16 @@ export async function retrieve(
       durationMs: Date.now() - start,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
     // The query is the user's text: never logged (audit G-11), only its length.
-    logger.error("Retrieval failed", { error: message, queryLength: query.query.length });
+    logger.error("Retrieval failed", {
+      error: error instanceof Error ? error.message : String(error),
+      queryLength: query.query.length,
+    });
+    // The explanation is returned with the answer: a fixed reason, never the store's (R-77).
     steps.push({
       phase: "error",
-      description: `Retrieval failed: ${message}`,
-      data: { error: message },
+      description: "Retrieval failed (the detail is in the log)",
+      data: { error: READ_FAILED },
       durationMs: Date.now() - start,
     });
     return {

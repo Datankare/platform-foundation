@@ -1,6 +1,11 @@
 "use client";
 
 import React from "react";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.layout.${key}`, values);
 
 interface AuthLayoutProps {
   children: React.ReactNode;
@@ -15,8 +20,8 @@ interface AuthLayoutProps {
  */
 export default function AuthLayout({
   children,
-  title = "PLAYFORM",
-  subtitle = "Platform Foundation",
+  title = t("brand_title"),
+  subtitle = t("brand_subtitle"),
 }: AuthLayoutProps) {
   return (
     <div className="min-h-screen bg-[#0a0f1e] flex flex-col items-center justify-center px-4">
@@ -27,7 +32,7 @@ export default function AuthLayout({
               <span className="text-white">
                 {title.substring(0, title.indexOf("FORM"))}
               </span>
-              <span className="text-blue-400">FORM</span>
+              <span className="text-blue-400">{t("form")}</span>
             </>
           ) : (
             <span className="text-white">{title}</span>
@@ -45,7 +50,7 @@ export default function AuthLayout({
       </div>
 
       <p className="text-xs text-gray-400 mt-8">
-        Foundation as Fabric · Continuous Confidence
+        {t("foundation_as_fabric_continuous_confidence")}
       </p>
     </div>
   );

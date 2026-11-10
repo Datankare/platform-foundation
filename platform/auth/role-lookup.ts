@@ -14,6 +14,8 @@
  */
 
 import type { Tx } from "@/platform/data";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 export interface RoleWithPermissions {
   readonly id: string;
@@ -53,10 +55,12 @@ async function read<R extends Record<string, unknown>>(
   try {
     return (await tx.query<R>(text, values)).rows;
   } catch (err) {
-    throw new LookupUnavailableError(
+    // The store's own text is logged; the error says only what could not be read (R-77).
+    logCaught(logger, "Role lookup failed", err, {
       what,
-      err instanceof Error ? err.message : String(err)
-    );
+      route: "platform/auth/role-lookup",
+    });
+    throw new LookupUnavailableError(what, "the store did not answer");
   }
 }
 

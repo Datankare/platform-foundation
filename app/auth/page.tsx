@@ -7,10 +7,11 @@
 
 import type { Metadata } from "next";
 import AuthPageClient from "./AuthPageClient";
+import { renderMessage } from "@/platform/errors/messages";
 
 export const metadata: Metadata = {
-  title: "Sign In — Platform Foundation",
-  description: "Sign in or create an account",
+  title: renderMessage("screens.app.meta.auth_title"),
+  description: renderMessage("screens.app.meta.auth_description"),
 };
 
 export default function AuthRoute() {

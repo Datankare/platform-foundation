@@ -34,6 +34,11 @@ import type { ModerationAction } from "@/platform/moderation/types";
 import type { ReviewRecommendation } from "@/platform/moderation/review-assist";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { readRefusal } from "@/platform/errors/refusal";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const msg = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.review_dashboard.${key}`, values);
 
 // ── Theme ─────────────────────────────────────────────────────────────
 
@@ -142,7 +147,7 @@ async function fetchQueue(status: ReviewStatus | "all"): Promise<QueueResult> {
     const data = await res.json();
     return { items: Array.isArray(data.items) ? data.items : [], error: null };
   } catch {
-    return { items: [], error: "Could not connect to the review service." };
+    return { items: [], error: msg("service_unreachable") };
   }
 }
 
@@ -210,12 +215,12 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "The action could not be completed.");
+        setError(data.error ?? msg("the_action_could_not_be"));
         return false;
       }
       return true;
     } catch {
-      setError("Could not connect to the review service.");
+      setError(msg("could_not_connect_to_the"));
       return false;
     } finally {
       setBusyId(null);
@@ -272,7 +277,7 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
   const handleResolveSubmit = useCallback(async () => {
     if (!draft) return;
     if (!draft.reviewerNotes.trim()) {
-      setError("Reviewer notes are required to resolve.");
+      setError(msg("reviewer_notes_are_required_to"));
       return;
     }
     const body: Record<string, unknown> = {
@@ -293,18 +298,18 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
       data-testid="review-dashboard"
     >
       <div className="flex items-center justify-between mb-4">
-        <h2 className={`text-lg font-semibold ${t.heading}`}>Review queue</h2>
+        <h2 className={`text-lg font-semibold ${t.heading}`}>{msg("review_queue")}</h2>
         <button
           type="button"
           onClick={() => load(filter)}
           className={`px-3 py-1 rounded-md text-sm font-medium ${t.secondaryBtn}`}
           data-testid="rd-refresh"
         >
-          Refresh
+          {msg("refresh")}
         </button>
       </div>
 
-      <div className="flex gap-2 mb-4" role="group" aria-label="Filter by status">
+      <div className="flex gap-2 mb-4" role="group" aria-label={msg("filter_by_status")}>
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
@@ -316,7 +321,7 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
             }`}
             data-testid={`rd-filter-${s}`}
           >
-            {s}
+            {msg(`filter_${s}`)}
           </button>
         ))}
       </div>
@@ -333,13 +338,13 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
 
       {loading && (
         <div className={`py-8 text-center text-sm ${t.muted}`} data-testid="rd-loading">
-          Loading review queue…
+          {msg("loading_review_queue")}
         </div>
       )}
 
       {!loading && !error && items.length === 0 && (
         <div className={`py-8 text-center text-sm ${t.muted}`} data-testid="rd-empty">
-          No items in the review queue.
+          {msg("no_items_in_the_review")}
         </div>
       )}
 
@@ -402,7 +407,7 @@ function ReviewCard(props: ReviewCardProps) {
           className={`text-xs mb-2 ${t.muted}`}
           data-testid={`rd-appeal-reason-${item.id}`}
         >
-          Appeal: {item.appealReason}
+          {msg("appeal_reason", { reason: item.appealReason ?? "" })}
         </p>
       )}
 
@@ -415,7 +420,7 @@ function ReviewCard(props: ReviewCardProps) {
               className={`px-3 py-1 rounded-md text-sm font-medium ${t.secondaryBtn}`}
               data-testid={`rd-assist-btn-${item.id}`}
             >
-              Get AI suggestion
+              {msg("get_ai_suggestion")}
             </button>
           )}
           {assist?.loading && (
@@ -423,7 +428,7 @@ function ReviewCard(props: ReviewCardProps) {
               className={`text-sm ${t.muted}`}
               data-testid={`rd-assist-loading-${item.id}`}
             >
-              Generating suggestion…
+              {msg("generating_suggestion")}
             </span>
           )}
           {assist?.fetched && assist.rec && (
@@ -431,8 +436,11 @@ function ReviewCard(props: ReviewCardProps) {
               className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-sm text-blue-800"
               data-testid={`rd-assist-banner-${item.id}`}
             >
-              Suggested: {assist.rec.recommendation} — {assist.rec.rationale}{" "}
-              <span className="text-blue-600">(advisory; you decide)</span>
+              {msg("suggested", {
+                recommendation: assist.rec.recommendation,
+                rationale: assist.rec.rationale,
+              })}{" "}
+              <span className="text-blue-600">{msg("advisory_you_decide")}</span>
             </div>
           )}
           {assist?.fetched && !assist.rec && (
@@ -440,7 +448,7 @@ function ReviewCard(props: ReviewCardProps) {
               className={`text-sm ${t.muted}`}
               data-testid={`rd-assist-none-${item.id}`}
             >
-              No suggestion available right now.
+              {msg("no_suggestion_available_right_now")}
             </span>
           )}
         </div>
@@ -454,7 +462,7 @@ function ReviewCard(props: ReviewCardProps) {
           className="px-3 py-1 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
           data-testid={`rd-claim-${item.id}`}
         >
-          Claim
+          {msg("claim")}
         </button>
       )}
 
@@ -466,7 +474,7 @@ function ReviewCard(props: ReviewCardProps) {
             className="px-3 py-1 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
             data-testid={`rd-resolve-open-${item.id}`}
           >
-            Resolve
+            {msg("resolve")}
           </button>
           <button
             type="button"
@@ -475,14 +483,16 @@ function ReviewCard(props: ReviewCardProps) {
             className={`px-3 py-1 rounded-md text-sm font-medium ${t.secondaryBtn} disabled:opacity-50`}
             data-testid={`rd-release-${item.id}`}
           >
-            Release
+            {msg("release")}
           </button>
         </div>
       )}
 
       {item.status === "resolved" && (
         <p className={`text-sm ${t.muted}`} data-testid={`rd-decision-${item.id}`}>
-          Decision: {item.decision}
+          {msg("decision_line", {
+            decision: item.decision ? msg(`decision_${item.decision}`) : "",
+          })}
         </p>
       )}
 
@@ -527,7 +537,7 @@ function ResolvePanel({
       className={`mt-3 rounded-lg border p-3 ${t.panel}`}
       data-testid={`rd-resolve-panel-${item.id}`}
     >
-      <label className="block text-xs mb-1">Decision</label>
+      <label className="block text-xs mb-1">{msg("decision")}</label>
       <select
         value={draft.decision}
         onChange={(e) =>
@@ -538,14 +548,14 @@ function ResolvePanel({
       >
         {DECISIONS.map((d) => (
           <option key={d} value={d}>
-            {d}
+            {msg(`decision_${d}`)}
           </option>
         ))}
       </select>
 
       {draft.decision === "modify" && (
         <div data-testid="rd-modify-block">
-          <label className="block text-xs mb-1">Modified action</label>
+          <label className="block text-xs mb-1">{msg("modified_action")}</label>
           <select
             value={draft.modifiedAction}
             onChange={(e) =>
@@ -556,19 +566,19 @@ function ResolvePanel({
           >
             {MODIFIED_ACTIONS.map((a) => (
               <option key={a} value={a}>
-                {a}
+                {msg(`action_${a}`)}
               </option>
             ))}
           </select>
         </div>
       )}
 
-      <label className="block text-xs mb-1">Reviewer notes</label>
+      <label className="block text-xs mb-1">{msg("reviewer_notes")}</label>
       <textarea
         value={draft.reviewerNotes}
         onChange={(e) => onChange({ ...draft, reviewerNotes: e.target.value })}
         rows={3}
-        placeholder="Explain the decision…"
+        placeholder={msg("explain_the_decision")}
         className={`w-full mb-2 rounded-md border px-2 py-1 text-sm ${t.input}`}
         data-testid="rd-notes"
       />
@@ -581,7 +591,7 @@ function ResolvePanel({
           className="px-3 py-1 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
           data-testid="rd-resolve-submit"
         >
-          Submit decision
+          {msg("submit_decision")}
         </button>
         <button
           type="button"
@@ -589,7 +599,7 @@ function ResolvePanel({
           className={`px-3 py-1 rounded-md text-sm font-medium ${t.secondaryBtn}`}
           data-testid="rd-resolve-cancel"
         >
-          Cancel
+          {msg("cancel")}
         </button>
       </div>
     </div>
@@ -603,12 +613,15 @@ function ItemHeader({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }) {
     <div className="flex flex-wrap items-center gap-2 mb-2">
       <Badge className={SOURCE_BADGE[item.source]}>{item.source}</Badge>
       <Badge className={PRIORITY_BADGE[item.priority]}>{item.priority}</Badge>
-      <Badge className={STATUS_BADGE[item.status]}>{item.status}</Badge>
+      <Badge className={STATUS_BADGE[item.status]}>{msg(`filter_${item.status}`)}</Badge>
       <span
         className={`ml-auto text-xs ${t.muted}`}
         data-testid={`rd-trajectory-${item.id}`}
       >
-        traj: {item.moderationResult.trajectoryId} · user: {item.targetUserId}
+        {msg("trajectory_and_user", {
+          trajectory: item.moderationResult.trajectoryId ?? "",
+          user: item.targetUserId,
+        })}
       </span>
     </div>
   );
@@ -630,7 +643,7 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
           className="flex items-center gap-2 mb-2"
           data-testid={`rd-confidence-${item.id}`}
         >
-          <span className={`text-xs ${t.muted} w-20`}>Confidence</span>
+          <span className={`text-xs ${t.muted} w-20`}>{msg("confidence")}</span>
           <div className={`flex-1 h-2 rounded-full ${t.track}`}>
             <div
               className="h-2 rounded-full bg-amber-500"
@@ -644,7 +657,9 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
       <div className="flex flex-wrap gap-1.5 mb-2">
         <Chip className="bg-blue-100 text-blue-800">{m.triggeredBy}</Chip>
         {severity && (
-          <Chip className="bg-amber-100 text-amber-800">severity: {severity}</Chip>
+          <Chip className="bg-amber-100 text-amber-800">
+            {msg("severity", { severity: String(severity) })}
+          </Chip>
         )}
         {categories.map((cat) => (
           <Chip key={cat} className="bg-gray-100 text-gray-700">
@@ -659,7 +674,7 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
       </div>
 
       <p className="text-sm mb-1">
-        <span className={t.muted}>Action:</span> {m.action}
+        <span className={t.muted}>{msg("action")}</span> {msg(`action_${m.action}`)}
       </p>
       <p className="text-sm mb-2">{m.reasoning}</p>
     </div>
@@ -686,7 +701,7 @@ function ExplanationTimeline({ item, t }: { item: ReviewQueueItem; t: ThemeClass
       ))}
       {chain.conclusion && (
         <p className={`text-xs mt-1 ${t.muted}`} data-testid={`rd-conclusion-${item.id}`}>
-          Conclusion: {chain.conclusion}
+          {msg("conclusion", { conclusion: chain.conclusion })}
         </p>
       )}
     </div>

@@ -25,15 +25,22 @@ export const DEFAULT_BACKOFF: BackoffPolicy = Object.freeze({
 
 /** Validate a policy: a positive base no larger than its maximum, both at most a day. */
 export function checkBackoff(policy: BackoffPolicy): BackoffPolicy {
+  const problem = backoffProblem(policy);
+  if (problem) throw new RangeError(problem);
+  return Object.freeze({ baseMs: policy.baseMs, maxMs: policy.maxMs });
+}
+
+/** What is wrong with a policy, in this module's words; undefined when it is valid. */
+export function backoffProblem(policy: BackoffPolicy): string | undefined {
   const { baseMs, maxMs } = policy;
   const day = 24 * 60 * 60_000;
   if (!Number.isInteger(baseMs) || baseMs < 1_000 || baseMs > day) {
-    throw new RangeError("backoff.baseMs must be a whole number of ms, 1 s – 1 day");
+    return "backoff.baseMs must be a whole number of ms, 1 s – 1 day";
   }
   if (!Number.isInteger(maxMs) || maxMs < baseMs || maxMs > day) {
-    throw new RangeError("backoff.maxMs must be a whole number of ms, baseMs – 1 day");
+    return "backoff.maxMs must be a whole number of ms, baseMs – 1 day";
   }
-  return Object.freeze({ baseMs, maxMs });
+  return undefined;
 }
 
 /**

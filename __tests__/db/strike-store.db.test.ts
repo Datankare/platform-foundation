@@ -131,7 +131,12 @@ dbDescribe("PostgresStrikeStore", () => {
     it("refuses a strike for a user of no tenant it can see, and says why (L19)", async () => {
       const res = await store.recordStrike(strike(randomUUID()));
       expect(res.success).toBe(false);
-      expect(res.error).toMatch(/foreign key/);
+      // L19's why is in the log (R-77): the result's text is fixed.
+      expect(res.error).toBe("Failed to record strike");
+      expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ error: expect.stringMatching(/foreign key/) })
+      );
     });
 
     it("refuses a strike whose user id is not a uuid", async () => {
@@ -205,10 +210,11 @@ dbDescribe("PostgresStrikeStore", () => {
       const user = randomUUID();
       await runWithoutTenant(async () => {
         const res = await store.recordStrike(strike(user));
-        expect(res).toMatchObject({
-          success: false,
-          error: expect.stringMatching(/tenant/i),
-        });
+        expect(res).toMatchObject({ success: false, error: "Failed to record strike" });
+        expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({ error: expect.stringMatching(/tenant/i) })
+        );
         await expect(store.getActiveStrikes(user)).rejects.toThrow(/tenant/i);
         expect(await store.queryStrikes({ userId: user })).toEqual([]);
         await expect(store.expireStrikes()).rejects.toThrow(/tenant/i);

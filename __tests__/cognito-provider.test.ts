@@ -371,7 +371,9 @@ describe("CognitoAuthProvider — email verification", () => {
     const result = await provider.confirmEmailVerification("test@example.com", "000000");
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Invalid verification code");
+    // R-77: the result names the operation and Cognito's exception type; its text is logged.
+    expect(result.error).toBe("Verification failed: CodeMismatchException");
+    expect(result.error).not.toContain("Invalid verification code");
   });
 });
 
@@ -433,7 +435,13 @@ describe("CognitoAuthProvider — resilience", () => {
     mockFetch.mockRejectedValueOnce(new Error("Network down"));
 
     const provider = new CognitoAuthProvider(TEST_CONFIG);
-    await expect(provider.signOut("some-token")).rejects.toThrow("Network down");
+    // R-77: the network's own text is logged, not carried by the error.
+    const err = await provider.signOut("some-token").catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      cognitoType: "NetworkError",
+      message: "Cognito could not be reached",
+    });
+    expect((err as Error).message).not.toContain("Network down");
   });
 
   it("verifyToken returns null on network failure (P6)", async () => {

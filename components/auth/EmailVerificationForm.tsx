@@ -1,6 +1,27 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.email_verification.${key}`, values);
+
+/**
+ * "We sent a verification code to {email}" as one message (any word order), the address styled
+ * where the translation puts it.
+ */
+function sentCodeTo(email: string): React.ReactNode {
+  const mark = "\u0001";
+  const [before, after = ""] = t("sent_code_to", { email: mark }).split(mark);
+  return (
+    <>
+      {before}
+      <span className="text-white font-medium">{email}</span>
+      {after}
+    </>
+  );
+}
 
 interface EmailVerificationFormProps {
   email: string;
@@ -56,11 +77,10 @@ export default function EmailVerificationForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">Verify Your Email</h2>
-      <p className="text-sm text-gray-400 text-center">
-        {"We sent a verification code to "}
-        <span className="text-white font-medium">{email}</span>
-      </p>
+      <h2 className="text-xl font-bold text-white text-center">
+        {t("verify_your_email")}
+      </h2>
+      <p className="text-sm text-gray-400 text-center">{sentCodeTo(email)}</p>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
@@ -103,7 +123,7 @@ export default function EmailVerificationForm({
           disabled={!canSubmit}
           className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {isLoading ? "Verifying..." : "Verify Email"}
+          {isLoading ? t("verifying") : t("verify_email")}
         </button>
       </form>
 
@@ -114,8 +134,8 @@ export default function EmailVerificationForm({
           className="text-sm text-blue-400 hover:text-blue-300 transition disabled:text-gray-600 disabled:cursor-not-allowed"
         >
           {resendCooldown > 0
-            ? `Resend code in ${resendCooldown}s`
-            : "Resend verification code"}
+            ? t("resend_in", { seconds: String(resendCooldown) })
+            : t("resend_verification_code")}
         </button>
       </div>
 
@@ -124,7 +144,7 @@ export default function EmailVerificationForm({
           onClick={onBackToLogin}
           className="text-blue-400 hover:text-blue-300 transition"
         >
-          Back to Sign In
+          {t("back_to_sign_in")}
         </button>
       </p>
     </div>

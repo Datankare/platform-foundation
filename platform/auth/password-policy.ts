@@ -17,6 +17,7 @@
 
 import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
+import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
 
 // ============================================================
 // Types (existing Phase 1 API — do not change)
@@ -343,7 +344,10 @@ export async function saveGlobalPasswordPolicy(
     );
     return { success: true };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    logCaught(logger, "Password policy update failed", err, {
+      route: "platform/auth/password-policy",
+    });
+    return { success: false, error: WRITE_FAILED };
   }
 }
 

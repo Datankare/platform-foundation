@@ -31,6 +31,8 @@ import {
   USER_DATA_TABLES,
   exportUserTables,
 } from "@/platform/auth/user-data";
+import { READ_FAILED, logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 /** The error an export over EXPORT_MAX_ROWS rows answers with (nothing is disclosed). */
 export const EXPORT_TOO_LARGE = "export.too_large";
@@ -120,7 +122,11 @@ async function collectUserData(
   } catch (err) {
     if (err instanceof ExportTooLargeError)
       return { data: {}, errors: [EXPORT_TOO_LARGE] };
-    errors.push(`store: ${err instanceof Error ? err.message : String(err)}`);
+    logCaught(logger, "Data export: the platform's tables could not be read", err, {
+      userId,
+      route: "platform/auth/data-export",
+    });
+    errors.push(`store: ${READ_FAILED}`);
   }
 
   // 6. Registered module data
@@ -133,9 +139,12 @@ async function collectUserData(
         exportData[mod.moduleName] = result.data;
       }
     } catch (err) {
-      errors.push(
-        `${mod.moduleName}: ${err instanceof Error ? err.message : String(err)}`
-      );
+      logCaught(logger, "Data export: a module could not be read", err, {
+        userId,
+        module: mod.moduleName,
+        route: "platform/auth/data-export",
+      });
+      errors.push(`${mod.moduleName}: ${READ_FAILED}`);
     }
   }
 

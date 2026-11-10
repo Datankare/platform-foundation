@@ -24,6 +24,11 @@
 import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import {
+  CALL_FAILED,
+  WRITE_FAILED,
+  logCaught,
+} from "@/platform/observability/caught-error";
 import { emailHash } from "@/platform/auth/user-provisioning";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
 import {
@@ -72,13 +77,33 @@ export const ADDRESS_REPLACEMENTS: readonly string[] = [
   "update app_sessions set state = jsonb_replace_text_value(state, $1::text, $2::text) where jsonb_may_mention_text(state, $1::text)",
 ];
 
-/** Run a write; its error message, or undefined when it succeeded. */
-async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
+/** The soft delete found no account with the id. */
+class NoSuchUser extends Error {}
+
+/** What failure() says for NoSuchUser. */
+const NO_SUCH_USER = "no such user";
+
+/**
+ * Run a write: undefined when it succeeded; otherwise its error is logged with the erasure's
+ * `step` and WRITE_FAILED is returned — erasure results and records are read on the admin
+ * console, so a store's own text never goes into them (R-77).
+ */
+async function failure(
+  step: string,
+  write: () => Promise<unknown>
+): Promise<string | undefined> {
   try {
     await write();
     return undefined;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    // The account is not there: the result says so in this module's words (the delete route
+    // answers it as not found), never a store's text.
+    if (err instanceof NoSuchUser) return NO_SUCH_USER;
+    logCaught(logger, "Erasure write failed", err, {
+      step,
+      route: "platform/auth/gdpr-deletion",
+    });
+    return WRITE_FAILED;
   }
 }
 
@@ -95,7 +120,10 @@ async function runModule(
   try {
     return await step();
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    logCaught(logger, "Erasure module step failed", err, {
+      route: "platform/auth/gdpr-deletion",
+    });
+    return { success: false, error: CALL_FAILED };
   }
 }
 
@@ -219,7 +247,7 @@ export async function softDeleteUser(
         //    banned account's address is kept only as a hash, so the ban follows the address to a
         //    new identity and erasing the account does not lift it (audit A-11).
         let subject: string | null = null;
-        const userError = await failure(() =>
+        const userError = await failure("soft delete: the account's rows", () =>
           withTenantTx(async (tx) => {
             const before = await tx.query<{
               email: string | null;
@@ -229,7 +257,7 @@ export async function softDeleteUser(
               "select email, account_status::text as status, cognito_sub as sub from users where id = $1::uuid for update",
               [userId]
             );
-            if (before.rowCount === 0) throw new Error("no such user");
+            if (before.rowCount === 0) throw new NoSuchUser();
             const standing = before.rows[0]?.status ?? null;
             subject = before.rows[0]?.sub ?? null;
             const email = before.rows[0]?.email;
@@ -343,7 +371,7 @@ async function recordProvenIdentityPool(
 ): Promise<void> {
   const pool = await provenIdentityPool({ userId, sub });
   if (!pool) return;
-  const error = await failure(() =>
+  const error = await failure("the identity pool record", () =>
     withTenantTx((tx) =>
       tx.query(
         "update user_deletions set identity_pool = $2 where user_id = $1::uuid and identity_pool is null",
@@ -455,7 +483,7 @@ async function eraseExternalStores(
     { userId, sub: rows[0].sub, pool: rows[0].pool },
     rows[0].external ?? {}
   );
-  const writeError = await failure(() =>
+  const writeError = await failure("the external stores' outcomes", () =>
     withTenantTx((tx) =>
       tx.query(
         // Merged per store (round 1, attestation): a store an operator attested meanwhile keeps
@@ -607,7 +635,7 @@ export async function hardPurgeUser(
   }
 
   // 2. The platform's tables, the user row last, in one transaction.
-  const userError = await failure(async () => {
+  const userError = await failure("hard purge: the platform's tables", async () => {
     steps = await withTenantTx((tx) => eraseUserData(tx, userId));
   });
 
@@ -616,16 +644,20 @@ export async function hardPurgeUser(
   }
 
   // 3. The stores outside the database: none may still hold the person when it is complete.
-  const external = await eraseExternalStores(userId, subject).catch((err: unknown) => ({
-    pending: [err instanceof Error ? err.message : String(err)],
-  }));
+  const external = await eraseExternalStores(userId, subject).catch((err: unknown) => {
+    logCaught(logger, "Erasure: the external stores could not be erased", err, {
+      userId,
+      route: "platform/auth/gdpr-deletion",
+    });
+    return { pending: ["the external stores (their erasure did not complete)"] };
+  });
   if (external.pending.length > 0) {
     errors.push(`external: ${external.pending.join(", ")} not yet erased`);
   }
 
   // 4. Mark the erasure complete — only when everything was removed.
   if (errors.length === 0) {
-    const recordError = await failure(() =>
+    const recordError = await failure("hard purge: the deletion record", () =>
       withTenantTx((tx) =>
         tx.query(
           "update user_deletions set purged_at = now(), purge_retry_at = null, last_purge_error = null where user_id = $1::uuid and purged_at is null",
@@ -757,7 +789,7 @@ function failingSteps(errors: readonly string[]): string {
 
 /** Record a failed purge and when it is tried again (1 h, doubling, at most 7 days). */
 async function deferPurge(userId: string, steps: string): Promise<void> {
-  const writeError = await failure(() =>
+  const writeError = await failure("a deferred purge's record", () =>
     withTenantTx((tx) =>
       tx.query(
         `update user_deletions
@@ -810,7 +842,7 @@ export async function eraseMentionsInOtherTenants(
     }
     const id = userId.toLowerCase();
     let aborted = false;
-    const error = await failure(async () => {
+    const error = await failure("mentions in other tenants", async () => {
       // In page ranges, one transaction each (review round 1, item 6: one statement read the
       // whole audit log, every tenant's, in one transaction). Records written after the size is
       // read are new — none names an account erased before them.

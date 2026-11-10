@@ -17,6 +17,8 @@
  */
 
 import { getAuthProvider } from "@/platform/auth/config";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 import { hasDatabase, withPlatformTx } from "@/platform/data";
 import {
   getCognitoAdminCredentials,
@@ -71,10 +73,13 @@ async function databaseCheck(): Promise<ReadinessCheck> {
       detail: `The request connection signs in as ${r.role}, under row-level security.`,
     };
   } catch (err) {
+    logCaught(logger, "Readiness: the database could not be reached", err, {
+      route: "platform/tenancy/readiness",
+    });
     return {
       name: "database",
       state: "not_ready",
-      detail: `The database could not be reached: ${err instanceof Error ? err.message : String(err)}`,
+      detail: "The database could not be reached (the detail is in the log).",
     };
   }
 }

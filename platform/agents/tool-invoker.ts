@@ -20,6 +20,7 @@ import {
   ActionNotRecordedError,
   ApprovedRunFailedError,
   LOST_COMMIT_CODE,
+  RUN_RAISED,
   executeActionPipeline,
   isPipelineConflict,
   type PipelineOutcome,
@@ -40,6 +41,7 @@ import { generateSecureId } from "./utils";
 import { performExternalEffect, type ExternalEffectOutcome } from "./external-effect";
 import { storedJsonViolation } from "@/platform/errors/json-limits";
 import { logger } from "@/lib/logger";
+import { logCaught } from "@/platform/observability/caught-error";
 import { raiseAlert } from "@/platform/observability/alert";
 
 /** Effects that reach outside the system and therefore require a ledger entry (D7). */
@@ -247,13 +249,14 @@ export async function invokeTool<TState = unknown>(
         }
       } catch (err) {
         if (!approved || err instanceof ActionNotRecordedError) throw err;
-        throw new ActionNotRecordedError(
-          tool.id,
-          pendingOperationId,
-          true,
-          err instanceof Error ? err.message : String(err),
-          { cause: err }
-        );
+        logCaught(logger, "Approved tool run: output not recorded", err, {
+          toolId: tool.id,
+          operationId: pendingOperationId,
+          route: "platform/agents/tool-invoker",
+        });
+        throw new ActionNotRecordedError(tool.id, pendingOperationId, true, RUN_RAISED, {
+          cause: err,
+        });
       }
     }
     throw new SchemaValidationError(

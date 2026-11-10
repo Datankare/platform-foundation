@@ -13,6 +13,8 @@ import type {
   HealthProbe as ObservabilityHealthProbe,
 } from "@/platform/observability/types";
 import type { CacheProvider } from "./types";
+import { PROBE_FAILED, logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 /**
  * Health probe interface (matches platform/observability HealthProbe).
@@ -49,11 +51,18 @@ export function createCacheHealthProbe(cache: CacheProvider): HealthProbe {
           },
         };
       } catch (error) {
+        logCaught(
+          logger,
+          "Cache health check failed",
+          error,
+          { provider: cache.name },
+          "warn"
+        );
         return {
           status: "unhealthy",
           details: {
             provider: cache.name,
-            error: error instanceof Error ? error.message : "Unknown error",
+            error: PROBE_FAILED,
           },
         };
       }
@@ -86,10 +95,11 @@ export function createCacheReadinessProbe(
           checkedAt,
         };
       } catch (error) {
+        logCaught(logger, "Cache health check failed", error, { probe: "cache" }, "warn");
         return {
           name: "cache",
           status: "unhealthy",
-          detail: error instanceof Error ? error.message : "Unknown error",
+          detail: PROBE_FAILED,
           checkedAt,
         };
       }

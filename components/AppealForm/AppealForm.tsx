@@ -21,6 +21,11 @@
 import { useCallback, useState } from "react";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { readRefusal } from "@/platform/errors/refusal";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const msg = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.appeal.${key}`, values);
 
 type Variant = "light" | "dark";
 
@@ -91,7 +96,7 @@ export default function AppealForm({
       setSubmitted(true);
       onSubmitted?.(data.item);
     } catch {
-      setError("Could not connect to the appeals service.");
+      setError(msg("could_not_connect_to_the"));
     } finally {
       setSubmitting(false);
     }
@@ -105,8 +110,7 @@ export default function AppealForm({
           role="status"
           data-testid="af-success"
         >
-          Your appeal has been submitted for review. You&apos;ll be notified once a
-          moderator has reviewed it.
+          {msg("your_appeal_has_been_submitted")}
         </div>
       </div>
     );
@@ -118,7 +122,7 @@ export default function AppealForm({
         htmlFor="appeal-reason"
         className={`block text-sm font-medium mb-1 ${t.label}`}
       >
-        Why should this decision be reconsidered?
+        {msg("why_should_this_decision_be")}
       </label>
       <textarea
         id="appeal-reason"
@@ -126,15 +130,17 @@ export default function AppealForm({
         onChange={(e) => setReason(e.target.value)}
         disabled={submitting}
         rows={5}
-        placeholder="Explain the context the automated system may have missed…"
+        placeholder={msg("explain_the_context_the_automated")}
         className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:border-blue-400 disabled:opacity-50 ${t.input}`}
         data-testid="af-reason"
       />
 
       <div className={`mt-1 text-xs ${t.muted}`} data-testid="af-counter">
         {tooShort
-          ? `${minReasonLength - trimmedLength} more character(s) needed`
-          : `${trimmedLength} characters`}
+          ? msg("more_characters_needed", {
+              count: String(minReasonLength - trimmedLength),
+            })
+          : msg("characters", { count: String(trimmedLength) })}
       </div>
 
       {error && (
@@ -154,7 +160,7 @@ export default function AppealForm({
         className="mt-3 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         data-testid="af-submit"
       >
-        {submitting ? "Submitting…" : "Submit appeal"}
+        {submitting ? msg("submitting") : msg("submit_appeal")}
       </button>
     </div>
   );

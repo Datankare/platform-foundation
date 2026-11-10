@@ -18,6 +18,7 @@
 import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited, recordAudit } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import { WRITE_FAILED } from "@/platform/observability/caught-error";
 
 export type ProfileVisibility = "private" | "friends" | "public";
 
@@ -237,17 +238,15 @@ export async function updateProfile(
             )
           );
         } catch (err) {
-          error = err instanceof Error ? err.message : String(err);
-        }
-
-        if (error) {
           logger.error("Profile update failed", {
             userId,
-            error,
+            error: err instanceof Error ? err.message : String(err),
             route: "platform/auth/profile",
           });
-          return { success: false, error };
+          error = WRITE_FAILED;
         }
+
+        if (error) return { success: false, error };
 
         return { success: true };
       }

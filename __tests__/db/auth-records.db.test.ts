@@ -155,7 +155,12 @@ dbDescribe(`${SUITE} consent`, () => {
       grantConsent({ userId: ghost, consentType: "analytics", consentVersion: "1" })
     );
     expect(out.success).toBe(false);
-    expect(out.error).toMatch(/foreign key/);
+    // R-77: the store's refusal is logged; the result says the write did not complete.
+    expect(out.error).toBe("the write did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: expect.stringMatching(/foreign key/) })
+    );
     const outcomes = (await auditOf(t, ghost)).map((r) => (r.details as Row).outcome);
     expect(outcomes.sort()).toEqual(["attempted", "failed"]);
     const bad = await t.run(() => revokeConsent({ userId: "x", consentType: "a" }));
@@ -266,7 +271,12 @@ dbDescribe(`${SUITE} devices`, () => {
   it("reports a refused write: a device for no such user, a malformed id", async () => {
     const out = await t.run(() => registerDevice(uuid(), "dev-1"));
     expect(out.success).toBe(false);
-    expect(out.error).toMatch(/foreign key/);
+    // R-77: the store's refusal is logged; the result says the write did not complete.
+    expect(out.error).toBe("the write did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: expect.stringMatching(/foreign key/) })
+    );
     // A malformed id is refused by the audit record itself (not a user id).
     await expect(t.run(() => removeDevice("x", "dev-1"))).resolves.toEqual({
       success: false,
@@ -349,7 +359,12 @@ dbDescribe(`${SUITE} entitlements`, () => {
       })
     );
     expect(out.success).toBe(false);
-    expect(out.error).toMatch(/foreign key/);
+    // R-77: the store's refusal is logged; the result says the write did not complete.
+    expect(out.error).toBe("the write did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: expect.stringMatching(/foreign key/) })
+    );
     const outcomes = (await auditOf(t, user)).map((r) => (r.details as Row).outcome);
     expect(outcomes.sort()).toEqual(["attempted", "failed"]);
     expect(await sql(t, "select id from user_entitlements")).toEqual([]);
@@ -695,7 +710,11 @@ dbDescribe(`${SUITE} data export`, () => {
     await runWithoutTenant(async () => {
       const out = await exportUserData(user);
       expect(out.data).toEqual({});
-      expect(out.errors).toEqual([expect.stringMatching(/^store: No tenant context/)]);
+      expect(out.errors).toEqual(["store: the read did not complete"]);
+      expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ error: expect.stringMatching(/No tenant context/) })
+      );
     });
   });
 });

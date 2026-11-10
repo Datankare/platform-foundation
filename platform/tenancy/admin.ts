@@ -31,6 +31,7 @@ import { TENANT_PURGE_AFTER_DAYS } from "./postgres-directory";
 import {
   CachedTenantDirectory,
   TenantDirectoryConflictError,
+  TENANT_CONFLICT_TEXT,
   getTenantDirectory,
   isTenantSlug,
   normaliseHost,
@@ -282,7 +283,7 @@ export async function provisionTenant(
         tenant = await directory.createTenant({ id, slug: input.slug, name });
       } catch (err) {
         if (err instanceof TenantDirectoryConflictError)
-          return fail(err.code, err.message);
+          return fail(err.code, TENANT_CONFLICT_TEXT[err.code]);
         throw err;
       }
       for (const host of hosts) {
@@ -317,7 +318,8 @@ export async function addTenantDomain(
     try {
       return ok(await getTenantDirectory().addDomain(tenantId, host));
     } catch (err) {
-      if (err instanceof TenantDirectoryConflictError) return fail(err.code, err.message);
+      if (err instanceof TenantDirectoryConflictError)
+        return fail(err.code, TENANT_CONFLICT_TEXT[err.code]);
       throw err;
     }
   });

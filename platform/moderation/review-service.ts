@@ -16,6 +16,7 @@
  */
 
 import { logger } from "@/lib/logger";
+import { logCaught } from "@/platform/observability/caught-error";
 import { getConfig } from "@/platform/auth/platform-config";
 import { withTenantTx, type Tx } from "@/platform/data";
 import { audited, AuditWriteError } from "@/platform/auth/audit";
@@ -570,13 +571,12 @@ async function applyOverturnSideEffects(
       });
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     logger.error("Review: strike expiry failed", {
       userId: item.targetUserId,
-      error: message,
+      error: err instanceof Error ? err.message : String(err),
       route: "platform/moderation/review-service",
     });
-    return `strike expiry failed: ${message}`;
+    return "strike expiry failed (the detail is in the log)";
   }
   return null;
 }
@@ -602,9 +602,12 @@ interface StatusChangeRecord {
 }
 
 /** A restoration that could not be made; the message is the failure returned to the caller. */
-class RestoreFailure extends Error {}
-
-const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+/** A restoration refused for a reason this module states (its words: shown to the reviewer). */
+class RestoreFailure extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
 
 /**
  * The most recent status change applied to an account (Sentinel's `sentinel_status_change`
@@ -625,7 +628,11 @@ async function latestStatusChange(
       [userId]
     ));
   } catch (err) {
-    throw new Error(`status history unreadable: ${errorText(err)}`, { cause: err });
+    logCaught(logger, "Review: status history unreadable", err, {
+      userId,
+      route: "platform/moderation/review-service",
+    });
+    throw new RestoreFailure("status history unreadable (the detail is in the log)");
   }
   const changes = rows
     .map((row) => row.details ?? {})
@@ -675,7 +682,11 @@ async function restoreAccountStatus(
           [item.targetUserId]
         ));
       } catch (err) {
-        throw new RestoreFailure(`account status unreadable: ${errorText(err)}`);
+        logCaught(logger, "Review: account status unreadable", err, {
+          userId: item.targetUserId,
+          route: "platform/moderation/review-service",
+        });
+        throw new RestoreFailure("account status unreadable (the detail is in the log)");
       }
       if (!current) return "account not found";
 
@@ -743,15 +754,14 @@ async function restoreAccountStatus(
       return null;
     });
   } catch (err) {
-    if (err instanceof RestoreFailure) return err.message;
-    const message = errorText(err);
+    if (err instanceof RestoreFailure) return err.reason;
     logger.error("Review: account status restoration failed", {
       userId: item.targetUserId,
       reviewerId,
-      error: message,
+      error: err instanceof Error ? err.message : String(err),
       route: "platform/moderation/review-service",
     });
-    return `account status restore failed: ${message}`;
+    return "account status restore failed (the detail is in the log)";
   }
 }
 

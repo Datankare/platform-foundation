@@ -689,7 +689,9 @@ describe("Health Probes — Song ID", () => {
     provider.errorToThrow = new Error("ECONNREFUSED");
     const status = await checkSongIdHealth(provider);
     expect(status.healthy).toBe(false);
-    expect(status.error).toContain("ECONNREFUSED");
+    // R-77: a fixed reason; the network's own text is logged.
+    expect(status.error).toBe("the provider could not be reached");
+    expect(status.error).not.toContain("ECONNREFUSED");
   });
 });
 
@@ -707,7 +709,8 @@ describe("Health Probes — Audio Converter", () => {
     converter.errorToThrow = new Error("fetch failed");
     const status = await checkAudioConverterHealth(converter);
     expect(status.healthy).toBe(false);
-    expect(status.error).toContain("fetch failed");
+    expect(status.error).toBe("the provider could not be reached");
+    expect(status.error).not.toContain("fetch failed");
   });
 });
 

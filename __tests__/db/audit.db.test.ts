@@ -14,6 +14,7 @@ jest.mock("@/lib/logger", () => ({
 
 import { createHash } from "node:crypto";
 import {
+  ACT_RAISED_REASON,
   AuditWriteError,
   audited,
   auditedResponse,
@@ -174,7 +175,13 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
       );
       const outcomes = rows.map((r) => `${r.details.outcome}:${r.details.reason ?? ""}`);
       expect(outcomes.sort()).toEqual(
-        ["attempted:", "attempted:", "failed:boom", "failed:refused"].sort()
+        // R-77: a thrown error's text is logged; its record names a fixed reason.
+        [
+          "attempted:",
+          "attempted:",
+          `failed:${ACT_RAISED_REASON}`,
+          "failed:refused",
+        ].sort()
       );
     });
 

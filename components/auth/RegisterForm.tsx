@@ -1,6 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.register.${key}`, values);
 
 interface RegisterFormProps {
   onSubmit: (email: string, password: string) => Promise<void>;
@@ -46,12 +51,12 @@ export default function RegisterForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">Create Account</h2>
+      <h2 className="text-xl font-bold text-white text-center">{t("create_account")}</h2>
 
       <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">
         <div>
           <label htmlFor="register-email" className="block text-sm text-gray-400 mb-1.5">
-            Email
+            {t("email")}
           </label>
           <input
             id="register-email"
@@ -59,7 +64,7 @@ export default function RegisterForm({
             autoComplete="username"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
+            placeholder={t("you_example_com")}
             disabled={isLoading}
             required
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
@@ -71,7 +76,7 @@ export default function RegisterForm({
             htmlFor="register-password"
             className="block text-sm text-gray-400 mb-1.5"
           >
-            Password
+            {t("password")}
           </label>
           <input
             id="register-password"
@@ -79,7 +84,7 @@ export default function RegisterForm({
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Create a strong password"
+            placeholder={t("create_a_strong_password")}
             disabled={isLoading}
             required
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
@@ -88,17 +93,26 @@ export default function RegisterForm({
           {password.length > 0 && (
             <div
               aria-live="polite"
-              aria-label="Password requirements"
+              aria-label={t("password_requirements")}
               className="mt-2 flex flex-col gap-1"
             >
               <PasswordCheck
-                label={`At least ${minPasswordLength} characters`}
+                label={t("at_least_characters", { count: String(minPasswordLength) })}
                 passed={passwordChecks.length}
               />
-              <PasswordCheck label="Uppercase letter" passed={passwordChecks.uppercase} />
-              <PasswordCheck label="Lowercase letter" passed={passwordChecks.lowercase} />
-              <PasswordCheck label="Number" passed={passwordChecks.number} />
-              <PasswordCheck label="Special character" passed={passwordChecks.special} />
+              <PasswordCheck
+                label={t("uppercase_letter")}
+                passed={passwordChecks.uppercase}
+              />
+              <PasswordCheck
+                label={t("lowercase_letter")}
+                passed={passwordChecks.lowercase}
+              />
+              <PasswordCheck label={t("number")} passed={passwordChecks.number} />
+              <PasswordCheck
+                label={t("special_character")}
+                passed={passwordChecks.special}
+              />
             </div>
           )}
         </div>
@@ -108,7 +122,7 @@ export default function RegisterForm({
             htmlFor="register-confirm"
             className="block text-sm text-gray-400 mb-1.5"
           >
-            Confirm Password
+            {t("confirm_password")}
           </label>
           <input
             id="register-confirm"
@@ -116,13 +130,13 @@ export default function RegisterForm({
             autoComplete="new-password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            placeholder="Confirm your password"
+            placeholder={t("confirm_your_password")}
             disabled={isLoading}
             required
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
           />
           {confirmPassword.length > 0 && !passwordChecks.match && (
-            <p className="text-red-400 text-xs mt-1">Passwords do not match</p>
+            <p className="text-red-400 text-xs mt-1">{t("passwords_do_not_match")}</p>
           )}
         </div>
 
@@ -141,17 +155,17 @@ export default function RegisterForm({
           disabled={!canSubmit}
           className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {isLoading ? "Creating account..." : "Create Account"}
+          {isLoading ? t("creating_account") : t("create_account")}
         </button>
       </form>
 
       <p className="text-center text-sm text-gray-400">
-        Already have an account?{" "}
+        {t("already_have_account")}{" "}
         <button
           onClick={onBackToLogin}
           className="text-blue-400 hover:text-blue-300 transition"
         >
-          Sign in
+          {t("sign_in")}
         </button>
       </p>
     </div>

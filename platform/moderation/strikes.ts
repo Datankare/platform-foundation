@@ -249,10 +249,7 @@ export class PostgresStrikeStore implements StrikeStore {
         error: err instanceof Error ? err.message : String(err),
         route: "platform/moderation/strikes",
       });
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : "Failed to record strike",
-      };
+      return { success: false, error: "Failed to record strike" };
     }
   }
 

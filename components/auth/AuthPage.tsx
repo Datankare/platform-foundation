@@ -14,8 +14,12 @@ import { useAuth } from "@/platform/auth/context";
 import type { SsoProvider } from "@/platform/auth/types";
 import { useSsoProviders } from "@/components/auth/useSsoProviders";
 import { useReturnError } from "@/components/auth/useReturnError";
-import { renderMessage } from "@/platform/errors/messages";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { readRefusal } from "@/platform/errors/refusal";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.page.${key}`, values);
 
 type AuthView =
   | "login"
@@ -43,7 +47,7 @@ async function startGuestSession(): Promise<
     guestId?: unknown;
   };
   if (typeof result.token !== "string" || typeof result.guestId !== "string") {
-    return { error: "Guest access failed" };
+    return { error: t("guest_access_failed") };
   }
   return {
     session: {
@@ -131,7 +135,7 @@ export default function AuthPage() {
       }
 
       if (!result.success) {
-        setError(result.error || "Sign-in failed");
+        setError(result.error || t("sign_in_failed"));
         return;
       }
 
@@ -139,7 +143,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
     } finally {
       setIsLoading(false);
     }
@@ -151,13 +155,13 @@ export default function AuthPage() {
     try {
       const auth = getAuthProvider();
       if (!dateOfBirth) {
-        setError("Please enter your date of birth first.");
+        setError(t("please_enter_your_date_of"));
         return;
       }
       const result = await auth.signUp(email, password, { dateOfBirth });
 
       if (!result.success) {
-        setError(result.error || "Registration failed");
+        setError(result.error || t("registration_failed"));
         return;
       }
 
@@ -166,7 +170,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
     } finally {
       setIsLoading(false);
     }
@@ -180,7 +184,7 @@ export default function AuthPage() {
       const result = await auth.confirmEmailVerification(pendingEmail, code);
 
       if (!result.success) {
-        setError(result.error || "Verification failed");
+        setError(result.error || t("verification_failed"));
         return;
       }
 
@@ -189,7 +193,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
     } finally {
       setIsLoading(false);
     }
@@ -202,7 +206,7 @@ export default function AuthPage() {
       const auth = getAuthProvider();
       const result = await auth.resendEmailVerification(pendingEmail);
       if (!result.success) {
-        setError(result.error || "Could not resend verification code.");
+        setError(result.error || t("could_not_resend_verification_code"));
         return false;
       }
       setNotice(renderMessage("screens.auth.code_resent"));
@@ -210,7 +214,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("Could not resend verification code.");
+      setError(t("could_not_resend_verification_code"));
       return false;
     } finally {
       setIsLoading(false);
@@ -225,7 +229,7 @@ export default function AuthPage() {
       const result = await auth.forgotPassword(email);
 
       if (!result.success) {
-        setError(result.error || "Could not send reset code");
+        setError(result.error || t("could_not_send_reset_code"));
         return false;
       }
       setPendingEmail(email);
@@ -233,7 +237,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
       return false;
     } finally {
       setIsLoading(false);
@@ -253,14 +257,14 @@ export default function AuthPage() {
 
       if (!result.success) {
         // The server's words: a wrong or expired code, the password policy, a rate limit.
-        setError(result.error || "Password reset failed");
+        setError(result.error || t("password_reset_failed"));
         return false;
       }
       return true;
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
       return false;
     } finally {
       setIsLoading(false);
@@ -279,7 +283,7 @@ export default function AuthPage() {
       );
 
       if (!result.success) {
-        setError(result.error || "Invalid code");
+        setError(result.error || t("invalid_code"));
         return;
       }
 
@@ -287,7 +291,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
     } finally {
       setIsLoading(false);
     }
@@ -314,7 +318,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
     } finally {
       setIsLoading(false);
     }
@@ -332,7 +336,7 @@ export default function AuthPage() {
       );
 
       if (!result.success) {
-        setError(result.error || "Could not set new password");
+        setError(result.error || t("could_not_set_new_password"));
         return;
       }
 
@@ -340,7 +344,7 @@ export default function AuthPage() {
     } catch {
       /* justified */
       // Auth errors shown to user via setError
-      setError("An unexpected error occurred. Please try again.");
+      setError(t("an_unexpected_error_occurred_please"));
     } finally {
       setIsLoading(false);
     }

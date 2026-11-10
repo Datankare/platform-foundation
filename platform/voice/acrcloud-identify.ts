@@ -219,9 +219,8 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
 
       return (await response.json()) as ACRCloudResponse;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       logger.error("ACRCloudIdentifier: identification failed", {
-        error: message,
+        error: err instanceof Error ? err.message : String(err),
         requestId,
         route: "platform/voice/acrcloud-identify",
       });

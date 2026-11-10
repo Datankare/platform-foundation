@@ -1,1 +1,47 @@
-{}
+{
+  "screens": {
+    "app": {
+      "spike": {
+        "voice_input_is_not_supported": "Voice input is not supported in this browser. Please use Chrome or Edge.",
+        "voice_recognition_failed_please_try": "Voice recognition failed. Please try again or type your input.",
+        "something_went_wrong": "Something went wrong.",
+        "network_error_please_check_your": "Network error. Please check your connection and try again.",
+        "audio_playback_failed": "Audio playback failed.",
+        "platform_validation_spike_v0_1": "Platform Validation Spike · v0.1",
+        "type_something_or_use_voice": "Type something or use voice input...",
+        "text_input": "Text input",
+        "too_long_please_shorten_to": "✗ Too long — please shorten to 100 characters or fewer",
+        "stop_recording": "Stop recording",
+        "start_voice_input": "Start voice input",
+        "stop": "Stop",
+        "speak": "Speak",
+        "clear_input": "Clear input",
+        "submit_and_translate": "Submit and translate",
+        "max_100_characters_sfw_content": "Max 100 characters · SFW content only · Press Enter to submit",
+        "translation_results": "Translation results",
+        "platform_foundation_foundation_as_fabric": "Platform Foundation · Foundation as Fabric · Continuous Confidence",
+        "brand_first": "PLAY",
+        "brand_second": "FORM",
+        "clear": "Clear",
+        "processing": "Processing...",
+        "translate_and_speak": "Translate & Speak",
+        "play_language_audio": "Play {language} audio"
+      },
+      "auth_page": {
+        "loading": "Loading..."
+      },
+      "meta": {
+        "site_title": "Platform Foundation",
+        "site_description": "Production-grade application platform — GenAI-native",
+        "home_description": "Platform Foundation — GenAI-native application platform",
+        "auth_title": "Sign In — Platform Foundation",
+        "auth_description": "Sign in or create an account"
+      },
+      "languages": {
+        "en": "English",
+        "hi": "Hindi",
+        "es": "Spanish"
+      }
+    }
+  }
+}

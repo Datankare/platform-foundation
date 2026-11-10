@@ -6986,7 +6986,186 @@ agent, not a person, and stay.
   ("Held at effectiveRisk "restricted" (effects: stateWrite)", now the catalog's words, the detail
   behind Details); the audit log's action broken mid-word.
 
-_Last updated: November 7, 2026 (TASK-202 — the admin console made usable: the owner's walk of 2026-11-07)_
+### TASK-205 — Caught-error text logged, never returned; every screen literal in the catalog
+
+| Field        | Detail                                                                                              |
+| ------------ | --------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-205                                                                                            |
+| **Type**     | Defect (internal text reached results, records and answers; English on screens outside the catalog) |
+| **Severity** | High (R-75 and R-77 were Important; R-78 Low)                                                       |
+| **Phase**    | Phase 5                                                                                             |
+| **Target**   | v6.0.0 (RC)                                                                                         |
+| **Status**   | Fixed on develop (sub-batch 55e of the residuals batch)                                             |
+| **Logged**   | 2026-11-06 (sweep 4: S4-C1, S4-C2, S4-C3 — register N-57, N-58, N-59; residuals R-75, R-77, R-78)   |
+
+Three residuals of TASK-194 rounds 14 and 15, open since:
+
+- **R-77 (N-58) — a caught error's text left its catch.** `__tests__/error-text-not-returned.test.ts`
+  scanned only `platform/admin`, `app/api` and `lib/`; the rest of `platform/` held 118 sites where
+  `err.message`, `String(err)` or `${err}` went into a result, a stored record, a thrown error's
+  reason, a health answer or a metric. Some reached people: the audit log's failed-act `reason`
+  (read on the admin console), erasure results and their external-store outcomes, the moderation
+  queue's restore and strike messages, approvals' `lastRunError`, `/api/health` details, a RAG
+  answer's explanation; the rest reached logs only by way of a field. Each site now logs the text
+  where it is caught, with its context, and carries a fixed text or a code
+  (`platform/observability/caught-error.ts`: `logCaught`, `failedWrite`, `WRITE_FAILED`,
+  `READ_FAILED`, `CALL_FAILED`, `PROBE_FAILED`). Where a caller acted on the text, it now acts on a
+  type: the age route answers `account.age_already_recorded` from the result's `errorCode` (it
+  matched English: `startsWith("the age is already recorded")`); the delete route's "no such user"
+  comes from a typed error; a relink report names which stamps were not published from
+  `NotPublishedError.parts`; a run's own refusal text travels as a field this module wrote
+  (`RelinkUsageError.usage`, `ChangedMeanwhile.detail`, `RestoreFailure.reason`,
+  `ValkeyUrlError.violation`, `TENANT_CONFLICT_TEXT` by code), never as another error's message. A
+  database probe's own timeout still says "did not answer within N ms" (`DatabaseProbeTimeout`). AI
+  failure metrics record the failure's class (`refused`, `transient: overloaded`, `error`).
+  `errorMessage()` (provider-health), a helper that returned an error's text, is gone.
+- **R-78 (N-59) — the diagnostic was lost.** Playform's export and erasure module turned a failure
+  into `err.message` through a helper (`failed(err)`); the export route logged only a count, so the
+  cause was nowhere. The helper now logs the cause with its step and returns fixed text; the route
+  logs which parts failed (`errors`, fixed texts naming the part); `platform/auth/data-export.ts`
+  logs each part's cause where it catches it.
+- **The guard.** It scans all of `platform/`, `app/api` and `lib/` (baseline 0, so any new site
+  fails), and follows a caught error into a helper that returns its text — the file's own
+  (`failed(err)`, `errorText(err)`, `this.codedFailure(err, …)`), or one another scanned file
+  exports and this one imports. A helper is a function whose parameter (untyped, `unknown`, `any` or
+  an `Error` type) has its text leave by the same rules; one that only logs it is not. Run on the
+  base trees it reports 138 sites in PF and 140 in Playform (the 118, the Cognito providers'
+  `codedFailure`, review-service's `errorText`, provider-health's `errorMessage`, Playform's
+  `failed(err)`); after this change, none.
+- **R-75 (N-57) — screen literals.** After TASK-202: PF 232, Playform 270. Every one is in the
+  catalog, in the pattern the screens already use — a module-local `t` over
+  `renderMessage("screens.<area>.<key>")`: shared screens in `messages/en.json`
+  (`screens.auth.{profile,page,login,register,forgot_password,new_password,age_gate,mfa_challenge,email_verification,layout,sso}`,
+  `screens.admin_console.views`, `screens.review_dashboard`, `screens.adaptive_input`,
+  `screens.appeal`, `screens.error_boundary`, `screens.home`); a repository's own screens in its
+  `messages/app/en.json` under `screens.app` (PF: the spike page and the auth page client). The scan
+  also missed a string a JSX expression shows or a label attribute's expression gives
+  (`{busy ? "Saving..." : "Save"}`, `aria-label={on ? "Stop" : "Start"}`): 39 in PF, 50 in
+  Playform; it counts them now, and they moved too. A sentence with a styled part (an address in
+  white, an approver, a bold state) stays one message, and the part is placed where the translation
+  puts it. Counts keep their text exactly (passed as text, so "2500" does not become "2,500"); the
+  member count is an ICU plural. English is the only locale (ADR-051 D6, `CATALOGS`), so English is
+  each string's only translation. The guard requires 0 in both repositories and fails on any
+  literal, by its place; a new check fails any catalog key a screen names that English does not
+  have (a missing key renders as the key itself).
+- **R-75, the rest — text that reaches a screen indirectly.** The scans above see a literal where
+  the screen shows it; text kept elsewhere and shown through a name passed them by: the input's mode
+  table (`MODE_CONFIG[mode].label`, `.ariaLabel`, `.title`) and its default placeholder, the
+  sign-in providers' button labels, the profile's visibility options, the auth layout's default
+  title and subtitle, the review queue's status filters, decisions and actions (shown as words: now
+  from the catalog, in the same words, and the item's own status, decision and action with them),
+  the entitlements table's headers and empty line, the capability map's panel name, the guest
+  sign-in's failure and the review queue's connection failure, the dual-control panel's change
+  comment, and each repository's page titles and descriptions (`metadata`). Each is in the catalog
+  now; a language's name comes from `screens.app.languages` through `components/language-name.ts`
+  (shared), never from a list in a component or the name an API answer carries.
+  `section-hints.ts`'s "(unknown tool)" was never shown — a permission no one holds — and is now a
+  code (`permission.unknown_tool`). A new guard, `__tests__/screen-text-indirect.test.ts`, at 0 in
+  both repositories: rule A follows every name in a text position (a variable, a property chain,
+  an alias, a `.map`/`.find` parameter, a default prop, a function's returned values, an import) to
+  the literals it can hold; rule B reports words for a person anywhere in the screens' code (app/
+  but its API routes, components/, hooks/, platform's .tsx) outside the catalog, a log, an error,
+  a comparison or a technical attribute — text that reaches a screen through a prop or a hook's
+  state. Code-shaped strings (CSS, cookies, dotted keys, paths, identifiers, ISO codes, HTTP
+  methods) are not words. On the first pass's commits it reports 70 findings in PF and 150 in
+  Playform (one literal both rules see is listed twice); now none. Rendered DOM equal to the base's
+  in the screens it touched (335 PF and 451 Playform renders); the routed ones walked again,
+  unchanged.
+
+Walked: every routed screen whose text moved, on production builds of the base trees and of this
+change, at 1280 px and 390 px — PF's sign-in, create-account, forgot-password and home (guest,
+signed in), Playform's same plus the language picker, `/agent/console`, `/agent/authorize`, `/admin`
+and its data views (roles, entitlements, password policy, approval policy, capabilities, capability
+map, per-account), and the admin console spec's own walk (TASK-202). PF: 10 of 10 shots identical
+pixel for pixel; Playform: 23 of 32 identical, 9 differ by 31–102 anti-aliased pixels where a
+sentence that was several text nodes is now one run (no word, position or size changed). Screens
+no route mounts (the profile page, the review dashboard, the adaptive input, the appeal form and
+others) were compared by their rendered DOM in every one of their tests: 325 PF and 429 Playform
+renders, none different.
+
+Credits: MITRE's CWE-209, "Generation of Error Message Containing Sensitive Information" (MITRE
+Corporation), and the OWASP Error Handling Cheat Sheet (OWASP Foundation): a generic message to the
+caller, the detail to the log.
+
+**Design check**
+
+- **Reach:** every caller of the changed platform functions — routes (account age, export, delete;
+  the auth routes through the providers' results; `/api/health`; the admin and operator routes
+  through audit, erasure, moderation and approvals records), the jobs (erasure retries, approval
+  expiry), the relink command an operator runs, and the screens. No permission, guard or route
+  changes who can call what.
+- **Races:** none new: every change is in what a failure carries, after the failure. The relink
+  command's chunks, the pipeline's claims and the erasure steps run as before; only their reason
+  texts change.
+- **Dependencies down:** this is the change's subject. Each dependency's failure still fails (or
+  degrades) as before — the same status, the same refusal code, the same retry — and its cause is
+  now in the log line at the catch, with the step, module, user or probe it concerns. A logger that
+  throws is not new (the code already logged at most of these sites).
+- **Erasure leftovers:** less is stored: an erasure's results, its external stores' outcomes and
+  the audit log's failure reasons no longer copy a store's message (which could name an address or
+  a value). Nothing new is stored.
+- **Screens × responses:** responses keep their codes and statuses; the texts that change are
+  fields people read: the audit log's failed-act reason (Audit log view), approvals'
+  `lastRunError` (Approvals), erasure errors and external outcomes (Erasures), the moderation
+  queue's restore and strike messages (review dashboard), health details (`/api/health`), the
+  relink command's report lines (the operator's terminal), `AuthResult.error` (logs only: routes
+  answer `errorCode`). The screens: every literal moved, rendered identically (above).
+- **Journeys touched:** none changes path. Sign-in, sign-up, password reset, the home page as guest
+  and user, the agent console and authorize page, the admin console's data views — walked, and
+  Playform's E2E suite runs the same 25 specs with the same outcomes as on the base.
+- **Weakens a tenant's protection?** No. It removes a leak (a store's or provider's text into
+  records and answers others read); refusals, codes, statuses and permissions are unchanged, and
+  the screens' text is the same.
+
+**Threat model**
+
+- **Boundary:** text crossing from a failed dependency (database, cache, Cognito, AI provider,
+  speech and song providers, external erasure stores) into what the platform returns, stores or
+  shows — results, records, health answers, screens.
+- **Bypasses:** a site the guard cannot see — through a helper (now followed, same file or
+  imported), a cast or a template (already), a `.catch` callback (already); a helper whose parameter
+  is typed `string` is not followed (it cannot hold an error). Not followed: a caught error kept in a
+  variable and read later outside the catch (`const e = err; … e.message`) — none exists; the guard's
+  header says so.
+- **Forgeries:** an actor who can make a dependency's error carry text — a user whose input is
+  echoed in a provider's error, a database constraint naming a value they chose — could get it into
+  an admin-visible record before; now it reaches only the log. Actors that exist today: users and
+  guests of a deployment (their own input), tenants' administrators (records they read). No other
+  actor is assumed.
+- **Legitimate flows:** a failure is still reported, by code and fixed text, to the caller that
+  handles it; the operator reads the cause in the log line (the relink command's own stderr, the
+  deployment's logs); every screen shows the same words.
+- **Agreed before code:** the owner's brief for batch 55e (2026-11-08: fix every site to a stable,
+  safe code or message with the detail to the log only; baseline 0 and the guard failing on any new
+  site; R-78's diagnostic restored; every screen literal into the catalog the repositories already
+  use, baseline 0, walked at 1280 and 390 px). No commit precedes this entry; the owner reviews it
+  with the change.
+
+**Self-review**
+
+- **Consumers checked:** for each changed result field, its readers: the age route (now
+  `errorCode`), the delete route (`users: no such user`, kept by type), the export route (logs
+  `errors`), `hold-authority` and `tool-invoker` (`reason` into audit records — fixed text),
+  `isStaleChangeFailure` (the stale code comes from `reportsFailure`, not a catch — unchanged),
+  the relink report and its tests (stamp names kept), `authResultResponse` / `errorFromResult`
+  (`error` reaches `internalError`'s log only), metrics readers (`ai_metrics.error` is a class now).
+  The tests that asserted a dependency's raw text (25 files in each repository) now assert the
+  fixed text and, where the reason mattered, that the cause was logged. The
+  screens: every changed component's tests, unchanged, pass; their rendered DOM equals the base's.
+- **Hostile re-read:** tried to get a database message into an erasure record (`users: …`, an
+  external store's outcome — fixed texts, tests), into the audit log's reason (fixed — DB test),
+  into a health answer (fixed — tests), into an approval's `lastRunError` (fixed — tests); to hide
+  a site behind a local helper, an imported helper, a method helper (all reported by the guard's
+  self-test); to make a `string` parameter's template count as error text (not reported —
+  self-test); to break a key a screen uses (the key check fails, proven by renaming one); to change
+  a shown number's grouping (kept as text; DOM equal); to hide a label in a table, an alias, a
+  callback, a default prop, a function's return, an import, a component's prop, a hook's
+  notification (each reported by the indirect guard's self-tests); to pass a CSS value, a cookie,
+  a dotted key or an HTTP method off as words (not reported — self-test).
+
+_Last updated: November 8, 2026 (TASK-205 — caught-error text logged, never returned; every screen literal in the catalog)_
+
+_Previously updated: November 7, 2026 (TASK-202 — the admin console made usable: the owner's walk of 2026-11-07)_
 
 _Previously updated: November 7, 2026 (TASK-201 — runner images pinned, Supabase secret keys, the security-review action re-checked)_
 

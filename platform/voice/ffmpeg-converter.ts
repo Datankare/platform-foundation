@@ -168,9 +168,8 @@ export class FfmpegServiceConverter implements AudioFormatConverter {
 
       return response;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       logger.error("FfmpegServiceConverter: conversion failed", {
-        error: message,
+        error: err instanceof Error ? err.message : String(err),
         sourceFormat,
         inputBytes: audioData.length,
         requestId,

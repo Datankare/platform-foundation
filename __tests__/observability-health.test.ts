@@ -139,7 +139,9 @@ describe("HealthRegistry", () => {
 
     const report = await registry.check();
     expect(report.status).toBe("unhealthy");
-    expect(report.checks[0].detail).toContain("Unexpected crash");
+    // R-77: /api/health answers a fixed detail; the probe's own text is logged.
+    expect(report.checks[0].detail).toBe("the check did not complete");
+    expect(report.checks[0].detail).not.toContain("Unexpected crash");
   });
 
   it("times out slow probes", async () => {
@@ -299,16 +301,16 @@ describe("PostgresHealthProbe", () => {
     const r = await new PostgresHealthProbe().check();
     expect(r).toMatchObject({
       status: "unhealthy",
-      detail: "No database connection could be had",
+      detail: "the check did not complete",
     });
   });
 
-  it("reports a non-Error failure as text", async () => {
+  it("reports a non-Error failure as a fixed detail (R-77)", async () => {
     mockHasDatabase.mockReturnValue(true);
     mockWithPlatformTx.mockRejectedValue("boom");
     await expect(new PostgresHealthProbe().check()).resolves.toMatchObject({
       status: "unhealthy",
-      detail: "boom",
+      detail: "the check did not complete",
     });
   });
 

@@ -54,6 +54,11 @@ import { getCache } from "@/platform/cache";
 import type { CacheProvider } from "@/platform/cache/types";
 import { getConfigNumber } from "@/platform/auth/platform-config";
 import { logger } from "@/lib/logger";
+import {
+  CALL_FAILED,
+  WRITE_FAILED,
+  logCaught,
+} from "@/platform/observability/caught-error";
 import type { TokenPayload } from "@/platform/auth/types";
 import { sameId } from "@/platform/auth/same-id";
 
@@ -277,10 +282,15 @@ export class TokenVerifier {
     try {
       return await ask();
     } catch (err) {
-      return {
-        kind: "unavailable",
-        reason: err instanceof Error ? err.message : String(err),
-      };
+      logCaught(
+        logger,
+        "Token verification: the identity provider could not be asked",
+        err,
+        {
+          route: "platform/auth/token-verification",
+        }
+      );
+      return { kind: "unavailable", reason: CALL_FAILED };
     }
   }
 
@@ -357,12 +367,11 @@ export async function publishTokenRevocation(
     });
     return { published: true };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
     logger.error("Token revocation not published to other instances", {
-      error,
+      error: err instanceof Error ? err.message : String(err),
       route: "platform/auth/token-verification",
     });
-    return { published: false, error };
+    return { published: false, error: WRITE_FAILED };
   }
 }
 

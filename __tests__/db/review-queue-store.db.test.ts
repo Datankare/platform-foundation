@@ -284,10 +284,16 @@ dbDescribe("PostgresReviewQueueStore", () => {
       const store = new PostgresReviewQueueStore();
       await runWithoutTenant(async () => {
         const res = await store.submit(item(randomUUID()));
+        // R-77: a fixed text and a code; the store's own words are logged.
         expect(res).toMatchObject({
           success: false,
-          error: expect.stringMatching(/tenant/i),
+          error: "Submit failed",
+          errorCode: "internal.error",
         });
+        expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({ error: expect.stringMatching(/tenant/i) })
+        );
         expect(await store.getById(randomUUID())).toBeUndefined();
         expect(await store.query()).toEqual([]);
         expect(await store.update(randomUUID(), { status: "claimed" })).toMatchObject({

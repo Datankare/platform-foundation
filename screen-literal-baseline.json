@@ -1,7 +1,8 @@
 {
-  "_comment": "ADR-051 / TASK-110 screen-literal ratchet for this repository: user-visible English literals left in screens. Lower it in the commit that moves strings to messages/; Sprint 7B takes it to 0. Per repository \u2014 not synced.",
-  "count": 232,
+  "_comment": "ADR-051 / TASK-110 screen-literal ratchet for this repository: user-visible English literals left in screens. Lower it in the commit that moves strings to messages/; Sprint 7B takes it to 0. Per repository — not synced.",
+  "count": 0,
   "_round13": "TASK-194 round 13 (nit 6): the scan counts a sentence given to a state setter too (31 found, all older than this round but the dual-control panel's, which moved to the catalog with its 7 JSX literals): 284 - 7 + 31 = 308.",
   "_round14": "TASK-194 round 14 (item 7): the scan walks every literal inside a setter's argument (ternary branches, updaters, object fields; t()/renderMessage() skipped). It found 4 more, all present at the base 9dff0ab (app/admin/page.tsx 'Decision recorded', components/admin/HeldActionsPanel.tsx 'Network error', components/auth/AgeGate.tsx x2): 308 + 4 = 312. Residual R-75.",
-  "_task202": "TASK-202 (the admin console made usable): its screens' text moved to messages/ - ActionConfirmPanel, ExecutionResultsPanel, AdminPromptBar, AdminShell, HeldActionsPanel, the audit and per-account views, the page's 'Decision recorded' - and the three dead panels deleted (S3-E21): 312 - 80 = 232."
+  "_task202": "TASK-202 (the admin console made usable): its screens' text moved to messages/ - ActionConfirmPanel, ExecutionResultsPanel, AdminPromptBar, AdminShell, HeldActionsPanel, the audit and per-account views, the page's 'Decision recorded' - and the three dead panels deleted (S3-E21): 312 - 80 = 232.",
+  "_task205": "TASK-205 (R-75): every screen literal moved to messages/ (shared screens to messages/en.json, this repository's own to messages/app/en.json): 232 - 232 = 0. The scan now also counts a string a JSX expression shows or a label attribute's expression gives (39 more found, all moved), and the guard requires 0: any literal fails."
 }

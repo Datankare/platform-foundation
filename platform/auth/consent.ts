@@ -12,6 +12,7 @@
 
 import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
+import { failedWrite } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
 
 export interface ConsentRecord {
@@ -32,16 +33,6 @@ interface ConsentRow {
   granted: boolean;
   granted_at: Date;
   revoked_at: Date | null;
-}
-
-/** Run a write; its error message, or undefined when it succeeded. */
-async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
-  try {
-    await write();
-    return undefined;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
-  }
 }
 
 /**
@@ -67,32 +58,32 @@ export async function grantConsent(params: {
         },
       },
       async () => {
-        const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
-              `insert into consent_records
+        const error = await failedWrite(
+          logger,
+          () =>
+            withTenantTx((tx) =>
+              tx.query(
+                `insert into consent_records
                  (user_id, consent_type, consent_version, granted, ip_address, user_agent)
                values ($1::uuid, $2, $3, true, $4::inet, $5)`,
-              [
-                params.userId,
-                params.consentType,
-                params.consentVersion,
-                params.ipAddress || null,
-                params.userAgent || null,
-              ]
-            )
-          )
-        );
-
-        if (error) {
-          logger.error("Consent grant failed", {
+                [
+                  params.userId,
+                  params.consentType,
+                  params.consentVersion,
+                  params.ipAddress || null,
+                  params.userAgent || null,
+                ]
+              )
+            ),
+          "Consent grant failed",
+          {
             userId: params.userId,
             consentType: params.consentType,
-            error,
             route: "platform/auth/consent",
-          });
-          return { success: false, error };
-        }
+          }
+        );
+
+        if (error) return { success: false, error };
 
         return { success: true };
       }
@@ -121,25 +112,25 @@ export async function revokeConsent(params: {
         details: { consentType: params.consentType },
       },
       async () => {
-        const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
-              `update consent_records set revoked_at = now()
+        const error = await failedWrite(
+          logger,
+          () =>
+            withTenantTx((tx) =>
+              tx.query(
+                `update consent_records set revoked_at = now()
                 where user_id = $1::uuid and consent_type = $2 and revoked_at is null`,
-              [params.userId, params.consentType]
-            )
-          )
-        );
-
-        if (error) {
-          logger.error("Consent revocation failed", {
+                [params.userId, params.consentType]
+              )
+            ),
+          "Consent revocation failed",
+          {
             userId: params.userId,
             consentType: params.consentType,
-            error,
             route: "platform/auth/consent",
-          });
-          return { success: false, error };
-        }
+          }
+        );
+
+        if (error) return { success: false, error };
 
         return { success: true };
       }

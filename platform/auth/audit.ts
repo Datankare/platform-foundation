@@ -62,6 +62,13 @@ export class AuditWriteError extends Error {
   }
 }
 
+/** The reason a failed act's record carries: the error's own text is logged, not recorded. */
+export const ACT_RAISED_REASON =
+  "the action raised an error (its detail is in the server log)";
+
+/** Why an audit write failed, as the thrown error says it: the store's text is logged. */
+export const AUDIT_STORE_REFUSED = "the audit store did not accept it";
+
 /**
  * An act that reaches outside the database was audited inside an open transaction (review 13 L5):
  * a rollback could not undo it, so its record could not be true. A programming error: run the act
@@ -141,16 +148,17 @@ export async function recordAudit(
       )
     );
   } catch (err) {
-    failure = err instanceof Error ? err.message : "Unknown error";
-  }
-  if (failure !== undefined) {
+    // The store's own text (a table, a constraint, a host) goes to the log only (R-77).
     logger.error("Audit record could not be written", {
-      error: failure,
+      error: err instanceof Error ? err.message : String(err),
       action: entry.action,
       actorId: entry.actorId,
       targetId: entry.targetId,
       route: "platform/auth/audit",
     });
+    failure = AUDIT_STORE_REFUSED;
+  }
+  if (failure !== undefined) {
     throw new AuditWriteError(entry.action, failure);
   }
 }
@@ -249,11 +257,16 @@ export async function audited<T>(
     if (isIndeterminate(err)) {
       await recordOutcome(tagged, "indeterminate", INDETERMINATE_REASON);
     } else {
-      await recordOutcome(
-        tagged,
-        "failed",
-        err instanceof Error ? err.message : String(err)
-      );
+      // The record names a fixed reason; the error's own text goes to the log only (R-77): the
+      // audit log is read on the admin console.
+      logger.error("Audited act failed", {
+        error: err instanceof Error ? err.message : String(err),
+        action: entry.action,
+        actorId: entry.actorId,
+        targetId: entry.targetId,
+        route: "platform/auth/audit",
+      });
+      await recordOutcome(tagged, "failed", ACT_RAISED_REASON);
     }
     throw err;
   }

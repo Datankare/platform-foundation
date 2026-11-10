@@ -4,12 +4,13 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { AuthContextProvider } from "@/platform/auth/context";
+import { renderMessage } from "@/platform/errors/messages";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Platform Foundation",
-  description: "Production-grade application platform — GenAI-native",
+  title: renderMessage("screens.app.meta.site_title"),
+  description: renderMessage("screens.app.meta.site_description"),
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

@@ -464,7 +464,12 @@ describe("VoicePipeline — P3 Safety", () => {
 
     expect(result.success).toBe(false);
     expect(result.safetyPassed).toBe(false);
-    expect(result.safetyReason).toContain("safety service down");
+    // R-77: the reason is fixed; the service's own text is logged.
+    expect(result.safetyReason).toBe("Safety check error: the check did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: "safety service down" })
+    );
   });
 });
 
@@ -597,7 +602,11 @@ describe("Voice Health Probes", () => {
 
     const result = await checkTranslationHealth(broken);
     expect(result.healthy).toBe(false);
-    expect(result.error).toContain("API down");
+    expect(result.error).toBe("the check did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.warn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: "API down" })
+    );
   });
 });
 

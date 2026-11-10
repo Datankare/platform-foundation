@@ -36,6 +36,7 @@ import { logger } from "@/lib/logger";
 import { unionWithModules } from "@/platform/modules/compose";
 import type { CoppaGateResult, ContentRatingLevel } from "@/platform/moderation/types";
 import type { ErrorCode } from "@/platform/errors/registry";
+import { WRITE_FAILED } from "@/platform/observability/caught-error";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -307,10 +308,7 @@ export async function updateCoppaEnforcement(
       error: err instanceof Error ? err.message : String(err),
       route: "platform/auth/coppa-gate",
     });
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Unknown error",
-    };
+    return { success: false, error: WRITE_FAILED };
   }
 }
 

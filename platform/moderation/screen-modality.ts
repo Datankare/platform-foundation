@@ -11,6 +11,8 @@
  */
 
 import type { ModerationAction, ScreeningDirection } from "./types";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 /** Light content descriptor the seam screens — modality + declared MIME + base64 bytes. */
 export interface ModalityContent {
@@ -148,12 +150,22 @@ export async function screenModality(
         : `withheld: ${UNCONFIGURED}`,
     };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "screen error";
+    // The reasoning is stored with the review item and read by moderators: the classifier's own
+    // text goes to the log (R-77).
+    logCaught(
+      logger,
+      "Modality screen failed: escalated",
+      error,
+      {
+        route: "platform/moderation/screen-modality",
+      },
+      "warn"
+    );
     return {
       action: "escalate",
       axes: [],
       hardRefused: false,
-      reasoning: `fail-closed: ${reason}`,
+      reasoning: "fail-closed: the screen did not complete (the detail is in the log)",
     };
   }
 }

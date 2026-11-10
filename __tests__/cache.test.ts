@@ -326,7 +326,8 @@ describe("RedisCacheProvider", () => {
     });
     const health = await cache.health();
     expect(health.connected).toBe(false);
-    expect(health.error).toBe("Network error");
+    // R-77: the ping's own text is logged; the answer is fixed.
+    expect(health.error).toBe("the check did not complete");
   });
 
   it("handles HTTP errors", async () => {
@@ -471,6 +472,6 @@ describe("createCacheHealthProbe", () => {
     const probe = createCacheHealthProbe(throwingCache);
     const result = await probe.check();
     expect(result.status).toBe("unhealthy");
-    expect(result.details?.error).toBe("Network down");
+    expect(result.details?.error).toBe("the check did not complete");
   });
 });

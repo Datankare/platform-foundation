@@ -46,6 +46,27 @@ import { assembleActionContext, computeEffectiveRisk, resolveTier } from "./risk
 import { canonicalJson } from "./canonical-json";
 import { withAuditCorrelation } from "@/platform/kernel/audit-correlation";
 import { sameId } from "@/platform/auth/same-id";
+import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
+
+/** The log's name for the pipeline. */
+const PIPELINE_ROUTE = "platform/action-pipeline";
+
+/**
+ * A run's reason when what failed was another error: its text is logged here, and the reason —
+ * read in audit records, approvals and the admin console — is fixed (R-77).
+ */
+export const RUN_RAISED = "the run raised an error (the detail is in the log)";
+
+/** Log `err` under `what` with the action's label and operation; RUN_RAISED for its reason. */
+function loggedReason(
+  what: string,
+  err: unknown,
+  context: { label: string; operationId: string }
+): string {
+  logCaught(logger, what, err, { ...context, route: PIPELINE_ROUTE });
+  return RUN_RAISED;
+}
 
 // ── Rejection ─────────────────────────────────────────────────────────
 
@@ -451,7 +472,13 @@ export async function executeActionPipeline<TState>(
       try {
         done = await proposalStore.complete(approvalId, token!);
       } catch (err) {
-        failure = err instanceof Error ? err.message : String(err);
+        logCaught(logger, "Approval completion not written", err, {
+          label: req.label,
+          operationId,
+          proposalId: approvalId,
+          route: PIPELINE_ROUTE,
+        });
+        failure = WRITE_FAILED;
       }
       if (done) return;
       const reason =
@@ -505,9 +532,7 @@ export async function executeActionPipeline<TState>(
       const reason =
         err instanceof ApprovedRunFailedError
           ? err.reason
-          : err instanceof Error
-            ? err.message
-            : String(err);
+          : loggedReason("Approved run failed", err, { label: req.label, operationId });
       // The run's own code, when it gave one, goes with it (round 15, I-1).
       const failure = err instanceof ApprovedRunFailedError ? err.failure : undefined;
       // Atomic: the transaction that holds the claim rolls back with everything else.
@@ -554,7 +579,10 @@ export async function executeActionPipeline<TState>(
         throw new ApprovedRunFailedError(
           req.label,
           approvalId,
-          err instanceof Error ? err.message : String(err),
+          loggedReason("Approved run's commit failed", err, {
+            label: req.label,
+            operationId,
+          }),
           true,
           { cause: err }
         );
@@ -569,7 +597,10 @@ export async function executeActionPipeline<TState>(
         req.label,
         operationId,
         applied,
-        err instanceof Error ? err.message : String(err),
+        loggedReason("Action's commit or record failed", err, {
+          label: req.label,
+          operationId,
+        }),
         { cause: err }
       );
     }
@@ -671,7 +702,10 @@ async function commitAndRecord<TState>(
       req.label,
       operationId,
       req.perform !== undefined || committed !== null,
-      err instanceof Error ? err.message : String(err),
+      loggedReason("Action's trajectory step not recorded", err, {
+        label: req.label,
+        operationId,
+      }),
       { cause: err }
     );
   }
@@ -973,7 +1007,11 @@ export async function compensateTrajectory(
     try {
       output = await plan.perform();
     } catch (err) {
-      error = err instanceof Error ? err.message : "Unknown error";
+      // The step is stored in the trajectory, read on the admin console: a fixed reason (R-77).
+      error = loggedReason("Compensation failed", err, {
+        label: plan.label,
+        operationId,
+      });
       failures.push({ operationId: step.operationId ?? "(none)", error });
     }
 

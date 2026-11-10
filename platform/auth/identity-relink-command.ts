@@ -70,6 +70,7 @@ import {
   type IdentityDirectory,
 } from "@/platform/auth/identity-directory";
 import {
+  NotPublishedError,
   RelinkUsageError,
   partial,
   relinkIdentities,
@@ -77,6 +78,11 @@ import {
   type RelinkReport,
   type RelinkRequest,
 } from "@/platform/auth/identity-relink";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
+
+/** The log's name for this command. */
+const RELINK_ROUTE = "platform/auth/identity-relink-command";
 
 /** The exit codes (see the header). */
 export const EXIT = {
@@ -353,7 +359,13 @@ export async function runRelinkCommand(
   try {
     parsed = parseArgs(argv);
   } catch (err) {
-    io.err(`✗ ${(err as Error).message}`);
+    if (err instanceof RelinkUsageError) io.err(`✗ ${err.usage}`);
+    else {
+      logCaught(logger, "Relink: the arguments could not be read", err, {
+        route: RELINK_ROUTE,
+      });
+      io.err("✗ The arguments could not be read (the detail is in the log line above).");
+    }
     io.err(USAGE);
     return EXIT.usage;
   }
@@ -383,7 +395,12 @@ export async function runRelinkCommand(
         credentials: getCognitoAdminCredentials(env)!,
       });
   } catch (err) {
-    io.err(`✗ ${(err as Error).message}`);
+    logCaught(logger, "Relink: the identity pool's settings could not be read", err, {
+      route: RELINK_ROUTE,
+    });
+    io.err(
+      "✗ The identity pool's settings could not be read (the detail is in the log line above)."
+    );
     return EXIT.usage;
   }
   const machine = deps.machine ?? { osUser: safeOsUser(), host: hostname() };
@@ -402,7 +419,7 @@ export async function runRelinkCommand(
           ? []
           : [`token verifications: ${outcome.tokens.error}`]),
       ];
-      if (failed.length > 0) throw new Error(`not published (${failed.join("; ")})`);
+      if (failed.length > 0) throw new NotPublishedError(failed);
     });
 
   let report: RelinkReport;
@@ -417,15 +434,16 @@ export async function runRelinkCommand(
     );
   } catch (err) {
     if (err instanceof RelinkUsageError) {
-      io.err(`✗ ${err.message}`);
+      io.err(`✗ ${err.usage}`);
       io.err(USAGE);
       return EXIT.usage;
     }
     // Thrown only before anything committed (a failure after a commit is in the report, and a
-    // commit whose outcome is unknown is reported as such — never thrown). The message names
-    // what failed (a pool error type, a database error): no setting's value.
+    // commit whose outcome is unknown is reported as such — never thrown). What failed (a pool
+    // error type, a database error) is logged; the operator's line is fixed (R-77).
+    logCaught(logger, "Relink: nothing was changed", err, { route: RELINK_ROUTE });
     io.err(
-      `✗ Nothing was changed: ${err instanceof Error ? err.message.slice(0, 300) : "unknown error"}`
+      "✗ Nothing was changed: the identity pool or the database could not be used (the detail is in the log line above)."
     );
     return EXIT.unreachable;
   }

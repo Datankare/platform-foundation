@@ -39,6 +39,7 @@ import type {
 } from "./types";
 import { sameId } from "@/platform/auth/same-id";
 import { assertDistinctParticipants, initTurnState } from "./turn";
+import { logger } from "@/lib/logger";
 
 // ── Event subscribers (D8) ────────────────────────────────────────────
 
@@ -281,10 +282,14 @@ export async function dispatch<TState, TAction, TConfig>(
     if (err instanceof PipelineRejectedError) {
       // Sessions never commit on an approval, so "approval-used" cannot arise here; it would
       // mean "this needs (a fresh) approval".
-      throw new ActionRejectedError(
-        err.message,
-        err.reason === "approval-used" ? "requires-approval" : err.reason
-      );
+      const reason = err.reason === "approval-used" ? "requires-approval" : err.reason;
+      logger.warn("Session action refused by the pipeline", {
+        reason: err.reason,
+        error: err.message,
+        route: "platform/app-framework/session",
+      });
+      // A fixed message by its reason; the pipeline's own words are logged (R-77).
+      throw new ActionRejectedError(`the action was refused (${reason})`, reason);
     }
     throw err;
   }

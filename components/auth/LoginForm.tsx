@@ -3,6 +3,11 @@
 import React, { useState } from "react";
 import SsoButtons from "@/components/auth/SsoButtons";
 import type { SsoProvider } from "@/platform/auth/types";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.login.${key}`, values);
 
 interface LoginFormProps {
   onSubmit: (email: string, password: string) => Promise<void>;
@@ -45,7 +50,7 @@ export default function LoginForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">Sign In</h2>
+      <h2 className="text-xl font-bold text-white text-center">{t("sign_in")}</h2>
 
       {/* SSO Buttons — only configured providers (ADR-050 D3); none, no divider */}
       {enabledSsoProviders.length > 0 && (
@@ -57,13 +62,13 @@ export default function LoginForm({
           />
 
           {/* Divider */}
-          <div className="flex items-center gap-4" role="separator" aria-label="or">
+          <div className="flex items-center gap-4" role="separator" aria-label={t("or")}>
             <div className="flex-1 h-px bg-gray-700" />
             <span
               className="text-xs text-gray-400 uppercase tracking-wider"
               aria-hidden="true"
             >
-              or
+              {t("or")}
             </span>
             <div className="flex-1 h-px bg-gray-700" />
           </div>
@@ -74,7 +79,7 @@ export default function LoginForm({
       <form onSubmit={handleSubmit} aria-busy={isLoading} className="flex flex-col gap-4">
         <div>
           <label htmlFor="login-email" className="block text-sm text-gray-400 mb-1.5">
-            Email
+            {t("email")}
           </label>
           <input
             id="login-email"
@@ -82,7 +87,7 @@ export default function LoginForm({
             autoComplete="username"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
+            placeholder={t("you_example_com")}
             disabled={isLoading}
             required
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
@@ -92,14 +97,14 @@ export default function LoginForm({
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <label htmlFor="login-password" className="text-sm text-gray-400">
-              Password
+              {t("password")}
             </label>
             <button
               type="button"
               onClick={onForgotPassword}
               className="text-xs text-blue-400 hover:text-blue-300 transition"
             >
-              Forgot password?
+              {t("forgot_password")}
             </button>
           </div>
           <input
@@ -108,7 +113,7 @@ export default function LoginForm({
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
+            placeholder={t("enter_your_password")}
             disabled={isLoading}
             required
             className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
@@ -132,7 +137,7 @@ export default function LoginForm({
           disabled={!canSubmit}
           className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {isLoading ? "Signing in..." : "Sign In"}
+          {isLoading ? t("signing_in") : t("sign_in")}
         </button>
       </form>
 
@@ -141,7 +146,9 @@ export default function LoginForm({
         <>
           <div className="flex items-center gap-4">
             <div className="flex-1 h-px bg-gray-700" />
-            <span className="text-xs text-gray-400 uppercase tracking-wider">or</span>
+            <span className="text-xs text-gray-400 uppercase tracking-wider">
+              {t("or")}
+            </span>
             <div className="flex-1 h-px bg-gray-700" />
           </div>
           <button
@@ -149,19 +156,19 @@ export default function LoginForm({
             disabled={isLoading}
             className="w-full border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600 py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Continue as Guest
+            {t("continue_as_guest")}
           </button>
         </>
       )}
 
       {/* Create account link */}
       <p className="text-center text-sm text-gray-400">
-        {"Don't have an account? "}
+        {t("dont_have_an_account")}
         <button
           onClick={onCreateAccount}
           className="text-blue-400 hover:text-blue-300 transition"
         >
-          Create one
+          {t("create_one")}
         </button>
       </p>
     </div>

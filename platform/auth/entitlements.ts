@@ -20,6 +20,7 @@
 
 import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
+import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import {
   checkPermissionGrant,
@@ -80,13 +81,20 @@ async function checkRules(
   if (refused) throw new EntitlementRuleError(refused);
 }
 
-/** Run a write; its error message, or undefined when it succeeded. */
+/**
+ * Run a write: undefined when it succeeded; a rule's refusal, its code; any other error is
+ * logged and the result says WRITE_FAILED (R-77: a store's text never leaves).
+ */
 async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
   try {
     await write();
     return undefined;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    if (err instanceof EntitlementRuleError) return err.refusal.code;
+    logCaught(logger, "Entitlement write failed", err, {
+      route: "platform/auth/entitlements",
+    });
+    return WRITE_FAILED;
   }
 }
 
@@ -149,12 +157,10 @@ export async function grantEntitlement(
   } catch (err) {
     if (err instanceof AuditWriteError)
       return { success: false, error: "audit unavailable" };
-    const message = err instanceof Error ? err.message : "Grant failed";
-    logger.error("Entitlement grant error", {
-      error: message,
+    logCaught(logger, "Entitlement grant error", err, {
       route: "platform/auth/entitlements",
     });
-    return { success: false, error: message };
+    return { success: false, error: "Grant failed" };
   }
 }
 
@@ -212,12 +218,10 @@ export async function revokeEntitlement(
   } catch (err) {
     if (err instanceof AuditWriteError)
       return { success: false, error: "audit unavailable" };
-    const message = err instanceof Error ? err.message : "Revoke failed";
-    logger.error("Entitlement revoke error", {
-      error: message,
+    logCaught(logger, "Entitlement revoke error", err, {
       route: "platform/auth/entitlements",
     });
-    return { success: false, error: message };
+    return { success: false, error: "Revoke failed" };
   }
 }
 

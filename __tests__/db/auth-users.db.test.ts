@@ -721,7 +721,12 @@ dbDescribe(`${SUITE} profiles`, () => {
       updateProfile(id, { profileVisibility: "everyone" as never })
     );
     expect(bad.success).toBe(false);
-    expect(bad.error).toMatch(/profile_visibility/);
+    // R-77: the database's refusal is logged; the result's text is fixed.
+    expect(bad.error).toBe("the write did not complete");
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: expect.stringMatching(/profile_visibility/) })
+    );
   });
 
   it("changes nothing when the record cannot be written", async () => {

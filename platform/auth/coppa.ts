@@ -18,6 +18,7 @@
 import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
+import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
 
 export type ParentalConsentStatus = "not_required" | "pending" | "granted" | "denied";
 
@@ -25,15 +26,18 @@ export type { AgeVerificationResult } from "@/platform/auth/age";
 export { calculateAge, evaluateAge } from "@/platform/auth/age";
 import { evaluateAge, type AgeVerificationResult } from "@/platform/auth/age";
 
-/** Run a write; its error message, or undefined when it succeeded. */
-async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
-  try {
-    await write();
-    return undefined;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
-  }
-}
+/** A date of birth that is not a real, past calendar date: the result's `error` (R-77). */
+export const INVALID_BIRTH_DATE = "the date of birth is not a real, past calendar date";
+
+/** The age is recorded once: a second declaration changes nothing (`errorCode` below). */
+export const AGE_ALREADY_RECORDED =
+  "the age is already recorded, or there is no such user";
+
+/** Parental consent recorded for an account that does not need it. */
+export const CONSENT_NOT_NEEDED = "this account does not need parental consent";
+
+/** The update matched no row: the refusal its result names, never a store's text. */
+class NothingToUpdate extends Error {}
 
 /**
  * Record age verification for a user.
@@ -46,13 +50,25 @@ export async function recordAgeVerification(
   success: boolean;
   result?: AgeVerificationResult;
   error?: string;
+  /** Set when the refusal is one a caller answers with its own code (not a store failure). */
+  errorCode?: "account.age_already_recorded";
 }> {
   let evaluation: AgeVerificationResult;
   try {
     evaluation = evaluateAge(dateOfBirth);
   } catch (err) {
     // Not a real, past calendar date: nothing is recorded, and nothing is read as an adult.
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    logCaught(
+      logger,
+      "Age verification refused: not a real, past date",
+      err,
+      {
+        userId,
+        route: "platform/auth/coppa",
+      },
+      "warn"
+    );
+    return { success: false, error: INVALID_BIRTH_DATE };
   }
   const consentStatus = evaluation.requiresParentalConsent ? "pending" : "not_required";
 
@@ -73,9 +89,10 @@ export async function recordAgeVerification(
         success: boolean;
         result?: AgeVerificationResult;
         error?: string;
+        errorCode?: "account.age_already_recorded";
       }> => {
-        const error = await failure(() =>
-          withTenantTx(async (tx) => {
+        try {
+          await withTenantTx(async (tx) => {
             const updated = await tx.query(
               // The gate's flag is set with the age it follows from (X-16): a child is
               // enforced until consent is granted. An age is recorded once; a second
@@ -94,19 +111,25 @@ export async function recordAgeVerification(
                 evaluation.requiresParentalConsent,
               ]
             );
-            if (updated.rowCount === 0) {
-              throw new Error("the age is already recorded, or there is no such user");
-            }
-          })
-        );
-
-        if (error) {
-          logger.error("Age verification failed", {
+            if (updated.rowCount === 0) throw new NothingToUpdate();
+          });
+        } catch (err) {
+          if (err instanceof NothingToUpdate) {
+            logger.warn("Age verification refused: already recorded, or no such user", {
+              userId,
+              route: "platform/auth/coppa",
+            });
+            return {
+              success: false,
+              error: AGE_ALREADY_RECORDED,
+              errorCode: "account.age_already_recorded",
+            };
+          }
+          logCaught(logger, "Age verification failed", err, {
             userId,
-            error,
             route: "platform/auth/coppa",
           });
-          return { success: false, error };
+          return { success: false, error: WRITE_FAILED };
         }
 
         return { success: true, result: evaluation };
@@ -136,8 +159,8 @@ export async function recordParentalConsent(
         details: { type: "parental_consent", consentStatus: status },
       },
       async () => {
-        const error = await failure(() =>
-          withTenantTx(async (tx) => {
+        try {
+          await withTenantTx(async (tx) => {
             const updated = await tx.query(
               // Granted lifts the gate; denied keeps it — for an account that needed consent.
               `update users
@@ -148,20 +171,23 @@ export async function recordParentalConsent(
                   and parental_consent_status <> 'not_required'`,
               [userId, status, parentEmail || null]
             );
-            if (updated.rowCount === 0) {
-              throw new Error("this account does not need parental consent");
-            }
-          })
-        );
-
-        if (error) {
-          logger.error("Parental consent recording failed", {
+            if (updated.rowCount === 0) throw new NothingToUpdate();
+          });
+        } catch (err) {
+          if (err instanceof NothingToUpdate) {
+            logger.warn("Parental consent refused: the account does not need it", {
+              userId,
+              consentStatus: status,
+              route: "platform/auth/coppa",
+            });
+            return { success: false, error: CONSENT_NOT_NEEDED };
+          }
+          logCaught(logger, "Parental consent recording failed", err, {
             userId,
             consentStatus: status,
-            error,
             route: "platform/auth/coppa",
           });
-          return { success: false, error };
+          return { success: false, error: WRITE_FAILED };
         }
 
         return { success: true };

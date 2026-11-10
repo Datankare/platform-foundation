@@ -968,7 +968,15 @@ dbDescribe(`${SUITE} export`, () => {
     });
     const { data, errors } = await t.run(() => exportUserData(user));
     expect(data).toEqual({});
-    expect(errors).toEqual(["db-coverage-failing: module store down"]);
+    // R-77/R-78: the part is named with a fixed reason; the cause is logged.
+    expect(errors).toEqual(["db-coverage-failing: the read did not complete"]);
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      "Data export: a module could not be read",
+      expect.objectContaining({
+        module: "db-coverage-failing",
+        error: "module store down",
+      })
+    );
     registerExportModule({
       moduleName: "db-coverage-failing",
       description: "x",

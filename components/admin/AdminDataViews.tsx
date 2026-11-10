@@ -6,7 +6,7 @@ import {
   ADMIN_HIGHLIGHT_MIN_SECONDS,
   ADMIN_HIGHLIGHT_MAX_SECONDS,
 } from "@/shared/config/limits";
-import { renderMessage } from "@/platform/errors/messages";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { missingFeaturePermissions } from "@/platform/auth/feature-permissions";
 import {
   isPanelUnavailable,
@@ -21,6 +21,10 @@ import {
 import { groupPermissions } from "@/platform/auth/catalog-order";
 import { ExpandableText } from "@/components/admin/ExpandableText";
 import { personText } from "@/components/admin/people";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.admin_console.views.${key}`, values);
 
 const thClass =
   "text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800";
@@ -154,11 +158,7 @@ export function RolesDataView({ data }: { data: any }) {
   const uid = useId();
 
   if (roles.length === 0) {
-    return (
-      <p className="text-gray-400 text-sm">
-        No roles found. Use the command bar to create one.
-      </p>
-    );
+    return <p className="text-gray-400 text-sm">{t("no_roles_found_use_the")}</p>;
   }
 
   return (
@@ -166,11 +166,11 @@ export function RolesDataView({ data }: { data: any }) {
       <table className="w-full text-sm text-left border-collapse">
         <thead>
           <tr>
-            <th className={thClass}>Role</th>
-            <th className={thClass}>Display Name</th>
-            <th className={thClass}>Permissions</th>
-            <th className={thClass}>Created</th>
-            <th className={thClass}>Modified</th>
+            <th className={thClass}>{t("role")}</th>
+            <th className={thClass}>{t("display_name")}</th>
+            <th className={thClass}>{t("permissions")}</th>
+            <th className={thClass}>{t("created")}</th>
+            <th className={thClass}>{t("modified")}</th>
           </tr>
         </thead>
         <tbody>
@@ -269,14 +269,16 @@ export function RolesDataView({ data }: { data: any }) {
                           )}
                         </div>
                       ) : (
-                        <p className="text-xs text-gray-400">No permissions assigned.</p>
+                        <p className="text-xs text-gray-400">
+                          {t("no_permissions_assigned")}
+                        </p>
                       )}
                       <div className="mt-3 text-xs text-gray-400 flex gap-4">
                         <span>
-                          Created: <AdminDate iso={r.createdAt} withTime />
+                          {t("created_label")} <AdminDate iso={r.createdAt} withTime />
                         </span>
                         <span>
-                          Modified: <AdminDate iso={r.updatedAt} withTime />
+                          {t("modified_label")} <AdminDate iso={r.updatedAt} withTime />
                         </span>
                       </div>
                     </td>
@@ -299,9 +301,9 @@ export function EntitlementsDataView({ data }: { data: any }) {
 
   return (
     <DataTable
-      headers={["Code", "Name", "Users", "Status"]}
+      headers={[t("col_code"), t("col_name"), t("col_users"), t("col_status")]}
       isEmpty={groups.length === 0}
-      emptyMessage="No entitlement groups. Use the command bar to create one."
+      emptyMessage={t("no_entitlement_groups")}
     >
       {groups.map((g: any) => (
         <tr
@@ -321,7 +323,7 @@ export function EntitlementsDataView({ data }: { data: any }) {
                   : "bg-gray-700 text-gray-400"
               }`}
             >
-              {g.isActive ? "Active" : "Inactive"}
+              {g.isActive ? t("active") : t("inactive")}
             </span>
           </td>
         </tr>
@@ -416,17 +418,17 @@ function ConfigRow({
 
 export function PasswordPolicyDataView({ data }: { data: any }) {
   const policy = data?.policy;
-  if (!policy) return <p className="text-gray-400 text-sm">Loading...</p>;
+  if (!policy) return <p className="text-gray-400 text-sm">{t("loading")}</p>;
   return (
     <div className="bg-[#111827] rounded-xl border border-gray-800 p-5 max-w-lg">
       <div className="space-y-3 text-sm">
-        <ConfigRow label="Min length" value={policy.minLength} />
-        <ConfigRow label="Rotation (days)" value={policy.rotationDays} />
-        <ConfigRow label="History count" value={policy.passwordHistoryCount} />
-        <ConfigRow label="Uppercase" value={policy.requireUppercase} />
-        <ConfigRow label="Lowercase" value={policy.requireLowercase} />
-        <ConfigRow label="Number" value={policy.requireNumber} />
-        <ConfigRow label="Special char" value={policy.requireSpecial} />
+        <ConfigRow label={t("min_length")} value={policy.minLength} />
+        <ConfigRow label={t("rotation_days")} value={policy.rotationDays} />
+        <ConfigRow label={t("history_count")} value={policy.passwordHistoryCount} />
+        <ConfigRow label={t("uppercase")} value={policy.requireUppercase} />
+        <ConfigRow label={t("lowercase")} value={policy.requireLowercase} />
+        <ConfigRow label={t("number")} value={policy.requireNumber} />
+        <ConfigRow label={t("special_char")} value={policy.requireSpecial} />
       </div>
     </div>
   );
@@ -501,32 +503,43 @@ export function ApprovalPolicyDataView({ data }: { data: any }) {
   const rules: any[] = Array.isArray(policy?.rules) ? policy.rules : [];
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-6">Approval policy</h2>
+      <h2 className="text-xl font-bold text-white mb-6">{t("approval_policy")}</h2>
       {!policy ? (
-        <p className="text-gray-400 text-sm">No policy loaded.</p>
+        <p className="text-gray-400 text-sm">{t("no_policy_loaded")}</p>
       ) : (
         <>
           <p className="text-sm text-gray-400 mb-4">
-            Version {policy.version} · default approver:{" "}
-            <span className="text-gray-200">{policy.default}</span>
+            {(() => {
+              // One message, the approver styled where the translation puts it.
+              const mark = "\u0001";
+              const [before, after = ""] = t("policy_version", {
+                version: String(policy.version),
+                approver: mark,
+              }).split(mark);
+              return (
+                <>
+                  {before}
+                  <span className="text-gray-200">{policy.default}</span>
+                  {after}
+                </>
+              );
+            })()}
           </p>
           {rules.length === 0 ? (
-            <p className="text-gray-400 text-sm">
-              No rules — the default approver handles every action.
-            </p>
+            <p className="text-gray-400 text-sm">{t("no_rules_the_default_approver")}</p>
           ) : (
             <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-x-auto">
               <table className="w-full text-sm text-left border-collapse">
                 <thead>
                   <tr>
                     <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                      Max risk
+                      {t("max_risk")}
                     </th>
                     <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                      Effects
+                      {t("effects")}
                     </th>
                     <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                      Required approver
+                      {t("required_approver")}
                     </th>
                   </tr>
                 </thead>
@@ -537,7 +550,7 @@ export function ApprovalPolicyDataView({ data }: { data: any }) {
                         {r.maxRisk}
                       </td>
                       <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
-                        {(r.effects || []).join(", ") || "any"}
+                        {(r.effects || []).join(", ") || t("any")}
                       </td>
                       <td className="py-3 px-4 text-gray-300 border-b border-gray-800/50">
                         {r.requiredApprover}
@@ -558,32 +571,31 @@ export function CapabilitiesDataView({ data }: { data: any }) {
   const goals: any[] = Array.isArray(data?.goals) ? data.goals : [];
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-2">Capabilities</h2>
+      <h2 className="text-xl font-bold text-white mb-2">{t("capabilities")}</h2>
       <p className="text-sm text-gray-400 mb-6">
-        Read-only. Capabilities are derived from the registered workflows, not
-        administered here.
+        {t("read_only_capabilities_are_derived")}
       </p>
       {goals.length === 0 ? (
-        <p className="text-gray-400 text-sm">No capabilities registered.</p>
+        <p className="text-gray-400 text-sm">{t("no_capabilities_registered")}</p>
       ) : (
         <div className="bg-[#111827] rounded-xl border border-gray-800 overflow-x-auto">
           <table className="w-full text-sm text-left border-collapse">
             <thead>
               <tr>
                 <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Goal
+                  {t("goal")}
                 </th>
                 <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Endpoint
+                  {t("endpoint")}
                 </th>
                 <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Steps
+                  {t("steps")}
                 </th>
                 <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Est. cost
+                  {t("est_cost")}
                 </th>
                 <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Requires
+                  {t("requires")}
                 </th>
               </tr>
             </thead>
@@ -625,13 +637,15 @@ export function CapabilityMappingDataView({ data }: { data: any }) {
   const pairs: [string, string[]][] = state === "ready" ? data.mappings : [];
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-6">Capability → feature mapping</h2>
+      <h2 className="text-xl font-bold text-white mb-6">
+        {t("capability_feature_mapping")}
+      </h2>
       {state === "loading" ? (
         <p className="text-gray-400 text-sm">
           {renderMessage("screens.admin_console.loading")}
         </p>
       ) : state === "unavailable" ? (
-        <PanelUnavailable panel="Capability → feature mapping" />
+        <PanelUnavailable panel={t("capability_feature_mapping")} />
       ) : pairs.length === 0 ? (
         <p className="text-gray-400 text-sm">
           {renderMessage("screens.admin_console.no_mappings")}
@@ -642,10 +656,10 @@ export function CapabilityMappingDataView({ data }: { data: any }) {
             <thead>
               <tr>
                 <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Capability
+                  {t("capability")}
                 </th>
                 <th className="text-xs text-gray-400 uppercase tracking-wider py-3 px-4 border-b border-gray-800">
-                  Required features
+                  {t("required_features")}
                 </th>
               </tr>
             </thead>

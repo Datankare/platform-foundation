@@ -10,6 +10,9 @@
  * @module platform/observability
  */
 
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
+
 /** One provider probe's outcome. `error` is set only when the provider could not be reached. */
 export interface ProviderHealthStatus {
   readonly provider: string;
@@ -24,19 +27,18 @@ export interface ProviderHealthStatus {
  */
 const CONNECTIVITY_FAILURE = /ECONNREFUSED|ENOTFOUND|timed out|fetch failed/i;
 
-/** The message of a thrown value, whatever was thrown. */
-export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 /** Whether an error message says the provider could not be reached. */
 export function isConnectivityFailure(message: string): boolean {
   return CONNECTIVITY_FAILURE.test(message);
 }
 
+/** What an unreachable provider's status says; the network's own text is logged (R-77). */
+export const PROVIDER_UNREACHABLE = "the provider could not be reached";
+
 /**
  * Run a probe call and classify its outcome: success is healthy; a connectivity failure is
- * unhealthy and carries its message; any other error is a provider that answered, so healthy.
+ * unhealthy (its message logged, the status saying PROVIDER_UNREACHABLE); any other error is a
+ * provider that answered, so healthy.
  */
 export async function probeResponsive(
   provider: string,
@@ -48,13 +50,15 @@ export async function probeResponsive(
     await call();
     return { provider, healthy: true, latencyMs: now() - start };
   } catch (err) {
-    const message = errorMessage(err);
-    const unreachable = isConnectivityFailure(message);
-    return {
-      provider,
-      healthy: !unreachable,
-      latencyMs: now() - start,
-      error: unreachable ? message : undefined,
-    };
+    if (isConnectivityFailure(err instanceof Error ? err.message : String(err))) {
+      logCaught(logger, "Provider unreachable", err, { provider }, "warn");
+      return {
+        provider,
+        healthy: false,
+        latencyMs: now() - start,
+        error: PROVIDER_UNREACHABLE,
+      };
+    }
+    return { provider, healthy: true, latencyMs: now() - start, error: undefined };
   }
 }

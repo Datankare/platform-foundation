@@ -1,6 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.forgot_password.${key}`, values);
 
 interface ForgotPasswordFormProps {
   /** True when the code was sent; false keeps the email step (the error says why). */
@@ -55,16 +60,14 @@ export default function ForgotPasswordForm({
   if (success) {
     return (
       <div className="flex flex-col gap-6 text-center">
-        <div className="text-4xl">&#x2705;</div>
-        <h2 className="text-xl font-bold text-white">Password Reset</h2>
-        <p className="text-sm text-gray-400">
-          Your password has been reset successfully.
-        </p>
+        <div className="text-4xl">✅</div>
+        <h2 className="text-xl font-bold text-white">{t("password_reset")}</h2>
+        <p className="text-sm text-gray-400">{t("your_password_has_been_reset")}</p>
         <button
           onClick={onBackToLogin}
           className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition"
         >
-          Back to Sign In
+          {t("back_to_sign_in")}
         </button>
       </div>
     );
@@ -72,16 +75,16 @@ export default function ForgotPasswordForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-bold text-white text-center">Reset Password</h2>
+      <h2 className="text-xl font-bold text-white text-center">{t("reset_password")}</h2>
 
       {step === "email" ? (
         <form onSubmit={handleSendCode} className="flex flex-col gap-4">
           <p className="text-sm text-gray-400 text-center">
-            Enter your email and we will send you a reset code.
+            {t("enter_your_email_and_we")}
           </p>
           <div>
             <label htmlFor="forgot-email" className="block text-sm text-gray-400 mb-1.5">
-              Email
+              {t("email")}
             </label>
             <input
               id="forgot-email"
@@ -89,7 +92,7 @@ export default function ForgotPasswordForm({
               autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t("you_example_com")}
               disabled={isLoading}
               required
               className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
@@ -111,17 +114,17 @@ export default function ForgotPasswordForm({
             disabled={!email.trim() || isLoading}
             className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {isLoading ? "Sending..." : "Send Reset Code"}
+            {isLoading ? t("sending") : t("send_reset_code")}
           </button>
         </form>
       ) : (
         <form onSubmit={handleConfirmReset} className="flex flex-col gap-4">
           <p className="text-sm text-gray-400 text-center">
-            Check your email for a verification code.
+            {t("check_your_email_for_a")}
           </p>
           <div>
             <label htmlFor="reset-code" className="block text-sm text-gray-400 mb-1.5">
-              Verification Code
+              {t("verification_code")}
             </label>
             <input
               id="reset-code"
@@ -129,7 +132,7 @@ export default function ForgotPasswordForm({
               autoComplete="one-time-code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="Enter 6-digit code"
+              placeholder={t("enter_6_digit_code")}
               disabled={isLoading}
               required
               className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
@@ -141,7 +144,7 @@ export default function ForgotPasswordForm({
               htmlFor="reset-new-password"
               className="block text-sm text-gray-400 mb-1.5"
             >
-              New Password
+              {t("new_password")}
             </label>
             <input
               id="reset-new-password"
@@ -149,7 +152,7 @@ export default function ForgotPasswordForm({
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Create a new password"
+              placeholder={t("create_a_new_password")}
               disabled={isLoading}
               required
               className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
@@ -161,7 +164,7 @@ export default function ForgotPasswordForm({
               htmlFor="reset-confirm-password"
               className="block text-sm text-gray-400 mb-1.5"
             >
-              Confirm New Password
+              {t("confirm_new_password")}
             </label>
             <input
               id="reset-confirm-password"
@@ -169,13 +172,13 @@ export default function ForgotPasswordForm({
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm new password"
+              placeholder={t("confirm_new_password_2")}
               disabled={isLoading}
               required
               className="w-full bg-[#0a0f1e] border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:opacity-50"
             />
             {confirmPassword.length > 0 && !passwordsMatch && (
-              <p className="text-red-400 text-xs mt-1">Passwords do not match</p>
+              <p className="text-red-400 text-xs mt-1">{t("passwords_do_not_match")}</p>
             )}
           </div>
 
@@ -194,7 +197,7 @@ export default function ForgotPasswordForm({
             disabled={!code || !passwordsMatch || !passwordLongEnough || isLoading}
             className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {isLoading ? "Resetting..." : "Reset Password"}
+            {isLoading ? t("resetting") : t("reset_password")}
           </button>
         </form>
       )}
@@ -204,7 +207,7 @@ export default function ForgotPasswordForm({
           onClick={onBackToLogin}
           className="text-blue-400 hover:text-blue-300 transition"
         >
-          Back to Sign In
+          {t("back_to_sign_in")}
         </button>
       </p>
     </div>

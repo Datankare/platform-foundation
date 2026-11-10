@@ -841,11 +841,14 @@ async function lockConfigKey(
  * status: governed-config.ts). This enforces only what the data model requires.
  */
 /** The value a compare-and-set write expected was changed by another write first. */
+/** What a write refused because the setting changed since it was read says (its own words). */
+function configChangedText(key: string): string {
+  return `"${key}" changed since it was read, so nothing was changed. Read it again and retry.`;
+}
+
 class ConfigChangedError extends Error {
   constructor(key: string) {
-    super(
-      `"${key}" changed since it was read, so nothing was changed. Read it again and retry.`
-    );
+    super(configChangedText(key));
     this.name = "ConfigChangedError";
   }
 }
@@ -1014,7 +1017,7 @@ export async function setConfigWithHistory(
           else await withOwnerTx("operator", write);
         } catch (err) {
           if (err instanceof ConfigChangedError) {
-            return { success: false, error: err.message, stale: true };
+            return { success: false, error: configChangedText(key), stale: true };
           }
           if (commitOutcomeUnknown(err)) {
             // It may have landed: every instance forgets the key, as after a write (review 14 L-2).
@@ -1086,7 +1089,7 @@ export async function clearTenantConfig(
   if (!entry) return { success: false, error: `Config key "${key}" not found.` };
   if (!entry.overridden) {
     return options.expectPrevious
-      ? { success: false, error: new ConfigChangedError(key).message, stale: true }
+      ? { success: false, error: configChangedText(key), stale: true }
       : { success: true };
   }
   const tenant = peekTenant();
@@ -1152,7 +1155,7 @@ export async function clearTenantConfig(
           else await withTenantTx(write);
         } catch (err) {
           if (err instanceof ConfigChangedError) {
-            return { success: false, error: err.message, stale: true };
+            return { success: false, error: configChangedText(key), stale: true };
           }
           if (commitOutcomeUnknown(err)) {
             // It may have landed: every instance forgets the key, as after a reset (review 14 L-2).

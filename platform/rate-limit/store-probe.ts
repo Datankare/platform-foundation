@@ -25,6 +25,8 @@ import { isExternalServiceError } from "@/platform/errors/external-service";
 import type { HealthCheckResult, HealthProbe } from "@/platform/observability/types";
 import { getRateLimiter } from "./factory";
 import type { RateLimiter, RateLimitRule } from "./types";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 export const RATE_LIMIT_STORE_PROBE = "rate-limit-store";
 /** At most one store read per minute per instance. */
@@ -55,15 +57,21 @@ export function createRateLimitStoreProbe(
           checkedAt,
         };
       } catch (err) {
+        if (!isExternalServiceError(err))
+          logCaught(
+            logger,
+            "Rate-limit store probe failed",
+            err,
+            { probe: RATE_LIMIT_STORE_PROBE },
+            "warn"
+          );
         return {
           name: RATE_LIMIT_STORE_PROBE,
           status: isExternalServiceError(err) ? statusForReason(err.reason) : "unhealthy",
           latencyMs: Date.now() - start,
           detail: isExternalServiceError(err)
             ? `${err.service}: ${err.reason}${err.status ? ` (HTTP ${err.status})` : ""}`
-            : err instanceof Error
-              ? err.message
-              : "the store did not answer",
+            : "the store did not answer",
           checkedAt,
         };
       }

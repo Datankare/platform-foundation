@@ -16,6 +16,14 @@ import type { HealthProbe, HealthCheckResult, HealthReport, HealthStatus } from 
 import { logger } from "@/lib/logger";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import { hasDatabase, withPlatformTx } from "@/platform/data";
+import { PROBE_FAILED, logCaught } from "@/platform/observability/caught-error";
+
+/** The database probe's own timeout: its detail says so, in this module's words. */
+class DatabaseProbeTimeout extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Database did not answer within ${timeoutMs}ms`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Health Registry — aggregates probes into a report
@@ -92,10 +100,11 @@ export class HealthRegistry {
       return result;
     } catch (err) {
       if (timer) clearTimeout(timer);
+      logCaught(logger, "Health probe failed", err, { probe: probe.name }, "warn");
       return {
         name: probe.name,
         status: "unhealthy",
-        detail: err instanceof Error ? err.message : String(err),
+        detail: PROBE_FAILED,
         checkedAt: new Date().toISOString(),
       };
     }
@@ -140,10 +149,7 @@ export class PostgresHealthProbe implements HealthProbe {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timedOut = new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`Database did not answer within ${timeoutMs}ms`)),
-          timeoutMs
-        );
+        timer = setTimeout(() => reject(new DatabaseProbeTimeout(timeoutMs)), timeoutMs);
       });
       await Promise.race([withPlatformTx((tx) => tx.query("select 1")), timedOut]);
       return {
@@ -154,11 +160,16 @@ export class PostgresHealthProbe implements HealthProbe {
         checkedAt: new Date().toISOString(),
       };
     } catch (err) {
+      logCaught(logger, "Health probe failed", err, { probe: this.name }, "warn");
       return {
         name: this.name,
         status: "unhealthy",
         latencyMs: Date.now() - start,
-        detail: err instanceof Error ? err.message : String(err),
+        // Its own timeout says so (this module's words); any other failure's text is logged.
+        detail:
+          err instanceof DatabaseProbeTimeout
+            ? `Database did not answer within ${err.timeoutMs}ms`
+            : PROBE_FAILED,
         checkedAt: new Date().toISOString(),
       };
     } finally {
@@ -245,11 +256,12 @@ export class LLMProviderHealthProbe implements HealthProbe {
         checkedAt: new Date().toISOString(),
       };
     } catch (err) {
+      logCaught(logger, "Health probe failed", err, { probe: this.name }, "warn");
       return {
         name: this.name,
         status: "unhealthy",
         latencyMs: Date.now() - start,
-        detail: err instanceof Error ? err.message : String(err),
+        detail: PROBE_FAILED,
         checkedAt: new Date().toISOString(),
       };
     }
@@ -301,11 +313,12 @@ export class HttpHealthProbe implements HealthProbe {
         checkedAt: new Date().toISOString(),
       };
     } catch (err) {
+      logCaught(logger, "Health probe failed", err, { probe: this.name }, "warn");
       return {
         name: this.name,
         status: "unhealthy",
         latencyMs: Date.now() - start,
-        detail: err instanceof Error ? err.message : String(err),
+        detail: PROBE_FAILED,
         checkedAt: new Date().toISOString(),
       };
     }

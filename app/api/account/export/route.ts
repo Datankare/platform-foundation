@@ -49,6 +49,8 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     logger.error("Data export not given: a part could not be read", {
       userId: actor.id,
       errorCount: errors.length,
+      // Each names its part and a fixed reason; the cause is logged where it was caught (R-78).
+      errors,
       route: "app/api/account/export",
     });
     return apiError("service.unavailable", {

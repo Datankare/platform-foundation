@@ -14,10 +14,11 @@
 import type { TTSProvider, STTProvider } from "./types";
 import type { TranslationProvider } from "@/platform/translation/types";
 import {
-  errorMessage,
   probeResponsive,
   type ProviderHealthStatus,
 } from "@/platform/observability/provider-health";
+import { PROBE_FAILED, logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 // ── Health Probe Results ────────────────────────────────────────────────
 
@@ -39,11 +40,18 @@ export async function checkTranslationHealth(
       latencyMs: Date.now() - start,
     };
   } catch (err) {
+    logCaught(
+      logger,
+      "Voice health check failed",
+      err,
+      { provider: provider.name },
+      "warn"
+    );
     return {
       provider: provider.name,
       healthy: false,
       latencyMs: Date.now() - start,
-      error: errorMessage(err),
+      error: PROBE_FAILED,
     };
   }
 }
@@ -64,11 +72,18 @@ export async function checkTTSHealth(provider: TTSProvider): Promise<VoiceHealth
       latencyMs: Date.now() - start,
     };
   } catch (err) {
+    logCaught(
+      logger,
+      "Voice health check failed",
+      err,
+      { provider: provider.name },
+      "warn"
+    );
     return {
       provider: provider.name,
       healthy: false,
       latencyMs: Date.now() - start,
-      error: errorMessage(err),
+      error: PROBE_FAILED,
     };
   }
 }

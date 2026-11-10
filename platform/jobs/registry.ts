@@ -12,7 +12,7 @@
 
 import { getSingleton } from "@/platform/kernel/singleton";
 import { composeWithModules } from "@/platform/modules/compose";
-import { checkBackoff, DEFAULT_BACKOFF } from "./backoff";
+import { backoffProblem, checkBackoff, DEFAULT_BACKOFF } from "./backoff";
 import { CORE_JOBS } from "./duties";
 import type {
   JobDefinition,
@@ -122,12 +122,9 @@ export function defineJob(
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > MAX_TIMEOUT_MS) {
     throw new JobDefinitionError(kind, "timeoutMs must be 1 s – 5 min");
   }
-  let backoff;
-  try {
-    backoff = checkBackoff(options.backoff ?? DEFAULT_BACKOFF);
-  } catch (err) {
-    throw new JobDefinitionError(kind, (err as Error).message);
-  }
+  const problem = backoffProblem(options.backoff ?? DEFAULT_BACKOFF);
+  if (problem) throw new JobDefinitionError(kind, problem);
+  const backoff = checkBackoff(options.backoff ?? DEFAULT_BACKOFF);
   const schedule = options.schedule ? checkSchedule(kind, options.schedule) : undefined;
   if (
     options.scope !== undefined &&

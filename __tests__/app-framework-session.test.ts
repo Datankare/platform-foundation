@@ -388,7 +388,11 @@ describe("session dispatch", () => {
         actor: alice,
         cost: 0.5,
       })
-    ).rejects.toThrow(/exceeds session ceiling/);
+      // R-77: the session's own words, by reason; the pipeline's are logged.
+    ).rejects.toMatchObject({
+      reason: "budget-exceeded",
+      message: "the action was refused (budget-exceeded)",
+    });
   });
 
   it("D8 — emits a state-change event carrying agentic fields", async () => {

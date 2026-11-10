@@ -662,8 +662,9 @@ dbDescribe(
       expect(code).toBe(EXIT.appliedNotVoided);
       expect(text).toContain("Not voided for 2 subject(s)");
       expect(text).toContain(
-        "not published (permissions: cache down; token verifications: cache down)"
+        "not published (permissions: the write did not complete; token verifications: the write did not complete)"
       );
+      expect(text).not.toContain("cache down"); // R-77: logged, never reported
       expect(text).toContain("The change itself is committed.");
       expect(text).not.toContain("on every instance");
       expect(await userRow(id)).toMatchObject({ cognito_sub: g.sub });

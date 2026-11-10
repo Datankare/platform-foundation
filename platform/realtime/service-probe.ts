@@ -17,6 +17,8 @@
 
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import type { HealthCheckResult, HealthProbe } from "@/platform/observability/types";
+import { PROBE_FAILED, logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 export function createRealtimeServiceProbe(
   selection: string,
@@ -58,11 +60,12 @@ export function createRealtimeServiceProbe(
           checkedAt: checkedAt(),
         };
       } catch (err) {
+        logCaught(logger, "Health probe failed", err, { probe: "realtime" }, "warn");
         return {
           name: "realtime",
           status: "unhealthy",
           latencyMs: Date.now() - start,
-          detail: err instanceof Error ? err.message : String(err),
+          detail: PROBE_FAILED,
           checkedAt: checkedAt(),
         };
       }

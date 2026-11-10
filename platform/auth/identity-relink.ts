@@ -118,6 +118,8 @@ import {
   type IdentityDirectory,
 } from "@/platform/auth/identity-directory";
 import { sameId } from "@/platform/auth/same-id";
+import { logCaught } from "@/platform/observability/caught-error";
+import { logger } from "@/lib/logger";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -386,10 +388,40 @@ export interface RelinkReport {
 }
 
 /** The request is malformed: nothing was read. */
+/** The log's name for this module. */
+const RELINK_LOG_ROUTE = "platform/auth/identity-relink";
+
+/**
+ * A report's fixed texts (R-77): what failed is in the log line written where it was caught —
+ * never a pool's or a database's own words in the report.
+ */
+export const NOT_INVALIDATED =
+  "its cached permissions could not be voided (the detail is in the log)";
+export const CHUNK_OUTCOME_UNKNOWN =
+  "the connection failed while the chunk was committing: whether it took effect is unknown (the detail is in the log)";
+
+/**
+ * An invalidation that was not published, naming each stamp and its outcome's fixed reason
+ * (review 16 M2): the report says which, in these words — never a cache's own text (R-77).
+ */
+export class NotPublishedError extends Error {
+  constructor(readonly parts: readonly string[]) {
+    super(`not published (${parts.join("; ")})`);
+    this.name = "NotPublishedError";
+  }
+}
+export const CHUNK_FAILED = "the chunk failed (the detail is in the log)";
+
 export class RelinkUsageError extends Error {
-  constructor(message: string) {
-    super(message);
+  /**
+   * The operator's usage text: written by this module (a flag, a missing value), never another
+   * error's, so the command prints it as it is (R-77).
+   */
+  readonly usage: string;
+  constructor(usage: string) {
+    super(usage);
     this.name = "RelinkUsageError";
+    this.usage = usage;
   }
 }
 
@@ -1041,9 +1073,10 @@ function contestedSubjects(plans: readonly AccountPlan[]): Set<string> {
 class ChangedMeanwhile extends Error {
   constructor(
     readonly code: RefusalCode,
-    message: string
+    /** The refusal's text for the report: this module's own words (R-77). */
+    readonly detail: string
   ) {
-    super(message);
+    super(detail);
     this.name = "ChangedMeanwhile";
   }
 }
@@ -1435,9 +1468,21 @@ export async function relinkIdentities(
           await deps.invalidate(s);
           invalidated.push(s);
         } catch (e) {
+          logCaught(
+            logger,
+            "Relink: a subject's cached permissions could not be voided",
+            e,
+            {
+              subject: s,
+              route: RELINK_LOG_ROUTE,
+            }
+          );
           notInvalidated.push({
             subject: s,
-            error: e instanceof Error ? e.message.slice(0, 200) : String(e),
+            error:
+              e instanceof NotPublishedError
+                ? `not published (${e.parts.join("; ")})`
+                : NOT_INVALIDATED,
           });
         }
       }
@@ -1501,7 +1546,7 @@ export async function relinkIdentities(
             );
           } catch (err) {
             if (!(err instanceof ChangedMeanwhile)) throw err;
-            locked[i] = refusal(p.email, err.code, err.message);
+            locked[i] = refusal(p.email, err.code, err.detail);
             if (!skip) throw new ChunkStopped(locked);
           }
         }
@@ -1537,10 +1582,11 @@ export async function relinkIdentities(
       if (isCommitOutcomeUnknown(err)) {
         outcomes.push({ index: c, from, to, outcome: "indeterminate", relinked: 0 });
         stoppedBy = "indeterminate";
-        failure = {
+        logCaught(logger, "Relink: a chunk's commit outcome is unknown", err, {
           chunk: c,
-          message: err instanceof Error ? err.message.slice(0, 300) : "unknown error",
-        };
+          route: RELINK_LOG_ROUTE,
+        });
+        failure = { chunk: c, message: CHUNK_OUTCOME_UNKNOWN };
         await voidAll(attempted);
         continue;
       }
@@ -1548,9 +1594,13 @@ export async function relinkIdentities(
       if (relinkedTotal === 0) throw err;
       outcomes.push({ index: c, from, to, outcome: "failed", relinked: 0 });
       stoppedBy = "failure";
+      logCaught(logger, "Relink: a chunk failed", err, {
+        chunk: c,
+        route: RELINK_LOG_ROUTE,
+      });
       failure = {
         chunk: c,
-        message: err instanceof Error ? err.message.slice(0, 300) : "unknown error",
+        message: CHUNK_FAILED,
       };
       continue;
     }

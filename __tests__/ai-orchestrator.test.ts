@@ -257,7 +257,8 @@ describe("createOrchestrator", () => {
     const metrics = getRecentMetrics();
     expect(metrics).toHaveLength(1);
     expect(metrics[0].success).toBe(false);
-    expect(metrics[0].error).toBe("Network fail");
+    // R-77: the metric records the failure's class, never the provider's text.
+    expect(metrics[0].error).toBe("error");
   });
 
   it("opens circuit breaker on transient errors", async () => {

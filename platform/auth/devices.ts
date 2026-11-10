@@ -11,6 +11,7 @@
 
 import { withTenantTx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
+import { failedWrite } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
 
 export interface DeviceRecord {
@@ -31,16 +32,6 @@ interface DeviceRow {
   is_trusted: boolean;
   last_used_at: Date;
   created_at: Date;
-}
-
-/** Run a write; its error message, or undefined when it succeeded. */
-async function failure(write: () => Promise<unknown>): Promise<string | undefined> {
-  try {
-    await write();
-    return undefined;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
-  }
 }
 
 /**
@@ -68,10 +59,16 @@ export async function registerDevice(
   }
   if (known) {
     const id = known;
-    const error = await failure(() =>
-      withTenantTx((tx) =>
-        tx.query("update user_devices set last_used_at = now() where id = $1::uuid", [id])
-      )
+    const error = await failedWrite(
+      logger,
+      () =>
+        withTenantTx((tx) =>
+          tx.query("update user_devices set last_used_at = now() where id = $1::uuid", [
+            id,
+          ])
+        ),
+      "Device last-used time could not be refreshed",
+      { userId, deviceId, route: "platform/auth/devices" }
     );
     return error ? { success: false, error } : { success: true };
   }
@@ -87,27 +84,27 @@ export async function registerDevice(
         details: { deviceId, deviceName },
       },
       async () => {
-        const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
-              `insert into user_devices (user_id, device_id, device_name, last_used_at)
+        const error = await failedWrite(
+          logger,
+          () =>
+            withTenantTx((tx) =>
+              tx.query(
+                `insert into user_devices (user_id, device_id, device_name, last_used_at)
                values ($1::uuid, $2, $3, now())
                on conflict (user_id, device_id) do update
                  set device_name = excluded.device_name, last_used_at = excluded.last_used_at`,
-              [userId, deviceId, deviceName || null]
-            )
-          )
-        );
-
-        if (error) {
-          logger.error("Device registration failed", {
+                [userId, deviceId, deviceName || null]
+              )
+            ),
+          "Device registration failed",
+          {
             userId,
             deviceId,
-            error,
             route: "platform/auth/devices",
-          });
-          return { success: false, error };
-        }
+          }
+        );
+
+        if (error) return { success: false, error };
 
         return { success: true };
       }
@@ -164,24 +161,24 @@ export async function removeDevice(
         details: { deviceId },
       },
       async () => {
-        const error = await failure(() =>
-          withTenantTx((tx) =>
-            tx.query(
-              "delete from user_devices where user_id = $1::uuid and device_id = $2",
-              [userId, deviceId]
-            )
-          )
-        );
-
-        if (error) {
-          logger.error("Device removal failed", {
+        const error = await failedWrite(
+          logger,
+          () =>
+            withTenantTx((tx) =>
+              tx.query(
+                "delete from user_devices where user_id = $1::uuid and device_id = $2",
+                [userId, deviceId]
+              )
+            ),
+          "Device removal failed",
+          {
             userId,
             deviceId,
-            error,
             route: "platform/auth/devices",
-          });
-          return { success: false, error };
-        }
+          }
+        );
+
+        if (error) return { success: false, error };
 
         return { success: true };
       }

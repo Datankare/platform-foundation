@@ -45,7 +45,12 @@ describe("coppa: a write that fails after its record", () => {
   ])("%s reports the error and records the failed outcome", async (_name, run) => {
     answers = [[], new Error("update refused"), []];
     const out = await run();
-    expect(out).toMatchObject({ success: false, error: "update refused" });
+    // R-77: the result carries a fixed text; the store's own is logged, never returned.
+    expect(out).toMatchObject({ success: false, error: "the write did not complete" });
+    expect(jest.requireMock("@/lib/logger").logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ error: "update refused" })
+    );
     expect(queries.filter((q) => /insert into audit_log/.test(q))).toHaveLength(2);
   });
 });

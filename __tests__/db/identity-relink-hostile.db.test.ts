@@ -41,6 +41,8 @@ import type {
   IdentityDirectory,
 } from "@/platform/auth/identity-directory";
 import {
+  CHUNK_FAILED,
+  NOT_INVALIDATED,
   relinkIdentities,
   type AccountPlan,
   type RelinkRequest,
@@ -609,7 +611,8 @@ dbDescribe("review 15 M2: a cache failure after the commit", () => {
     );
     expect(report.applied).toBe(true);
     expect(report.invalidated).toEqual([id]);
-    expect(report.notInvalidated).toEqual([{ subject: g.sub, error: "cache down" }]);
+    // R-77: the cache's own text is logged; the report carries a fixed reason.
+    expect(report.notInvalidated).toEqual([{ subject: g.sub, error: NOT_INVALIDATED }]);
     expect(await userRow(id)).toMatchObject({ cognito_sub: g.sub });
   });
 });
@@ -708,7 +711,7 @@ dbDescribe("review 15 M4: applied in chunks", () => {
     expect(report).toMatchObject({
       applied: true,
       stoppedBy: "failure",
-      failure: { chunk: 1, message: "connection terminated unexpectedly" },
+      failure: { chunk: 1, message: CHUNK_FAILED },
     });
     expect(report.chunks.map((c) => c.outcome)).toEqual(["applied", "failed", "not-run"]);
     const subs = await Promise.all(

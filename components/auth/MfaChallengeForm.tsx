@@ -1,6 +1,11 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+
+/** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
+const t = (key: string, values?: MessageValues) =>
+  renderMessage(`screens.auth.mfa_challenge.${key}`, values);
 
 interface MfaChallengeFormProps {
   onSubmit: (totpCode: string) => Promise<void>;
@@ -43,11 +48,9 @@ export default function MfaChallengeForm({
   return (
     <div className="flex flex-col gap-6">
       <h2 className="text-xl font-bold text-white text-center">
-        Two-Factor Authentication
+        {t("two_factor_authentication")}
       </h2>
-      <p className="text-sm text-gray-400 text-center">
-        Enter the 6-digit code from your authenticator app.
-      </p>
+      <p className="text-sm text-gray-400 text-center">{t("enter_the_6_digit_code")}</p>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
@@ -81,7 +84,7 @@ export default function MfaChallengeForm({
           disabled={!canSubmit}
           className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {isLoading ? "Verifying..." : "Verify"}
+          {isLoading ? t("verifying") : t("verify")}
         </button>
       </form>
 
@@ -90,7 +93,7 @@ export default function MfaChallengeForm({
           onClick={onCancel}
           className="text-blue-400 hover:text-blue-300 transition"
         >
-          Cancel sign-in
+          {t("cancel_sign_in")}
         </button>
       </p>
     </div>

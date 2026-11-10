@@ -37,6 +37,7 @@ import type {
   TokenPayload,
 } from "@/platform/auth/types";
 import { logger } from "@/lib/logger";
+import { logCaught } from "@/platform/observability/caught-error";
 import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 import {
   readFailureText,
@@ -312,11 +313,12 @@ async function callCognito(
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new CognitoError(`Cognito timed out after ${timeout}ms`, "TimeoutError", 0);
     }
-    throw new CognitoError(
-      error instanceof Error ? error.message : "Unknown Cognito error",
-      "NetworkError",
-      0
-    );
+    // What the network said is logged; the error says only that Cognito was not reached (R-77).
+    logCaught(logger, "Cognito could not be reached", error, {
+      action,
+      route: "platform/auth/cognito-provider",
+    });
+    throw new CognitoError("Cognito could not be reached", "NetworkError", 0);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -1793,7 +1795,7 @@ export class CognitoAuthProvider implements AuthProvider {
       );
       return {
         success: false,
-        error: error instanceof Error ? error.message : "client secret refused",
+        error: "client secret refused",
         errorCode: "service.unavailable",
         errorParams: { service: "auth" },
       };
@@ -1803,9 +1805,10 @@ export class CognitoAuthProvider implements AuthProvider {
         cognitoType: error.cognitoType,
         message: error.message,
       });
+      // Cognito's own words are in the line above; the result names the exception's type (R-77).
       return {
         success: false,
-        error: error.message,
+        error: `${operation}: ${error.cognitoType}`,
         errorCode: COGNITO_ERROR_CODES[error.cognitoType] ?? "internal.error",
       };
     }

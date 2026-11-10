@@ -25,6 +25,7 @@ import type {
 } from "./types";
 import { generateId } from "@/platform/agents/utils";
 import { logger } from "@/lib/logger";
+import { CALL_FAILED, logCaught } from "@/platform/observability/caught-error";
 
 /**
  * Generate a unique purge ID.
@@ -202,11 +203,15 @@ export class PurgePipeline {
           durationMs: Date.now() - start,
         });
       } catch (error) {
+        logCaught(logger, "Hard purge handler failed", error, {
+          handler: handler.name,
+          route: "platform/gdpr/hard-purge",
+        });
         steps.push({
           handler: handler.name,
           success: false,
           deletedCount: 0,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: CALL_FAILED,
           durationMs: Date.now() - start,
         });
 
