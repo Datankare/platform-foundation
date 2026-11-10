@@ -21,6 +21,8 @@ jest.mock("@/lib/logger", () => ({
 // Gotcha #34: platform-config mock for getConfig
 jest.mock("@/platform/auth/platform-config", () => ({
   getConfigOrThrow: jest.fn().mockResolvedValue(false),
+  // The setting's tier names who could approve it (TASK-203, N-24).
+  getPermissionTier: jest.fn().mockResolvedValue("standard"),
 }));
 
 // The workflow itself is proven against Postgres (__tests__/db/platform-config.db.test.ts);

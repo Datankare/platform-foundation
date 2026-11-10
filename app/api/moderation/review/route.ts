@@ -31,7 +31,12 @@ import type {
 } from "@/platform/moderation/review-types";
 import type { ModerationResult } from "@/platform/moderation/types";
 import type { ExplanationChain } from "@/platform/rag/types";
-import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  errorFromResult,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 const MODERATE_PERMISSION = "can_moderate";
@@ -52,6 +57,79 @@ const VALID_SUBMIT_SOURCES: readonly ReviewItemSource[] = ["escalation"];
  * The fields of a moderation result the review pipeline reads. A hand-submitted result that
  * lacks them would fail later, inside the service, as an uncoded error (release review).
  */
+const S: InputSchemaNode = { type: "string" };
+const N: InputSchemaNode = { type: "number" };
+const B: InputSchemaNode = { type: "boolean" };
+const NAMES: InputSchemaNode = { type: "array", items: S };
+
+/**
+ * The body this route reads (TASK-203, N-31): an item for the queue — a moderation result as the
+ * pipeline makes one (ModerationResult, its classifier output included) and, optionally, its
+ * explanation chain. Any other key, at any depth, is refused. An explanation step's `data` takes
+ * no key here: the pipeline enqueues its own items in process (review-service); a caller of the
+ * route sends the chain's text, never data of its own shape.
+ */
+const ENQUEUE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    source: S,
+    targetUserId: S,
+    moderationResult: {
+      type: "object",
+      properties: {
+        action: S,
+        triggeredBy: S,
+        direction: S,
+        contentType: S,
+        contentRatingLevel: N,
+        blocklistMatches: NAMES,
+        classifierOutput: {
+          type: "object",
+          properties: {
+            safe: B,
+            categories: NAMES,
+            confidence: N,
+            severity: S,
+            reason: S,
+            unjudged: B,
+          },
+        },
+        reasoning: S,
+        severityAdjustment: N,
+        contextFactors: NAMES,
+        attributeToUser: B,
+        pipelineLatencyMs: N,
+        classifierCostUsd: N,
+        trajectoryId: S,
+        agentId: S,
+        screeningUnavailable: B,
+        unjudgedReason: S,
+      },
+    },
+    explanationChain: {
+      type: "object",
+      properties: {
+        id: S,
+        requestId: S,
+        steps: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              phase: S,
+              description: S,
+              data: { type: "object", properties: {} },
+              durationMs: N,
+            },
+          },
+        },
+        conclusion: S,
+        createdAt: S,
+      },
+    },
+  },
+};
+
 function isModerationResultShape(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const m = value as Record<string, unknown>;
@@ -144,7 +222,10 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
 
   const requestId = generateRequestId();
 
-  const read = await readJsonObject(request);
+  // An account's standing before a case is the server's to record, never a caller's.
+  const read = await readJsonBody(request, ENQUEUE_BODY_SCHEMA, {
+    notAccepted: ["previousAccountStatus"],
+  });
   if (!read.ok) return read.response;
   const body = read.body as {
     source?: ReviewItemSource;

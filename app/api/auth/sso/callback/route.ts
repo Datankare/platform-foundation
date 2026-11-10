@@ -16,7 +16,7 @@ import {
   sessionResponse,
 } from "@/platform/auth/auth-response";
 import { isFeatureAvailable } from "@/platform/features";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { logger } from "@/lib/logger";
 import {
   SSO_COOKIE,
@@ -29,6 +29,15 @@ import {
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sessionTenantRefusal } from "@/platform/tenancy/identity";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const CALLBACK_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    code: { type: "string" },
+    state: { type: "string" },
+  },
+};
 
 function endAttempt(response: NextResponse): NextResponse {
   response.cookies.set(SSO_COOKIE, "", {
@@ -46,7 +55,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_SESSION);
   if (limited) return limited;
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, CALLBACK_BODY_SCHEMA);
   if (!read.ok) return endAttempt(read.response);
   const body = read.body as { code?: unknown; state?: unknown };
 

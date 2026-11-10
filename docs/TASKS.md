@@ -5452,7 +5452,7 @@ erasure failed the job), `account-data-rights` (the route deleted the identity w
 | Nit: `tenant.invalid` dropped its message                                                                                                        | Nit       | Carried as `reason` (`messages/en.json`, the registry, API_ERRORS); `db/operator-routes` checks it                                                                                                                                                                                                                                                                                                                 |
 
 **Review round 3** (final; an independent verifier of round 2): **SHIP**, 0 Important. Accepted
-residuals: (Low) the pool is proven only at soft-delete time, so a throttled or not-yet-permitted
+residuals (_all three resolved by TASK-203: N-54, N-55, N-56_): (Low) the pool is proven only at soft-delete time, so a throttled or not-yet-permitted
 lookup then leaves a step for attestation that a later retry could have proven (fails closed:
 operator work, not data); (Low) the proof reads `users.cognito_sub` while the erase reads
 `user_deletions.cognito_sub` — unreachable today, since nothing nulls `users.cognito_sub`;
@@ -5475,7 +5475,8 @@ the parental-consent flow ships; before turning it on, count what it would erase
 `select count(*) from users where parental_consent_status in ('pending', 'denied') and deleted_at
 is null and coalesce(age_verified_at, created_at) < now() - interval '14 days';`.
 
-**Deferred / not here:** B-5, B-11–B-14, A-8, A-9 (retention for tables without rules: batch S4).
+**Deferred / not here:** B-5, B-11–B-14, A-8, A-9 (retention for tables without rules: batch S4;
+every table's retention is answered by TASK-203, N-25).
 
 ### TASK-194 — Access control and security: the whole-codebase sweep's class C (batch S1)
 
@@ -6033,12 +6034,14 @@ remove it.
 | N5: the model check's file-list call was unauthenticated                                                                                 | Important | `GITHUB_TOKEN` (the workflow's read-only token) is sent when set; `model-registry-check.yml` passes it; tested                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Nits: Retry submitted the input's current text; a reporter in one arm of a conditional counted for the return/throw; the round-2 heading | Nit       | Retry submits the failed turn's own text (tested); the coverage guard counts a reporter only when it is on every way through the expression (`?:`, `&&`, `\|\|`, `??`); the heading corrected                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
-**Residuals.** (1) Re-applying an older migration after later ones is not harmless: re-running
+**Residuals.** (1) _Resolved by TASK-203 (N-53): `applied_migrations` refuses an older migration
+recorded after a later one unless the session names it._ Re-applying an older migration after later ones is not harmless: re-running
 039 after 049 puts back 039's `rate_limit_hit`. Each migration is idempotent when re-applied in
 order (the replay checks that); re-running an old one out of order is not supported — the SQL
 Editor procedure applies the newest. (2) The live Haiku 4.5 retirement date is tentative ("not
 sooner than 2026-10-15") and not in the Models API while the model is active: TASK-187 tracks
-the move. (3) No readiness probe computes a Cognito SECRET_HASH (the finding's second
+the move. (3) _Decided and resolved by TASK-203 (N-52): readiness compares the client's secret on
+demand, never a sign-in._ No readiness probe computes a Cognito SECRET_HASH (the finding's second
 suggestion): the first refused sign-in now alerts; a probe would sign in as nobody against the
 production pool every interval — left for the owner to decide. (4) Google speech-to-text's
 `latest_long` and the `text-embedding-3-*` ids are not checked (no list API; no embedding
@@ -7163,7 +7166,207 @@ caller, the detail to the log.
   notification (each reported by the indirect guard's self-tests); to pass a CSS value, a cookie,
   a dotted key or an HTTP method off as words (not reported — self-test).
 
-_Last updated: November 8, 2026 (TASK-205 — caught-error text logged, never returned; every screen literal in the catalog)_
+### TASK-203 — Erasure, retention, security and dual-control readiness
+
+| Field        | Detail                                                                                                    |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-203                                                                                                  |
+| **Type**     | Defect (erasure readiness, retention, dual control that could not be satisfied, input and record gaps)    |
+| **Severity** | High (an erasure held for an approver who did not exist; rows kept with no limit; an unbounded purge)     |
+| **Phase**    | Phase 5                                                                                                   |
+| **Target**   | v6.0.0 (RC)                                                                                               |
+| **Status**   | Fixed on develop (sub-batch 55c of the residuals batch); owner steps below                                |
+| **Logged**   | 2026-11-08 (the rebuilt residuals register: N-22–N-29, N-31, N-35–N-37, N-52–N-56, N-83, N-85, N-87–N-91) |
+
+**1. Dual control that nobody could satisfy (N-24, N-85).** Every dual-controlled action — an
+erasure, a role change, a held setting, a catalog change, a tenant's deletion, an erasure's
+attestation — waited for an approver who was not the requester, and nothing checked that one
+existed: a deployment with one super_admin accepted an erasure, held it, and it lapsed while the
+erasure deadline ran. The rules stay as strict as they were; what changed is when the answer comes:
+
+- `platform/admin/eligible-approvers.ts` reads who could approve, as the permission engine resolves
+  it (role, inherited role, active entitlement; an account in good standing), and the request path
+  refuses up front, before anything is held: `approvals.no_eligible_approver` (409), naming the
+  action and every permission its approver needs, when no account but the requester (and the
+  account the action acts on) could approve it — the command bar and the screens on it (Users,
+  Entitlements, the erasure route), held settings (`requestApproval`, the config tools), tenant
+  deletion and erasure attestation. The action's own approver rule (a role change: every
+  permission of both roles) is applied per account, the same function the decision runs. In a
+  shared deployment an operator of any tenant counts for a tenant's hold (platform_operate and the
+  approval's permissions), as the operators' approval routes allow. A read failure refuses
+  (`service.unavailable`), never holds.
+- Operator readiness gains a `dual_control` check (`platform/admin/dual-control-readiness.ts`):
+  every dual-controlled action, per tenant with staff and across the deployment for operators'
+  actions, that has no second eligible approver — named with what its approver needs.
+- The users and entitlements routes answered every refused action as 503; a coded refusal is now
+  answered with its own code.
+- TENANCY_OPERATIONS "The second super admin": a guarded SQL block the owner runs once (tenant
+  `default`; exactly one non-deleted account with the address; not already a super_admin; not the
+  mailbox of an existing super_admin, `+tags` ignored; exactly one super_admin today), with its
+  `role_bootstrap` audit record and the check queries — every column checked against the
+  migrations (`last_login_at`, not `last_sign_in_at`), and run as written against the replayed
+  schema by `__tests__/db/second-super-admin.db.test.ts` (each refusal too). It joins the documented
+  hand-edit exceptions (CLAUDE.md, `review-process` guard).
+
+**2. Erasure readiness (N-22, N-23, N-52, N-54, N-55).** Operator readiness gains `erasure`: with
+the administrative key, DescribeUserPool must answer this pool, ListUsers is allowed (a lookup of a
+name no pool user can have) and AdminDeleteUser is allowed (its delete of that absent name answers
+`UserNotFoundException`; it is never sent when the lookup found someone) — a refusal names the
+action and the policy. The administrative key is needed in every tenancy mode (erasure deletes
+identities with it); the contract's hint, ENV_REFERENCE and TENANCY_OPERATIONS §3.3 name the inline
+policy `cognito-tenancy-and-erasure` and its eight actions, scoped to the one pool, from one list
+(`COGNITO_ADMIN_ACTIONS`) that a test holds to every action the provider sends. **N-52, decided:**
+`client_secret` compares the app client's secret (DescribeUserPoolClient) with
+`COGNITO_CLIENT_SECRET` in constant time, on demand from the readiness page — never a sign-in, never
+periodic, never the secret in an answer (TASK-197 residual 3). The pool is proven at erase time too
+when the soft delete could not prove it (throttled, not yet permitted), from the same
+`user_deletions.cognito_sub` the erase uses (TASK-193 residuals).
+
+**3. Retention (N-25, N-26).** `platform/jobs/retention.ts` answers for every platform table: a rule
+(its age, what happens, who applies it) or why it is kept, and
+`__tests__/db/retention-coverage.db.test.ts` fails on a table of the schema with no entry (an app's
+own tables in its manifest's `retention`). The rules no other duty applied run in the new
+`data.retention` job, every tenant, suspended ones too: audit and consent rows lose their IP address
+and user agent after `retention.network_identifiers_days` (90); interactions, AI metrics,
+content-safety decisions (not one a strike rests on), resolved effects, idle guests, idle sessions
+and past budget counters are deleted after their own `retention.*` age — each a governed,
+operator-only, bounded setting (migration 064). The trajectory-retention job and the new job are
+dual-controlled (`config.dual_control_keys`, seeded once as 052 seeded its keys).
+
+**4. The purge (N-27, N-28, N-29).** A purge that ran out of time reported `failed` while its step
+could still complete; now it is `indeterminate` (purge_log, 064), the step's signal is aborted, each
+step reported as not known or not started, a late completion logged, and the account stays due. A
+refused or failed erasure request left its `attempted` record open; it is closed `refused` with the
+code, and an alert (`gdpr.request_record_unclosed`) when even that cannot be written. The cache and
+rate-limit purge handlers no pipeline ran are removed, and with them the AI cache's whole-cache
+clear and `purgeUserData` (it keys by prompt, not by person).
+
+**5. Inputs and records (N-31, N-37, N-56).** Every JSON body is read against its schema
+(`body-schema-baseline.json` at zero; the guard now fails on any schemaless read). Bodies whose part
+is an action's input read it against the keys some action's schema names, a setting's value as a
+configuration value (`CONFIG_VALUE_SCHEMA`, held to every seeded value by a DB test); a key the
+server sets is refused `request.field_not_accepted` at any depth (`readJsonBody`'s `notAccepted`
+paths). Claiming and releasing a moderation case are audited (`review_claimed` /
+`review_unclaimed`); with no record, nothing changes. `tenant.invalid` echoes at most 100
+characters, control characters removed.
+
+**6. Migrations (N-53, N-87).** Migration 064 makes `applied_migrations` refuse recording a
+migration older than one already recorded unless the session names it
+(`platform.migration_reapply`); the replay checks the refusal and the deliberate re-apply
+(TASK-197 residual 1). TENANCY_OPERATIONS "Reconciling the migration record": a guarded procedure to
+retire a record whose file no branch has, or record a file applied without one, with its audit
+record (tested as written). `migration-parity.mjs --records-may-lead` lists records ahead of a
+branch as information.
+
+**7. Security debt (N-35, N-36, N-83).** SEC-001 resolved (stale); SEC-012 and SEC-013 traced with `npm ls` (dev and build only: jest's
+coverage chain and ESLint's; `--omit=dev` lists neither; no import), kept accepted with the
+evidence; H-13 stays accepted with its reason written; TASK-044's state and owner steps recorded.
+
+**8. What this batch found, fixed in it (the coordinator's ruling: no residuals).**
+
+- **SEC-017, styles without `'unsafe-inline'`.** `style-src 'self' 'nonce-…'`: Next.js puts the
+  request's nonce on the tags it renders — the approach of the Next.js documentation's "Content
+  Security Policy" guide (nextjs.org/docs/app/guides/content-security-policy, Vercel). The two
+  components that rendered `style` attributes no longer do (ErrorBoundary: classes; the review
+  dashboard's confidence bar: its width set on the element's style object from script, which the
+  policy allows); `no-inline-style-attributes` refuses a new one (JSX or `setAttribute("style")`).
+  Playform's `e2e/csp.spec.ts` checks the header and that the sign-in page, the main page and the
+  admin console (each section opened) raise no CSP violation, with a planted un-nonced style seen
+  as one. SEC-017 resolved.
+- **npm audit.** Before, in both repositories: 33 (4 low, 29 moderate) — glob (GHSA-3g3m-2fjr-6pw4),
+  minimatch (GHSA-g3hv-75wg-m249), qs (four advisories), deepmerge (CVE-2026-93753), and what
+  depends on them, `@sentry/nextjs` on the production path. Upgrades: `@sentry/nextjs` 11.11.0 (its
+  bundler plugins take glob ^14.0.3), `@stryker-mutator/core` 10.1.1. Where upstream has no fix,
+  overrides, each in the Dependency Overrides register with its reason and removal condition: glob
+  ^14.0.4 (jest 30.5.2, test-exclude), minimatch ^11.0.5 under Stryker, test-exclude and
+  typescript-estree, qs ^6.17.1 (Stryker's typed-rest-client pins 6.15.1), and deepmerge — no fixed
+  release exists — as `vendor/deepmerge`, 4.3.1's build with each key written as an own property
+  (MIT, its authors credited; `vendored-deepmerge` shows the poisoning on upstream's assignment and
+  not on ours). After: `npm audit` and `npm audit --omit=dev` find 0, in both.
+- **The tenants table at 390 px** scrolled the whole page (74 px): the operator console's three
+  tables now scroll inside their own box, as the console's lists do (TASK-202).
+- **Playform's expired delegation requests** are deleted by age (Playform TASK-5004).
+
+**Owner steps** (in order; each with its check). (1) Apply migration 064 in the SQL Editor; check
+`select filename from applied_migrations where filename like '064%';` (one row) and
+`select key from platform_config where key like 'retention.%' order by 1;` (eight keys). (2) Give
+every deployment's Cognito key the inline policy `cognito-tenancy-and-erasure` (TENANCY_OPERATIONS
+§3.3) and open the operator readiness page: `erasure` and `client_secret` ready. (3) If readiness
+names actions with no second approver, add a second super admin with the procedure in
+TENANCY_OPERATIONS (the person signs in once first). (4) After deploy, run `data.retention` from
+the jobs page, or wait a day. (5) Run `npm ci` after pulling: the lockfile changed (overrides, the
+vendored deepmerge).
+
+**Playform.** The same shared files byte for byte; its own Cognito readiness checks, retention for
+its tables, credential register and env reference (N-89, N-90), LIVE_JOURNEY_CHECK §8 (N-91) and the
+parity workflow (N-87) — Playform TASK-5004 in `docs/PLAYFORM_TASKS.md`.
+
+**Design check**
+
+- **Reach:** the erasure route, the Users and Entitlements screens, the command bar, the config
+  assistant and settings (a request no one else could approve is now refused, coded, not held);
+  every route body (a key no schema names is refused); operator readiness (three checks); the
+  purge pipeline and the erasure job; a new daily job; migration 064. Guests and agents: no change
+  except through these routes.
+- **Races:** the approver read is a snapshot: an approver removed after a request is held leaves it
+  held, as before (expiry ends it). Retention deletes in batches of 5000 by `ctid` in its own
+  transactions; a row written meanwhile is younger than the cutoff. The migration trigger runs in
+  the inserting transaction.
+- **Dependencies down:** the staff read failing refuses the request (`service.unavailable`); a
+  Cognito check that cannot answer is `unknown`, never ready; a purge step past its time limit is
+  `indeterminate`.
+- **Erasure leftovers:** none added: the readiness probe names no person; retention removes more.
+- **Screens × responses:** the readiness panel lists the three new checks; a refused request shows
+  its coded message (en.json) wherever a held one showed "held".
+- **Journeys touched:** none exempted or added.
+- **Weakens a tenant's protection?** No: no approval rule is relaxed; an operator counting as an
+  approver is the rule the operators' routes already applied.
+
+**Threat model**
+
+- **Boundary:** the admin and operator routes, the request bodies, the erasure pipeline, the
+  migration record. The actors that exist: the owner (the only account with 2FA that merges and the
+  only operator today), staff accounts of the deployment (super_admin, admin, safety_approver,
+  moderator) and ordinary users; the owner's AI agent working on the code; AWS Cognito; Supabase.
+- **Bypasses** (our own mistakes): an erasure accepted and left to lapse (refused up front now); a
+  setting or role change accepted with no possible approver (same); a body key nobody declared
+  reaching a stored payload (refused); a migration re-applied out of order by hand in the SQL
+  Editor (refused unless named); a purge reported failed while its step completed (indeterminate);
+  a claim of another account's case leaving no record (audited).
+- **Forgeries:** none in scope: each needs an actor who does not exist (a second operator account,
+  a forged Cognito answer); not a residual.
+- **Legitimate flows:** an erasure, role change or held setting in a tenant with a second eligible
+  admin (held, as before); an operator deciding a tenant's hold; the readiness page read by the
+  owner; the first super admin's bootstrap (ADR-013) and the documented procedures.
+- **Agreed before code:** the owner's brief for sub-batch 55c (2026-11-08): refuse up front with a
+  clear message, rules stay strict; readiness names each unapprovable action; the second super
+  admin procedure; N-52 decided and recorded.
+
+**Self-review**
+
+- **Consumers checked:** every caller of `requestApproval`, `runCommandBarAction`,
+  `requestTenantDeletion`, `requestErasureAttestation`; every `readJsonObject`/`readJsonBody`
+  (`body-schema-baseline.json` to zero); every reader of `PurgeStatus` and purge_log.status
+  (`status-lifecycle` register classifies `indeterminate`); every import of the removed handlers
+  and `clearAll`; every test tenant that held a change with one admin (given a second approver, or
+  asserting the refusal where the rules let no one approve — a super_admin's own role, erasure).
+- **Hostile re-read:** tried a requester's id in another case, subject or address as the only
+  approver (excluded — test); an approver suspended until tomorrow, a restriction that ended, a
+  deleted account, an entitlement (DB test); the target as the only approver (refused); a server
+  key nested in a plan's second action (refused with its path — test); a pool user named like the
+  probe (the delete never sent — test); a delete that succeeds, another pool, a throttled pool
+  (never ready — test); the second-super-admin block with the placeholder, a second account with
+  the address, a `+tag` of the first super admin's mailbox, two super admins already (each refused,
+  as written in the document — test); a retention rule deleting a strike's decision (kept — test);
+  an inline style without the nonce on the sign-in page (refused and reported — the CSP spec's
+  self-test), a `style` attribute in JSX or set with `setAttribute` (the guard's self-test), a
+  parsed `__proto__` key through the vendored deepmerge as target, source, or into a
+  null-prototype object (prototype untouched — test), `npm ci` from the new lockfile (installs,
+  `npm ls` clean).
+
+_Last updated: November 8, 2026 (TASK-203, rebased onto TASK-205 — erasure, retention, security and dual-control readiness)_
+
+_Previously updated: November 8, 2026 (TASK-205 — caught-error text logged, never returned; every screen literal in the catalog)_
 
 _Previously updated: November 7, 2026 (TASK-202 — the admin console made usable: the owner's walk of 2026-11-07)_
 

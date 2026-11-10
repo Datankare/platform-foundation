@@ -241,71 +241,75 @@ export function TenantSettingsView({ data: initial }: { data: TenantData | undef
         <p className="text-sm text-gray-400 mt-1">
           {t(shared ? "settings_intro_shared" : "settings_intro_single")}
         </p>
-        <table className="w-full text-sm mt-3">
-          <thead>
-            <tr>
-              <th className={th}>{t("col_setting")}</th>
-              <th className={th}>{t("col_value")}</th>
-              <th className={th}>{t("col_default")}</th>
-              <th className={th}>{t("col_change")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(data.settings ?? []).map((s) => (
-              <tr key={s.key}>
-                <td className={td}>
-                  <span className="font-mono text-blue-300">{s.key}</span>
-                  {s.description && (
-                    <p className="text-xs text-gray-400 mt-1">{s.description}</p>
-                  )}
-                </td>
-                <td className={td}>
-                  <span className="font-mono">{show(s.value)}</span>
-                  {s.overridden && (
-                    <span className="ml-2 text-xs text-amber-400">{t("own_value")}</span>
-                  )}
-                </td>
-                <td className={`${td} font-mono text-gray-400`}>
-                  {show(s.platformValue)}
-                </td>
-                <td className={td}>
-                  <div className="flex gap-2 items-center">
-                    <label className="sr-only" htmlFor={`v-${s.key}`}>
-                      {t("new_value_for", { key: s.key })}
-                    </label>
-                    <input
-                      id={`v-${s.key}`}
-                      className={input}
-                      value={drafts[s.key] ?? ""}
-                      placeholder={show(s.value)}
-                      onChange={(e) =>
-                        setDrafts((d) => ({ ...d, [s.key]: e.target.value }))
-                      }
-                    />
-                    <button
-                      className={button}
-                      aria-label={t("save_for", { key: s.key })}
-                      disabled={busy || !(drafts[s.key] ?? "").trim()}
-                      onClick={() => void save(s.key)}
-                    >
-                      {t("save")}
-                    </button>
-                    {shared && s.overridden && (
-                      <button
-                        className={quiet}
-                        aria-label={t("use_default_for", { key: s.key })}
-                        disabled={busy}
-                        onClick={() => void reset(s.key)}
-                      >
-                        {t("use_default")}
-                      </button>
-                    )}
-                  </div>
-                </td>
+        <div className="mt-3 overflow-x-auto" data-scroll-box>
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th className={th}>{t("col_setting")}</th>
+                <th className={th}>{t("col_value")}</th>
+                <th className={th}>{t("col_default")}</th>
+                <th className={th}>{t("col_change")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(data.settings ?? []).map((s) => (
+                <tr key={s.key}>
+                  <td className={td}>
+                    <span className="font-mono text-blue-300">{s.key}</span>
+                    {s.description && (
+                      <p className="text-xs text-gray-400 mt-1">{s.description}</p>
+                    )}
+                  </td>
+                  <td className={td}>
+                    <span className="font-mono">{show(s.value)}</span>
+                    {s.overridden && (
+                      <span className="ml-2 text-xs text-amber-400">
+                        {t("own_value")}
+                      </span>
+                    )}
+                  </td>
+                  <td className={`${td} font-mono text-gray-400`}>
+                    {show(s.platformValue)}
+                  </td>
+                  <td className={td}>
+                    <div className="flex gap-2 items-center">
+                      <label className="sr-only" htmlFor={`v-${s.key}`}>
+                        {t("new_value_for", { key: s.key })}
+                      </label>
+                      <input
+                        id={`v-${s.key}`}
+                        className={input}
+                        value={drafts[s.key] ?? ""}
+                        placeholder={show(s.value)}
+                        onChange={(e) =>
+                          setDrafts((d) => ({ ...d, [s.key]: e.target.value }))
+                        }
+                      />
+                      <button
+                        className={button}
+                        aria-label={t("save_for", { key: s.key })}
+                        disabled={busy || !(drafts[s.key] ?? "").trim()}
+                        onClick={() => void save(s.key)}
+                      >
+                        {t("save")}
+                      </button>
+                      {shared && s.overridden && (
+                        <button
+                          className={quiet}
+                          aria-label={t("use_default_for", { key: s.key })}
+                          disabled={busy}
+                          onClick={() => void reset(s.key)}
+                        >
+                          {t("use_default")}
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         {status && <Status {...status} />}
       </section>
 
@@ -811,30 +815,32 @@ export function OperatorTenantsView({
             onDone={() => setQuestion(null)}
           />
         )}
-        <table className="w-full text-sm mt-3">
-          <thead>
-            <tr>
-              <th className={th}>{t("col_tenant")}</th>
-              <th className={th}>{t("col_state")}</th>
-              <th className={th}>{t("col_addresses")}</th>
-              <th className={th}>{t("col_users")}</th>
-              <th className={th}>{t("col_actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tenants.map((row) => (
-              <TenantRowView
-                key={row.id}
-                tenant={row}
-                busy={busy}
-                act={act}
-                ask={setQuestion}
-                onSettings={(row) => void openSettings(row)}
-                onKillSwitch={setKillSwitchFor}
-              />
-            ))}
-          </tbody>
-        </table>
+        <div className="mt-3 overflow-x-auto" data-scroll-box>
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th className={th}>{t("col_tenant")}</th>
+                <th className={th}>{t("col_state")}</th>
+                <th className={th}>{t("col_addresses")}</th>
+                <th className={th}>{t("col_users")}</th>
+                <th className={th}>{t("col_actions")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tenants.map((row) => (
+                <TenantRowView
+                  key={row.id}
+                  tenant={row}
+                  busy={busy}
+                  act={act}
+                  ask={setQuestion}
+                  onSettings={(row) => void openSettings(row)}
+                  onKillSwitch={setKillSwitchFor}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
         {status && <Status {...status} />}
       </section>
       {killSwitchFor && (
@@ -1116,73 +1122,77 @@ export function OperatorTenantSettings({
           onChange={(e) => setFilter(e.target.value)}
         />
       </div>
-      <table className="w-full text-sm mt-3">
-        <thead>
-          <tr>
-            <th className={th}>{t("col_setting")}</th>
-            <th className={th}>{t("col_value")}</th>
-            <th className={th}>{t("col_default")}</th>
-            <th className={th}>{t("col_change")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shown.map((e) => (
-            <tr key={e.key}>
-              <td className={td}>
-                <span className="font-mono text-blue-300">{e.key}</span>
-                <p className="text-xs text-gray-400 mt-1">
-                  {t(e.tenantOverridable ? "tenant_settable" : "platform_governed")}
-                  {e.permissionTier === "safety" ? ` · ${t("safety_tier")}` : ""}
-                </p>
-                {e.description && (
-                  <p className="text-xs text-gray-400 mt-1">{e.description}</p>
-                )}
-              </td>
-              <td className={td}>
-                <span className="font-mono">{show(e.value)}</span>
-                {e.overridden && (
-                  <span className="ml-2 text-xs text-amber-400">{t("own_value")}</span>
-                )}
-              </td>
-              <td className={`${td} font-mono text-gray-400`}>{show(e.platformValue)}</td>
-              <td className={td}>
-                <div className="flex gap-2 items-center">
-                  <label className="sr-only" htmlFor={`ov-${e.key}`}>
-                    {t("new_value_for", { key: e.key })}
-                  </label>
-                  <input
-                    id={`ov-${e.key}`}
-                    className={input}
-                    value={drafts[e.key] ?? ""}
-                    placeholder={show(e.value)}
-                    onChange={(ev) =>
-                      setDrafts((d) => ({ ...d, [e.key]: ev.target.value }))
-                    }
-                  />
-                  <button
-                    className={button}
-                    aria-label={t("save_for", { key: e.key })}
-                    disabled={busy || !(drafts[e.key] ?? "").trim()}
-                    onClick={() => void save(e.key)}
-                  >
-                    {t("save")}
-                  </button>
-                  {e.overridden && (
-                    <button
-                      className={quiet}
-                      aria-label={t("use_default_for", { key: e.key })}
-                      disabled={busy}
-                      onClick={() => void reset(e.key)}
-                    >
-                      {t("use_default")}
-                    </button>
-                  )}
-                </div>
-              </td>
+      <div className="mt-3 overflow-x-auto" data-scroll-box>
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              <th className={th}>{t("col_setting")}</th>
+              <th className={th}>{t("col_value")}</th>
+              <th className={th}>{t("col_default")}</th>
+              <th className={th}>{t("col_change")}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {shown.map((e) => (
+              <tr key={e.key}>
+                <td className={td}>
+                  <span className="font-mono text-blue-300">{e.key}</span>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {t(e.tenantOverridable ? "tenant_settable" : "platform_governed")}
+                    {e.permissionTier === "safety" ? ` · ${t("safety_tier")}` : ""}
+                  </p>
+                  {e.description && (
+                    <p className="text-xs text-gray-400 mt-1">{e.description}</p>
+                  )}
+                </td>
+                <td className={td}>
+                  <span className="font-mono">{show(e.value)}</span>
+                  {e.overridden && (
+                    <span className="ml-2 text-xs text-amber-400">{t("own_value")}</span>
+                  )}
+                </td>
+                <td className={`${td} font-mono text-gray-400`}>
+                  {show(e.platformValue)}
+                </td>
+                <td className={td}>
+                  <div className="flex gap-2 items-center">
+                    <label className="sr-only" htmlFor={`ov-${e.key}`}>
+                      {t("new_value_for", { key: e.key })}
+                    </label>
+                    <input
+                      id={`ov-${e.key}`}
+                      className={input}
+                      value={drafts[e.key] ?? ""}
+                      placeholder={show(e.value)}
+                      onChange={(ev) =>
+                        setDrafts((d) => ({ ...d, [e.key]: ev.target.value }))
+                      }
+                    />
+                    <button
+                      className={button}
+                      aria-label={t("save_for", { key: e.key })}
+                      disabled={busy || !(drafts[e.key] ?? "").trim()}
+                      onClick={() => void save(e.key)}
+                    >
+                      {t("save")}
+                    </button>
+                    {e.overridden && (
+                      <button
+                        className={quiet}
+                        aria-label={t("use_default_for", { key: e.key })}
+                        disabled={busy}
+                        onClick={() => void reset(e.key)}
+                      >
+                        {t("use_default")}
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {status && <Status {...status} />}
     </section>
   );

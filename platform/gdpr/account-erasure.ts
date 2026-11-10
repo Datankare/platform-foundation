@@ -29,7 +29,7 @@ export class AccountErasureHandler implements PurgeHandler {
 
   constructor(private readonly requestedBy: string) {}
 
-  async execute(userId: string, dryRun: boolean): Promise<number> {
+  async execute(userId: string, dryRun: boolean, signal?: AbortSignal): Promise<number> {
     if (dryRun) {
       const steps = await withTenantTx((tx) =>
         eraseUserData(tx, userId, { dryRun: true })
@@ -38,6 +38,13 @@ export class AccountErasureHandler implements PurgeHandler {
     }
     const erased = await softDeleteUser(userId, this.requestedBy);
     if (!erased.success) throw new Error(erased.errors.join("; "));
+    // Past the pipeline's time limit the purge is not started (N-27): the account stays erased
+    // (soft-deleted) and gdpr.retention-purge completes the purge on its schedule.
+    if (signal?.aborted) {
+      throw new Error(
+        "The time limit ran out after the erasure: its purge is left to the retention job"
+      );
+    }
     const purged = await hardPurgeUser(userId);
     if (!purged.success) throw new Error(purged.errors.join("; "));
     return (purged.steps ?? []).reduce((sum, s) => sum + s.rows, 0);

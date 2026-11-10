@@ -18,6 +18,7 @@
 import { withTenantTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
+import type { InputSchemaNode } from "@/platform/admin/input-keys";
 
 // ============================================================
 // Types (existing Phase 1 API — do not change)
@@ -238,6 +239,18 @@ const BOOLEAN = [
   "requireNumber",
   "requireSpecial",
 ] as const;
+
+/**
+ * A password-policy change as a route body (TASK-203, N-31): any of the policy's fields, and no
+ * other key — PATCH /api/admin/password-policy reads its body against it.
+ */
+export const PASSWORD_POLICY_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: Object.fromEntries([
+    ...NUMERIC.map((f) => [f, { type: "integer" }] as const),
+    ...BOOLEAN.map((f) => [f, { type: "boolean" }] as const),
+  ]),
+};
 
 export type PasswordPolicyChange =
   | { readonly policy: PasswordPolicy }

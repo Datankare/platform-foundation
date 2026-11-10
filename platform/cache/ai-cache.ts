@@ -182,27 +182,10 @@ export class AICache {
     await this.cache.delete(key);
   }
 
-  /**
-   * Clear all AI cached responses.
-   */
-  async clearAll(): Promise<void> {
-    await this.cache.clear();
-  }
-
-  /**
-   * Delete all cached AI responses for a specific user.
-   * Used by GDPR purge pipeline.
-   *
-   * NOTE: With hash-based keys, we can't enumerate per-user entries
-   * in the generic cache. This clears the entire AI cache namespace.
-   * For per-user granularity, a user-keyed cache design is needed (Phase 4).
-   */
-  async purgeUserData(_userId: string): Promise<number> {
-    // Phase 2: Clear entire AI cache (conservative approach)
-    // Phase 4: User-keyed cache enables per-user purge
-    await this.cache.clear();
-    return 0; // Can't count hash-keyed entries
-  }
+  // N-29: no clearAll and no purgeUserData — both called clear() on the cache this wraps, which is
+  // the deployment's shared cache: it would have wiped every permission and token-revocation stamp
+  // with the AI answers. An entry ends by invalidate() or its TTL; a user-scoped answer is keyed by
+  // its scope (buildAICacheKey).
 
   /** Get hit/miss stats */
   get stats(): { hits: number; misses: number; hitRate: number } {

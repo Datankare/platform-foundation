@@ -10,10 +10,23 @@
 
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { discardDeadJob, replayDeadJob } from "@/platform/jobs/operator";
 import { jobsResponse } from "@/platform/jobs/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const ACTION_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    action: { type: "string" },
+  },
+};
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -24,7 +37,7 @@ export const POST = tenantRoute(async function POST(
   const guard = await requireAdmin(request, "platform_operate");
   if (guard.error) return guard.error;
   const { id } = await params;
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, ACTION_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const { action } = read.body as Record<string, unknown>;
   if (action !== "replay" && action !== "discard") {

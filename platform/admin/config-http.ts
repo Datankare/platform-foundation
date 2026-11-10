@@ -19,7 +19,24 @@ import {
 } from "@/platform/admin/governed-config";
 import type { ConfigScope } from "@/platform/admin/types";
 import { logger, generateRequestId } from "@/lib/logger";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
+import { CONFIG_VALUE_SCHEMA } from "@/platform/admin/input-keys";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const CONFIG_CHANGE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    key: { type: "string" },
+    value: CONFIG_VALUE_SCHEMA,
+    changeComment: { type: "string" },
+    scope: { type: "string" },
+  },
+};
 
 export interface ConfigPutOptions {
   /** Force the change's scope (the operators' per-tenant settings: always "tenant"). */
@@ -33,7 +50,7 @@ export async function configPutResponse(
   options: ConfigPutOptions = {}
 ): Promise<Response> {
   const requestId = generateRequestId();
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, CONFIG_CHANGE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body as {
     key?: unknown;

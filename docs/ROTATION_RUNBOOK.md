@@ -58,8 +58,14 @@ Playform (verified 2026-10-20, issue #573).
 | Buckets        | ACRCloud Music                                                   |
 | Include Works  | No                                                               |
 | Env vars       | `ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET` |
-| Env var scope  | All environments (Production, Preview, Development)              |
+| Env var scope  | Production only (TASK-044: each environment its own project)     |
 | Vercel project | playform                                                         |
+
+Each environment has its own project (TASK-044, done in TASK-203): production
+`playform-prod-songid` (above); staging `playform-staging-songid` in the `playform-staging` Vercel
+project, created by the owner (SECURITY_DEBT TASK-044's steps), with its own row in Playform's
+credential register; dev runs `SONG_ID_PROVIDER=mock` — no credential, no paid call. Rotate each
+project on its own, in its own Vercel project.
 
 ### Rotation History
 
@@ -96,9 +102,9 @@ Playform (verified 2026-10-20, issue #573).
 
 **Vercel cutover:**
 
-1. Update `ACRCLOUD_ACCESS_KEY` and `ACRCLOUD_ACCESS_SECRET` in Vercel dashboard (all environments)
+1. Update `ACRCLOUD_ACCESS_KEY` and `ACRCLOUD_ACCESS_SECRET` in the Vercel project of that project's environment only (production: `playform`; staging: `playform-staging`)
 2. Leave `ACRCLOUD_HOST` unchanged (same region)
-3. Redeploy production — uncheck "Use existing Build Cache"
+3. Redeploy that environment — uncheck "Use existing Build Cache"
 4. Smoke-test via Playform UI — play a song, verify match appears
 
 **Cleanup:**

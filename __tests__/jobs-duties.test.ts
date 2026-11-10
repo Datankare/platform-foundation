@@ -49,6 +49,9 @@ jest.mock("@/platform/auth/user-provisioning", () => ({
 jest.mock("@/platform/agents/trajectory-retention", () => ({
   applyTrajectoryRetention: jest.fn(),
 }));
+jest.mock("@/platform/jobs/retention", () => ({
+  applyRetention: jest.fn(),
+}));
 jest.mock("@/platform/admin/config-approval", () => ({
   expireStaleApprovals: jest.fn(),
 }));
@@ -74,6 +77,7 @@ import {
 import { expireLapsedAccountStatuses } from "@/platform/auth/account-status-guard";
 import { purgeDueErasures } from "@/platform/auth/gdpr-deletion";
 import { applyTrajectoryRetention } from "@/platform/agents/trajectory-retention";
+import { applyRetention } from "@/platform/jobs/retention";
 import { expireStaleApprovals } from "@/platform/admin/config-approval";
 import { purgeDueTenants } from "@/platform/tenancy/admin";
 import { getConfigNumber } from "@/platform/auth/platform-config";
@@ -89,7 +93,7 @@ const duty = (kind: string) => {
 beforeEach(() => jest.clearAllMocks());
 
 describe("the core duties", () => {
-  it("are nine, all recurring, each with a description", () => {
+  it("are ten, all recurring, each with a description", () => {
     expect(CORE_JOBS.map((j) => j.kind)).toEqual([
       "moderation.escalation-reaper",
       "moderation.release-claims",
@@ -97,6 +101,7 @@ describe("the core duties", () => {
       "accounts.expire-restrictions",
       "gdpr.retention-purge",
       "agents.trajectory-retention",
+      "data.retention",
       "config.expire-approvals",
       "tenancy.purge-due",
       "jobs.prune",
@@ -109,7 +114,22 @@ describe("the core duties", () => {
       CORE_JOBS.filter((j) => j.runsForSuspended)
         .map((j) => j.kind)
         .sort()
-    ).toEqual(["agents.trajectory-retention", "gdpr.retention-purge"]);
+    ).toEqual(["agents.trajectory-retention", "data.retention", "gdpr.retention-purge"]);
+  });
+
+  it("data.retention (TASK-203, N-25): passes the job's signal, reports each table, continues on a full batch", async () => {
+    (applyRetention as jest.Mock).mockResolvedValue({
+      changed: { audit_log: 3, ai_metrics: 5000 },
+      more: true,
+    });
+    const stop = new AbortController();
+    expect(await duty("data.retention")({ signal: stop.signal })).toEqual({
+      summary: { audit_log: 3, ai_metrics: 5000 },
+      continueWith: { part: "next" },
+    });
+    expect((applyRetention as jest.Mock).mock.calls[0][0]).toBe(stop.signal);
+    (applyRetention as jest.Mock).mockResolvedValue({ changed: {}, more: false });
+    expect(await duty("data.retention")()).toEqual({ summary: {} });
   });
 
   // Review finding 3: a duty that works item by item is given the job's signal and, told to

@@ -71,8 +71,12 @@ export interface TestTenant {
   readonly ctx: TenantContext;
   /** Run `fn` as this tenant (a job-style scope). */
   run<T>(fn: () => T): T;
-  /** A user of this tenant (created on first use), by label. */
-  user(label?: string): Promise<string>;
+  /**
+   * A user of this tenant (created on first use), by label: the default role's, or `role`'s — an
+   * account another admin's dual-controlled change can be approved by (TASK-203, N-24: a change
+   * no one else could approve is refused up front).
+   */
+  user(label?: string, role?: string): Promise<string>;
 }
 
 const created = new Set<string>();
@@ -95,16 +99,19 @@ export async function createTestTenant(): Promise<TestTenant> {
     id,
     ctx,
     run: (fn) => runWithTenant(ctx, fn),
-    async user(label = "default") {
+    async user(label = "default", role?: string) {
       const existing = users.get(label);
       if (existing) return existing;
       const uid = randomUUID();
-      await withOwnerTx("tenant-lifecycle", (tx) =>
+      const { rowCount } = await withOwnerTx("tenant-lifecycle", (tx) =>
         tx.query(
-          "insert into users (id, cognito_sub, email, role_id, tenant_id) select $1::uuid, $1::uuid, $2, r.id, $3::uuid from roles r where r.is_default",
-          [uid, `${label}-${uid.slice(0, 8)}@test.example`, id]
+          `insert into users (id, cognito_sub, email, role_id, tenant_id)
+           select $1::uuid, $1::uuid, $2, r.id, $3::uuid from roles r
+            where case when $4::text is null then r.is_default else r.name = $4::text end`,
+          [uid, `${label}-${uid.slice(0, 8)}@test.example`, id, role ?? null]
         )
       );
+      if (rowCount !== 1) throw new Error(`no role ${role ?? "(default)"}`);
       users.set(label, uid);
       return uid;
     },

@@ -76,7 +76,12 @@ jest.mock("@/platform/auth/platform-config", () => {
 const mockListApprovals = jest.fn();
 jest.mock("@/platform/admin/config-approval", () => {
   const actual = jest.requireActual("@/platform/admin/config-approval");
-  return { ...actual, listApprovals: (...a: unknown[]) => mockListApprovals(...a) };
+  return {
+    ...actual,
+    listApprovals: (...a: unknown[]) => mockListApprovals(...a),
+    // Someone else could approve (TASK-203, N-24): the store beneath is not these fixtures'.
+    configChangeWithoutApprover: async () => null,
+  };
 });
 const mockNames = jest.fn();
 jest.mock("@/platform/admin/account-names", () => {

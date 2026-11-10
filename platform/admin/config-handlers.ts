@@ -56,6 +56,7 @@ import {
   approveAndApply,
   APPLY_LEASE_SECONDS,
   rejectChange as rejectApprovalChange,
+  configChangeWithoutApprover,
 } from "./config-approval";
 import { generateImpactReport, isModerationConfig } from "./config-impact";
 import type { ErrorCode } from "@/platform/errors/registry";
@@ -1685,6 +1686,67 @@ const HELD_VALUE_FIELD: Readonly<Record<string, string>> = {
  * it would clear one). The same checks, in the same order, as handleUpdateConfig,
  * handleRequestApproval and handleResetConfig make — so nothing is held that its run would refuse.
  */
+/**
+ * The refusal of a held config change no one but its requester could approve (N-24), as the
+ * hold's run would answer a refusal; undefined when someone could. The scope is the change's own
+ * (resolveConfigTarget, as heldChangeProblem resolves it). Unreadable: refused (fail closed).
+ */
+async function heldChangeWithoutApprover(
+  toolId: string,
+  key: string | undefined,
+  input: Record<string, unknown>,
+  actor: AgentIdentity
+): Promise<ConfigToolResult | undefined> {
+  if (!key) return undefined;
+  const coded = (refusal: {
+    readonly errorCode: ErrorCode;
+    readonly errorParams: Record<string, string | readonly string[]>;
+    readonly error: string;
+  }): ConfigToolResult => ({
+    toolId,
+    success: true,
+    data: {
+      applied: false,
+      error: refusal.error,
+      errorCode: refusal.errorCode,
+      errorParams: refusal.errorParams,
+    },
+    errorCode: refusal.errorCode,
+    errorParams: refusal.errorParams,
+    durationMs: 0,
+  });
+  try {
+    const entry = await getEnhancedConfig(key);
+    const asked =
+      toolId === "reset_config"
+        ? "tenant"
+        : input.scope === "platform" || input.scope === "tenant"
+          ? input.scope
+          : undefined;
+    const decision = entry
+      ? resolveConfigTarget(input.actorIsOperator === true, entry, asked)
+      : undefined;
+    const scope = decision?.ok ? decision.target.scope : "platform";
+    const refused = await configChangeWithoutApprover(key, scope, [
+      actor.actorId,
+      actor.onBehalfOf,
+      actor.delegation?.onBehalfOf,
+    ]);
+    return refused ? coded(refused) : undefined;
+  } catch (err) {
+    logger.error("Who could approve a held change could not be read: not held", {
+      key,
+      error: err instanceof Error ? err.message : String(err),
+      route: "platform/admin/config-handlers",
+    });
+    return coded({
+      errorCode: "service.unavailable",
+      errorParams: { service: "config" },
+      error: "Who could approve this change could not be read.",
+    });
+  }
+}
+
 async function heldChangeProblem(
   toolId: string,
   key: string | undefined,
@@ -1951,6 +2013,14 @@ export async function dispatchConfigTool(
         // when approved — never held for an approver to clear and the store to keep.
         const problem = await heldChangeProblem(toolId, targetKey, input);
         if (problem) return problem;
+        // Nor anything no one but its requester could approve (N-24): refused now, coded.
+        const noApprover = await heldChangeWithoutApprover(
+          toolId,
+          targetKey,
+          input,
+          actor
+        );
+        if (noApprover) return noApprover;
         const stepIndex = context?.steps.length ?? 0;
         const proposal = await proposeOnce({
           spec: {

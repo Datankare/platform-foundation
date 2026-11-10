@@ -1,0 +1,10 @@
+{
+  "name": "deepmerge",
+  "version": "4.3.2-pf.1",
+  "description": "deepmerge 4.3.1 with its prototype-poisoning fix, vendored by platform-foundation (TASK-203; see index.js). Not an upstream release: the -pf prerelease tag marks it as this repository's.",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "homepage": "https://github.com/TehShrike/deepmerge",
+  "dependencies": {}
+}

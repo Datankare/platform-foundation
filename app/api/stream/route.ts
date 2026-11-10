@@ -34,12 +34,31 @@ import {
   enforceDailyPaidQuota,
   enforceRateLimit,
 } from "@/platform/rate-limit";
-import { apiError, apiErrorBody, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  apiErrorBody,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { IncompleteStreamError, screenStream } from "@/platform/ai/screened-stream";
 import { checkOutputSafety, checkSafety } from "@/lib/safety";
 import { buildStreamSystemPrompt } from "@/prompts";
 import { logger, generateRequestId } from "@/lib/logger";
 import { tenantRoute } from "@/platform/tenancy/route";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const STREAM_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    prompt: { type: "string" },
+    tier: { type: "string" },
+    maxTokens: { type: "number" },
+    temperature: { type: "number" },
+  },
+};
+
+/** The system prompt is the platform's (stream-policy.ts): a caller's is refused, by name. */
+const STREAM_BODY_OPTIONS = { notAccepted: ["system"] } as const;
 
 export const runtime = "nodejs";
 
@@ -68,7 +87,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   });
   if (limited) return limited;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, STREAM_BODY_SCHEMA, STREAM_BODY_OPTIONS);
   if (!read.ok) return read.response;
   const body = read.body;
 

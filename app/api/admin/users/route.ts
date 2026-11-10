@@ -61,7 +61,13 @@ import { auditedResponse } from "@/platform/auth/audit";
 import { invalidatePermissions } from "@/platform/auth/permissions-cache";
 import { logger } from "@/lib/logger";
 import { likeTerm, pageParams } from "@/lib/pagination";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+  isErrorCode,
+} from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { roleOrderSql } from "@/platform/auth/catalog-order";
 import {
@@ -79,6 +85,15 @@ import {
   type SortDirection,
   type UserSort,
 } from "@/app/api/admin/users/listing";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const ROLE_CHANGE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    userId: { type: "string" },
+    roleId: { type: "string" },
+  },
+};
 
 type UserRow = {
   id: string;
@@ -264,7 +279,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   if (verified.error) return verified.error;
   const { admin } = verified;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, ROLE_CHANGE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body as { userId?: unknown; roleId?: unknown };
   const { userId, roleId } = body ?? {};
@@ -355,8 +370,12 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
           { status: 202 }
         );
       }
-      return outcome.result.success
-        ? NextResponse.json({ success: true })
+      if (outcome.result.success) return NextResponse.json({ success: true });
+      // Refused before it was held — no one else could approve it (TASK-203, N-24), say — as its
+      // own coded answer; an uncoded failure as the service being unavailable.
+      const { code, params } = outcome.result;
+      return code && isErrorCode(code)
+        ? apiError(code, { params: params ?? {}, request })
         : apiError("service.unavailable", { params: { service: "roles" }, request });
     } catch (err) {
       return internalError(err, { request, context: "Role change hold failed" });

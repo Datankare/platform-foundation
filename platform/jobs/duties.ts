@@ -17,6 +17,8 @@
  *                                                  external erasures retried (TASK-193)
  *   agents.trajectory-retention    each tenant*    abandoned open trajectories ended (TASK-193), then
  *                                                  finished ones past retention deleted
+ *   data.retention                 each tenant*    every other table's retention rule applied
+ *                                                  (./retention.ts RETENTION_RULES, TASK-203)
  *   config.expire-approvals        platform        stale configuration approvals expired (TASK-036)
  *   tenancy.purge-due              platform        deleted tenants past their purge time purged
  *   jobs.prune                     platform        succeeded jobs past jobs.retention_days deleted
@@ -30,7 +32,7 @@
  * timed-out handler does not keep running beside its retry. The duties that are one statement
  * (strike expiry, claim release, trajectory retention, approval expiry, prune) end on their own.
  *
- * gdpr.retention-purge and agents.trajectory-retention run for suspended tenants too
+ * gdpr.retention-purge, agents.trajectory-retention and data.retention run for suspended tenants too
  * (runsForSuspended): erasure and storage limitation are legal obligations a suspension does not
  * pause. A deleted tenant's jobs never run — its purge removes everything.
  *
@@ -39,6 +41,7 @@
 
 import { expireStaleApprovals } from "@/platform/admin/config-approval";
 import { applyTrajectoryRetention } from "@/platform/agents/trajectory-retention";
+import { applyRetention } from "./retention";
 import { expireLapsedAccountStatuses } from "@/platform/auth/account-status-guard";
 import {
   eraseMentionsInOtherTenants,
@@ -210,6 +213,27 @@ export const CORE_JOBS: readonly JobDefinition[] = Object.freeze([
           abandoned: r.abandoned,
           abandonHours: r.abandonHours,
         },
+        ...more(r.more),
+      };
+    },
+  },
+  {
+    kind: "data.retention",
+    description:
+      "Applies every table's retention rule that no other duty applies: audit and consent records lose their IP address and user agent, and interactions, AI metrics, content-safety decisions, resolved effects, idle guests and sessions, and past budget counters are deleted after their governed age (retention.*).",
+    runsForSuspended: true,
+    schedule: {
+      scope: "each-tenant",
+      defaultIntervalMinutes: 1440,
+      minIntervalMinutes: 60,
+      maxIntervalMinutes: 10080,
+    },
+    handler: async (ctx) => {
+      const r = await applyRetention(ctx.signal);
+      return {
+        summary: Object.fromEntries(
+          Object.entries(r.changed).map(([table, n]) => [table, n])
+        ),
         ...more(r.more),
       };
     },

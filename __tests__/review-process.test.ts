@@ -58,8 +58,8 @@ describe("CLAUDE.md", () => {
     ["a screen for every refusal", /Every refusal has a screen/],
     ["migrations from files, in the SQL Editor", /Supabase SQL Editor, from the files/],
     [
-      "no hand edits but the bootstrap",
-      /No hand edits of data[\s\S]*first-super-admin bootstrap/,
+      "no hand edits but the documented bootstraps (TASK-203: each one named)",
+      /No hand edits of data[\s\S]*first-super-admin\s+bootstrap[\s\S]*first\s+safety\s+approver[\s\S]*second\s+super\s+admin[\s\S]*reconciling\s+the\s+migration\s+record/,
     ],
     ["verify before claiming", /Verify before claiming/],
     ["match effort to stakes", /Match effort to stakes[\s\S]*pre-launch/],

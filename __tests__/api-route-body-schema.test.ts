@@ -214,6 +214,13 @@ describe("JSON bodies are read against a declared schema (TASK-200, rule 5)", ()
     expect(baseline.count).toBe(sum);
   });
 
+  it("no route reads a body without a schema: the baseline is empty (TASK-203, N-31)", () => {
+    // Every body read before the rule was given its schema; the baseline now only proves nothing
+    // is owed. A new schemaless read fails the test above (it is over its count of 0).
+    expect(baseline).toMatchObject({ count: 0, files: {} });
+    expect(counts).toEqual({});
+  });
+
   it("[self-test] reports a planted schemaless read, a bare request.json() and a schema-less readJsonBody", () => {
     const planted = [
       "export async function POST(request: Request) {",

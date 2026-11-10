@@ -241,6 +241,9 @@ export const STATUS_LIFECYCLE: Readonly<
     partial: {
       rest: "the record of an erasure attempt; its account stays due in user_deletions",
     },
+    indeterminate: {
+      rest: "the record of an erasure attempt that ran out of time (TASK-203, N-27): whether its running step completed is not known, so its account stays due in user_deletions and the erasure runs again",
+    },
   },
   "effect_ledger.status": {
     pending: {

@@ -44,8 +44,8 @@ or Upstash for the shared cache; Jest with ts-jest; Semgrep, CodeQL and gitleaks
   (`__tests__/refusal-coverage.test.ts`; the baseline may only shrink).
 - **Migrations** are applied by the owner in the Supabase SQL Editor, from the files in
   `supabase/migrations/`; each replays cleanly twice (`scripts/migration-replay.sh`).
-- **No hand edits of data.** The one exception is the documented first-super-admin bootstrap
-  ([ADR-013](docs/adr/ADR-013-role-hierarchy.md): `super_admin` is assigned in the database only).
+- **No hand edits of data** but the documented first-super-admin bootstrap (ADR-013) and, in
+  TENANCY_OPERATIONS, first safety approver, second super admin, reconciling the migration record.
 - **Verify before claiming.** Show the command and its output; say plainly what was not run.
 - **Match effort to stakes.** The platform is pre-launch: before building new machinery, ask
   whether the problem matters now, and say what the simpler path would be.

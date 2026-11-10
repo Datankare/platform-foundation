@@ -267,9 +267,16 @@ const ROUTES: readonly RouteCase[] = [
     valid: () =>
       fc.record({
         key: fc.constant(`matrix.${RUN}.absent`),
-        value: fc.jsonValue({ maxDepth: 1 }),
+        // What a setting's value can be (CONFIG_VALUE_SCHEMA, TASK-203 N-31): a scalar or a list;
+        // the route reads `changeComment` (it never read a `comment`, which is now refused).
+        value: fc.oneof(
+          fc.integer(),
+          fc.boolean(),
+          fc.string(),
+          fc.array(fc.oneof(fc.string(), fc.integer()))
+        ),
         scope: fc.constantFrom("tenant", "platform"),
-        comment: words(),
+        changeComment: words(),
       }),
   },
   {
@@ -532,7 +539,7 @@ const ROUTES: readonly RouteCase[] = [
     fc.record({
       key: fc.constant(`matrix.${RUN}.absent`),
       value: fc.integer(),
-      comment: words(),
+      changeComment: words(),
     })
   ),
   op(`tenants/${ID}/config`, "DELETE", "tenants/[id]/config"),

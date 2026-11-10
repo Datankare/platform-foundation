@@ -113,6 +113,10 @@ describe("ReviewDashboard — states", () => {
     render(<ReviewDashboard />);
     await waitFor(() => screen.getByTestId("rd-item-review-1"));
     expect(screen.getByTestId("rd-confidence-review-1")).toBeDefined();
+    // SEC-017 (TASK-203): the bar's width is set on its style object, never as a style attribute
+    // in the markup (the policy refuses those) — 52%, from the item's confidence.
+    const fill = screen.getByTestId("rd-confidence-fill");
+    await waitFor(() => expect(fill.style.width).toBe("52%"));
     expect(screen.getByTestId("rd-trajectory-review-1")).toBeDefined();
     expect(screen.getByTestId("rd-timeline-review-1")).toBeDefined();
     expect(screen.getByTestId("rd-step-review-1-0")).toBeDefined();

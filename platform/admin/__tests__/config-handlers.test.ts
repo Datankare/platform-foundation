@@ -45,6 +45,7 @@ const mockApproveApprovalChange = jest.fn();
 const mockRejectApprovalChange = jest.fn();
 const mockListApprovals = jest.fn();
 const mockGetApproval = jest.fn().mockResolvedValue(null);
+const mockConfigChangeWithoutApprover = jest.fn().mockResolvedValue(null);
 
 jest.mock("../config-approval", () => ({
   isApprovalRequired: (...args: any[]) => mockIsApprovalRequired(...args),
@@ -66,6 +67,9 @@ jest.mock("../config-approval", () => ({
   rejectChange: (...args: any[]) => mockRejectApprovalChange(...args),
   listApprovals: (...args: any[]) => mockListApprovals(...args),
   getApproval: (...args: any[]) => mockGetApproval(...args),
+  // Someone else could approve (TASK-203, N-24: refused up front otherwise — see below).
+  configChangeWithoutApprover: (...args: any[]) =>
+    mockConfigChangeWithoutApprover(...args),
 }));
 
 const mockGenerateImpactReport = jest.fn();

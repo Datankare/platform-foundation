@@ -62,7 +62,8 @@ function lifecycleHooks(): void {
     await connectTestDatabase();
     setTenantDirectory(new CachedTenantDirectory(new PostgresTenantDirectory()));
     home = await createTestTenant();
-    const op1Id = await home.user("op1");
+    // Operators hold platform_operate (TASK-203, N-24: a second one must exist to ask at all).
+    const op1Id = await home.user("op1", "super_admin");
     // A verified super_admin operator: the role rules apply to them (audit C-5).
     op1 = {
       userId: op1Id,
@@ -73,7 +74,7 @@ function lifecycleHooks(): void {
         permissions: ROLE_PERMISSIONS.super_admin,
       },
     };
-    op2 = { userId: await home.user("op2") };
+    op2 = { userId: await home.user("op2", "super_admin") };
   });
 
   afterAll(async () => {

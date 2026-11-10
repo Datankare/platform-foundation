@@ -89,6 +89,7 @@ export const REFUSAL_HANDLERS = {
   "approvals.hold_not_found": "message",
   "approvals.permission_required": "message",
   "approvals.run_failed": "message",
+  "approvals.no_eligible_approver": "message",
   "approvals.self_approval": "message",
   "approvals.stale": "message",
   "auth.account_exists": "message",

@@ -63,6 +63,8 @@ if (DB_ENABLED) {
   });
   beforeEach(async () => {
     t = await createTestTenant();
+    // Someone else could approve (TASK-203, N-24: otherwise refused up front).
+    await t.user("approver", "super_admin");
   });
 }
 const sql = (text: string, values: unknown[] = []) =>
@@ -381,6 +383,8 @@ dbDescribe(
       await expect(insert([3, root, 0])).rejects.toThrow(/segment \+ 1/);
       await expect(insert([2, root, 9])).rejects.toThrow(/step_offset/);
       const other = await createTestTenant();
+      // Someone else could approve (TASK-203, N-24: otherwise refused up front).
+      await other.user("approver", "super_admin");
       const theirs = (
         await other.run(() => store.create({ kind: "agent", id: "h" }, "t", "user"))
       ).trajectory.trajectoryId;

@@ -137,6 +137,59 @@ for f in $order; do
   fi
 done
 
+# TASK-203 (N-53): from 064 a migration applied before is refused when another was recorded since
+# (applied_migrations_in_order). Shown here, then the steps below — which re-apply older migrations
+# on purpose, to check each is idempotent against the data it could disturb — name themselves as
+# deliberate re-applications (platform.migration_reapply), as a documented step would.
+step "064: an older migration re-applied out of order is refused, and changes nothing"
+# The oldest replayed migration that records itself (an app's own may not: Playform's 007).
+oldest=$(echo "$order" | while read -r f; do
+  grep -qF "('$f', 'verified'" "$BASELINE" && continue
+  grep -qF "'$f'" "$ROOT/supabase/migrations/$f" && { echo "$f"; break; }
+done)
+newest=$("${PSQL[@]}" -At -c "SELECT filename FROM public.applied_migrations ORDER BY recorded_at DESC, filename DESC LIMIT 1")
+if [ -n "$oldest" ] && [ "$oldest" != "$newest" ]; then
+  before=$(schema_snapshot)
+  refused=$("${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$oldest" 2>&1 >/dev/null || true)
+  case "$refused" in
+    *"re-applying an older migration out of order is refused"*) ;;
+    *) echo "✗ re-applying $oldest after $newest was not refused: $refused"; exit 1 ;;
+  esac
+  [ "$before" = "$(schema_snapshot)" ] \
+    || { echo "✗ the refused re-application of $oldest changed the database"; exit 1; }
+fi
+# Named as a deliberate re-application, an older one is applied: 063 (it only records its checksum
+# again, so nothing later depends on what it would put back).
+PGOPTIONS="${PGOPTIONS:-} -c platform.migration_reapply=063_applied_migrations_checksum.sql" \
+  "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/063_applied_migrations_checksum.sql" >/dev/null \
+  || { echo "✗ 063 named as a deliberate re-application was still refused"; exit 1; }
+export PGOPTIONS="${PGOPTIONS:-} -c platform.migration_reapply=all"
+
+step "064: retention settings seeded; both retention duties dual-controlled once — an operator's removal stands; purge_log takes indeterminate"
+# The platform's eight by name (an app's own retention settings may sit beside them: Playform's 064a).
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM public.platform_config WHERE key IN ('retention.network_identifiers_days', 'retention.user_interactions_days', 'retention.ai_metrics_days', 'retention.content_safety_audit_days', 'retention.effect_ledger_days', 'retention.guest_usage_days', 'retention.app_sessions_days', 'retention.agent_budgets_days') AND category = 'retention' AND permission_tier = 'safety' AND NOT tenant_overridable")" = "8" ] \
+  || { echo "✗ 064 did not seed the eight operator-only retention settings"; exit 1; }
+for k in jobs.agents.trajectory-retention.enabled jobs.data.retention.enabled; do
+  [ "$("${PSQL[@]}" -At -c "SELECT (value @> to_jsonb('$k'::text))::text FROM public.platform_config WHERE key = 'config.dual_control_keys'")" = "true" ] \
+    || { echo "✗ 064 did not put $k under dual control"; exit 1; }
+done
+# An operator removes one (a governed change, recorded in the history); 064 applied again keeps it out.
+"${PSQL[@]}" >/dev/null <<'SQL'
+WITH before AS (SELECT value FROM public.platform_config WHERE key = 'config.dual_control_keys')
+INSERT INTO public.platform_config_history (config_key, previous_value, new_value, change_comment, change_source, scope)
+SELECT 'config.dual_control_keys', b.value, b.value - 'jobs.data.retention.enabled', 'replay-064', 'replay', 'platform' FROM before b;
+UPDATE public.platform_config SET value = value - 'jobs.data.retention.enabled' WHERE key = 'config.dual_control_keys';
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/064_retention_and_migration_order.sql" >/dev/null
+[ "$("${PSQL[@]}" -At -c "SELECT (value @> '[\"jobs.data.retention.enabled\"]'::jsonb)::text FROM public.platform_config WHERE key = 'config.dual_control_keys'")" = "false" ] \
+  || { echo "✗ applying 064 again put back a dual-control key an operator removed"; exit 1; }
+"${PSQL[@]}" >/dev/null <<'SQL'
+UPDATE public.platform_config SET value = value || '["jobs.data.retention.enabled"]'::jsonb WHERE key = 'config.dual_control_keys';
+DELETE FROM public.platform_config_history WHERE change_comment = 'replay-064';
+SQL
+"${PSQL[@]}" -At -c "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'purge_log_status_check'" | grep -q "indeterminate" \
+  || { echo "✗ purge_log does not accept a purge recorded indeterminate"; exit 1; }
+
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
 DO $$

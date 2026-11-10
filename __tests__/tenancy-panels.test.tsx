@@ -274,6 +274,17 @@ describe("OperatorTenantsView", () => {
     expect(screen.getByText("Loading…")).toBeDefined();
   });
 
+  it("the tenants table scrolls inside its own box, never the page (390 px, TASK-203)", () => {
+    const { container } = view();
+    const tables = container.querySelectorAll("table");
+    expect(tables.length).toBeGreaterThan(0);
+    for (const table of tables) {
+      const box = table.parentElement!;
+      expect(box.hasAttribute("data-scroll-box")).toBe(true);
+      expect(box.className).toContain("overflow-x-auto");
+    }
+  });
+
   it("offers only the actions each state allows", () => {
     view();
     button("Suspend Acme");

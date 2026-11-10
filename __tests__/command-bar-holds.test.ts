@@ -81,6 +81,8 @@ import {
 } from "@/app/api/admin/ai/command-bar";
 import type { AdminToolId } from "@/app/api/admin/ai/tool-permissions";
 
+// hostile:id-spelling n/a: requester and approver are compared by sameId (the id-equality guard holds every comparison to it); a requester spelled otherwise is no-eligible-approver.test's case
+
 let proposals: InMemoryProposalStore;
 
 /**
@@ -102,8 +104,17 @@ async function hold(caller: CallerName, tool: string, input: Record<string, unkn
   const res = await execute(
     post("/api/admin/ai/execute", { actions: [{ tool, input }] }, caller)
   );
-  const { results } = await res.json();
-  return results[0] as {
+  const answer = await res.json();
+  // A key the action's schema does not name is refused with the plan's body, before any step
+  // (TASK-203, N-31): a coded 400, the key named by its path in the body.
+  if (res.status === 400 && answer.results === undefined)
+    return { success: false, code: answer.code, params: answer.params } as {
+      success: boolean;
+      held?: boolean;
+      proposalId?: string;
+      error?: string;
+    };
+  return answer.results[0] as {
     success: boolean;
     held?: boolean;
     proposalId?: string;
@@ -204,7 +215,7 @@ describe("holding (C-14)", () => {
     expect(result).toMatchObject({
       success: false,
       code: "request.field_not_accepted",
-      params: { field: "held_current_role_id" },
+      params: { field: "actions[0].input.held_current_role_id" },
     });
     expect(result.held).toBeUndefined();
     expect(await proposals.query({})).toEqual([]);
@@ -230,7 +241,12 @@ describe("holding (C-14)", () => {
     expect(held).toMatchObject({
       success: false,
       code: "request.unknown_input",
-      params: { field: "why", allowed: ["user_identifier", "new_role"] },
+      // A key no tool names is refused with the plan's body (TASK-203, N-31), naming every
+      // tool's keys; one another tool names reaches the action's own check (below).
+      params: {
+        field: "actions[0].input.why",
+        allowed: expect.arrayContaining(["user_identifier", "new_role"]),
+      },
     });
     expect(held.held).toBeUndefined();
     const now = await hold("super_admin", "suspend_agent", {
@@ -269,7 +285,7 @@ describe("holding (C-14)", () => {
       success: false,
       code: "request.unknown_input",
       params: {
-        field: "rules[1].note",
+        field: "actions[0].input.rules[1].note",
         allowed: ["max_risk", "effects", "required_approver"],
       },
     });
@@ -280,7 +296,7 @@ describe("holding (C-14)", () => {
     });
     expect(shaped).toMatchObject({
       code: "request.unknown_input_none",
-      params: { field: "new_role.name" },
+      params: { field: "actions[0].input.new_role.name" },
     });
     expect((shaped as { params?: object }).params).not.toHaveProperty("allowed");
     expect(ran).toEqual([]);
@@ -359,7 +375,7 @@ describe("holding (C-14)", () => {
     ]);
   });
 
-  it("holds every write when the list cannot be read, and never a read (fail closed)", async () => {
+  it("[hostile:store-down] holds every write when the list cannot be read, and never a read (fail closed)", async () => {
     mockList.mockRejectedValue(new Error("db down"));
     await expect(isDualControlledAction("block_user_feature")).resolves.toBe(true);
     await expect(isDualControlledAction("search")).resolves.toBe(false);
@@ -419,7 +435,7 @@ describe("approving (X-10, B-10, RR-19)", () => {
   });
 
   it.each(["safety_approver", "moderator"] as const)(
-    "refuses %s, who could not make the change themselves (B-10)",
+    "[hostile:role] refuses %s, who could not make the change themselves (B-10)",
     async (caller) => {
       const res = await approve(id, caller);
       expect(res.status).toBe(403);
@@ -431,7 +447,7 @@ describe("approving (X-10, B-10, RR-19)", () => {
     }
   );
 
-  it("refuses the requester approving their own action", async () => {
+  it("[hostile:self] refuses the requester approving their own action", async () => {
     const res = await approve(id, "admin");
     expect(res.status).toBe(409);
     expect(ran).toEqual([]);

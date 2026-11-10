@@ -8,18 +8,27 @@
 
 import { NextRequest } from "next/server";
 import { logger } from "@/lib/logger";
-import { readJsonObject, requireTextFields } from "@/platform/errors";
+import { readJsonBody, type InputSchemaNode, requireTextFields } from "@/platform/errors";
 import { callAuthProvider, sessionResponse } from "@/platform/auth/auth-response";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sessionTenantRefusal } from "@/platform/tenancy/identity";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const SIGN_IN_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    email: { type: "string" },
+    password: { type: "string" },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.
   const limited = await enforceRateLimit(request, DEFAULT_RULES.AUTH_LOGIN);
   if (limited) return limited;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, SIGN_IN_BODY_SCHEMA);
   if (!read.ok) return read.response;
   // Typed as text: requireTextFields below refuses anything else before it is used.
   const body = read.body as { email: string; password: string };

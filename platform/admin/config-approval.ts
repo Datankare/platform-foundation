@@ -39,7 +39,13 @@ import { withOwnerTx, withTenantTx, type Tx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import type { ErrorCode } from "@/platform/errors/registry";
 import { writeFailureCode, type IncompleteWrite } from "@/platform/admin/write-failure";
-import { getConfigOrThrow } from "@/platform/auth/platform-config";
+import { getConfigOrThrow, getPermissionTier } from "@/platform/auth/platform-config";
+import {
+  ADMIN_ACCESS,
+  OPERATOR_ACCESS,
+  noApproverRefusal,
+} from "@/platform/admin/eligible-approvers";
+import { isSharedDeployment } from "@/platform/admin/config-scope";
 import type {
   ConfigApprovalRecord,
   ConfigApprovalStatus,
@@ -135,6 +141,47 @@ export async function isApprovalRequired(): Promise<boolean> {
 // CRUD Operations
 // ---------------------------------------------------------------------------
 
+/**
+ * The refusal of a held change to `configKey` that no one but its requester could approve (N-24),
+ * or null when someone could: the approval needs the key's tier permission (config_manage_standard
+ * or _safety, as requiredPermissionForKey reads it) and the admin area — and, for a shared
+ * deployment's platform default, an operator (ADR-053 D5), weighed across tenants. The rules are
+ * the decision's (approval-decision.ts), unchanged. A read failure throws (the caller fails
+ * closed).
+ */
+export async function configChangeWithoutApprover(
+  configKey: string,
+  scope: ConfigScope,
+  requesters: readonly (string | null | undefined)[]
+): Promise<{
+  readonly error: string;
+  readonly errorCode: ErrorCode;
+  readonly errorParams: Record<string, string | readonly string[]>;
+} | null> {
+  const tier = await getPermissionTier(configKey);
+  const operatorNeeded = scope === "platform" && isSharedDeployment();
+  const permissions = [
+    tier === "standard" ? "config_manage_standard" : "config_manage_safety",
+    ADMIN_ACCESS,
+    ...(operatorNeeded ? [OPERATOR_ACCESS] : []),
+  ];
+  const refusal = await noApproverRefusal(
+    `setting ${configKey}`,
+    { permissions, excluded: requesters },
+    operatorNeeded ? "deployment" : "tenant"
+  );
+  return refusal
+    ? {
+        error: refusal.message,
+        errorCode: refusal.code,
+        errorParams: {
+          action: refusal.params.action,
+          permissions: refusal.params.permissions,
+        },
+      }
+    : null;
+}
+
 /** An approved change to the key is not yet known to be applied (round 17, I-2). */
 const SETTLING = Symbol("settling");
 
@@ -155,6 +202,19 @@ export async function requestApproval(params: {
   action?: ConfigApprovalAction;
 }): Promise<ConfigApprovalResult> {
   try {
+    // Nothing is filed that no one else could approve (N-24): refused now, naming the setting.
+    const noOne = await configChangeWithoutApprover(
+      params.configKey,
+      params.scope ?? "platform",
+      [params.requestedBy]
+    );
+    if (noOne)
+      return {
+        success: false,
+        error: noOne.error,
+        errorCode: noOne.errorCode,
+        errorParams: noOne.errorParams,
+      };
     const outcome = await withTenantTx(async (tx) => {
       // One open request per key and scope in a tenant: serialise concurrent requests for the
       // same key so two cannot both see "none pending" and both insert. The lock is the

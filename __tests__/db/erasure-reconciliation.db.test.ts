@@ -478,8 +478,8 @@ dbDescribe("the identity step, against a fake pool (TASK-193 rounds 1 and 2)", (
   });
 
   it("an open attestation is dropped when the job records another failure, and approval re-checks the step (S2 round 2)", async () => {
-    const a = { userId: await u.user("operator-d") };
-    const b = { userId: await u.user("operator-e") };
+    const a = { userId: await u.user("operator-d", "super_admin") };
+    const b = { userId: await u.user("operator-e", "super_admin") };
     // (1) The job's next attempt is refused (another failure kind): the request goes.
     const first = await unrelinked("attest-then-refused");
     const t1 = { tenantId: u.id, userId: first };
@@ -525,8 +525,8 @@ dbDescribe("the identity step, against a fake pool (TASK-193 rounds 1 and 2)", (
     const gone = await unrelinked("decommissioned-pool");
     const step = async () => (await stepOf(gone)).entry;
     expect(await step()).toMatchObject({ poolUnverified: true });
-    const a = { userId: await u.user("operator-a") };
-    const b = { userId: await u.user("operator-b") };
+    const a = { userId: await u.user("operator-a", "super_admin") };
+    const b = { userId: await u.user("operator-b", "super_admin") };
     const target = { tenantId: u.id, userId: gone };
 
     // A reason outside the fixed list, or no note, is refused.
@@ -591,7 +591,7 @@ dbDescribe("the identity step, against a fake pool (TASK-193 rounds 1 and 2)", (
     const fine = await u.user("verified");
     identities.set((await subOf(fine))!, (await subOf(fine))!);
     await u.run(() => softDeleteUser(fine, fine));
-    const operator = { userId: await u.user("operator-c") };
+    const operator = { userId: await u.user("operator-c", "super_admin") };
     expect(
       await u.run(() =>
         requestErasureAttestation(

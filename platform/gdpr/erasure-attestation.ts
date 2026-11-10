@@ -28,7 +28,12 @@
 
 import { withOwnerTx, type Tx } from "@/platform/data";
 import { AuditWriteError, audited } from "@/platform/auth/audit";
-import type { Operator, OperatorResult } from "@/platform/tenancy/admin";
+import {
+  echoed,
+  secondOperatorRefusal,
+  type Operator,
+  type OperatorResult,
+} from "@/platform/tenancy/admin";
 import { listExternalErasures, type RecordedExternalErasure } from "./external-erasure";
 import { sameId } from "@/platform/auth/same-id";
 
@@ -106,7 +111,7 @@ function checked(
   }
   const store = target.store ?? "identity-provider";
   if (!listExternalErasures().some((e) => e.name === store)) {
-    return fail("tenant.invalid", `No external store named ${store}.`);
+    return fail("tenant.invalid", `No external store named ${echoed(store)}.`);
   }
   if (note.length > 500)
     return fail("tenant.invalid", "The note is at most 500 characters.");
@@ -151,6 +156,12 @@ export async function requestErasureAttestation(
   }
   if (note.trim().length < 3)
     return fail("tenant.invalid", "Give a note (3–500 characters).");
+  // A request no other operator could approve is refused, never left to expire (N-24, N-85).
+  const noOne = await secondOperatorRefusal<RecordedExternalErasure>(
+    "erasure attestation",
+    operator
+  );
+  if (noOne) return noOne;
   return recorded(
     operator,
     "external_erasure_attestation_requested",

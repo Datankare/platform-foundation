@@ -75,6 +75,10 @@ describe("Content Security Policy (audit G-10)", () => {
         policy.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
       expect(scriptSrc).not.toContain("'unsafe-inline'");
       expect(policy).not.toContain("'unsafe-eval'");
+      // SEC-017 (TASK-203): no inline style but the response's own nonce — nowhere in the policy.
+      expect(policy).not.toContain("'unsafe-inline'");
+      const nonce = nonceOf(policy);
+      expect(policy).toContain(`style-src 'self' 'nonce-${nonce}'`);
       for (const directive of [
         "object-src 'none'",
         "base-uri 'self'",

@@ -13,10 +13,25 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { governedOutcomeResponse } from "@/platform/admin/config-http";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { setSchedule } from "@/platform/jobs/operator";
 import { jobsResponse } from "@/platform/jobs/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const SCHEDULE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    enabled: { type: "boolean" },
+    intervalMinutes: { type: "number" },
+    changeComment: { type: "string" },
+  },
+};
 
 type Params = { params: Promise<{ kind: string }> };
 
@@ -27,7 +42,7 @@ export const PATCH = tenantRoute(async function PATCH(
   const guard = await requireAdmin(request, "platform_operate");
   if (guard.error) return guard.error;
   const { kind } = await params;
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, SCHEDULE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const { enabled, intervalMinutes, changeComment } = read.body as Record<
     string,

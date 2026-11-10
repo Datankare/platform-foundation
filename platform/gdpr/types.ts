@@ -15,8 +15,14 @@
  * @see ROADMAP.md Phase 2 Sprint 4 — GDPR hard purge
  */
 
-/** Status of a purge operation */
-export type PurgeStatus = "pending" | "in-progress" | "completed" | "failed" | "partial";
+/**
+ * Status of a purge operation. `indeterminate` (N-27): the time limit ran out while a handler was
+ * running — the pipeline stopped waiting and started no further handler, but the one running may
+ * still finish, so the purge neither failed nor completed as far as anyone knows. Every step is
+ * safe to repeat: run it again.
+ */
+export type PurgeStatus =
+  "pending" | "in-progress" | "completed" | "failed" | "partial" | "indeterminate";
 
 /** Individual step result in the purge pipeline */
 export interface PurgeStepResult {
@@ -83,10 +89,12 @@ export interface PurgeHandler {
   /** Execution order priority (lower = earlier). Default: 100. */
   readonly priority: number;
   /**
-   * Execute deletion for the given user.
+   * Execute deletion for the given user. `signal` aborts when the pipeline's time limit runs out
+   * (N-27): a handler of several steps checks it between them and stops; a step already sent is
+   * not undone.
    * @returns Number of records/items deleted
    */
-  execute(userId: string, dryRun: boolean): Promise<number>;
+  execute(userId: string, dryRun: boolean, signal?: AbortSignal): Promise<number>;
 }
 
 /** Configuration for the purge pipeline */

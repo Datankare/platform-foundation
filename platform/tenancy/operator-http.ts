@@ -26,7 +26,9 @@ export function operatorError(
   message: string,
   request: NextRequest,
   /** For tenant.role_refused: the role rule that refused (its own code, ADR-051). */
-  refusal?: RoleRefusal
+  refusal?: RoleRefusal,
+  /** For approvals.no_eligible_approver: the action and what its approver must hold (N-24). */
+  needs?: { readonly action: string; readonly permissions: readonly string[] }
 ): NextResponse {
   switch (code) {
     case "tenant.role_refused":
@@ -51,6 +53,16 @@ export function operatorError(
       return apiError("tenant.self_approval", { request });
     case "audit.unavailable":
       return apiError("service.unavailable", { params: { service: "audit" }, request });
+    case "roles.unavailable":
+      return apiError("service.unavailable", { params: { service: "roles" }, request });
+    case "approvals.no_eligible_approver":
+      return apiError("approvals.no_eligible_approver", {
+        params: {
+          action: needs?.action ?? "this action",
+          permissions: [...(needs?.permissions ?? [OPERATOR_PERMISSION])],
+        },
+        request,
+      });
   }
 }
 
@@ -61,5 +73,11 @@ export function operatorResponse<T>(
   okStatus = 200
 ): NextResponse {
   if (result.ok) return NextResponse.json({ result: result.value }, { status: okStatus });
-  return operatorError(result.code, result.message, request, result.refusal);
+  return operatorError(
+    result.code,
+    result.message,
+    request,
+    result.refusal,
+    result.needs
+  );
 }

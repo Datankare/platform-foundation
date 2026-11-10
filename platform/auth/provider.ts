@@ -324,7 +324,48 @@ export interface AuthProvider {
    * (platform/auth/pool-shape-probe.ts). Optional: a provider without it is not checked.
    */
   checkPoolShape?(): Promise<PoolShapeReadiness>;
+
+  /**
+   * Whether erasure can delete identities from this pool (N-22): the administrative credentials
+   * are configured and the pool lets them look a user up by subject (ListUsers) and delete one
+   * (AdminDeleteUser). Checked by operator readiness in every tenancy mode, never on a timer
+   * (platform/tenancy/readiness.ts). Optional: a provider whose identities are not erased by the
+   * platform is not checked.
+   */
+  checkErasureAccess?(): Promise<ErasureAccessReadiness>;
+
+  /**
+   * Whether the app client's secret the deployment holds is the one the pool has (N-52, decided:
+   * operator readiness on demand, read with DescribeUserPoolClient and compared in constant time —
+   * never a sign-in against the pool). Optional: a provider without a client secret is not checked.
+   */
+  checkClientSecret?(): Promise<ClientSecretReadiness>;
 }
+
+/**
+ * - `ready`   — the key is set and the pool allowed both the lookup and the delete;
+ * - `denied`  — the key is set and the pool refused one of them (`action` names which);
+ * - `missing` — no administrative key is configured: no identity is ever erased;
+ * - `unknown` — it could not be checked (the pool did not answer).
+ */
+export type ErasureAccessReadiness =
+  | { readonly state: "ready" }
+  | { readonly state: "denied"; readonly reason: string; readonly action: string }
+  | { readonly state: "missing" | "unknown"; readonly reason: string };
+
+/**
+ * - `ready`         — the secret held matches the app client's (or neither has one);
+ * - `mismatch`      — they differ, or one side has a secret and the other none: every sign-in
+ *                     that carries a SECRET_HASH would be refused;
+ * - `not_checkable` — no administrative key to read the client with;
+ * - `unknown`       — it could not be checked (the pool did not answer, or refused the read).
+ */
+export type ClientSecretReadiness =
+  | { readonly state: "ready" }
+  | {
+      readonly state: "mismatch" | "not_checkable" | "unknown";
+      readonly reason: string;
+    };
 
 /**
  * - `ready`   — the pool has the required shape;

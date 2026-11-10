@@ -48,12 +48,20 @@ import {
   ExternalServiceError,
 } from "@/platform/errors/external-service";
 import {
+  COGNITO_ADMIN_POLICY,
   getCognitoAdminCredentials,
   getCognitoSettings,
   isTenantId,
 } from "@/platform/providers/environment-contract";
 import { signAwsJsonPost, type AwsCredentials } from "@/platform/auth/aws-sigv4";
+import {
+  ERASURE_PROBE_USERNAME,
+  compareClientSecrets,
+  isAccessRefusal,
+} from "@/platform/auth/admin-key-readiness";
 import type {
+  ClientSecretReadiness,
+  ErasureAccessReadiness,
   PoolShapeReadiness,
   TenantAttributeReadiness,
 } from "@/platform/auth/provider";
@@ -1737,6 +1745,126 @@ export class CognitoAuthProvider implements AuthProvider {
       return users.length === 1 ? true : undefined;
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * Whether erasure can delete identities from this pool (N-22): the administrative key is set,
+   * DescribeUserPool answers this pool, ListUsers is allowed (a lookup of ERASURE_PROBE_USERNAME,
+   * a name no pool user can have — not a UUID, not an address), and AdminDeleteUser is allowed: the
+   * delete of that absent user answers UserNotFoundException when the policy allows the action and
+   * AccessDeniedException when it does not — nothing exists to delete, and the delete is not sent
+   * when the lookup found anyone. Read on demand by operator readiness, never on a timer.
+   */
+  async checkErasureAccess(): Promise<ErasureAccessReadiness> {
+    const credentials = this.config.adminCredentials;
+    if (!credentials) {
+      return {
+        state: "missing",
+        reason:
+          "COGNITO_ADMIN_ACCESS_KEY_ID is not set — no identity is ever erased (TENANCY_OPERATIONS §3.3: every Cognito deployment needs the key)",
+      };
+    }
+    const denied = (action: string): ErasureAccessReadiness => ({
+      state: "denied",
+      action,
+      reason: `the administrative key may not call cognito-idp:${action} on this pool — give it the policy ${COGNITO_ADMIN_POLICY} (TENANCY_OPERATIONS §3.3)`,
+    });
+    const isDenied = (e: unknown) =>
+      e instanceof CognitoError && isAccessRefusal(e.cognitoType);
+    const unknown = (action: string, e: unknown): ErasureAccessReadiness => ({
+      state: "unknown",
+      reason: `${action} did not answer (${e instanceof CognitoError ? e.cognitoType : "error"})`,
+    });
+    let step = "DescribeUserPool";
+    try {
+      const pool = await callCognito(
+        this.config,
+        "DescribeUserPool",
+        { UserPoolId: this.config.userPoolId },
+        credentials
+      );
+      if (
+        !sameId(
+          (pool.UserPool as { Id?: string } | undefined)?.Id,
+          this.config.userPoolId
+        )
+      ) {
+        return { state: "unknown", reason: "DescribeUserPool answered another pool" };
+      }
+      step = "ListUsers";
+      const found = await callCognito(
+        this.config,
+        "ListUsers",
+        {
+          UserPoolId: this.config.userPoolId,
+          Filter: `username = "${ERASURE_PROBE_USERNAME}"`,
+          Limit: 1,
+        },
+        credentials
+      );
+      if (((found.Users as unknown[] | undefined) ?? []).length > 0) {
+        return {
+          state: "unknown",
+          reason: `a pool user is named ${ERASURE_PROBE_USERNAME}; the delete was not tried`,
+        };
+      }
+      step = "AdminDeleteUser";
+      await callCognito(
+        this.config,
+        "AdminDeleteUser",
+        { UserPoolId: this.config.userPoolId, Username: ERASURE_PROBE_USERNAME },
+        credentials
+      );
+      // A delete of a name no user has cannot succeed; it is not taken as proof.
+      return {
+        state: "unknown",
+        reason: "AdminDeleteUser answered for a user that cannot exist",
+      };
+    } catch (error) {
+      if (
+        step === "AdminDeleteUser" &&
+        error instanceof CognitoError &&
+        error.cognitoType === "UserNotFoundException"
+      ) {
+        return { state: "ready" };
+      }
+      return isDenied(error) ? denied(step) : unknown(step, error);
+    }
+  }
+
+  /**
+   * Whether the app client's secret this deployment holds is the pool's (N-52): DescribeUserPoolClient
+   * (the administrative key) gives the client's secret, compared with COGNITO_CLIENT_SECRET in
+   * constant time; neither is ever logged or returned. A client with a secret and none held, or one
+   * held for a client without, is a mismatch: every sign-in would be refused. Never a sign-in.
+   */
+  async checkClientSecret(): Promise<ClientSecretReadiness> {
+    const credentials = this.config.adminCredentials;
+    if (!credentials) {
+      return {
+        state: "not_checkable",
+        reason: "the administrative key is not set, so the app client cannot be read",
+      };
+    }
+    try {
+      const r = await callCognito(
+        this.config,
+        "DescribeUserPoolClient",
+        { UserPoolId: this.config.userPoolId, ClientId: this.config.clientId },
+        credentials
+      );
+      const poolSecret = (r.UserPoolClient as { ClientSecret?: unknown } | undefined)
+        ?.ClientSecret;
+      return compareClientSecrets(
+        typeof poolSecret === "string" && poolSecret ? poolSecret : undefined,
+        this.config.clientSecret
+      );
+    } catch (error) {
+      return {
+        state: "unknown",
+        reason: `DescribeUserPoolClient did not answer (${error instanceof CognitoError ? error.cognitoType : "error"})`,
+      };
     }
   }
 

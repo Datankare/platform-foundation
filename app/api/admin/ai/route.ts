@@ -37,7 +37,7 @@ import { getPromptConfig, buildAdminSystemPrompt } from "@/prompts";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS, type AdminTool } from "./tool-schemas";
 import { listPendingApprovals } from "@/platform/admin/pending-approvals";
 import { COMMAND_BAR_HOLDS } from "@/app/api/admin/ai/command-bar";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { enforceDailyPaidQuota } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import {
@@ -45,6 +45,15 @@ import {
   permissionOrderSql,
   roleOrderSql,
 } from "@/platform/auth/catalog-order";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const PROMPT_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    prompt: { type: "string" },
+    panel: { type: "string" },
+  },
+};
 
 /** The longest command an admin may send to the planner. */
 const MAX_PROMPT_CHARS = 4000;
@@ -165,7 +174,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const { admin } = verified;
 
   const requestId = generateRequestId();
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, PROMPT_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body as { prompt?: unknown; panel?: unknown };
   const { prompt, panel } = body ?? {};

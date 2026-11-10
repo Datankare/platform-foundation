@@ -41,6 +41,7 @@ import {
   type TenantStatus,
 } from "./directory";
 import { sameId } from "@/platform/auth/same-id";
+import { OPERATOR_ACCESS, noApproverRefusal } from "@/platform/admin/eligible-approvers";
 
 /** The verified operator acting. */
 export interface Operator {
@@ -73,6 +74,10 @@ export type OperatorFailure =
   | "tenant.user_not_found"
   /** A role rule refused the change (the result carries the rule's refusal). */
   | "tenant.role_refused"
+  /** No operator but the requester could approve it (N-24): `needs` says what one must hold. */
+  | "approvals.no_eligible_approver"
+  /** Who could approve could not be read: nothing was asked. */
+  | "roles.unavailable"
   | "audit.unavailable";
 
 export type OperatorResult<T> =
@@ -83,7 +88,62 @@ export type OperatorResult<T> =
       readonly message: string;
       /** For tenant.role_refused: the role rule's coded refusal. */
       readonly refusal?: RoleRefusal;
+      /** For approvals.no_eligible_approver: the action and what its approver must hold. */
+      readonly needs?: {
+        readonly action: string;
+        readonly permissions: readonly string[];
+      };
     };
+
+/**
+ * The refusal of an operator's request no other operator could approve (N-24): a tenant's deletion
+ * and an erasure's attestation wait for a second operator (platform_operate), across tenants, who
+ * is not the requester — with only one, the request would wait and expire. Null when someone could;
+ * `roles.unavailable` when it cannot be read (nothing is asked).
+ */
+export async function secondOperatorRefusal<T>(
+  action: string,
+  operator: Operator
+): Promise<OperatorResult<T> | null> {
+  try {
+    const refusal = await noApproverRefusal(
+      action,
+      {
+        permissions: [OPERATOR_ACCESS],
+        excluded: [operator.userId, operator.admin?.sub],
+      },
+      "deployment"
+    );
+    return refusal
+      ? {
+          ok: false,
+          code: "approvals.no_eligible_approver",
+          message: refusal.message,
+          needs: { action, permissions: refusal.params.permissions },
+        }
+      : null;
+  } catch {
+    return {
+      ok: false,
+      code: "roles.unavailable",
+      message: "Who could approve this could not be read, so nothing was asked.",
+    };
+  }
+}
+
+/** The longest piece of an operator's input a refusal repeats back (N-56). */
+export const ECHO_MAX = 100;
+
+/**
+ * An operator's input as a refusal repeats it (N-56): control characters removed and at most
+ * ECHO_MAX characters, then "…" — the message travels in the coded error's `reason` and the
+ * audit record, so a megabyte of input is never repeated back or stored twice.
+ */
+export function echoed(input: unknown): string {
+  // eslint-disable-next-line no-control-regex
+  const text = String(input ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  return text.length > ECHO_MAX ? `${text.slice(0, ECHO_MAX)}…` : text;
+}
 
 const ok = <T>(value: T): OperatorResult<T> => ({ ok: true, value });
 const fail = <T>(code: OperatorFailure, message: string): OperatorResult<T> => ({
@@ -268,7 +328,7 @@ export async function provisionTenant(
   const hosts: string[] = [];
   for (const raw of input.domains ?? []) {
     const host = normaliseHost(raw);
-    if (!host) return fail("tenant.invalid", `"${raw}" is not a host name.`);
+    if (!host) return fail("tenant.invalid", `"${echoed(raw)}" is not a host name.`);
     if (!hosts.includes(host)) hosts.push(host);
   }
   const id = randomUUID();
@@ -311,7 +371,7 @@ export async function addTenantDomain(
   rawHost: string
 ): Promise<OperatorResult<TenantDomainRecord>> {
   const host = normaliseHost(rawHost);
-  if (!host) return fail("tenant.invalid", `"${rawHost}" is not a host name.`);
+  if (!host) return fail("tenant.invalid", `"${echoed(rawHost)}" is not a host name.`);
   const tenant = await tenantById(tenantId);
   if (!tenant) return fail("tenant.not_found", "No such tenant.");
   return recorded(operator, "tenant_domain_added", { tenantId, host }, async () => {
@@ -337,7 +397,7 @@ export async function removeTenantDomain(
   rawHost: string
 ): Promise<OperatorResult<true>> {
   const host = normaliseHost(rawHost);
-  if (!host) return fail("tenant.invalid", `"${rawHost}" is not a host name.`);
+  if (!host) return fail("tenant.invalid", `"${echoed(rawHost)}" is not a host name.`);
   if (!isTenantId(tenantId)) return fail("tenant.not_found", "No such tenant.");
   const own = ownTenant(tenantId);
   return recorded(operator, "tenant_domain_removed", { tenantId, host }, async () => {
@@ -493,6 +553,9 @@ export async function requestTenantDeletion(
       "You cannot delete the tenant you are operating from."
     );
   }
+  // A request no other operator could approve is refused, never left to expire (N-24).
+  const noOne = await secondOperatorRefusal<DeletionRequest>("tenant deletion", operator);
+  if (noOne) return noOne;
   return recorded(operator, "tenant_deletion_requested", { tenantId, reason: why }, () =>
     withOwnerTx("tenant-lifecycle", async (tx) => {
       const t = await tx.query<{ status: string }>(

@@ -10,6 +10,11 @@
  * statement goes to `fakeData().answer(sql, values)` — rows to return, or a throw to inject a
  * database failure — and is logged in `fakeData().statements`.
  *
+ * Who could approve a dual-controlled action (platform/admin/eligible-approvers.ts, N-24) is the
+ * `eligible-approvers` statement: answered from `fakeData().approvers` — by default one other
+ * staff account holding every permission (FAKE_SECOND_APPROVER), so a hold is held as before; set
+ * it to `[]` (or to the accounts you need) to test the refusal, or to `"fail"` to fail the read.
+ *
  * This proves only what the code does with the answers it gets. The SQL itself is proved
  * against Postgres in __tests__/db.
  */
@@ -25,6 +30,26 @@ export interface AuditRow {
   details: Record<string, any>;
 }
 
+/** One staff account as the eligible-approvers statement returns it. */
+export interface FakeStaffRow {
+  id: string;
+  tenant_id: string;
+  sub: string | null;
+  email: string | null;
+  role_name: string | null;
+  permissions: string[];
+}
+
+/** The second staff account a fake database has unless a test says otherwise. */
+export const FAKE_SECOND_APPROVER: FakeStaffRow = {
+  id: "a9a9a9a9-0000-4000-8000-000000000002",
+  tenant_id: "00000000-0000-4000-8000-000000000001",
+  sub: "a9a9a9a9-0000-4000-8000-0000000000f2",
+  email: "second-approver@example.test",
+  role_name: "super_admin",
+  permissions: ["*"],
+};
+
 export interface FakeData {
   /** Audit rows written, in order. */
   audit: AuditRow[];
@@ -34,6 +59,8 @@ export interface FakeData {
   statements: { sql: string; values: readonly unknown[] }[];
   /** The rows a non-audit statement returns (default: none). Throw to fail it. */
   answer: (sql: string, values: readonly unknown[]) => any[] | undefined;
+  /** The staff the eligible-approvers statement returns, or "fail" to fail it. */
+  approvers: FakeStaffRow[] | "fail";
   /** Clear everything back to an empty, working database. */
   reset(): void;
 }
@@ -47,11 +74,13 @@ function state(): FakeData {
     failAudit: false,
     statements: [],
     answer: () => undefined,
+    approvers: [FAKE_SECOND_APPROVER],
     reset() {
       this.audit = [];
       this.failAudit = false;
       this.statements = [];
       this.answer = () => undefined;
+      this.approvers = [FAKE_SECOND_APPROVER];
     },
   } satisfies FakeData;
   return g[KEY];
@@ -76,6 +105,10 @@ async function query(text: string, values: readonly unknown[] = []) {
     return { rows: [], rowCount: 1 };
   }
   s.statements.push({ sql, values });
+  if (sql.startsWith("/* eligible-approvers */")) {
+    if (s.approvers === "fail") throw new Error("users is unavailable");
+    return { rows: s.approvers, rowCount: s.approvers.length };
+  }
   const rows = s.answer(sql, values) ?? [];
   return { rows, rowCount: rows.length };
 }

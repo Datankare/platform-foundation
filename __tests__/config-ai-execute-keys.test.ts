@@ -38,6 +38,11 @@ import { NextRequest } from "next/server";
 import { authAs } from "@/__tests__/helpers/test-identities";
 import { POST } from "@/app/api/admin/config-ai/execute/route";
 
+// hostile:role n/a: every call here is a super_admin: the tier and permission checks are config-routes' (C-1), run before these keys
+// hostile:self n/a: no account is acted on: the config tools change settings, and self-approval is platform-config's DB test
+// hostile:store-down n/a: dispatch is replaced here; a store failure's coded answer is tested in config-routes and config-handlers
+// hostile:id-spelling n/a: no id is compared here: the body's keys are, against each tool's schema
+
 const call = (toolId: string, input: Record<string, unknown>) =>
   POST(
     new NextRequest("http://localhost/api/admin/config-ai/execute", {
@@ -67,7 +72,34 @@ it("refuses a key outside the tool's schema, coded; nothing runs (round 10, I-A)
   expect(await res.json()).toMatchObject({
     code: "request.unknown_input",
     params: {
-      field: "why",
+      // A key no config tool names is refused with the body (TASK-203, N-31), naming every
+      // tool's keys; the tool's own keys exactly once the caller may act (next test).
+      field: "input.why",
+      allowed: expect.arrayContaining([
+        "key",
+        "value",
+        "changeComment",
+        "actorId",
+        "confirmed",
+        "scope",
+      ]),
+    },
+  });
+  expect(mockDispatch).not.toHaveBeenCalled();
+});
+
+it("refuses another tool's key on this tool, naming exactly this tool's keys (round 10, I-A)", async () => {
+  const res = await call("update_config", {
+    key: "moderation.strike_ban_threshold",
+    value: 3,
+    changeComment: "raise",
+    proposedValue: 4,
+  });
+  expect(res.status).toBe(400);
+  expect(await res.json()).toMatchObject({
+    code: "request.unknown_input",
+    params: {
+      field: "proposedValue",
       allowed: ["key", "value", "changeComment", "actorId", "confirmed", "scope"],
     },
   });
@@ -148,7 +180,8 @@ it.each([
     [field]: value,
   });
   expect(res.status).toBe(400);
-  expect(await res.json()).toMatchObject({ code, params: { field } });
+  // Read with the body (TASK-203, N-31): the field named by its path in the body.
+  expect(await res.json()).toMatchObject({ code, params: { field: `input.${field}` } });
   expect(mockDispatch).not.toHaveBeenCalled();
 });
 

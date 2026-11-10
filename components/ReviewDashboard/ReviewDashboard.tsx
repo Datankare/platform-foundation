@@ -627,6 +627,26 @@ function ItemHeader({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }) {
   );
 }
 
+/**
+ * The confidence bar's fill. Its width is set on the element's style object after render, never as
+ * a `style` attribute: the Content Security Policy allows no inline style attribute (SEC-017,
+ * TASK-203 — `style-src` has no 'unsafe-inline'), and a CSSOM property set from script is not one.
+ */
+function ConfidenceFill({ percent }: { percent: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.style.width = `${percent}%`;
+  }, [percent]);
+  return (
+    <div
+      ref={ref}
+      className="h-2 w-0 rounded-full bg-amber-500"
+      data-testid="rd-confidence-fill"
+      data-percent={percent}
+    />
+  );
+}
+
 function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }) {
   const m = item.moderationResult;
   const c = m.classifierOutput;
@@ -645,10 +665,7 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
         >
           <span className={`text-xs ${t.muted} w-20`}>{msg("confidence")}</span>
           <div className={`flex-1 h-2 rounded-full ${t.track}`}>
-            <div
-              className="h-2 rounded-full bg-amber-500"
-              style={{ width: `${confidencePct}%` }}
-            />
+            <ConfidenceFill percent={confidencePct} />
           </div>
           <span className="text-xs font-medium w-10 text-right">{confidencePct}%</span>
         </div>

@@ -9,11 +9,7 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import {
-  PurgePipeline,
-  CachePurgeHandler,
-  RateLimitPurgeHandler,
-} from "../platform/gdpr/hard-purge";
+import { PurgePipeline } from "../platform/gdpr/hard-purge";
 import type { PurgeHandler, PurgeAuditEntry } from "../platform/gdpr/types";
 
 /** Test helper: create a mock handler */
@@ -158,7 +154,7 @@ describe("PurgePipeline", () => {
       dryRun: true,
     });
 
-    expect(handler.execute).toHaveBeenCalledWith("user-1", true);
+    expect(handler.execute).toHaveBeenCalledWith("user-1", true, expect.any(AbortSignal));
     expect(result.totalDeleted).toBe(0); // Dry run returns 0
     expect(result.status).toBe("completed");
   });
@@ -311,62 +307,73 @@ describe("PurgePipeline — audit callback", () => {
   });
 });
 
-describe("Built-in purge handlers", () => {
-  it("CachePurgeHandler calls clearFn", async () => {
-    const clearFn = jest.fn().mockResolvedValue(5);
-    const handler = new CachePurgeHandler(clearFn);
+describe("PurgePipeline — timeout (N-27)", () => {
+  afterEach(() => jest.useRealTimers());
 
-    expect(handler.name).toBe("cache:user-entries");
-    expect(handler.priority).toBe(90);
-
-    const result = await handler.execute("user-1", false);
-    expect(result).toBe(5);
-    expect(clearFn).toHaveBeenCalledWith("user-1");
-  });
-
-  it("CachePurgeHandler returns 0 on dry run", async () => {
-    const clearFn = jest.fn().mockResolvedValue(5);
-    const handler = new CachePurgeHandler(clearFn);
-
-    const result = await handler.execute("user-1", true);
-    expect(result).toBe(0);
-    expect(clearFn).not.toHaveBeenCalled();
-  });
-
-  it("RateLimitPurgeHandler calls clearFn", async () => {
-    const clearFn = jest.fn().mockResolvedValue(3);
-    const handler = new RateLimitPurgeHandler(clearFn);
-
-    expect(handler.name).toBe("rate-limit:user-entries");
-    expect(handler.priority).toBe(91);
-
-    const result = await handler.execute("user-1", false);
-    expect(result).toBe(3);
-  });
-});
-
-describe("PurgePipeline — timeout", () => {
-  it("times out long-running handlers", async () => {
+  it("a timed-out purge is indeterminate, not failed: the running handler may still finish", async () => {
     jest.useFakeTimers();
-
+    const audit = jest.fn().mockResolvedValue(undefined);
     const pipeline = new PurgePipeline({ timeoutMs: 1000 });
-    const slowHandler: PurgeHandler = {
+    pipeline.onAudit(audit);
+    let seen: AbortSignal | undefined;
+    pipeline.register({
       name: "slow",
       priority: 10,
-      execute: () => new Promise((resolve) => setTimeout(() => resolve(1), 5000)),
-    };
-    pipeline.register(slowHandler);
+      execute: (_u, _d, signal) => {
+        seen = signal;
+        return new Promise((resolve) => setTimeout(() => resolve(7), 5000));
+      },
+    });
+    const later = jest.fn().mockResolvedValue(1);
+    pipeline.register({ name: "later", priority: 20, execute: later });
 
     const resultPromise = pipeline.execute({
       userId: "user-1",
       requestedBy: "self",
       reason: "user-request",
     });
-
-    jest.advanceTimersByTime(1500);
+    await jest.advanceTimersByTimeAsync(1500);
     const result = await resultPromise;
 
-    expect(result.status).toBe("failed");
-    jest.useRealTimers();
+    expect(result.status).toBe("indeterminate");
+    expect(seen?.aborted).toBe(true);
+    expect(result.steps.map((s) => [s.handler, s.error])).toEqual([
+      [
+        "slow",
+        "Still running when the time limit ran out: whether it completed is not known",
+      ],
+      ["later", "Not started: the time limit ran out"],
+    ]);
+    // The record says the same.
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "indeterminate" })
+    );
+    const returned = JSON.stringify(result);
+
+    // The slow handler finishes after the result was returned: nothing returned changes, and no
+    // further handler starts.
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(JSON.stringify(result)).toBe(returned);
+    expect(later).not.toHaveBeenCalled();
+  });
+
+  it("a purge that finishes in time is judged by its steps, with the signal never aborted", async () => {
+    let seen: AbortSignal | undefined;
+    const pipeline = new PurgePipeline({ timeoutMs: 1000 });
+    pipeline.register({
+      name: "fast",
+      priority: 10,
+      execute: async (_u, _d, signal) => {
+        seen = signal;
+        return 2;
+      },
+    });
+    const result = await pipeline.execute({
+      userId: "user-1",
+      requestedBy: "self",
+      reason: "user-request",
+    });
+    expect(result.status).toBe("completed");
+    expect(seen?.aborted).toBe(false);
   });
 });

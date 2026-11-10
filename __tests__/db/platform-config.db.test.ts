@@ -95,10 +95,11 @@ if (DB_ENABLED) {
     a = await createTestTenant();
     b = await createTestTenant();
     ua = await a.user("admin");
-    ua2 = await a.user("reviewer");
-    ua3 = await a.user("third");
+    // The reviewers can approve (TASK-203, N-24: a change no one else could approve is refused).
+    ua2 = await a.user("reviewer", "super_admin");
+    ua3 = await a.user("third", "super_admin");
     ub = await b.user("admin");
-    ub2 = await b.user("reviewer");
+    ub2 = await b.user("reviewer", "super_admin");
   });
   afterAll(async () => {
     await withOwnerTx("operator", async (tx) => {

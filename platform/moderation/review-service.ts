@@ -269,12 +269,49 @@ export async function claimItem(
   }
   if (isSelfReview(item, reviewerId)) return SELF_REVIEW;
 
+  // Recorded (N-37): taking another account's case is a staff action, and the row keeps only the
+  // current claimer — a release or a later claim overwrites it. With no record nothing changes.
   // Claimed only if still pending: of two reviewers claiming at once, one wins.
-  return store.update(
-    itemId,
-    { status: "claimed", claimedBy: reviewerId, claimedAt: new Date().toISOString() },
-    { status: "pending" }
+  return auditedReview(
+    {
+      action: "admin_action",
+      actorId: reviewerId,
+      targetId: item.targetUserId,
+      details: { type: "review_claimed", reviewItemId: item.id, source: item.source },
+    },
+    "claimed",
+    () =>
+      store.update(
+        itemId,
+        { status: "claimed", claimedBy: reviewerId, claimedAt: new Date().toISOString() },
+        { status: "pending" }
+      )
   );
+}
+
+/**
+ * Run a review change under audited() (N-37): its record first (no record, nothing changes), its
+ * outcome after; an audit log that cannot be written answers service.unavailable, coded.
+ */
+async function auditedReview(
+  entry: Parameters<typeof audited>[0],
+  what: string,
+  act: () => Promise<ReviewResult>,
+  options: Parameters<typeof audited>[2] = {}
+): Promise<ReviewResult> {
+  try {
+    return await audited(entry, act, options);
+  } catch (err) {
+    if (err instanceof AuditWriteError) {
+      return {
+        success: false,
+        error: `The audit log is unavailable, so the item was not ${what}.`,
+        errorCode: "service.unavailable",
+        errorParams: { service: "audit" },
+      };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -315,11 +352,22 @@ export async function unclaimItem(
     };
   }
 
-  // The claim is cleared (null), and only while it is still this reviewer's.
-  return store.update(
-    itemId,
-    { status: "pending", claimedBy: null, claimedAt: null },
-    { status: "claimed", claimedBy: reviewerId }
+  // Recorded (N-37), as a claim is. The claim is cleared (null), and only while it is still this
+  // reviewer's.
+  return auditedReview(
+    {
+      action: "admin_action",
+      actorId: reviewerId,
+      targetId: item.targetUserId,
+      details: { type: "review_unclaimed", reviewItemId: item.id, source: item.source },
+    },
+    "released",
+    () =>
+      store.update(
+        itemId,
+        { status: "pending", claimedBy: null, claimedAt: null },
+        { status: "claimed", claimedBy: reviewerId }
+      )
   );
 }
 

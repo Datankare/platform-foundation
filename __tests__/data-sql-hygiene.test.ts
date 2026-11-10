@@ -61,6 +61,10 @@ const OWNER_CALLERS: Readonly<Record<string, string>> = {
     "the operators' Erasures view: the open erasures across tenants and the operators who may attest them, read-only, behind GET /api/operator/erasures (platform_operate; TASK-202, S3-E19)",
   "platform/auth/identity-relink-command.ts":
     "the operator's re-link command (scripts/relink-identities): calls relinkIdentities, which lends the owner transaction only to its `onChunk` hook — the command passes none (found by the round 1 scan, A5: a hook reached through an object parameter)",
+  "platform/admin/eligible-approvers.ts":
+    "who could approve a dual-controlled action across the deployment (staffOfDeployment: the accounts holding platform_operate in every tenant, read-only), for the refusal up front and operator readiness (TASK-203, N-24)",
+  "platform/admin/dual-control-readiness.ts":
+    "operator readiness's dual-control check: every tenant's name and its staff, read-only, to name each tenant where an action has no eligible approver (GET /api/operator/readiness, platform_operate; TASK-203, N-24)",
   "platform/jobs/postgres-store.ts":
     "the job runner: claiming, settling and scheduling every tenant's jobs; operators' cross-tenant job views (ADR-056 D2)",
 };

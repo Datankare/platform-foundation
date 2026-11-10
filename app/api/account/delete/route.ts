@@ -20,10 +20,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActor, requirePermission } from "@/platform/auth/middleware";
 import { softDeleteUser } from "@/platform/auth/gdpr-deletion";
 import { clearSessionCookies } from "@/platform/auth/auth-response";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { logger } from "@/lib/logger";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const DELETE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    confirm: { type: "string" },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
@@ -39,7 +47,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const permitted = await requirePermission(actor.user.sub, "can_delete_account");
   if (permitted.error) return permitted.error;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, DELETE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   if (read.body.confirm !== "DELETE") {
     return apiError("request.invalid_value", {

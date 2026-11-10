@@ -178,8 +178,12 @@ The platform sets a new user's tenant (AdminUpdateUserAttributes), deletes an er
 identity (ListUsers finds the pool user by its subject — a federated user's username is not its
 subject — then AdminDeleteUser; DescribeUserPool confirms the pool before a "not found" counts as
 erased: TASK-193 — without them every erasure's identity step stays pending and alerts
-`gdpr.external_erasure_pending`) and checks the pool's setup. Create an IAM user for this
-alone, with this policy (replace region, account and pool id):
+`gdpr.external_erasure_pending`) and checks the pool's setup. **Every Cognito deployment needs
+this key, in either tenancy mode** — a single deployment erases identities with it too; without
+it the operator readiness check `erasure` reports not ready. Create an IAM user for this alone,
+with this inline policy, named `cognito-tenancy-and-erasure` — exactly these eight actions, on
+the one pool (replace region, account and pool id; `COGNITO_ADMIN_ACTIONS` in
+`platform/providers/environment-contract.ts` is the same list, and a test holds the two equal):
 
 ```json
 {
@@ -399,6 +403,202 @@ Check — it must return `safety_approver` and one `role_bootstrap` record:
 select r.name from public.users u join public.roles r on r.id = u.role_id
  where lower(btrim(u.email)) = lower(btrim('approver@example.com')) and u.deleted_at is null;
 select count(*) from public.audit_log where details->>'type' = 'role_bootstrap';
+```
+
+### The second super admin (TASK-203, N-85)
+
+Dual control stays strict (the owner's decision, 2026-11-07): a role change and every action in
+`admin.dual_control_actions` needs an approver holding every permission the change needs —
+`admin_manage_roles` and `admin_manage_agents` are `super_admin`'s alone — and an operator's
+attestation of an erasure, or a tenant's deletion, needs a second operator (`platform_operate`,
+`super_admin` only). A deployment with one `super_admin` can therefore approve none of them, and
+operator readiness says so (the `dual_control` check names each action without an approver). The
+second `super_admin` cannot be made in the app — `super_admin` is assigned in the database only
+(ADR-013) — so it is the second documented one-time bootstrap, as the first `super_admin` and the
+first safety approver are: a separate account, on a **different address** from every existing
+`super_admin`, that has signed in once (so its account exists).
+
+In the Supabase SQL Editor of the project (as its `postgres` user), replace the address in the
+first line of the block, and run it as one run. It refuses — raises, changes nothing — unless:
+the tenant `default` exists; the address was replaced; exactly one account that is not deleted has
+that address there; that account is not already a `super_admin`; its address is a different
+mailbox from every existing `super_admin`'s (compared trimmed and in lower case, and without a
+`+tag` — `you+2@example.com` is `you@example.com`'s mailbox); and the tenant has exactly one
+`super_admin` now. It records the change in the audit log (`admin_action`, `role_bootstrap`, with
+the role, the role it replaced and this procedure's name) in the same transaction. The new role is
+in effect within a minute (the permissions cache), or when the person signs in again.
+
+```sql
+begin;
+set local lock_timeout = '5s';
+do $$
+declare
+  v_email  constant text := 'REPLACE-WITH-THE-SECOND-ADDRESS@example.com';
+  v_tenant constant text := 'default';
+  v_tenant_id uuid;
+  v_role uuid;
+  v_user uuid;
+  v_from text;
+  v_found int;
+  v_supers int;
+  v_mailbox text;
+begin
+  if v_email like 'REPLACE-WITH-%' then
+    raise exception 'replace the address in the first line with the second super admin''s';
+  end if;
+  select id into v_tenant_id from public.tenants where slug = v_tenant;
+  if v_tenant_id is null then raise exception 'no tenant %', v_tenant; end if;
+  select id into v_role from public.roles where name = 'super_admin';
+  if v_role is null then raise exception 'no super_admin role'; end if;
+  select count(*) into v_found from public.users
+   where tenant_id = v_tenant_id and lower(btrim(email)) = lower(btrim(v_email))
+     and deleted_at is null;
+  if v_found <> 1 then
+    raise exception '% accounts with address % in tenant % (the person signs in once first)',
+      v_found, v_email, v_tenant;
+  end if;
+  select u.id, r.name into v_user, v_from
+    from public.users u left join public.roles r on r.id = u.role_id
+   where u.tenant_id = v_tenant_id and lower(btrim(u.email)) = lower(btrim(v_email))
+     and u.deleted_at is null;
+  if v_from = 'super_admin' then
+    raise exception 'the account with address % is already a super_admin', v_email;
+  end if;
+  v_mailbox := regexp_replace(lower(btrim(v_email)), '[+][^@]*@', '@');
+  if exists (select 1 from public.users u
+              where u.role_id = v_role and u.deleted_at is null
+                and regexp_replace(lower(btrim(coalesce(u.email, ''))), '[+][^@]*@', '@') = v_mailbox) then
+    raise exception 'address % is the mailbox of an existing super_admin: use a different address', v_email;
+  end if;
+  select count(*) into v_supers from public.users
+   where tenant_id = v_tenant_id and role_id = v_role and deleted_at is null;
+  if v_supers <> 1 then
+    raise exception 'tenant % has % super_admins, not one: this procedure makes only the second',
+      v_tenant, v_supers;
+  end if;
+  update public.users set role_id = v_role where id = v_user;
+  insert into public.audit_log (tenant_id, action, actor_id, target_id, details)
+  values (v_tenant_id, 'admin_action', null, v_user,
+          jsonb_build_object('type', 'role_bootstrap', 'role', 'super_admin',
+                             'from_role', v_from,
+                             'procedure', 'TENANCY_OPERATIONS: the second super admin'));
+end $$;
+commit;
+```
+
+Check — it must return two rows, both `super_admin`, the second the new address; and one
+`role_bootstrap` record of this procedure, naming that account:
+
+```sql
+select u.email, r.name, u.last_login_at
+  from public.users u join public.roles r on r.id = u.role_id
+ where r.name = 'super_admin' and u.deleted_at is null
+ order by u.created_at;
+select a.created_at, a.target_id, a.details->>'from_role' as from_role
+  from public.audit_log a
+ where a.action = 'admin_action'
+   and a.details->>'type' = 'role_bootstrap'
+   and a.details->>'procedure' = 'TENANCY_OPERATIONS: the second super admin';
+```
+
+Then, signed in as either super admin, **Admin → Tenants (operators) → Check**: `dual_control`
+reads ready (or names only what still lacks an approver).
+
+### Reconciling the migration record (TASK-203, N-87)
+
+`scripts/migration-parity.mjs` (the weekly **Migration parity** workflow) compares a database's
+`applied_migrations` with a branch's `supabase/migrations`. Most drift it reports is not in the
+data, and is never fixed here:
+
+- **A branch behind the database it is compared with.** A database two environments share is
+  applied from the newer branch: its newer records are that branch's, not drift. The behind branch
+  is checked with `--records-may-lead` (every file of its own still recorded, the rest listed), and
+  the newer branch exactly. Promote; never delete a record of a migration that was applied.
+- **An older parity script.** A branch whose script predates a fix (it does not know the schema
+  baseline's own record, `000_baseline.sql`, TASK-148) reports what the current script accepts.
+  Promote; never delete the baseline's record — this procedure refuses it.
+- **A migration not applied.** Apply it from its file, as its migration guide says.
+
+What is left is the record itself being wrong, and only two cases: **retire** a record whose file
+no branch of the repository has or will have again (a migration renamed or withdrawn before it
+reached a release), or **record** a file whose effect is in the database but whose own record is
+missing (applied without its last statement). Check first, read-only: the file is absent from
+every branch (`git log --all --oneline -- supabase/migrations/<file>` prints nothing, for retire)
+or its objects are present (for record: the check its migration guide gives). Then, in the
+Supabase SQL Editor of that project (as its `postgres` user), replace the three values in the first
+lines and run it as one run. It refuses — raises, changes nothing — unless the values were replaced;
+the action is `retire` or `record`; the file name has a migration's form and is not
+`000_baseline.sql`; the reason is a sentence (20 characters or more); for `retire`, the record
+exists and carries no checksum (a migration from 063 records its checksum: its file exists); for
+`record`, there is no record yet. It writes one `admin_action` audit record of type
+`migration_record_reconciled` — the action, the file, the record retired (as it was) and the reason
+— in the same transaction. One file per run.
+
+```sql
+begin;
+set local lock_timeout = '5s';
+do $$
+declare
+  v_action   constant text := 'REPLACE-WITH-retire-OR-record';
+  v_filename constant text := 'REPLACE-WITH-THE-FILE-NAME.sql';
+  v_reason   constant text := 'REPLACE-WITH-WHY: the parity run, and what you checked';
+  v_tenant_id uuid;
+  v_row public.applied_migrations%rowtype;
+begin
+  if v_action like 'REPLACE-WITH-%' or v_filename like 'REPLACE-WITH-%'
+     or v_reason like 'REPLACE-WITH-%' then
+    raise exception 'replace the action, the file name and the reason in the first lines';
+  end if;
+  if v_action not in ('retire', 'record') then
+    raise exception 'the action is retire or record, not %', v_action;
+  end if;
+  if v_filename !~ '^[0-9]{3}[a-z]?_[a-z0-9_-]+[.]sql$' then
+    raise exception '% is not a migration file name', v_filename;
+  end if;
+  if v_filename = '000_baseline.sql' then
+    raise exception 'the schema baseline''s record is never reconciled: parity knows it';
+  end if;
+  if length(btrim(v_reason)) < 20 then
+    raise exception 'give the reason in a sentence';
+  end if;
+  select id into v_tenant_id from public.tenants where slug = 'default';
+  if v_tenant_id is null then raise exception 'no tenant default'; end if;
+  select * into v_row from public.applied_migrations where filename = v_filename;
+  if v_action = 'retire' then
+    if not found then raise exception 'no record of %', v_filename; end if;
+    if v_row.checksum is not null then
+      raise exception '% records its checksum (063 or later): its file exists, so its record stays',
+        v_filename;
+    end if;
+    delete from public.applied_migrations where filename = v_filename;
+  else
+    if found then raise exception '% is already recorded', v_filename; end if;
+    insert into public.applied_migrations (filename, confidence, note)
+    values (v_filename, 'assumed',
+            'Recorded by hand (TENANCY_OPERATIONS: reconciling the migration record): ' || v_reason);
+  end if;
+  insert into public.audit_log (tenant_id, action, actor_id, target_id, details)
+  values (v_tenant_id, 'admin_action', null, null,
+          jsonb_build_object('type', 'migration_record_reconciled',
+                             'reconciliation', v_action,
+                             'filename', v_filename,
+                             'record', case when v_action = 'retire' then to_jsonb(v_row) end,
+                             'reason', v_reason,
+                             'procedure', 'TENANCY_OPERATIONS: reconciling the migration record'));
+end $$;
+commit;
+```
+
+Check — the first query answers `0` after a retire and `assumed` after a record; the second lists
+this run's record; then run the parity workflow again for that environment and see it pass:
+
+```sql
+select coalesce((select confidence from public.applied_migrations
+                  where filename = 'REPLACE-WITH-THE-FILE-NAME.sql'), '0') as recorded;
+select created_at, details->>'reconciliation' as action, details->>'filename' as filename
+  from public.audit_log
+ where action = 'admin_action' and details->>'type' = 'migration_record_reconciled'
+ order by created_at desc limit 5;
 ```
 
 ### Resetting two-step verification (operator-assisted, TASK-194)

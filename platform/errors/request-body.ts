@@ -61,11 +61,37 @@ export async function readJsonObject(request: JsonRequest): Promise<JsonObjectRe
  */
 export async function readJsonBody(
   request: JsonRequest,
-  schema: InputSchemaNode
+  schema: BodySchema,
+  options: {
+    /**
+     * Keys a caller may never send — the server's own (a stream's system prompt; a held change's
+     * snapshot, TASK-203): each a path into the body (`system`, `actions[0].input.heldPrevious`),
+     * or a function of the body giving them. One present is refused `request.field_not_accepted`,
+     * naming its path, before the schema's own check.
+     */
+    readonly notAccepted?:
+      | readonly string[]
+      | ((body: Readonly<Record<string, unknown>>) => readonly string[]);
+  } = {}
 ): Promise<JsonObjectResult> {
   const read = await readJsonObject(request);
   if (!read.ok) return read;
-  const refused = inputKeyRefusal(closeUnmarkedOpen(schema), read.body);
+  const paths =
+    typeof options.notAccepted === "function"
+      ? options.notAccepted(read.body)
+      : (options.notAccepted ?? []);
+  const server = paths.find((path) => presentAt(read.body, path));
+  if (server !== undefined) {
+    return {
+      ok: false,
+      response: apiError("request.field_not_accepted", {
+        params: { field: server },
+        request,
+      }),
+    };
+  }
+  const declared = typeof schema === "function" ? schema(read.body) : schema;
+  const refused = inputKeyRefusal(closeUnmarkedOpen(declared), read.body);
   if (refused) {
     return {
       ok: false,
@@ -73,6 +99,27 @@ export async function readJsonBody(
     };
   }
   return read;
+}
+
+/**
+ * A route's body schema: the schema itself, or — for a body whose parts are each an action's
+ * input, its shape chosen by a key beside it (the command bar's `tool`, the config assistant's
+ * `toolId`) — a function of the body giving it (TASK-203, N-31). The function names the schema
+ * of each action the body names, so an input is read against its own action's keys.
+ */
+export type BodySchema =
+  InputSchemaNode | ((body: Readonly<Record<string, unknown>>) => InputSchemaNode);
+
+/** Whether `path` (`a.b`, `a[0].b`) names an own key present in `body`. */
+function presentAt(body: unknown, path: string): boolean {
+  const steps = path.match(/[^.[\]]+/g) ?? [];
+  let at: unknown = body;
+  for (const step of steps) {
+    if (at === null || typeof at !== "object") return false;
+    if (!Object.prototype.hasOwnProperty.call(at, step)) return false;
+    at = (at as Record<string, unknown>)[step];
+  }
+  return steps.length > 0;
 }
 
 /**

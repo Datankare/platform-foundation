@@ -83,6 +83,16 @@ import {
   heldTargetAccount,
 } from "./held-summary";
 import { canonicalUuid, sameId } from "@/platform/auth/same-id";
+import {
+  ADMIN_ACCESS,
+  OPERATOR_ACCESS,
+  noApproverRefusal,
+} from "@/platform/admin/eligible-approvers";
+import {
+  assignableRoles,
+  type DualControlledAction,
+} from "@/platform/admin/dual-control-readiness";
+import { getTenancySettings } from "@/platform/providers/environment-contract";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -246,6 +256,50 @@ export async function isDualControlledAction(tool: AdminToolId): Promise<boolean
   } catch {
     return true;
   }
+}
+
+/** The role-catalog actions: in a shared deployment only an operator may make (or approve) one. */
+const CATALOG_ACTIONS: ReadonlySet<AdminToolId> = new Set<AdminToolId>([
+  "create_role",
+  "delete_role",
+  "duplicate_role",
+  "assign_permissions",
+]);
+
+/**
+ * The command-bar actions held for a second admin now, each with what its approver must hold —
+ * for operator readiness (N-24; platform/admin/dual-control-readiness.ts): the action's own
+ * permission and the admin area; a catalog change in a shared deployment, an operator's too
+ * (mayChangePlatformCatalog); a role change, every permission of the role it gives (the rule an
+ * approver passes: checkRoleAssignment), one entry per role that can be given. Config writes are
+ * the key's holds, weighed with the settings. A read error throws.
+ */
+export async function commandBarDualControlledActions(): Promise<DualControlledAction[]> {
+  const shared = getTenancySettings().mode === "shared";
+  const tools = (Object.keys(ADMIN_TOOL_PERMISSIONS) as AdminToolId[]).filter(
+    (t) => t !== "search" && !isConfigWriteAction(t)
+  );
+  const held: AdminToolId[] = [];
+  for (const t of tools) if (await isDualControlledAction(t)) held.push(t);
+  const roles = held.includes("change_user_role") ? await assignableRoles() : [];
+  return held.flatMap((tool): DualControlledAction[] => {
+    const base = [ADMIN_TOOL_PERMISSIONS[tool], ADMIN_ACCESS];
+    if (tool === "change_user_role") {
+      return roles.map((r) => ({
+        action: `change_user_role (to ${r.name})`,
+        permissions: [...new Set([...base, ...r.permissions])],
+        across: "tenant",
+      }));
+    }
+    return [
+      {
+        action: tool,
+        permissions:
+          shared && CATALOG_ACTIONS.has(tool) ? [...base, OPERATOR_ACCESS] : base,
+        across: shared && CATALOG_ACTIONS.has(tool) ? "deployment" : "tenant",
+      },
+    ];
+  });
 }
 
 /**
@@ -535,6 +589,11 @@ export async function runCommandBarAction(args: {
         [HELD_CURRENT_ROLE]: snapshot.roleId,
       };
     }
+    // Nothing is held that no one could approve (N-24): an account other than the requester and
+    // the account it acts on must hold the action's permission, the admin area and pass its own
+    // rules — else refused now, naming the action and what its approver needs.
+    const noApprover = await heldWithoutApprover(tool, payload, admin);
+    if (noApprover) return { kind: "ran", result: noApprover };
     const proposal = await proposeOnce({
       spec: {
         type: runtimeTool.id,
@@ -554,6 +613,41 @@ export async function runCommandBarAction(args: {
       trajectoryStore,
     });
     return { kind: "held", proposalId: proposal.proposalId };
+  }
+}
+
+/**
+ * The refusal of a hold no account could approve (N-24), or null when one could: the approval
+ * decision's own checks — the action's permission and the admin area (approval-decision.ts), never
+ * the requester nor the account it acts on, and the action's rules for its approver
+ * (APPROVER_RULES, the same check the decision runs) — weighed over the tenant's staff in good
+ * standing (platform/admin/eligible-approvers.ts). Unreadable: refused, nothing held (fail closed).
+ */
+async function heldWithoutApprover(
+  tool: AdminToolId,
+  payload: Record<string, unknown>,
+  admin: VerifiedAdmin
+): Promise<ActionResult | null> {
+  // The decision reads only the label and the payload of a hold.
+  const asHeld = { label: tool, payload } as unknown as ProposalRecord;
+  try {
+    const [check, target] = await Promise.all([
+      COMMAND_BAR_HOLDS.approverRuleCheck!(asHeld),
+      heldTargetAccount(tool, payload),
+    ]);
+    const refusal = await noApproverRefusal(tool, {
+      permissions: [ADMIN_TOOL_PERMISSIONS[tool], ADMIN_ACCESS],
+      excluded: [admin.userId, admin.sub, target?.id],
+      rule: (approver) => check(approver),
+    });
+    return refusal ? coded(refusal.code, refusal.params) : null;
+  } catch (err) {
+    logger.error("Who could approve a held action could not be read: not held", {
+      tool,
+      error: err instanceof Error ? err.message : String(err),
+      route: "app/api/admin/ai/command-bar",
+    });
+    return coded("service.unavailable", { service: "roles" });
   }
 }
 

@@ -61,18 +61,23 @@ function db(rows: Row[], withChecksumColumn = true, status = 200): Promise<Serve
 
 async function parity(
   server: Server,
-  keys: Record<string, string> = { SUPABASE_SECRET_KEY: SECRET }
+  keys: Record<string, string> = { SUPABASE_SECRET_KEY: SECRET },
+  flags: string[] = []
 ): Promise<{ code: number | null; out: string }> {
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return new Promise((resolve) => {
-    const child = spawn("node", [join(ROOT, "scripts/migration-parity.mjs"), "test"], {
-      cwd: ROOT,
-      env: {
-        PATH: process.env.PATH ?? "",
-        SUPABASE_URL: url,
-        ...keys,
-      } as unknown as NodeJS.ProcessEnv,
-    });
+    const child = spawn(
+      "node",
+      [join(ROOT, "scripts/migration-parity.mjs"), "test", ...flags],
+      {
+        cwd: ROOT,
+        env: {
+          PATH: process.env.PATH ?? "",
+          SUPABASE_URL: url,
+          ...keys,
+        } as unknown as NodeJS.ProcessEnv,
+      }
+    );
     let out = "";
     child.stdout.on("data", (d: Buffer) => (out += d));
     child.stderr.on("data", (d: Buffer) => (out += d));
@@ -92,11 +97,12 @@ async function withDb(
   rows: Row[],
   withChecksumColumn = true,
   keys?: Record<string, string>,
-  status = 200
+  status = 200,
+  flags: string[] = []
 ) {
   const server = await db(rows, withChecksumColumn, status);
   try {
-    return await parity(server, keys);
+    return await parity(server, keys, flags);
   } finally {
     server.close();
   }
@@ -136,6 +142,50 @@ describe("migration parity (TASK-197, audit D-11)", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("not recorded");
     expect(r.out).toContain("063_applied_migrations_checksum.sql");
+  });
+});
+
+describe("a branch behind its shared database: --records-may-lead (TASK-203, N-87)", () => {
+  const ahead: Row[] = [
+    { filename: "099_from_a_newer_branch.sql", confidence: "verified", checksum: null },
+  ];
+
+  it("without the flag, a record with no file is drift (the exact check stays the default)", async () => {
+    const r = await withDb([...recordAll(), ...ahead]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("recorded migration(s) with no file");
+  });
+
+  it("with it, records ahead of the branch are listed, not drift", async () => {
+    const r = await withDb([...recordAll(), ...ahead], true, undefined, 200, [
+      "--records-may-lead",
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("ahead of this branch");
+    expect(r.out).toContain("099_from_a_newer_branch.sql");
+  });
+
+  it("[self-test] with it, a file of the branch not recorded, or edited after it was applied, is still drift", async () => {
+    const missing = recordAll().filter((x) => !x.filename.startsWith("063_"));
+    const r = await withDb([...missing, ...ahead], true, undefined, 200, [
+      "--records-may-lead",
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("not recorded");
+    const edited = recordAll();
+    edited.find((x) => x.filename.startsWith("063_"))!.checksum =
+      `sha256:${"2".repeat(64)}`;
+    const e = await withDb([...edited, ...ahead], true, undefined, 200, [
+      "--records-may-lead",
+    ]);
+    expect(e.code).toBe(1);
+    expect(e.out).toContain("changed since they were applied");
+  });
+
+  it("refuses an unknown option, checking nothing", async () => {
+    const r = await withDb(recordAll(), true, undefined, 200, ["--lenient"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("unknown option --lenient");
   });
 });
 

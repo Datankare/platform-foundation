@@ -6,14 +6,13 @@ Complete user data deletion pipeline for GDPR/CCPA compliance. Orchestrates dele
 
 ```typescript
 import { withTenantTx } from "@/platform/data";
-import { PurgePipeline, CachePurgeHandler } from "@/platform/gdpr";
+import { PurgePipeline } from "@/platform/gdpr";
 
 const pipeline = new PurgePipeline();
 
 // Register handlers (consumers add their own)
 pipeline.register(myProfileHandler);
 pipeline.register(myContentHandler);
-pipeline.register(new CachePurgeHandler(clearUserCache));
 
 // Set up audit logging — the record belongs to the current tenant (tenant_id is its column default)
 pipeline.onAudit(async (entry) => {
@@ -44,7 +43,8 @@ const result = await pipeline.execute({
   reason: "user-request",
 });
 
-// result.status: "completed" | "partial" | "failed"
+// result.status: "completed" | "partial" | "failed" | "indeterminate" (the time limit ran out
+// while a handler ran: it may still finish — N-27)
 // result.totalDeleted: number of records removed
 ```
 
@@ -69,7 +69,9 @@ class MyAppDataPurgeHandler implements PurgeHandler {
   readonly name = "myapp:user-data";
   readonly priority = 50; // Lower = earlier execution
 
-  async execute(userId: string, dryRun: boolean): Promise<number> {
+  async execute(userId: string, dryRun: boolean, signal?: AbortSignal): Promise<number> {
+    // Past the pipeline's time limit, stop between steps (N-27): signal.aborted.
+    if (signal?.aborted) throw new Error("time limit");
     // Row-level security confines both statements to the current tenant's rows.
     return withTenantTx(async (tx) => {
       if (dryRun) {
@@ -93,12 +95,12 @@ the platform's tables have (migration 049).
 
 ## Priority Guidelines
 
-| Range  | Use Case                                    |
-| ------ | ------------------------------------------- |
-| 1–20   | Auth/identity deletion (Cognito, profiles)  |
-| 21–50  | Primary data (content, preferences)         |
-| 51–80  | Secondary data (analytics, logs)            |
-| 81–100 | Infrastructure cleanup (cache, rate limits) |
+| Range  | Use Case                                     |
+| ------ | -------------------------------------------- |
+| 1–20   | Auth/identity deletion (Cognito, profiles)   |
+| 21–50  | Primary data (content, preferences)          |
+| 51–80  | Secondary data (analytics, logs)             |
+| 81–100 | Infrastructure cleanup (an app's own stores) |
 
 ## Database
 
@@ -109,7 +111,8 @@ Migration `009_gdpr_purge_log.sql` creates the `purge_log` audit table; migratio
 ```
 platform/gdpr/
 ├── types.ts        ← PurgeHandler, PurgeResult, PurgeRequest interfaces
-├── hard-purge.ts   ← PurgePipeline orchestrator, built-in handlers
+├── hard-purge.ts   ← PurgePipeline orchestrator (its time limit: N-27)
+├── account-erasure.ts ← the platform's handler: the account and every platform table
 ├── index.ts        ← Barrel exports
 └── README.md       ← This file
 ```

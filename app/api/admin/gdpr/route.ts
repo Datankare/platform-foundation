@@ -42,7 +42,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { logger } from "@/lib/logger";
-import { apiError, internalError, readJsonObject, isErrorCode } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+  isErrorCode,
+} from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { withTrajectory } from "@/platform/agents/trajectory-closure";
 import {
@@ -61,6 +67,17 @@ import {
 } from "@/app/api/admin/ai/handlers/purge";
 import type { ActionResult } from "@/app/api/admin/ai/handlers";
 import { withTenantTx } from "@/platform/data";
+import { raiseAlert } from "@/platform/observability/alert";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const ERASURE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    userId: { type: "string" },
+    reason: { type: "string" },
+    dryRun: { type: "boolean" },
+  },
+};
 
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -78,6 +95,43 @@ function hasPurgeResult(
   );
 }
 
+/**
+ * Close a recorded request ("attempted") that was refused (N-28): its "refused" record, with the
+ * code. A record that cannot be written is never swallowed — logged and alerted
+ * (`gdpr.request_record_unclosed`), so an attempted request without its outcome is seen.
+ */
+async function closeRefusedRequest(
+  admin: { readonly userId: string },
+  input: { readonly userId: string; readonly reason: string },
+  code: string
+): Promise<void> {
+  try {
+    await recordAudit({
+      action: "admin_action",
+      actorId: admin.userId,
+      targetId: input.userId,
+      details: {
+        type: "gdpr_purge_requested",
+        purgeReason: input.reason,
+        outcome: "refused",
+        code,
+      },
+    });
+  } catch (err) {
+    raiseAlert({
+      name: "gdpr.request_record_unclosed",
+      message:
+        "An erasure request was refused, but its refusal could not be recorded: the audit log shows the request attempted with no outcome.",
+      tags: {
+        targetId: input.userId,
+        requestedBy: admin.userId,
+        code,
+        error: err instanceof Error ? err.name : "error",
+      },
+    });
+  }
+}
+
 /** A refused or failed action as its coded answer. */
 function refusedResponse(result: ActionResult, request: NextRequest): NextResponse {
   if (result.code && isErrorCode(result.code)) {
@@ -93,7 +147,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const { admin } = verified;
 
   // Parse and validate input
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, ERASURE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body as { userId?: string; reason?: string; dryRun?: boolean };
 
@@ -157,6 +211,8 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     dryRun: input.dryRun,
   });
 
+  // Whether the request was recorded "attempted": from then on every way out closes it (N-28).
+  let attempted = false;
   try {
     // A dry run counts and changes nothing: it answers at once, recorded as a dry run.
     if (input.dryRun) {
@@ -219,6 +275,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     } catch {
       return apiError("service.unavailable", { params: { service: "audit" }, request });
     }
+    attempted = true;
     // The erasure itself is held for a second admin (always: ALWAYS_HELD_ACTIONS). Its
     // trajectory is ended with the request (TASK-193) — unless held, when the hold's decision,
     // withdrawal or expiry ends it.
@@ -247,26 +304,19 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     }
     // Ran (only were it ever unheld): its outcome, as a dry run's is shown.
     const ran = outcome.result as ActionResult & { purge?: unknown };
-    return hasPurgeResult(ran)
-      ? NextResponse.json(ran.purge)
-      : refusedResponse(ran, request);
+    if (hasPurgeResult(ran)) return NextResponse.json(ran.purge);
+    // Refused before it was held — no approver (N-24), a store down: the request recorded above
+    // is closed as refused, so no record claims a request still open (N-28).
+    await closeRefusedRequest(admin, input, ran.code ?? "internal.error");
+    return refusedResponse(ran, request);
   } catch (error) {
     // Two requests at once: the database kept one open erasure for the account (round 2, A6).
     // The request recorded above is closed as refused (round 3), so no record claims a hold.
     if (isErasureHoldConflict(error)) {
-      await recordAudit({
-        action: "admin_action",
-        actorId: admin.userId,
-        targetId: input.userId,
-        details: {
-          type: "gdpr_purge_requested",
-          purgeReason: input.reason,
-          outcome: "refused",
-          code: "admin.erasure_pending",
-        },
-      }).catch(() => undefined);
+      await closeRefusedRequest(admin, input, "admin.erasure_pending");
       return apiError("admin.erasure_pending", { request });
     }
+    if (attempted) await closeRefusedRequest(admin, input, "internal.error");
     return internalError(error, { request, context: "GDPR purge failed" });
   }
 });

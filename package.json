@@ -29,7 +29,7 @@
     "jobs:worker": "node scripts/jobs-worker.mjs"
   },
   "dependencies": {
-    "@sentry/nextjs": "^11.9.0",
+    "@sentry/nextjs": "^11.11.0",
     "@supabase/supabase-js": "^2.117.2",
     "ajv": "8.20.0",
     "intl-messageformat": "12.1.4",
@@ -45,7 +45,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
-    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/core": "10.1.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
@@ -55,6 +55,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "babel-jest": "^30.5.2",
+    "deepmerge": "file:vendor/deepmerge",
     "eslint": "^9.39.5",
     "eslint-config-next": "16.4.3",
     "eslint-config-prettier": "^10.1.5",
@@ -151,6 +152,18 @@
     "brace-expansion@2": "2.1.7",
     "js-yaml@3": "3.15.2",
     "js-yaml@4": "4.3.2",
-    "source-map-js": "^1.2.2"
+    "source-map-js": "^1.2.2",
+    "qs": "^6.17.1",
+    "deepmerge": "$deepmerge",
+    "glob": "^14.0.4",
+    "@stryker-mutator/core": {
+      "minimatch": "^11.0.5"
+    },
+    "test-exclude": {
+      "minimatch": "^11.0.5"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.5"
+    }
   }
 }

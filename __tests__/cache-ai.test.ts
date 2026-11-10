@@ -195,14 +195,14 @@ describe("AICache", () => {
     expect(await aiCache.get(req, "test")).toBeNull();
   });
 
-  it("clears all cached AI responses", async () => {
-    await aiCache.set(makeRequest({ system: "A" }), makeResponse(), "test");
-    await aiCache.set(makeRequest({ system: "B" }), makeResponse(), "test");
-
-    await aiCache.clearAll();
-
-    expect(await aiCache.get(makeRequest({ system: "A" }), "test")).toBeNull();
-    expect(await aiCache.get(makeRequest({ system: "B" }), "test")).toBeNull();
+  it("never clears the shared cache it wraps: no clearAll, no purgeUserData (N-29)", async () => {
+    // The cache an AICache wraps is the deployment's shared cache: a clear() would wipe every
+    // permission and token-revocation stamp with the AI answers.
+    await cache.set("perm:stamp", "1");
+    await aiCache.set(makeRequest(), makeResponse(), "test");
+    expect((aiCache as unknown as Record<string, unknown>).clearAll).toBeUndefined();
+    expect((aiCache as unknown as Record<string, unknown>).purgeUserData).toBeUndefined();
+    expect(await cache.get("perm:stamp")).toBe("1");
   });
 
   it("does nothing when disabled", async () => {
@@ -229,13 +229,6 @@ describe("AICache", () => {
     expect(result).toBeNull();
     expect(aiCache.stats.misses).toBe(1);
   });
-
-  it("purgeUserData clears AI cache", async () => {
-    await aiCache.set(makeRequest(), makeResponse(), "test");
-    await aiCache.purgeUserData("user-123");
-
-    expect(await aiCache.get(makeRequest(), "test")).toBeNull();
-  });
 });
 
 describe("Token-aware rate limit types", () => {
@@ -259,40 +252,16 @@ describe("Token-aware rate limit types", () => {
   });
 });
 
-describe("AI Purge Handlers", () => {
-  it("AIMetricsPurgeHandler calls deleteFn", async () => {
-    const { AIMetricsPurgeHandler } = await import("../platform/gdpr/ai-purge-handler");
-    const deleteFn = jest.fn().mockResolvedValue(15);
-    const handler = new AIMetricsPurgeHandler(deleteFn);
-
-    expect(handler.name).toBe("ai:metrics");
-    expect(handler.priority).toBe(50);
-
-    const count = await handler.execute("user-123", false);
-    expect(count).toBe(15);
-    expect(deleteFn).toHaveBeenCalledWith("user-123");
-  });
-
-  it("AIMetricsPurgeHandler returns 0 on dry run", async () => {
-    const { AIMetricsPurgeHandler } = await import("../platform/gdpr/ai-purge-handler");
-    const deleteFn = jest.fn();
-    const handler = new AIMetricsPurgeHandler(deleteFn);
-
-    const count = await handler.execute("user-123", true);
-    expect(count).toBe(0);
-    expect(deleteFn).not.toHaveBeenCalled();
-  });
-
-  it("AICachePurgeHandler calls purgeFn", async () => {
-    const { AICachePurgeHandler } = await import("../platform/gdpr/ai-purge-handler");
-    const purgeFn = jest.fn().mockResolvedValue(0);
-    const handler = new AICachePurgeHandler(purgeFn);
-
-    expect(handler.name).toBe("ai:cached-responses");
-    expect(handler.priority).toBe(85);
-
-    await handler.execute("user-123", false);
-    expect(purgeFn).toHaveBeenCalledWith("user-123");
+describe("no placeholder purge handlers (N-29)", () => {
+  it("the gdpr barrel exports no handler that nothing registers", async () => {
+    const gdpr = (await import("../platform/gdpr")) as Record<string, unknown>;
+    for (const name of [
+      "CachePurgeHandler",
+      "RateLimitPurgeHandler",
+      "AIMetricsPurgeHandler",
+      "AICachePurgeHandler",
+    ])
+      expect(gdpr[name]).toBeUndefined();
   });
 });
 

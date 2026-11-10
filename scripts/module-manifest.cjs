@@ -99,6 +99,7 @@ const APP_KEYS = [
   "modules",
   "migrationsBeforeTheConvention",
   "noUserData",
+  "retention",
 ];
 /** A table name as the app declares one: lower-case, digits and "_". */
 const TABLE_NAME = /^[a-z_][a-z0-9_]*$/;
@@ -326,6 +327,28 @@ function appManifestShapeProblems(platform, app) {
       }
     }
   }
+  // The app's tables' retention (TASK-203, N-25): each its rule — what happens to a row, when,
+  // and what applies it — or why its rows are kept, in a sentence. The retention coverage test
+  // classifies an app's tables by these, as the platform's by platform/jobs/retention.ts.
+  if (app.retention !== undefined) {
+    const r = app.retention;
+    if (r === null || typeof r !== "object" || Array.isArray(r)) {
+      problems.push(
+        `${where}: "retention" must be an object { "<table>": "<its rule, or why its rows are kept>" }`
+      );
+    } else {
+      for (const [table, rule] of Object.entries(r)) {
+        if (!TABLE_NAME.test(table))
+          problems.push(
+            `${where} retention."${table}": not a table name (lower-case letters, digits, "_")`
+          );
+        if (typeof rule !== "string" || rule.trim().length < 10)
+          problems.push(
+            `${where} retention.${table}: say how long its rows are kept, or why they are kept (a sentence)`
+          );
+      }
+    }
+  }
   const modules = app.modules ?? {};
   if (typeof modules !== "object" || Array.isArray(modules)) {
     return [...problems, `${where}: "modules" must be an object keyed by module id`];
@@ -397,6 +420,7 @@ function mergeManifests(
   out.app = app.app ?? null;
   out.migrationsBeforeTheConvention = [...(app.migrationsBeforeTheConvention ?? [])];
   out.noUserData = { ...(app.noUserData ?? {}) };
+  out.retention = { ...(app.retention ?? {}) };
   out.platformModules = Object.keys(platform.modules);
   out.appModules = [];
   for (const [id, entry] of Object.entries(app.modules ?? {})) {

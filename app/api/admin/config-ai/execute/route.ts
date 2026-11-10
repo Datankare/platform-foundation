@@ -21,7 +21,13 @@ import { requireAdmin } from "@/platform/auth/admin-guard";
 import { holds } from "@/platform/auth/role-governance";
 import { tierPermission } from "@/platform/admin/governed-config";
 import { logger, generateRequestId } from "@/lib/logger";
-import { inputKeyRefusal, type InputSchemaNode } from "@/platform/admin/input-keys";
+import {
+  CONFIG_VALUE_SCHEMA,
+  inputKeyRefusal,
+  mergeInputSchemas,
+  withOpenAs,
+  type InputSchemaNode,
+} from "@/platform/admin/input-keys";
 import {
   CONFIG_SERVER_SET_INPUTS,
   CONFIG_TOOLS,
@@ -31,7 +37,7 @@ import {
 import { getPermissionTier } from "@/platform/auth/platform-config";
 import type { ToolExecutionContext } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
-import { apiError, apiErrorBody, readJsonObject } from "@/platform/errors";
+import { apiError, apiErrorBody, readJsonBody } from "@/platform/errors";
 import { ERROR_CODES } from "@/platform/errors/registry";
 import { getApproval } from "@/platform/admin/config-approval";
 import { requiredPermissionForKey } from "@/platform/admin/pending-approvals";
@@ -99,6 +105,36 @@ interface ExecuteRequest {
 /** Each config tool's input schema, by its id. */
 const CONFIG_TOOL_SCHEMAS = new Map(CONFIG_TOOLS.map((t) => [t.id, t.inputSchema]));
 
+/**
+ * The body this route reads (TASK-203, N-31): a tool and its input — the input naming only keys
+ * some config tool's schema names, a setting's value read as a configuration value
+ * (CONFIG_VALUE_SCHEMA); a key no tool names is refused here, before anything else. The named
+ * tool's own keys are checked exactly below, after the permission checks (a caller who may not
+ * act is told so first — C-1), and the keys the server sets for it are refused here (below).
+ */
+const EXECUTE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    toolId: { type: "string" },
+    input: mergeInputSchemas(
+      CONFIG_TOOLS.map((t) =>
+        withOpenAs(t.inputSchema as InputSchemaNode, CONFIG_VALUE_SCHEMA)
+      )
+    ),
+  },
+};
+
+/**
+ * The keys of the tool's input the server sets (CONFIG_SERVER_SET_INPUTS: the operator flags,
+ * heldPrevious, expectPrevious), never a caller: refused `request.field_not_accepted` (round 12).
+ */
+function serverSetPaths(body: Readonly<Record<string, unknown>>): string[] {
+  return typeof body.toolId === "string" &&
+    Object.prototype.hasOwnProperty.call(CONFIG_SERVER_SET_INPUTS, body.toolId)
+    ? Object.keys(CONFIG_SERVER_SET_INPUTS[body.toolId] ?? {}).map((k) => `input.${k}`)
+    : [];
+}
+
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
 
@@ -109,7 +145,9 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   const { admin } = guard;
   const actorId = admin.userId;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, EXECUTE_BODY_SCHEMA, {
+    notAccepted: serverSetPaths,
+  });
   if (!read.ok) return read.response;
   const raw = read.body;
   if (typeof raw.toolId !== "string" || !raw.toolId) {
@@ -177,10 +215,11 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     // change records its input as its hold's payload and its proposal step's input, and free text
     // under a key no schema names would pass the erasure's register of free-text keys. Refused,
     // coded — never dropped silently. After the permission checks (a caller who may not act is
-    // told so, not shown the tool's keys). The keys the route and dispatchConfigTool set — the
-    // operator flags, heldPrevious, expectPrevious (CONFIG_SERVER_SET_INPUTS) — are the
-    // server's: a caller's is `request.field_not_accepted` (round 12, nit 1); actorId and
-    // reviewerId are the schema's, and overwritten below.
+    // told so, not shown the tool's keys). The body's read (EXECUTE_BODY_SCHEMA) already refused
+    // a key no config tool names, and the keys the route and dispatchConfigTool set — the operator
+    // flags, heldPrevious, expectPrevious (CONFIG_SERVER_SET_INPUTS), the server's:
+    // `request.field_not_accepted` (round 12, nit 1). actorId and reviewerId are the schema's, and
+    // overwritten below.
     const refused = inputKeyRefusal(
       CONFIG_TOOL_SCHEMAS.get(body.toolId) as InputSchemaNode | undefined,
       body.input,

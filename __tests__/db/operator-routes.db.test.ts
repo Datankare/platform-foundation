@@ -277,7 +277,7 @@ dbDescribe(`${SUITE} GET /api/admin/tenant`, () => {
   const get = (caller: Caller, mode?: "single" | "shared") =>
     tenantGET(req("/api/admin/tenant", caller, { tenant: t, mode }));
 
-  it("refuses the anonymous and callers without admin access", async () => {
+  it("[hostile:role] refuses the anonymous and callers without admin access", async () => {
     await expectCode(await get("anonymous"), 401, "auth.required");
     await expectCode(await get(free), 403, "auth.permission_denied");
   });
@@ -776,7 +776,7 @@ dbDescribe(`${SUITE} POST /api/operator/tenants/[id]/state`, () => {
     expect((await tenantRow(t.id)).status).toBe("active");
   });
 
-  it("never suspends the operator's own tenant", async () => {
+  it("[hostile:self] never suspends the operator's own tenant", async () => {
     await expectCode(await changeState(home.id, "suspend"), 403, "tenant.own_tenant");
     expect((await tenantRow(home.id)).status).toBe("active");
   });
@@ -1230,7 +1230,7 @@ dbDescribe(`${SUITE} POST /api/operator/tenants/[id]/admins`, () => {
     expect(await roleOf(user)).toBe(freeRole);
   });
 
-  it("makes the tenant's user its administrator, recorded first", async () => {
+  it("[hostile:id-spelling] makes the tenant's user its administrator, recorded first (its address in upper case, padded)", async () => {
     const res = await grant(t.id, { email: `  ${mail("first").toUpperCase()} ` });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ result: { userId: user } });
@@ -1496,6 +1496,9 @@ dbDescribe(`${SUITE} GET /api/operator/readiness`, () => {
       "owner_connection",
       "directory",
       "identity",
+      "erasure",
+      "client_secret",
+      "dual_control",
     ]);
     for (const c of body.checks) {
       expect(c).toEqual({
@@ -1552,7 +1555,7 @@ dbDescribe(`${SUITE} audit first: no record, no change`, () => {
     noAudit = callerWithUnrecordableId("super_admin", RUN);
   });
 
-  it("refuses a suspension it cannot record; the tenant stays active", async () => {
+  it("[hostile:store-down] refuses a suspension it cannot record; the tenant stays active", async () => {
     const t = await createTestTenant();
     const body = await expectCode(
       await changeState(t.id, "suspend", noAudit),

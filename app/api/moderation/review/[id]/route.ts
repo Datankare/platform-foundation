@@ -19,8 +19,24 @@ import {
 } from "@/platform/moderation/review-service";
 import type { ReviewDecision } from "@/platform/moderation/review-types";
 import type { ModerationAction } from "@/platform/moderation/types";
-import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  errorFromResult,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const DECISION_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    action: { type: "string" },
+    decision: { type: "string" },
+    reviewerNotes: { type: "string" },
+    modifiedAction: { type: "string" },
+  },
+};
 
 const MODERATE_PERMISSION = "can_moderate";
 
@@ -37,7 +53,10 @@ export const PATCH = tenantRoute(async function PATCH(
   const requestId = generateRequestId();
   const { id } = await context.params;
 
-  const read = await readJsonObject(request);
+  // The reviewer is the verified caller (audit X-8): one named in the body is the server's to set.
+  const read = await readJsonBody(request, DECISION_BODY_SCHEMA, {
+    notAccepted: ["reviewerId"],
+  });
   if (!read.ok) return read.response;
   const body = read.body as {
     action?: string;

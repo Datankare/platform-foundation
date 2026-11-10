@@ -35,7 +35,7 @@ import { isApprovalRequired } from "@/platform/admin/config-approval";
 import type { Step } from "@/platform/agents/types";
 import type { ConfigToolResult } from "@/platform/admin/types";
 import { generateId } from "@/platform/agents/utils";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +59,21 @@ interface ConfigAIRequest {
   /** Conversation history (previous turns) */
   history?: ConversationMessage[];
 }
+
+/** The body this route reads (TASK-203, N-31): the message and the conversation so far. */
+const MESSAGE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    message: { type: "string" },
+    history: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { role: { type: "string" }, content: { type: "string" } },
+      },
+    },
+  },
+};
 
 interface ConfigAIResponse {
   /** Agent's natural language response */
@@ -88,7 +103,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   if (guard.error) return guard.error;
   const { admin } = guard;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, MESSAGE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body as Partial<ConfigAIRequest>;
 

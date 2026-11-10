@@ -69,6 +69,8 @@ import { getApproval } from "@/platform/admin/config-approval";
 import * as conversationRoute from "@/app/api/admin/config-ai/route";
 import * as configRoute from "@/app/api/admin/config/route";
 
+// hostile:id-spelling n/a: no account id is compared by these routes: the actor is the verified admin, and the approver comparison is config-approval's
+
 const dispatch = dispatchConfigTool as jest.Mock;
 const tierOf = getPermissionTier as jest.Mock;
 const entryOf = getEnhancedConfig as jest.Mock;
@@ -171,7 +173,7 @@ describe("/api/admin/config-ai/execute", () => {
     }
   );
 
-  it("refuses an admin a safety-tier update", async () => {
+  it("[hostile:role] refuses an admin a safety-tier update", async () => {
     const res = await execute("admin", {
       toolId: "update_config",
       input: { key: SAFETY_KEY, value: 9, changeComment: "c" },
@@ -286,7 +288,7 @@ describe("/api/admin/config-ai/execute", () => {
     expect(res.status).toBe(200);
   });
 
-  it("records the verified actor, overwriting a spoofed actorId and reviewerId", async () => {
+  it("[hostile:self] records the verified actor, overwriting a spoofed actorId and reviewerId", async () => {
     await execute("safety_approver", {
       toolId: "update_config",
       input: {
@@ -370,7 +372,7 @@ describe("/api/admin/config-ai/execute", () => {
 
   // Round 13 (I-C), round 14 (items 3, 4, 5): an uncoded tool failure answers admin.action_failed
   // at that code's own status, its text logged — never in the body.
-  it("answers an uncoded tool failure admin.action_failed, its text logged, never returned", async () => {
+  it("[hostile:store-down] answers an uncoded tool failure admin.action_failed, its text logged, never returned", async () => {
     const { logger } = jest.requireMock("@/lib/logger") as {
       logger: { error: jest.Mock };
     };
@@ -472,7 +474,18 @@ describe("/api/admin/config-ai", () => {
   });
 
   it("derives the assistant's tier from the verified admin, not the body", async () => {
-    await converse("admin", { message: "hello", adminRole: "super_admin" });
+    // A role in the body is no input (TASK-203, N-31): refused before anything is built.
+    const refused = await converse("admin", {
+      message: "hello",
+      adminRole: "super_admin",
+    });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      code: "request.unknown_input",
+      params: { field: "adminRole" },
+    });
+    expect(buildConfigManagerPrompt).not.toHaveBeenCalled();
+    await converse("admin", { message: "hello" });
     expect(buildConfigManagerPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         adminUserId: CALLERS.admin.userId,

@@ -51,6 +51,9 @@ import { POST as planPOST } from "@/app/api/admin/ai/route";
 import { POST as executePOST } from "@/app/api/admin/ai/execute/route";
 import { SHARED_TOOLS, PANEL_TOOL_SCHEMAS } from "@/app/api/admin/ai/tool-schemas";
 
+// hostile:self n/a: these routes plan and run actions; one on the caller's own account is refused by its handler, tested in command-bar-holds and approver-rules
+// hostile:id-spelling n/a: no account id is compared here: a plan names tools and their input keys, checked by key
+
 const mockOrchestrator = getOrchestrator as jest.Mock;
 const mockInvokeTool = invokeTool as jest.Mock;
 
@@ -137,7 +140,7 @@ describe("ai plan route", () => {
     expect(JSON.stringify(body)).not.toMatch(/stop_reason|Anthropic/);
   });
 
-  it("a permanent provider error that is not a refusal is still service.unavailable", async () => {
+  it("[hostile:store-down] a permanent provider error that is not a refusal is still service.unavailable", async () => {
     mockOrchestrator.mockReturnValue({
       complete: jest
         .fn()
@@ -148,7 +151,7 @@ describe("ai plan route", () => {
     expect((await res.json()).code).toBe("service.unavailable");
   });
 
-  it("refuses a caller who cannot enter the admin area", async () => {
+  it("[hostile:role] refuses a caller who cannot enter the admin area", async () => {
     const res = await planPOST(
       jsonReq({ prompt: "x", panel: "roles" }, undefined, "free")
     );
@@ -161,7 +164,6 @@ describe("ai execute route", () => {
     mockInvokeTool.mockResolvedValue({ output: { success: true, result: "done" } });
     const body = {
       actions: [{ tool: "create_role", input: { name: "ops" } }],
-      prompt: "x",
     };
     const res = await executePOST(jsonReq(body));
     expect(res.status).toBe(200);

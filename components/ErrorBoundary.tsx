@@ -61,38 +61,16 @@ export default class ErrorBoundary extends Component<
         <div
           role="alert"
           aria-live="assertive"
-          style={{
-            minHeight: "100vh",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "#0a0f1e",
-            color: "#e2e8f0",
-            fontFamily: "system-ui, sans-serif",
-            padding: "2rem",
-            textAlign: "center",
-          }}
+          className="min-h-screen flex items-center justify-center bg-[#0a0f1e] text-slate-200 font-sans p-8 text-center"
         >
           <div>
-            <h1
-              style={{ fontSize: "1.5rem", fontWeight: "bold", marginBottom: "0.5rem" }}
-            >
-              {t("something_went_wrong")}
-            </h1>
-            <p style={{ color: "#94a3b8", marginBottom: "1.5rem" }}>
+            <h1 className="text-2xl font-bold mb-2">{t("something_went_wrong")}</h1>
+            <p className="text-slate-400 mb-6">
               {t("an_unexpected_error_occurred_please")}
             </p>
             <button
               onClick={() => window.location.reload()}
-              style={{
-                padding: "0.5rem 1.5rem",
-                backgroundColor: "#2563eb",
-                color: "white",
-                border: "none",
-                borderRadius: "0.5rem",
-                cursor: "pointer",
-                fontSize: "0.875rem",
-              }}
+              className="px-6 py-2 bg-blue-600 text-white border-0 rounded-lg cursor-pointer text-sm"
             >
               {t("refresh_page")}
             </button>

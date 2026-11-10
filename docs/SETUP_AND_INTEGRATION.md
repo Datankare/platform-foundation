@@ -248,7 +248,10 @@ sync.
   list your own files one by one. Your tables that hold no user's data go in `"noUserData"`
   (`{ "<table>": "<why>" }`); the others are erased by your deletion module, which your migration
   records in `deletion_manifest`. The user-data coverage test classifies your tables by these two
-  declarations and fails on one you did not declare. The manifest tests derive the module ids from
+  declarations and fails on one you did not declare. Every table of yours also says how long its
+  rows are kept, in `"retention"` (`{ "<table>": "<its rule, or why its rows are kept>" }`,
+  TASK-203): the retention coverage test (`__tests__/db/retention-coverage.db.test.ts`) fails on a
+  table — yours or the platform's (`platform/jobs/retention.ts`) — with no entry. The manifest tests derive the module ids from
   the merge, so your modules are checked like the platform's. `node scripts/module-manifest.cjs --check` runs the merge and the migration-name
   check on their own.
 

@@ -56,6 +56,8 @@ import { GET, POST } from "@/app/api/moderation/review/route";
 import { fakeData } from "./helpers/fake-data";
 import { PATCH } from "@/app/api/moderation/review/[id]/route";
 
+// hostile:self n/a: the routes pass the verified reviewer to the service, which refuses one's own case — review-claim-audit [hostile:self]
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 const REVIEWER = CALLERS.moderator.userId;
@@ -234,7 +236,7 @@ describe("POST /api/moderation/review", () => {
     });
   });
 
-  it("files nothing when the submission cannot be recorded (503)", async () => {
+  it("[hostile:store-down] files nothing when the submission cannot be recorded (503)", async () => {
     fakeData().failAudit = true;
     const res = await POST(
       jsonRequest("POST", {
@@ -268,12 +270,8 @@ describe("POST /api/moderation/review", () => {
     expect(submitForReview).not.toHaveBeenCalled();
   });
 
-  it("drops a previousAccountStatus sent with an escalation", async () => {
-    (submitForReview as jest.Mock).mockResolvedValue({
-      success: true,
-      item: { id: "r" },
-    });
-    await POST(
+  it("refuses a previousAccountStatus sent with an escalation: the server's to record (TASK-203, N-31)", async () => {
+    const res = await POST(
       jsonRequest("POST", {
         source: "escalation",
         moderationResult: mr("escalate"),
@@ -281,18 +279,24 @@ describe("POST /api/moderation/review", () => {
         previousAccountStatus: "banned",
       })
     );
-    expect(
-      (submitForReview as jest.Mock).mock.calls[0][0].previousAccountStatus
-    ).toBeUndefined();
-  });
-
-  it.each(["u1", "x,y", 7])("refuses the target id %p", async (targetUserId) => {
-    const res = await POST(
-      jsonRequest("POST", { source: "escalation", moderationResult: {}, targetUserId })
-    );
     expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "request.field_not_accepted",
+      params: { field: "previousAccountStatus" },
+    });
     expect(submitForReview).not.toHaveBeenCalled();
   });
+
+  it.each(["u1", "x,y", 7])(
+    "[hostile:id-spelling] refuses the target id %p",
+    async (targetUserId) => {
+      const res = await POST(
+        jsonRequest("POST", { source: "escalation", moderationResult: {}, targetUserId })
+      );
+      expect(res.status).toBe(400);
+      expect(submitForReview).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     ["null", null],
@@ -489,20 +493,27 @@ describe("PATCH /api/moderation/review/[id]", () => {
     expect(res.status).toBe(400);
   });
 
-  it("never takes the reviewer from the body (audit X-8)", async () => {
+  it("never takes the reviewer from the body (audit X-8): one sent is refused, the server's to set", async () => {
     (claimItem as jest.Mock).mockResolvedValue({
       success: true,
       item: { id: "review-1" },
     });
-    await PATCH(
+    const refused = await PATCH(
       jsonRequest("PATCH", { action: "claim", reviewerId: CALLERS.super_admin.userId }),
       patchCtx("review-1")
     );
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      code: "request.field_not_accepted",
+      params: { field: "reviewerId" },
+    });
+    expect(claimItem).not.toHaveBeenCalled();
+    await PATCH(jsonRequest("PATCH", { action: "claim" }), patchCtx("review-1"));
     expect(claimItem).toHaveBeenCalledWith("review-1", REVIEWER);
   });
 
   it.each(["anonymous", "free", "safety_approver", "suspended_super_admin"] as const)(
-    "refuses %s",
+    "[hostile:role] refuses %s",
     async (caller) => {
       const res = await PATCH(
         jsonRequest("PATCH", { action: "claim" }, undefined, caller),

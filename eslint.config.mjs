@@ -31,6 +31,9 @@ const eslintConfig = [
       // Stryker's sandbox and report (stryker.config.mjs, TASK-200).
       ".stryker-tmp/**",
       "reports/**",
+      // Third-party code kept as its authors wrote it, changed only where its header says
+      // (vendor/deepmerge, TASK-203).
+      "vendor/**",
     ],
   },
   ...nextVitals,

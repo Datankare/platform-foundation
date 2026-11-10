@@ -1,0 +1,3 @@
+# Third-party code kept as its authors wrote it, changed only where its header says
+# (vendor/deepmerge: TASK-203). Prettier also reads .gitignore.
+vendor/**

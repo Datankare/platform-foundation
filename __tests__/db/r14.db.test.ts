@@ -46,6 +46,8 @@ if (DB_ENABLED) {
   });
   beforeEach(async () => {
     t = await createTestTenant();
+    // Someone else could approve (TASK-203, N-24: otherwise refused up front).
+    await t.user("approver", "super_admin");
     raiseAlert.mockReset();
   });
 }
@@ -158,7 +160,11 @@ dbDescribe("R14-L4 a platform-scope withdrawal reaches every tenant", () => {
 
   it("withdraws the platform-scope approvals of other tenants, each audited in its own tenant; tenant-scope ones stand", async () => {
     const other = await createTestTenant();
+    // Someone else could approve (TASK-203, N-24: otherwise refused up front).
+    await other.user("approver", "super_admin");
     const third = await createTestTenant();
+    // Someone else could approve (TASK-203, N-24: otherwise refused up front).
+    await third.user("approver", "super_admin");
     const operatorUser = await t.user("operator");
     const otherRequester = await other.user("req");
     const thirdRequester = await third.user("req");
@@ -233,6 +239,8 @@ dbDescribe("R14-L4 a platform-scope withdrawal reaches every tenant", () => {
 
   it("a tenant-scope reduction stays in the current tenant", async () => {
     const other = await createTestTenant();
+    // Someone else could approve (TASK-203, N-24: otherwise refused up front).
+    await other.user("approver", "super_admin");
     const otherRequester = await other.user("req");
     const theirs = await other.run(() =>
       requestApproval({

@@ -90,6 +90,9 @@ import {
 } from "../helpers/db-admin";
 import type { TestIdentity } from "../helpers/test-identities";
 
+// hostile:self n/a: the catalog (roles, permissions, groups) is no account: a change to one's own role is the Users route's, in approver-rules
+// hostile:id-spelling n/a: catalog rows are named by code and id the routes look up; no account id is compared here
+
 const RUN = newRun();
 const name = (label: string) => catalogName(RUN, label);
 
@@ -258,7 +261,7 @@ dbDescribe(`${SUITE} handleCreateRole`, () => {
     expect(res.error).not.toMatch(/duplicate|unique|constraint/i);
   });
 
-  it("refuses a permission the admin does not hold, and writes nothing", async () => {
+  it("[hostile:role] refuses a permission the admin does not hold, and writes nothing", async () => {
     const before = (await auditOf(a)).length;
     const res = await shared(() =>
       handleCreateRole(
@@ -912,7 +915,7 @@ dbDescribe(`${SUITE} /api/admin/entitlements`, () => {
     expect(await isActive(cat.groups.basic)).toBe(false);
   });
 
-  it("does not toggle a group when the audit log is unavailable", async () => {
+  it("[hostile:store-down] does not toggle a group when the audit log is unavailable", async () => {
     const res = await entPATCH(
       req("PATCH", callerWithUnrecordableId("super_admin", RUN), {
         groupId: cat.groups.basic,
@@ -929,8 +932,10 @@ dbDescribe(`${SUITE} /api/admin/entitlements`, () => {
    * role change, on the page and in the command bar.
    */
   describe("under dual control (review 7 M6)", () => {
-    beforeAll(() => {
+    beforeAll(async () => {
       mockDualControl.off = false;
+      // A second admin who could approve (TASK-203, N-24: otherwise refused up front).
+      await insertUser(a, { roleId: await seededRoleId("super_admin") });
     });
     afterAll(() => {
       mockDualControl.off = true;

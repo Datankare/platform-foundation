@@ -21,10 +21,24 @@ command bar's search limited to what the admin pages show (TASK-189), and one li
 screen (TASK-190), and roles and permissions in a logical order (TASK-192), and every lifecycle
 closed and every erasure completed (TASK-193), and the sweep's access-control batch (TASK-194),
 and external dependency failures coded, probed and alerted (TASK-197), and the engineering process
-enforced in CI (TASK-200). Deploy: migrations 053,
-054, 055, 056, 057, 058, 059, 060, 061, 062 and 063 in the SQL Editor
+enforced in CI (TASK-200), and erasure, retention and dual-control readiness (TASK-203). Deploy:
+migrations 053, 054, 055, 056, 057, 058, 059, 060, 061, 062, 063 and 064 in the SQL Editor
 ([MIGRATION_v5_to_v6.md](MIGRATION_v5_to_v6.md) §1 step 2), set `REFRESH_COOKIE_KEY`, then the
-code. Consumer steps: §1b, the ten "Release candidate" rows.
+code. Consumer steps: §1b, the eleven "Release candidate" rows.
+
+- **Erasure, retention and dual-control readiness (TASK-203).** A dual-controlled request no one
+  else could approve is refused up front (`approvals.no_eligible_approver`), never held to lapse;
+  operator readiness checks that every dual-controlled action has a second approver, that the
+  Cognito key may erase (`erasure`) and that the client secret is the pool's (`client_secret`).
+  Every table has a retention rule or a reason (`platform/jobs/retention.ts`, an app's own in its
+  manifest's `retention`), applied by the new `data.retention` job with governed ages (migration
+  064). A purge that runs out of time is `indeterminate`; every route body is read against a
+  schema; claiming a moderation case is audited; `applied_migrations` refuses an out-of-order
+  record. TENANCY_OPERATIONS adds the second super admin and reconciling the migration record.
+  The policy allows no inline style without the response's nonce (SEC-017): an app's components
+  render no `style` attribute (`no-inline-style-attributes`). `npm audit` is clean: Sentry
+  11.11.0, overrides for glob, minimatch and qs, and a vendored deepmerge (no fixed release
+  upstream).
 
 - **The engineering process, enforced (TASK-200).** CI's Layer 0f (`scripts/process-check.mjs`)
   fails a code commit whose task entry lacks a complete Design check and Self-review, and a route

@@ -1185,18 +1185,19 @@ dbDescribe(`${SUITE} /api/admin/password-policy`, () => {
     expect(other.policy.minLength).toBe(12);
   });
 
+  // A key the policy does not have is refused by the body's schema (TASK-203, N-31).
   it.each([
-    [{ minLength: 3 }],
-    [{ minLength: "16" }],
-    [{ rotationDays: -5 }],
-    [{ unknownField: 1 }],
-  ])("PUT refuses %p and writes nothing", async (body) => {
+    [{ minLength: 3 }, "request.invalid_value"],
+    [{ minLength: "16" }, "request.invalid_value"],
+    [{ rotationDays: -5 }, "request.invalid_value"],
+    [{ unknownField: 1 }, "request.unknown_input"],
+  ])("PUT refuses %p and writes nothing (%s)", async (body, code) => {
     const before = await policyRows();
     const res = await pwPUT(
       req("/api/admin/password-policy", superAdmin, { method: "PUT", body, tenant: t })
     );
     expect(res.status).toBe(400);
-    expect((await res.json()).code).toBe("request.invalid_value");
+    expect((await res.json()).code).toBe(code);
     expect(await policyRows()).toEqual(before);
   });
 

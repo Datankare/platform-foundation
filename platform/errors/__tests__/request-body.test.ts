@@ -144,3 +144,90 @@ describe("readJsonBody (TASK-200, rule 5: schema first)", () => {
     }
   });
 });
+
+describe("readJsonBody: the server's own keys, and a schema chosen by the body (TASK-203, N-31)", () => {
+  const post = (raw: string) =>
+    new Request("http://x/", {
+      method: "POST",
+      body: raw,
+      headers: { "content-type": "application/json" },
+    });
+  const PLAN: InputSchemaNode = {
+    type: "object",
+    properties: {
+      actions: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            tool: { type: "string" },
+            input: { type: "object", properties: { a: { type: "string" } } },
+          },
+        },
+      },
+    },
+  };
+  const answer = async (r: Awaited<ReturnType<typeof readJsonBody>>) =>
+    r.ok ? null : ((await r.response.json()) as { code: string; params: unknown });
+
+  it("refuses a key the server sets, at any depth, by its path — before the schema's own check", async () => {
+    const r = await readJsonBody(
+      post(
+        '{"actions":[{"tool":"t","input":{"a":"x"}},{"tool":"t","input":{"held":1}}]}'
+      ),
+      PLAN,
+      {
+        notAccepted: (body) =>
+          (body.actions as unknown[]).map((_, i) => `actions[${i}].input.held`),
+      }
+    );
+    expect(await answer(r)).toEqual(
+      expect.objectContaining({
+        code: "request.field_not_accepted",
+        params: { field: "actions[1].input.held" },
+      })
+    );
+  });
+
+  it("a server key absent, or only inherited, is no refusal; a top-level one still is", async () => {
+    expect(
+      (
+        await readJsonBody(post('{"actions":[{"tool":"t","input":{"a":"x"}}]}'), PLAN, {
+          notAccepted: ["actions[0].input.held", "actions[0].input.toString"],
+        })
+      ).ok
+    ).toBe(true);
+    const top = await readJsonBody(
+      post('{"system":"s"}'),
+      { type: "object", properties: {} },
+      {
+        notAccepted: ["system"],
+      }
+    );
+    expect(await answer(top)).toEqual(
+      expect.objectContaining({
+        code: "request.field_not_accepted",
+        params: { field: "system" },
+      })
+    );
+  });
+
+  it("reads the body against the schema its function gives for that body", async () => {
+    const chosen = (body: Readonly<Record<string, unknown>>): InputSchemaNode => ({
+      type: "object",
+      properties: {
+        kind: { type: "string" },
+        ...(body.kind === "b" ? { b: { type: "string" } } : { a: { type: "string" } }),
+      },
+    });
+    expect((await readJsonBody(post('{"kind":"b","b":"x"}'), chosen)).ok).toBe(true);
+    expect(
+      await answer(await readJsonBody(post('{"kind":"a","b":"x"}'), chosen))
+    ).toEqual(
+      expect.objectContaining({
+        code: "request.unknown_input",
+        params: { field: "b", allowed: ["kind", "a"] },
+      })
+    );
+  });
+});

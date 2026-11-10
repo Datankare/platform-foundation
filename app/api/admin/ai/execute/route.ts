@@ -19,6 +19,8 @@ import {
   COMMAND_BAR_HANDLERS,
   codedResult,
   isErasureHoldConflict,
+  actionInputSchema,
+  SERVER_SET_INPUTS,
   runCommandBarAction,
   withAccountIdsNormalised,
   type ActionResult as BarResult,
@@ -26,7 +28,8 @@ import {
 import { heldTargetAccount } from "@/app/api/admin/ai/held-summary";
 import { withAccountNames } from "@/app/api/admin/ai/handlers/search";
 import { withTrajectory } from "@/platform/agents/trajectory-closure";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
+import { mergeInputSchemas } from "@/platform/admin/input-keys";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 /** Held for a second admin's approval: `held`, with the hold's id (ActionResult, review 9 H1). */
@@ -49,6 +52,69 @@ async function namedTarget(
   }
 }
 
+/** search's parser also takes `query`, the old name of its `text` filter (an older plan's). */
+const SEARCH_INPUT: InputSchemaNode = mergeInputSchemas([
+  actionInputSchema("search"),
+  { type: "object", properties: { query: { type: "string" } } },
+]);
+
+/** The keys an action's input may hold: its own schema's (search: with `query`). */
+function inputSchemaOf(tool: AdminToolId): InputSchemaNode {
+  return tool === "search" ? SEARCH_INPUT : actionInputSchema(tool);
+}
+
+/** The plan's actions as sent: each `{ tool, input }` read as far as it is one. */
+function sentActions(body: Readonly<Record<string, unknown>>): { tool?: unknown }[] {
+  return Array.isArray(body.actions)
+    ? body.actions.map((a) =>
+        a && typeof a === "object" ? (a as { tool?: unknown }) : {}
+      )
+    : [];
+}
+
+const isTool = (t: unknown): t is AdminToolId =>
+  typeof t === "string" &&
+  Object.prototype.hasOwnProperty.call(ADMIN_TOOL_PERMISSIONS, t);
+
+/**
+ * The body this route reads (TASK-203, N-31): a plan of actions, each a tool and its input, read
+ * before any step runs — an input naming only keys some tool's schema names (search's with
+ * `query`); a key no tool names is refused here. Each action's own schema then checks its input
+ * exactly (inputKeyProblem), after the action's permission (a caller who may not act is told so,
+ * not shown the tool's keys), and the keys the server sets for it are refused here (below).
+ */
+const PLAN_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    actions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          tool: { type: "string" },
+          input: mergeInputSchemas(
+            (Object.keys(ADMIN_TOOL_PERMISSIONS) as AdminToolId[]).map(inputSchemaOf)
+          ),
+        },
+      },
+    },
+  },
+};
+
+/**
+ * The keys of each action's input the server sets (SERVER_SET_INPUTS: a held change's snapshot of
+ * the role it was asked against), never a caller: refused `request.field_not_accepted`.
+ */
+function serverSetPaths(body: Readonly<Record<string, unknown>>): string[] {
+  return sentActions(body).flatMap((a, i) =>
+    isTool(a.tool)
+      ? Object.keys(SERVER_SET_INPUTS[a.tool] ?? {}).map(
+          (k) => `actions[${i}].input.${k}`
+        )
+      : []
+  );
+}
+
 /** The most actions one confirmed plan may carry (audit B-19). */
 const MAX_ACTIONS = 20;
 
@@ -57,7 +123,9 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   if (verified.error) return verified.error;
   const { admin } = verified;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, PLAN_BODY_SCHEMA, {
+    notAccepted: serverSetPaths,
+  });
   if (!read.ok) return read.response;
   const body = read.body;
   const { actions } = (body && typeof body === "object" ? body : {}) as {

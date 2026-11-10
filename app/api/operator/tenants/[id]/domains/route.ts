@@ -8,10 +8,23 @@
 
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { addTenantDomain, removeTenantDomain } from "@/platform/tenancy/admin";
 import { operatorOf, operatorResponse } from "@/platform/tenancy/operator-http";
 import { tenantRoute } from "@/platform/tenancy/route";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const DOMAIN_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    host: { type: "string" },
+  },
+};
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -22,7 +35,7 @@ export const POST = tenantRoute(async function POST(
   const guard = await requireAdmin(request, "platform_operate");
   if (guard.error) return guard.error;
   const { id } = await params;
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, DOMAIN_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const { host } = read.body as Record<string, unknown>;
   if (typeof host !== "string") {

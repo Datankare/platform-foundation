@@ -23,8 +23,15 @@
  * by the end of 2026 (https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys).
  * A run with only the legacy variable stops, naming the new one.
  *
- * Usage: node scripts/migration-parity.mjs [label]
+ * Usage: node scripts/migration-parity.mjs [label] [--records-may-lead]
  * Exit: 0 in parity, 1 on drift, 2 when it cannot check.
+ *
+ * TASK-203 (N-87): `--records-may-lead` is for a branch behind the database it is compared with —
+ * a database two environments share, whose newer migrations come from the newer branch (Playform's
+ * dev and staging share one Supabase project, applied from `develop`; its `staging` branch is
+ * behind until a promotion). Every file of the branch must still be recorded, with its checksum;
+ * a record with no file on this branch is listed ("ahead of this branch"), never drift. The newer
+ * branch's own run, without the flag, holds the database to exactly its files.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -37,7 +44,14 @@ const CHECKSUM_MIGRATION = "063_applied_migrations_checksum.sql";
 /** A Supabase secret API key's form (the value is never printed). */
 const SECRET_KEY = /^sb_secret_[\w-]{16,}$/;
 
-const label = process.argv[2] ?? "database";
+const args = process.argv.slice(2);
+const recordsMayLead = args.includes("--records-may-lead");
+const label = args.find((a) => !a.startsWith("--")) ?? "database";
+const unknownFlag = args.find((a) => a.startsWith("--") && a !== "--records-may-lead");
+if (unknownFlag) {
+  console.error(`${label}: unknown option ${unknownFlag}`);
+  process.exit(2);
+}
 const url = (process.env.SUPABASE_URL ?? "").replace(/\/$/, "");
 const key = process.env.SUPABASE_SECRET_KEY ?? "";
 if (!key && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -168,6 +182,16 @@ if (unchecked) {
   console.log(
     `ℹ ${label}: ${unchecked} migration(s) recorded without a checksum (before 063): compared by name only`
   );
+}
+
+// A branch behind its shared database (--records-may-lead): the records ahead of it are the newer
+// branch's, listed and not drift.
+const ahead = recordsMayLead ? unknown.splice(0, unknown.length) : [];
+if (ahead.length) {
+  console.log(
+    `ℹ ${label}: ${ahead.length} recorded migration(s) ahead of this branch (applied from a newer branch of the shared database):`
+  );
+  for (const f of ahead) console.log(`    ${f}`);
 }
 
 if (unapplied.length === 0 && unknown.length === 0 && edited.length === 0) {

@@ -13,9 +13,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
 import { parseDeclaredBirthDate, recordAgeVerification } from "@/platform/auth/coppa";
 import { isUnder13Unavailable } from "@/platform/auth/age";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const AGE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    dateOfBirth: { type: "string" },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const guard = await requireActorWithStatus(request, "update_profile", {
@@ -27,7 +35,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   });
   if (limited) return limited;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, AGE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const { dateOfBirth } = read.body as { dateOfBirth?: unknown };
   const evaluation = parseDeclaredBirthDate(dateOfBirth);

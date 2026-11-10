@@ -343,7 +343,9 @@ export async function softDeleteUser(
         //    First the pool, recorded only when the identity is proven present in it (S2 round 2:
         //    an old-pool account, never re-linked, is not proven here — its "not found" stays
         //    unverified until two operators attest it). Never replaced once recorded.
-        await recordProvenIdentityPool(userId, subject);
+        // The subject proven is the one the erasure recorded (user_deletions.cognito_sub, N-55):
+        // the one the erase will use, read by both from the same table.
+        await recordProvenIdentityPool(userId);
         const external = await eraseExternalStores(userId);
 
         return {
@@ -364,13 +366,30 @@ export async function softDeleteUser(
   }
 }
 
-/** Record the pool the identity is proven present in, if it is, on an erasure with none. */
+/**
+ * Record the pool the identity is proven present in, if it is, on an erasure with none — and return
+ * it (null when not proven, or not recorded). The subject is the erasure record's
+ * (user_deletions.cognito_sub), the one the erase uses (N-55: the proof read users.cognito_sub and
+ * the erase user_deletions.cognito_sub, so a nulled or re-linked subject in users made them
+ * disagree). `sub`: the record's subject already read by the caller; read here when not given.
+ */
 async function recordProvenIdentityPool(
   userId: string,
-  sub: string | null
-): Promise<void> {
-  const pool = await provenIdentityPool({ userId, sub });
-  if (!pool) return;
+  sub?: string | null
+): Promise<string | null> {
+  let subject = sub;
+  if (subject === undefined) {
+    const read = await withTenantTx((tx) =>
+      tx.query<{ sub: string | null }>(
+        "select cognito_sub as sub from user_deletions where user_id = $1::uuid",
+        [userId]
+      )
+    ).catch(() => undefined);
+    if (!read?.rows.length) return null;
+    subject = read.rows[0].sub;
+  }
+  const pool = await provenIdentityPool({ userId, sub: subject });
+  if (!pool) return null;
   const error = await failure("the identity pool record", () =>
     withTenantTx((tx) =>
       tx.query(
@@ -385,7 +404,9 @@ async function recordProvenIdentityPool(
       error,
       route: "platform/auth/gdpr-deletion",
     });
+    return null;
   }
+  return pool;
 }
 
 /** Who records an erasure found without its record (reconcileErasures). */
@@ -479,8 +500,13 @@ async function eraseExternalStores(
     );
     return { pending: once.pending };
   }
+  // N-54: the pool is proven at erase time too — on every attempt while none is recorded, before
+  // the delete — not only at soft-delete time: a lookup throttled or not yet permitted then, or an
+  // earlier delete whose outcome was lost, no longer leaves the step for attestation when this
+  // attempt can prove where the identity is. Same subject as the erase (N-55).
+  const pool = rows[0].pool ?? (await recordProvenIdentityPool(userId, rows[0].sub));
   const run = await runExternalErasures(
-    { userId, sub: rows[0].sub, pool: rows[0].pool },
+    { userId, sub: rows[0].sub, pool },
     rows[0].external ?? {}
   );
   const writeError = await failure("the external stores' outcomes", () =>
@@ -616,7 +642,8 @@ export async function hardPurgeUser(
   const errors: string[] = [];
   let steps: readonly ErasureStep[] | undefined;
   // The account's identity, read before its row goes: what the external stores know it by when
-  // it has no erasure record to keep it.
+  // it has no erasure record to keep it. With a record, the proof and the erase both read the
+  // record's subject (eraseExternalStores, N-55); this one is used only without one, for both.
   const subject = await withTenantTx((tx) =>
     tx.query<{ sub: string | null }>(
       "select cognito_sub as sub from users where id = $1::uuid",

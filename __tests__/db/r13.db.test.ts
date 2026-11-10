@@ -62,6 +62,8 @@ if (DB_ENABLED) {
   });
   beforeEach(async () => {
     t = await createTestTenant();
+    // Someone else could approve (TASK-203, N-24: otherwise refused up front).
+    await t.user("approver", "super_admin");
   });
 }
 const sql = (text: string, values: unknown[] = []) =>

@@ -307,6 +307,9 @@ export const PLATFORM_AUDIT_DETAILS_SCHEMA: DetailsSchema = {
   ],
   "admin_action:password_policy_updated": ["previous", "policy"],
   "admin_action:update_password_policy": ["previous", "policy"],
+  // N-37: a reviewer taking or releasing a case.
+  "admin_action:review_claimed": ["reviewItemId", "source"],
+  "admin_action:review_unclaimed": ["reviewItemId", "source"],
   "admin_action:review_resolution": [
     "reviewItemId",
     "source",

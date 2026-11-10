@@ -112,6 +112,24 @@
           "state": null
         },
         {
+          "kind": "data.retention",
+          "description": "Applies every table's retention rule that no other duty applies: audit and consent records lose their IP address and user agent, and interactions, AI metrics, content-safety decisions, resolved effects, idle guests and sessions, and past budget counters are deleted after their governed age (retention.*).",
+          "owner": "core",
+          "scope": "each-tenant",
+          "runsForSuspended": true,
+          "enabled": true,
+          "intervalMinutes": 1440,
+          "minIntervalMinutes": 60,
+          "maxIntervalMinutes": 10080,
+          "tenantOptOutKey": null,
+          "required": false,
+          "settings": {
+            "enabled": "jobs.data.retention.enabled",
+            "interval": "jobs.data.retention.interval_minutes"
+          },
+          "state": null
+        },
+        {
           "kind": "config.expire-approvals",
           "description": "Marks pending configuration approvals past their expiry as expired, settles approvals whose outcome is being checked, and lists undecided runs for a person.",
           "owner": "core",

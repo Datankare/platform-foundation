@@ -10,6 +10,14 @@
  *   directory     where tenants are kept (a shared deployment needs Postgres)
  *   identity      (shared) the identity provider holds each user's tenant where users cannot
  *                 change it, and the platform can set it
+ *   erasure       (every mode, N-22) erasure can delete identities: the administrative key is set
+ *                 and the pool allows the lookup by subject and the delete (a refused probe of a
+ *                 user that cannot exist — nothing is deleted)
+ *   client_secret (every mode, N-52) the app client's secret the deployment holds is the pool's —
+ *                 read with the administrative key and compared in constant time, never a
+ *                 sign-in (the owner's decision is recorded in TASK-203)
+ *   dual_control  (every mode, N-24) every dual-controlled action has a second account that may
+ *                 approve it; each one without is named (platform/admin/dual-control-readiness.ts)
  *
  * Read-only; safe to run at any time.
  *
@@ -19,6 +27,11 @@
 import { getAuthProvider } from "@/platform/auth/config";
 import { logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
+import type { AuthProvider } from "@/platform/auth/provider";
+import {
+  checkDualControlReadiness,
+  type DualControlledAction,
+} from "@/platform/admin/dual-control-readiness";
 import { hasDatabase, withPlatformTx } from "@/platform/data";
 import {
   getCognitoAdminCredentials,
@@ -30,7 +43,15 @@ import {
 export type CheckState = "ready" | "not_ready" | "not_needed" | "unknown";
 
 export interface ReadinessCheck {
-  readonly name: "mode" | "database" | "owner_connection" | "directory" | "identity";
+  readonly name:
+    | "mode"
+    | "database"
+    | "owner_connection"
+    | "directory"
+    | "identity"
+    | "erasure"
+    | "client_secret"
+    | "dual_control";
   readonly state: CheckState;
   readonly detail: string;
 }
@@ -84,7 +105,76 @@ async function databaseCheck(): Promise<ReadinessCheck> {
   }
 }
 
-export async function checkTenancyReadiness(): Promise<TenancyReadiness> {
+/** The registered auth provider, or undefined when none can be built. */
+function providerOrNone(): AuthProvider | undefined {
+  try {
+    return getAuthProvider();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether erasure can delete identities from the provider's pool (N-22), in every mode. */
+async function erasureCheck(provider: AuthProvider | undefined): Promise<ReadinessCheck> {
+  if (!provider?.checkErasureAccess) {
+    return {
+      name: "erasure",
+      state: "not_needed",
+      detail: "The identity provider keeps no identities the platform erases.",
+    };
+  }
+  const r = await provider.checkErasureAccess();
+  if (r.state === "ready") {
+    return {
+      name: "erasure",
+      state: "ready",
+      detail: "Erasure can find an identity by its subject and delete it.",
+    };
+  }
+  return {
+    name: "erasure",
+    state: r.state === "unknown" ? "unknown" : "not_ready",
+    detail: `Erasure cannot delete identities: ${r.reason}.`,
+  };
+}
+
+/** Whether the app client's secret the deployment holds is the pool's (N-52). */
+async function clientSecretCheck(
+  provider: AuthProvider | undefined
+): Promise<ReadinessCheck> {
+  if (!provider?.checkClientSecret) {
+    return {
+      name: "client_secret",
+      state: "not_needed",
+      detail: "The identity provider has no app client secret to check.",
+    };
+  }
+  const r = await provider.checkClientSecret();
+  if (r.state === "ready") {
+    return {
+      name: "client_secret",
+      state: "ready",
+      detail: "The app client's secret is the one the pool has.",
+    };
+  }
+  return {
+    name: "client_secret",
+    state: r.state === "mismatch" ? "not_ready" : "unknown",
+    detail: `The app client's secret is not confirmed: ${r.reason}.`,
+  };
+}
+
+export interface TenancyReadinessOptions {
+  /**
+   * The app's own dual-controlled actions, weighed with the platform's (the routes pass PF's
+   * command bar: commandBarDualControlledActions).
+   */
+  readonly heldActions?: () => Promise<readonly DualControlledAction[]>;
+}
+
+export async function checkTenancyReadiness(
+  options: TenancyReadinessOptions = {}
+): Promise<TenancyReadiness> {
   const settings = getTenancySettings();
   const shared = settings.mode === "shared";
   const checks: ReadinessCheck[] = [];
@@ -146,12 +236,7 @@ export async function checkTenancyReadiness(): Promise<TenancyReadiness> {
         "COGNITO_ADMIN_ACCESS_KEY_ID is not set: new users cannot be assigned a tenant.",
     });
   } else {
-    let provider;
-    try {
-      provider = getAuthProvider();
-    } catch {
-      provider = undefined;
-    }
+    const provider = providerOrNone();
     const result = provider?.checkTenantAttribute
       ? await provider.checkTenantAttribute()
       : {
@@ -172,6 +257,18 @@ export async function checkTenancyReadiness(): Promise<TenancyReadiness> {
           : `Users' tenants are not held safely: ${result.reason}.`,
     });
   }
+
+  const provider = providerOrNone();
+  const [erasure, clientSecret, dual] = await Promise.all([
+    erasureCheck(provider),
+    clientSecretCheck(provider),
+    checkDualControlReadiness(options.heldActions),
+  ]);
+  checks.push(erasure, clientSecret, {
+    name: "dual_control",
+    state: dual.state,
+    detail: dual.detail,
+  });
 
   return {
     mode: settings.mode,

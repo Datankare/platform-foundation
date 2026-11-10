@@ -18,15 +18,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { AuditWriteError } from "@/platform/auth/audit";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { suspendAllAgents } from "@/platform/admin/agent-kill-switch";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { logger } from "@/lib/logger";
 
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const SUSPEND_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    reason: { type: "string" },
+  },
+};
+
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const guard = await requireAdmin(request, "config_manage_safety");
   if (guard.error) return guard.error;
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, SUSPEND_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const { reason } = read.body as Record<string, unknown>;
   if (typeof reason !== "string" || reason.trim() === "") {

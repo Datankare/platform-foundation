@@ -69,7 +69,8 @@ import {
   apiError,
   apiErrorBody,
   errorFromResult,
-  readJsonObject,
+  readJsonBody,
+  type InputSchemaNode,
 } from "@/platform/errors";
 import { ERROR_CODES, type ErrorCode } from "@/platform/errors/registry";
 import { settlesWithinMinutes } from "@/platform/admin/approval-settle";
@@ -89,6 +90,16 @@ import {
 } from "@/platform/admin/hold-expiry";
 import { sameId } from "@/platform/auth/same-id";
 import { requiredJobWithdrawalNote } from "@/platform/jobs/required-schedule";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const DECISION_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    decision: { type: "string" },
+    source: { type: "string" },
+    note: { type: "string" },
+  },
+};
 
 /** A users.id's shape: only an account id is a record's target (recordAudit refuses another). */
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -211,7 +222,7 @@ export async function decideApproval(
   const requestId = generateRequestId();
   const decidedBy = admin.userId;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, DECISION_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body as DecisionBody;
 

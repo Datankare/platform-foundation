@@ -42,10 +42,10 @@ function generatePurgeId(): string {
 /**
  * GDPR Hard Purge Pipeline.
  *
- * Usage:
+ * Usage (createPlatformPurgePipeline in ./account-erasure.ts registers the platform's own handler;
+ * an app registers a handler of its own for a store the erasure register cannot reach):
  *   const pipeline = new PurgePipeline();
- *   pipeline.register(new AIMetricsPurgeHandler(deleteAiMetrics));
- *   pipeline.register(new CachePurgeHandler(cache));
+ *   pipeline.register(myStoreHandler);
  *   const result = await pipeline.execute({ userId, requestedBy, reason });
  */
 export class PurgePipeline {
@@ -112,33 +112,63 @@ export class PurgePipeline {
       };
     }
 
-    // Execute with overall timeout
+    // Execute with an overall time limit (N-27). A race does not cancel the handlers: when the
+    // time runs out the signal aborts — no further handler starts, a handler of several steps
+    // stops between them — but the one running may still finish. So a timed-out purge is
+    // `indeterminate`, never `failed` while it keeps erasing; and the result holds a copy of the
+    // steps as they stood, so a step that ends later never changes what was returned.
+    const controller = new AbortController();
     let timeoutTimer: ReturnType<typeof setTimeout>;
     const timeoutPromise = new Promise<"timeout">((resolve) => {
       timeoutTimer = setTimeout(() => resolve("timeout"), this.config.timeoutMs);
     });
 
-    const executionPromise = this.executeHandlers(request.userId, dryRun, steps);
+    const executionPromise = this.executeHandlers(
+      request.userId,
+      dryRun,
+      steps,
+      controller.signal
+    );
 
     const result = await Promise.race([executionPromise, timeoutPromise]);
     clearTimeout(timeoutTimer!);
 
+    let reported: PurgeStepResult[];
     if (result === "timeout") {
-      overallStatus = "failed";
-      // Record which handlers didn't get to run
-      const completedNames = new Set(steps.map((s) => s.handler));
+      controller.abort();
+      overallStatus = "indeterminate";
+      reported = [...steps];
+      const finished = new Set(steps.map((s) => s.handler));
+      let running = true;
       for (const handler of this.handlers) {
-        if (!completedNames.has(handler.name)) {
-          steps.push({
-            handler: handler.name,
-            success: false,
-            deletedCount: 0,
-            error: "Purge operation timed out",
-            durationMs: 0,
-          });
-        }
+        if (finished.has(handler.name)) continue;
+        reported.push({
+          handler: handler.name,
+          success: false,
+          deletedCount: 0,
+          error: running
+            ? "Still running when the time limit ran out: whether it completed is not known"
+            : "Not started: the time limit ran out",
+          durationMs: 0,
+        });
+        running = false;
       }
+      // What the running handler did, once it ends: logged with the purge's id (its own records —
+      // user_deletions, the audit log — say what was erased).
+      void executionPromise.then(
+        () =>
+          logger.warn(
+            "A timed-out purge's handlers ended after its result was returned",
+            {
+              purgeId,
+              steps: steps.map((s) => ({ handler: s.handler, success: s.success })),
+              route: "platform/gdpr/hard-purge",
+            }
+          ),
+        () => undefined
+      );
     } else {
+      reported = [...steps];
       // Determine overall status from step results
       const allSucceeded = steps.every((s) => s.success);
       const anySucceeded = steps.some((s) => s.success);
@@ -146,13 +176,13 @@ export class PurgePipeline {
     }
 
     const completedAt = new Date().toISOString();
-    const totalDeleted = steps.reduce((sum, s) => sum + s.deletedCount, 0);
+    const totalDeleted = reported.reduce((sum, s) => sum + s.deletedCount, 0);
 
     const purgeResult: PurgeResult = {
       purgeId,
       userId: request.userId,
       status: overallStatus,
-      steps,
+      steps: reported,
       requestedAt,
       completedAt,
       totalDeleted,
@@ -167,7 +197,7 @@ export class PurgePipeline {
           requested_by: request.requestedBy,
           reason: request.reason,
           status: overallStatus,
-          steps_json: JSON.stringify(steps),
+          steps_json: JSON.stringify(reported),
           total_deleted: totalDeleted,
           requested_at: requestedAt,
           completed_at: completedAt,
@@ -190,12 +220,15 @@ export class PurgePipeline {
   private async executeHandlers(
     userId: string,
     dryRun: boolean,
-    steps: PurgeStepResult[]
+    steps: PurgeStepResult[],
+    signal: AbortSignal
   ): Promise<void> {
     for (const handler of this.handlers) {
+      // Past the time limit no further handler starts (N-27).
+      if (signal.aborted) return;
       const start = Date.now();
       try {
-        const deletedCount = await handler.execute(userId, dryRun);
+        const deletedCount = await handler.execute(userId, dryRun, signal);
         steps.push({
           handler: handler.name,
           success: true,
@@ -220,45 +253,5 @@ export class PurgePipeline {
         }
       }
     }
-  }
-}
-
-/**
- * Built-in purge handler: clears user's cache entries.
- *
- * Consumers should extend with app-specific cache key patterns.
- */
-export class CachePurgeHandler implements PurgeHandler {
-  readonly name = "cache:user-entries";
-  readonly priority = 90; // Run late — after DB deletion
-
-  private clearFn: (userId: string) => Promise<number>;
-
-  constructor(clearFn: (userId: string) => Promise<number>) {
-    this.clearFn = clearFn;
-  }
-
-  async execute(userId: string, dryRun: boolean): Promise<number> {
-    if (dryRun) return 0; // Can't predict cache entries
-    return this.clearFn(userId);
-  }
-}
-
-/**
- * Built-in purge handler: clears user's rate limit entries.
- */
-export class RateLimitPurgeHandler implements PurgeHandler {
-  readonly name = "rate-limit:user-entries";
-  readonly priority = 91;
-
-  private clearFn: (userId: string) => Promise<number>;
-
-  constructor(clearFn: (userId: string) => Promise<number>) {
-    this.clearFn = clearFn;
-  }
-
-  async execute(userId: string, dryRun: boolean): Promise<number> {
-    if (dryRun) return 0;
-    return this.clearFn(userId);
   }
 }

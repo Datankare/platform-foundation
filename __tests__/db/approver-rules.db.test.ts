@@ -282,6 +282,10 @@ if (DB_ENABLED) {
       roleId: roleIds.super_admin,
       cognitoSub: requester.sub,
     });
+    // Another super_admin beside the approvers: a change acting on an approver's own account still
+    // has someone else who could approve it, so it is held (TASK-203, N-24) and the approver's
+    // own decision is what is tested here.
+    await insertUser(t, { roleId: roleIds.super_admin });
     for (const role of APPROVER_ROLES) {
       approvers[role] = suiteCaller(role, RUN, { name: `approver-${role}` });
       await insertUser(t, {
@@ -295,6 +299,31 @@ if (DB_ENABLED) {
     await dropTestTenants();
     await dropCatalog();
     await disconnectTestDatabase();
+  });
+}
+
+/**
+ * Hold `tool` with `input` as the requester; the hold's id — or, when no one else could approve
+ * it (TASK-203, N-24), the up-front refusal.
+ */
+async function holdOrRefusal(
+  tool: AdminToolId,
+  input: Record<string, unknown>
+): Promise<string | { code?: string }> {
+  return single(async () => {
+    const trajectory = await getTrajectoryStore().create(
+      { kind: "agent", id: COMMAND_BAR_ACTOR_ID },
+      `approver-rules:${tool}`,
+      "platform"
+    );
+    const outcome = await runCommandBarAction({
+      tool,
+      input,
+      admin: verified(requester),
+      trajectoryId: trajectory.trajectory.trajectoryId,
+      stepIndex: 0,
+    });
+    return outcome.kind === "held" ? outcome.proposalId : outcome.result;
   });
 }
 
@@ -370,7 +399,15 @@ dbDescribe(
             const payload = await c.payload(`${i}${role.slice(0, 3)}`);
             for (const k of Object.keys(payload))
               if (payload[k] === "SELF") payload[k] = approver.userId;
-            const id = await hold(c.tool, payload);
+            const id = await holdOrRefusal(c.tool, payload);
+            if (typeof id !== "string") {
+              // No account but the requester and the target could approve it (the target here
+              // the one super_admin approver): refused up front, nothing held (TASK-203, N-24) —
+              // only ever where the rules let no approver make it.
+              expect([role, id.code]).toEqual([role, "approvals.no_eligible_approver"]);
+              expect(c.rulesAllow(approver)).toBe(false);
+              return;
+            }
             const res = await approve(id, approver);
             const body = (await res.json()) as { code?: string; applied?: boolean };
             const pagePermission = has(approver, [ADMIN_TOOL_PERMISSIONS[c.tool]]);

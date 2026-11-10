@@ -26,10 +26,24 @@ import type {
   ModerationAuditRecord,
   ModerationResult,
 } from "@/platform/moderation/types";
-import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  errorFromResult,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { sameId } from "@/platform/auth/same-id";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const APPEAL_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    originalDecisionId: { type: "string" },
+    appealReason: { type: "string" },
+  },
+};
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "active",
@@ -119,7 +133,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
 
   const requestId = generateRequestId();
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, APPEAL_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const { originalDecisionId, appealReason } = read.body;
   if (

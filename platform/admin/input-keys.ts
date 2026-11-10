@@ -192,3 +192,90 @@ export function inputKeyRefusal(
       }
     : { code: "request.unknown_input_none", params: { field: unknown.field } };
 }
+
+/**
+ * A configuration value, as a route body declares one (TASK-203, N-31: every body read with a
+ * schema, none left open): a scalar, a list of scalars, or a list of pairs — the two governed lists
+ * whose entries hold more than text, `agent.capability_features` (`[capability, [feature, …]]`)
+ * and `agent.trusted_agents` (`[agentId, { owner, scopes, status, maxTokenTtl, displayName }]`). A key no entry
+ * of either has is refused here; the value itself is the entry's to check (validateConfigValue).
+ * __tests__/db/config-value-schema.db.test.ts holds every seeded value and default to it, so a new
+ * setting of another shape fails there before a route refuses it.
+ */
+export const CONFIG_VALUE_SCHEMA: InputSchemaNode = Object.freeze({
+  description: "a configuration value: a scalar, a list, or a list of pairs",
+  items: Object.freeze({
+    items: Object.freeze({
+      // A pair's second element: a list of names, or a trusted agent's record.
+      properties: Object.freeze({
+        owner: Object.freeze({ type: "string" }),
+        scopes: Object.freeze({
+          type: "array",
+          items: Object.freeze({ type: "string" }),
+        }),
+        status: Object.freeze({ type: "string" }),
+        maxTokenTtl: Object.freeze({ type: "number" }),
+        displayName: Object.freeze({ type: "string" }),
+      }),
+      items: Object.freeze({ type: "string" }),
+    }),
+  }),
+});
+
+/**
+ * One schema naming every key any of `nodes` names, at every depth (TASK-203, N-31): the body of a
+ * route that takes several actions' inputs (the command bar's plan, the config assistant's tool)
+ * names each action's keys and no other — the action's own schema then checks its input exactly.
+ * An open node (no type, properties, items or enum) contributes nothing: the merge names only what
+ * some node names, so a merged schema is never open.
+ */
+export function mergeInputSchemas(nodes: readonly InputSchemaNode[]): InputSchemaNode {
+  const withProps = nodes.filter((n) => n.properties !== undefined);
+  const withItems = nodes.filter((n) => n.items !== undefined);
+  const keys = [...new Set(withProps.flatMap((n) => Object.keys(n.properties ?? {})))];
+  const properties = Object.fromEntries(
+    keys.map((k) => [
+      k,
+      mergeInputSchemas(
+        withProps
+          .map((n) => n.properties?.[k])
+          .filter((x): x is InputSchemaNode => x !== undefined)
+      ),
+    ])
+  );
+  const merged: { type: string; properties: typeof properties; items?: InputSchemaNode } =
+    {
+      type: "object",
+      properties,
+    };
+  if (withItems.length > 0)
+    merged.items = mergeInputSchemas(withItems.map((n) => n.items!));
+  return merged;
+}
+
+/**
+ * `schema` with each open node below its top replaced by `replacement` (TASK-203, N-31): a tool
+ * whose input has a value of the caller's own shape — the config assistant's `value` and
+ * `proposedValue` — is read by a route against what that value may hold (CONFIG_VALUE_SCHEMA),
+ * never left open.
+ */
+export function withOpenAs(
+  schema: InputSchemaNode,
+  replacement: InputSchemaNode
+): InputSchemaNode {
+  const below = (node: InputSchemaNode): InputSchemaNode =>
+    isOpenNode(node)
+      ? replacement
+      : {
+          ...node,
+          ...(node.properties
+            ? {
+                properties: Object.fromEntries(
+                  Object.entries(node.properties).map(([k, v]) => [k, below(v)])
+                ),
+              }
+            : {}),
+          ...(node.items ? { items: below(node.items) } : {}),
+        };
+  return isOpenNode(schema) ? schema : below(schema);
+}

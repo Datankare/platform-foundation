@@ -145,7 +145,7 @@ export const PLATFORM_ERROR_CODES = {
     status: 500,
     params: [{ name: "status", kind: "id" }],
     action:
-      "An erasure ran and did not complete (TASK-199): its steps are in the audit log; run it again — every step is safe to repeat.",
+      "An erasure ran and did not complete (TASK-199): its steps are in the audit log; run it again — every step is safe to repeat. status `indeterminate` (N-27): it ran past its time limit and may still be finishing — check the account before running it again.",
   },
   "admin.role_in_use": {
     status: 409,
@@ -247,6 +247,17 @@ export const PLATFORM_ERROR_CODES = {
     status: 404,
     params: [],
     action: "Refresh the list.",
+  },
+  // N-24 / N-85: a dual-controlled request that no account but the requester (and the account it
+  // acts on) could approve — refused up front, nothing held (platform/admin/eligible-approvers.ts).
+  "approvals.no_eligible_approver": {
+    status: 409,
+    params: [
+      { name: "action", kind: "id" },
+      { name: "permissions", kind: "list" },
+    ],
+    action:
+      "Nothing was held: no other active account holds every permission the approval needs. Give a second person those permissions (a second super_admin or safety approver: docs/TENANCY_OPERATIONS.md), then request again. Operator readiness names every action without an approver.",
   },
   "approvals.permission_required": {
     status: 403,

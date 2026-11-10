@@ -5,7 +5,7 @@ import { textToSpeech } from "@/lib/tts";
 import { ProcessResponse } from "@/types";
 import { logger, generateRequestId } from "@/lib/logger";
 import { MAX_INPUT_CHARACTERS } from "@/shared/config/limits";
-import { apiError, readJsonObject } from "@/platform/errors";
+import { apiError, readJsonBody, type InputSchemaNode } from "@/platform/errors";
 import { requireActorWithStatus } from "@/platform/auth/actor-guard";
 import { enforceGuestAllowance } from "@/platform/auth/guest-allowance";
 import {
@@ -14,6 +14,14 @@ import {
   enforceRateLimit,
 } from "@/platform/rate-limit";
 import { tenantRoute } from "@/platform/tenancy/route";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const PROCESS_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    text: { type: "string" },
+  },
+};
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   const requestId = generateRequestId();
@@ -32,7 +40,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
   if (limited) return limited;
 
   // Malformed or non-object bodies are a coded 400, not a 500 (audit I-5).
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, PROCESS_BODY_SCHEMA);
   if (!read.ok) {
     logger.response("/api/process", "POST", 400, requestId, Date.now() - start);
     return read.response;

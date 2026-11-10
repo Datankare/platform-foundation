@@ -10,11 +10,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
 import { auditedResponse } from "@/platform/auth/audit";
 import {
+  PASSWORD_POLICY_BODY_SCHEMA,
   applyPasswordPolicyChange,
   getGlobalPasswordPolicy,
   saveGlobalPasswordPolicy,
 } from "@/platform/auth/password-policy";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import { apiError, internalError, readJsonBody } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
@@ -28,7 +29,7 @@ export const PUT = tenantRoute(async function PUT(request: NextRequest) {
   if (verified.error) return verified.error;
   const { admin } = verified;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, PASSWORD_POLICY_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body;
   if (!body || typeof body !== "object" || Array.isArray(body)) {

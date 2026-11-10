@@ -15,6 +15,10 @@
 import { NextRequest } from "next/server";
 import { resetRateLimiter } from "@/platform/rate-limit";
 
+// hostile:role n/a: the auth routes are called signed out and take no role, so there is none to forge
+// hostile:self n/a: each call is about the address it names; no account acts on another account here
+// hostile:id-spelling n/a: no account id is read or compared: the routes take an address, which the provider compares
+
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   generateRequestId: () => "req-test",
@@ -85,12 +89,14 @@ beforeEach(() => {
 });
 
 describe.each(ROUTES)("POST /api/auth/%s", (route, fields) => {
+  // An object with keys is refused first by the body's schema (TASK-203, N-31): no key is named
+  // under a text field — request.unknown_input_none, naming the key's path.
   it.each([
-    ["a number", 7],
-    ["a list", ["a@b.c"]],
-    ["an object", { a: 1 }],
-    ["a boolean", true],
-  ])("refuses %s in a text field with request.invalid_body", async (_label, value) => {
+    ["a number", 7, "request.invalid_body"],
+    ["a list", ["a@b.c"], "request.invalid_body"],
+    ["an object", { a: 1 }, "request.unknown_input_none"],
+    ["a boolean", true, "request.invalid_body"],
+  ])("refuses %s in a text field with %s", async (_label, value, code) => {
     for (const field of fields) {
       const body = {
         ...Object.fromEntries(fields.map((f) => [f, good[f]])),
@@ -98,7 +104,10 @@ describe.each(ROUTES)("POST /api/auth/%s", (route, fields) => {
       };
       const res = await (await handler(route))(post(body));
       expect(res.status).toBe(400);
-      expect((await res.json()).code).toBe("request.invalid_body");
+      const answer = await res.json();
+      expect(answer.code).toBe(code);
+      if (code === "request.unknown_input_none")
+        expect(answer.params).toEqual({ field: `${field}.a` });
     }
     for (const fn of Object.values(provider)) expect(fn).not.toHaveBeenCalled();
   });
@@ -114,7 +123,7 @@ describe.each(ROUTES)("POST /api/auth/%s", (route, fields) => {
 });
 
 describe("sign-up without a readable password policy", () => {
-  it("applies the built-in policy — never a 500 (the database client cannot be created)", async () => {
+  it("[hostile:store-down] applies the built-in policy — never a 500 (the database client cannot be created)", async () => {
     const signUp = await handler("sign-up");
     const weak = await signUp(
       post({ email: "a@b.c", password: "short", dateOfBirth: good.dateOfBirth })

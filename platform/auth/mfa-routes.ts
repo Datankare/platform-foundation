@@ -44,8 +44,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { callAuthProvider } from "@/platform/auth/auth-response";
 import { recordAuthEvent } from "@/platform/auth/auth-events";
 import { auditableAccountId } from "@/platform/auth/account-identity";
-import { apiError, errorFromResult, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  errorFromResult,
+  readJsonBody,
+  type InputSchemaNode,
+} from "@/platform/errors";
 import { DEFAULT_RULES, enforceRateLimit } from "@/platform/rate-limit";
+
+/** The body a step-up reads (TASK-203, N-31): read against its schema — any other key refused. */
+const STEP_UP_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: { password: { type: "string" }, currentCode: { type: "string" } },
+};
+
+/** The body MFA verification reads (TASK-203, N-31): the authenticator's code. */
+const CODE_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: { code: { type: "string" } },
+};
 
 const TOTP = /^\d{6}$/;
 
@@ -84,7 +101,7 @@ async function steppedUp(
   purpose: "disable" | "re-enrol"
 ): Promise<SteppedUp> {
   // No body, or one that is not an object, carries no proof: the step-up is asked for.
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, STEP_UP_BODY_SCHEMA);
   const { password, currentCode } = (read.ok ? read.body : {}) as {
     password?: unknown;
     currentCode?: unknown;
@@ -213,7 +230,7 @@ export async function mfaVerify(
 ): Promise<Response> {
   const caller = await verified(request, verifiedCaller);
   if (!caller.ok) return caller.response;
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, CODE_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const code = (read.body as { code?: unknown }).code;
   if (typeof code !== "string" || !TOTP.test(code)) {

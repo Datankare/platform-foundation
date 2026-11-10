@@ -20,7 +20,13 @@ import { mayChangePlatformCatalog } from "@/platform/admin/config-scope";
 import { clearPermissionsCache } from "@/platform/auth/permissions-cache";
 import { auditedResponse } from "@/platform/auth/audit";
 import { logger } from "@/lib/logger";
-import { apiError, internalError, readJsonObject } from "@/platform/errors";
+import {
+  apiError,
+  internalError,
+  readJsonBody,
+  type InputSchemaNode,
+  isErrorCode,
+} from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { withTrajectory } from "@/platform/agents/trajectory-closure";
 import { groupWithPermissions } from "@/app/api/admin/ai/handlers/entitlements";
@@ -29,6 +35,15 @@ import {
   isDualControlledAction,
   runCommandBarAction,
 } from "@/app/api/admin/ai/command-bar";
+
+/** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
+const ENTITLEMENT_BODY_SCHEMA: InputSchemaNode = {
+  type: "object",
+  properties: {
+    groupId: { type: "string" },
+    isActive: { type: "boolean" },
+  },
+};
 
 type GroupRow = { id: string; code: string; display_name: string; is_active: boolean };
 
@@ -85,7 +100,7 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
   if (verified.error) return verified.error;
   const { admin } = verified;
 
-  const read = await readJsonObject(request);
+  const read = await readJsonBody(request, ENTITLEMENT_BODY_SCHEMA);
   if (!read.ok) return read.response;
   const body = read.body as { groupId?: unknown; isActive?: unknown };
   const { groupId, isActive } = body ?? {};
@@ -173,8 +188,12 @@ export const PATCH = tenantRoute(async function PATCH(request: NextRequest) {
           { status: 202 }
         );
       }
-      return outcome.result.success
-        ? NextResponse.json({ success: true })
+      if (outcome.result.success) return NextResponse.json({ success: true });
+      // Refused before it was held — no one else could approve it (TASK-203, N-24), say — as its
+      // own coded answer; an uncoded failure as the service being unavailable.
+      const { code, params } = outcome.result;
+      return code && isErrorCode(code)
+        ? apiError(code, { params: params ?? {}, request })
         : apiError("service.unavailable", {
             params: { service: "entitlements" },
             request,

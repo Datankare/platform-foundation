@@ -29,6 +29,33 @@ import { parseValkeyUrl, ValkeyUrlError } from "@/platform/cache/valkey-url";
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
+/**
+ * Every Cognito action the platform signs with the administrative key (COGNITO_ADMIN_*), scoped to
+ * the one user pool — the live inline policy `cognito-tenancy-and-erasure` (TENANCY_OPERATIONS
+ * §3.3). The key is needed by a Cognito deployment in ANY tenancy mode: erasure deletes the
+ * identity (ListUsers finds the pool user by its subject, AdminDeleteUser removes it,
+ * DescribeUserPool proves the pool before a "not found" counts as erased); a shared deployment
+ * also assigns each user's tenant (AdminUpdateUserAttributes) and its readiness reads the pool's
+ * setup (DescribeUserPool, ListUserPoolClients, DescribeUserPoolClient, DescribeIdentityProvider);
+ * AdminGetUser reads one user (the tenant, the address's subject). Without the key no identity is
+ * ever erased (readiness says so: platform/tenancy/readiness.ts, the "erasure" check).
+ * `__tests__/cognito-admin-actions.test.ts` fails when the provider signs an action not listed
+ * here, or the docs list another set (N-23).
+ */
+export const COGNITO_ADMIN_ACTIONS: readonly string[] = [
+  "AdminUpdateUserAttributes",
+  "AdminGetUser",
+  "AdminDeleteUser",
+  "ListUsers",
+  "DescribeUserPool",
+  "ListUserPoolClients",
+  "DescribeUserPoolClient",
+  "DescribeIdentityProvider",
+];
+
+/** The name of the IAM inline policy that grants COGNITO_ADMIN_ACTIONS on the pool. */
+export const COGNITO_ADMIN_POLICY = "cognito-tenancy-and-erasure";
+
 export interface SettingDeclaration {
   /** The single source of the setting. */
   readonly name: string;
@@ -219,8 +246,7 @@ export const ENVIRONMENT_CONTRACT: readonly SettingDeclaration[] = [
     name: "COGNITO_ADMIN_ACCESS_KEY_ID",
     aliases: [],
     shape: /^(AKIA|ASIA)[A-Z0-9]{12,124}$/,
-    shapeHint:
-      "an AWS access key id (AKIA… or ASIA…) allowed only cognito-idp:AdminUpdateUserAttributes, AdminGetUser, DescribeUserPool, ListUserPoolClients, DescribeUserPoolClient and DescribeIdentityProvider on the pool",
+    shapeHint: `an AWS access key id (AKIA… or ASIA…) whose policy (${COGNITO_ADMIN_POLICY}) allows only cognito-idp:${COGNITO_ADMIN_ACTIONS.join(", ")} on the one user pool — needed in any tenancy mode: erasure deletes identities with it`,
   },
   {
     name: "COGNITO_ADMIN_SECRET_ACCESS_KEY",
@@ -729,8 +755,9 @@ export interface CognitoAdminCredentials {
 }
 
 /**
- * ADR-053 D2: the credentials the platform uses to set a user's tenant in Cognito — the one
- * administrative call it makes. Undefined when not configured (single mode never needs them).
+ * The Cognito administrative key (COGNITO_ADMIN_ACTIONS on the pool): erasure deletes identities
+ * with it in every tenancy mode, and a shared deployment (ADR-053 D2) also sets each user's tenant
+ * with it. Undefined when not configured — then no identity is ever erased, and readiness says so.
  */
 export function getCognitoAdminCredentials(
   env: EnvSource = process.env
