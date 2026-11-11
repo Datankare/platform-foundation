@@ -687,6 +687,8 @@ export const NO_USER_DATA: Readonly<Record<string, string>> = {
   platform_config_history:
     "configuration history; changed_by records who made an administrative change",
   purge_log: "the record of an erasure, which must outlive it",
+  provider_usage:
+    "a prepaid provider's running count of billed requests (TASK-212): no person's",
   role_inheritance: "the role catalog",
   role_permissions:
     "the role catalog; granted_by records who made an administrative change",
@@ -1004,6 +1006,7 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "job_schedule_outcomes.last_error": "job scheduling",
   "job_schedule_outcomes.status": "job scheduling",
   "job_schedules.kind": "job scheduling",
+  "provider_usage.provider": "a provider's name (TASK-212)",
   "jobs.idempotency_key": "background work",
   "jobs.kind": "background work",
   "jobs.last_error": "background work",

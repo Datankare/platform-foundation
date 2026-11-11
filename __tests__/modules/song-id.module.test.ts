@@ -166,10 +166,15 @@ describe("song-id module — health probe (TASK-041, X-13)", () => {
     await boot();
     const { createModuleHealthProbes } = await import("@/platform/modules/contributions");
     const probes = createModuleHealthProbes();
-    expect(probes.map((p) => p.name)).toEqual(["song-identification"]);
+    // TASK-212 (N-77): and the prepaid credit's probe, which makes no call.
+    expect(probes.map((p) => p.name)).toEqual(["song-identification", "song-id-credit"]);
     expect(probes[0]).toBeInstanceOf(CachedHealthProbe);
     const result = await probes[0].check();
     expect(result).toMatchObject({ name: "song-identification", status: "healthy" });
+    expect(await probes[1].check()).toMatchObject({
+      name: "song-id-credit",
+      status: "healthy",
+    });
   });
 
   it("is not built for an app without the module", async () => {

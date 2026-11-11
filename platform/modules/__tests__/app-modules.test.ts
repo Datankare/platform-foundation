@@ -160,13 +160,15 @@ describe("PF's app modules", () => {
     });
   });
 
-  it("registers the modules' health probes: the Google key and voices, song identification", async () => {
+  it("registers the modules' health probes: the Google key and voices, song identification and its credit", async () => {
     const { createModuleHealthProbes } = await import("@/platform/modules/contributions");
     // TASK-197 (audit D-2): translation and voice probe the deployed Google key.
     expect(createModuleHealthProbes().map((p) => p.name)).toEqual([
       "google-translate",
       "google-tts",
       "song-identification",
+      // TASK-212 (N-77): the prepaid ACRCloud credit, counted against its budget.
+      "song-id-credit",
     ]);
   });
 });

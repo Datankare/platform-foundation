@@ -530,6 +530,46 @@ DELETE FROM public.user_strikes WHERE trajectory_id = 'replay-068';
 DELETE FROM public.users WHERE id::text LIKE '0680000%';
 SQL
 
+step "069: a provider's billed usage is counted through its two functions only (app_tenant), adds up, and refuses a malformed name"
+"${PSQL[@]}" -At <<'SQL'
+DO $$
+DECLARE v bigint; refused boolean;
+BEGIN
+  IF has_table_privilege('app_tenant', 'public.provider_usage', 'SELECT')
+     OR has_table_privilege('app_tenant', 'public.provider_usage', 'UPDATE') THEN
+    RAISE EXCEPTION '069: app_tenant reaches provider_usage itself';
+  END IF;
+  IF has_function_privilege('anon', 'public.provider_usage_add(text, integer)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.provider_usage_read(text)', 'EXECUTE') THEN
+    RAISE EXCEPTION '069: a public role may call the usage functions';
+  END IF;
+  SET LOCAL ROLE app_tenant;
+  PERFORM public.provider_usage_add('replay-069', 2);
+  v := public.provider_usage_add('replay-069', 1);
+  IF v <> 3 THEN RAISE EXCEPTION '069: the total is %, not 3', v; END IF;
+  IF (SELECT r.billable_halves FROM public.provider_usage_read('replay-069') r) <> 3 THEN
+    RAISE EXCEPTION '069: the read total is not 3';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.provider_usage_read('replay-069-none')) THEN
+    RAISE EXCEPTION '069: a provider never counted has a row';
+  END IF;
+  refused := false;
+  BEGIN
+    PERFORM public.provider_usage_add('Not A Name', 1);
+  EXCEPTION WHEN raise_exception THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION '069: a malformed provider name was counted'; END IF;
+  refused := false;
+  BEGIN
+    PERFORM public.provider_usage_add('replay-069', -1);
+  EXCEPTION WHEN raise_exception THEN refused := true;
+  END;
+  IF NOT refused THEN RAISE EXCEPTION '069: a negative count was added'; END IF;
+  RESET ROLE;
+  DELETE FROM public.provider_usage WHERE provider = 'replay-069';
+END $$;
+SQL
+
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
 DO $$
@@ -547,12 +587,13 @@ BEGIN
     'agent_trajectories','proposals','effect_ledger','app_sessions','document_embeddings',
     'rate_limit_events','applied_migrations','ai_metrics','tenants','tenant_domains',
     'tenant_config_overrides','tenant_lifecycle_requests','jobs','job_schedules',
-    'config_dual_control_seeded'
+    'config_dual_control_seeded','provider_usage'
   ]) AS t WHERE to_regclass('public.' || t) IS NULL;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing tables: %', missing; END IF;
   SELECT string_agg(f, ', ') INTO missing FROM unnest(ARRAY[
     'agent_budget_consume','guest_allowance_consume','rate_limit_hit','rate_limit_reset',
-    'app_current_tenant','directory_host','directory_tenant','tenant_own_domains','job_claim'
+    'app_current_tenant','directory_host','directory_tenant','tenant_own_domains','job_claim',
+    'provider_usage_add','provider_usage_read'
   ]) AS f WHERE NOT EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public' AND p.proname = f);
@@ -776,7 +817,7 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
       AND c.relname NOT IN ('permissions','roles','role_permissions','role_inheritance','entitlement_groups',
         'entitlement_permissions','deletion_manifest','platform_config','applied_migrations','tenants',
-        'job_schedules','config_dual_control_seeded');
+        'job_schedules','config_dual_control_seeded','provider_usage');
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'tables with no tenant_id that are not platform-owned: %', missing; END IF;
   SELECT string_agg(c.relname, ', ') INTO missing FROM pg_class c
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped

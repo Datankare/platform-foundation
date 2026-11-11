@@ -183,6 +183,10 @@ export const RETENTION_REGISTER: Readonly<Record<string, RetentionEntry>> = {
     kind: "keep",
     why: "one row per recurring job and tenant (its last outcome, replaced each run): bounded",
   },
+  provider_usage: {
+    kind: "keep",
+    why: "one row per prepaid provider (a running count, TASK-212): bounded, and no person's data",
+  },
 };
 
 /** One rule the data.retention job applies. */

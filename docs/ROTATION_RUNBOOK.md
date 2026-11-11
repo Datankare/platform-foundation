@@ -113,6 +113,28 @@ project on its own, in its own Vercel project.
 2. Delete any local credential artifacts (`rm /tmp/acrcloud-rotation/*`)
 3. Update this runbook with new rotation history entry
 
+### Credit (TASK-212, N-77)
+
+The account is prepaid, and the credit — not a key — is what runs out. ACRCloud offers no API that
+reports the balance (its console API has projects, buckets and a daily statistic; its
+identification answers carry no quota header — docs.acrcloud.com, "Identification API",
+"Console API → Base Projects", "Error Codes"), so the platform counts what ACRCloud bills — "Valid
+Requests = Requests with results + Requests with no results / 2" (docs.acrcloud.com, FAQ
+"Definition of Terms") — in `provider_usage` (migration 069), from the first request after 069.
+
+1. **Set the budget.** In the ACRCloud console → Billing, read the credit left and the price per
+   1,000 requests of the plan; divide, keep about a fifth back for the time a top-up takes, and
+   set the result as `ACRCLOUD_CREDIT_ALERT_AT` in each Vercel project that runs
+   `SONG_ID_PROVIDER=acrcloud` (a whole number of valid requests). Redeploy.
+2. **At the budget** the alert `credentials.acrcloud_credit_low` is raised once (log, metric, error
+   report), and `/api/health` lists `song-id-credit` as degraded until the budget is raised.
+3. **After a top-up**, raise `ACRCLOUD_CREDIT_ALERT_AT` by the valid requests the new credit buys
+   and redeploy. The count is never reset or edited by hand. Read it (the SQL Editor, read-only):
+
+   ```sql
+   select billable_halves / 2.0 as valid_requests, since from public.provider_usage where provider = 'acrcloud';
+   ```
+
 ### Gotchas (from TASK-026 rotation)
 
 - **Audio clip duration:** ACRCloud needs ≥10s for reliable matching. 5s clips return `code: 1001`. See G-VOICE-001.

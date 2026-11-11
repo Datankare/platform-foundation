@@ -10,7 +10,11 @@
 //
 //   - a date within CREDENTIAL_LEAD_DAYS (default: the register's leadDays, else 30) or past
 //     fails the run, naming the credential and where to rotate it;
-//   - "unknown" warns (::warning::) — the owner is to fill it in — and does not fail;
+//   - "unknown" (TASK-212, N-32) passes only while the row says until when the owner has to record
+//     the date — "pending-owner-until": a real date, today or later and at most
+//     PENDING_MAX_DAYS (90) ahead — and what the owner does to find it ("owner-step"). It warns
+//     (::warning::) until then; the day after, it fails, as does an "unknown" without both: an
+//     expiry nobody records is not tracked, it is forgotten;
 //   - "never" must say why (a generated secret with no expiry, an address);
 //   - anything else, or a row without a name or a place, fails.
 //
@@ -26,6 +30,17 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_REGISTER = join(ROOT, "docs/credential-register.json");
 const DAY_MS = 86_400_000;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** How far ahead an "unknown" row may put off recording its expiry (TASK-212, N-32). */
+export const PENDING_MAX_DAYS = 90;
+
+/** The UTC midnight of a real calendar day YYYY-MM-DD, or NaN (Date.parse rolls 02-31 over). */
+function calendarDay(value) {
+  if (typeof value !== "string" || !DATE.test(value)) return Number.NaN;
+  const t = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === value
+    ? t
+    : Number.NaN;
+}
 
 /**
  * Each row's verdict: "ok", "expiring" (within the lead time), "expired", "unknown", "never", or
@@ -56,19 +71,48 @@ export function evaluate(register, now = Date.now(), leadOverride) {
       return { name, verdict: "invalid", why: "where it lives is not given" };
     }
     const exp = row.expires;
-    if (exp === "unknown") return { name, verdict: "unknown", where: row.where };
+    if (exp === "unknown") {
+      const until = row["pending-owner-until"];
+      const step = row["owner-step"];
+      const at = calendarDay(until);
+      if (!Number.isFinite(at)) {
+        return {
+          name,
+          verdict: "invalid",
+          why: '"unknown" needs "pending-owner-until": the date (YYYY-MM-DD) by which the owner records the expiry',
+        };
+      }
+      if (typeof step !== "string" || step.trim().length < 10) {
+        return {
+          name,
+          verdict: "invalid",
+          why: '"unknown" needs "owner-step": what the owner does to find the expiry',
+        };
+      }
+      const today = Math.floor(now / DAY_MS) * DAY_MS;
+      if (at < today) {
+        return {
+          name,
+          verdict: "invalid",
+          why: `its expiry is still unknown and pending-owner-until ${until} has passed: record the date (${step.trim()})`,
+        };
+      }
+      if (at > today + PENDING_MAX_DAYS * DAY_MS) {
+        return {
+          name,
+          verdict: "invalid",
+          why: `pending-owner-until ${until} is more than ${PENDING_MAX_DAYS} days ahead`,
+        };
+      }
+      return { name, verdict: "unknown", where: row.where, until, step: step.trim() };
+    }
     if (exp === "never") {
       return typeof row.note === "string" && row.note.trim().length > 10
         ? { name, verdict: "never" }
         : { name, verdict: "invalid", why: '"never" needs a note saying why' };
     }
     // A real calendar day: Date.parse rolls 2026-02-31 over into March (review round 1).
-    if (
-      typeof exp !== "string" ||
-      !DATE.test(exp) ||
-      !Number.isFinite(Date.parse(`${exp}T00:00:00Z`)) ||
-      new Date(Date.parse(`${exp}T00:00:00Z`)).toISOString().slice(0, 10) !== exp
-    ) {
+    if (!Number.isFinite(calendarDay(exp))) {
       return {
         name,
         verdict: "invalid",
@@ -137,9 +181,9 @@ function main() {
       lines.push(`- ✗ ${r.name}: ${r.why}`);
     } else if (r.verdict === "unknown") {
       console.log(
-        `::warning::${r.name} (${r.where}): its expiry is unknown — record it in docs/credential-register.json`
+        `::warning::${r.name} (${r.where}): its expiry is unknown — record it in docs/credential-register.json by ${r.until} (${r.step}); after that day this check fails`
       );
-      lines.push(`- ⚠ ${r.name}: expiry unknown — owner to fill`);
+      lines.push(`- ⚠ ${r.name}: expiry unknown — owner to record by ${r.until}`);
     } else {
       console.log(
         `ok ${r.name}${r.expires ? ` (${r.expires}, ${r.days} days)` : " (no expiry)"}`

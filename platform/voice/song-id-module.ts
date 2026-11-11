@@ -3,7 +3,8 @@
  *
  * Song identification: the provider slot (SONG_ID_PROVIDER), the SONG_IDENTIFY rule, the
  * "identify-song" goal, the "identify_song" consent and account-status feature, the
- * music_identification feature and the provider's health probe. Shares platform/voice/ with
+ * music_identification feature, the provider's health probe and the prepaid credit's
+ * (song-id-credit, TASK-212: ./acrcloud-usage.ts). Shares platform/voice/ with
  * voice and audio-convert until Sprint 7S; its files and migration (013) are listed in
  * platform/modules/manifest.json.
  *
@@ -17,6 +18,11 @@ import { definePlatformModule } from "@/platform/modules/define";
 import { CachedHealthProbe } from "@/platform/observability/health";
 import { PAID_PROBE_CACHE } from "@/platform/observability/paid-api-probe";
 import { ACRCloudIdentifier, getAcrCloudConfig } from "./acrcloud-identify";
+import {
+  ACRCLOUD_CREDIT_PROBE,
+  createAcrCloudCreditProbe,
+  parseCreditAlertAt,
+} from "./acrcloud-usage";
 import {
   AUDIO_CONVERTER_NEEDS,
   isAudioConverterReady,
@@ -97,6 +103,16 @@ export const SONG_ID_MODULE = definePlatformModule({
           SONG_ID_PROBE_TTL_MS,
           Date.now,
           PAID_PROBE_CACHE
+        ),
+    },
+    {
+      // TASK-212 (N-77): ACRCloud has no balance API — the billed requests are counted, and
+      // readiness degrades at the operator's budget (or with none set while ACRCloud serves).
+      name: ACRCLOUD_CREDIT_PROBE,
+      create: () =>
+        createAcrCloudCreditProbe(
+          () => getSongIdProvider().name === "acrcloud",
+          () => parseCreditAlertAt(getAcrCloudConfig().creditAlertAt)
         ),
     },
   ],

@@ -338,8 +338,34 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
 
+      # TASK-212 (register NEW-1): the model journey (e2e/assistant.spec.ts test 4) needs the key and
+      # skips without it — and the E2E step never received it, so it always skipped, unnoticed. A
+      # run without the key fails, as Playform's (its TASK-204, N-6) — except a Dependabot PR, which
+      # GitHub gives no repository secrets: there the skip is a warning and a step-summary line.
+      # E2E_KEY_REQUIRED=false (a repository variable) is the owner's explicit, loud opt-out.
+      # __tests__/e2e-key-wiring.test.ts holds that every key a spec skips without reaches this step.
+      - name: Layer 3 — The key the model journey needs
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          IS_DEPENDABOT: ${{ github.actor == 'dependabot[bot]' }}
+          E2E_KEY_REQUIRED: ${{ vars.E2E_KEY_REQUIRED }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_KEY" = "true" ]; then echo "ANTHROPIC_API_KEY is set: the model journey runs"; exit 0; fi
+          why="ANTHROPIC_API_KEY is not set, so the model journey (e2e/assistant.spec.ts test 4) skips"
+          if [ "$IS_DEPENDABOT" = "true" ] || [ "$E2E_KEY_REQUIRED" = "false" ]; then
+            echo "::warning::$why (a Dependabot run, or E2E_KEY_REQUIRED=false)."
+            echo "**Layer 3:** $why." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::error::$why: the E2E layer would pass without its model journey."
+          exit 1
+
       - name: Layer 3 — E2E tests
         run: npm run test:e2e -- --fail-on-flaky-tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
 
       # The permission was resolved, not skipped: the test double's user reached the guarded
       # routes and was provisioned with the default role.

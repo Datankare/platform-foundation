@@ -107,6 +107,7 @@
       "dependsOn": ["audio-convert"],
       "code": [
         "platform/voice/acrcloud-identify.ts",
+        "platform/voice/acrcloud-usage.ts",
         "platform/voice/identify-types.ts",
         "platform/voice/mock-identify.ts",
         "platform/voice/song-id.ts",
@@ -119,11 +120,13 @@
       "routes": [],
       "components": [],
       "tests": [
+        "__tests__/acrcloud-credit.test.ts",
         "__tests__/acrcloud-failure.test.ts",
         "__tests__/acrcloud-identify-contract.test.ts",
         "__tests__/modules/song-id.module.test.ts",
         "__tests__/song-id-provider.test.ts",
-        "__tests__/song-identify-sprint4.test.ts"
+        "__tests__/song-identify-sprint4.test.ts",
+        "__tests__/db/provider-usage.db.test.ts"
       ],
       "kits": ["__tests__/contract/song-id-provider-contract.ts"],
       "kitManifest": "__tests__/contract/modules/song-id.ts",

@@ -40,6 +40,7 @@ import {
   type ExternalFailureReason,
 } from "@/platform/observability/external-failure";
 import { logger, generateRequestId } from "@/lib/logger";
+import { parseCreditAlertAt, recordAcrCloudRequest } from "./acrcloud-usage";
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -87,12 +88,14 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
   private readonly host: string;
   private readonly accessKey: string;
   private readonly accessSecret: string;
+  private readonly creditAlertAt: number | undefined;
 
   constructor() {
     const config = getAcrCloudConfig();
     this.host = config.host;
     this.accessKey = config.accessKey;
     this.accessSecret = config.accessSecret;
+    this.creditAlertAt = parseCreditAlertAt(config.creditAlertAt);
   }
 
   async identify(request: IdentifyRequest): Promise<IdentifyResult> {
@@ -117,6 +120,16 @@ export class ACRCloudIdentifier implements SongIdentificationProvider {
     const formData = this.buildSignedFormData(audioPayload);
     const data = await this.sendRequest(formData, requestId, request);
     const latencyMs = Date.now() - start;
+
+    // N-77: what ACRCloud bills — an answer with a result, or with none — is counted against the
+    // prepaid credit's budget (./acrcloud-usage.ts). An error status is not a billed request.
+    const code = data?.status?.code;
+    if (code === 0 || code === 1001) {
+      await recordAcrCloudRequest(
+        code === 0 && data.metadata?.music?.[0] ? "result" : "no_result",
+        this.creditAlertAt
+      );
+    }
 
     return this.parseResponse(data, {
       latencyMs,
@@ -327,6 +340,11 @@ export interface AcrCloudConfig {
   readonly host: string;
   readonly accessKey: string;
   readonly accessSecret: string;
+  /**
+   * ACRCLOUD_CREDIT_ALERT_AT (TASK-212, N-77): the valid requests after which the prepaid credit
+   * is to be topped up, as written ("" when unset); ./acrcloud-usage.ts parses it.
+   */
+  readonly creditAlertAt: string;
 }
 
 /**
@@ -341,6 +359,7 @@ export function getAcrCloudConfig(
     host: env.ACRCLOUD_HOST ?? "",
     accessKey: env.ACRCLOUD_ACCESS_KEY ?? "",
     accessSecret: env.ACRCLOUD_ACCESS_SECRET ?? "",
+    creditAlertAt: env.ACRCLOUD_CREDIT_ALERT_AT ?? "",
   };
 }
 

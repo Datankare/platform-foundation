@@ -69,6 +69,7 @@
     "065_role_description_note.sql",
     "066_recorded_notes.sql",
     "067_recorded_notes_written_by_code.sql",
-    "068_moderation_decision_accounts.sql"
+    "068_moderation_decision_accounts.sql",
+    "069_provider_usage.sql"
   ]
 }

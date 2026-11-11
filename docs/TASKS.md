@@ -7,6 +7,144 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-212 — Residuals 55l: credentials the code reads are registered and dated, the delegation keys and the ACRCloud credit are checked, the model journey runs in CI, the guides count from the files
+
+| Field        | Detail                                                                                       |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-212                                                                                     |
+| **Type**     | Defect (credentials untracked or unchecked; a journey skipped unseen; guides that drifted)   |
+| **Severity** | Important (N-68), Low (N-32, N-33, N-77, NEW-1), Nit (NEW-2)                                 |
+| **Phase**    | Phase 5                                                                                      |
+| **Target**   | v6.0.0 (RC)                                                                                  |
+| **Status**   | Fixed on develop (sub-batch 55l of the residuals batch)                                      |
+| **Logged**   | 2026-11-10 (register N-32, N-33, N-68, N-77, N-109; NEW-1 and NEW-2 from the register audit) |
+
+Sub-batch 55l of the residuals register, in both repositories (Playform: its TASK-5013).
+
+**N-33 — every secret the code reads has a register row.** `__tests__/credential-register.test.ts`
+required a row only for the secrets a workflow reads. It now also scans `app/`, `lib/` and
+`platform/` (outside tests) for every setting read by name — `process.env.X`, `env.X`,
+`env["X"]`, `raw(env, "X")`, `resolveSetting("X")` and the environment contract's declarations —
+and requires a row for each whose name says it is a secret (secret, password, private, token, a
+key or key id, a DSN, a CA bundle) or that is a URL carrying a password (`DATABASE_URL`,
+`DATABASE_OWNER_URL`, `VALKEY_URL`). Three names are excepted, each with why: `NEXT_PUBLIC_GOOGLE_API_KEY`
+and `SUPABASE_SERVICE_ROLE_KEY` are read only to be refused or named at boot; `SENTRY_DSN` is not a
+secret (Sentry, "Data Source Name (DSN)": "DSNs are safe to keep public because they only allow
+submission of new events"). Self-tests on a scratch tree, every way of reading included. This
+repository's register gains a row for each of the 21 deployment secrets the platform's code reads
+— held by each app's deployment, never here (platform-foundation has none) — and `FIXTURE_SECRET`,
+the name a unit test gives a made-up feature's setting, recorded as what it is.
+
+**N-32 — an unknown expiry has a deadline.** `scripts/check-credential-expiry.mjs` passed "unknown"
+with a warning, forever. An "unknown" row now needs `pending-owner-until` (a real date, today or
+later, at most 90 days ahead) and `owner-step` (what the owner does to find the date): it warns,
+naming the date and the step, until that day and fails the day after — in the weekly check and in
+CI, where the register test fails on it — and fails at once without both.
+
+**N-77 — the ACRCloud credit is watched.** ACRCloud is prepaid and offers no balance API: its
+console API has projects, buckets and an undocumented daily statistic, and its identification
+answers carry no quota header (docs.acrcloud.com, "Identification API", "Console API → Base
+Projects", "Error Codes" — 3003 "Request count limit exceeded" is the only sign, at exhaustion).
+So the platform counts what ACRCloud bills, as ACRCloud defines it — "Valid Requests = Requests with
+results + Requests with no results / 2" (docs.acrcloud.com, FAQ "Definition of Terms") — after
+each answered identification, in migration 069's `provider_usage` (platform-owned, in halves),
+through `provider_usage_add` (one statement: no count lost across instances) and
+`provider_usage_read`, the only access the request role has. `ACRCLOUD_CREDIT_ALERT_AT` is the
+operator's budget in valid requests: the request that reaches it raises
+`credentials.acrcloud_credit_low` once (log, metric, error report), and readiness's
+`song-id-credit` (the song-id module's, degraded-only) is degraded from then on — and while
+ACRCloud serves with no budget set. After a top-up the budget is raised (ROTATION_RUNBOOK,
+"Credit"); the count is never edited by hand. An error answer is not counted; a count that cannot
+be written never fails the identification.
+
+**N-68 — the delegation keys (Playform: TASK-5013).** Playform's issuer checks the pair at boot,
+at readiness (`agent-delegation-keys`) and at the token route (the coded 503, not a 500): its
+entry has the detail. ENV_REFERENCE says what an app that runs both halves checks.
+
+**NEW-1 — the model journey runs in CI.** The E2E step (`Layer 3 — E2E tests`) received no
+`ANTHROPIC_API_KEY` — only the build did (`ci.yml`'s Layer 2) — so `e2e/assistant.spec.ts` test 4
+skipped on every run, unnoticed. The step now receives `ANTHROPIC_API_KEY` and `GOOGLE_API_KEY`, and
+a step before it fails a run without the key, as Playform's does (its TASK-204, N-6): a Dependabot
+PR (no repository secrets) or `E2E_KEY_REQUIRED=false` is a warning and a step-summary line.
+`__tests__/e2e-key-wiring.test.ts` (both repositories): every setting an E2E spec's `test.skip`
+reads, directly or through a constant, must reach every step that runs `npm run test:e2e` — in its
+`env:`, its job's, or `$GITHUB_ENV` from an earlier step; self-tests for each form.
+
+**NEW-2 and N-109 — the promotion guides.** Playform's guide said the record check shows
+"twenty-three rows"; the files from `046` were 27 after 065–068, and are 28 with 069. Every count
+in both guides was checked against the files: MIGRATION_v5_to_v6 said 067 locks "five tables" —
+it adds columns to four (`config_pending_approvals`, `platform_config_history`, `review_queue`,
+`content_safety_audit`); the rest hold (060's four settings, 064's eight keys, the replay's three
+owner-rights queries). `__tests__/migration-guide-counts.test.ts` derives them from the directory:
+MIGRATION_v5_to_v6 copies every platform migration from 046 once; an app's guide
+(`docs/<APP>_MIGRATION_v…_to_v….md`) has its record count, its §1 table and its pbcopy list equal
+to the files from 046, and names the newest platform migration as the last a database applies. Both
+guides now check `TENANT_DIRECTORY_STORE` (absent or `postgres`) before every promotion
+(MIGRATION_v5_to_v6 step 5; Playform's "Order of work"), with the check after it.
+
+**Tests.** `credential-register` (N-33 scan and self-test; N-32's rule and its CI self-test);
+`acrcloud-credit` (the budget, the count, the alert once, the probe in each state, an
+identification counted as billed — error answers not); `db/provider-usage.db` (concurrent requests
+add up through the request role; the table itself refused); the replay's 069 step (grants,
+totals, a malformed name and a negative count refused, applied twice changing nothing);
+`e2e-key-wiring`; `migration-guide-counts`.
+
+**Design check**
+
+- **Reach:** the credential register test and both registers; the expiry script; the song-id
+  module (its identifier, a new usage file, a probe); a new migration (069) with the replay's checks
+  and the platform migration list; the retention and user-data registers (`provider_usage`: kept,
+  no person's data — their DB coverage tests found it); PF's CI workflow (the E2E step and a key
+  check); both promotion
+  guides, ENV_REFERENCE, ROTATION_RUNBOOK; two new guards.
+- **Races:** concurrent identifications on any number of instances each add in one statement
+  (`insert … on conflict do update … returning`): none lost, the alert raised by the one request
+  whose own total crossed the budget.
+- **Dependencies down:** the database down → the count is logged and skipped, the identification
+  stands, the probe is degraded ("could not be read"); ACRCloud down → nothing billed, nothing
+  counted.
+- **Erasure leftovers:** none: `provider_usage` holds a provider's name and a number, no person's
+  data (platform-owned, no tenant).
+- **Screens × responses:** no screen changes; readiness and /api/health list one more probe by name
+  and status (details stay in the log).
+- **Journeys touched:** none changed; e2e spec by spec on both repositories, base and change; in CI
+  PF's model journey now runs instead of skipping.
+- **Weakens a tenant's protection?** No: the new table is reached only through two owner-rights
+  functions that take a provider's name and a count, granted to the request role only; the public
+  roles reach neither (replay checks both).
+
+**Threat model**
+
+- **Boundary:** the request role's new access (069's two functions); the workflow's E2E step
+  receiving the model and Google keys.
+- **Actors that exist today:** any signed-in account (or guest, where song identification is
+  offered) spends ACRCloud credit with each identification — bounded by `SONG_IDENTIFY_RULE` and
+  the daily paid quota — and the readiness probe spends it too; this change makes that spending
+  visible before it ends the service. Pull requests run CI: a Dependabot PR gets no secrets (the
+  warning path); a pull request from a fork gets none either and fails the key check, as Playform's
+  E2E layer already does. No actor gains a capability: the count is written only by server code.
+- **Bypasses:** none new: `provider_usage_add` refuses a malformed provider name and a count
+  outside 0–1000; the table itself is not granted to the request role.
+- **Forgeries:** a client cannot add to or read the count — no route takes it; the functions run
+  only from the identification path and the probe.
+- **Legitimate flows:** an operator sets and raises the budget; an identification is counted; CI's
+  E2E step runs the model journey with the key.
+- **Agreed before code:** the owner's brief for sub-batch 55l (2026-11-10): N-68, N-33, N-32, N-77,
+  the PF CI E2E key, the guide counts and N-109.
+
+**Self-review**
+
+- **Consumers checked:** every reader of `getAcrCloudConfig` (the module, the identifier, the
+  feature check — the new field is additive); every importer of the song-id module's probes
+  (`createModuleHealthProbes`, the dependency-coverage test); the replay's platform-table and
+  function lists; every workflow step that runs `test:e2e` in both repositories; every reader of
+  the registers (the expiry script and the weekly workflow).
+- **Hostile re-read:** a budget of `0`, `1.5` or `1e3` (refused: unset); a count crossing the budget
+  from two instances at once (each total is the statement's own, so exactly one crosses); a
+  register row "unknown" with a date 10 years ahead (refused past 90 days) or a rolled-over date
+  (`2026-02-31`, refused); an E2E skip through a constant (`OWNER_URL`, read through); a key
+  written to `$GITHUB_ENV` by a later step (not counted — tested by order).
+
 ### TASK-211 — Residuals 55k: the assistant on a real page, no module left unreached, and only a block is appealed
 
 | Field        | Detail                                                                                 |
