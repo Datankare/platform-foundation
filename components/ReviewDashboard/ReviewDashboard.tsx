@@ -35,6 +35,9 @@ import type { ReviewRecommendation } from "@/platform/moderation/review-assist";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { readRefusal } from "@/platform/errors/refusal";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import { renderShown } from "@/platform/errors/shown-text";
+import { recordedFactor, recordedReasons } from "@/platform/moderation/reasons";
+import { Recorded, shownOrStored } from "./recorded";
 
 /** This screen's text, from the message catalog (ADR-051 D4, TASK-205). */
 const msg = (key: string, values?: MessageValues) =>
@@ -683,9 +686,9 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
             {cat}
           </Chip>
         ))}
-        {m.contextFactors.map((factor) => (
-          <Chip key={factor} className="bg-gray-100 text-gray-700">
-            {factor}
+        {m.contextFactors.map((factor, i) => (
+          <Chip key={i} className="bg-gray-100 text-gray-700">
+            <Recorded {...recordedFactor(factor)} />
           </Chip>
         ))}
       </div>
@@ -693,7 +696,9 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
       <p className="text-sm mb-1">
         <span className={t.muted}>{msg("action")}</span> {msg(`action_${m.action}`)}
       </p>
-      <p className="text-sm mb-2">{m.reasoning}</p>
+      <p className="text-sm mb-2" data-testid={`rd-reasoning-${item.id}`}>
+        <Recorded {...recordedReasons(m.reasoning)} />
+      </p>
     </div>
   );
 }
@@ -713,12 +718,18 @@ function ExplanationTimeline({ item, t }: { item: ReviewQueueItem; t: ThemeClass
           data-testid={`rd-step-${item.id}-${i}`}
         >
           <span className={`text-xs ${t.muted} min-w-24`}>{step.phase}</span>
-          <span className="text-xs">{step.description}</span>
+          <span className="text-xs">
+            <Recorded {...shownOrStored(step.description)} />
+          </span>
         </div>
       ))}
       {chain.conclusion && (
         <p className={`text-xs mt-1 ${t.muted}`} data-testid={`rd-conclusion-${item.id}`}>
-          {msg("conclusion", { conclusion: chain.conclusion })}
+          {typeof chain.conclusion === "string" ? (
+            <Recorded {...shownOrStored(chain.conclusion)} />
+          ) : (
+            msg("conclusion", { conclusion: renderShown(chain.conclusion) })
+          )}
         </p>
       )}
     </div>

@@ -11,6 +11,7 @@
 
 import type {
   CreateProposalArgs,
+  DecisionNote,
   ProposalQuery,
   ProposalRecord,
   ProposalStatus,
@@ -21,7 +22,12 @@ import { generateUuid } from "./utils";
 import { listAgentGoals } from "./goals";
 import { getSingleton, setSingleton } from "@/platform/kernel/singleton";
 import { TenantPartitionedMap } from "@/platform/tenancy/partition";
-import { withdrawalRecord } from "@/platform/errors/recorded-text";
+import {
+  markedExecuted,
+  VERIFIED_APPLIED,
+  withdrawalRecord,
+} from "@/platform/errors/recorded-text";
+import { isShownText, type ShownText } from "@/platform/errors/shown-text";
 
 export type {
   CreateProposalArgs,
@@ -39,13 +45,34 @@ const ONE_LIVE: ReadonlySet<ProposalStatus> = new Set([
   "executed",
 ]);
 
-/** Why a run that never ended within its lease is undecided (review 11 H-1). */
-export const INDETERMINATE_NOTE =
-  "run did not end within its lease; its outcome is unknown — verify, then mark it executed, approve it again or withdraw it";
+/**
+ * Why a run that never ended within its lease is undecided (review 11 H-1): its lastRunError, a
+ * catalog key the screens word (TASK-209: it was English).
+ */
+export const INDETERMINATE_NOTE = "screens.held.note_indeterminate";
 
 /** Why an atomic run that never ended was returned to approved (its effect rolled back with it). */
-export const ATOMIC_RECOVERED_NOTE =
-  "atomic run did not end within its lease; its transaction rolled back with its effect, approval kept";
+export const ATOMIC_RECOVERED_NOTE = "screens.held.note_atomic_recovered";
+
+/**
+ * A decision's note in a record's two fields (TASK-209): a person's, as written, in decisionNote;
+ * the platform's own (a catalog key and values) in decisionShown.
+ */
+export function decisionFields(note: DecisionNote | undefined): {
+  readonly decisionNote?: string;
+  readonly decisionShown?: ProposalRecord["decisionShown"];
+} {
+  if (note === undefined) return {};
+  if (typeof note === "string") return { decisionNote: note };
+  return isShownText(note) ? { decisionShown: note } : {};
+}
+
+/** The platform's own note, when `note` is one (the why a withdrawal record keeps). */
+export function platformNote(note: DecisionNote | undefined): ShownText | undefined {
+  return note !== undefined && typeof note !== "string" && isShownText(note)
+    ? note
+    : undefined;
+}
 
 /**
  * Where a recovered run leaves its workflow (TASK-173). When the approval-expiry job takes back a
@@ -145,7 +172,7 @@ export class InMemoryProposalStore implements ProposalStore {
       "proposed" | "executed" | "executing" | "indeterminate"
     >,
     decidedBy: string,
-    note?: string
+    note?: DecisionNote
   ): Promise<ProposalRecord | undefined> {
     const records = this.parts.current();
     const current = records.get(proposalId);
@@ -161,7 +188,9 @@ export class InMemoryProposalStore implements ProposalStore {
       status,
       decidedBy,
       decidedAt: now,
-      decisionNote: note,
+      decisionNote: undefined,
+      decisionShown: undefined,
+      ...decisionFields(note),
       updatedAt: now,
     };
     records.set(proposalId, updated);
@@ -234,14 +263,14 @@ export class InMemoryProposalStore implements ProposalStore {
 
   async release(
     proposalId: string,
-    note: string,
+    code: string,
     runToken: string
   ): Promise<ProposalRecord | undefined> {
     return this.transition(
       proposalId,
       ["executing", "indeterminate"],
       "approved",
-      { lastRunError: note, runToken: undefined, runAtomic: undefined },
+      { lastRunError: code, runToken: undefined, runAtomic: undefined },
       runToken
     );
   }
@@ -250,7 +279,7 @@ export class InMemoryProposalStore implements ProposalStore {
     proposalId: string,
     resolution: "executed" | "approved" | "rejected",
     decidedBy: string,
-    note: string
+    note: DecisionNote
   ): Promise<ProposalRecord | undefined> {
     const now = new Date().toISOString();
     const current = this.parts.current().get(proposalId);
@@ -259,16 +288,26 @@ export class InMemoryProposalStore implements ProposalStore {
       ["indeterminate"],
       resolution,
       resolution === "executed"
-        ? { lastRunError: `marked executed by ${decidedBy}: ${note}` }
+        ? // Who marked it and their note, as the catalog's record (TASK-209: it was English in
+          // lastRunError); the approval's decider and note stand, and the run's note is cleared.
+          {
+            decisionShown: markedExecuted(
+              decidedBy,
+              typeof note === "string" ? note : (platformNote(note) ?? VERIFIED_APPLIED)
+            ),
+            lastRunError: undefined,
+          }
         : {
             decidedBy,
             decidedAt: now,
             // Withdrawn without running, verified not applied (TASK-194 round 5): the record keeps
-            // who had approved it and when — a catalog key and values (TASK-208, N-110).
-            decisionNote: note,
-            ...(resolution === "rejected" && current
-              ? { decisionShown: withdrawalRecord(current, "undecided") }
-              : {}),
+            // who had approved it and when — a catalog key and values (TASK-208, N-110) — and the
+            // platform's why when it gave one; a person's note is the row's own.
+            decisionNote: typeof note === "string" ? note : undefined,
+            decisionShown:
+              resolution === "rejected" && current
+                ? withdrawalRecord(current, "undecided", platformNote(note))
+                : decisionFields(note).decisionShown,
             runToken: undefined,
             runAtomic: undefined,
           }
@@ -331,7 +370,7 @@ export class InMemoryProposalStore implements ProposalStore {
   async withdraw(
     proposalId: string,
     decidedBy: string,
-    note: string
+    note: DecisionNote
   ): Promise<ProposalRecord | undefined> {
     const records = this.parts.current();
     const current = records.get(proposalId);
@@ -342,9 +381,10 @@ export class InMemoryProposalStore implements ProposalStore {
       status: "rejected",
       decidedBy,
       decidedAt: now,
-      // Who had approved it and when, as the catalog's record (TASK-208, N-110); the note is why.
-      decisionNote: note,
-      decisionShown: withdrawalRecord(current),
+      // Who had approved it and when, as the catalog's record (TASK-208, N-110); why is the
+      // person's note as written, or the platform's own kept in the record (TASK-209).
+      decisionNote: typeof note === "string" ? note : undefined,
+      decisionShown: withdrawalRecord(current, "approved", platformNote(note)),
       updatedAt: now,
     };
     records.set(proposalId, updated);
@@ -354,7 +394,7 @@ export class InMemoryProposalStore implements ProposalStore {
   async supersede(
     proposalIds: readonly string[],
     decidedBy: string,
-    note: string
+    note: DecisionNote
   ): Promise<readonly string[]> {
     const moved: string[] = [];
     for (const id of new Set(proposalIds)) {

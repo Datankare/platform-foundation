@@ -21,7 +21,7 @@ import { writeGovernedConfig } from "@/platform/admin/governed-config";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import { coded, fromGovernedConfig, type ActionResult } from "./shared";
 import { sameId } from "@/platform/auth/same-id";
-import { renderShown, shown, type ShownText } from "@/platform/errors/shown-text";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -73,10 +73,12 @@ async function writeRegistry(
   const outcome = await writeGovernedConfig(admin, {
     key: TRUSTED_AGENTS_KEY,
     value: pairs,
-    // The record of the change, worded by the catalog when it is written (TASK-206, N-102).
-    changeComment: renderShown(
-      shown("screens.admin_console.results.command_bar_comment", { what: summary })
-    ),
+    // The record of the change: the catalog's key and values, worded when it is read (TASK-209:
+    // it was worded in English when it was written).
+    changeComment: "",
+    changeShown: shown("screens.admin_console.results.command_bar_comment", {
+      what: summary,
+    }),
   });
   return fromGovernedConfig(outcome, TRUSTED_AGENTS_KEY, summary);
 }

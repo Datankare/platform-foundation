@@ -159,6 +159,8 @@ describe("an app with no modules", () => {
     const { evaluateContext } = await import("@/platform/moderation/context");
     const evaluation = await evaluateContext({ contentType: "translation" });
     expect(evaluation).toMatchObject({ severityReduction: 0, attributeToUser: true });
-    expect(evaluation.factors).toContain("unknown-content-type: treated as generation");
+    expect(evaluation.factors).toContainEqual({
+      key: "screens.moderation.factors.unknown_content_type",
+    });
   });
 });

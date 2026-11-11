@@ -442,7 +442,7 @@ const ROUTES: readonly RouteCase[] = [
         moderationResult: fc.constant({
           action: "escalate",
           triggeredBy: "content-rating",
-          reasoning: "matrix",
+          reasoning: [{ key: "screens.moderation.reasons.declined" }],
           trajectoryId: "t",
           agentId: "guardian",
           contextFactors: [],

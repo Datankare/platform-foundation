@@ -107,6 +107,13 @@ import {
 } from "@/platform/admin/stale-change";
 import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { withdrawSupersededHolds } from "@/platform/admin/hold-withdrawal";
+import {
+  changeApproved,
+  approvedNote,
+  POWER_REDUCED,
+  type RecordedNote,
+} from "@/platform/errors/recorded-text";
+import { isShownText, shown, type ShownText } from "@/platform/errors/shown-text";
 import { configToolTargetKey } from "@/platform/admin/hold-keys";
 
 // ---------------------------------------------------------------------------
@@ -326,6 +333,17 @@ export async function handleGetConfig(input: GetConfigInput): Promise<ConfigTool
   });
 }
 
+/**
+ * A change's note as stored (TASK-209): the platform's own (changeShown: a catalog key and
+ * values), else the person's comment as written.
+ */
+function noteOf(input: {
+  readonly changeComment: string;
+  readonly changeShown?: unknown;
+}): RecordedNote {
+  return isShownText(input.changeShown) ? input.changeShown : input.changeComment;
+}
+
 // ---------------------------------------------------------------------------
 // Tool: update_config
 // ---------------------------------------------------------------------------
@@ -334,6 +352,12 @@ export interface UpdateConfigInput {
   readonly key: string;
   readonly value: unknown;
   readonly changeComment: string;
+  /**
+   * The platform's own note on the change, when it, not a person, says why (TASK-209: "Changed
+   * on the config page", a command bar summary) — a catalog key and values, kept in change_shown
+   * beside an empty comment. Set by the platform, never a caller (CONFIG_SERVER_SET_INPUTS).
+   */
+  readonly changeShown?: ShownText;
   readonly actorId: string;
   /**
    * ADR-053 D5: whether the actor is an operator — set by the route from the verified admin,
@@ -471,8 +495,7 @@ export async function handleUpdateConfig(
         currentValue: input.heldPrevious ? input.heldPrevious.value : replaced,
         proposedValue: input.value,
         requestedBy: input.actorId,
-        changeComment: input.changeComment,
-        impactSummary: changeRequest.impact,
+        changeComment: noteOf(input),
         scope: decision.target.scope,
       });
 
@@ -505,7 +528,7 @@ export async function handleUpdateConfig(
         input.key,
         input.value,
         input.actorId,
-        input.changeComment,
+        noteOf(input),
         "config_agent",
         entry,
         decision.target,
@@ -558,6 +581,12 @@ export async function handleUpdateConfig(
 export interface ResetConfigInput {
   readonly key: string;
   readonly changeComment: string;
+  /**
+   * The platform's own note on the change, when it, not a person, says why (TASK-209: "Changed
+   * on the config page", a command bar summary) — a catalog key and values, kept in change_shown
+   * beside an empty comment. Set by the platform, never a caller (CONFIG_SERVER_SET_INPUTS).
+   */
+  readonly changeShown?: ShownText;
   readonly actorId: string;
   /** Set by the route from the verified admin, never taken from the caller. */
   readonly actorIsOperator?: boolean;
@@ -619,8 +648,7 @@ export async function handleResetConfig(
         // while the platform default is still this value.
         proposedValue: held ? held.inherited : entry.platformValue,
         requestedBy: input.actorId,
-        changeComment: input.changeComment,
-        impactSummary: changeRequest.impact,
+        changeComment: noteOf(input),
         scope: "tenant",
         action: "reset",
       });
@@ -642,7 +670,7 @@ export async function handleResetConfig(
     const result = await clearTenantConfig(
       input.key,
       input.actorId,
-      input.changeComment,
+      noteOf(input),
       operator,
       held
         ? {
@@ -682,68 +710,45 @@ export function buildChangeRequest(
   };
 }
 
-/** Generate a human-readable impact description */
+/**
+ * Why a change matters, line by line, from the catalog (TASK-209: it was English composed here):
+ * the change itself, then what its tier, kind or key touches.
+ */
 function buildImpactDescription(
   entry: EnhancedConfigEntry,
   proposedValue: unknown
-): string {
-  const parts: string[] = [];
-
-  parts.push(
-    `Changing "${entry.key}" from ${JSON.stringify(entry.value)} to ${JSON.stringify(proposedValue)}.`
-  );
-
-  if (entry.permissionTier === "safety") {
-    parts.push(
-      "This is a safety-critical setting. Changes affect content moderation behavior."
-    );
-  }
-
-  if (entry.key.includes("block_severity") || entry.key.includes("warn_severity")) {
-    parts.push(
-      "Moderation threshold changes affect how content is screened in real-time."
-    );
-  }
-
-  if (entry.key.includes("strike")) {
-    parts.push("Strike threshold changes affect account consequence escalation.");
-  }
-
-  if (entry.key === "maintenance_mode") {
-    parts.push("Enabling maintenance mode makes the platform read-only for all users.");
-  }
-
-  if (entry.key === "signups_enabled") {
-    parts.push("Disabling signups prevents new account creation.");
-  }
-
-  return parts.join(" ");
+): ShownText[] {
+  const parts: ShownText[] = [
+    shown("screens.config_impact.change", {
+      key: entry.key,
+      from: JSON.stringify(entry.value) ?? "null",
+      to: JSON.stringify(proposedValue) ?? "null",
+    }),
+  ];
+  if (entry.permissionTier === "safety")
+    parts.push(shown("screens.config_impact.safety"));
+  if (entry.key.includes("block_severity") || entry.key.includes("warn_severity"))
+    parts.push(shown("screens.config_impact.moderation_threshold"));
+  if (entry.key.includes("strike")) parts.push(shown("screens.config_impact.strike"));
+  if (entry.key === "maintenance_mode")
+    parts.push(shown("screens.config_impact.maintenance"));
+  if (entry.key === "signups_enabled") parts.push(shown("screens.config_impact.signups"));
+  return parts;
 }
 
-/** Generate a human-readable description of affected users */
-function buildAffectedUsersDescription(entry: EnhancedConfigEntry): string {
-  if (entry.key.includes("level1")) {
-    return "Users under 13 (COPPA-protected, strictest content rating)";
-  }
-  if (entry.key.includes("level2")) {
-    return "Teen users (13–17, moderate content rating)";
-  }
-  if (entry.key.includes("level3")) {
-    return "Adult users (18+, standard content rating)";
-  }
-  if (entry.key.includes("strike")) {
-    return "All users — affects account consequence escalation";
-  }
-  if (entry.key === "rate_limit_rpm") {
-    return "All users — affects API request throttling";
-  }
-  if (entry.key === "maintenance_mode" || entry.key === "signups_enabled") {
-    return "All users — platform-wide setting";
-  }
-  if (entry.category === "moderation") {
-    return "All users — affects content safety pipeline";
-  }
-  return "Varies by setting";
+/** Who a change affects, from the catalog (TASK-209: it was English composed here). */
+function buildAffectedUsersDescription(entry: EnhancedConfigEntry): ShownText {
+  if (entry.key.includes("level1")) return shown("screens.config_impact.affected_level1");
+  if (entry.key.includes("level2")) return shown("screens.config_impact.affected_level2");
+  if (entry.key.includes("level3")) return shown("screens.config_impact.affected_level3");
+  if (entry.key.includes("strike")) return shown("screens.config_impact.affected_strike");
+  if (entry.key === "rate_limit_rpm")
+    return shown("screens.config_impact.affected_rate_limit");
+  if (entry.key === "maintenance_mode" || entry.key === "signups_enabled")
+    return shown("screens.config_impact.affected_platform");
+  if (entry.category === "moderation")
+    return shown("screens.config_impact.affected_moderation");
+  return shown("screens.config_impact.affected_varies");
 }
 
 // ---------------------------------------------------------------------------
@@ -967,7 +972,6 @@ export async function handleRequestApproval(
       proposedValue: input.proposedValue,
       requestedBy: input.actorId,
       changeComment: input.changeComment,
-      impactSummary: buildImpactDescription(entry, input.proposedValue),
       scope: decision.target.scope,
     });
 
@@ -1032,7 +1036,7 @@ export async function handleApproveChange(
           return clearTenantConfig(
             record.configKey,
             input.reviewerId,
-            `Approved: ${record.changeComment}`,
+            changeApproved(approvedNote(record)),
             decision.target.operator,
             { expectPrevious, expectInherited: { value: record.proposedValue } }
           );
@@ -1041,7 +1045,7 @@ export async function handleApproveChange(
           record.configKey,
           record.proposedValue,
           input.reviewerId,
-          `Approved: ${record.changeComment}`,
+          changeApproved(approvedNote(record)),
           "config_agent",
           undefined,
           decision.target,
@@ -1651,6 +1655,8 @@ export const CONFIG_SERVER_SET_INPUTS: Readonly<
   update_config: {
     actorIsOperator:
       "the requester's operator standing, from the verified admin (ADR-053 D5)",
+    changeShown:
+      "the platform's own note on a change no person commented, a catalog key and values (TASK-209), set by the config page and the command bar's handlers",
     heldPrevious:
       "the value a held change replaces, recorded by dispatchConfigTool when it holds it (review 12 H2)",
     expectPrevious:
@@ -1659,6 +1665,8 @@ export const CONFIG_SERVER_SET_INPUTS: Readonly<
   reset_config: {
     actorIsOperator:
       "the requester's operator standing, from the verified admin (ADR-053 D5)",
+    changeShown:
+      "the platform's own note on a change no person commented, a catalog key and values (TASK-209), set by the config page and the command bar's handlers",
     heldPrevious:
       "the value a held reset replaces, recorded by dispatchConfigTool when it holds it (review 12 H2)",
   },
@@ -1847,12 +1855,7 @@ async function announcePowerReduction(
     tags: { key },
   });
   // Only the holds of the scope that was reduced (review 13 L1).
-  await withdrawSupersededHolds(
-    key,
-    actorId,
-    "a power reduction was applied to the key",
-    scope
-  );
+  await withdrawSupersededHolds(key, actorId, POWER_REDUCED, scope);
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

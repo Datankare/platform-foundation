@@ -94,6 +94,11 @@ jest.mock("@/platform/auth/platform-config", () => {
   };
 });
 
+// hostile:role n/a: these routes' role cases are command-bar-holds and r10-one-hold [hostile:role]
+// hostile:self n/a: deciding one's own hold is command-bar-holds and r10-one-hold [hostile:self]
+// hostile:store-down n/a: a store down on these routes is command-bar-holds and r10-one-hold [hostile:store-down]
+// hostile:id-spelling n/a: an id spelled otherwise is admin-usability-routes and approver-rules [hostile:id-spelling]
+import { decisionWords } from "@/platform/errors/recorded-words";
 import { NextRequest } from "next/server";
 import {
   authAs,
@@ -352,9 +357,17 @@ describe("an approved hold withdrawn as stale or refused (round 21)", () => {
       });
       const after = await proposals.getById(id);
       expect(after).toMatchObject({ status: "rejected", decidedBy: REFUSED_HOLD_ACTOR });
-      expect(after?.decisionNote).not.toMatch(/withdrawn.*withdrawn/);
+      // The system's why is the catalog's record (TASK-209: it was English in decisionNote).
+      expect(after?.decisionNote).toBeUndefined();
+      const words = decisionWords(after!) ?? "";
+      expect(words).not.toMatch(/withdrawn.*withdrawn/);
       // Any held change's (round 23): a role change is no setting.
-      expect(after?.decisionNote).not.toMatch(/setting/);
+      expect(words).not.toMatch(/setting/);
+      expect(words).toMatch(
+        answer === "stale"
+          ? /withdrawn: stale: what it would replace changed since it was requested$/
+          : /withdrawn: refused: ".+" turns on a job that is now required/
+      );
       expect(withdrawnRecord()).toEqual([
         expect.objectContaining({
           actor: null,

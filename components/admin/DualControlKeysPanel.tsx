@@ -112,14 +112,16 @@ export function DualControlKeysPanel() {
     };
   }, []);
 
-  async function commit(next: string[], change: string) {
+  async function commit(next: string[]) {
     setBusy(true);
     setNotice(null);
     setError(null);
+    // No comment of the screen's own (TASK-209): it was the catalog's words, rendered here and
+    // stored as if a person wrote them. The change's record keeps the list before and after.
     const res = await callConfigAi("update_config", {
       key: "config.dual_control_keys",
       value: next,
-      changeComment: change,
+      changeComment: "",
       confirmed: true,
     });
     // The list is always dual-controlled: the change waits on another admin (a runtime hold), or
@@ -147,14 +149,11 @@ export function DualControlKeysPanel() {
       return;
     }
     setNewKey("");
-    void commit([...keys, k], t("comment_add", { key: k }));
+    void commit([...keys, k]);
   }
 
   function remove(k: string) {
-    void commit(
-      keys.filter((x) => x !== k),
-      t("comment_remove", { key: k })
-    );
+    void commit(keys.filter((x) => x !== k));
   }
 
   return (

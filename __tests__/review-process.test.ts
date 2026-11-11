@@ -101,12 +101,15 @@ describe("CLAUDE.md", () => {
     expect(text).toMatch(re);
   });
 
-  (existsSync(join(ROOT, "e2e-live")) ? it : it.skip)(
-    "in an app with a live journey: every user-facing feature adds its e2e-live step",
-    () => {
+  // Runs in every repository (TASK-209: a test skipped by a condition hides what it checks).
+  it("an app with a live journey says every user-facing feature adds its e2e-live step; the platform has none", () => {
+    if (existsSync(join(ROOT, "e2e-live")))
       expect(text).toMatch(/user-facing feature adds its `e2e-live\/` step/);
-    }
-  );
+    else
+      expect((JSON.parse(read("package.json")) as { name: string }).name).toBe(
+        "platform-foundation"
+      );
+  });
 });
 
 describe("REVIEW.md", () => {

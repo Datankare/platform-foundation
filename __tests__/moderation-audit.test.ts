@@ -5,6 +5,7 @@
  * privacy (no raw content), dual-write to store, resilient on store failure.
  */
 
+import { reasonsText, type Reasons } from "@/platform/moderation/reasons";
 import {
   hashInput,
   buildAuditRecord,
@@ -72,9 +73,18 @@ describe("buildAuditRecord", () => {
       categories: ["violence", "hate"],
       confidence: 0.87,
       severity: "high",
-      reason: "graphic content",
+      rawReason: "graphic content",
     },
-    reasoning: "Severity high >= block threshold medium for child (under 13).",
+    reasoning: [
+      {
+        key: "screens.moderation.reasons.block_threshold",
+        params: {
+          severity: "high",
+          threshold: "medium",
+          level: { key: "screens.moderation.levels.child" },
+        },
+      },
+    ],
     severityAdjustment: 0,
     contextFactors: [],
     attributeToUser: true,
@@ -96,7 +106,9 @@ describe("buildAuditRecord", () => {
     expect(record.confidence).toBeCloseTo(0.87);
     expect(record.severity).toBe("high");
     expect(record.actionTaken).toBe("block");
-    expect(record.reasoning).toContain("block threshold");
+    expect(reasonsText(record.reasoning as Reasons)).toBe(
+      "Adjusted severity high ≥ block threshold medium for child (under 13)."
+    );
     expect(record.severityAdjustment).toBe(0);
     expect(record.attributeToUser).toBe(true);
     expect(record.trajectoryId).toBe("traj-abc");

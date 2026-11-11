@@ -41,6 +41,7 @@ import { InMemoryActivityStateStore } from "@/platform/app-framework/memory-stat
 import {
   ActionNotRecordedError,
   ApprovedRunFailedError,
+  RUN_FAILED_NOTE,
   RUN_RAISED,
   executeActionPipeline,
 } from "@/platform/action-pipeline";
@@ -277,7 +278,8 @@ describe("r10 H2: an approved run claims its approval and ends the claim", () =>
     expect(err).toMatchObject({ released: true, reason: RUN_RAISED });
     expect(await store.getById(id)).toMatchObject({
       status: "approved",
-      lastRunError: expect.stringContaining(RUN_RAISED),
+      // Kept with why, as a catalog key the screens word (TASK-209: it was English).
+      lastRunError: RUN_FAILED_NOTE,
     });
     await runApproved(store, id, t);
     expect((await store.getById(id))?.status).toBe("executed");

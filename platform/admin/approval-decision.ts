@@ -72,7 +72,8 @@ import {
   readJsonBody,
   type InputSchemaNode,
 } from "@/platform/errors";
-import { ERROR_CODES, type ErrorCode } from "@/platform/errors/registry";
+import { ERROR_CODES, messageKey, type ErrorCode } from "@/platform/errors/registry";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { settlesWithinMinutes } from "@/platform/admin/approval-settle";
 import { LOST_COMMIT_CODE } from "@/platform/action-pipeline";
 import {
@@ -89,7 +90,18 @@ import {
   RUN_LEASE_SECONDS,
 } from "@/platform/admin/hold-expiry";
 import { sameId } from "@/platform/auth/same-id";
-import { requiredJobWithdrawalNote } from "@/platform/jobs/required-schedule";
+import {
+  APPROVED_AGAIN,
+  changeApproved,
+  approvedNote,
+  duplicateOf,
+  REFUSED_STALE,
+  refused,
+  requiredJob,
+  VERIFIED_APPLIED,
+  VERIFIED_NOT_APPLIED,
+  WITHDRAWN_RUN_FAILED,
+} from "@/platform/errors/recorded-text";
 
 /** The body this route reads (TASK-203, N-31): read against its schema — any other key refused. */
 const DECISION_BODY_SCHEMA: InputSchemaNode = {
@@ -114,12 +126,17 @@ export const DUPLICATE_HOLD_ACTOR = "system:duplicate-hold";
  */
 export const REFUSED_HOLD_ACTOR = "system:held-change-refused";
 
-/** The note on a hold refused for good, by its code (round 21, nit 2). */
-function refusedHoldNote(code: ErrorCode, proposal: ProposalRecord): string {
+/**
+ * The note on a hold refused for good, by its code (round 21, nit 2): the catalog's key and values
+ * (TASK-209: it was English) — a required job's rule, else the code's sentence.
+ */
+function refusedHoldNote(code: ErrorCode, proposal: ProposalRecord): ShownText {
   const key = proposalConfigKey(proposal.payload);
-  return code === "jobs.schedule_required" && key
-    ? `refused: ${requiredJobWithdrawalNote(key)}`
-    : `refused: ${code}`;
+  return refused(
+    code === "jobs.schedule_required" && key
+      ? requiredJob(key)
+      : shown(messageKey(code) as `errors.${string}`)
+  );
 }
 
 /**
@@ -137,7 +154,8 @@ async function withdrawRefusedHold(
     readonly source: string;
     readonly decidedBy: string;
     readonly proposal: ProposalRecord;
-    readonly note: string;
+    /** Why, the catalog's key and values (TASK-209). */
+    readonly note: ShownText;
   }
 ): Promise<boolean> {
   const { id, source, decidedBy, proposal, note } = args;
@@ -506,7 +524,7 @@ export async function decideApproval(
                   return clearTenantConfig(
                     record.configKey,
                     decidedBy,
-                    `Approved: ${record.changeComment}`,
+                    changeApproved(approvedNote(record)),
                     target.target.operator,
                     { expectPrevious, expectInherited: { value: record.proposedValue } }
                   );
@@ -515,7 +533,7 @@ export async function decideApproval(
                   record.configKey,
                   record.proposedValue,
                   decidedBy,
-                  `Approved: ${record.changeComment}`,
+                  changeApproved(approvedNote(record)),
                   "config_agent",
                   undefined,
                   target.target,
@@ -563,7 +581,12 @@ export async function decideApproval(
 /** A decided runtime hold's outcome: the audit outcome and the HTTP response. */
 interface DecisionOutcome {
   readonly success: boolean;
+  /** For the log (audited() logs it); never recorded. */
   readonly error?: string;
+  /** The refusal's code, recorded as the failure's reason (TASK-209). */
+  readonly errorCode?: ErrorCode;
+  /** What is true of the approval when its run failed: a records key, recorded (TASK-209). */
+  readonly auditReason?: `screens.records.${string}`;
   readonly response: Response;
 }
 
@@ -610,7 +633,7 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
     const withdrawn = await getProposalStore().withdraw(
       id,
       decidedBy,
-      note?.trim() || "rejected_after_run_failed"
+      note?.trim() || WITHDRAWN_RUN_FAILED
     );
     if (!withdrawn) {
       return {
@@ -631,7 +654,7 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
       id,
       "rejected",
       decidedBy,
-      note?.trim() || "verified that its run did not take effect"
+      note?.trim() || VERIFIED_NOT_APPLIED
     );
     if (!gone) {
       return {
@@ -651,7 +674,7 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
       id,
       "executed",
       decidedBy,
-      note?.trim() || "verified as applied"
+      note?.trim() || VERIFIED_APPLIED
     );
     if (!done) {
       return {
@@ -682,12 +705,13 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
         id,
         "approved",
         decidedBy,
-        note?.trim() || "approved again: verified that its run did not take effect"
+        note?.trim() || APPROVED_AGAIN
       );
       if (!again) {
         return {
           success: false,
           error: "not undecided (its run ended, or another admin decided it)",
+          errorCode: "approvals.decision_conflict",
           response: apiError("approvals.decision_conflict", { request }),
         };
       }
@@ -740,7 +764,7 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
           proposal: held.proposal,
           note:
             ran.kind === "stale"
-              ? "stale: what it would replace changed since it was requested"
+              ? REFUSED_STALE
               : refusedHoldNote(ran.code, held.proposal),
         });
         const code: ErrorCode = ran.kind === "stale" ? "approvals.stale" : ran.code;
@@ -820,6 +844,10 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
           error: kept
             ? `Approved but not applied; approval kept: ${error}`
             : `Approved but not applied; its run's claim not given back, undecided once its lease has passed: ${error}`,
+          // The record's reason: what is true of the approval, a catalog key (TASK-209).
+          auditReason: kept
+            ? "screens.records.audit_run_failed_kept"
+            : "screens.records.audit_run_failed_not_released",
           ...(ran.code === LOST_COMMIT_CODE ? { indeterminate: true } : {}),
           response: said,
         };
@@ -830,6 +858,7 @@ async function decideRuntimeHoldNow(args: RuntimeDecisionArgs): Promise<Decision
       return {
         success: false,
         error: `approval did not commit (${outcome.kind})`,
+        errorCode: "approvals.decision_conflict",
         response: apiError("approvals.decision_conflict", { request }),
       };
     }
@@ -910,7 +939,7 @@ async function refuseDuplicateHold(args: {
           id,
           "rejected",
           DUPLICATE_HOLD_ACTOR,
-          `duplicate of hold ${duplicate.holdId}, which stands`
+          duplicateOf(duplicate.holdId)
         );
         await Promise.resolve()
           .then(() => settleHeldTrajectory(getTrajectoryStore(), rejected))

@@ -11,6 +11,8 @@
  *   PostgresModerationStore — for production
  */
 
+import type { ShownText } from "@/platform/errors/shown-text";
+import { isRecordedFactor, isRecordedReasons, type RecordedReasons } from "./reasons";
 import type { ModerationStore, ModerationAuditRecord, AuditQueryOptions } from "./types";
 import { logger } from "@/lib/logger";
 import { withTenantTx } from "@/platform/data";
@@ -121,8 +123,10 @@ interface AuditRow {
   severity: string;
   action_taken: string;
   reasoning: string;
+  reasoning_shown: unknown;
   severity_adjustment: number;
   context_factors: string[] | null;
+  context_factors_shown: unknown;
   attribute_to_user: boolean;
   classifier_cost_usd: number;
   trajectory_id: string;
@@ -145,12 +149,13 @@ export class PostgresModerationStore implements ModerationStore {
           `insert into content_safety_audit (
              input_hash, direction, content_type, content_rating_level, user_id, triggered_by,
              classifier_output, categories_flagged, confidence, severity, action_taken,
-             reasoning, severity_adjustment, context_factors, attribute_to_user,
-             classifier_cost_usd, trajectory_id, agent_id, pipeline_latency_ms, request_id,
-             created_at)
+             reasoning, reasoning_shown, severity_adjustment, context_factors,
+             context_factors_shown, attribute_to_user, classifier_cost_usd, trajectory_id,
+             agent_id, pipeline_latency_ms, request_id, created_at)
            values ($1, $2::screening_direction, $3::content_type, $4, $5,
              $6::moderation_trigger, $7::jsonb, $8::text[], $9, $10, $11::moderation_action,
-             $12, $13, $14::text[], $15, $16, $17, $18, $19, $20, $21::timestamptz)`,
+             '', $12::jsonb, $13, '{}'::text[], $14::jsonb, $15, $16, $17, $18, $19, $20,
+             $21::timestamptz)`,
           [
             record.inputHash,
             record.direction,
@@ -163,9 +168,11 @@ export class PostgresModerationStore implements ModerationStore {
             record.confidence,
             record.severity,
             record.actionTaken,
-            record.reasoning,
+            // The reasons and factors as catalog keys and values (TASK-209); the English columns
+            // keep only what was recorded before them (migration 067).
+            JSON.stringify(recordedArray(record.reasoning)),
             record.severityAdjustment,
-            record.contextFactors,
+            JSON.stringify(record.contextFactors.filter((f) => typeof f !== "string")),
             record.attributeToUser,
             record.classifierCostUsd,
             record.trajectoryId,
@@ -193,8 +200,8 @@ export class PostgresModerationStore implements ModerationStore {
       const { rows } = await withTenantTx((tx) =>
         tx.query<AuditRow>(
           `select input_hash, direction, content_type, content_rating_level, user_id, triggered_by, classifier_output,
-             categories_flagged, confidence, severity, action_taken, reasoning,
-             severity_adjustment, context_factors, attribute_to_user, classifier_cost_usd,
+             categories_flagged, confidence, severity, action_taken, reasoning, reasoning_shown,
+             severity_adjustment, context_factors, context_factors_shown, attribute_to_user, classifier_cost_usd,
              trajectory_id, agent_id, pipeline_latency_ms, request_id, created_at
              from content_safety_audit
             where ($1::moderation_action is null or action_taken = $1::moderation_action)
@@ -231,8 +238,8 @@ export class PostgresModerationStore implements ModerationStore {
       const { rows } = await withTenantTx((tx) =>
         tx.query<AuditRow>(
           `select input_hash, direction, content_type, content_rating_level, user_id, triggered_by, classifier_output,
-             categories_flagged, confidence, severity, action_taken, reasoning,
-             severity_adjustment, context_factors, attribute_to_user, classifier_cost_usd,
+             categories_flagged, confidence, severity, action_taken, reasoning, reasoning_shown,
+             severity_adjustment, context_factors, context_factors_shown, attribute_to_user, classifier_cost_usd,
              trajectory_id, agent_id, pipeline_latency_ms, request_id, created_at
              from content_safety_audit
             where input_hash = $1
@@ -262,9 +269,17 @@ function mapRowToRecord(row: AuditRow): ModerationAuditRecord {
     confidence: row.confidence,
     severity: row.severity,
     actionTaken: row.action_taken as ModerationAuditRecord["actionTaken"],
-    reasoning: row.reasoning,
+    // The keys when the row has them; a row recorded before them, its stored text (067).
+    reasoning: isRecordedReasons(row.reasoning_shown)
+      ? row.reasoning_shown
+      : row.reasoning,
     severityAdjustment: row.severity_adjustment,
-    contextFactors: row.context_factors ?? [],
+    contextFactors: [
+      ...(Array.isArray(row.context_factors_shown)
+        ? (row.context_factors_shown as unknown[]).filter(isRecordedFactor)
+        : []),
+      ...(row.context_factors ?? []),
+    ],
     attributeToUser: row.attribute_to_user,
     classifierCostUsd: row.classifier_cost_usd,
     trajectoryId: row.trajectory_id,
@@ -302,4 +317,9 @@ export function setModerationStore(store: ModerationStore): ModerationStore {
 
 export function resetModerationStore(): void {
   writeCurrentStore(new InMemoryModerationStore());
+}
+
+/** Reasons to store as keys: a list as it is; a text recorded before them is not rewritten. */
+function recordedArray(reasons: RecordedReasons): readonly ShownText[] {
+  return typeof reasons === "string" ? [] : reasons;
 }

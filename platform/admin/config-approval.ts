@@ -54,7 +54,14 @@ import type {
   ConfigScope,
 } from "./types";
 import { sameId } from "@/platform/auth/same-id";
-import { requiredJobWithdrawalNote } from "@/platform/jobs/required-schedule";
+import {
+  configWithdrawn,
+  isRecordedText,
+  noteColumns,
+  requiredJob,
+  type RecordedNote,
+} from "@/platform/errors/recorded-text";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 
 // ---------------------------------------------------------------------------
 // DB row shape
@@ -71,6 +78,8 @@ interface ApprovalRow {
   status: string;
   reviewed_by: string | null;
   review_comment: string | null;
+  change_shown: unknown;
+  review_shown: unknown;
   reviewed_at: Date | string | null;
   expires_at: Date | string;
   created_at: Date | string;
@@ -91,10 +100,12 @@ function mapApprovalRow(row: ApprovalRow): ConfigApprovalRecord {
     proposedValue: row.proposed_value,
     requestedBy: row.requested_by,
     changeComment: row.change_comment,
+    ...(isRecordedText(row.change_shown) ? { changeShown: row.change_shown } : {}),
     impactSummary: row.impact_summary,
     status: parseApprovalStatus(row.status),
     reviewedBy: row.reviewed_by,
     reviewComment: row.review_comment,
+    ...(isRecordedText(row.review_shown) ? { reviewShown: row.review_shown } : {}),
     reviewedAt: row.reviewed_at === null ? null : iso(row.reviewed_at),
     expiresAt: iso(row.expires_at),
     createdAt: iso(row.created_at),
@@ -194,13 +205,14 @@ export async function requestApproval(params: {
   currentValue: unknown;
   proposedValue: unknown;
   requestedBy: string;
-  changeComment: string;
-  impactSummary?: string;
+  /** The requester's comment, as written — or the platform's own note (TASK-209). */
+  changeComment: RecordedNote;
   /** What the change is to; default the platform default (single-tenant deployments). */
   scope?: ConfigScope;
   /** "reset": the tenant's own value is removed when approved (scope "tenant" only). */
   action?: ConfigApprovalAction;
 }): Promise<ConfigApprovalResult> {
+  const comment = noteColumns(params.changeComment);
   try {
     // Nothing is filed that no one else could approve (N-24): refused now, naming the setting.
     const noOne = await configChangeWithoutApprover(
@@ -238,9 +250,9 @@ export async function requestApproval(params: {
         return existing.rows[0]?.status === "pending" ? null : SETTLING;
       const { rows } = await tx.query<ApprovalRow>(
         `insert into config_pending_approvals
-           (config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, scope, action)
-         values ($1, $2::jsonb, $3::jsonb, $4::uuid, $5, $6, $7, $8)
-         returning id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action`,
+           (config_key, current_value, proposed_value, requested_by, change_comment, change_shown, scope, action)
+         values ($1, $2::jsonb, $3::jsonb, $4::uuid, $5, $6::jsonb, $7, $8)
+         returning id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, change_shown, review_shown, reviewed_at, expires_at, created_at, scope, action`,
         [
           params.configKey,
           // jsonb columns take the value itself (release review, Sprint 7X: a stringified value
@@ -248,8 +260,8 @@ export async function requestApproval(params: {
           JSON.stringify(params.currentValue ?? null),
           JSON.stringify(params.proposedValue ?? null),
           params.requestedBy,
-          params.changeComment,
-          params.impactSummary ?? null,
+          comment.text ?? "",
+          comment.shown ? JSON.stringify(comment.shown) : null,
           scope,
           params.action ?? "set",
         ]
@@ -416,7 +428,8 @@ export async function approveAndApply(
     await withTenantTx((tx) =>
       tx.query(
         `update config_pending_approvals
-            set status = 'pending', reviewed_by = null, review_comment = null, reviewed_at = null
+            set status = 'pending', reviewed_by = null, review_comment = null, review_shown = null,
+                reviewed_at = null
           where id = $1::uuid and status = 'approved'`,
         [approvalId]
       )
@@ -452,20 +465,26 @@ async function withdrawUnapplied(
     return await withTenantTx(async (tx) => {
       const { rows } = await tx.query<{ id: string }>(
         `update config_pending_approvals
-            set status = 'rejected', reviewed_by = null, review_comment = $2
+            set status = 'rejected', reviewed_by = null, review_comment = null, review_shown = $2::jsonb
           where id = $1::uuid and status = 'approved'
           returning id`,
         [
           record.id,
-          `${
-            code === "jobs.schedule_required"
-              ? `withdrawn by the system: ${requiredJobWithdrawalNote(record.configKey)}`
-              : `withdrawn by the system: ${
-                  reason === "stale"
-                    ? `stale — "${record.configKey}" changed since it was requested`
-                    : `refused — "${record.configKey}" no longer takes the value requested`
-                }`
-          } (approved by ${record.reviewedBy ?? "unknown"} at ${record.reviewedAt ?? "unknown"})`,
+          // The system's record, a catalog key and values (TASK-209: it was English): why, and
+          // who had approved it and when.
+          JSON.stringify(
+            configWithdrawn(
+              code === "jobs.schedule_required"
+                ? requiredJob(record.configKey)
+                : shown(
+                    reason === "stale"
+                      ? "screens.records.config_stale"
+                      : "screens.records.config_refused",
+                    { key: record.configKey }
+                  ),
+              { by: record.reviewedBy, at: record.reviewedAt }
+            )
+          ),
         ]
       );
       if (!rows.length) return false;
@@ -633,7 +652,9 @@ export const APPROVAL_WITHDRAWAL_MAX_BATCHES = 20;
 export async function withdrawPendingApprovalsForKey(
   configKey: string,
   actorId: string,
-  note: string,
+  /** Why, the platform's own note (a catalog key and values: TASK-209). */
+  note: ShownText,
+  /** Why, for the audit record: a code. */
   cause: string,
   scope: ConfigScope
 ): Promise<{ withdrawn: string[]; incomplete: boolean; remaining: number }> {
@@ -650,7 +671,8 @@ export async function withdrawPendingApprovalsForKey(
     const ids = await withTenantTx(async (tx) => {
       const { rows } = await tx.query<{ id: string }>(
         `update config_pending_approvals
-            set status = 'rejected', reviewed_by = $2::uuid, review_comment = $3, reviewed_at = now()
+            set status = 'rejected', reviewed_by = $2::uuid, review_comment = null,
+                review_shown = $3::jsonb, reviewed_at = now()
           where id in (select id from config_pending_approvals
                         where config_key = $1 and status = 'pending' and scope = $4
                         order by created_at
@@ -660,7 +682,7 @@ export async function withdrawPendingApprovalsForKey(
         [
           configKey,
           isUser ? actorId : null,
-          note.slice(0, 1000),
+          JSON.stringify(note),
           scope,
           APPROVAL_WITHDRAWAL_BATCH,
         ]
@@ -732,7 +754,7 @@ async function reviewChange(
       // Locked for the decision: two reviewers at once serialise here, and the second sees
       // the first's outcome (A4).
       const { rows } = await tx.query<ApprovalRow>(
-        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action
+        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, change_shown, review_shown, reviewed_at, expires_at, created_at, scope, action
            from config_pending_approvals where id = $1::uuid for update`,
         [approvalId]
       );
@@ -775,7 +797,7 @@ async function reviewChange(
             set status = $2::config_approval_status, reviewed_by = $3::uuid,
                 review_comment = $4, reviewed_at = now()
           where id = $1::uuid and status = 'pending'
-          returning id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action`,
+          returning id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, change_shown, review_shown, reviewed_at, expires_at, created_at, scope, action`,
         [approvalId, newStatus, reviewerId, reviewComment]
       );
       if (!updated.rows[0]) {
@@ -821,7 +843,7 @@ export async function listApprovals(
   try {
     const { rows } = await withTenantTx((tx) =>
       tx.query<ApprovalRow>(
-        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action
+        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, change_shown, review_shown, reviewed_at, expires_at, created_at, scope, action
            from config_pending_approvals
           where ($1::text is null or status = $1::config_approval_status)
             and ($2::text is null or config_key = $2)
@@ -856,7 +878,7 @@ export async function getApproval(
   try {
     const { rows } = await withTenantTx((tx) =>
       tx.query<ApprovalRow>(
-        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, reviewed_at, expires_at, created_at, scope, action
+        `select id, config_key, current_value, proposed_value, requested_by, change_comment, impact_summary, status, reviewed_by, review_comment, change_shown, review_shown, reviewed_at, expires_at, created_at, scope, action
            from config_pending_approvals where id = $1::uuid`,
         [approvalId]
       )

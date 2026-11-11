@@ -42,6 +42,7 @@ import * as data from "@/platform/data";
 import { withOwnerTx } from "@/platform/data";
 import { GET as approvalsGET } from "@/app/api/admin/approvals/route";
 import { GET as auditGET } from "@/app/api/admin/audit/route";
+import { renderMessage } from "@/platform/errors/messages";
 import { GET as perAccountGET } from "@/app/api/admin/per-account/route";
 import { GET as erasuresGET } from "@/app/api/operator/erasures/route";
 import * as names from "@/platform/admin/account-names";
@@ -276,7 +277,12 @@ dbDescribe(
           [
             superAdmin.userId,
             erasedUser,
-            JSON.stringify({ type: `usability-${RUN}` }),
+            // TASK-209: a run's reason and a change's note, as the platform records them.
+            JSON.stringify({
+              type: `usability-${RUN}`,
+              reason: "screens.records.run_raised",
+              changeShown: { key: "screens.records.changed_on_page" },
+            }),
             a.id,
             otherTenantUser,
           ]
@@ -315,6 +321,13 @@ dbDescribe(
       const foreign = mine.find((e) => e.targetId === otherTenantUser);
       // An id that names no account of this tenant: no name, the id only as a detail.
       expect(foreign?.target).toBeNull();
+      // The platform's words in the details are the catalog's, in words (TASK-209), never a key.
+      expect(JSON.parse(mine[0]!.details)).toEqual({
+        type: `usability-${RUN}`,
+        reason: renderMessage("screens.records.run_raised"),
+        changeShown: renderMessage("screens.records.changed_on_page"),
+      });
+      expect(mine[0]!.details).not.toContain("screens.");
     });
 
     it("[hostile:role] the audit log stays its permission's: a free account is refused", async () => {

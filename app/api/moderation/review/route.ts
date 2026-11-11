@@ -16,6 +16,8 @@
  * account, which source) before it is filed; with no record it is not filed.
  */
 
+import { isShownText } from "@/platform/errors/shown-text";
+import { CATALOGS, DEFAULT_LOCALE, lookup } from "@/platform/errors/messages";
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
 import { auditedResponse } from "@/platform/auth/audit";
@@ -63,11 +65,61 @@ const B: InputSchemaNode = { type: "boolean" };
 const NAMES: InputSchemaNode = { type: "array", items: S };
 
 /**
+ * A moderation reason and a context factor as the pipeline records them (TASK-209): a catalog key
+ * and its named values (platform/moderation/reasons.ts) — never English. Closed: only the values
+ * the catalog's moderation messages name.
+ */
+const KEY_ONLY: InputSchemaNode = { type: "object", properties: { key: S } };
+const FACTOR: InputSchemaNode = {
+  type: "object",
+  properties: {
+    key: S,
+    params: {
+      type: "object",
+      properties: { contentType: S, reduction: S, source: S, target: S },
+    },
+  },
+};
+const REASON: InputSchemaNode = {
+  type: "object",
+  properties: {
+    key: S,
+    params: {
+      type: "object",
+      properties: {
+        categories: S,
+        severity: S,
+        confidence: S,
+        from: S,
+        to: S,
+        contentType: S,
+        reduction: S,
+        threshold: S,
+        level: KEY_ONLY,
+        factors: { type: "array", items: FACTOR },
+      },
+    },
+  },
+};
+const CLASSIFIER_NOTE: InputSchemaNode = {
+  type: "object",
+  properties: {
+    key: S,
+    params: {
+      type: "object",
+      properties: { problems: { type: "array", items: KEY_ONLY }, action: S, matches: S },
+    },
+  },
+};
+
+/**
  * The body this route reads (TASK-203, N-31): an item for the queue — a moderation result as the
  * pipeline makes one (ModerationResult, its classifier output included) and, optionally, its
  * explanation chain. Any other key, at any depth, is refused. An explanation step's `data` takes
  * no key here: the pipeline enqueues its own items in process (review-service); a caller of the
- * route sends the chain's text, never data of its own shape.
+ * route sends the chain's catalog keys (its description and conclusion, TASK-209), never data of
+ * its own shape. A reason, a factor and a classifier's note are catalog keys and their values;
+ * the classifier model's own words, if any, are `rawReason`.
  */
 const ENQUEUE_BODY_SCHEMA: InputSchemaNode = {
   type: "object",
@@ -90,13 +142,14 @@ const ENQUEUE_BODY_SCHEMA: InputSchemaNode = {
             categories: NAMES,
             confidence: N,
             severity: S,
-            reason: S,
+            rawReason: S,
+            note: CLASSIFIER_NOTE,
             unjudged: B,
           },
         },
-        reasoning: S,
+        reasoning: { type: "array", items: REASON },
         severityAdjustment: N,
-        contextFactors: NAMES,
+        contextFactors: { type: "array", items: FACTOR },
         attributeToUser: B,
         pipelineLatencyMs: N,
         classifierCostUsd: N,
@@ -117,18 +170,31 @@ const ENQUEUE_BODY_SCHEMA: InputSchemaNode = {
             type: "object",
             properties: {
               phase: S,
-              description: S,
+              description: KEY_ONLY,
               data: { type: "object", properties: {} },
               durationMs: N,
             },
           },
         },
-        conclusion: S,
+        conclusion: KEY_ONLY,
         createdAt: S,
       },
     },
   },
 };
+
+/** A list of catalog keys under `prefix`, each one the catalog has (its values its own). */
+function isCatalogList(value: unknown, prefix: string): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (v) =>
+        isShownText(v) &&
+        v.key.startsWith(prefix) &&
+        lookup(CATALOGS[DEFAULT_LOCALE], v.key) !== undefined
+    )
+  );
+}
 
 function isModerationResultShape(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -136,9 +202,10 @@ function isModerationResultShape(value: unknown): boolean {
   return (
     typeof m.action === "string" &&
     ["allow", "warn", "block", "escalate"].includes(m.action) &&
-    typeof m.reasoning === "string" &&
+    // Reasons and factors as the pipeline records them: keys the catalog has (TASK-209).
+    isCatalogList(m.reasoning, "screens.moderation.reasons.") &&
     typeof m.trajectoryId === "string" &&
-    Array.isArray(m.contextFactors) &&
+    isCatalogList(m.contextFactors, "screens.moderation.factors.") &&
     Array.isArray(m.blocklistMatches)
   );
 }

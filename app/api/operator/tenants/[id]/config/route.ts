@@ -15,7 +15,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/platform/auth/admin-guard";
 import { listEnhancedConfig } from "@/platform/auth/platform-config";
-import { configPutResponse, configResetResponse } from "@/platform/admin/config-http";
+import {
+  configPutResponse,
+  configResetResponse,
+  describedByCatalog,
+} from "@/platform/admin/config-http";
+import { SET_BY_OPERATOR } from "@/platform/errors/recorded-text";
 import { internalError } from "@/platform/errors";
 import { inTargetTenant } from "@/platform/tenancy/operator-target";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -31,7 +36,10 @@ export const GET = tenantRoute(async function GET(
   const { id } = await params;
   return inTargetTenant(id, request, async () => {
     try {
-      return NextResponse.json({ tenantId: id, entries: await listEnhancedConfig() });
+      return NextResponse.json({
+        tenantId: id,
+        entries: (await listEnhancedConfig()).map(describedByCatalog),
+      });
     } catch (error) {
       return internalError(error, { request, context: "Tenant settings read failed" });
     }
@@ -46,7 +54,7 @@ export const PUT = tenantRoute(async function PUT(
   if (guard.error) return guard.error;
   const { id } = await params;
   return inTargetTenant(id, request, () =>
-    configPutResponse(request, guard.admin, { scope: "tenant" })
+    configPutResponse(request, guard.admin, { scope: "tenant", note: SET_BY_OPERATOR })
   );
 });
 

@@ -62,7 +62,7 @@ export async function isOutputAllowed(
       logger.info("Output withheld by content screening", {
         requestId: context.requestId,
         route: context.route,
-        reason: result.reason,
+        reasons: result.reasons,
       });
     }
     return result.safe;

@@ -19,6 +19,7 @@ jest.mock("@/platform/auth/platform-config", () => ({
   }),
 }));
 
+import { renderShown } from "@/platform/errors/shown-text";
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
 import type {
   AIRequest,
@@ -97,7 +98,7 @@ describe("classifyContent", () => {
     expect(result.categories).toContain("violence");
     expect(result.categories).toContain("hate");
     expect(result.severity).toBe("high");
-    expect(result.reason).toBe("graphic violence");
+    expect(result.rawReason).toBe("graphic violence");
   });
 
   it("passes correct tier and use case to orchestrator", async () => {
@@ -127,14 +128,14 @@ describe("classifyContent", () => {
 
     const result = await classifyContent("test");
     expect(result.safe).toBe(false);
-    expect(result.reason).toContain("unexpected response type");
+    expect(renderShown(result.note!)).toContain("unexpected response type");
   });
 
   it("fails closed on orchestrator error", async () => {
     mockComplete.mockRejectedValueOnce(new Error("Provider down"));
     const result = await classifyContent("test");
     expect(result.safe).toBe(false);
-    expect(result.reason).toBeDefined();
+    expect(result.note).toEqual({ key: "screens.moderation.classifier.unavailable" });
   });
 
   it("fails closed on malformed JSON response", async () => {
@@ -155,7 +156,7 @@ describe("checkSafety", () => {
     );
     const result = await checkSafety("clean text");
     expect(result.safe).toBe(true);
-    expect(result.reason).toBeUndefined();
+    expect(result.reasons).toBeUndefined();
   });
 
   it("returns SafetyResult with safe:false and reason", async () => {
@@ -164,14 +165,16 @@ describe("checkSafety", () => {
     );
     const result = await checkSafety("bad text");
     expect(result.safe).toBe(false);
-    expect(result.reason).toBe("hate speech");
+    expect(result.rawReason).toBe("hate speech");
   });
 
   it("fails closed on error — returns safe:false", async () => {
     mockComplete.mockRejectedValueOnce(new Error("timeout"));
     const result = await checkSafety("test");
     expect(result.safe).toBe(false);
-    expect(result.reason).toBeDefined();
+    expect(result.reasons).toEqual([
+      { key: "screens.moderation.classifier.unavailable" },
+    ]);
   });
 
   it("accepts optional requestId", async () => {

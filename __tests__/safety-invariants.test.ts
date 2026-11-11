@@ -119,13 +119,15 @@ describe("safety.ts — fail-closed invariants", () => {
     } satisfies AIResponse);
     const result = await checkSafety("violent text");
     expect(result.safe).toBe(false);
-    expect(result.reason).toBe("violent content");
+    expect(result.rawReason).toBe("violent content");
   });
 
   it("fails closed when orchestrator throws", async () => {
     mockComplete.mockRejectedValueOnce(new Error("circuit breaker open"));
     const result = await checkSafety("test input");
     expect(result.safe).toBe(false);
-    expect(result.reason).toBeDefined();
+    expect(result.reasons).toEqual([
+      { key: "screens.moderation.classifier.unavailable" },
+    ]);
   });
 });

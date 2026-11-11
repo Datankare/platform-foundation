@@ -25,24 +25,15 @@ import { withTenantTx } from "@/platform/data";
 import { CONFIG_HOLD_TOOLS } from "@/platform/admin/hold-keys";
 import { namedAccounts, type NamedAccount } from "@/platform/admin/account-names";
 import { getEnhancedConfig, getPermissionTier } from "@/platform/auth/platform-config";
-import { shown, type ShownText } from "@/platform/errors/shown-text";
-import { isErrorCode, messageKey, type ErrorCode } from "@/platform/errors/registry";
-import {
-  ATOMIC_RECOVERED_NOTE,
-  INDETERMINATE_NOTE,
-} from "@/platform/agents/proposal-store";
+import { isShownText, shown, type ShownText } from "@/platform/errors/shown-text";
+import { runNoteShown } from "@/platform/errors/recorded-words";
 
 /**
- * A run's recorded note as the screen shows it (TASK-206, N-102): a registry code by its sentence,
- * the store's own notes by the catalog's words, anything else as recorded (an operator's note).
+ * A run's recorded note as the screen shows it (TASK-206, N-102; TASK-209): a registry code by its
+ * sentence, the platform's own notes (`screens.held.note_*` keys) by the catalog's words, anything
+ * else as recorded (a note written before codes).
  */
-export function runNote(note: string): ShownText | string {
-  if (isErrorCode(note))
-    return shown(messageKey(note as ErrorCode) as `errors.${string}`);
-  if (note === INDETERMINATE_NOTE) return shown("screens.held.note_indeterminate");
-  if (note === ATOMIC_RECOVERED_NOTE) return shown("screens.held.note_atomic_recovered");
-  return note;
-}
+export const runNote = runNoteShown;
 
 export { proposalConfigKey } from "@/platform/admin/hold-authority";
 
@@ -189,6 +180,12 @@ export interface PendingApproval {
   readonly change?: ConfigChangeView;
   /** The requester's own comment on the change (N-61) — only to a viewer who could decide it. */
   readonly comment?: string;
+  /**
+   * The platform's own note on the change when no person wrote one ("Changed on the config page",
+   * a command bar summary): a catalog key and values (TASK-209 — it was English in the comment),
+   * worded by the screen. Only to a viewer who could decide it.
+   */
+  readonly commentShown?: ShownText;
   readonly createdAt: string;
 }
 
@@ -481,6 +478,9 @@ export async function listPendingApprovals(
         ? await heldConfigChange(p).catch(() => undefined)
         : undefined;
       const comment = decider ? shownComment(p.payload["changeComment"]) : undefined;
+      // The platform's note on a held change a config tool made (TASK-209), when no person wrote one.
+      const noted = p.payload["changeShown"];
+      const heldShown = decider && !comment && isShownText(noted) ? noted : undefined;
       return {
         source: "runtime",
         id: p.proposalId,
@@ -501,6 +501,7 @@ export async function listPendingApprovals(
         ...(summary ? { summary } : {}),
         ...(change ? { change } : {}),
         ...(comment ? { comment } : {}),
+        ...(heldShown ? { commentShown: heldShown } : {}),
         reason:
           p.status === "indeterminate" || p.status === "approved"
             ? shown(
@@ -527,6 +528,8 @@ export async function listPendingApprovals(
       // Its values and comment (N-61): to a viewer who could decide it, as a hold's summary.
       const decider = !!viewer && holds(viewer, requiredPermission);
       const comment = decider ? shownComment(c.changeComment) : undefined;
+      const commentShown =
+        decider && !comment && c.changeShown ? (c.changeShown as ShownText) : undefined;
       return {
         source: "config-approval",
         id: c.id,
@@ -547,6 +550,7 @@ export async function listPendingApprovals(
             }
           : {}),
         ...(comment ? { comment } : {}),
+        ...(commentShown ? { commentShown } : {}),
         reason: shown("screens.held.reason_two_person", { key: c.configKey }),
         createdAt: c.createdAt,
       };

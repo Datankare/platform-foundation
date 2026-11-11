@@ -489,6 +489,103 @@ select (select checksum from public.applied_migrations
             or steps::text ~ '"note": "Approved by \S+ at \S+, (never run; withdrawn|its run undecided; withdrawn, verified not applied): ') as run_notes_left;
 ```
 
+**Release candidate (TASK-209):** `067_recorded_notes_written_by_code.sql`, after 066, on its own:
+
+```bash
+pbcopy < supabase/migrations/067_recorded_notes_written_by_code.sql
+```
+
+It adds `config_pending_approvals.change_shown` and `review_shown`,
+`platform_config_history.change_shown` and `review_queue.notes_shown` (each a screen message's key
+and values, checked to be one), records `job_claim`'s dead lease as the code `lease_expired`, and
+moves the platform's English notes that TypeScript wrote into their keys and values or codes: a
+lapsed or undecided hold's note, a decision's default note, a refused, stale, superseded or
+duplicate hold's, the action pipeline's revised and stale-state notes (into `decision_shown`); a
+kept run's note and "marked executed by …" (`last_run_error`: a code, or the record); a two-person
+approval withdrawn by the system, 062's note, a request's comment the platform made, and the
+impact summary (cleared); a setting change's comment the platform made ("Changed on the config
+page", "Approved: …", an emergency suspension, the command bar's); the Sentinel's ban reason
+(`ban_note`) and strike reason (a code); the escalation reaper's note; the effect ledger's
+reasons; a dead lease's text in `jobs` and `job_schedule_outcomes`; and the moderation
+pipeline's reasons — `content_safety_audit` gains `reasoning_shown` and `context_factors_shown`,
+the Guardian's reasoning (part by part, all or none), each context factor and the classifier's
+notes (in `classifier_output` and a review case's `moderation_result`: the platform's as `note`,
+the model's own words as `rawReason`) become keys and values. A text that does not match exactly
+(a person's) is left as it is — a reasoning left so reads, on the review dashboard, as recorded
+before reasons were coded, its text behind a disclosure; what a person wrote inside a composed one
+is kept as written. Applying 050 again later puts back 050's `job_claim`: apply 067 after it.
+Brief locks on the five tables that gain a column (nullable, no rewrite), then the matching rows
+are updated (`agent_trajectories` read once with a text prefilter; `content_safety_audit`, a row
+per screening, read once); `lock_timeout` 5 s. Then this answers one
+row, its checksum what
+`node scripts/migration-checksum.mjs supabase/migrations/067_recorded_notes_written_by_code.sql`
+prints, and every count 0:
+
+```sql
+select (select checksum from public.applied_migrations
+         where filename = '067_recorded_notes_written_by_code.sql') as checksum,
+       (select count(*) from public.proposals
+         where decision_note ~ '^expired: not run within \d+ days? of its approval$'
+            or decision_note ~ '^expired: not decided within \d+ days? of being requested$'
+            or decision_note in ('rejected_after_run_failed',
+                                 'withdrawn: not approved again after its run failed',
+                                 'verified that its run did not take effect',
+                                 'verified as applied',
+                                 'approved again: verified that its run did not take effect',
+                                 'revised',
+                                 'stale: what it would replace changed since it was requested',
+                                 'withdrawn: superseded — a power reduction was applied to the key')
+            or decision_note ~ '^state advanced -?\d+ -> -?\d+; approval is stale$'
+            or decision_note ~ '^duplicate of hold \S+, which stands$'
+            or decision_note ~ '^refused: ([a-z][a-z0-9_]*(\.[a-z0-9_]+)+|"[^"]+" turns on a job that is now required — always on, and set only as the platform default)$'
+            or decision_note ~ '^withdrawn: superseded — every agent was suspended: ') as decision_notes_left,
+       (select count(*) from public.proposals
+         where last_run_error ~ '^(marked executed by \S+: |run failed, approval kept: )'
+            or last_run_error in ('commit failed, approval kept',
+                                  'state moved before commit, approval kept',
+                                  'run did not end within its lease; its outcome is unknown — verify, then mark it executed, approve it again or withdraw it',
+                                  'atomic run did not end within its lease; its transaction rolled back with its effect, approval kept')) as run_notes_left,
+       (select count(*) from public.agent_trajectories
+         where steps::text ~ '"note": "(expired: not (run|decided) within |rejected_after_run_failed"|withdrawn: (not approved again|superseded)|verified (that its run did not|as applied)|approved again: verified|revised"|state advanced |duplicate of hold |stale: what it would|refused: |marked executed by |run did not end within its lease|atomic run did not end|commit failed, approval kept"|state moved before commit|run failed, approval kept: )') as step_notes_left,
+       (select count(*) from public.config_pending_approvals
+         where review_comment ~ '^withdrawn by the system: '
+            or review_comment ~ '^withdrawn: superseded — (a power reduction was applied to the key$|every agent was suspended: )'
+            or change_comment in ('Changed on the config page', 'Tenant settings',
+                                  'Set by an operator for this tenant', 'Use the platform default')
+            or impact_summary like 'Changing "%') as approval_notes_left,
+       (select count(*) from public.platform_config_history
+         where change_comment in ('Changed on the config page', 'Tenant settings',
+                                  'Set by an operator for this tenant', 'Use the platform default')
+            or change_comment ~ '^(Approved: |Emergency: every agent suspended — )'
+            or change_comment ~ '^(Add \S+ to|Remove \S+ from) dual-control$'
+            or change_comment ~ '^Command bar: (Registered agent \S+|(Reactivated|Suspended) agent \S+|Removed every capability from the scope of \S+|Set the scope of \S+ to .+|Set the token ceiling of \S+ to [0-9,]+ seconds?|Removed capability mapping “[^”]+”|Mapped “[^”]+” to .+)$') as change_comments_left,
+       (select count(*) from public.users
+         where ban_reason = 'Automatic ban: strike threshold exceeded') as ban_reasons_left,
+       (select count(*) from public.review_queue
+         where reviewer_notes ~ '^Auto-blocked: escalation exceeded the [0-9]+(\.[0-9]+)?h SLA without human review \(ADR-041\)\.$') as reviewer_notes_left,
+       (select count(*) from public.user_strikes s
+         where (regexp_match(s.reason, '^Guardian blocked content: (.+) \(severity: (\S+), triggered by: ([a-z][a-z-]*)\)\.$'))[1] = s.category
+           and (regexp_match(s.reason, '^Guardian blocked content: (.+) \(severity: (\S+), triggered by: ([a-z][a-z-]*)\)\.$'))[2] = s.severity) as strike_reasons_left,
+       (select count(*) from public.effect_ledger
+         where error in ('the call may have taken effect: it timed out or its connection dropped (the detail is in the log)',
+                         'the call failed (the detail is in the log)',
+                         'unresolved entry found on retry; downstream state unknown')) as effect_errors_left,
+       (select count(*) from public.jobs
+         where last_error = 'The worker running the last attempt stopped before it finished (its lease expired).')
+       + (select count(*) from public.job_schedule_outcomes
+         where last_error = 'The worker running the last attempt stopped before it finished (its lease expired).') as job_errors_left,
+       (select count(*) from public.content_safety_audit
+         where reasoning ~ '^((Empty text — no content to screen\.|Context: (unknown-content-type: treated as generation|[a-z][a-z-]*-content: severity reduced by [0-9]+|ai-output: strikes not attributed to user|clean-history: user has long clean record|repeat-flags: 3\+ flags in last 24h|language-context: \S+ → \S+)(; (unknown-content-type: treated as generation|[a-z][a-z-]*-content: severity reduced by [0-9]+|ai-output: strikes not attributed to user|clean-history: user has long clean record|repeat-flags: 3\+ flags in last 24h|language-context: \S+ → \S+))*\.|Blocklist hit: [a-z_, -]+ \(severity: [a-z]+\)\. Blocked immediately — classifier skipped\.|Classifier declined to assess the content \(declined\) — withheld for human review\.|Classifier unavailable — content withheld at every rating level \(fail-closed\)\.|Classifier answer unreadable — withheld for human review at every rating level \(fail-closed\)\.|Classifier: safe \(confidence [0-9]+\.[0-9]+\)\.|Low-severity blocklist match — warning applied\.|Config unavailable — using fail-closed thresholds\.|Severity adjusted: [a-z]+ → [a-z]+ \([a-z][a-z-]* context, -[0-9]+\)\.|Confidence [0-9]+\.[0-9]+ below threshold [0-9.]+ for (child \(under 13\)|teen \(13–17\)|adult \(18\+\)|fail-closed \(config unavailable\)) — escalating for human review\.|Adjusted severity [a-z]+ ≥ (block|warn) threshold [a-z]+ for (child \(under 13\)|teen \(13–17\)|adult \(18\+\)|fail-closed \(config unavailable\))\.|Adjusted severity [a-z]+ below warn threshold for (child \(under 13\)|teen \(13–17\)|adult \(18\+\)|fail-closed \(config unavailable\)) — allowed\.|Screening run did not complete — escalated for human review \(fail-closed\)\.)( |$))+$') as moderation_reasons_left,
+       (select count(*) from public.content_safety_audit
+         where exists (select 1 from unnest(context_factors) f where f ~ '^(unknown-content-type: treated as generation|[a-z][a-z-]*-content: severity reduced by [0-9]+|ai-output: strikes not attributed to user|clean-history: user has long clean record|repeat-flags: 3\+ flags in last 24h|language-context: \S+ → \S+)$')
+            or classifier_output ? 'reason') as moderation_factors_left,
+       (select count(*) from public.review_queue
+         where moderation_result ->> 'reasoning' ~ '^((Empty text — no content to screen\.|Context: (unknown-content-type: treated as generation|[a-z][a-z-]*-content: severity reduced by [0-9]+|ai-output: strikes not attributed to user|clean-history: user has long clean record|repeat-flags: 3\+ flags in last 24h|language-context: \S+ → \S+)(; (unknown-content-type: treated as generation|[a-z][a-z-]*-content: severity reduced by [0-9]+|ai-output: strikes not attributed to user|clean-history: user has long clean record|repeat-flags: 3\+ flags in last 24h|language-context: \S+ → \S+))*\.|Blocklist hit: [a-z_, -]+ \(severity: [a-z]+\)\. Blocked immediately — classifier skipped\.|Classifier declined to assess the content \(declined\) — withheld for human review\.|Classifier unavailable — content withheld at every rating level \(fail-closed\)\.|Classifier answer unreadable — withheld for human review at every rating level \(fail-closed\)\.|Classifier: safe \(confidence [0-9]+\.[0-9]+\)\.|Low-severity blocklist match — warning applied\.|Config unavailable — using fail-closed thresholds\.|Severity adjusted: [a-z]+ → [a-z]+ \([a-z][a-z-]* context, -[0-9]+\)\.|Confidence [0-9]+\.[0-9]+ below threshold [0-9.]+ for (child \(under 13\)|teen \(13–17\)|adult \(18\+\)|fail-closed \(config unavailable\)) — escalating for human review\.|Adjusted severity [a-z]+ ≥ (block|warn) threshold [a-z]+ for (child \(under 13\)|teen \(13–17\)|adult \(18\+\)|fail-closed \(config unavailable\))\.|Adjusted severity [a-z]+ below warn threshold for (child \(under 13\)|teen \(13–17\)|adult \(18\+\)|fail-closed \(config unavailable\)) — allowed\.|Screening run did not complete — escalated for human review \(fail-closed\)\.)( |$))+$'
+            or exists (select 1 from jsonb_array_elements(case when jsonb_typeof(moderation_result -> 'contextFactors') = 'array' then moderation_result -> 'contextFactors' else '[]' end) f
+                        where jsonb_typeof(f) = 'string' and f #>> '{}' ~ '^(unknown-content-type: treated as generation|[a-z][a-z-]*-content: severity reduced by [0-9]+|ai-output: strikes not attributed to user|clean-history: user has long clean record|repeat-flags: 3\+ flags in last 24h|language-context: \S+ → \S+)$')
+            or moderation_result -> 'classifierOutput' ? 'reason') as review_moderation_left;
+```
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 

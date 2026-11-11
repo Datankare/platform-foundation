@@ -14,7 +14,7 @@
  * reports it held.
  */
 
-import { renderShown, shown, type ShownText } from "@/platform/errors/shown-text";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import {
   CAPABILITY_FEATURES_KEY,
   readCapabilityFeatures,
@@ -97,10 +97,12 @@ export async function handleSetCapabilityMapping(
   const outcome = await writeGovernedConfig(admin, {
     key: CAPABILITY_FEATURES_KEY,
     value: pairs,
-    // The record of the change, worded by the catalog when it is written (TASK-206, N-102).
-    changeComment: renderShown(
-      shown("screens.admin_console.results.command_bar_comment", { what: summary })
-    ),
+    // The record of the change: the catalog's key and values, worded when it is read (TASK-209:
+    // it was worded in English when it was written).
+    changeComment: "",
+    changeShown: shown("screens.admin_console.results.command_bar_comment", {
+      what: summary,
+    }),
   });
   return fromGovernedConfig(outcome, CAPABILITY_FEATURES_KEY, summary);
 }

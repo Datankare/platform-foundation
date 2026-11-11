@@ -100,8 +100,16 @@ export interface ReviewQueueItem {
   readonly resolvedAt?: string;
   /** The reviewer's decision */
   readonly decision?: ReviewDecision;
-  /** Reviewer's notes explaining the decision */
+  /** Reviewer's notes explaining the decision, as written */
   readonly reviewerNotes?: string;
+  /**
+   * The platform's own note on a decision it made (the escalation reaper's block, ADR-041), as a
+   * catalog key and values (TASK-209: it was English in reviewerNotes).
+   */
+  readonly notesShown?: {
+    readonly key: string;
+    readonly params?: Readonly<Record<string, unknown>>;
+  };
   /** Modified action (only when decision === "modify") */
   readonly modifiedAction?: ModerationAction;
   /**
@@ -192,6 +200,7 @@ export type ReviewQueueUpdate = Partial<
     | "resolvedAt"
     | "decision"
     | "reviewerNotes"
+    | "notesShown"
     | "modifiedAction"
     | "priority"
     | "updatedAt"

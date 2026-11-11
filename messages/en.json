@@ -332,7 +332,6 @@
       "use_default": "Use default",
       "use_default_for": "Use the platform default for {key}",
       "save_for": "Save {key}",
-      "change_comment": "Tenant settings",
       "saved": "{key} saved.",
       "held": "{key} is held for approval.",
       "reset_done": "{key} uses the platform default again.",
@@ -396,7 +395,6 @@
       "settings_label": "Settings of {tenant}",
       "settings_heading": "Settings of {tenant}",
       "settings_intro_operator": "Any setting can be set for this tenant: its own value replaces the platform default. Safety settings may need a second approver; held changes are listed here.",
-      "operator_change_comment": "Set by an operator for this tenant",
       "close": "Close",
       "held_heading": "Waiting for approval",
       "held_by": "requested by {requester} · needs {permission}",
@@ -420,9 +418,7 @@
       "add_label": "Config key to add to dual-control",
       "already": "\"{key}\" is already dual-controlled.",
       "held": "Change held for approval{id, select, none {} other { ({kind, select, approval {approval} other {proposal}} {id})}} — an independent approver must clear it in Approvals.",
-      "not_applied": "The change could not be applied.",
-      "comment_add": "Add {key} to dual-control",
-      "comment_remove": "Remove {key} from dual-control"
+      "not_applied": "The change could not be applied."
     },
     "held": {
       "mark_executed": "Took effect",
@@ -533,7 +529,10 @@
       "reason_held": "Held at {risk, select, ordinary {ordinary} consequential {consequential} restricted {restricted} other {unknown}} risk{effected, select, yes { (effects: {effects})} other {}} — needs an independent approver.",
       "reason_two_person": "A safety-tier change to “{key}” awaiting a second approver.",
       "note_indeterminate": "its run did not end within its lease; its outcome is unknown",
-      "note_atomic_recovered": "its atomic run did not end within its lease; its transaction rolled back with its effect, and the approval was kept"
+      "note_atomic_recovered": "its atomic run did not end within its lease; its transaction rolled back with its effect, and the approval was kept",
+      "note_run_failed": "its run failed before taking effect (the detail is in the log)",
+      "note_commit_failed": "its commit failed before taking effect",
+      "note_state_moved": "what it acts on changed before it was committed"
     },
     "jobs": {
       "nav": "Jobs (operators)",
@@ -628,6 +627,7 @@
         "sqlstate": "A database statement failed (SQLSTATE {detail}).",
         "unexpected": "The job failed with an unexpected {detail}.",
         "threw": "The job failed: it threw a {detail} value.",
+        "lease_expired": "The worker running the last attempt stopped before it finished (its lease expired).",
         "uncoded": "A failure recorded before failures were coded.",
         "uncoded_show": "Show the stored text"
       }
@@ -1402,7 +1402,451 @@
       "trajectory_abandoned": "no activity and no open hold since {since}",
       "ban_carried_over": "A ban on this address carried over to a new account.",
       "by_platform": "the platform",
-      "by_another_account": "another account"
+      "by_another_account": "another account",
+      "expired_unused": "expired: not run within {days, plural, one {# day} other {# days}} of its approval",
+      "expired_undecided": "expired: not decided within {days, plural, one {# day} other {# days}} of being requested",
+      "withdrawn_run_failed": "not approved again after its run failed",
+      "verified_not_applied": "verified that its run did not take effect",
+      "verified_applied": "verified as applied",
+      "approved_again": "approved again: verified that its run did not take effect",
+      "marked_executed": "marked executed by {by}: {note}",
+      "revised": "revised",
+      "stale_state": "state advanced {observed} -> {current}; approval is stale",
+      "duplicate_of": "duplicate of hold {holdId}, which stands",
+      "refused_stale": "stale: what it would replace changed since it was requested",
+      "refused": "refused: {reason}",
+      "required_job": "\"{key}\" turns on a job that is now required — always on, and set only as the platform default",
+      "superseded": "withdrawn: superseded — {reason}",
+      "power_reduced": "a power reduction was applied to the key",
+      "agents_suspended": "every agent was suspended: {reason}",
+      "config_withdrawn": "withdrawn by the system: {why} (approved by {approvedBy} at {approvedAt})",
+      "config_stale": "stale — \"{key}\" changed since it was requested",
+      "config_refused": "refused — \"{key}\" no longer takes the value requested",
+      "config_required_job_062": "withdrawn by the system: {why} (migration 062)",
+      "changed_on_page": "Changed on the config page",
+      "reset_to_default": "Use the platform default",
+      "change_approved": "Approved: {note}",
+      "emergency_suspended": "Emergency: every agent suspended — {reason}",
+      "ban_strike_threshold": "Automatic ban: strike threshold exceeded",
+      "escalation_auto_blocked": "Auto-blocked: escalation exceeded the {hours}h SLA without human review (ADR-041).",
+      "strike_guardian_block": "Guardian blocked content: {category} (severity: {severity}, triggered by: {triggeredBy}).",
+      "effect_unknown": "the call may have taken effect: it timed out or its connection dropped (the detail is in the log)",
+      "effect_failed": "the call failed (the detail is in the log)",
+      "effect_unresolved": "unresolved entry found on retry; downstream state unknown",
+      "set_by_operator": "Set by an operator for this tenant",
+      "dual_control_added": "Add {key} to dual-control",
+      "dual_control_removed": "Remove {key} from dual-control",
+      "run_raised": "the run raised an error (the detail is in the log)",
+      "completion_not_written": "its approval's completion could not be written; the approval-expiry job settles it",
+      "claim_taken_back": "its approval's claim was no longer this run's (taken back after its lease and decided otherwise); recorded as a conflict",
+      "audit_act_raised": "the action raised an error (its detail is in the server log)",
+      "audit_reported_failure": "the action reported a failure (its detail is in the server log)",
+      "audit_rolled_back": "the transaction it ran in rolled back",
+      "audit_indeterminate": "the connection failed while the transaction it ran in was committing: whether it took effect is unknown",
+      "audit_run_failed_kept": "approved but not applied; approval kept",
+      "audit_run_failed_not_released": "approved but not applied; its run's claim not given back, undecided once its lease has passed"
+    },
+    "settings": {
+      "account_status": {
+        "known_features": "The canonical set of features that exist. Access checks fail closed on any feature not in this list. Union of route feature literals and the capability->feature map. Kept in sync with setKnownFeaturesFallback() in instrumentation.ts.",
+        "restricted_features": "Features blocked for users with account_status = restricted.",
+        "suspended_features": "Features blocked for users with account_status = suspended. [\"*\"] means all features."
+      },
+      "admin": {
+        "dual_control_actions": "Administrative actions held until a second administrator who holds the same permission approves them. Never an action whose effect is a config write (an agent's registration or scope, a capability mapping): the key it writes is held under its own rules instead."
+      },
+      "agent": {
+        "budget": {
+          "default_tokens_per_month": "Default monthly token budget per agent per scope",
+          "default_usd_per_month": "Default monthly USD budget per agent per scope",
+          "max_cost_per_day": "Platform ceiling on agent daily spend (USD). Applied as the most-restrictive of this ceiling and each agent's per-class default: lowering it tightens spend platform-wide; it cannot raise an agent above its own default. Governs the ADR-048 cost cap.",
+          "max_steps_per_trajectory": "Platform ceiling on steps per agent trajectory. Most-restrictive of this ceiling and each agent's per-class default. Governs the ADR-048 step cap.",
+          "tenant_max_cost_per_day": "Daily cap (USD) on all of one tenant's agents together, checked after each agent's own cap. Operators set it per tenant (ADR-053 D6)."
+        },
+        "capability_features": "Capability -> required account-status features, as [capability, features[]] pairs. evaluateCapability reads this; the built-in fallback in lib/agent-capabilities.ts covers a config outage. Kept in sync with that fallback.",
+        "delegation": {
+          "max_ttl_seconds": "Global hard cap (seconds) on delegation token lifetime. Effective TTL is min(requested_ttl, per-agent maxTokenTtl, this). The absolute ceiling no agent can exceed."
+        },
+        "trajectory": {
+          "abandon_after_hours": "Hours an open agent trajectory (running, paused, awaiting retry, indeterminate) may go without activity, with no open hold on it, before the agents.trajectory-retention job ends it as failed. Retention then counts from its last activity.",
+          "max_steps": "Maximum steps per trajectory before forced completion",
+          "retention_days": "Days to retain completed trajectories before archival"
+        },
+        "trajectory_max_segments": "The most segments one trajectory chain (an app session, a run that rolls over) may have; each segment holds at most 1,000 steps and 16 MiB. Past it the next action is refused (request.trajectory_chain_full). Raising it lets one session grow larger.",
+        "trusted_agents": "Governed trusted-agent registry: agentId -> '{'owner, scopes[], status'}', as [agentId, record] pairs. agentAuthorized reads this; the built-in fallback in lib/agent-identity.ts covers a config outage. Kept in sync with that fallback.",
+        "workflow": {
+          "abandon_after_days": "Days a workflow's open trajectory may go without activity, with no open hold on it, before the agents.trajectory-retention job ends it as failed. A workflow is the user's to continue; other trajectories end after agent.trajectory.abandon_after_hours."
+        }
+      },
+      "ai": {
+        "daily_paid_requests_per_actor": "Requests that make paid AI calls (model, translation, speech, song ID) one user or guest may make in any 24 hours; one request may make several calls. At the limit the caller gets 429 until requests age out. The platform uses 200 whenever this row is missing or outside 1–10000.",
+        "prompt_cache_enabled": "Whether a request may use Anthropic's prompt cache. Both this and the request's own promptCache flag must be on, and only a fixed, tenant-free cacheablePrefix is ever cached."
+      },
+      "auth": {
+        "staff_mfa_required": "Staff (anyone using an administrative permission) must sign in with a second factor. Turning it off needs a second operator.",
+        "token_cache_seconds": "Seconds a verified access token is answered from the shared cache instead of asking the identity provider again (at most 60, never past the token's expiry; 0: always ask). Sign-out, account and role or MFA changes void it at once.",
+        "token_stale_grace_seconds": "When the identity provider cannot answer (throttled, down), seconds past its fresh window an ordinary route may still accept a token it verified (never past the token's expiry or a revocation). Privileged routes never do: they answer 503. 0 turns it off."
+      },
+      "config": {
+        "approval_expiry_days": "Pending approval requests expire after this many days.",
+        "dual_control_keys": "Config keys whose changes require a runtime hold + independent human approval (ADR-039 dual-control), in addition to the two-person domain gate.",
+        "require_two_person_approval": "When true, safety-critical config changes require super_admin approval before taking effect."
+      },
+      "coppa": {
+        "blocked_features": "Features blocked for under-13 users without parental consent. JSON array of feature identifiers.",
+        "consent_expiry_days": "Days a child's account may wait for a parent's consent (pending or denied) after its age is recorded; then the gdpr.retention-purge job erases it (COPPA 312.5(c)(1)).",
+        "consent_expiry_enabled": "Whether the gdpr.retention-purge job erases a child's account whose parent's consent is pending or denied past coppa.consent_expiry_days. Off until the parental-consent flow ships.",
+        "enforcement_enabled": "Master switch for COPPA enforcement. When false, consent gate is bypassed (for development only)."
+      },
+      "default_language": "Default UI language code",
+      "guest": {
+        "translate_allowance": "Translate requests a guest may make before signing in (one per request, whatever the number of target languages). Enforced before any paid call; at the limit the guest is asked to sign in. The platform clamps it to 1–10 whatever this row says."
+      },
+      "jobs": {
+        "accounts": {
+          "expire-restrictions": {
+            "enabled": "Steps restricted or suspended accounts whose end date has passed down to warned, for every active tenant.",
+            "interval_minutes": "Minutes between runs that lift lapsed restrictions and suspensions."
+          }
+        },
+        "agents": {
+          "trajectory-retention": {
+            "enabled": "Ends open agent trajectories with no activity for agent.trajectory.abandon_after_hours and no open hold, then deletes completed and failed ones older than agent.trajectory.retention_days, for every active tenant and every suspended one (storage limitation does not pause).",
+            "interval_minutes": "Minutes between trajectory-retention runs."
+          }
+        },
+        "config": {
+          "expire-approvals": {
+            "enabled": "Required — cannot be turned off (TASK-194): expires stale configuration approvals, settles approvals whose outcome is being checked, and lists undecided runs for a person. Only its interval may be changed.",
+            "interval_minutes": "Minutes between runs that expire stale configuration approvals."
+          }
+        },
+        "data": {
+          "retention": {
+            "enabled": "Applies the retention rules no other duty applies (platform/jobs/retention.ts), for every active tenant and every suspended one (storage limitation does not pause).",
+            "interval_minutes": "Minutes between retention runs."
+          }
+        },
+        "gdpr": {
+          "retention-purge": {
+            "enabled": "Erases accounts whose GDPR retention period has passed (hard purge), for every active tenant and every suspended one (a legal obligation that does not pause).",
+            "interval_minutes": "Minutes between GDPR retention purges."
+          }
+        },
+        "jobs": {
+          "prune": {
+            "enabled": "Deletes succeeded jobs older than jobs.retention_days. Dead jobs are kept until an operator replays or discards them.",
+            "interval_minutes": "Minutes between job-history prunes."
+          }
+        },
+        "moderation": {
+          "escalation-reaper": {
+            "enabled": "Runs the escalation-SLA reaper (ADR-041) for every active tenant. Off, over-SLA escalations stay withheld without a decision.",
+            "interval_minutes": "Minutes between escalation-SLA reaper runs. An item can stay over its SLA by up to this long."
+          },
+          "expire-strikes": {
+            "enabled": "Marks strikes past their expiry as expired, for every active tenant.",
+            "interval_minutes": "Minutes between strike-expiry runs."
+          },
+          "release-claims": {
+            "enabled": "Returns review items whose claim timed out to the queue, for every active tenant.",
+            "interval_minutes": "Minutes between releases of timed-out review claims."
+          }
+        },
+        "retention_days": "Days a succeeded job is kept in the history before it is pruned.",
+        "social": {
+          "analyst": {
+            "enabled": "Runs the analyst agent over each active tenant's groups (group health reports in its trajectories).",
+            "interval_minutes": "Minutes between analyst runs."
+          },
+          "curator": {
+            "enabled": "Runs the curator agent over each active tenant's groups (activity digests in its trajectories).",
+            "interval_minutes": "Minutes between curator runs."
+          }
+        },
+        "tenancy": {
+          "purge-due": {
+            "enabled": "Purges the data of deleted tenants whose purge time has passed (ADR-053 D7).",
+            "interval_minutes": "Minutes between tenant purges."
+          }
+        }
+      },
+      "maintenance_mode": "When true, all non-admin requests return 503",
+      "max_devices_per_player": "Maximum devices a player can register",
+      "moderation": {
+        "appeal_reason_min_length": "Minimum number of characters required in an appeal reason. Range: 1-1000.",
+        "appeal_window_hours": "Hours after a decision during which a user may file an appeal. Range: 1-720.",
+        "blocklist_only_surfaces": "Retired in 052 (D-20): nothing reads it. Kept, with its change history, as the record of what it was; it is not listed and cannot be set.",
+        "classifier_effort": "Default effort tier for LLM classifier. Options: low, standard, max.",
+        "escalation_remedial_action": "Reaper action on an over-SLA item: block (fail-closed default) or escalate_higher (re-queue + notify). Never allow. Allowed-set validated in the config reader (ADR-041 D2).",
+        "escalation_sla_hours": "Max hours a review item may stay in pending/claimed before the reaper applies the remedial action (ADR-041). Clamped to [min,max]; on read failure the min is used (fail-closed).",
+        "escalation_sla_max_hours": "Upper clamp for escalation_sla_hours (ADR-041 D1) — caps an accidental effectively-infinite SLA.",
+        "escalation_sla_min_hours": "Lower clamp + fail-closed value for escalation_sla_hours (ADR-041 D1).",
+        "extraction_severity_reduction": "Severity levels to reduce for extraction content. Range: 0-3.",
+        "level1": {
+          "block_severity": "Minimum severity to BLOCK for Level 1 (under 13). Options: low, medium, high, critical.",
+          "escalate_below": "Classifier confidence threshold for escalation (Level 1). Range: 0.0-1.0.",
+          "warn_severity": "Minimum severity to WARN for Level 1 (under 13)."
+        },
+        "level2": {
+          "block_severity": "Minimum severity to BLOCK for Level 2 (13-17).",
+          "escalate_below": "Classifier confidence threshold for escalation (Level 2). Range: 0.0-1.0.",
+          "warn_severity": "Minimum severity to WARN for Level 2 (13-17)."
+        },
+        "level3": {
+          "block_severity": "Minimum severity to BLOCK for Level 3 (18+).",
+          "escalate_below": "Classifier confidence threshold for escalation (Level 3). Range: 0.0-1.0.",
+          "warn_severity": "Minimum severity to WARN for Level 3 (18+)."
+        },
+        "restriction_duration_hours": "Duration of content restriction (read-only mode) in hours.",
+        "review_claim_timeout_hours": "Hours a claimed review item may sit before it auto-releases back to pending. Range: 1-168.",
+        "strike_ban_threshold": "Strikes before permanent ban. Range: 1-50.",
+        "strike_expiry_critical_days": "Days until a critical-severity strike expires. 0 = never expires.",
+        "strike_expiry_high_days": "Days until a high-severity strike expires. 0 = never expires.",
+        "strike_expiry_low_days": "Days until a low-severity strike expires. 0 = never expires.",
+        "strike_expiry_medium_days": "Days until a medium-severity strike expires. 0 = never expires.",
+        "strike_suspend_threshold": "Strikes before suspension. Range: 1-20.",
+        "strike_warn_threshold": "Strikes before user warning. Range: 1-10.",
+        "suspension_duration_days": "Duration of account suspension in days.",
+        "transcription_severity_reduction": "Severity levels to reduce for transcription content. Range: 0-3.",
+        "translation_severity_reduction": "Severity levels to reduce for translation content. Range: 0-3."
+      },
+      "profile": {
+        "max_display_name_length": "Maximum length for display names. Enforced before Guardian screening.",
+        "max_real_name_length": "Maximum length for real names. Enforced before Guardian screening.",
+        "screened_fields": "Profile fields that require Guardian screening before write. Field names must match ProfileUpdate keys."
+      },
+      "rate_limit_rpm": "Default API rate limit (requests per minute)",
+      "retention": {
+        "agent_budgets_days": "Days an agent's daily budget counters are kept after their day (TASK-203).",
+        "ai_metrics_days": "Days an AI call's metrics are kept before they are deleted (TASK-203).",
+        "app_sessions_days": "Days an app session is kept after it was last updated (TASK-203).",
+        "content_safety_audit_days": "Days a content-safety decision is kept before it is deleted; one a strike names is kept with the account (TASK-203).",
+        "effect_ledger_days": "Days a resolved external effect (confirmed or failed) is kept in the effect ledger; pending and indeterminate ones stay until resolved (TASK-203).",
+        "guest_usage_days": "Days a guest's usage count is kept after the guest was last seen (TASK-203).",
+        "network_identifiers_days": "Days an IP address and user agent are kept on audit and consent records; the records themselves are kept (accountability), these two fields cleared (TASK-203).",
+        "user_interactions_days": "Days a user interaction (an input, its output, a rating) is kept before it is deleted (TASK-203)."
+      },
+      "signups_enabled": "When false, new registrations are blocked",
+      "social": {
+        "scheduled_agents_enabled": "Whether the scheduled social agents (analyst, curator) run for this tenant. A tenant's administrators may turn them off."
+      },
+      "song_id": {
+        "max_duration_seconds": "Maximum recording duration in seconds for song identification. Limits upload size and API cost. ACRCloud recommends 10-20s; 60s is generous upper bound.",
+        "min_duration_seconds": "Minimum recording duration in seconds before song identification is attempted. ACRCloud requires 10s+ for reliable fingerprint matching. Below this threshold, the API returns 422."
+      },
+      "supported_languages": "Languages available in the platform"
+    },
+    "permissions": {
+      "admin_manage_account_restrictions": {
+        "name": "Manage Account Restrictions",
+        "description": "Block or unblock features for a user account"
+      },
+      "admin_manage_agents": {
+        "name": "Manage Agents",
+        "description": "Register, suspend and scope trusted agents"
+      },
+      "admin_manage_approval_policy": {
+        "name": "Manage Approval Policy",
+        "description": "Set who must approve held agent actions"
+      },
+      "admin_manage_config": {
+        "name": "Manage Config",
+        "description": "Edit governance config (password policy, guest config)"
+      },
+      "admin_manage_entitlements": {
+        "name": "Manage Entitlements",
+        "description": "Create, grant, revoke entitlement groups"
+      },
+      "admin_manage_roles": {
+        "name": "Manage Roles",
+        "description": "Create, edit, delete roles and role-permission mappings"
+      },
+      "admin_manage_users": {
+        "name": "Manage Users",
+        "description": "Edit user roles and view user data"
+      },
+      "admin_purge_user_data": {
+        "name": "Purge User Data",
+        "description": "Irreversibly erase an account's personal data (GDPR hard purge)"
+      },
+      "admin_view_audit": {
+        "name": "View Audit Log",
+        "description": "Read audit trail entries"
+      },
+      "can_access_admin": {
+        "name": "Can Access Admin",
+        "description": "Access admin UI"
+      },
+      "can_create_group": {
+        "name": "Can Create Group",
+        "description": "Form player groups"
+      },
+      "can_delete_account": {
+        "name": "Can Delete Account",
+        "description": "Delete own account (GDPR)"
+      },
+      "can_edit_profile": {
+        "name": "Can Edit Profile",
+        "description": "Edit own profile fields"
+      },
+      "can_export_data": {
+        "name": "Can Export Data",
+        "description": "Download own data (GDPR)"
+      },
+      "can_moderate": {
+        "name": "Can Moderate",
+        "description": "Review and resolve escalated moderation items and appeals"
+      },
+      "can_play": {
+        "name": "Can Play",
+        "description": "Access gameplay"
+      },
+      "can_translate": {
+        "name": "Can Translate",
+        "description": "Use translation feature"
+      },
+      "can_view_profile": {
+        "name": "Can View Profile",
+        "description": "View own profile"
+      },
+      "config_manage_safety": {
+        "name": "Manage Safety Config",
+        "description": "Edit safety-critical configuration entries (moderation, strikes, COPPA)"
+      },
+      "config_manage_standard": {
+        "name": "Manage Standard Config",
+        "description": "Edit standard-tier configuration entries"
+      },
+      "config_view": {
+        "name": "View Configuration",
+        "description": "View all platform configuration entries and history"
+      },
+      "platform_operate": {
+        "name": "Operate the Platform",
+        "description": "Manage tenants, platform defaults and catalogs across tenants"
+      }
+    },
+    "sentinel": {
+      "blocked": "Guardian blocked content: {category} (severity: {severity}, triggered by: {triggeredBy}).",
+      "active_strikes": "User has {count, plural, one {# active strike} other {# active strikes}}.",
+      "strike_failed": "Strike recording failed (the detail is in the log).",
+      "strike_recorded": "Strike recorded: {category} ({severity}). Expires: {expiresAt}.",
+      "strike_recorded_permanent": "Strike recorded: {category} ({severity}). Never expires.",
+      "evaluated": "Total active strikes: {total}. Thresholds: warn={warnAt}, suspend={suspendAt}, ban={banAt}. Consequence: {consequence}.",
+      "status_changed": "Status changed: {from} -> {to}.",
+      "status_kept": "No status change needed (current: {status}).",
+      "incomplete": "Sentinel run did not complete — consequence not applied (surfaced)."
+    },
+    "config_impact": {
+      "change": "Changing \"{key}\" from {from} to {to}.",
+      "safety": "This is a safety-critical setting. Changes affect content moderation behavior.",
+      "moderation_threshold": "Moderation threshold changes affect how content is screened in real-time.",
+      "strike": "Strike threshold changes affect account consequence escalation.",
+      "maintenance": "Enabling maintenance mode makes the platform read-only for all users.",
+      "signups": "Disabling signups prevents new account creation.",
+      "affected_level1": "Users under 13 (COPPA-protected, strictest content rating)",
+      "affected_level2": "Teen users (13–17, moderate content rating)",
+      "affected_level3": "Adult users (18+, standard content rating)",
+      "affected_strike": "All users — affects account consequence escalation",
+      "affected_rate_limit": "All users — affects API request throttling",
+      "affected_platform": "All users — platform-wide setting",
+      "affected_moderation": "All users — affects content safety pipeline",
+      "affected_varies": "Varies by setting"
+    },
+    "moderation": {
+      "reasons": {
+        "empty_text": "Empty text — no content to screen.",
+        "context": "Context: {factors}.",
+        "blocklist_block": "Blocklist hit: {categories} (severity: {severity}). Blocked immediately — classifier skipped.",
+        "declined": "Classifier declined to assess the content (declined) — withheld for human review.",
+        "unavailable": "Classifier unavailable — content withheld at every rating level (fail-closed).",
+        "unreadable": "Classifier answer unreadable — withheld for human review at every rating level (fail-closed).",
+        "safe": "Classifier: safe (confidence {confidence}).",
+        "low_blocklist": "Low-severity blocklist match — warning applied.",
+        "config_unavailable": "Config unavailable — using fail-closed thresholds.",
+        "severity_adjusted": "Severity adjusted: {from} → {to} ({contentType} context, -{reduction}).",
+        "escalate_confidence": "Confidence {confidence} below threshold {threshold} for {level} — escalating for human review.",
+        "block_threshold": "Adjusted severity {severity} ≥ block threshold {threshold} for {level}.",
+        "warn_threshold": "Adjusted severity {severity} ≥ warn threshold {threshold} for {level}.",
+        "allowed": "Adjusted severity {severity} below warn threshold for {level} — allowed.",
+        "run_incomplete": "Screening run did not complete — escalated for human review (fail-closed)."
+      },
+      "factors": {
+        "unknown_content_type": "unknown-content-type: treated as generation",
+        "severity_reduced": "{contentType}-content: severity reduced by {reduction}",
+        "ai_output": "ai-output: strikes not attributed to user",
+        "clean_history": "clean-history: user has long clean record",
+        "repeat_flags": "repeat-flags: 3+ flags in last 24h",
+        "language_context": "language-context: {source} → {target}"
+      },
+      "levels": {
+        "child": "child (under 13)",
+        "teen": "teen (13–17)",
+        "adult": "adult (18+)",
+        "fail_closed": "fail-closed (config unavailable)"
+      },
+      "classifier": {
+        "not_object": "Classifier answer is not a JSON object",
+        "unparsable": "Failed to parse classifier response",
+        "missing_safe": "Missing 'safe' field",
+        "unreadable": "Classifier answer not fully readable ({problems})",
+        "unexpected_type": "Classifier returned unexpected response type",
+        "unavailable": "Classifier unavailable",
+        "declined": "declined",
+        "pipeline_action": "Pipeline action: {action}",
+        "filter_block": "Blocked by content filter: {matches}"
+      },
+      "problems": {
+        "categories_missing": "categories missing",
+        "unknown_category": "unknown category",
+        "confidence_invalid": "confidence missing or outside 0–1",
+        "severity_invalid": "severity missing or unknown",
+        "reason_not_text": "reason is not text",
+        "safe_contradiction": "a safe verdict with categories or a severity above low"
+      },
+      "modality": {
+        "hard_refuse": "hard-refuse invariant (non-configurable)",
+        "axes": "axes: {axes}",
+        "unconfigured": "withheld: no classifier configured",
+        "failed": "fail-closed: the screen did not complete (the detail is in the log)",
+        "input_withheld": "{modality} input {action}: {reason}"
+      },
+      "image": {
+        "failed": "generation failed: {error}",
+        "indeterminate": "generation indeterminate — awaiting reconciliation",
+        "withheld": "generated image {action}: {reason}",
+        "no_approval": "no approval to commit this generation",
+        "committed_approved": "committed (approved)",
+        "committed_low": "committed (low risk)",
+        "held": "high-risk generation held for Confirm",
+        "held_synthetic": "high-risk generation held for Confirm (synthetic reference input)"
+      },
+      "profile": {
+        "not_text": "{field} must be text.",
+        "too_long": "{field} exceeds maximum length of {limit} characters.",
+        "not_allowed": "{field} contains content that is not allowed in profiles.",
+        "unavailable": "Profile update temporarily unavailable. Please try again.",
+        "not_field": "{field} is not a profile field.",
+        "visibility": "{field} must be private, friends or public.",
+        "boolean": "{field} must be true or false.",
+        "language": "languagePreference must be a language code.",
+        "timezone": "timezone must be a time zone name.",
+        "avatar_https": "avatarUrl must be an https address.",
+        "avatar_credentials": "avatarUrl must not contain credentials.",
+        "avatar_public_host": "avatarUrl must name a public host.",
+        "avatar_port": "avatarUrl must use the standard port.",
+        "invalid_user": "Invalid user ID format"
+      },
+      "social": {
+        "prohibited": "Content contains prohibited material",
+        "needs_review": "Content requires review and cannot be used at this time",
+        "unavailable": "Content screening is temporarily unavailable. Please try again later."
+      },
+      "legacy": {
+        "recorded": "A reason recorded before reasons were coded.",
+        "show": "Show the stored text"
+      }
     }
   }
 }

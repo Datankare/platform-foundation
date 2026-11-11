@@ -19,6 +19,8 @@ import { logger } from "@/lib/logger";
 import { internalError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { isShownText } from "@/platform/errors/shown-text";
+import { negotiateLocale } from "@/platform/errors/messages";
+import { permissionNameText } from "@/platform/errors/definitions";
 import {
   comparePermissions,
   roleOrderSql,
@@ -60,12 +62,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
         await tx.query<PermissionRow>(
           "select id, code, display_name, category from permissions order by category, code"
         )
-      ).rows.sort((a, b) =>
-        comparePermissions(
-          { code: a.code, displayName: a.display_name, category: a.category },
-          { code: b.code, displayName: b.display_name, category: b.category }
-        )
-      ),
+      ).rows,
     })));
   } catch (error) {
     logger.error("Admin roles list failed", {
@@ -75,11 +72,20 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     return internalError(error, { request, context: "Admin roles query failed" });
   }
 
+  // A permission's name is the catalog's, by its code, in the request's language (TASK-209,
+  // N-113): permissions.display_name is the definitional record, never shown.
+  const locale = negotiateLocale(request.headers.get("accept-language"));
   const permMap = new Map(
-    allPermissions.map((p) => [
-      p.id,
-      { code: p.code, displayName: p.display_name, category: p.category },
-    ])
+    allPermissions
+      .map((p): [string, ListedPermission] => [
+        p.id,
+        {
+          code: p.code,
+          displayName: permissionNameText(p.code, locale),
+          category: p.category,
+        },
+      ])
+      .sort((a, b) => comparePermissions(a[1], b[1]))
   );
 
   const rolePermMap = new Map<string, ListedPermission[]>();
@@ -112,6 +118,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
 
   return NextResponse.json({
     roles: result,
-    availablePermissions: allPermissions,
+    // Every permission, named by the catalog, in the catalog's order (TASK-209, N-113).
+    availablePermissions: [...permMap.values()],
   });
 });

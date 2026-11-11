@@ -167,6 +167,19 @@ function serverSources(): Sources {
   };
 }
 
+/**
+ * Rule F's code: the server's (serverSources) and the screens' (diskSources) — a screen that sends
+ * a stored note (a change comment) is a writer of it too.
+ */
+function noteSources(): Sources {
+  const server = serverSources();
+  const screens = diskSources();
+  return {
+    read: (f) => server.read(f),
+    list: () => [...new Set([...server.list(), ...screens.list()])],
+  };
+}
+
 /** Every literal key a `shown(…)` names (rule C), with where it is. */
 export function shownKeys(
   files: readonly string[],
@@ -270,7 +283,38 @@ const CALLBACK_METHODS = new Set([
 /** What a name resolves to: a value (an initializer) or a function. */
 type Decl = { kind: "value"; init: ts.Expression } | { kind: "function"; fn: ts.Node };
 
-export function indirectSites(src: Sources, root: string): string[] {
+/** How a flow judges what it finds (rule A: words; rule F: anything not a key). */
+interface FlowOptions {
+  /** Whether a literal found is reported. */
+  readonly accept?: (text: string) => boolean;
+  /**
+   * Rule F: a string method's receiver (`\`…\`.slice(0, 500)`, `note.trim()`) is followed to its
+   * literals, as the value it returns is made of them.
+   */
+  readonly receivers?: boolean;
+}
+
+/** A string method whose result is made of its receiver's text (rule F). */
+const STRING_METHODS = new Set([
+  "slice",
+  "substring",
+  "trim",
+  "trimStart",
+  "trimEnd",
+  "toString",
+  "padStart",
+  "padEnd",
+  "toLowerCase",
+  "toUpperCase",
+]);
+
+/**
+ * The flow from an expression back to the string literals it can hold (rule A; rule F reuses it):
+ * names, property chains, aliases, callbacks' elements, destructured defaults, functions'
+ * returned values and imports, each followed to its literals; `report` keeps those `accept`ed.
+ */
+function flowOf(src: Sources, root: string, options: FlowOptions = {}) {
+  const accept = options.accept ?? isWords;
   const parse = parser(src);
   const resolveImport = (from: string, spec: string): string | undefined => {
     const base = spec.startsWith("@/")
@@ -331,6 +375,56 @@ export function indirectSites(src: Sources, root: string): string[] {
         const tsf = target ? parse(target) : undefined;
         if (tsf) return findDecl(tsf, (el.propertyName ?? el.name).text, depth + 1);
       }
+    }
+    return undefined;
+  };
+  /**
+   * The declaration an identifier names where it is used (TASK-209): the nearest enclosing scope's
+   * — a block's or a file's statements, a function's parameters — so two locals of one name in a
+   * file are not confused. A parameter (no value to follow) is "param". Undefined when no
+   * enclosing scope declares it (an import: findDecl).
+   */
+  const declAt = (id: ts.Identifier): Decl | "param" | undefined => {
+    const name = id.text;
+    const fromStatements = (statements: ts.NodeArray<ts.Statement>): Decl | undefined => {
+      for (const st of statements) {
+        if (ts.isVariableStatement(st))
+          for (const d of st.declarationList.declarations)
+            if (ts.isIdentifier(d.name) && d.name.text === name && d.initializer) {
+              const init = strip(d.initializer);
+              return ts.isArrowFunction(init) || ts.isFunctionExpression(init)
+                ? { kind: "function", fn: init }
+                : { kind: "value", init: d.initializer };
+            }
+        if (ts.isFunctionDeclaration(st) && st.name?.text === name && st.body)
+          return { kind: "function", fn: st };
+      }
+      return undefined;
+    };
+    for (let p: ts.Node | undefined = id.parent; p; p = p.parent) {
+      if (
+        ts.isBlock(p) ||
+        ts.isSourceFile(p) ||
+        ts.isModuleBlock(p) ||
+        ts.isCaseClause(p)
+      ) {
+        const d = fromStatements(p.statements);
+        if (d) return d;
+      }
+      if (ts.isFunctionLike(p))
+        for (const q of p.parameters) {
+          if (ts.isIdentifier(q.name) && q.name.text === name) return "param";
+          if (ts.isObjectBindingPattern(q.name) || ts.isArrayBindingPattern(q.name))
+            for (const el of q.name.elements)
+              if (
+                ts.isBindingElement(el) &&
+                ts.isIdentifier(el.name) &&
+                el.name.text === name
+              )
+                return el.initializer ? { kind: "value", init: el.initializer } : "param";
+        }
+      if (ts.isCatchClause(p) && p.variableDeclaration?.name.getText() === name)
+        return "param";
     }
     return undefined;
   };
@@ -405,8 +499,14 @@ export function indirectSites(src: Sources, root: string): string[] {
     const e = strip(e0);
     const text = literalText(e);
     if (text !== undefined) {
-      if (props.length === 0 && isWords(text)) report(e);
-      if (ts.isTemplateExpression(e))
+      if (props.length === 0 && accept(text)) report(e);
+      // Rule F: a `kind:${detail}` template is a code; its detail is data, not words.
+      const kindCode =
+        options.receivers &&
+        ts.isTemplateExpression(e) &&
+        /^[a-z][a-z0-9_]*:$/.test(e.head.text) &&
+        e.templateSpans.every((x) => x.literal.text === "");
+      if (ts.isTemplateExpression(e) && !kindCode)
         for (const s of e.templateSpans) literalsAt(s.expression, [], seen);
       return;
     }
@@ -452,7 +552,9 @@ export function indirectSites(src: Sources, root: string): string[] {
       const name = e.expression.text;
       if (name === "renderMessage" || name === "String" || name === "Number") return;
       const sf = e.getSourceFile();
-      const d = findDecl(sf, name);
+      const at = declAt(e.expression);
+      if (at === "param") return;
+      const d = at ?? findDecl(sf, name);
       const k = `fn:${sf.fileName}:${name}`;
       if (!d || d.kind !== "function" || isCatalogFunction(d.fn) || seen.has(k)) return;
       seen.add(k);
@@ -468,15 +570,66 @@ export function indirectSites(src: Sources, root: string): string[] {
       else if (fn.body) visit(fn.body);
       return;
     }
+    if (
+      options.receivers &&
+      ts.isCallExpression(e) &&
+      ts.isPropertyAccessExpression(e.expression) &&
+      STRING_METHODS.has(e.expression.name.text)
+    ) {
+      literalsAt(e.expression.expression, props, seen);
+      return;
+    }
+    // Rule F: a joined list's text is its elements'.
+    if (
+      options.receivers &&
+      ts.isCallExpression(e) &&
+      ts.isPropertyAccessExpression(e.expression) &&
+      e.expression.name.text === "join"
+    ) {
+      literalsAt(e.expression.expression, ["*", ...props], seen);
+      return;
+    }
     const c = chain(e);
     if (!c) return;
     const sf = c.root.getSourceFile();
     const k = `${sf.fileName}:${c.root.text}:${[...c.props, ...props].join(".")}`;
     if (seen.has(k)) return;
     seen.add(k);
-    const d = findDecl(sf, c.root.text);
-    if (d?.kind === "value") literalsAt(d.init, [...c.props, ...props], seen);
+    const at = declAt(c.root);
+    if (at === "param") return;
+    const d = at ?? findDecl(sf, c.root.text);
+    if (d?.kind === "value") {
+      const path = [...c.props, ...props];
+      literalsAt(d.init, path, seen);
+      // Rule F: an array built by `name.push(…)` holds what is pushed (`parts.join(" ")`).
+      if (
+        options.receivers &&
+        ts.isArrayLiteralExpression(strip(d.init)) &&
+        path[0] === "*"
+      ) {
+        let scope: ts.Node | undefined = d.init.parent;
+        while (scope && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope))
+          scope = scope.parent;
+        const pushes = (n: ts.Node): void => {
+          if (
+            ts.isCallExpression(n) &&
+            ts.isPropertyAccessExpression(n.expression) &&
+            n.expression.name.text === "push" &&
+            ts.isIdentifier(n.expression.expression) &&
+            n.expression.expression.text === c.root.text
+          )
+            for (const a of n.arguments) literalsAt(a, path.slice(1), seen);
+          ts.forEachChild(n, pushes);
+        };
+        if (scope) pushes(scope);
+      }
+    }
   };
+  return { parse, findDecl, literalsAt, sites: () => [...out.values()].sort() };
+}
+
+export function indirectSites(src: Sources, root: string): string[] {
+  const { parse, literalsAt, sites } = flowOf(src, root);
   /** The expressions in a text position that carry a value from elsewhere. */
   const sources = (
     e0: ts.Expression | undefined,
@@ -536,7 +689,7 @@ export function indirectSites(src: Sources, root: string): string[] {
     };
     visit(sf);
   }
-  return [...out.values()].sort();
+  return sites();
 }
 
 // ── Rule B: screen code ───────────────────────────────────────────────
@@ -896,6 +1049,753 @@ export function labelAsNounSites(src: Sources, root: string): string[] {
   return out;
 }
 
+// ── Rule F: a record's notes are the catalog's key, never English (TASK-209, N-112) ─────
+
+/**
+ * The columns that keep a record's note or comment: what a person wrote, as written — the
+ * platform's own words go beside it as a catalog key and values (a ShownText column:
+ * decision_shown, review_shown, change_shown, ban_note…). Nothing TypeScript composed is stored
+ * here, not even a token ("revised" is shown as it is).
+ */
+export const STORED_NOTE_COLUMNS = new Set([
+  "decision_note",
+  "ban_reason",
+  "review_comment",
+  "change_comment",
+  "impact_summary",
+  "status_reason",
+  "reviewer_notes",
+  "appeal_reason",
+  "note",
+]);
+
+/**
+ * The columns that keep a code: why a run or a call failed, a reason from a list. A code or a
+ * catalog key is stored there (`approvals.run_failed`, `sqlstate:57014`, `legal-order`) and
+ * rendered from the catalog; never a sentence.
+ */
+export const STORED_CODE_COLUMNS = new Set([
+  "last_run_error",
+  "reason",
+  "error",
+  "last_error",
+  "last_purge_error",
+]);
+
+/** The same, as a record's field (camelCase), in an object TypeScript stores. */
+export const STORED_NOTE_FIELDS = new Set([
+  // The moderation pipeline's reasons, stored with a decision and shown to moderators (TASK-209):
+  // a list of catalog keys and values; the context factors; an explanation chain's conclusion.
+  "reasoning",
+  "contextFactors",
+  "factors",
+  "conclusion",
+  "decisionNote",
+  "banReason",
+  "reviewComment",
+  "changeComment",
+  "impactSummary",
+  "statusReason",
+  "reviewerNotes",
+  "appealReason",
+]);
+export const STORED_CODE_FIELDS = new Set([
+  "lastRunError",
+  "lastError",
+  "lastPurgeError",
+]);
+
+/** A run step's output fields (agent_trajectories.steps: exported, rendered): a note; a reason. */
+const STEP_NOTE_FIELDS = new Set(["note"]);
+const STEP_CODE_FIELDS = new Set(["reason", "error"]);
+
+/**
+ * An audit record's details (TASK-209): an object given as `details` — to writeAuditLog,
+ * recordAudit, audited — or nested in one. Every value in it is a code, an id, a number, a value,
+ * a catalog key and values, or a person's text; never a sentence TypeScript composed. Raw text from
+ * a provider, a model or an error goes only under a key named `raw…` (AUDIT_RAW_FIELD), which no
+ * screen or export shows as text.
+ */
+export const AUDIT_RAW_FIELD = /^raw[A-Z]/;
+
+/**
+ * Is `obj` (an object literal) an audit record's details, or nested in them: the value of a
+ * `details` property of an object that also names its `action` (an AuditEntry; a health answer's
+ * `details` is not one)?
+ */
+export function inAuditDetails(obj: ts.Node): boolean {
+  let n: ts.Node = obj;
+  while (ts.isObjectLiteralExpression(n) && ts.isPropertyAssignment(n.parent)) {
+    const entry = n.parent.parent;
+    if (
+      n.parent.name.getText().replace(/^["']|["']$/g, "") === "details" &&
+      ts.isObjectLiteralExpression(entry) &&
+      entry.properties.some((p) => p.name?.getText() === "action")
+    )
+      return true;
+    n = entry;
+  }
+  return false;
+}
+
+/** A catalog render whose words, stored, are frozen in one locale. */
+const CATALOG_RENDERS = new Set([
+  "renderShown",
+  "renderMessage",
+  "renderRecorded",
+  "decisionWords",
+  "t",
+  "msg",
+]);
+
+/**
+ * Rule F's judgement: a literal reaching a record's note is reported unless it is empty, has no
+ * letter, or is a code or catalog key (`approvals.run_failed`, `screens.records.note_erased`). A
+ * lone token is reported too: "revised" or "rejected_after_run_failed" stored as a note is shown
+ * as it is.
+ */
+export function isStoredWords(text: string): boolean {
+  const t = text.trim();
+  if (!/[a-z]/i.test(t)) return false;
+  return !/^[a-z][\w-]*(?:\.[\w-]+)+$/i.test(t) && !isKindCode(text);
+}
+
+/** A `kind:detail` code (`sqlstate:57014`, `reported:x`): its kind, its detail data. */
+export function isKindCode(text: string): boolean {
+  return /^[a-z][a-z0-9_]*:\S*$/.test(text);
+}
+
+/**
+ * In a code column (STORED_CODE_COLUMNS), a sentence is reported; a code — a token, a dotted key,
+ * a `kind:detail` — is what belongs there.
+ */
+export function isCodeColumnWords(text: string): boolean {
+  const t = text.trim();
+  return /[a-z]{2,}[,.;:]?\s+[a-z]{2,}/i.test(t) && !isKindCode(t) && !isApiCode(t);
+}
+
+/** The text between a position and the end of its expression in SQL (a comma or a clause at depth 0). */
+function sqlExpressionAt(sql: string, from: number): string {
+  let depth = 0;
+  let quoted = false;
+  for (let i = from; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === "'") quoted = !quoted;
+    if (quoted) continue;
+    if (c === "(") depth++;
+    else if (c === ")") {
+      if (depth === 0) return sql.slice(from, i);
+      depth--;
+    } else if (c === "," && depth === 0) return sql.slice(from, i);
+    else if (
+      depth === 0 &&
+      /^\s(?:where|returning|from|on\s+conflict)\b/i.test(sql.slice(i, i + 14))
+    )
+      return sql.slice(from, i);
+  }
+  return sql.slice(from);
+}
+
+/** Split a parenthesised list's inside at its top-level commas. */
+function sqlList(inside: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i < inside.length; i++) {
+    const c = inside[i];
+    if (c === "'") quoted = !quoted;
+    if (quoted) continue;
+    if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(inside.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(inside.slice(start));
+  return out.map((x) => x.trim());
+}
+
+/** The parenthesised text starting at `open` (an opening parenthesis), without its parentheses. */
+function sqlParens(sql: string, open: number): string {
+  let depth = 0;
+  for (let i = open; i < sql.length; i++) {
+    if (sql[i] === "(") depth++;
+    else if (sql[i] === ")" && --depth === 0) return sql.slice(open + 1, i);
+  }
+  return sql.slice(open + 1);
+}
+
+/**
+ * The parameters (1-based) a statement writes into a record's note: `col = …$n…` (an update's
+ * set, a case included), an insert's `(…col…) values (…$n…)`, and a JSON note
+ * `jsonb_build_object(…, 'note', $n …)`.
+ */
+export function sqlNoteParams(
+  sql: string,
+  columns: ReadonlySet<string> = STORED_NOTE_COLUMNS,
+  jsonKeys: RegExp = /'(note)'\s*,\s*/g
+): number[] {
+  const found = new Set<number>();
+  const params = (text: string) => {
+    for (const m of text.matchAll(/\$(\d+)/g)) found.add(Number(m[1]));
+  };
+  for (const m of sql.matchAll(/(?<![\w.'])(\w+)\s*=(?![=>])\s*/g)) {
+    if (columns.has(m[1].toLowerCase()))
+      params(sqlExpressionAt(sql, m.index + m[0].length));
+  }
+  for (const m of sql.matchAll(/\binsert\s+into\s+[\w.]+\s*\(/gi)) {
+    const open = m.index + m[0].length - 1;
+    const cols = sqlList(sqlParens(sql, open));
+    const rest = sql.slice(open + cols.join(",").length);
+    const v = /\)\s*values\s*\(/i.exec(rest);
+    if (!v) continue;
+    const vals = sqlList(sqlParens(rest, v.index + v[0].length - 1));
+    cols.forEach((c, i) => {
+      if (columns.has(c.replace(/"/g, "").toLowerCase()) && vals[i]) params(vals[i]);
+    });
+  }
+  for (const m of sql.matchAll(jsonKeys))
+    params(sqlExpressionAt(sql, m.index + m[0].length));
+  return [...found].sort((a, b) => a - b);
+}
+
+/** The parameters a statement writes into a code column (or a JSON reason or error). */
+export const sqlCodeParams = (sql: string): number[] =>
+  sqlNoteParams(sql, STORED_CODE_COLUMNS, /'(reason|error)'\s*,\s*/g);
+
+/**
+ * An object that is a table of codes (`{ changeComment: "text", status: "code", … }`: a field's
+ * kind), not a record: three or more properties, every value a code-shaped literal.
+ */
+/** A stored field assigned (`acc.reasoning = …`): its value as a sink (TASK-209), or undefined. */
+function assignedField(n: ts.Node): [ts.Expression, string[], boolean] | undefined {
+  if (
+    !ts.isBinaryExpression(n) ||
+    n.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isPropertyAccessExpression(n.left)
+  )
+    return undefined;
+  const field = n.left.name.text;
+  const strict = STORED_NOTE_FIELDS.has(field);
+  if (!strict && !STORED_CODE_FIELDS.has(field)) return undefined;
+  if (ts.isObjectLiteralExpression(strip(n.right)) || inReaderRender(n)) return undefined;
+  return [n.right, [], strict];
+}
+
+/**
+ * Is `n` inside a function that words a record for its reader (`renderStep`, `renderRecords`: a
+ * copy made for an export or a screen, never stored)?
+ */
+function inReaderRender(n: ts.Node): boolean {
+  for (let p: ts.Node | undefined = n.parent; p; p = p.parent)
+    if (
+      (ts.isFunctionDeclaration(p) || ts.isMethodDeclaration(p)) &&
+      p.name &&
+      /^render[A-Z]/.test(p.name.getText())
+    )
+      return true;
+  return false;
+}
+
+/**
+ * Is `o` (an object literal) not a record but a description of one — an input schema's
+ * `properties` — or the values a catalog render is given (`msg("conclusion", { conclusion })`)?
+ */
+function isSchemaOrRenderValues(o: ts.Node): boolean {
+  if (!ts.isObjectLiteralExpression(o)) return false;
+  const p = o.parent;
+  if (ts.isPropertyAssignment(p) && p.name.getText() === "properties") return true;
+  if (ts.isCallExpression(p)) {
+    const e = strip(p.expression);
+    const name = ts.isIdentifier(e)
+      ? e.text
+      : ts.isPropertyAccessExpression(e)
+        ? e.name.text
+        : undefined;
+    return !!name && CATALOG_RENDERS.has(name) && p.arguments.indexOf(o) > 0;
+  }
+  return false;
+}
+
+function isCodeTable(o: ts.Node): boolean {
+  return (
+    ts.isObjectLiteralExpression(o) &&
+    o.properties.length >= 3 &&
+    o.properties.every(
+      (p) =>
+        ts.isPropertyAssignment(p) &&
+        (ts.isStringLiteral(p.initializer) ||
+          ts.isNoSubstitutionTemplateLiteral(p.initializer)) &&
+        !isPhrase(p.initializer.text)
+    )
+  );
+}
+
+/**
+ * Where a function's parameter carries a record's note: its index, in an object the path, and
+ * whether a note (strict) or a code column takes it.
+ */
+interface NoteParam {
+  readonly index: number;
+  readonly path: readonly string[];
+  readonly strict: boolean;
+}
+
+/**
+ * A class's constructor parameter kept as its field (`readonly reason: string`): a sink that reads
+ * the field (`err.reason`, `err.reason.slice(…)`) reaches every `new Class(…)`'s argument there —
+ * a run failure's reason carried by its error into an audit record (TASK-209). The classes the
+ * receiver is are known, never guessed by the field's name: a parameter typed as one, an
+ * `instanceof` test that holds where it is read, or a `new` it was given. Answers, for a sink's
+ * value, the constructor arguments it reads.
+ */
+function classFieldArgs(
+  files: readonly string[],
+  parse: (file: string) => ts.SourceFile | undefined
+): (e: ts.Expression) => ts.Expression[] {
+  const ctorFields = new Map<string, { cls: string; index: number }[]>();
+  const constructions: ts.NewExpression[] = [];
+  for (const file of files) {
+    const sf = parse(file);
+    if (!sf) continue;
+    const visit = (n: ts.Node): void => {
+      if (ts.isClassDeclaration(n) && n.name)
+        for (const m of n.members)
+          if (ts.isConstructorDeclaration(m))
+            m.parameters.forEach((p, index) => {
+              if (ts.isIdentifier(p.name) && ts.getModifiers(p)?.length) {
+                const list = ctorFields.get(p.name.text) ?? [];
+                list.push({ cls: n.name!.text, index });
+                ctorFields.set(p.name.text, list);
+              }
+            });
+      if (ts.isNewExpression(n)) constructions.push(n);
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  /**
+   * The field a sink's value reads off an object (`x.reason`, through string methods), and the
+   * classes `x` is known to be: a parameter typed as one, an `instanceof` test that holds where it
+   * is read, or a `new` it was given — never a guess by the field's name alone.
+   */
+  const fieldRead = (
+    e0: ts.Expression
+  ): { field: string; classes: string[] } | undefined => {
+    let e = strip(e0);
+    while (
+      ts.isCallExpression(e) &&
+      ts.isPropertyAccessExpression(e.expression) &&
+      STRING_METHODS.has(e.expression.name.text)
+    )
+      e = strip(e.expression.expression);
+    if (!ts.isPropertyAccessExpression(e)) return undefined;
+    const recv = strip(e.expression);
+    if (!ts.isIdentifier(recv)) return undefined;
+    const name = recv.text;
+    const classes = new Set<string>();
+    const typeNames = (t: ts.TypeNode | undefined): void => {
+      if (!t) return;
+      if (ts.isTypeReferenceNode(t)) classes.add(t.typeName.getText());
+      else if (ts.isUnionTypeNode(t)) t.types.forEach(typeNames);
+    };
+    for (let n: ts.Node | undefined = e; n; n = n.parent) {
+      if (ts.isFunctionLike(n))
+        for (const p of n.parameters)
+          if (ts.isIdentifier(p.name) && p.name.text === name) typeNames(p.type);
+      const test = ts.isIfStatement(n)
+        ? n.expression
+        : ts.isConditionalExpression(n)
+          ? n.condition
+          : undefined;
+      if (test) {
+        const look = (x: ts.Node): void => {
+          if (
+            ts.isBinaryExpression(x) &&
+            x.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+            ts.isIdentifier(strip(x.left)) &&
+            (strip(x.left) as ts.Identifier).text === name
+          )
+            classes.add(x.right.getText());
+          ts.forEachChild(x, look);
+        };
+        look(test);
+      }
+      if (ts.isBlock(n) || ts.isSourceFile(n))
+        for (const st of n.statements)
+          if (ts.isVariableStatement(st))
+            for (const d of st.declarationList.declarations)
+              if (
+                ts.isIdentifier(d.name) &&
+                d.name.text === name &&
+                d.initializer &&
+                ts.isNewExpression(strip(d.initializer))
+              )
+                classes.add(
+                  (strip(d.initializer) as ts.NewExpression).expression.getText()
+                );
+    }
+    return { field: e.name.text, classes: [...classes] };
+  };
+  return (e: ts.Expression): ts.Expression[] => {
+    const read = fieldRead(e);
+    if (!read) return [];
+    const out: ts.Expression[] = [];
+    for (const { cls, index } of ctorFields.get(read.field) ?? [])
+      if (read.classes.includes(cls))
+        for (const c of constructions) {
+          const callee = strip(c.expression);
+          const arg = c.arguments?.[index];
+          if (
+            ts.isIdentifier(callee) &&
+            callee.text === cls &&
+            arg &&
+            !ts.isSpreadElement(arg)
+          )
+            out.push(arg);
+        }
+    return out;
+  };
+}
+
+/** One place a value is stored: the expression, the path inside it, and which judgement holds. */
+type Sink = [ts.Expression, string[], boolean];
+
+/**
+ * Rule F (TASK-209, N-112): no TypeScript in app/api, platform/ or lib/ writes words into a
+ * record's note, reason, comment or error — a held change's decision note, a run's last error, a
+ * ban's reason, an approval's review comment, a setting's change comment, a tenant's status
+ * reason, a run step's note — as "<file>:<line> <text>". A sink is:
+ *
+ *   - a stored field in an object literal (STORED_NOTE_FIELDS, STORED_CODE_FIELDS; a step
+ *     output's note, reason or error: an object given as `output`) — not a schema's or a ShownText
+ *     (an object), nor a table of codes;
+ *   - a statement's parameter written into a note or code column (sqlNoteParams, sqlCodeParams),
+ *     its SQL a literal, a template or a constant;
+ *   - an argument given where a function takes a note it stores — found from the sinks above, by
+ *     following each function's parameters (an object parameter's property too) through its
+ *     locals to a sink, to a fixed point; a call is matched by the function's or method's name.
+ *
+ * From each sink the flow (rule A's) is followed to its literals: in a note, each one
+ * isStoredWords; in a code column, each sentence (isCodeColumnWords). A `kind:${detail}` template
+ * is a code, its detail data. A catalog render reaching a sink is reported too, as
+ * "<file>:<line> rendered <call>": its words would be stored in one locale. A person's note (a
+ * parameter, a request's field) is no literal and is never reported.
+ */
+export function storedNoteSites(src: Sources, root: string): string[] {
+  const strictFlow = flowOf(src, root, { accept: isStoredWords, receivers: true });
+  const codeFlow = flowOf(src, root, { accept: isCodeColumnWords, receivers: true });
+  const parse = strictFlow.parse;
+  const files = src.list().filter((f) => /\.tsx?$/.test(f));
+  type Fn = ts.FunctionLikeDeclaration;
+  // A function's key: "method:<name>" for a class's or an object's method (called `x.name(…)`),
+  // "function:<name>" for a declared or bound function (called `name(…)`) — so a screen's local
+  // `submit` is not taken for a store's `submit` method.
+  const fns: { name: string; fn: Fn }[] = [];
+  for (const file of files) {
+    const sf = parse(file);
+    if (!sf) continue;
+    const visit = (n: ts.Node): void => {
+      if (ts.isFunctionDeclaration(n) && n.name && n.body)
+        fns.push({ name: `function:${n.name.getText(sf)}`, fn: n });
+      else if (ts.isMethodDeclaration(n) && n.body)
+        fns.push({ name: `method:${n.name.getText(sf)}`, fn: n });
+      else if (
+        (ts.isVariableDeclaration(n) || ts.isPropertyAssignment(n)) &&
+        n.initializer &&
+        (ts.isArrowFunction(strip(n.initializer)) ||
+          ts.isFunctionExpression(strip(n.initializer)))
+      )
+        fns.push({
+          name: `${ts.isPropertyAssignment(n) ? "method" : "function"}:${n.name.getText(sf)}`,
+          fn: strip(n.initializer) as Fn,
+        });
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  const noteParams = new Map<string, NoteParam[]>();
+  const calleeName = (c: ts.CallExpression | ts.NewExpression): string | undefined => {
+    const e = strip(c.expression);
+    if (ts.isIdentifier(e)) return e.text;
+    if (ts.isPropertyAccessExpression(e)) return e.name.text;
+    return undefined;
+  };
+  /** A call's key in noteParams (see fns). */
+  const calleeKey = (c: ts.CallExpression | ts.NewExpression): string | undefined => {
+    const e = strip(c.expression);
+    if (ts.isIdentifier(e)) return `function:${e.text}`;
+    if (ts.isPropertyAccessExpression(e)) return `method:${e.name.text}`;
+    return undefined;
+  };
+  /** The SQL text a `query` call's first argument holds (a literal, a template, a constant). */
+  const sqlOf = (e: ts.Expression | undefined): string | undefined => {
+    if (!e) return undefined;
+    const x = strip(e);
+    if (ts.isTemplateExpression(x))
+      return x.head.text + x.templateSpans.map((s) => " ? " + s.literal.text).join("");
+    const text = literalText(x);
+    if (text !== undefined) return text;
+    if (ts.isIdentifier(x)) {
+      const d = strictFlow.findDecl(x.getSourceFile(), x.text);
+      return d?.kind === "value" ? sqlOf(d.init) : undefined;
+    }
+    return undefined;
+  };
+  /** Every sink in `scope`. */
+  const sinks = (scope: ts.Node): Sink[] => {
+    const out: Sink[] = [];
+    const visit = (n: ts.Node): void => {
+      if (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) {
+        const key = n.name.getText().replace(/^["']|["']$/g, "");
+        const obj = n.parent;
+        const inOutput =
+          ts.isObjectLiteralExpression(obj) &&
+          ts.isPropertyAssignment(obj.parent) &&
+          obj.parent.name.getText() === "output";
+        const value = ts.isPropertyAssignment(n)
+          ? n.initializer
+          : (n.name as ts.Expression);
+        const strict =
+          STORED_NOTE_FIELDS.has(key) || (inOutput && STEP_NOTE_FIELDS.has(key));
+        const code =
+          STORED_CODE_FIELDS.has(key) ||
+          (inOutput && STEP_CODE_FIELDS.has(key)) ||
+          (inAuditDetails(obj) && !AUDIT_RAW_FIELD.test(key));
+        // A schema's property or a ShownText (an object) is not a stored text; nor is a table.
+        if (
+          (strict || code) &&
+          !ts.isObjectLiteralExpression(strip(value)) &&
+          !isCodeTable(obj) &&
+          !isSchemaOrRenderValues(obj)
+        )
+          out.push([value, [], strict]);
+      }
+      // A stored field assigned (`acc.reasoning = parts.join(" ")`, TASK-209).
+      const assigned = assignedField(n);
+      if (assigned) out.push(assigned);
+      if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
+        const name = calleeName(n);
+        const args = n.arguments ?? ts.factory.createNodeArray<ts.Expression>();
+        if (name === "query" && ts.isCallExpression(n) && args.length >= 2) {
+          const sql = sqlOf(args[0]);
+          const values = strip(args[1]);
+          if (sql && isApiCode(sql) && ts.isArrayLiteralExpression(values)) {
+            const at = (k: number, strict: boolean) => {
+              const v = values.elements[k - 1];
+              if (v && !ts.isSpreadElement(v)) out.push([v, [], strict]);
+            };
+            for (const k of sqlNoteParams(sql)) at(k, true);
+            for (const k of sqlCodeParams(sql)) at(k, false);
+          }
+        }
+        const fnKey = calleeKey(n);
+        for (const p of (fnKey && noteParams.get(fnKey)) || []) {
+          const a = args[p.index];
+          // A text the function stores is never an object literal: that is another function of
+          // the same name (a screen's `submit(reason)` beside a store's `submit(item)`).
+          if (!a || ts.isSpreadElement(a)) continue;
+          if (p.path.length === 0 && ts.isObjectLiteralExpression(strip(a))) continue;
+          out.push([a, [...p.path], p.strict]);
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(scope);
+    return out;
+  };
+  /** The parameters of `fn` (index, path) that `e` carries, through `fn`'s own locals. */
+  const origins = (fn: Fn, e0: ts.Expression, depth = 0): Omit<NoteParam, "strict">[] => {
+    if (depth > 6) return [];
+    const e = strip(e0);
+    const out: Omit<NoteParam, "strict">[] = [];
+    const param = (name: string, path: string[]): void => {
+      fn.parameters.forEach((p, index) => {
+        if (ts.isIdentifier(p.name) && p.name.text === name) out.push({ index, path });
+        else if (ts.isObjectBindingPattern(p.name))
+          for (const el of p.name.elements)
+            if (ts.isIdentifier(el.name) && el.name.text === name)
+              out.push({
+                index,
+                path: [(el.propertyName ?? el.name).getText(), ...path],
+              });
+      });
+    };
+    const local = (name: string): ts.Expression | undefined => {
+      let found: ts.Expression | undefined;
+      const visit = (n: ts.Node): void => {
+        if (found) return;
+        if (
+          ts.isVariableDeclaration(n) &&
+          ts.isIdentifier(n.name) &&
+          n.name.text === name &&
+          n.initializer
+        )
+          found = n.initializer;
+        else ts.forEachChild(n, visit);
+      };
+      if (fn.body) visit(fn.body);
+      return found;
+    };
+    /** `const { name } = x` (or `{ prop: name }`) in `fn`: what it is taken from, and the key. */
+    const destructured = (
+      name: string
+    ): { from: ts.Expression; prop: string } | undefined => {
+      let found: { from: ts.Expression; prop: string } | undefined;
+      const visit = (n: ts.Node): void => {
+        if (found) return;
+        if (
+          ts.isVariableDeclaration(n) &&
+          ts.isObjectBindingPattern(n.name) &&
+          n.initializer
+        )
+          for (const el of n.name.elements)
+            if (ts.isIdentifier(el.name) && el.name.text === name)
+              found = {
+                from: n.initializer,
+                prop: (el.propertyName ?? el.name).getText(),
+              };
+        if (!found) ts.forEachChild(n, visit);
+      };
+      if (fn.body) visit(fn.body);
+      return found;
+    };
+    if (ts.isIdentifier(e)) {
+      param(e.text, []);
+      if (out.length === 0) {
+        const init = local(e.text);
+        if (init) out.push(...origins(fn, init, depth + 1));
+        const d = init ? undefined : destructured(e.text);
+        if (d)
+          for (const o of origins(fn, d.from, depth + 1))
+            out.push({ index: o.index, path: [...o.path, d.prop] });
+      }
+      return out;
+    }
+    if (ts.isPropertyAccessExpression(e)) {
+      const path: string[] = [];
+      let x: ts.Expression = e;
+      while (ts.isPropertyAccessExpression(x)) {
+        path.unshift(x.name.text);
+        x = strip(x.expression);
+      }
+      if (ts.isIdentifier(x)) param(x.text, path);
+      return out;
+    }
+    if (ts.isTemplateExpression(e)) {
+      for (const s of e.templateSpans) out.push(...origins(fn, s.expression, depth + 1));
+      return out;
+    }
+    if (ts.isConditionalExpression(e))
+      return [
+        ...origins(fn, e.whenTrue, depth + 1),
+        ...origins(fn, e.whenFalse, depth + 1),
+      ];
+    if (ts.isBinaryExpression(e)) {
+      const op = e.operatorToken.kind;
+      if (
+        op === ts.SyntaxKind.PlusToken ||
+        op === ts.SyntaxKind.BarBarToken ||
+        op === ts.SyntaxKind.QuestionQuestionToken
+      )
+        return [...origins(fn, e.left, depth + 1), ...origins(fn, e.right, depth + 1)];
+      return out;
+    }
+    if (
+      ts.isCallExpression(e) &&
+      ts.isPropertyAccessExpression(e.expression) &&
+      STRING_METHODS.has(e.expression.name.text)
+    )
+      return origins(fn, e.expression.expression, depth + 1);
+    if (
+      ts.isCallExpression(e) &&
+      ts.isIdentifier(e.expression) &&
+      e.expression.text === "String"
+    )
+      return e.arguments[0] ? origins(fn, e.arguments[0], depth + 1) : out;
+    return out;
+  };
+  const key = (p: NoteParam) => `${p.index}:${p.path.join(".")}:${p.strict}`;
+  for (let changed = true, round = 0; changed && round < 20; round++) {
+    changed = false;
+    for (const { name, fn } of fns) {
+      if (!fn.body) continue;
+      const known = noteParams.get(name) ?? [];
+      const seen = new Set(known.map(key));
+      for (const [expr, path, strict] of sinks(fn.body))
+        for (const o of origins(fn, expr)) {
+          const p = { index: o.index, path: [...o.path, ...path], strict };
+          if (!seen.has(key(p))) {
+            seen.add(key(p));
+            known.push(p);
+            changed = true;
+          }
+        }
+      if (known.length) noteParams.set(name, known);
+    }
+  }
+  /** A catalog render in a sink's value, through its locals: its words would be stored. */
+  const rendered: string[] = [];
+  const renders = (e0: ts.Expression | undefined, depth = 0): void => {
+    if (!e0 || depth > 6) return;
+    const e = strip(e0);
+    if (ts.isCallExpression(e)) {
+      const name = calleeName(e);
+      if (name && CATALOG_RENDERS.has(name)) {
+        const sf = e.getSourceFile();
+        rendered.push(
+          `${relative(root, sf.fileName)}:${sf.getLineAndCharacterOfPosition(e.getStart(sf)).line + 1} rendered ${name}(…)`
+        );
+        return;
+      }
+      if (
+        ts.isPropertyAccessExpression(e.expression) &&
+        STRING_METHODS.has(e.expression.name.text)
+      )
+        renders(e.expression.expression, depth + 1);
+      return;
+    }
+    if (ts.isTemplateExpression(e))
+      e.templateSpans.forEach((s) => renders(s.expression, depth + 1));
+    else if (ts.isConditionalExpression(e)) {
+      renders(e.whenTrue, depth + 1);
+      renders(e.whenFalse, depth + 1);
+    } else if (ts.isBinaryExpression(e)) {
+      renders(e.left, depth + 1);
+      renders(e.right, depth + 1);
+    } else if (ts.isIdentifier(e)) {
+      let p: ts.Node | undefined = e.parent;
+      while (p && !ts.isFunctionLike(p) && !ts.isSourceFile(p)) p = p.parent;
+      const visit = (n: ts.Node): void => {
+        if (
+          ts.isVariableDeclaration(n) &&
+          ts.isIdentifier(n.name) &&
+          n.name.text === e.text &&
+          n.initializer
+        )
+          renders(n.initializer, depth + 1);
+        else ts.forEachChild(n, visit);
+      };
+      if (p) visit(p);
+    }
+  };
+  const fieldArgs = classFieldArgs(files, parse);
+  for (const file of files) {
+    const sf = parse(file);
+    if (!sf) continue;
+    for (const [expr, path, strict] of sinks(sf)) {
+      (strict ? strictFlow : codeFlow).literalsAt(expr, path, new Set());
+      if (path.length === 0) renders(expr);
+      if (path.length === 0)
+        for (const arg of fieldArgs(expr))
+          (strict ? strictFlow : codeFlow).literalsAt(arg, [], new Set());
+    }
+  }
+  return [...new Set([...strictFlow.sites(), ...codeFlow.sites(), ...rendered])].sort();
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 /** A virtual source set rooted at /v. */
@@ -1163,5 +2063,164 @@ describe("screen text reached indirectly comes from the catalog (TASK-205)", () 
       "Max 2500 characters",
     ])
       expect([s, isWords(s)]).toEqual([s, true]);
+  });
+});
+
+describe("records written by TypeScript carry a catalog key (TASK-209, rule F)", () => {
+  it("rule F: no TypeScript writes words into a record's note, reason, comment or error (TASK-209)", () => {
+    // TASK-209 (N-112): a lapsed or undecided hold's note, a decision's default note, a superseded
+    // or duplicate hold's note, a run's recorded error, "marked executed by …", a strike ban's
+    // reason, a withdrawn approval's review comment are a catalog key and values
+    // (platform/errors/recorded-text.ts). None is known: a new one fails.
+    expect(storedNoteSites(noteSources(), ROOT)).toEqual([]);
+  });
+
+  it("[self-test] rule F: words reaching a record's note are found; codes, keys and a person's note are not", () => {
+    const found = storedNoteSites(
+      virtual({
+        "platform/x/store.ts": [
+          "export class S {",
+          "  async decide(id: string, by: string, note?: string) {",
+          '    await tx.query("update proposals set decided_by = $2, decision_note = $3 where id = $1", [id, by, note]);',
+          "  }",
+          "  async fail(id: string, why: string) {",
+          "    return this.move(id, { lastRunError: why });",
+          "  }",
+          "}",
+          "export const lapsed = (days: number) => `expired: not run within ${days} days`;",
+          "async function sweep(days: number) {",
+          '  await tx.query("update proposals set decision_note = $2 where x < $1", [days, lapsed(days)]);',
+          '  await tx.query("insert into user_strikes (user_id, reason) values ($1, $2)", [u, "Automatic ban for spam"]);',
+          '  await tx.query("update users set ban_reason = case when $1::boolean then $2 else ban_reason end", [true, "strike threshold"]);',
+          "}",
+          "function step(note: string) {",
+          '  return { output: { note: `marked executed: ${note}`, status: "done", error: "sqlstate:57014" } };',
+          "}",
+          "async function route(body: { note?: string }) {",
+          '  await new S().decide("p", "a", body.note?.trim() || "rejected_after_run_failed");',
+          '  await new S().decide("p", "a", body.note ?? "approvals.run_failed");',
+          '  await new S().fail("p", `run failed: ${code}`.slice(0, 500));',
+          '  await new S().decide("p", "a", body.note);',
+          '  const label = "Not a note at all";',
+          '  return { label, changeComment: "Use the platform default" };',
+          "}",
+          "function impact() {",
+          "  const parts: string[] = [];",
+          '  parts.push("This is a safety-critical setting.");',
+          '  return { impactSummary: parts.join(" "), reviewComment: renderShown(x) };',
+          "}",
+          'const KINDS = { changeComment: "text", status: "code", reason: "text" };',
+          'const SCHEMA = { properties: { changeComment: { type: "string", description: "Why it changed" } } };',
+          "function code(k: string) {",
+          '  return { lastRunError: `reported:${k}`, lastError: "lease_expired" };',
+          "}",
+        ].join("\n"),
+      }),
+      "/v"
+    );
+    expect(found).toEqual([
+      'platform/x/store.ts:12 "Automatic ban for spam"',
+      'platform/x/store.ts:13 "strike threshold"',
+      'platform/x/store.ts:16 "marked executed:  "',
+      'platform/x/store.ts:19 "rejected_after_run_failed"',
+      'platform/x/store.ts:21 "run failed:  "',
+      'platform/x/store.ts:24 "Use the platform default"',
+      'platform/x/store.ts:28 "This is a safety-critical setting."',
+      "platform/x/store.ts:29 rendered renderShown(…)",
+      'platform/x/store.ts:9 "expired: not run within   days"',
+    ]);
+    expect(
+      sqlNoteParams(
+        "update t set status = $1, decision_note = $2, note = $4 where id = $3"
+      )
+    ).toEqual([2, 4]);
+    expect(
+      sqlNoteParams(
+        "insert into config_pending_approvals (id, review_comment, status) values ($1, coalesce($2, 'x'), $3)"
+      )
+    ).toEqual([2]);
+    expect(sqlNoteParams("select jsonb_build_object('note', $5, 'by', $6)")).toEqual([5]);
+    expect(
+      sqlCodeParams("update proposals set last_run_error = $3 where id = $1")
+    ).toEqual([3]);
+    expect(isStoredWords("revised")).toBe(true);
+    expect(isStoredWords("refused: x")).toBe(true);
+    expect(isStoredWords("screens.records.note_erased")).toBe(false);
+    expect(isStoredWords("approvals.run_failed")).toBe(false);
+    expect(isStoredWords("sqlstate:57014")).toBe(false);
+    expect(isStoredWords(" ")).toBe(false);
+    expect(isCodeColumnWords("run failed, approval kept")).toBe(true);
+    expect(isCodeColumnWords("lease_expired")).toBe(false);
+    expect(isCodeColumnWords("reported:x")).toBe(false);
+  });
+
+  it("[self-test] rule F, moderation reasons: words in a decision's reasoning, factors or conclusion are found; keys, schemas and render values are not", () => {
+    const found = storedNoteSites(
+      virtual({
+        "platform/x/guardian.ts": [
+          "function screen(empty: boolean) {",
+          "  const reasonParts: string[] = [];",
+          '  reasonParts.push("Classifier unavailable — withheld.");',
+          '  if (empty) return { action: "allow", reasoning: "Empty text — no content to screen.", contextFactors: [] };',
+          '  return { action: "block", reasoning: reasonParts.join(" "), contextFactors: ["ai-output: strikes not attributed to user"] };',
+          "  acc.reasoning = `Blocklist hit: ${cats}.`;",
+          "}",
+          "function keyed() {",
+          '  return { reasoning: [shown("screens.moderation.reasons.declined")], factors: [shown("screens.moderation.factors.ai_output")] };',
+          "}",
+          'const S = { type: "string" };',
+          'const SCHEMA = { type: "object", properties: { reasoning: S, conclusion: S } };',
+          "function view(c: string) {",
+          '  return msg("conclusion", { conclusion: c });',
+          "}",
+          'function chain() { return builder.build({ conclusion: "Answer generated" }); }',
+        ].join("\n"),
+      }),
+      "/v"
+    );
+    expect(found).toEqual([
+      'platform/x/guardian.ts:16 "Answer generated"',
+      'platform/x/guardian.ts:3 "Classifier unavailable — withheld."',
+      'platform/x/guardian.ts:4 "Empty text — no content to screen."',
+      'platform/x/guardian.ts:5 "ai-output: strikes not attributed to user"',
+      'platform/x/guardian.ts:6 "Blocklist hit:  ."',
+    ]);
+  });
+
+  it("[self-test] rule F, audit details: a sentence or an error's composed reason is found; codes, raw fields and a health answer's details are not", () => {
+    const found = storedNoteSites(
+      virtual({
+        "platform/x/audit.ts": [
+          "export class RunFailed extends Error {",
+          "  constructor(readonly label: string, readonly reason: string) { super(label); }",
+          "}",
+          "export class Other extends Error {",
+          "  constructor(readonly reason: string) { super(reason); }",
+          "}",
+          'const RAISED = "the run raised an error";',
+          "function run() {",
+          '  throw new RunFailed("t", RAISED);',
+          "}",
+          'function other() { throw new Other("an unrelated sentence here"); }',
+          "async function record(err: RunFailed, why: string) {",
+          "  await writeAuditLog({",
+          '    action: "admin_action",',
+          '    details: { type: "approved_run_failed", reason: err.reason.slice(0, 500), note: "Applied by the system", nested: { cause: "it went away" } },',
+          "  });",
+          '  await writeAuditLog({ action: "admin_action", details: { reason: why, rawReply: "model text, kept raw", code: "screens.records.run_raised" } });',
+          "}",
+          "async function unknown(e: unknown) {",
+          '  await writeAuditLog({ action: "x", details: { reason: (e as Other).reason } });',
+          "}",
+          'function health() { return { name: "db", details: { detail: "the check did not complete" } }; }',
+        ].join("\n"),
+      }),
+      "/v"
+    );
+    expect(found).toEqual([
+      'platform/x/audit.ts:15 "Applied by the system"',
+      'platform/x/audit.ts:15 "it went away"',
+      'platform/x/audit.ts:7 "the run raised an error"',
+    ]);
   });
 });

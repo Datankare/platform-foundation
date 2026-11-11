@@ -203,7 +203,8 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           requestId: opts.requestId,
         });
         throw new AIProviderError(
-          `Multimodal input withheld by screening: ${inputScreen.reason}`,
+          // Why is in the log line above (a catalog key, TASK-209).
+          "Multimodal input withheld by screening",
           "permanent"
         );
       }
@@ -301,7 +302,8 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
           requestId: opts.requestId,
         });
         throw new AIProviderError(
-          `Multimodal input withheld by screening: ${inputScreen.reason}`,
+          // Why is in the log line above (a catalog key, TASK-209).
+          "Multimodal input withheld by screening",
           "permanent"
         );
       }

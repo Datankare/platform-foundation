@@ -16,6 +16,7 @@
  * @module platform/ai
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { performExternalEffect, getProposalStore } from "@/platform/agents";
 import { logger } from "@/lib/logger";
 import type { AgentIdentity } from "@/platform/kernel/types";
@@ -62,7 +63,8 @@ export interface GenerationOutcome {
   readonly provenance?: ProvenanceCredential;
   /** Proposal id when a held generation was enqueued for admin Confirm (ADR-040). */
   readonly proposalId?: string;
-  readonly reason: string;
+  /** Why it ended so: a catalog key and values (screens.moderation.image.*, TASK-209). */
+  readonly reason: ShownText;
 }
 
 /** Signals available to the risk policy beyond the request + output screen. */
@@ -155,12 +157,20 @@ export async function generateGoverned(
     call: async () => generator(request),
   });
   if (effect.status === "failed") {
-    return { status: "withheld", reason: `generation failed: ${effect.error}` };
+    return {
+      status: "withheld",
+      reason: shown("screens.moderation.image.failed", {
+        // The effect ledger's reason: a catalog key (screens.records.effect_*), else a code.
+        error: effect.error?.startsWith("screens.")
+          ? shown(effect.error as `screens.${string}`)
+          : String(effect.error ?? ""),
+      }),
+    };
   }
   if (effect.status === "indeterminate") {
     return {
       status: "held",
-      reason: "generation indeterminate — awaiting reconciliation",
+      reason: shown("screens.moderation.image.indeterminate"),
     };
   }
   const draft = effect.result;
@@ -173,7 +183,10 @@ export async function generateGoverned(
   if (!screenPermits(verdict)) {
     return {
       status: "withheld",
-      reason: `generated image ${verdict.action}: ${verdict.reasoning}`,
+      reason: shown("screens.moderation.image.withheld", {
+        action: verdict.action,
+        reason: verdict.reasoning,
+      }),
     };
   }
 
@@ -191,7 +204,11 @@ export async function generateGoverned(
       proposal.operationId === request.operationId;
     const claimed = matches ? await store.consume(opts.approvedProposalId) : undefined;
     if (!claimed) {
-      return { status: "held", tier, reason: "no approval to commit this generation" };
+      return {
+        status: "held",
+        tier,
+        reason: shown("screens.moderation.image.no_approval"),
+      };
     }
     const provenance = emitProvenance(draft, { model: opts.model ?? "image-generation" });
     return {
@@ -199,7 +216,7 @@ export async function generateGoverned(
       image: draft,
       tier,
       provenance,
-      reason: "committed (approved)",
+      reason: shown("screens.moderation.image.committed_approved"),
     };
   }
   if (tier === "high") {
@@ -210,9 +227,11 @@ export async function generateGoverned(
       status: "held",
       tier,
       proposalId,
-      reason: syntheticInput
-        ? "high-risk generation held for Confirm (synthetic reference input)"
-        : "high-risk generation held for Confirm",
+      reason: shown(
+        syntheticInput
+          ? "screens.moderation.image.held_synthetic"
+          : "screens.moderation.image.held"
+      ),
     };
   }
 
@@ -223,7 +242,7 @@ export async function generateGoverned(
     image: draft,
     tier,
     provenance,
-    reason: "committed (low risk)",
+    reason: shown("screens.moderation.image.committed_low"),
   };
 }
 

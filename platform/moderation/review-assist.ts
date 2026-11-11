@@ -15,6 +15,8 @@
  * @module platform/moderation
  */
 
+import type { ShownText } from "@/platform/errors/shown-text";
+import { reasonText, reasonsText, type RecordedReasons } from "./reasons";
 import { getOrchestrator } from "@/platform/ai";
 import { logger } from "@/lib/logger";
 import { sanitizeForPrompt } from "@/lib/sanitize";
@@ -48,6 +50,23 @@ const SYSTEM_PROMPT =
 const data = (v: unknown, max = 2000): string =>
   sanitizeForPrompt(String(v ?? "").slice(0, max));
 
+/**
+ * The prompt boundary (TASK-209): the record's reasons, factors and explanation are catalog keys
+ * and values (./reasons.ts) — words for a reader. A prompt is model input, not a screen: they are
+ * rendered here in English (PROMPT_LOCALE), the language the prompt is written in, whatever the
+ * moderator's — the same words the prompt always carried, so its meaning does not change. A
+ * record from before the keys gives its stored text, as it always did.
+ */
+const PROMPT_LOCALE = "en";
+
+/** A recorded reason list or text, in the prompt's words. */
+const promptReasons = (r: RecordedReasons): string =>
+  typeof r === "string" ? r : reasonsText(r, PROMPT_LOCALE);
+
+/** A recorded factor or explanation text, in the prompt's words. */
+const promptText = (f: ShownText | string): string =>
+  typeof f === "string" ? f : reasonText(f, PROMPT_LOCALE);
+
 /** Build the decision context the model reasons over. */
 function buildContext(item: ReviewQueueItem): string {
   const m = item.moderationResult;
@@ -59,11 +78,11 @@ function buildContext(item: ReviewQueueItem): string {
     c
       ? `Classifier: categories=[${c.categories.map((x) => data(x, 64)).join(", ")}], severity=${data(c.severity, 64)}`
       : "Classifier: not invoked",
-    `Reasoning: ${data(m.reasoning)}`,
+    `Reasoning: ${data(promptReasons(m.reasoning))}`,
     m.contextFactors.length > 0
       ? `Context factors: ${m.contextFactors
           .slice(0, 20)
-          .map((x) => data(x, 500))
+          .map((x) => data(promptText(x), 500))
           .join("; ")}`
       : "Context factors: none",
   ];
@@ -73,7 +92,7 @@ function buildContext(item: ReviewQueueItem): string {
     lines.push(`User appeal: ${data(item.appealReason)}`);
   }
   if (item.explanationChain?.conclusion) {
-    lines.push(`Explanation: ${data(item.explanationChain.conclusion)}`);
+    lines.push(`Explanation: ${data(promptText(item.explanationChain.conclusion))}`);
   }
   return lines.join("\n");
 }

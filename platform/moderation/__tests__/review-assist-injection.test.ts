@@ -99,3 +99,31 @@ describe("every record field in the prompt is wrapped as data (C-9)", () => {
     expect(markers.filter((m) => outside.includes(m))).toEqual([]);
   });
 });
+
+// TASK-209: the record's reasons and factors are catalog keys; the prompt is model input, so they
+// are rendered in English at its boundary — the words the prompt always carried.
+it("renders a record's keyed reasons and factors in English in the prompt, as before", async () => {
+  await generateReviewRecommendation(
+    {
+      ...item("an appeal of enough length to pass"),
+      moderationResult: {
+        action: "escalate",
+        triggeredBy: "content-rating",
+        reasoning: [
+          {
+            key: "screens.moderation.reasons.context",
+            params: { factors: [{ key: "screens.moderation.factors.ai_output" }] },
+          },
+          { key: "screens.moderation.reasons.declined" },
+        ],
+        contextFactors: [{ key: "screens.moderation.factors.ai_output" }],
+      },
+    } as unknown as ReviewQueueItem,
+    "req"
+  );
+  expect(sent()).toContain(
+    "Context: ai-output: strikes not attributed to user. Classifier declined to assess the content (declined) — withheld for human review."
+  );
+  expect(sent()).toContain("ai-output: strikes not attributed to user");
+  expect(sent()).not.toContain("screens.moderation");
+});

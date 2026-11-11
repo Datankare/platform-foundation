@@ -11,6 +11,8 @@
  */
 
 import type { ModerationAction } from "@/platform/moderation/types";
+import type { RecordedReasons } from "@/platform/moderation/reasons";
+import { shown } from "@/platform/errors/shown-text";
 import { screenContent } from "@/platform/moderation/middleware";
 import { logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
@@ -18,7 +20,8 @@ import { logger } from "@/lib/logger";
 /** The subset of a screening decision the RAG paths act on (provider-agnostic, ADR-043 D6). */
 export interface ScreenDecision {
   readonly action: ModerationAction;
-  readonly reasoning?: string;
+  /** Why: catalog keys and values (platform/moderation/reasons.ts, TASK-209). */
+  readonly reasoning?: RecordedReasons;
 }
 
 /** Screens one user-supplied input text. The seam both enforcement points call (ADR-043 D2). */
@@ -61,7 +64,7 @@ export async function runInputScreen(
     );
     return {
       action: "escalate",
-      reasoning: "fail-closed: the screen did not complete (the detail is in the log)",
+      reasoning: [shown("screens.moderation.modality.failed")],
     };
   }
 }

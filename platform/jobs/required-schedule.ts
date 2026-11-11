@@ -37,15 +37,3 @@ export async function refusesRequiredSchedule(
   if (getJobDefinition(kind)?.schedule?.required !== true) return false;
   return scope !== "platform" || value !== true;
 }
-
-/**
- * Why a change to a required job's enabled key is withdrawn by the system (round 20, nit 2; round
- * 21, nit 1: the body only — each caller says it was withdrawn its own way): one wording for every
- * row so withdrawn — a two-person approval's apply ("withdrawn by the system: …", config-approval
- * withdrawUnapplied), an approved runtime hold ("refused: …", approval-decision; the store adds
- * "withdrawn: ") and migration 062 ("withdrawn by the system: … (migration 062)") — true whatever
- * value the change asked for.
- */
-export function requiredJobWithdrawalNote(key: string): string {
-  return `"${key}" turns on a job that is now required — always on, and set only as the platform default`;
-}

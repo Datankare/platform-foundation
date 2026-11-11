@@ -41,15 +41,25 @@ import {
   type SettingType,
 } from "./config-value";
 import { formatDateTime } from "./admin-format";
+import { isShownText, renderShown, type ShownText } from "@/platform/errors/shown-text";
 
 const t = (key: string, values?: MessageValues) =>
   renderMessage(`screens.admin_console.config.${key}`, values);
+
+/** A setting's description in words: the catalog's, as the answer names it (TASK-209). */
+export function describe(entry: { readonly description: unknown }): string {
+  return isShownText(entry.description) ? renderShown(entry.description) : "";
+}
 
 /** A setting as GET /api/admin/config?enhanced=true lists it (EnhancedConfigEntry). */
 export interface SettingEntry extends SettingRules {
   readonly key: string;
   readonly value: unknown;
-  readonly description: string | null;
+  /**
+   * The setting's description: the catalog's key, which this screen renders (TASK-209, N-113 —
+   * never the stored English, the definitional record).
+   */
+  readonly description: ShownText | null;
   readonly category: string;
   readonly updatedAt: string;
   readonly defaultValue: unknown;
@@ -92,7 +102,7 @@ export function PlatformConfigPanel({
     ? entries.filter(
         (e) =>
           e.key.toLowerCase().includes(needle) ||
-          (e.description ?? "").toLowerCase().includes(needle)
+          describe(e).toLowerCase().includes(needle)
       )
     : entries;
   const selected = entries.find((e) => e.key === selectedKey) ?? null;
@@ -207,10 +217,10 @@ export function PlatformConfigPanel({
                     >
                       {e.key}
                     </button>
-                    {e.description ? (
+                    {describe(e) ? (
                       <span className="mt-1 block text-xs text-gray-400">
                         <ExpandableText
-                          text={e.description}
+                          text={describe(e)}
                           column={t("field_description")}
                         />
                       </span>
@@ -292,7 +302,7 @@ export function SettingPanel({
         {entry.key}
       </code>,
     ],
-    [t("field_description"), entry.description || t("no_description")],
+    [t("field_description"), describe(entry) || t("no_description")],
     [
       t("field_tier"),
       `${entry.permissionTier === "standard" ? t("tier_standard") : t("tier_safety")} — ${

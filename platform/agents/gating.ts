@@ -50,6 +50,12 @@ import {
   type ApprovalPolicy,
 } from "./approval-policy-store";
 import { sameId } from "@/platform/auth/same-id";
+import {
+  APPROVED_AGAIN,
+  VERIFIED_APPLIED,
+  VERIFIED_NOT_APPLIED,
+  WITHDRAWN_RUN_FAILED,
+} from "@/platform/errors/recorded-text";
 
 /**
  * Which actor type may approve a held action of this risk/effects.
@@ -176,10 +182,14 @@ export async function endHeldTrajectory(
         proposalId: proposal.proposalId,
         status: proposal.status,
         decidedBy: proposal.decidedBy ?? "",
-        note: (proposal.decisionNote ?? proposal.lastRunError ?? "").slice(0, 500),
-        // The platform's record of the decision (a withdrawal's: who had approved it, when), a
-        // catalog key and values rendered with the note — never English (TASK-208, N-110).
+        // What the decider wrote, as written (TASK-209: the platform's own words are not here).
+        ...(proposal.decisionNote ? { note: proposal.decisionNote.slice(0, 500) } : {}),
+        // The platform's record of the decision (a withdrawal's: who had approved it, when, and
+        // why when the platform said; a lapse, a supersession, a mark as executed), a catalog key
+        // and values rendered with the note — never English (TASK-208, N-110; TASK-209).
         ...(proposal.decisionShown ? { decision: proposal.decisionShown } : {}),
+        // Why its last run failed: a code or a catalog key (TASK-209), rendered on export.
+        ...(proposal.lastRunError ? { lastRunError: proposal.lastRunError } : {}),
         ...(proposal.status === "executed" ? { outputRecorded: false } : {}),
       },
       cost: 0,
@@ -273,7 +283,7 @@ export async function withdrawHeldAction(
   const withdrawn = await proposalStore.withdraw(
     args.proposalId,
     args.decidedBy,
-    args.note?.trim() || "withdrawn: not approved again after its run failed"
+    args.note?.trim() || WITHDRAWN_RUN_FAILED
   );
   if (withdrawn) await endHeldTrajectory(trajectoryStore, withdrawn);
   return withdrawn;
@@ -302,13 +312,15 @@ export async function resolveUndecidedHeldAction(
 ): Promise<ProposalRecord | undefined> {
   const proposalStore = args.proposalStore ?? getProposalStore();
   const trajectoryStore = args.trajectoryStore ?? getTrajectoryStore();
+  // A person's note as written; when none was written, the catalog's words for the resolution
+  // (TASK-209: they were English).
   const note =
     args.note?.trim() ||
     (args.resolution === "executed"
-      ? "verified as applied"
+      ? VERIFIED_APPLIED
       : args.resolution === "rejected"
-        ? "verified that its run did not take effect"
-        : "approved again: verified that its run did not take effect");
+        ? VERIFIED_NOT_APPLIED
+        : APPROVED_AGAIN);
   const done = await proposalStore.resolveIndeterminate(
     args.proposalId,
     args.resolution,

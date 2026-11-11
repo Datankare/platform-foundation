@@ -42,7 +42,12 @@ describe("handleSetCapabilityMapping", () => {
     expect(written()).toContainEqual(["summarize", ["translate", "speak"]]);
     expect(writeGovernedConfig).toHaveBeenCalledWith(
       ACTOR,
-      expect.objectContaining({ changeComment: expect.stringMatching(/^Command bar: /) })
+      expect.objectContaining({
+        changeComment: "",
+        changeShown: expect.objectContaining({
+          key: "screens.admin_console.results.command_bar_comment",
+        }),
+      })
     );
   });
 

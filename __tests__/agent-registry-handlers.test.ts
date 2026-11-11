@@ -60,7 +60,20 @@ describe("handleRegisterAgent", () => {
     ]);
     expect(writeGovernedConfig).toHaveBeenCalledWith(
       ACTOR,
-      expect.objectContaining({ changeComment: expect.stringMatching(/^Command bar: /) })
+      // The command bar's note, the catalog's key and values — worded when read (TASK-209: it was
+      // worded in English when written).
+      expect.objectContaining({
+        changeComment: "",
+        changeShown: {
+          key: "screens.admin_console.results.command_bar_comment",
+          params: {
+            what: {
+              key: "screens.admin_console.results.agent_registered",
+              params: { agent: "agent:x" },
+            },
+          },
+        },
+      })
     );
   });
 

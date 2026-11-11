@@ -42,6 +42,7 @@ jest.mock("@/platform/auth/permissions", () => ({
   resolvePermissions: (...a: [string]) => resolvePermissions(...a),
 }));
 
+import { POWER_REDUCED } from "@/platform/errors/recorded-text";
 import { fakeData } from "./helpers/fake-data";
 import {
   clearConfigCache,
@@ -272,7 +273,7 @@ describe("R13-L7 withdrawing many holds is bounded", () => {
       const out = await withdrawSupersededHolds(
         KEY,
         "agent-ops",
-        "test reduction",
+        POWER_REDUCED,
         "tenant"
       );
       expect(out.holds).toHaveLength(250);
@@ -319,7 +320,7 @@ describe("R13-L7 withdrawing many holds is bounded", () => {
       return Array.from({ length: n }, (_, i) => ({ id: `a-${pending + i}` }));
     };
     const out = await runWithTenant(SHARED, () =>
-      withdrawSupersededHolds(KEY, "agent-ops", "test", "platform")
+      withdrawSupersededHolds(KEY, "agent-ops", POWER_REDUCED, "platform")
     );
     expect(out.approvals).toHaveLength(230);
     const records = fakeData().audit.filter(

@@ -50,6 +50,7 @@ jest.mock("../review-service", () => ({
 
 // ── Imports ─────────────────────────────────────────────────────────────
 
+import { renderShown } from "@/platform/errors/shown-text";
 import {
   Sentinel,
   evaluateConsequence,
@@ -224,9 +225,19 @@ describe("Sentinel", () => {
       const result = await sentinel.processBlock(makeBlockResult(), MOCK_USER, "req-1");
 
       // We can check reasoning contains expected content
-      expect(result.reasoning).toContain("Guardian blocked");
-      expect(result.reasoning).toContain("harassment");
-      expect(result.reasoning).toContain("Strike recorded");
+      // Each line a catalog key and values (TASK-209), never English composed by the Sentinel.
+      expect(result.reasoning.map((r) => r.key)).toEqual(
+        expect.arrayContaining([
+          "screens.sentinel.blocked",
+          "screens.sentinel.strike_recorded_permanent",
+        ])
+      );
+      for (const line of result.reasoning)
+        expect(line.key).toMatch(/^screens\.sentinel\./);
+      const words = result.reasoning.map((r) => renderShown(r)).join(" ");
+      expect(words).toContain("Guardian blocked");
+      expect(words).toContain("harassment");
+      expect(words).toContain("Strike recorded");
     });
 
     it("escalates to warn on first strike (threshold=1)", async () => {
@@ -372,7 +383,7 @@ describe("account changes are recorded first (audit X-8)", () => {
       "req-b"
     );
     expect(mockDb.rows("users")[0].account_status).toBe("active");
-    expect(result.reasoning).toContain("consequence not applied");
+    expect(result.reasoning).toContainEqual({ key: "screens.sentinel.incomplete" });
   });
 
   it("reports a failed status update instead of completing as if applied", async () => {
@@ -382,7 +393,7 @@ describe("account changes are recorded first (audit X-8)", () => {
       MOCK_USER,
       "req-c"
     );
-    expect(result.reasoning).toContain("consequence not applied");
+    expect(result.reasoning).toContainEqual({ key: "screens.sentinel.incomplete" });
     // The history records that the change failed, so it never reads as applied.
     const changes = mockDb
       .rows("audit_log")
@@ -433,7 +444,7 @@ describe("a consequence never lowers an account's standing (audit D-19)", () => 
       MOCK_USER,
       "req-d19-r"
     );
-    expect(result.reasoning).toContain("consequence not applied");
+    expect(result.reasoning).toContainEqual({ key: "screens.sentinel.incomplete" });
     expect(mockDb.rows("users")[0].account_status).toBe("banned");
   });
 
@@ -447,7 +458,7 @@ describe("a consequence never lowers an account's standing (audit D-19)", () => 
       MOCK_USER,
       "req-d19-u"
     );
-    expect(result.reasoning).toContain("consequence not applied");
+    expect(result.reasoning).toContainEqual({ key: "screens.sentinel.incomplete" });
     expect(
       mockDb.writes.some(([op, t]: [string, string]) => `${op} ${t}` === "update users")
     ).toBe(false);

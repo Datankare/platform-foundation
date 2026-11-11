@@ -49,6 +49,15 @@ export type { ModerationContentTypeDefinition } from "./content-types";
 
 // Middleware (primary API)
 export { screenContent } from "./middleware";
+export {
+  reasonText,
+  reasonsText,
+  recordedFactor,
+  recordedReasons,
+  isRecordedFactor,
+  isRecordedReasons,
+} from "./reasons";
+export type { Reasons, RecordedFactor, RecordedReasons } from "./reasons";
 export type { ScreeningOptions } from "./middleware";
 export {
   screenModality,

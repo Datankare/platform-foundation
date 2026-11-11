@@ -21,6 +21,8 @@ jest.mock("@/platform/auth/platform-config", () => ({
     settings.has(key) ? settings.get(key) : fallback,
 }));
 
+import { requiredJob } from "@/platform/errors/recorded-text";
+import { renderShown } from "@/platform/errors/shown-text";
 import { scheduleEnabled } from "@/platform/jobs/runner";
 import {
   defineJob,
@@ -30,10 +32,7 @@ import {
 } from "@/platform/jobs/registry";
 import { readFileSync } from "fs";
 import { join } from "path";
-import {
-  refusesRequiredSchedule,
-  requiredJobWithdrawalNote,
-} from "@/platform/jobs/required-schedule";
+import { refusesRequiredSchedule } from "@/platform/jobs/required-schedule";
 
 beforeEach(() => settings.clear());
 
@@ -113,18 +112,22 @@ describe("refusesRequiredSchedule (round 19)", () => {
   });
 });
 
-describe("requiredJobWithdrawalNote (round 20)", () => {
-  // One wording for every row withdrawn because its job is required: the code's and 062's.
-  it("is the note migration 062 writes, with the migration named", () => {
+describe("a required job's withdrawal note (round 20; TASK-209)", () => {
+  // One wording for every row withdrawn because its job is required — now the catalog's key and
+  // values (screens.records.required_job), which words exactly what migration 062 wrote, so
+  // migration 067 moves 062's rows to it by their exact text.
+  it("words what migration 062 writes, with the migration named", () => {
     const sql = readFileSync(
       join(process.cwd(), "supabase/migrations/062_expire_approvals_required.sql"),
       "utf8"
     );
-    const note = requiredJobWithdrawalNote(
-      scheduleKeys("config.expire-approvals").enabled
-    );
-    expect(sql).toContain(`'withdrawn by the system: ${note} (migration 062)'`);
-    expect(note).toMatch(/now required/);
-    expect(note).not.toMatch(/withdrawn/);
+    const why = requiredJob(scheduleKeys("config.expire-approvals").enabled);
+    const words = renderShown({
+      key: "screens.records.config_required_job_062",
+      params: { why },
+    });
+    expect(sql).toContain(`'${words}'`);
+    expect(renderShown(why)).toMatch(/now required/);
+    expect(renderShown(why)).not.toMatch(/withdrawn/);
   });
 });

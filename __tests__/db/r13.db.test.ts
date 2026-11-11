@@ -29,6 +29,7 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req",
 }));
 
+import { POWER_REDUCED } from "@/platform/errors/recorded-text";
 import { withOwnerTx, withTenantTx } from "@/platform/data";
 import { requestApproval } from "@/platform/admin/config-approval";
 import { withdrawSupersededHolds } from "@/platform/admin/hold-withdrawal";
@@ -152,7 +153,7 @@ dbDescribe(
       const platformHold = await hold(proposals, KEY(), 1, { scope: "platform" });
       const tenantHold = await hold(proposals, KEY(), 2); // shared deployment: the tenant's value
       const out = await t.run(() =>
-        withdrawSupersededHolds(KEY(), reducer, "a power reduction was applied", "tenant")
+        withdrawSupersededHolds(KEY(), reducer, POWER_REDUCED, "tenant")
       );
       expect(out).toEqual({
         holds: [tenantHold.proposalId],
@@ -175,7 +176,7 @@ dbDescribe(
       ).toBe("proposed");
       // And a platform-scope reduction withdraws the platform-scope ones only.
       const again = await t.run(() =>
-        withdrawSupersededHolds(KEY(), reducer, "the default was reduced", "platform")
+        withdrawSupersededHolds(KEY(), reducer, POWER_REDUCED, "platform")
       );
       expect(again).toEqual({
         holds: [platformHold.proposalId],
@@ -491,7 +492,7 @@ dbDescribe("R13-L7 withdrawing many holds is bounded", () => {
     const reducer = await t.user("red");
     const started = Date.now();
     const out = await t.run(() =>
-      withdrawSupersededHolds(KEY(), reducer, "many", "tenant")
+      withdrawSupersededHolds(KEY(), reducer, POWER_REDUCED, "tenant")
     );
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(out.holds).toHaveLength(250);

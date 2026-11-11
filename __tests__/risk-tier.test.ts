@@ -460,40 +460,46 @@ describe("this repository's own app areas, against its real tree", () => {
         .filter(Boolean)
     : [];
 
-  (has ? it : it.skip)(
-    "every path pattern in scripts/risk-tiers.app.json names a file that exists",
-    () => {
-      const areas = (
-        JSON.parse(readFileSync(app, "utf8")) as {
-          high: { area: string; paths: string[] }[];
-        }
-      ).high;
-      const dead = areas.flatMap((a) =>
-        a.paths
-          .filter((p) => {
-            // The glob as the script reads it: "**/" any segments, "**" the rest, "*" one segment.
-            const body = p
-              .split(/(\*\*\/|\*\*|\*)/)
-              .map((t) =>
-                t === "**/"
-                  ? "(?:[^/]+/)*"
-                  : t === "**"
-                    ? ".*"
-                    : t === "*"
-                      ? "[^/]*"
-                      : t.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-              )
-              .join("");
-            const re = new RegExp(`^${body}$`);
-            return !tracked.some((f) => re.test(f));
-          })
-          .map((p) => `${a.area}: ${p}`)
-      );
-      expect(dead).toEqual([]);
-    }
-  );
+  // Every test here runs in every repository (TASK-209: one skipped by a condition hides what it
+  // checks): an app checks its own areas; the platform, which has none, says so.
+  const platform = (): void =>
+    expect(
+      (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { name: string })
+        .name
+    ).toBe("platform-foundation");
 
-  (has ? it.each : it.skip.each)([
+  it("every path pattern in scripts/risk-tiers.app.json names a file that exists (the platform has no such file)", () => {
+    if (!has) return platform();
+    const areas = (
+      JSON.parse(readFileSync(app, "utf8")) as {
+        high: { area: string; paths: string[] }[];
+      }
+    ).high;
+    const dead = areas.flatMap((a) =>
+      a.paths
+        .filter((p) => {
+          // The glob as the script reads it: "**/" any segments, "**" the rest, "*" one segment.
+          const body = p
+            .split(/(\*\*\/|\*\*|\*)/)
+            .map((t) =>
+              t === "**/"
+                ? "(?:[^/]+/)*"
+                : t === "**"
+                  ? ".*"
+                  : t === "*"
+                    ? "[^/]*"
+                    : t.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+            )
+            .join("");
+          const re = new RegExp(`^${body}$`);
+          return !tracked.some((f) => re.test(f));
+        })
+        .map((p) => `${a.area}: ${p}`)
+    );
+    expect(dead).toEqual([]);
+  });
+
+  it.each([
     ["lib/translate.ts", "ai-provider"],
     ["e2e-live/user-journey.live.spec.ts", "live-journey"],
     ["app/api/agent/delegation/token/route.ts", "auth"],
@@ -504,12 +510,16 @@ describe("this repository's own app areas, against its real tree", () => {
     ["lib/safety.ts", "moderation"],
     ["platform/moderation/audit.ts", "moderation"],
     ["platform/rate-limit/daily-quota.ts", "billing-consent"],
-  ])("%s is High (%s), and exists", (file, area) => {
-    expect(tracked).toContain(file);
-    const r = tierOf([file]);
-    expect(r.tier).toBe("High");
-    expect(r.reasons.map((x) => x.area)).toContain(area);
-  });
+  ])(
+    "%s is High (%s), and exists, in an app (the platform has no app areas)",
+    (file, area) => {
+      if (!has) return platform();
+      expect(tracked).toContain(file);
+      const r = tierOf([file]);
+      expect(r.tier).toBe("High");
+      expect(r.reasons.map((x) => x.area)).toContain(area);
+    }
+  );
 });
 
 describe("a consuming app's own areas (scripts/risk-tiers.app.json)", () => {

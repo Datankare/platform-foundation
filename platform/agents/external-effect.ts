@@ -25,10 +25,14 @@ import { logger } from "@/lib/logger";
 /** An error that leaves a sent call's outcome unknown (a timeout, an abort, a dropped socket). */
 const AMBIGUOUS = /timeout|timed out|abort|socket|econnreset|network/i;
 
-/** The ledger's reasons (R-77): the call's own text is logged. */
-export const EFFECT_UNKNOWN =
-  "the call may have taken effect: it timed out or its connection dropped (the detail is in the log)";
-export const EFFECT_FAILED = "the call failed (the detail is in the log)";
+/**
+ * The ledger's reasons (R-77): the call's own text is logged. Catalog keys (TASK-209, N-112: they
+ * were English the ledger stored), worded where they are read (the data export).
+ */
+export const EFFECT_UNKNOWN = "screens.records.effect_unknown";
+export const EFFECT_FAILED = "screens.records.effect_failed";
+/** A retry found the entry unresolved: whether the call took effect is unknown. */
+export const EFFECT_UNRESOLVED = "screens.records.effect_unresolved";
 
 export interface ExternalEffectArgs<T> {
   readonly operationId: string;
@@ -101,7 +105,7 @@ export async function performExternalEffect<T>(
     if (existing.status === "failed") {
       return {
         status: "failed",
-        error: existing.error ?? "previously failed",
+        error: existing.error ?? EFFECT_FAILED,
         entry: existing,
       };
     }
@@ -136,7 +140,7 @@ export async function performExternalEffect<T>(
       args.operationId,
       args.effectKey,
       "indeterminate",
-      { error: "unresolved entry found on retry; downstream state unknown" }
+      { error: EFFECT_UNRESOLVED }
     );
     return { status: "indeterminate", entry: resolved ?? entry };
   }

@@ -12,6 +12,7 @@ import { SafetyResult } from "@/types";
 import { screenContent } from "@/platform/moderation";
 import type { ClassifierOutput } from "@/prompts/safety/classify-v1";
 import { generateRequestId } from "@/lib/logger";
+import { shown } from "@/platform/errors/shown-text";
 
 /** Who is being screened and the request it belongs to. */
 export interface SafetyOptions {
@@ -54,7 +55,12 @@ export async function classifyContent(
       : {
           ...result.classifierOutput,
           safe: false,
-          reason: result.classifierOutput.reason ?? `Pipeline action: ${result.action}`,
+          // The platform's note (a key, TASK-209): the model's own words stay in rawReason.
+          note:
+            result.classifierOutput.note ??
+            shown("screens.moderation.classifier.pipeline_action", {
+              action: result.action,
+            }),
         };
   }
 
@@ -64,10 +70,13 @@ export async function classifyContent(
     categories: [],
     confidence: 1.0,
     severity: result.action === "block" ? "critical" : "low",
-    reason:
-      result.action === "block"
-        ? `Blocked by content filter: ${result.blocklistMatches.join(", ")}`
-        : undefined,
+    ...(result.action === "block"
+      ? {
+          note: shown("screens.moderation.classifier.filter_block", {
+            matches: result.blocklistMatches.join(", "),
+          }),
+        }
+      : {}),
   };
 }
 
@@ -82,7 +91,8 @@ export async function checkSafety(
   const result = await classifyContent(text, options);
   return {
     safe: result.safe,
-    reason: result.reason,
+    ...(result.note ? { reasons: [result.note] } : {}),
+    ...(result.rawReason ? { rawReason: result.rawReason } : {}),
   };
 }
 
@@ -102,5 +112,8 @@ export async function checkOutputSafety(
   });
   return result.action === "allow"
     ? { safe: true }
-    : { safe: false, reason: result.reasoning };
+    : {
+        safe: false,
+        reasons: typeof result.reasoning === "string" ? [] : result.reasoning,
+      };
 }

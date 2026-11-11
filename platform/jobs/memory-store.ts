@@ -17,6 +17,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { LEASE_EXPIRED } from "@/platform/jobs/errors";
 import { peekTenant } from "@/platform/tenancy/context";
 import { getTenantDirectory } from "@/platform/tenancy/directory";
 import type {
@@ -170,8 +171,8 @@ export class InMemoryJobStore implements JobStore {
       ) {
         Object.assign(r, {
           status: "dead",
-          lastError:
-            "The worker running the last attempt stopped before it finished (its lease expired).",
+          // A code, as job_claim records it (migration 067, TASK-209: it was English).
+          lastError: LEASE_EXPIRED,
           lockedUntil: null,
           lockedBy: null,
           leaseToken: null,

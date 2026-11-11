@@ -56,6 +56,7 @@ import {
 } from "@/platform/agents/proposal-store";
 import { workflowTriggers } from "@/platform/agents/trajectory-closure";
 import { raiseAlert } from "@/platform/observability/alert";
+import { expiredUndecided, expiredUnused } from "@/platform/errors/recorded-text";
 
 /** The approval period, shared with configuration approvals. */
 export const APPROVAL_EXPIRY_DAYS_KEY = "config.approval_expiry_days";
@@ -94,15 +95,13 @@ export function approvalLapsed(
   return Number.isFinite(at) && at + days * DAY_MS < now;
 }
 
-/** The withdrawal note of a lapsed approval. */
-export function lapsedNote(days: number): string {
-  return `expired: not run within ${days} day${days === 1 ? "" : "s"} of its approval`;
-}
+/** The withdrawal note of a lapsed approval: the catalog's key and values (TASK-209). */
+export const lapsedNote = expiredUnused;
 
 /**
  * Withdraw every lapsed approval `tx` can see — on the owner connection (the job), every
- * tenant's. The record keeps who had approved it and when (a catalog key and values, TASK-208),
- * the note why, as ProposalStore.withdraw does. Each withdrawal is recorded in its tenant's audit
+ * tenant's. The record keeps who had approved it and when, and why (a catalog key and values,
+ * TASK-208, TASK-209), as ProposalStore.withdraw does. Each withdrawal is recorded in its tenant's audit
  * log, by the system (review 8 L5: the job left no record), in the same statement: no record, no
  * withdrawal. The hold's trajectory ends in the same statement too (TASK-193: it was left
  * awaiting_retry or running for good): every open segment of its chain is `failed`, unless another
@@ -124,10 +123,11 @@ export async function expireLapsedApprovedHolds(
      withdrawn as (
        update proposals p
           set status = 'rejected', decided_by = $2,
-              decision_note = $3,
+              decision_note = null,
               decision_shown = jsonb_build_object('key', 'screens.records.withdrawn_after_approval', 'params', jsonb_build_object(
                   'approvedBy', coalesce(to_jsonb(l.decided_by), jsonb_build_object('key', 'screens.records.unknown')),
-                  'approvedAt', coalesce(to_jsonb(to_char(l.decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')), jsonb_build_object('key', 'screens.records.unknown')))),
+                  'approvedAt', coalesce(to_jsonb(to_char(l.decided_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')), jsonb_build_object('key', 'screens.records.unknown')),
+                  'note', $3::jsonb)),
               decided_at = now(), updated_at = now()
          from lapsed l
         where p.tenant_id = l.tenant_id and p.id = l.id and p.status = 'approved'
@@ -160,15 +160,16 @@ export async function expireLapsedApprovedHolds(
                                'approvedBy', w.decided_by, 'approvedAt', w.decided_at,
                                'agent', $2::text, 'outcome', 'succeeded')
        from withdrawn w`,
-    [days, HOLD_EXPIRY_ACTOR, lapsedNote(days), scope.tenantIds ?? null]
+    [days, HOLD_EXPIRY_ACTOR, JSON.stringify(lapsedNote(days)), scope.tenantIds ?? null]
   );
   return rowCount;
 }
 
-/** The withdrawal note of a hold never decided within the period (TASK-193, audit B-4). */
-export function undecidedNote(days: number): string {
-  return `expired: not decided within ${days} day${days === 1 ? "" : "s"} of being requested`;
-}
+/**
+ * The withdrawal note of a hold never decided within the period (TASK-193, audit B-4): the
+ * catalog's key and values (TASK-209).
+ */
+export const undecidedNote = expiredUndecided;
 
 /**
  * Withdraw every runtime hold still awaiting a decision (`proposed`) `days` after it was requested
@@ -194,8 +195,8 @@ export async function expireUndecidedHolds(
      ),
      withdrawn as (
        update proposals p
-          set status = 'rejected', decided_by = $2, decision_note = $3,
-              decided_at = now(), updated_at = now()
+          set status = 'rejected', decided_by = $2, decision_note = null,
+              decision_shown = $3::jsonb, decided_at = now(), updated_at = now()
          from lapsed l
         where p.tenant_id = l.tenant_id and p.id = l.id and p.status = 'proposed'
         returning p.tenant_id, p.id, p.label, p.trajectory_id, p.created_at
@@ -227,7 +228,12 @@ export async function expireUndecidedHolds(
                                'label', w.label, 'requestedAt', w.created_at,
                                'agent', $2::text, 'outcome', 'succeeded')
        from withdrawn w`,
-    [days, HOLD_EXPIRY_ACTOR, undecidedNote(days), scope.tenantIds ?? null]
+    [
+      days,
+      HOLD_EXPIRY_ACTOR,
+      JSON.stringify(undecidedNote(days)),
+      scope.tenantIds ?? null,
+    ]
   );
   return rowCount;
 }

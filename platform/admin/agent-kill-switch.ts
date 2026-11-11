@@ -29,6 +29,7 @@ import {
   setConfigWithHistory,
 } from "@/platform/auth/platform-config";
 import { audited } from "@/platform/auth/audit";
+import { agentsSuspended, emergencySuspended } from "@/platform/errors/recorded-text";
 import { withdrawSupersededHolds } from "@/platform/admin/hold-withdrawal";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import { isOperator, resolveConfigTarget } from "@/platform/admin/config-scope";
@@ -96,7 +97,7 @@ export async function suspendAllAgents(
         TRUSTED_AGENTS_KEY,
         after,
         admin.userId,
-        `Emergency: every agent suspended — ${reason}`.slice(0, 1000),
+        emergencySuspended(reason.slice(0, 1000)),
         "admin_ui",
         entry,
         target.target,
@@ -111,7 +112,7 @@ export async function suspendAllAgents(
   const withdrawal = await withdrawSupersededHolds(
     TRUSTED_AGENTS_KEY,
     admin.userId,
-    `every agent was suspended: ${reason}`,
+    agentsSuspended(reason.slice(0, 500)),
     target.target.scope
   );
   raiseAlert({

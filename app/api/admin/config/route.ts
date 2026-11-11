@@ -18,7 +18,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard, requireAdmin } from "@/platform/auth/admin-guard";
 import { listConfig, listEnhancedConfig } from "@/platform/auth/platform-config";
-import { configPutResponse, configResetResponse } from "@/platform/admin/config-http";
+import {
+  configPutResponse,
+  configResetResponse,
+  describedByCatalog,
+} from "@/platform/admin/config-http";
 import { logger, generateRequestId } from "@/lib/logger";
 import { apiError } from "@/platform/errors";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -36,12 +40,15 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     if (enhanced) {
       // Sprint 3a: return enhanced entries with full metadata
       const entries = await listEnhancedConfig({ category });
-      return NextResponse.json({ entries, enhanced: true });
+      return NextResponse.json({
+        entries: entries.map(describedByCatalog),
+        enhanced: true,
+      });
     }
 
     // Original behavior: simple entries
     const entries = await listConfig(category);
-    return NextResponse.json({ entries });
+    return NextResponse.json({ entries: entries.map(describedByCatalog) });
   } catch (error) {
     logger.error("Config list failed", {
       requestId,

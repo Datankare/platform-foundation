@@ -221,7 +221,7 @@ dbDescribe("TASK-192 the screens' lists", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       roles: { name: string; permissions: ListedPermission[] }[];
-      availablePermissions: { code: string; display_name: string; category: string }[];
+      availablePermissions: ListedPermission[];
     };
     const names = body.roles.map((r) => r.name);
     const ours = [cat.roleNames.bee, cat.roleNames.mid];
@@ -253,11 +253,8 @@ dbDescribe("TASK-192 the screens' lists", () => {
     expect(categories.filter((c) => PERMISSION_CATEGORY_ORDER.includes(c))).toEqual(
       PERMISSION_CATEGORY_ORDER.filter((c) => categories.includes(c))
     );
-    const avail = body.availablePermissions.map((p) => ({
-      code: p.code,
-      displayName: p.display_name,
-      category: p.category,
-    }));
+    // Every permission, named by the catalog (TASK-209: never permissions.display_name).
+    const avail = body.availablePermissions;
     expect([...avail].sort(comparePermissions)).toEqual(avail);
   });
 
@@ -394,16 +391,21 @@ dbDescribe("TASK-192 round 1: names in any case; a consumer's sort_order kept", 
     const nameCol = found.table!.columns.indexOf("name");
     expect(found.table!.rows.map((r) => r[nameCol])).toEqual(expectedRoles());
 
-    // A category in another case is the known one; names by case, then exactly.
+    // A category in another case is the known one. A permission is named, and ordered, by the
+    // catalog's name (TASK-209, N-113): these, which it does not name, by their code — never by
+    // the definitional display_name ("Aardvark" would put pe first).
     const own = roles.roles.find((r) => r.name === mixed[0])!;
     expect(own.permissions.map((p) => p.code)).toEqual([
-      name("pe"),
       name("pa"),
-      name("pc"),
       name("pb"),
+      name("pc"),
+      name("pe"),
       "can_moderate",
       name("pd"),
     ]);
+    expect(own.permissions.find((p) => p.code === name("pe"))?.displayName).toBe(
+      name("pe")
+    );
     const perms = await a.run(() =>
       handleSearch({ table: "permissions", text: RUN }, admin)
     );
@@ -414,7 +416,7 @@ dbDescribe("TASK-192 round 1: names in any case; a consumer's sort_order kept", 
         listed,
         mixedPerms.map((p) => name(p.label))
       )
-    ).toEqual([name("pe"), name("pa"), name("pc"), name("pb"), name("pd")]);
+    ).toEqual([name("pa"), name("pb"), name("pc"), name("pe"), name("pd")]);
     const pairs = await a.run(() =>
       handleSearch({ table: "role_permissions", text: mixed[0] }, admin)
     );

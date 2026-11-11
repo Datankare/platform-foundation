@@ -55,6 +55,30 @@ than SQL, headers, logs and alerts, a JSON schema's `description` and what is ma
 `__tests__/catalog-punctuation.test.ts` renders every message in every branch and fails on a
 doubled full stop (N-105).
 
+_Implementation (TASK-208, TASK-209, batches 55h–55i, 2026-11-09):_ the platform's own notes on a
+record — a decision's, a kept run's, a withdrawal's, a change's, a ban's, a strike's, a review's —
+are stored as a catalog key and values (`platform/errors/recorded-text.ts`; `*_shown` columns) or
+a code, never English, and rendered where they are read; rules C (SQL) and F (TypeScript, the
+screens' requests included) of `screen-text-indirect` hold them at 0. **Definitional English
+(D4, decided 2026-11-09):** the migrations that create a setting or a permission write its
+description, and a permission's name, in English (`platform_config.description`,
+`permissions.display_name`, `permissions.description`). That text stays in the database as the
+definitional record — the configuration assistant (a model) reads it, and the admin search
+matches it — and no screen, and no answer a screen shows, reads it: they show the catalog's words
+by the setting's key or the permission's code (`screens.settings.<key>`,
+`screens.permissions.<code>.name|description`; an app's own under `screens.app.…`;
+`platform/errors/definitions.ts`). `scripts/catalog-definitions-check.mjs`, run by the migration
+replay on its database before any test writes to it, fails on a setting or permission the
+migrations define without its entry in every locale the catalog has, and on an entry naming none. A list a screen shows is ordered by the names it shows: the Roles route by
+the catalog's, and the search's statement is given the catalog's names by code. **Model input
+(decided 2026-11-09):** text written for a model or an agent is not screen text — the review
+assistant's prompt (the moderation reasons rendered there in English, the prompt's language, at
+that boundary: `platform/moderation/review-assist.ts`), the config tools' descriptions and
+answers, a workflow's next-action descriptions (ADR-030's affordances for the calling agent). A
+model's own words a screen shows are labelled as the model's (the review assistant's rationale);
+raw model or provider text kept with a record is a separate `raw…` field no screen shows (a
+classifier's `rawReason`, a modality axis's `rawReasoning`).
+
 ## 3. Sequencing
 
 | Sprint            | Scope                                                                                                                                                                                                                                                                                                                       |

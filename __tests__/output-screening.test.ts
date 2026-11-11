@@ -69,11 +69,12 @@ describe("isOutputAllowed", () => {
   });
 
   it("hostile: a refusal withholds, and its reason goes to the log only", async () => {
-    screen.mockResolvedValue({ safe: false, reason: "matched: slur" });
+    const reasons = [{ key: "screens.moderation.reasons.low_blocklist" }];
+    screen.mockResolvedValue({ safe: false, reasons });
     await expect(isOutputAllowed(["x"], ctx)).resolves.toBe(false);
     expect(logger.info).toHaveBeenCalledWith(
       "Output withheld by content screening",
-      expect.objectContaining({ reason: "matched: slur", route: "/api/test" })
+      expect.objectContaining({ reasons, route: "/api/test" })
     );
   });
 

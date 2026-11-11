@@ -48,15 +48,34 @@ import { withAuditCorrelation } from "@/platform/kernel/audit-correlation";
 import { sameId } from "@/platform/auth/same-id";
 import { WRITE_FAILED, logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
+import { REVISED, staleState } from "@/platform/errors/recorded-text";
 
 /** The log's name for the pipeline. */
 const PIPELINE_ROUTE = "platform/action-pipeline";
 
 /**
  * A run's reason when what failed was another error: its text is logged here, and the reason —
- * read in audit records, approvals and the admin console — is fixed (R-77).
+ * read in audit records, approvals and the admin console — is fixed (R-77): a catalog key
+ * (TASK-209: it was English, stored in the audit record's details), worded where it is read.
  */
-export const RUN_RAISED = "the run raised an error (the detail is in the log)";
+export const RUN_RAISED = "screens.records.run_raised";
+
+/**
+ * Why an applied run's record is incomplete (ActionNotRecordedError's reason, audited): its
+ * approval's completion was not written, or its claim was taken back meanwhile. Catalog keys
+ * (TASK-209).
+ */
+export const COMPLETION_NOT_WRITTEN = "screens.records.completion_not_written";
+export const CLAIM_TAKEN_BACK = "screens.records.claim_taken_back";
+
+/**
+ * Why a run's approval was kept, as its record stores it (the proposal's lastRunError: TASK-209,
+ * N-112 — it was English): the run's own code when it gave one, else one of these catalog keys,
+ * which the screens word (platform/errors/recorded-words.ts runNoteShown).
+ */
+export const RUN_FAILED_NOTE = "screens.held.note_run_failed";
+export const COMMIT_FAILED_NOTE = "screens.held.note_commit_failed";
+export const STATE_MOVED_NOTE = "screens.held.note_state_moved";
 
 /** Log `err` under `what` with the action's label and operation; RUN_RAISED for its reason. */
 function loggedReason(
@@ -481,21 +500,18 @@ export async function executeActionPipeline<TState>(
         failure = WRITE_FAILED;
       }
       if (done) return;
-      const reason =
-        failure !== undefined
-          ? `its approval's completion could not be written (${failure}); the approval-expiry job settles it`
-          : `its approval's claim was no longer this run's (taken back after its lease and decided otherwise); recorded as a conflict`;
+      const reason = failure !== undefined ? COMPLETION_NOT_WRITTEN : CLAIM_TAKEN_BACK;
       throw new ActionNotRecordedError(req.label, operationId, true, reason, {
         approvalConflict: failure === undefined,
         proposalId: approvalId,
       });
     };
 
-    /** Give the approval back (failed before taking effect); whether that landed. */
-    const releaseClaim = async (note: string): Promise<boolean> => {
+    /** Give the approval back (failed before taking effect), with why — a code; whether it landed. */
+    const releaseClaim = async (code: string): Promise<boolean> => {
       if (!approvalId || !proposalStore) return false;
       return proposalStore
-        .release(approvalId, note.slice(0, 500), token!)
+        .release(approvalId, code, token!)
         .then((r) => r !== undefined)
         .catch(() => false);
     };
@@ -550,7 +566,7 @@ export async function executeActionPipeline<TState>(
           cause: err,
           failure,
         });
-      const released = await releaseClaim(`run failed, approval kept: ${reason}`);
+      const released = await releaseClaim(failure?.code ?? RUN_FAILED_NOTE);
       throw new ApprovedRunFailedError(req.label, approvalId, reason, released, {
         cause: err,
         ...(failure ? { failure } : {}),
@@ -590,7 +606,7 @@ export async function executeActionPipeline<TState>(
       if (approvalId && proposalStore) {
         // Applied: the approval is used. Not applied (the commit was the effect): it stands.
         if (applied) await completeClaim();
-        else await releaseClaim("commit failed, approval kept");
+        else await releaseClaim(COMMIT_FAILED_NOTE);
       }
       if (err instanceof ActionNotRecordedError) throw err;
       throw new ActionNotRecordedError(
@@ -608,7 +624,7 @@ export async function executeActionPipeline<TState>(
     if (approvalId && proposalStore) {
       if (isPipelineConflict(outcome) && req.perform === undefined) {
         // A lost CAS mutated nothing: the approval was not used.
-        await releaseClaim("state moved before commit, approval kept");
+        await releaseClaim(STATE_MOVED_NOTE);
       } else {
         // Took effect. Atomic: a completion that does not land rolls the whole run back. Otherwise
         // a completion that does not land is raised (applied; review 11 H-1) — a failed write
@@ -1116,7 +1132,7 @@ export async function reviseProposal(req: ReviseRequest): Promise<ProposalRecord
       prior.proposalId,
       "superseded",
       req.revisedBy,
-      req.reason ?? "revised"
+      req.reason ?? REVISED
     );
   }
   return proposeAction(req);
@@ -1177,7 +1193,7 @@ export async function approveWithReconciliation(
           req.proposalId,
           "superseded",
           req.decidedBy,
-          `state advanced ${proposal.observedVersion} -> ${currentVersion}; approval is stale`
+          staleState(proposal.observedVersion, currentVersion)
         );
         await req.trajectoryStore.updateStatus(proposal.trajectoryId, "paused");
         return {

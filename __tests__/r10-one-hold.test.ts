@@ -404,7 +404,8 @@ describe("r10 H2: a failure after the claim keeps the approval", () => {
     expect(writes).toEqual([]);
     const kept = await proposals.getById(id);
     expect(kept?.status).toBe("approved");
-    expect(kept?.lastRunError).toMatch(/db blip/);
+    // Why it was kept: a catalog key (TASK-209) — the failure's own text ("db blip") is logged.
+    expect(kept?.lastRunError).toBe("screens.held.note_run_failed");
 
     const again = await approve(id, second);
     expect(again.status).toBe(200);

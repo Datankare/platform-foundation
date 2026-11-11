@@ -14,6 +14,7 @@
  * P13: Control plane — admin-configurable thresholds
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { getConfig } from "@/platform/auth/platform-config";
 import type { ContentRatingLevel, ContentRatingThresholds, ContentType } from "./types";
 import { allowsSeverityReduction } from "./content-types";
@@ -77,10 +78,11 @@ function parseSeverity(value: unknown, failClosed: SafetySeverity): SafetySeveri
 export async function loadContentRatingThresholds(
   level: ContentRatingLevel
 ): Promise<ContentRatingThresholds> {
-  const labels: Record<ContentRatingLevel, string> = {
-    1: "child (under 13)",
-    2: "teen (13–17)",
-    3: "adult (18+)",
+  // From the catalog (TASK-209: English, in the Guardian's stored reasons).
+  const labels: Record<ContentRatingLevel, ShownText> = {
+    1: shown("screens.moderation.levels.child"),
+    2: shown("screens.moderation.levels.teen"),
+    3: shown("screens.moderation.levels.adult"),
   };
 
   const blockSeverity = parseSeverity(

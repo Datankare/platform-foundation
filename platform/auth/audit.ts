@@ -17,6 +17,7 @@
  * Sprint 3, Task 3.6 · Sprint 7X (fail closed)
  */
 
+import { isErrorCode } from "@/platform/errors/registry";
 import {
   inTransaction,
   onRollback,
@@ -62,9 +63,14 @@ export class AuditWriteError extends Error {
   }
 }
 
-/** The reason a failed act's record carries: the error's own text is logged, not recorded. */
-export const ACT_RAISED_REASON =
-  "the action raised an error (its detail is in the server log)";
+/**
+ * The reasons an act's outcome record carries (TASK-209 — they were English, shown on the audit
+ * log page): catalog keys the page and the export word, or the act's own error code; the error's
+ * own text is logged, never recorded.
+ */
+export const ACT_RAISED_REASON = "screens.records.audit_act_raised";
+export const ACT_REPORTED_FAILURE = "screens.records.audit_reported_failure";
+export const ACT_ROLLED_BACK = "screens.records.audit_rolled_back";
 
 /** Why an audit write failed, as the thrown error says it: the store's text is logged. */
 export const AUDIT_STORE_REFUSED = "the audit store did not accept it";
@@ -176,8 +182,7 @@ function isIndeterminate(value: unknown): boolean {
   );
 }
 
-const INDETERMINATE_REASON =
-  "the connection failed while the transaction it ran in was committing: whether it took effect is unknown";
+const INDETERMINATE_REASON = "screens.records.audit_indeterminate";
 
 /** Whether an action's result reports failure ({ success: false } or { error }). */
 function reportsFailure(result: unknown): boolean {
@@ -276,11 +281,31 @@ export async function audited<T>(
   }
   const failed = reportsFailure(result);
   if (failed) {
-    const error = (result as { error?: unknown }).error;
+    // The act's own code when it gave one (a registry code the page words), else a fixed key; its
+    // error's text — English, a store's — goes to the log (TASK-209).
+    const { error, errorCode, auditReason } = result as {
+      error?: unknown;
+      errorCode?: unknown;
+      auditReason?: unknown;
+    };
+    if (typeof error === "string")
+      logger.warn("Audited act reported failure", {
+        error,
+        action: entry.action,
+        route: "platform/auth/audit",
+      });
     await recordOutcome(
       tagged,
       "failed",
-      typeof error === "string" ? error : "reported failure"
+      // An act that says more than its code (an approval kept, or not) names a records key.
+      typeof auditReason === "string" && /^screens\.records\.[a-z_]+$/.test(auditReason)
+        ? auditReason
+        : typeof errorCode === "string" && isErrorCode(errorCode)
+          ? errorCode
+          : // An act whose error is itself a code (an app's route acts answer so).
+            typeof error === "string" && isErrorCode(error)
+            ? error
+            : ACT_REPORTED_FAILURE
     );
   } else if (options.recordSuccess) {
     await recordOutcome(tagged, "succeeded");
@@ -290,7 +315,7 @@ export async function audited<T>(
     onRollback((ended) =>
       ended === "indeterminate"
         ? recordOutcome(tagged, "indeterminate", INDETERMINATE_REASON)
-        : recordOutcome(tagged, "rolled_back", "the transaction it ran in rolled back")
+        : recordOutcome(tagged, "rolled_back", ACT_ROLLED_BACK)
     );
   }
   return result;

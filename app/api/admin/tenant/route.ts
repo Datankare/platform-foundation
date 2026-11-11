@@ -23,6 +23,7 @@ import { currentTenant } from "@/platform/tenancy/context";
 import { listEnhancedConfig } from "@/platform/auth/platform-config";
 import { getBudgetTracker } from "@/platform/agents/budget-tracker";
 import { listTenantJobHistory } from "@/platform/jobs/operator";
+import { settingDescription } from "@/platform/errors/definitions";
 import { tenantRoute } from "@/platform/tenancy/route";
 
 export const GET = tenantRoute(async function GET(request: NextRequest) {
@@ -73,7 +74,8 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
           ?.filter((e) => e.tenantOverridable)
           .map((e) => ({
             key: e.key,
-            description: e.description,
+            // The catalog's key, rendered by the screen (TASK-209, N-113).
+            description: settingDescription(e.key),
             value: e.value,
             platformValue: e.platformValue,
             overridden: e.overridden,

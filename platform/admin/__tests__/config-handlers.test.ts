@@ -104,6 +104,9 @@ import { TOOL_BOUNDARIES } from "../types";
 import { getProposalStore } from "@/platform/agents/proposal-store";
 import { runWithTenant } from "@/platform/tenancy/context";
 import type { EnhancedConfigEntry, ToolExecutionContext } from "../types";
+import { renderShown } from "@/platform/errors/shown-text";
+import { renderMessage } from "@/platform/errors/messages";
+import en from "@/messages/en.json";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -762,7 +765,9 @@ describe("handleResetConfig — the tenant's own value removed, governed", () =>
     expect(mockClearTenantConfig).toHaveBeenCalledWith(
       "moderation.strike_ban_threshold",
       "op-2",
-      "Approved: back",
+      // The platform's record of the apply, with the request's comment as written (TASK-209:
+      // it was "Approved: back", English the history kept).
+      { key: "screens.records.change_approved", params: { note: "back" } },
       true,
       // Only onto the value it was requested against (review 12 H2), and onto the platform
       // default it was requested to inherit — the approval's proposed value (review 13 M1).
@@ -1237,20 +1242,66 @@ describe("buildChangeRequest (A8: pure function)", () => {
     expect(result.changeComment).toBe("Tightening");
     expect(result.requiresApproval).toBe(true);
     expect(result.permissionTier).toBe("safety");
-    expect(result.impact).toContain("safety-critical");
-    expect(result.affectedUsers).toContain("under 13");
+    // From the catalog, line by line (TASK-209): never English composed by the handler.
+    expect(result.impact).toEqual([
+      {
+        key: "screens.config_impact.change",
+        params: {
+          key: "moderation.level1.block_severity",
+          from: '"medium"',
+          to: '"high"',
+        },
+      },
+      { key: "screens.config_impact.safety" },
+      { key: "screens.config_impact.moderation_threshold" },
+    ]);
+    expect(result.impact.map((t) => renderShown(t)).join(" ")).toBe(
+      'Changing "moderation.level1.block_severity" from "medium" to "high". ' +
+        "This is a safety-critical setting. Changes affect content moderation behavior. " +
+        "Moderation threshold changes affect how content is screened in real-time."
+    );
+    expect(result.affectedUsers).toEqual({
+      key: "screens.config_impact.affected_level1",
+    });
+    expect(renderShown(result.affectedUsers)).toContain("under 13");
   });
 
-  it("identifies affected users by key pattern", () => {
-    const level2 = makeEntry({ key: "moderation.level2.warn_severity" });
-    expect(buildChangeRequest(level2, "low", "test", false).affectedUsers).toContain(
-      "13"
+  it("identifies affected users by key pattern, each the catalog's", () => {
+    const affected = (e: Parameters<typeof makeEntry>[0]) =>
+      buildChangeRequest(makeEntry(e), "low", "test", false).affectedUsers.key;
+    expect(affected({ key: "moderation.level2.warn_severity" })).toBe(
+      "screens.config_impact.affected_level2"
     );
-
-    const level3 = makeEntry({ key: "moderation.level3.block_severity" });
-    expect(buildChangeRequest(level3, "low", "test", false).affectedUsers).toContain(
-      "18+"
+    expect(affected({ key: "moderation.level3.block_severity" })).toBe(
+      "screens.config_impact.affected_level3"
     );
+    expect(affected({ key: "moderation.strike_ban_threshold" })).toBe(
+      "screens.config_impact.affected_strike"
+    );
+    expect(affected({ key: "rate_limit_rpm" })).toBe(
+      "screens.config_impact.affected_rate_limit"
+    );
+    expect(affected({ key: "signups_enabled" })).toBe(
+      "screens.config_impact.affected_platform"
+    );
+    expect(affected({ key: "moderation.other", category: "moderation" })).toBe(
+      "screens.config_impact.affected_moderation"
+    );
+    expect(affected({ key: "ui.theme", category: "ui" })).toBe(
+      "screens.config_impact.affected_varies"
+    );
+    const lines = (key: string) =>
+      buildChangeRequest(makeEntry({ key }), true, "t", false).impact.map((t) => t.key);
+    expect(lines("maintenance_mode")).toContain("screens.config_impact.maintenance");
+    expect(lines("signups_enabled")).toContain("screens.config_impact.signups");
+    expect(lines("moderation.strike_ban_threshold")).toContain(
+      "screens.config_impact.strike"
+    );
+    // Every key it can give is one English has.
+    for (const k of Object.keys(en.screens.config_impact))
+      expect(renderMessage(`screens.config_impact.${k}`)).not.toBe(
+        `screens.config_impact.${k}`
+      );
   });
 });
 

@@ -144,17 +144,24 @@ export function roleOrderSql(alias = ""): string {
 /**
  * The permissions' ORDER BY, for a table aliased `alias` (or none), with the category order bound
  * as the parameter `param` (PERMISSION_CATEGORY_ORDER, a text[]). Fixed text — no value is in it.
+ * With `names` (a parameter: a jsonb object of code to name), a permission is ordered by the name a
+ * screen shows it by — the catalog's (permissionNamesByCode), its code where the catalog has none —
+ * as comparePermissions orders the Roles route's (TASK-209, N-113); without it, by the
+ * definitional display_name (what the configuration assistant reads).
  */
-export function permissionOrderSql(param: string, alias = ""): string {
+export function permissionOrderSql(param: string, alias = "", names?: string): string {
   const c = alias ? `${alias}.` : "";
+  const name = names
+    ? `coalesce(${names}::jsonb ->> ${c}code, ${c}code)`
+    : `${c}display_name`;
   // The six whitespace characters normalCategory trims (round 2: btrim alone trims spaces only;
   // Postgres has no \v escape, so the vertical tab is \x0B).
   const category = `lower(btrim(${c}category, E' \\t\\n\\r\\f\\x0B'))`;
   return [
     `coalesce(array_position(${param}::text[], ${category}), cardinality(${param}::text[]) + 1)`,
     `${category} collate "C"`,
-    `lower(${c}display_name) collate "C"`,
-    `${c}display_name collate "C"`,
+    `lower(${name}) collate "C"`,
+    `${name} collate "C"`,
     `lower(${c}code) collate "C"`,
     `${c}code collate "C"`,
   ].join(", ");

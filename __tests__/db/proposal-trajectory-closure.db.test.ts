@@ -19,6 +19,7 @@
  * good (the playform-dev process-content workflow stuck in awaiting_retry is the audit's case).
  */
 
+import { POWER_REDUCED } from "@/platform/errors/recorded-text";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import {
@@ -310,7 +311,7 @@ const PATHS: readonly Path[] = [
         withdrawSupersededHolds(
           "agent.trusted_agents",
           "system:dbtest",
-          "dbtest",
+          POWER_REDUCED,
           "tenant"
         )
       ),

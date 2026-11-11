@@ -2,6 +2,7 @@
  * multimodal-screening-conformance.test.ts — ADR-046 L21: the screenModality seam satisfies
  * the multimodal-screening contract.
  */
+import { renderShown } from "@/platform/errors/shown-text";
 import { runMultimodalScreeningContract } from "./contract/multimodal-screening-contract";
 import {
   screenModality,
@@ -49,7 +50,7 @@ describe("unconfigured classifiers (audit X-18)", () => {
         const r = await screenModality(item, { direction, requestId: "r" });
         expect(screenPermits(r)).toBe(false);
         expect(r.action).toBe("escalate");
-        expect(r.reasoning).toMatch(/no classifier configured/);
+        expect(renderShown(r.reasoning)).toMatch(/no classifier configured/);
       }
     }
   );

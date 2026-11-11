@@ -269,6 +269,211 @@ DELETE FROM public.users WHERE id::text LIKE '0660000%';
 DELETE FROM public.agent_trajectories WHERE subject_id = 'replay-066';
 SQL
 
+step "067: the platform's notes TypeScript wrote are a catalog key and values or a code; ones written before are migrated, once — a person's are not"
+# Rows as the code before 067 wrote them — a lapsed, undecided, withdrawn, refused, superseded,
+# duplicate or stale hold's note, a decision's default note, a kept run's note, "marked executed
+# by …", a system withdrawal of a two-person approval (and 062's), a change's comment the
+# platform made, the Sentinel's ban and strike reasons, the reaper's note, the effect ledger's
+# reasons, a dead lease — and a person's own words beside each; 067 applied again migrates them.
+"${PSQL[@]}" --single-transaction >/dev/null <<'SQL'
+INSERT INTO public.proposals (tenant_id, id, operation_id, session_id, trajectory_id, label, actor_id, actor_role, effective_risk, status, decided_by, decision_note, decision_shown, last_run_error)
+SELECT t.id, v.id::uuid, v.op, 'replay', 'replay', 'replay', 'replay', 'replay', 'low', v.status, 'replay', v.note, v.shown::jsonb, v.run
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES
+         ('06700000-0000-4000-8000-000000000001', 'replay-067-a', 'rejected', 'expired: not run within 7 days of its approval', '{"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "alice"}}', NULL),
+         ('06700000-0000-4000-8000-000000000002', 'replay-067-b', 'rejected', 'expired: not decided within 1 day of being requested', NULL, NULL),
+         ('06700000-0000-4000-8000-000000000003', 'replay-067-c', 'rejected', 'rejected_after_run_failed', '{"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": {"key": "screens.records.unknown"}, "approvedBy": "bob"}}', 'run failed, approval kept: approvals.run_failed'),
+         ('06700000-0000-4000-8000-000000000004', 'replay-067-d', 'rejected', 'verified that its run did not take effect', '{"key": "screens.records.withdrawn_undecided", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "carol"}}', NULL),
+         ('06700000-0000-4000-8000-000000000005', 'replay-067-e', 'approved', 'approved again: verified that its run did not take effect', NULL, 'run did not end within its lease; its outcome is unknown — verify, then mark it executed, approve it again or withdraw it'),
+         ('06700000-0000-4000-8000-000000000006', 'replay-067-f', 'executed', NULL, NULL, 'marked executed by dave: verified as applied'),
+         ('06700000-0000-4000-8000-000000000007', 'replay-067-g', 'executed', NULL, NULL, E'marked executed by erin: checked the\nlog by hand'),
+         ('06700000-0000-4000-8000-000000000008', 'replay-067-h', 'superseded', 'state advanced 3 -> 5; approval is stale', NULL, NULL),
+         ('06700000-0000-4000-8000-000000000009', 'replay-067-i', 'rejected', 'duplicate of hold 06700000-0000-4000-8000-000000000001, which stands', NULL, NULL),
+         ('06700000-0000-4000-8000-00000000000a', 'replay-067-j', 'rejected', 'withdrawn: superseded — every agent was suspended: breach, as an operator wrote it', NULL, NULL),
+         ('06700000-0000-4000-8000-00000000000b', 'replay-067-k', 'rejected', 'refused: "jobs.config.expire-approvals.enabled" turns on a job that is now required — always on, and set only as the platform default', '{"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "frank"}}', NULL),
+         ('06700000-0000-4000-8000-00000000000c', 'replay-067-l', 'approved', NULL, NULL, 'run failed, approval kept: the run raised an error (the detail is in the log)'),
+         ('06700000-0000-4000-8000-00000000000d', 'replay-067-m', 'approved', NULL, NULL, 'commit failed, approval kept'),
+         ('06700000-0000-4000-8000-00000000000e', 'replay-067-n', 'rejected', 'expired: not run within 7 days of its approval, as a person wrote it', '{"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "gina"}}', 'run failed because I said so')
+       ) AS v(id, op, status, note, shown, run);
+INSERT INTO public.agent_trajectories (tenant_id, id, trigger, subject_kind, subject_id, steps)
+SELECT t.id, '06700000-0000-4000-8000-0000000000a1', 'replay', 'agent', 'replay-067', '[
+   {"action": "replay", "output": {"note": "expired: not run within 7 days of its approval", "decision": {"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "alice"}}}},
+   {"action": "replay", "output": {"note": "marked executed by dave: verified as applied", "outputRecorded": false}},
+   {"action": "replay", "output": {"note": "commit failed, approval kept"}},
+   {"action": "replay", "output": {"note": "expired: as a person wrote it"}}]'::jsonb
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t;
+INSERT INTO public.config_pending_approvals (tenant_id, id, config_key, proposed_value, change_comment, impact_summary, status, review_comment, scope)
+SELECT t.id, v.id::uuid, 'signups_enabled', 'false'::jsonb, v.comment, v.impact, v.status::config_approval_status, v.review, 'tenant'
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES
+         ('06700000-0000-4000-8000-0000000000b1', 'Changed on the config page', 'Changing "signups_enabled" from true to false. Disabling signups prevents new account creation.', 'rejected', 'withdrawn by the system: stale — "signups_enabled" changed since it was requested (approved by 06700000-0000-4000-8000-0000000000c1 at 2026-01-02T03:04:05.000Z)'),
+         ('06700000-0000-4000-8000-0000000000b2', 'Turned off for the launch, as a person wrote it', NULL, 'rejected', 'withdrawn by the system: "jobs.config.expire-approvals.enabled" turns on a job that is now required — always on, and set only as the platform default (migration 062)'),
+         ('06700000-0000-4000-8000-0000000000b3', 'Tenant settings', NULL, 'rejected', 'withdrawn: superseded — a power reduction was applied to the key'),
+         ('06700000-0000-4000-8000-0000000000b4', 'why not', NULL, 'rejected', 'Not now, as a reviewer wrote it')
+       ) AS v(id, comment, impact, status, review);
+INSERT INTO public.platform_config_history (tenant_id, id, config_key, new_value, change_comment, scope)
+SELECT t.id, v.id::uuid, 'signups_enabled', 'true'::jsonb, v.comment, 'tenant'
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES
+         ('06700000-0000-4000-8000-0000000000d1', 'Approved: Changed on the config page'),
+         ('06700000-0000-4000-8000-0000000000d2', 'Approved: launch week, as a person wrote it'),
+         ('06700000-0000-4000-8000-0000000000d3', 'Emergency: every agent suspended — leaked key'),
+         ('06700000-0000-4000-8000-0000000000d4', 'Command bar: Set the scope of agent-1 to read, write, and admin'),
+         ('06700000-0000-4000-8000-0000000000d5', 'Command bar: Set the token ceiling of agent-1 to 3,600 seconds'),
+         ('06700000-0000-4000-8000-0000000000d6', 'Remove signups_enabled from dual-control'),
+         ('06700000-0000-4000-8000-0000000000d7', 'Use the platform default'),
+         ('06700000-0000-4000-8000-0000000000d8', 'Command bar: something a person typed')
+       ) AS v(id, comment);
+INSERT INTO public.users (tenant_id, id, role_id, account_status, banned_at, ban_reason)
+SELECT t.id, ('0670000' || n || '-0000-4000-8000-000000000000')::uuid, r.id, 'banned', now(),
+       CASE n WHEN 1 THEN 'Automatic ban: strike threshold exceeded' ELSE 'Spam, as a moderator wrote it' END
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (SELECT id FROM public.roles ORDER BY name LIMIT 1) r, generate_series(1, 2) n;
+INSERT INTO public.review_queue (tenant_id, id, source, status, moderation_result, target_user_id, request_id, reviewer_notes)
+SELECT t.id, ('0670000' || n || '-0000-4000-8000-0000000000e0')::uuid, 'escalation', 'resolved', '{}'::jsonb,
+       '06700001-0000-4000-8000-000000000000', 'replay-067',
+       CASE n WHEN 1 THEN 'Auto-blocked: escalation exceeded the 24h SLA without human review (ADR-041).' ELSE 'Upheld, as a reviewer wrote it' END
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t, generate_series(1, 2) n;
+INSERT INTO public.user_strikes (tenant_id, id, user_id, category, severity, trajectory_id, agent_id, reason)
+SELECT t.id, ('0670000' || n || '-0000-4000-8000-0000000000f0')::uuid, '06700001-0000-4000-8000-000000000000',
+       'hate', 'high', 'replay', 'sentinel',
+       CASE n WHEN 1 THEN 'Guardian blocked content: hate (severity: high, triggered by: classifier).'
+              WHEN 2 THEN 'Guardian blocked content: spam (severity: high, triggered by: classifier).'
+              ELSE 'manual strike' END
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t, generate_series(1, 3) n;
+INSERT INTO public.effect_ledger (tenant_id, operation_id, effect_key, effect_type, status, idempotency_key, error)
+SELECT t.id, 'replay-067', 'e' || n, 'externalCall', 'failed', 'replay-067-' || n,
+       CASE n WHEN 1 THEN 'the call failed (the detail is in the log)'
+              WHEN 2 THEN 'unresolved entry found on retry; downstream state unknown'
+              ELSE 'a downstream said no' END
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t, generate_series(1, 3) n;
+INSERT INTO public.jobs (tenant_id, kind, idempotency_key, status, last_error)
+SELECT t.id, 'replay.r067', 'replay-067-' || n, 'dead',
+       CASE n WHEN 1 THEN 'The worker running the last attempt stopped before it finished (its lease expired).' ELSE 'sqlstate:57014' END
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t, generate_series(1, 2) n;
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/067_recorded_notes_written_by_code.sql" >/dev/null
+r067() {
+  "${PSQL[@]}" -At <<'SQL'
+SELECT string_agg(operation_id || '|' || coalesce(decision_note, '-') || '|' || coalesce(decision_shown::text, '-') || '|' || coalesce(last_run_error, '-'), E'\n' ORDER BY operation_id)
+  FROM public.proposals WHERE operation_id LIKE 'replay-067-%';
+SELECT steps::text FROM public.agent_trajectories WHERE subject_id = 'replay-067';
+SELECT string_agg(change_comment || '|' || coalesce(change_shown::text, '-') || '|' || coalesce(impact_summary, '-') || '|' || coalesce(review_comment, '-') || '|' || coalesce(review_shown::text, '-'), E'\n' ORDER BY id)
+  FROM public.config_pending_approvals WHERE id::text LIKE '06700000-%';
+SELECT string_agg(change_comment || '|' || coalesce(change_shown::text, '-'), E'\n' ORDER BY id)
+  FROM public.platform_config_history WHERE id::text LIKE '06700000-%';
+SELECT string_agg(coalesce(ban_reason, '-') || '|' || coalesce(ban_note::text, '-'), E'\n' ORDER BY id)
+  FROM public.users WHERE id::text LIKE '0670000%';
+SELECT string_agg(coalesce(reviewer_notes, '-') || '|' || coalesce(notes_shown::text, '-'), E'\n' ORDER BY id)
+  FROM public.review_queue WHERE request_id = 'replay-067';
+SELECT string_agg(reason, E'\n' ORDER BY id) FROM public.user_strikes WHERE trajectory_id = 'replay' AND id::text LIKE '0670000%';
+SELECT string_agg(error, E'\n' ORDER BY effect_key) FROM public.effect_ledger WHERE operation_id = 'replay-067';
+SELECT string_agg(last_error, E'\n' ORDER BY idempotency_key) FROM public.jobs WHERE kind = 'replay.r067';
+SQL
+}
+expected067='replay-067-a|-|{"key": "screens.records.withdrawn_after_approval", "params": {"note": {"key": "screens.records.expired_unused", "params": {"days": 7}}, "approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "alice"}}|-
+replay-067-b|-|{"key": "screens.records.expired_undecided", "params": {"days": 1}}|-
+replay-067-c|-|{"key": "screens.records.withdrawn_after_approval", "params": {"note": {"key": "screens.records.withdrawn_run_failed"}, "approvedAt": {"key": "screens.records.unknown"}, "approvedBy": "bob"}}|approvals.run_failed
+replay-067-d|-|{"key": "screens.records.withdrawn_undecided", "params": {"note": {"key": "screens.records.verified_not_applied"}, "approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "carol"}}|-
+replay-067-e|-|{"key": "screens.records.approved_again"}|screens.held.note_indeterminate
+replay-067-f|-|{"key": "screens.records.marked_executed", "params": {"by": "dave", "note": {"key": "screens.records.verified_applied"}}}|-
+replay-067-g|-|{"key": "screens.records.marked_executed", "params": {"by": "erin", "note": "checked the\nlog by hand"}}|-
+replay-067-h|-|{"key": "screens.records.stale_state", "params": {"current": 5, "observed": 3}}|-
+replay-067-i|-|{"key": "screens.records.duplicate_of", "params": {"holdId": "06700000-0000-4000-8000-000000000001"}}|-
+replay-067-j|-|{"key": "screens.records.superseded", "params": {"reason": {"key": "screens.records.agents_suspended", "params": {"reason": "breach, as an operator wrote it"}}}}|-
+replay-067-k|-|{"key": "screens.records.withdrawn_after_approval", "params": {"note": {"key": "screens.records.refused", "params": {"reason": {"key": "screens.records.required_job", "params": {"key": "jobs.config.expire-approvals.enabled"}}}}, "approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "frank"}}|-
+replay-067-l|-|-|screens.held.note_run_failed
+replay-067-m|-|-|screens.held.note_commit_failed
+replay-067-n|expired: not run within 7 days of its approval, as a person wrote it|{"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "gina"}}|run failed because I said so
+[{"action": "replay", "output": {"note": {"key": "screens.records.expired_unused", "params": {"days": 7}}, "decision": {"key": "screens.records.withdrawn_after_approval", "params": {"approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "alice"}}}}, {"action": "replay", "output": {"note": {"key": "screens.records.marked_executed", "params": {"by": "dave", "note": {"key": "screens.records.verified_applied"}}}, "outputRecorded": false}}, {"action": "replay", "output": {"note": {"key": "screens.held.note_commit_failed"}}}, {"action": "replay", "output": {"note": "expired: as a person wrote it"}}]
+|{"key": "screens.records.changed_on_page"}|-|-|{"key": "screens.records.config_withdrawn", "params": {"why": {"key": "screens.records.config_stale", "params": {"key": "signups_enabled"}}, "approvedAt": "2026-01-02T03:04:05.000Z", "approvedBy": "06700000-0000-4000-8000-0000000000c1"}}
+Turned off for the launch, as a person wrote it|-|-|-|{"key": "screens.records.config_required_job_062", "params": {"why": {"key": "screens.records.required_job", "params": {"key": "jobs.config.expire-approvals.enabled"}}}}
+|{"key": "screens.records.changed_on_page"}|-|-|{"key": "screens.records.superseded", "params": {"reason": {"key": "screens.records.power_reduced"}}}
+why not|-|-|Not now, as a reviewer wrote it|-
+|{"key": "screens.records.change_approved", "params": {"note": {"key": "screens.records.changed_on_page"}}}
+|{"key": "screens.records.change_approved", "params": {"note": "launch week, as a person wrote it"}}
+|{"key": "screens.records.emergency_suspended", "params": {"reason": "leaked key"}}
+|{"key": "screens.admin_console.results.command_bar_comment", "params": {"what": {"key": "screens.admin_console.results.agent_scope", "params": {"agent": "agent-1", "count": 3, "scopes": ["read", "write", "admin"]}}}}
+|{"key": "screens.admin_console.results.command_bar_comment", "params": {"what": {"key": "screens.admin_console.results.agent_ttl", "params": {"agent": "agent-1", "seconds": 3600}}}}
+|{"key": "screens.records.dual_control_removed", "params": {"key": "signups_enabled"}}
+|{"key": "screens.records.reset_to_default"}
+Command bar: something a person typed|-
+-|{"key": "screens.records.ban_strike_threshold"}
+Spam, as a moderator wrote it|-
+-|{"key": "screens.records.escalation_auto_blocked", "params": {"hours": 24}}
+Upheld, as a reviewer wrote it|-
+guardian_block:classifier
+Guardian blocked content: spam (severity: high, triggered by: classifier).
+manual strike
+screens.records.effect_failed
+screens.records.effect_unresolved
+a downstream said no
+lease_expired
+sqlstate:57014'
+got067=$(r067)
+[ "$got067" = "$expected067" ] \
+  || { echo "✗ 067 did not migrate the platform's English notes to their keys and codes (or changed a person's):"; diff <(echo "$expected067") <(echo "$got067") || true; exit 1; }
+before=$(schema_snapshot)
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/067_recorded_notes_written_by_code.sql" >/dev/null
+[ "$before" = "$(schema_snapshot)" ] && [ "$(r067)" = "$expected067" ] \
+  || { echo "✗ 067 applied twice changed a migrated row again"; exit 1; }
+step "067: the moderation pipeline's reasons, factors and classifier notes are catalog keys; ones written before are migrated part by part, once — a person's are not"
+# Rows as the Guardian wrote them before 067: a reasoning of several parts, one escalation, one a
+# person wrote; factors of the pipeline's and one of a person's; a classifier note and a model's
+# own words. 067 applied again migrates them; applied twice, nothing changes.
+"${PSQL[@]}" -q <<'SQL'
+INSERT INTO public.content_safety_audit (tenant_id, id, input_hash, trajectory_id, agent_id, request_id, reasoning, context_factors, classifier_output)
+SELECT t.id, v.id::uuid, 'h', 'replay', 'guardian', 'replay-067-m', v.reasoning, v.factors::text[], v.classifier::jsonb
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES
+         ('06700000-0000-4000-8000-0000000000f1', 'Context: ai-output: strikes not attributed to user; language-context: en → fr. Classifier: safe (confidence 0.93). Low-severity blocklist match — warning applied.', '{"ai-output: strikes not attributed to user","language-context: en → fr"}', '{"safe": true, "reason": "looks fine"}'),
+         ('06700000-0000-4000-8000-0000000000f2', 'Confidence 0.40 below threshold 0.5 for adult (18+) — escalating for human review.', '{"repeat-flags: 3+ flags in last 24h","a factor a person wrote"}', '{"safe": false, "reason": "Classifier unavailable"}'),
+         ('06700000-0000-4000-8000-0000000000f3', 'Blocked by a moderator by hand.', '{}', NULL),
+         ('06700000-0000-4000-8000-0000000000f4', 'Adjusted severity high ≥ block threshold medium for child (under 13). Something else.', '{}', NULL)
+       ) AS v(id, reasoning, factors, classifier);
+INSERT INTO public.review_queue (tenant_id, id, source, status, moderation_result, target_user_id, request_id)
+SELECT t.id, v.id::uuid, 'escalation', 'pending', v.result::jsonb, '06700001-0000-4000-8000-000000000000', 'replay-067-mq'
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES
+         ('06700000-0000-4000-8000-0000000000e1', '{"action": "escalate", "reasoning": "Screening run did not complete — escalated for human review (fail-closed).", "contextFactors": ["clean-history: user has long clean record", "by hand"], "classifierOutput": {"safe": false, "reason": "Classifier answer not fully readable (reason is not text)"}}'),
+         ('06700000-0000-4000-8000-0000000000e2', '{"action": "block", "reasoning": "hand-written reason", "contextFactors": []}')
+       ) AS v(id, result);
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/067_recorded_notes_written_by_code.sql" >/dev/null
+r067m() {
+  "${PSQL[@]}" -At <<'SQL'
+SELECT string_agg(reasoning || '|' || coalesce(reasoning_shown::text, '-') || '|' || array_to_string(context_factors, ',') || '|' || coalesce(context_factors_shown::text, '-') || '|' || coalesce(classifier_output::text, '-'), E'\n' ORDER BY id)
+  FROM public.content_safety_audit WHERE request_id = 'replay-067-m';
+SELECT string_agg(moderation_result::text, E'\n' ORDER BY id) FROM public.review_queue WHERE request_id = 'replay-067-mq';
+SQL
+}
+expected067m='|[{"key": "screens.moderation.reasons.context", "params": {"factors": [{"key": "screens.moderation.factors.ai_output"}, {"key": "screens.moderation.factors.language_context", "params": {"source": "en", "target": "fr"}}]}}, {"key": "screens.moderation.reasons.safe", "params": {"confidence": "0.93"}}, {"key": "screens.moderation.reasons.low_blocklist"}]||[{"key": "screens.moderation.factors.ai_output"}, {"key": "screens.moderation.factors.language_context", "params": {"source": "en", "target": "fr"}}]|{"safe": true, "rawReason": "looks fine"}
+|[{"key": "screens.moderation.reasons.escalate_confidence", "params": {"level": {"key": "screens.moderation.levels.adult"}, "threshold": "0.5", "confidence": "0.40"}}]|a factor a person wrote|[{"key": "screens.moderation.factors.repeat_flags"}]|{"note": {"key": "screens.moderation.classifier.unavailable"}, "safe": false}
+Blocked by a moderator by hand.|-||-|-
+Adjusted severity high ≥ block threshold medium for child (under 13). Something else.|-||-|-
+{"action": "escalate", "reasoning": [{"key": "screens.moderation.reasons.run_incomplete"}], "contextFactors": [{"key": "screens.moderation.factors.clean_history"}, "by hand"], "classifierOutput": {"note": {"key": "screens.moderation.classifier.unreadable", "params": {"problems": [{"key": "screens.moderation.problems.reason_not_text"}]}}, "safe": false}}
+{"action": "block", "reasoning": "hand-written reason", "contextFactors": []}'
+got067m=$(r067m)
+[ "$got067m" = "$expected067m" ] \
+  || { echo "✗ 067 did not migrate the moderation pipeline's reasons to their keys (or changed a person's):"; diff <(echo "$expected067m") <(echo "$got067m") || true; exit 1; }
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/067_recorded_notes_written_by_code.sql" >/dev/null
+[ "$(r067m)" = "$expected067m" ] \
+  || { echo "✗ 067 applied twice changed a migrated moderation row again"; exit 1; }
+# A dead lease from job_claim itself is the code now (050's text is gone).
+[ "$("${PSQL[@]}" -At -c "SELECT count(*) FROM pg_proc WHERE proname = 'job_claim' AND pg_get_functiondef(oid) LIKE '%stopped before it finished%'")" = "0" ] \
+  || { echo "✗ job_claim still records a dead lease in English"; exit 1; }
+"${PSQL[@]}" >/dev/null <<'SQL'
+DELETE FROM public.proposals WHERE operation_id LIKE 'replay-067-%';
+DELETE FROM public.agent_trajectories WHERE subject_id = 'replay-067';
+DELETE FROM public.config_pending_approvals WHERE id::text LIKE '06700000-%';
+DELETE FROM public.platform_config_history WHERE id::text LIKE '06700000-%';
+DELETE FROM public.user_strikes WHERE id::text LIKE '0670000%';
+DELETE FROM public.review_queue WHERE request_id = 'replay-067';
+DELETE FROM public.users WHERE id::text LIKE '0670000%';
+DELETE FROM public.effect_ledger WHERE operation_id = 'replay-067';
+DELETE FROM public.jobs WHERE kind = 'replay.r067';
+SQL
+
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
 DO $$
@@ -1054,9 +1259,19 @@ DROP TABLE public.replay_later;
 DROP POLICY replay_later_read ON public.users;
 SQL
 
-step "jobs: 050 and 051 applied again change nothing (idempotent)"
+step "jobs: 050 and 051 applied again change nothing (idempotent) — with 067, which redefines 050's job_claim"
 # An operator's choice since (a schedule turned off, a stretched interval, a duty taken off the
 # dual-control list) and a schedule's state must survive a re-run, as must every later object.
+# One later migration redefines an object 050 creates: 067 (TASK-209) records job_claim's dead
+# lease as a code. 050 applied again puts back its own job_claim, so a re-application of 050 is
+# followed by 067's — as a documented step re-applying 050 would be (067's header says so).
+redefines_050=(067_recorded_notes_written_by_code.sql)
+reapply_050_redefinitions() {
+  for r in "${redefines_050[@]}"; do
+    "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null 2>&1 \
+      || { echo "✗ $r failed when applied after 050 again:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$r" >/dev/null; exit 1; }
+  done
+}
 dual_before=$("${PSQL[@]}" -At -c "SELECT value::text FROM public.platform_config WHERE key = 'config.dual_control_keys'")
 "${PSQL[@]}" -At <<'SQL' >/dev/null
 UPDATE public.platform_config SET value = 'false' WHERE key = 'jobs.jobs.prune.enabled';
@@ -1070,6 +1285,7 @@ for f in $order; do
   "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null 2>&1 \
     || { echo "✗ $f failed when applied a second time:"; "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/$f" >/dev/null; exit 1; }
 done
+reapply_050_redefinitions
 after=$(snapshot)
 if [ "$before" != "$after" ]; then
   echo "✗ applying 050 and 051 a second time changed the database:"
@@ -1081,6 +1297,7 @@ fi
 # A third application: still removed (050 seeds dual control on its first application only).
 "${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/050_jobs.sql" >/dev/null 2>&1 \
   || { echo "✗ 050 failed when applied a third time"; exit 1; }
+reapply_050_redefinitions
 [ "$("${PSQL[@]}" -At -c "SELECT value @> '[\"jobs.tenancy.purge-due.enabled\"]' FROM public.platform_config WHERE key = 'config.dual_control_keys'")" = "f" ] \
   || { echo "✗ re-running 050 put back a dual-control key an operator removed"; exit 1; }
 "${PSQL[@]}" -At <<SQL >/dev/null
@@ -1909,5 +2126,12 @@ case "$temp" in
   *) echo "✗ app_tenant could create a temporary table, or could not sign in to be checked: $temp"; exit 1 ;;
 esac
 [ -z "$others" ] || { echo "✗ revoking TEMPORARY from app_tenant took it from: $others"; exit 1; }
+
+step "catalog: every setting and permission the migrations define is named by the catalog, in every locale (TASK-209, N-113)"
+# Here, before any test writes to the database: it holds what the migrations define — the
+# platform's, every module's and the app's — and nothing a test made.
+"${PSQL[@]}" -At -c "SELECT 'setting ' || key FROM public.platform_config UNION ALL SELECT 'permission ' || code FROM public.permissions" \
+  | node "$ROOT/scripts/catalog-definitions-check.mjs" --root "$ROOT" \
+  || { echo "✗ a setting or permission the catalog does not name (above)"; exit 1; }
 
 echo "✓ replay: baseline + $applied migration(s) it does not record, checks passed"

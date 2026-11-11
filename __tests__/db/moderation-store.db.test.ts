@@ -18,7 +18,7 @@ import { moderationAuditIsolation } from "../helpers/moderation-isolation-fixtur
 import { clearFaults, faults } from "../helpers/data-faults";
 import { PostgresModerationStore } from "@/platform/moderation/store";
 import type { ModerationAuditRecord } from "@/platform/moderation/types";
-import { DataUnavailableError } from "@/platform/data";
+import { DataUnavailableError, withOwnerTx } from "@/platform/data";
 import { logger } from "@/lib/logger";
 import { runWithoutTenant } from "@/platform/tenancy/context";
 import {
@@ -28,6 +28,7 @@ import {
   disconnectTestDatabase,
   dropTestTenants,
   inTenant,
+  type TestTenant,
 } from "../helpers/db";
 
 function record(overrides: Partial<ModerationAuditRecord> = {}): ModerationAuditRecord {
@@ -42,7 +43,7 @@ function record(overrides: Partial<ModerationAuditRecord> = {}): ModerationAudit
     confidence: 1,
     severity: "low",
     actionTaken: "allow",
-    reasoning: "db test",
+    reasoning: [{ key: "screens.moderation.reasons.declined" }],
     severityAdjustment: 0,
     contextFactors: [],
     attributeToUser: true,
@@ -83,8 +84,10 @@ dbDescribe("PostgresModerationStore", () => {
 
   describe("SQL paths beyond the kit", () => {
     let store: PostgresModerationStore;
+    let tenant: TestTenant;
     beforeEach(async () => {
-      store = inTenant(new PostgresModerationStore(), await createTestTenant());
+      tenant = await createTestTenant();
+      store = inTenant(new PostgresModerationStore(), tenant);
     });
 
     it("round-trips every field, with ISO timestamps and parsed classifier output", async () => {
@@ -104,13 +107,42 @@ dbDescribe("PostgresModerationStore", () => {
         severity: "medium",
         actionTaken: "block",
         severityAdjustment: -1,
-        contextFactors: ["quoted"],
+        contextFactors: [{ key: "screens.moderation.factors.ai_output" }],
         attributeToUser: false,
         classifierCostUsd: 0.0025,
         pipelineLatencyMs: 42,
       });
       await store.logAudit(full);
       expect(await store.getByInputHash("h-1")).toEqual([full]);
+    });
+
+    it("stores reasons and factors as keys (TASK-209); a row recorded before them reads as its stored text", async () => {
+      await store.logAudit(record({ inputHash: "h-keys" }));
+      const stored = await withOwnerTx("tenant-lifecycle", (tx) =>
+        tx.query<{
+          reasoning: string;
+          reasoning_shown: unknown;
+          context_factors: string[];
+        }>(
+          "select reasoning, reasoning_shown, context_factors from content_safety_audit where input_hash = 'h-keys'"
+        )
+      );
+      expect(stored.rows[0]).toEqual({
+        reasoning: "",
+        reasoning_shown: [{ key: "screens.moderation.reasons.declined" }],
+        context_factors: [],
+      });
+      // A row from before 067 that no template matched: its text, and its factor, as stored.
+      await withOwnerTx("tenant-lifecycle", (tx) =>
+        tx.query(
+          `insert into content_safety_audit (tenant_id, input_hash, trajectory_id, agent_id, request_id, reasoning, context_factors)
+           values ($1::uuid, 'h-legacy', 't', 'guardian', 'r', 'Blocked by a moderator by hand.', '{"a factor a person wrote"}')`,
+          [tenant.id]
+        )
+      );
+      const [legacy] = await store.getByInputHash("h-legacy");
+      expect(legacy.reasoning).toBe("Blocked by a moderator by hand.");
+      expect(legacy.contextFactors).toEqual(["a factor a person wrote"]);
     });
 
     it("maps a record with no user and no classifier output", async () => {

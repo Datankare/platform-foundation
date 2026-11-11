@@ -64,7 +64,7 @@ const REVIEWER = CALLERS.moderator.userId;
 /** A moderation result with the fields the review pipeline reads. */
 const mr = (action: string) => ({
   action,
-  reasoning: "Held for review.",
+  reasoning: [{ key: "screens.moderation.reasons.declined" }],
   trajectoryId: "traj-manual",
   contextFactors: [],
   blocklistMatches: [],

@@ -75,6 +75,10 @@ jest.mock("@/platform/admin/config-handlers", () => ({
     .codedConfigFailure,
 }));
 
+// hostile:role n/a: the decision route's role cases are r10-one-hold and approver-rules [hostile:role]
+// hostile:self n/a: deciding one's own hold is refused in r10-one-hold and approver-rules [hostile:self]
+// hostile:store-down n/a: the decision with its stores down is r10-one-hold and command-bar-holds [hostile:store-down]
+// hostile:id-spelling n/a: an approver id spelled otherwise is approver-rules' case [hostile:id-spelling]
 import { NextRequest } from "next/server";
 import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-identities";
 import { getProposalStore } from "@/platform/agents/proposal-store";
@@ -393,7 +397,7 @@ describe("POST /api/admin/approvals/[id] — ADR-040 040b", () => {
         "moderation.strike_ban_threshold",
         4,
         CALLERS.safety_approver.userId,
-        "Approved: tighten",
+        { key: "screens.records.change_approved", params: { note: "tighten" } },
         "config_agent",
         undefined,
         // Outside a shared deployment the recorded scope is applied as the approver.

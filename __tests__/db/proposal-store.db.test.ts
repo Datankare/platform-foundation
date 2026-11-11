@@ -114,13 +114,15 @@ dbDescribe("PostgresProposalStore", () => {
     expect(n).toBe(1);
     const after = await store.getById(lapsed);
     expect(after).toMatchObject({ status: "rejected", decidedBy: HOLD_EXPIRY_ACTOR });
-    // TASK-208: the record is the catalog's key and values, the note the job's reason.
-    expect(after?.decisionNote).toBe("expired: not run within 1 day of its approval");
+    // TASK-208: the record is the catalog's key and values; TASK-209: the job's reason too, in
+    // the record (it was English in decision_note).
+    expect(after?.decisionNote).toBeUndefined();
     expect(after?.decisionShown).toEqual({
       key: "screens.records.withdrawn_after_approval",
       params: {
         approvedBy: "alice",
         approvedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+        note: { key: "screens.records.expired_unused", params: { days: 1 } },
       },
     });
     expect(decisionWords(after!)).toMatch(

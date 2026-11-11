@@ -18,6 +18,7 @@ jest.mock("@/platform/observability/alert", () => ({
   raiseAlert: (...a: unknown[]) => raiseAlert(...a),
 }));
 
+import { POWER_REDUCED, superseded } from "@/platform/errors/recorded-text";
 import { Client } from "pg";
 import { withOwnerTx } from "@/platform/data";
 import {
@@ -111,13 +112,13 @@ dbDescribe("R14-L3 a withdrawal never leaves a locked approval unreported", () =
         withdrawPendingApprovalsForKey(
           KEY(),
           requester,
-          "kill switch",
-          "kill switch",
+          superseded(POWER_REDUCED),
+          POWER_REDUCED.key,
           "tenant"
         )
       );
       full = await t.run(() =>
-        withdrawSupersededHolds(KEY(), requester, "kill switch", "tenant")
+        withdrawSupersededHolds(KEY(), requester, POWER_REDUCED, "tenant")
       );
     } finally {
       await locker.query("rollback"); // the reviewer's decision was refused: the row is unchanged
@@ -140,7 +141,13 @@ dbDescribe("R14-L3 a withdrawal never leaves a locked approval unreported", () =
     expect(row.status).toBe("pending");
     // Unlocked, the next withdrawal takes it, and reports nothing left.
     const again = await t.run(() =>
-      withdrawPendingApprovalsForKey(KEY(), requester, "again", "again", "tenant")
+      withdrawPendingApprovalsForKey(
+        KEY(),
+        requester,
+        superseded(POWER_REDUCED),
+        POWER_REDUCED.key,
+        "tenant"
+      )
     );
     expect(again).toEqual({ withdrawn: [id], incomplete: false, remaining: 0 });
   });
@@ -148,7 +155,13 @@ dbDescribe("R14-L3 a withdrawal never leaves a locked approval unreported", () =
   it("an approval requested after the withdrawal began is not counted as left", async () => {
     const requester = await t.user("req");
     const out = await t.run(() =>
-      withdrawPendingApprovalsForKey(KEY(), requester, "n", "n", "tenant")
+      withdrawPendingApprovalsForKey(
+        KEY(),
+        requester,
+        superseded(POWER_REDUCED),
+        POWER_REDUCED.key,
+        "tenant"
+      )
     );
     expect(out).toEqual({ withdrawn: [], incomplete: false, remaining: 0 });
   });
@@ -199,7 +212,7 @@ dbDescribe("R14-L4 a platform-scope withdrawal reaches every tenant", () => {
       })
     );
     const out = await t.run(() =>
-      withdrawSupersededHolds(KEY(), operatorUser, "platform default reduced", "platform")
+      withdrawSupersededHolds(KEY(), operatorUser, POWER_REDUCED, "platform")
     );
     expect([...out.approvals].sort()).toEqual(
       [mine.record!.id, theirs.record!.id].sort()
@@ -254,7 +267,7 @@ dbDescribe("R14-L4 a platform-scope withdrawal reaches every tenant", () => {
     );
     const actor = await t.user("admin");
     const out = await t.run(() =>
-      withdrawSupersededHolds(KEY(), actor, "tenant value reduced", "tenant")
+      withdrawSupersededHolds(KEY(), actor, POWER_REDUCED, "tenant")
     );
     expect(out.tenants).toEqual([]);
     const [row] = await owner<{ status: string }>(

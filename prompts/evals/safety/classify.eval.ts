@@ -251,7 +251,7 @@ export const SAFETY_CLASSIFY_EVAL: EvalSuite<ClassifierOutput, string> = {
       id: "adversarial-oversized",
       tags: ["adversarial:oversized"],
       fixture: `{"safe": false, "categories": ["hate"], "confidence": 0.9, "severity": "high", "reason": "${"A".repeat(20000)}"}`,
-      assert: (o) => o.safe === false && typeof o.reason === "string",
+      assert: (o) => o.safe === false && typeof o.rawReason === "string",
     },
   ],
 };

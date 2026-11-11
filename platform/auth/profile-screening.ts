@@ -21,6 +21,8 @@
  * @module platform/auth
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
+import type { RecordedReasons } from "@/platform/moderation/reasons";
 import { getConfig, getConfigNumber } from "@/platform/auth/platform-config";
 import { screenContent } from "@/platform/moderation";
 import { logger } from "@/lib/logger";
@@ -37,7 +39,11 @@ export interface ProfileScreeningResult {
   /** Fields that failed screening */
   readonly blockedFields: readonly string[];
   /** Per-field failure reasons */
-  readonly reasons: Readonly<Record<string, string>>;
+  /**
+   * Per-field failure reasons: catalog keys and values (screens.moderation.profile.*, the
+   * Guardian's reasons; TASK-209 — English before). Logged by the route, never returned.
+   */
+  readonly reasons: Readonly<Record<string, readonly ShownText[]>>;
   /** Guardian trajectory IDs (one per screened field) */
   readonly trajectoryIds: readonly string[];
 }
@@ -144,18 +150,22 @@ export const MAX_AVATAR_URL_LENGTH = 2048;
  * app's to screen when it is uploaded (screenModality withholds every image until classifiers are
  * configured).
  */
-export function avatarUrlRefusal(value: string): string | undefined {
+export function avatarUrlRefusal(value: string): ShownText | undefined {
   if (value.length > MAX_AVATAR_URL_LENGTH) {
-    return `avatarUrl exceeds maximum length of ${MAX_AVATAR_URL_LENGTH} characters.`;
+    return shown("screens.moderation.profile.too_long", {
+      field: "avatarUrl",
+      limit: String(MAX_AVATAR_URL_LENGTH),
+    });
   }
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return "avatarUrl must be an https address.";
+    return shown("screens.moderation.profile.avatar_https");
   }
-  if (url.protocol !== "https:") return "avatarUrl must be an https address.";
-  if (url.username || url.password) return "avatarUrl must not contain credentials.";
+  if (url.protocol !== "https:") return shown("screens.moderation.profile.avatar_https");
+  if (url.username || url.password)
+    return shown("screens.moderation.profile.avatar_credentials");
   const host = url.hostname.toLowerCase();
   if (
     !host.includes(".") ||
@@ -165,9 +175,10 @@ export function avatarUrlRefusal(value: string): string | undefined {
     /^[\d.]+$/.test(host) ||
     host.startsWith("[")
   ) {
-    return "avatarUrl must name a public host.";
+    return shown("screens.moderation.profile.avatar_public_host");
   }
-  if (url.port && url.port !== "443") return "avatarUrl must use the standard port.";
+  if (url.port && url.port !== "443")
+    return shown("screens.moderation.profile.avatar_port");
   return undefined;
 }
 
@@ -176,31 +187,35 @@ export function avatarUrlRefusal(value: string): string | undefined {
  * one of its three values, a flag is a boolean, a language and a time zone are short codes.
  * Before: such values went to the database as given, and a wrong one failed there.
  */
-function shapeRefusal(field: string, value: unknown): string | undefined {
-  if (!KNOWN_FIELDS.has(field)) return `${field} is not a profile field.`;
+function shapeRefusal(field: string, value: unknown): ShownText | undefined {
+  if (!KNOWN_FIELDS.has(field))
+    return shown("screens.moderation.profile.not_field", { field });
   if (VISIBILITY_FIELDS.has(field)) {
     return typeof value === "string" && VISIBILITY.has(value)
       ? undefined
-      : `${field} must be private, friends or public.`;
+      : shown("screens.moderation.profile.visibility", { field });
   }
   if (BOOLEAN_FIELDS.has(field)) {
-    return typeof value === "boolean" ? undefined : `${field} must be true or false.`;
+    return typeof value === "boolean"
+      ? undefined
+      : shown("screens.moderation.profile.boolean", { field });
   }
   if (field === "languagePreference") {
     return typeof value === "string" && /^[a-z]{2,3}(?:-[a-z\d]{2,8}){0,2}$/i.test(value)
       ? undefined
-      : "languagePreference must be a language code.";
+      : shown("screens.moderation.profile.language");
   }
   if (field === "timezone") {
     return typeof value === "string" &&
       /^[a-z][\w+-]*(?:\/[\w+-]+){0,2}$/i.test(value) &&
       value.length <= 64
       ? undefined
-      : "timezone must be a time zone name.";
+      : shown("screens.moderation.profile.timezone");
   }
   if (TEXT_FIELDS.has(field)) {
     if (value === null) return undefined;
-    if (typeof value !== "string") return `${field} must be text.`;
+    if (typeof value !== "string")
+      return shown("screens.moderation.profile.not_text", { field });
     if (field === "avatarUrl" && value !== "") return avatarUrlRefusal(value);
   }
   return undefined;
@@ -250,7 +265,7 @@ export async function screenProfileUpdate(
     return {
       allowed: false,
       blockedFields: [],
-      reasons: { _userId: "Invalid user ID format" },
+      reasons: { _userId: [shown("screens.moderation.profile.invalid_user")] },
       trajectoryIds: [],
     };
   }
@@ -265,7 +280,7 @@ export async function screenProfileUpdate(
 
   const screenedFields = await loadScreenedFields();
   const blockedFields: string[] = [];
-  const reasons: Record<string, string> = {};
+  const reasons: Record<string, readonly ShownText[]> = {};
   const trajectoryIds: string[] = [];
 
   for (const field of updateKeys) {
@@ -274,7 +289,7 @@ export async function screenProfileUpdate(
     const refusal = shapeRefusal(field, value);
     if (refusal) {
       blockedFields.push(field);
-      reasons[field] = refusal;
+      reasons[field] = [refusal];
       continue;
     }
     if (!screenedFields.includes(field)) continue;
@@ -284,7 +299,7 @@ export async function screenProfileUpdate(
     if (value === null) continue;
     if (typeof value !== "string") {
       blockedFields.push(field);
-      reasons[field] = `${field} must be text.`;
+      reasons[field] = [shown("screens.moderation.profile.not_text", { field })];
       continue;
     }
 
@@ -292,8 +307,12 @@ export async function screenProfileUpdate(
     const lengthCheck = await checkLengthLimit(field, value);
     if (lengthCheck.exceeded) {
       blockedFields.push(field);
-      reasons[field] =
-        `${field} exceeds maximum length of ${lengthCheck.limit} characters.`;
+      reasons[field] = [
+        shown("screens.moderation.profile.too_long", {
+          field,
+          limit: String(lengthCheck.limit),
+        }),
+      ];
       continue;
     }
 
@@ -312,13 +331,15 @@ export async function screenProfileUpdate(
 
       if (result.action === "block" || result.action === "escalate") {
         blockedFields.push(field);
-        reasons[field] = result.reasoning;
+        reasons[field] = guardianReasons(result.reasoning);
       } else if (result.action === "warn") {
         // Warnings on profile fields are treated as blocks —
         // profiles are public-facing, no "soft warning" makes sense
         blockedFields.push(field);
-        reasons[field] =
-          `${field} contains content that is not allowed in profiles. ${result.reasoning}`;
+        reasons[field] = [
+          shown("screens.moderation.profile.not_allowed", { field }),
+          ...guardianReasons(result.reasoning),
+        ];
       }
     } catch (err) {
       // P11: Guardian error → fail-closed, block the field
@@ -330,7 +351,7 @@ export async function screenProfileUpdate(
         route: "platform/auth/profile-screening",
       });
       blockedFields.push(field);
-      reasons[field] = "Profile update temporarily unavailable. Please try again.";
+      reasons[field] = [shown("screens.moderation.profile.unavailable")];
     }
   }
 
@@ -349,4 +370,9 @@ export async function screenProfileUpdate(
     reasons,
     trajectoryIds,
   };
+}
+
+/** The Guardian's reasons for a field (a fresh decision's are always keys). */
+function guardianReasons(reasoning: RecordedReasons): readonly ShownText[] {
+  return typeof reasoning === "string" ? [] : reasoning;
 }

@@ -15,6 +15,7 @@
  * @module platform/moderation
  */
 
+import { escalationAutoBlocked } from "@/platform/errors/recorded-text";
 import { logger } from "@/lib/logger";
 import { logCaught } from "@/platform/observability/caught-error";
 import { getConfig } from "@/platform/auth/platform-config";
@@ -948,7 +949,8 @@ export async function reapOverdueEscalations(
             modifiedAction: "block",
             resolvedBy: REAPER,
             resolvedAt: now.toISOString(),
-            reviewerNotes: `Auto-blocked: escalation exceeded the ${slaHours}h SLA without human review (ADR-041).`,
+            // The reaper's note: the catalog's key and values (TASK-209: it was English).
+            notesShown: escalationAutoBlocked(slaHours),
           },
           reapExpectation(item)
         )

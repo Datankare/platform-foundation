@@ -44,6 +44,10 @@ jest.mock("@/platform/auth/platform-config", () => {
   };
 });
 
+// hostile:role n/a: these routes' role cases are command-bar-holds and r10-one-hold [hostile:role]
+// hostile:self n/a: deciding one's own hold is command-bar-holds and r10-one-hold [hostile:self]
+// hostile:store-down n/a: a store down on these routes is command-bar-holds and r10-one-hold [hostile:store-down]
+// hostile:id-spelling n/a: an id spelled otherwise is admin-usability-routes and approver-rules [hostile:id-spelling]
 import { NextRequest } from "next/server";
 import {
   authAs,
@@ -212,8 +216,8 @@ describe("a command-bar hold whose write lost its commit (round 16, item 1)", ()
       .audit.map((a) => a.details as Record<string, unknown>)
       .filter((d) => d.type === "approval_decision" && d.outcome === "failed");
     expect(record).toHaveLength(1);
-    expect(String(record[0].reason)).toMatch(/not given back/);
-    expect(String(record[0].reason)).not.toMatch(/approval kept/);
+    // A catalog key (TASK-209), worded by the audit page: "… claim not given back …".
+    expect(record[0].reason).toBe("screens.records.audit_run_failed_not_released");
   });
 
   it("a failed run whose claim was given back is audited 'approval kept'", async () => {
@@ -224,6 +228,6 @@ describe("a command-bar hold whose write lost its commit (round 16, item 1)", ()
     const record = fakeData()
       .audit.map((a) => a.details as Record<string, unknown>)
       .filter((d) => d.type === "approval_decision" && d.outcome === "failed");
-    expect(String(record[0].reason)).toMatch(/approval kept/);
+    expect(record[0].reason).toBe("screens.records.audit_run_failed_kept");
   });
 });

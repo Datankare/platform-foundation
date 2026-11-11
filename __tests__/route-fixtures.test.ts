@@ -1242,9 +1242,19 @@ async function blocked(trajectoryId: string, userId: string): Promise<void> {
       confidence: 0.92,
       severity: "high",
       actionTaken: "block",
-      reasoning: "harassment, high confidence",
+      // The Guardian's reasons and factors, as catalog keys (TASK-209).
+      reasoning: [
+        {
+          key: "screens.moderation.reasons.block_threshold",
+          params: {
+            severity: "high",
+            threshold: "medium",
+            level: { key: "screens.moderation.levels.child" },
+          },
+        },
+      ],
       severityAdjustment: 0,
-      contextFactors: [],
+      contextFactors: [{ key: "screens.moderation.factors.clean_history" }],
       attributeToUser: true,
       classifierCostUsd: 0,
       trajectoryId,
@@ -1958,9 +1968,24 @@ async function reviewQueue(more = false): Promise<void> {
         confidence: 0.52,
         severity: "medium",
       },
-      reasoning: "Low confidence — escalating.",
+      // As the Guardian records them (TASK-209): catalog keys and values.
+      reasoning: [
+        {
+          key: "screens.moderation.reasons.escalate_confidence",
+          params: {
+            confidence: "0.52",
+            threshold: "0.6",
+            level: { key: "screens.moderation.levels.child" },
+          },
+        },
+      ],
       severityAdjustment: 0,
-      contextFactors: ["translation context"],
+      contextFactors: [
+        {
+          key: "screens.moderation.factors.severity_reduced",
+          params: { contentType: "translation", reduction: "1" },
+        },
+      ],
       attributeToUser: true,
       pipelineLatencyMs: 100,
       classifierCostUsd: 0.001,
@@ -1973,6 +1998,7 @@ async function reviewQueue(more = false): Promise<void> {
       steps: [
         {
           phase: "classify",
+          // A chain recorded before its keys: shown as such, its text behind a disclosure.
           description: "ran the classifier",
           data: {},
           durationMs: 10,

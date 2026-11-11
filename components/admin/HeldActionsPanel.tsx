@@ -444,6 +444,11 @@ export function HeldActionsPanel({ data }: { data?: { approvals?: PendingApprova
                     <dd className="min-w-0 break-words text-gray-200">
                       {a.comment ? (
                         <ExpandableText text={a.comment} column={t("comment")} />
+                      ) : a.commentShown ? (
+                        <ExpandableText
+                          text={renderShown(a.commentShown)}
+                          column={t("comment")}
+                        />
                       ) : (
                         t("no_comment")
                       )}

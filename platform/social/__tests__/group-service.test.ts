@@ -109,26 +109,28 @@ describe("GroupService", () => {
     it("blocks group when screenContent rejects name", async () => {
       const screenFn = jest
         .fn()
-        .mockResolvedValueOnce("Name contains prohibited content");
+        .mockResolvedValueOnce([{ key: "screens.moderation.social.prohibited" }]);
       const { service } = createService(screenFn);
 
       const result = await service.createGroup(makeInput());
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe("Name contains prohibited content");
+      expect(result.error).toBe("content_refused");
+      expect(result.refused).toEqual([{ key: "screens.moderation.social.prohibited" }]);
     });
 
     it("blocks group when screenContent rejects description", async () => {
       const screenFn = jest
         .fn()
         .mockResolvedValueOnce(null) // name passes
-        .mockResolvedValueOnce("Description blocked");
+        .mockResolvedValueOnce([{ key: "screens.moderation.social.needs_review" }]);
       const { service } = createService(screenFn);
 
       const result = await service.createGroup(makeInput());
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe("Description blocked");
+      expect(result.error).toBe("content_refused");
+      expect(result.refused).toEqual([{ key: "screens.moderation.social.needs_review" }]);
     });
 
     it("skips screening when no hook provided", async () => {

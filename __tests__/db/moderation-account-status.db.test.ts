@@ -85,6 +85,7 @@ interface UserRow {
   account_status: AccountStatus;
   banned_at: Date | null;
   ban_reason: string | null;
+  ban_note: unknown;
   suspended_until: Date | null;
   restricted_until: Date | null;
   status_changed_by: string | null;
@@ -101,7 +102,7 @@ async function account(): Promise<UserRow> {
   const { rows } = await inT(() =>
     withTenantTx((tx) =>
       tx.query<UserRow>(
-        `select account_status, banned_at, ban_reason, suspended_until, restricted_until,
+        `select account_status, banned_at, ban_reason, ban_note, suspended_until, restricted_until,
                 status_changed_by, status_changed_at
            from users where id = $1::uuid`,
         [target]
@@ -416,7 +417,10 @@ dbDescribe("moderation account-status SQL", () => {
       expect(await account()).toMatchObject({
         account_status: "banned",
         banned_at: expect.any(Date),
-        ban_reason: "Automatic ban: strike threshold exceeded",
+        // The platform's note on the ban: the catalog's key (TASK-209: it was English in
+        // ban_reason, which is for what a person wrote).
+        ban_reason: null,
+        ban_note: { key: "screens.records.ban_strike_threshold" },
         // A ban leaves the suspension's end as it was.
         suspended_until: suspended.suspended_until,
       });
@@ -438,7 +442,7 @@ dbDescribe("moderation account-status SQL", () => {
           ? new DataUnavailableError("injected")
           : undefined;
       const res = await block("r-unwritable");
-      expect(res.reasoning).toContain("consequence not applied");
+      expect(res.reasoning).toContainEqual({ key: "screens.sentinel.incomplete" });
       clearFaults();
       expect((await account()).account_status).toBe("active");
     });

@@ -37,6 +37,11 @@ jest.mock("@/platform/rate-limit", () =>
   require("@/__tests__/helpers/test-identities").mockRateLimit()
 );
 
+// hostile:role n/a: these routes' role cases are config-routes and r10-one-hold [hostile:role], and route-role-matrix for every route and role
+// hostile:self n/a: approving one's own request is config-routes and r10-one-hold [hostile:self]
+// hostile:store-down n/a: a store down on these routes is config-routes and r10-one-hold [hostile:store-down]
+// hostile:id-spelling n/a: these writes name a setting key, not an account; an approver id spelled otherwise is approver-rules' case
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 import { NextRequest } from "next/server";
 import { withOwnerTx } from "@/platform/data";
 import { clearConfigCache, setConfigWithHistory } from "@/platform/auth/platform-config";
@@ -345,12 +350,18 @@ dbDescribe("a required schedule's enabled setting — an approval filed before 0
       withdrawn: true,
     });
     expect(await platformValue()).toBe(true);
-    const [row] = await q<{ status: string; reviewed_by: string | null; note: string }>(
-      "select status::text, reviewed_by, review_comment as note from config_pending_approvals where id = $1",
+    const [row] = await q<{
+      status: string;
+      reviewed_by: string | null;
+      comment: string | null;
+      note: ShownText;
+    }>(
+      "select status::text, reviewed_by, review_comment as comment, review_shown as note from config_pending_approvals where id = $1",
       [id]
     );
-    expect(row).toMatchObject({ status: "rejected", reviewed_by: null });
-    expect(row.note).toMatch(
+    expect(row).toMatchObject({ status: "rejected", reviewed_by: null, comment: null });
+    // The system's record, worded by the catalog (TASK-209: it was English).
+    expect(renderShown(row.note)).toMatch(
       /^withdrawn by the system: "jobs\.test\.r\w+\.enabled" turns on a job that is now required/
     );
     const audit = await q<{ reason: string }>(
@@ -522,12 +533,12 @@ dbDescribe(
         };
         expect(body).toMatchObject({ code: "jobs.schedule_required", withdrawn: true });
         expect(body.settling).toBeUndefined();
-        const [row] = await q<{ status: string; note: string }>(
-          "select status::text, review_comment as note from config_pending_approvals where id = $1",
+        const [row] = await q<{ status: string; note: ShownText }>(
+          "select status::text, review_shown as note from config_pending_approvals where id = $1",
           [filed.id]
         );
         expect(row.status).toBe("rejected");
-        expect(row.note).toMatch(
+        expect(renderShown(row.note)).toMatch(
           /^withdrawn by the system: "jobs\.test\.c\w+\.enabled" turns on a job that is now required/
         );
         expect(await withdrawnAudit(filed.id)).toEqual([{ reason: "refused" }]);

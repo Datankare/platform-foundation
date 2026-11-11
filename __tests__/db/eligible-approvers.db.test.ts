@@ -222,11 +222,18 @@ dbDescribe("an erasure no one else could approve is refused up front (N-24)", ()
     await disconnectTestDatabase();
   });
 
+  // A single-tenant deployment (N-114, TASK-209): its own staff alone decide. In a shared one
+  // every tenant's operators count too (asOperator: the first suite shows it with an operator it
+  // made), and suites running beside this one in the same database make operators of their own —
+  // so "alone" held only when none ran at that moment (409 or 202, by timing).
   const ask = async (target: string) =>
     erasurePOST(
       new NextRequest("http://localhost/api/admin/gdpr", {
         method: "POST",
-        headers: { ...asCallerIn(requester, lone), "content-type": "application/json" },
+        headers: {
+          ...asCallerIn(requester, lone, "single"),
+          "content-type": "application/json",
+        },
         body: JSON.stringify({ userId: target, reason: "user-request" }),
       })
     );

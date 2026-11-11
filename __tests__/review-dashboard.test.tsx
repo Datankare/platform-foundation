@@ -79,6 +79,15 @@ describe("ReviewDashboard — states", () => {
     expect(screen.getByTestId("rd-trajectory-review-1")).toBeDefined();
     expect(screen.getByTestId("rd-timeline-review-1")).toBeDefined();
     expect(screen.getByTestId("rd-step-review-1-0")).toBeDefined();
+    // TASK-209: the Guardian's reasons and factors, recorded as catalog keys, in the words a
+    // moderator always read; a chain step recorded before the keys, as such, its text disclosed.
+    expect(screen.getByTestId("rd-reasoning-review-1").textContent).toBe(
+      "Confidence 0.52 below threshold 0.6 for child (under 13) — escalating for human review."
+    );
+    expect(screen.getByText("translation-content: severity reduced by 1")).toBeDefined();
+    const step = screen.getByTestId("rd-step-review-1-0");
+    expect(step.textContent).toContain("A reason recorded before reasons were coded.");
+    expect(step.textContent).toContain("ran the classifier");
   });
 });
 

@@ -35,6 +35,7 @@ jest.mock("@/platform/moderation", () => ({
 
 // ── Imports ─────────────────────────────────────────────────────────────
 
+import { renderShown, type ShownText } from "@/platform/errors/shown-text";
 import { screenProfileUpdate } from "../profile-screening";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -45,7 +46,9 @@ function allowGuardian() {
   mockScreenContent.mockResolvedValue({
     action: "allow",
     triggeredBy: "none",
-    reasoning: "Content is safe.",
+    reasoning: [
+      { key: "screens.moderation.reasons.safe", params: { confidence: "0.99" } },
+    ],
     trajectoryId: "traj-test-1",
     contentType: "profile",
     attributeToUser: true,
@@ -54,7 +57,14 @@ function allowGuardian() {
   });
 }
 
-function blockGuardian(reasoning = "Hate speech detected.") {
+function blockGuardian(
+  reasoning: readonly ShownText[] = [
+    {
+      key: "screens.moderation.reasons.blocklist_block",
+      params: { categories: "hate", severity: "high" },
+    },
+  ]
+) {
   mockScreenContent.mockResolvedValue({
     action: "block",
     triggeredBy: "blocklist",
@@ -67,7 +77,9 @@ function blockGuardian(reasoning = "Hate speech detected.") {
   });
 }
 
-function warnGuardian(reasoning = "Mild profanity detected.") {
+function warnGuardian(
+  reasoning: readonly ShownText[] = [{ key: "screens.moderation.reasons.low_blocklist" }]
+) {
   mockScreenContent.mockResolvedValue({
     action: "warn",
     triggeredBy: "classifier",
@@ -99,6 +111,10 @@ function setupDefaultConfig() {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────
+
+/** A field's reasons as a reader sees them (TASK-209: catalog keys; the words are the same). */
+const words = (r: readonly ShownText[] | undefined): string =>
+  (r ?? []).map((t) => renderShown(t)).join(" ");
 
 describe("profileUpdateNeedsScreening", () => {
   beforeEach(() => {
@@ -218,7 +234,7 @@ describe("screenProfileUpdate", () => {
   // ── Guardian blocks ─────────────────────────────────────────────────
 
   it("blocks display name flagged by Guardian", async () => {
-    blockGuardian("Hate speech detected.");
+    blockGuardian();
     const result = await screenProfileUpdate(
       VALID_USER_ID,
       { displayName: "offensive-name" },
@@ -226,11 +242,13 @@ describe("screenProfileUpdate", () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.blockedFields).toEqual(["displayName"]);
-    expect(result.reasons.displayName).toMatch(/Hate speech/);
+    expect(words(result.reasons.displayName)).toBe(
+      "Blocklist hit: hate (severity: high). Blocked immediately — classifier skipped."
+    );
   });
 
   it("treats Guardian warn as block for profile fields", async () => {
-    warnGuardian("Mild profanity detected.");
+    warnGuardian();
     const result = await screenProfileUpdate(
       VALID_USER_ID,
       { displayName: "mildly-bad" },
@@ -238,7 +256,9 @@ describe("screenProfileUpdate", () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.blockedFields).toEqual(["displayName"]);
-    expect(result.reasons.displayName).toMatch(/not allowed in profiles/);
+    expect(words(result.reasons.displayName)).toBe(
+      "displayName contains content that is not allowed in profiles. Low-severity blocklist match — warning applied."
+    );
   });
 
   it("blocks one field, allows another in same update", async () => {
@@ -246,7 +266,7 @@ describe("screenProfileUpdate", () => {
       .mockResolvedValueOnce({
         action: "allow",
         triggeredBy: "none",
-        reasoning: "Safe.",
+        reasoning: [],
         trajectoryId: "traj-1",
         contentType: "profile",
         attributeToUser: true,
@@ -256,7 +276,12 @@ describe("screenProfileUpdate", () => {
       .mockResolvedValueOnce({
         action: "block",
         triggeredBy: "blocklist",
-        reasoning: "URL detected.",
+        reasoning: [
+          {
+            key: "screens.moderation.reasons.blocklist_block",
+            params: { categories: "url", severity: "high" },
+          },
+        ],
         trajectoryId: "traj-2",
         contentType: "profile",
         attributeToUser: true,
@@ -271,7 +296,7 @@ describe("screenProfileUpdate", () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.blockedFields).toEqual(["realName"]);
-    expect(result.reasons.realName).toMatch(/URL detected/);
+    expect(words(result.reasons.realName)).toMatch(/Blocklist hit: url/);
     expect(result.trajectoryIds).toHaveLength(2);
   });
 
@@ -285,7 +310,9 @@ describe("screenProfileUpdate", () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.blockedFields).toEqual(["displayName"]);
-    expect(result.reasons.displayName).toMatch(/exceeds maximum length of 50/);
+    expect(words(result.reasons.displayName)).toBe(
+      "displayName exceeds maximum length of 50 characters."
+    );
     expect(mockScreenContent).not.toHaveBeenCalled();
   });
 
@@ -297,7 +324,7 @@ describe("screenProfileUpdate", () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.blockedFields).toEqual(["realName"]);
-    expect(result.reasons.realName).toMatch(/exceeds maximum length of 100/);
+    expect(words(result.reasons.realName)).toMatch(/exceeds maximum length of 100/);
   });
 
   it("allows display name at exact limit", async () => {
@@ -320,7 +347,7 @@ describe("screenProfileUpdate", () => {
     );
     expect(result.allowed).toBe(false);
     expect(result.blockedFields).toEqual(["displayName"]);
-    expect(result.reasons.displayName).toMatch(/temporarily unavailable/);
+    expect(words(result.reasons.displayName)).toMatch(/temporarily unavailable/);
   });
 
   it("fails closed when config unavailable (uses fallback fields)", async () => {
@@ -344,14 +371,14 @@ describe("screenProfileUpdate", () => {
       "req-14"
     );
     expect(result.allowed).toBe(false);
-    expect(result.reasons._userId).toMatch(/Invalid user ID/);
+    expect(words(result.reasons._userId)).toMatch(/Invalid user ID/);
     expect(mockScreenContent).not.toHaveBeenCalled();
   });
 
   it("rejects empty userId", async () => {
     const result = await screenProfileUpdate("", { displayName: "Alice" }, "req-15");
     expect(result.allowed).toBe(false);
-    expect(result.reasons._userId).toMatch(/Invalid user ID/);
+    expect(words(result.reasons._userId)).toMatch(/Invalid user ID/);
   });
 });
 

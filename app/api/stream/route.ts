@@ -110,7 +110,8 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     // The classifier's reason may quote matched terms: it goes to the log, not the response.
     logger.info("Stream input rejected by content screening", {
       requestId,
-      reason: safety.reason,
+      reasons: safety.reasons,
+      rawReason: safety.rawReason,
     });
     return apiError("content.rejected", { request });
   }

@@ -14,6 +14,18 @@ import { resetAgentRegistry } from "@/platform/agents/registry";
 import { resetModerationStore } from "@/platform/moderation/store";
 import type { ScreeningContext } from "@/platform/moderation/types";
 import { CONTENT_KINDS_FIXTURE, withModules } from "./helpers/modules";
+import {
+  reasonText,
+  reasonsText,
+  type RecordedFactor,
+  type RecordedReasons,
+} from "@/platform/moderation/reasons";
+
+/** The words a reader sees (TASK-209: the reasons are catalog keys; the words are unchanged). */
+const words = (r: RecordedReasons): string =>
+  typeof r === "string" ? r : reasonsText(r);
+const factorWords = (f: RecordedFactor): string =>
+  typeof f === "string" ? f : reasonText(f);
 
 // The content kinds screened here are declared by a fixture module (ADR-054 D4): the core
 // screens what the registered modules declare.
@@ -167,8 +179,8 @@ describe("Guardian — trajectory (P18)", () => {
 
     const result = await guardian.screen("hello world", "input", "req-2", makeContext());
 
-    expect(result.reasoning).toContain("safe");
-    expect(result.reasoning.length).toBeGreaterThan(0);
+    expect(words(result.reasoning)).toContain("safe");
+    expect(words(result.reasoning).length).toBeGreaterThan(0);
   });
 });
 
@@ -328,10 +340,10 @@ describe("Guardian — content type adjustments", () => {
 
     expect(result.action).toBe("warn");
     expect(result.severityAdjustment).toBe(-1);
-    expect(result.contextFactors).toEqual(
+    expect(result.contextFactors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("translation-content")])
     );
-    expect(result.reasoning).toContain("Severity adjusted");
+    expect(words(result.reasoning)).toContain("Severity adjusted");
   });
 
   it("does not reduce severity for generation content", async () => {
@@ -367,7 +379,7 @@ describe("Guardian — ai-output (no user strikes)", () => {
     );
 
     expect(result.attributeToUser).toBe(false);
-    expect(result.contextFactors).toEqual(
+    expect(result.contextFactors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("strikes not attributed")])
     );
   });
@@ -466,7 +478,7 @@ describe("Guardian — config failure (F1: fail-closed)", () => {
     );
 
     expect(result.action).toBe("block");
-    expect(result.reasoning).toContain("fail-closed");
+    expect(words(result.reasoning)).toContain("fail-closed");
   });
 });
 

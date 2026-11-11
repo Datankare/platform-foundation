@@ -299,7 +299,8 @@ dbDescribe("r10 H2: approved runs on Postgres", () => {
     expect(n).toBe(2);
     expect(await t.run(() => proposals.getById(crashedBefore))).toMatchObject({
       status: "indeterminate",
-      lastRunError: expect.stringContaining("outcome is unknown"),
+      // Why: a catalog key the screens word (TASK-209: it was English).
+      lastRunError: "screens.held.note_indeterminate",
     });
     expect((await t.run(() => proposals.getById(crashedAfter)))?.status).toBe("executed");
     expect((await t.run(() => proposals.getById(running)))?.status).toBe("executing");

@@ -1,3 +1,4 @@
+import type { ShownText } from "@/platform/errors/shown-text";
 export interface ProcessRequest {
   text: string;
 }
@@ -18,5 +19,11 @@ export interface ProcessResponse {
 
 export interface SafetyResult {
   safe: boolean;
-  reason?: string;
+  /**
+   * Why not safe: the pipeline's reasons, catalog keys and values (TASK-209 — English before).
+   * Logged, never returned to the caller (content.rejected).
+   */
+  reasons?: readonly ShownText[];
+  /** The classifier model's own words, raw (logged; never shown or returned). */
+  rawReason?: string;
 }

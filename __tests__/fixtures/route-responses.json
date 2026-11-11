@@ -262,7 +262,9 @@
         {
           "key": "moderation.strike_ban_threshold",
           "value": 5,
-          "description": "Strikes before an account is banned.",
+          "description": {
+            "key": "screens.settings.moderation.strike_ban_threshold"
+          },
           "category": "moderation",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "defaultValue": 5,
@@ -278,7 +280,9 @@
         {
           "key": "default_language",
           "value": "en",
-          "description": "The language a new account starts with.",
+          "description": {
+            "key": "screens.settings.default_language"
+          },
           "category": "general",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "defaultValue": "en",
@@ -294,7 +298,9 @@
         {
           "key": "config.dual_control_keys",
           "value": ["signups_enabled", "config.dual_control_keys"],
-          "description": "Keys that need an independent approver before a change applies.",
+          "description": {
+            "key": "screens.settings.config.dual_control_keys"
+          },
           "category": "config",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "defaultValue": ["signups_enabled", "config.dual_control_keys"],
@@ -310,7 +316,9 @@
         {
           "key": "signups_enabled",
           "value": true,
-          "description": "Whether new accounts may sign up.",
+          "description": {
+            "key": "screens.settings.signups_enabled"
+          },
           "category": "auth",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "defaultValue": true,
@@ -338,8 +346,19 @@
           "key": "default_language",
           "currentValue": "en",
           "proposedValue": "fr",
-          "impact": "Changing \"default_language\" from \"en\" to \"fr\".",
-          "affectedUsers": "Varies by setting",
+          "impact": [
+            {
+              "key": "screens.config_impact.change",
+              "params": {
+                "key": "default_language",
+                "from": "\"en\"",
+                "to": "\"fr\""
+              }
+            }
+          ],
+          "affectedUsers": {
+            "key": "screens.config_impact.affected_varies"
+          },
           "reversible": true,
           "permissionTier": "standard",
           "requiresApproval": false,
@@ -2248,9 +2267,24 @@
           "contentType": "generation",
           "contentRatingLevel": 1,
           "blocklistMatches": [],
-          "reasoning": "harassment, high confidence",
+          "reasoning": [
+            {
+              "key": "screens.moderation.reasons.block_threshold",
+              "params": {
+                "severity": "high",
+                "threshold": "medium",
+                "level": {
+                  "key": "screens.moderation.levels.child"
+                }
+              }
+            }
+          ],
           "severityAdjustment": 0,
-          "contextFactors": [],
+          "contextFactors": [
+            {
+              "key": "screens.moderation.factors.clean_history"
+            }
+          ],
           "attributeToUser": true,
           "pipelineLatencyMs": 12,
           "classifierCostUsd": 0,
@@ -3277,9 +3311,28 @@
               "confidence": 0.52,
               "severity": "medium"
             },
-            "reasoning": "Low confidence — escalating.",
+            "reasoning": [
+              {
+                "key": "screens.moderation.reasons.escalate_confidence",
+                "params": {
+                  "confidence": "0.52",
+                  "threshold": "0.6",
+                  "level": {
+                    "key": "screens.moderation.levels.child"
+                  }
+                }
+              }
+            ],
             "severityAdjustment": 0,
-            "contextFactors": ["translation context"],
+            "contextFactors": [
+              {
+                "key": "screens.moderation.factors.severity_reduced",
+                "params": {
+                  "contentType": "translation",
+                  "reduction": "1"
+                }
+              }
+            ],
             "attributeToUser": true,
             "pipelineLatencyMs": 100,
             "classifierCostUsd": 0.001,
@@ -3330,9 +3383,28 @@
               "confidence": 0.52,
               "severity": "medium"
             },
-            "reasoning": "Low confidence — escalating.",
+            "reasoning": [
+              {
+                "key": "screens.moderation.reasons.escalate_confidence",
+                "params": {
+                  "confidence": "0.52",
+                  "threshold": "0.6",
+                  "level": {
+                    "key": "screens.moderation.levels.child"
+                  }
+                }
+              }
+            ],
             "severityAdjustment": 0,
-            "contextFactors": ["translation context"],
+            "contextFactors": [
+              {
+                "key": "screens.moderation.factors.severity_reduced",
+                "params": {
+                  "contentType": "translation",
+                  "reduction": "1"
+                }
+              }
+            ],
             "attributeToUser": true,
             "pipelineLatencyMs": 100,
             "classifierCostUsd": 0.001,
@@ -3376,9 +3448,28 @@
               "confidence": 0.52,
               "severity": "medium"
             },
-            "reasoning": "Low confidence — escalating.",
+            "reasoning": [
+              {
+                "key": "screens.moderation.reasons.escalate_confidence",
+                "params": {
+                  "confidence": "0.52",
+                  "threshold": "0.6",
+                  "level": {
+                    "key": "screens.moderation.levels.child"
+                  }
+                }
+              }
+            ],
             "severityAdjustment": 0,
-            "contextFactors": ["translation context"],
+            "contextFactors": [
+              {
+                "key": "screens.moderation.factors.severity_reduced",
+                "params": {
+                  "contentType": "translation",
+                  "reduction": "1"
+                }
+              }
+            ],
             "attributeToUser": true,
             "pipelineLatencyMs": 100,
             "classifierCostUsd": 0.001,
@@ -3431,9 +3522,28 @@
               "confidence": 0.52,
               "severity": "medium"
             },
-            "reasoning": "Low confidence — escalating.",
+            "reasoning": [
+              {
+                "key": "screens.moderation.reasons.escalate_confidence",
+                "params": {
+                  "confidence": "0.52",
+                  "threshold": "0.6",
+                  "level": {
+                    "key": "screens.moderation.levels.child"
+                  }
+                }
+              }
+            ],
             "severityAdjustment": 0,
-            "contextFactors": ["translation context"],
+            "contextFactors": [
+              {
+                "key": "screens.moderation.factors.severity_reduced",
+                "params": {
+                  "contentType": "translation",
+                  "reduction": "1"
+                }
+              }
+            ],
             "attributeToUser": true,
             "pipelineLatencyMs": 100,
             "classifierCostUsd": 0.001,
@@ -3490,9 +3600,28 @@
               "confidence": 0.52,
               "severity": "medium"
             },
-            "reasoning": "Low confidence — escalating.",
+            "reasoning": [
+              {
+                "key": "screens.moderation.reasons.escalate_confidence",
+                "params": {
+                  "confidence": "0.52",
+                  "threshold": "0.6",
+                  "level": {
+                    "key": "screens.moderation.levels.child"
+                  }
+                }
+              }
+            ],
             "severityAdjustment": 0,
-            "contextFactors": ["translation context"],
+            "contextFactors": [
+              {
+                "key": "screens.moderation.factors.severity_reduced",
+                "params": {
+                  "contentType": "translation",
+                  "reduction": "1"
+                }
+              }
+            ],
             "attributeToUser": true,
             "pipelineLatencyMs": 100,
             "classifierCostUsd": 0.001,
@@ -3556,9 +3685,28 @@
             "confidence": 0.52,
             "severity": "medium"
           },
-          "reasoning": "Low confidence — escalating.",
+          "reasoning": [
+            {
+              "key": "screens.moderation.reasons.escalate_confidence",
+              "params": {
+                "confidence": "0.52",
+                "threshold": "0.6",
+                "level": {
+                  "key": "screens.moderation.levels.child"
+                }
+              }
+            }
+          ],
           "severityAdjustment": 0,
-          "contextFactors": ["translation context"],
+          "contextFactors": [
+            {
+              "key": "screens.moderation.factors.severity_reduced",
+              "params": {
+                "contentType": "translation",
+                "reduction": "1"
+              }
+            }
+          ],
           "attributeToUser": true,
           "pipelineLatencyMs": 100,
           "classifierCostUsd": 0.001,
@@ -3609,9 +3757,28 @@
             "confidence": 0.52,
             "severity": "medium"
           },
-          "reasoning": "Low confidence — escalating.",
+          "reasoning": [
+            {
+              "key": "screens.moderation.reasons.escalate_confidence",
+              "params": {
+                "confidence": "0.52",
+                "threshold": "0.6",
+                "level": {
+                  "key": "screens.moderation.levels.child"
+                }
+              }
+            }
+          ],
           "severityAdjustment": 0,
-          "contextFactors": ["translation context"],
+          "contextFactors": [
+            {
+              "key": "screens.moderation.factors.severity_reduced",
+              "params": {
+                "contentType": "translation",
+                "reduction": "1"
+              }
+            }
+          ],
           "attributeToUser": true,
           "pipelineLatencyMs": 100,
           "classifierCostUsd": 0.001,
@@ -3672,9 +3839,28 @@
             "confidence": 0.52,
             "severity": "medium"
           },
-          "reasoning": "Low confidence — escalating.",
+          "reasoning": [
+            {
+              "key": "screens.moderation.reasons.escalate_confidence",
+              "params": {
+                "confidence": "0.52",
+                "threshold": "0.6",
+                "level": {
+                  "key": "screens.moderation.levels.child"
+                }
+              }
+            }
+          ],
           "severityAdjustment": 0,
-          "contextFactors": ["translation context"],
+          "contextFactors": [
+            {
+              "key": "screens.moderation.factors.severity_reduced",
+              "params": {
+                "contentType": "translation",
+                "reduction": "1"
+              }
+            }
+          ],
           "attributeToUser": true,
           "pipelineLatencyMs": 100,
           "classifierCostUsd": 0.001,
@@ -3729,9 +3915,28 @@
             "confidence": 0.52,
             "severity": "medium"
           },
-          "reasoning": "Low confidence — escalating.",
+          "reasoning": [
+            {
+              "key": "screens.moderation.reasons.escalate_confidence",
+              "params": {
+                "confidence": "0.52",
+                "threshold": "0.6",
+                "level": {
+                  "key": "screens.moderation.levels.child"
+                }
+              }
+            }
+          ],
           "severityAdjustment": 0,
-          "contextFactors": ["translation context"],
+          "contextFactors": [
+            {
+              "key": "screens.moderation.factors.severity_reduced",
+              "params": {
+                "contentType": "translation",
+                "reduction": "1"
+              }
+            }
+          ],
           "attributeToUser": true,
           "pipelineLatencyMs": 100,
           "classifierCostUsd": 0.001,
@@ -4529,7 +4734,9 @@
       "settings": [
         {
           "key": "signups_enabled",
-          "description": "Whether new accounts may sign up",
+          "description": {
+            "key": "screens.settings.signups_enabled"
+          },
           "value": false,
           "platformValue": true,
           "overridden": true,
@@ -4541,7 +4748,9 @@
         },
         {
           "key": "max_devices_per_player",
-          "description": null,
+          "description": {
+            "key": "screens.settings.max_devices_per_player"
+          },
           "value": 3,
           "platformValue": 3,
           "overridden": false,
@@ -4581,7 +4790,9 @@
       "settings": [
         {
           "key": "signups_enabled",
-          "description": "Whether new accounts may sign up",
+          "description": {
+            "key": "screens.settings.signups_enabled"
+          },
           "value": false,
           "platformValue": true,
           "overridden": true,
@@ -4593,7 +4804,9 @@
         },
         {
           "key": "max_devices_per_player",
-          "description": null,
+          "description": {
+            "key": "screens.settings.max_devices_per_player"
+          },
           "value": 3,
           "platformValue": 3,
           "overridden": false,
@@ -4633,7 +4846,9 @@
       "settings": [
         {
           "key": "signups_enabled",
-          "description": "Whether new accounts may sign up",
+          "description": {
+            "key": "screens.settings.signups_enabled"
+          },
           "value": false,
           "platformValue": true,
           "overridden": true,
@@ -4645,7 +4860,9 @@
         },
         {
           "key": "max_devices_per_player",
-          "description": null,
+          "description": {
+            "key": "screens.settings.max_devices_per_player"
+          },
           "value": 7,
           "platformValue": 3,
           "overridden": true,
@@ -4685,7 +4902,9 @@
       "settings": [
         {
           "key": "signups_enabled",
-          "description": "Whether new accounts may sign up",
+          "description": {
+            "key": "screens.settings.signups_enabled"
+          },
           "value": true,
           "platformValue": true,
           "overridden": false,
@@ -4697,7 +4916,9 @@
         },
         {
           "key": "max_devices_per_player",
-          "description": null,
+          "description": {
+            "key": "screens.settings.max_devices_per_player"
+          },
           "value": 3,
           "platformValue": 3,
           "overridden": false,
@@ -4732,7 +4953,9 @@
       "settings": [
         {
           "key": "signups_enabled",
-          "description": "Whether new accounts may sign up",
+          "description": {
+            "key": "screens.settings.signups_enabled"
+          },
           "value": false,
           "platformValue": true,
           "overridden": true,
@@ -4744,7 +4967,9 @@
         },
         {
           "key": "max_devices_per_player",
-          "description": null,
+          "description": {
+            "key": "screens.settings.max_devices_per_player"
+          },
           "value": 3,
           "platformValue": 3,
           "overridden": false,
@@ -5086,7 +5311,9 @@
         {
           "key": "max_devices_per_player",
           "value": 5,
-          "description": "Devices",
+          "description": {
+            "key": "screens.settings.max_devices_per_player"
+          },
           "category": "moderation",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "defaultValue": 3,
@@ -5102,7 +5329,9 @@
         {
           "key": "agent.budget.tenant_max_cost_per_day",
           "value": 100,
-          "description": "Tenant cap",
+          "description": {
+            "key": "screens.settings.agent.budget.tenant_max_cost_per_day"
+          },
           "category": "moderation",
           "updatedAt": "2026-01-01T00:00:00.000Z",
           "defaultValue": 100,

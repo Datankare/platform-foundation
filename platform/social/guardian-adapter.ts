@@ -12,6 +12,7 @@
  * @module platform/social
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { getGuardian } from "@/platform/moderation/guardian";
 import { generateId } from "@/platform/agents/utils";
 import type { ScreenContentFn } from "./group-service";
@@ -43,7 +44,7 @@ export function createGuardianScreenFn(
   return async (
     text: string,
     contentType: "group-name" | "group-description"
-  ): Promise<string | null> => {
+  ): Promise<readonly ShownText[] | null> => {
     try {
       const guardian = getGuardian();
       const requestId = `social-screen-${generateId()}`;
@@ -52,12 +53,15 @@ export function createGuardianScreenFn(
         contentRatingLevel: ratingLevel,
       });
 
+      // Catalog keys and values (TASK-209: English before), worded where they are shown.
       if (result.action === "block") {
-        return result.reasoning || "Content contains prohibited material";
+        return typeof result.reasoning !== "string" && result.reasoning.length > 0
+          ? result.reasoning
+          : [shown("screens.moderation.social.prohibited")];
       }
 
       if (result.action === "escalate") {
-        return "Content requires review and cannot be used at this time";
+        return [shown("screens.moderation.social.needs_review")];
       }
 
       return null;
@@ -66,7 +70,7 @@ export function createGuardianScreenFn(
         contentType,
         error: err instanceof Error ? err.message : "Unknown",
       });
-      return "Content screening is temporarily unavailable. Please try again later.";
+      return [shown("screens.moderation.social.unavailable")];
     }
   };
 }

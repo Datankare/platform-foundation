@@ -8,6 +8,7 @@
  * Returns structured ClassifierOutput (categories, confidence, severity).
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { getOrchestrator } from "@/platform/ai";
 import { getPromptConfig } from "@/prompts";
 import { buildSafetyPrompt, parseClassifierResponse } from "@/prompts/safety/classify-v1";
@@ -62,7 +63,10 @@ export async function classify(
     const costUsd = estimateCost(config.tier, response.usage);
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
-      return failClosedResult("Classifier returned unexpected response type", costUsd);
+      return failClosedResult(
+        shown("screens.moderation.classifier.unexpected_type"),
+        costUsd
+      );
     }
 
     return { ...parseClassifierResponse(textBlock.text), costUsd };
@@ -78,7 +82,7 @@ export async function classify(
         categories: [],
         confidence: 1,
         severity: "critical",
-        reason: "declined",
+        note: shown("screens.moderation.classifier.declined"),
         costUsd: estimateCost(config.tier, refusalUsage(err)),
         declined: true,
       };
@@ -89,17 +93,17 @@ export async function classify(
       route: "platform/moderation/classifier",
       error: err instanceof Error ? err.message : "Unknown",
     });
-    return failClosedResult("Classifier unavailable", 0);
+    return failClosedResult(shown("screens.moderation.classifier.unavailable"), 0);
   }
 }
 
-function failClosedResult(reason: string, costUsd: number): ClassifierResult {
+function failClosedResult(note: ShownText, costUsd: number): ClassifierResult {
   return {
     safe: false,
     categories: [],
     confidence: 0.5,
     severity: "medium",
-    reason,
+    note,
     costUsd,
     unjudged: true,
     unavailable: true,

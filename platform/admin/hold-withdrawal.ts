@@ -52,6 +52,8 @@ import { raiseAlert } from "@/platform/observability/alert";
 import type { ConfigScope } from "@/platform/admin/types";
 import type { ProposalRecord, ProposalStore } from "@/platform/kernel/types";
 import { sameId } from "@/platform/auth/same-id";
+import { superseded } from "@/platform/errors/recorded-text";
+import type { ShownText } from "@/platform/errors/shown-text";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -95,7 +97,8 @@ export function holdScope(p: Pick<ProposalRecord, "label" | "payload">): ConfigS
 export async function withdrawSupersededHolds(
   key: string,
   actorId: string,
-  reason: string,
+  /** How the key was reduced: the catalog's key and values (TASK-209: it was English). */
+  reason: ShownText,
   scope: ConfigScope
 ): Promise<SupersededWithdrawal> {
   const here = await withdrawInTenant(key, actorId, reason, scope);
@@ -187,7 +190,7 @@ async function tenantsHoldingPlatformScope(key: string): Promise<string[]> {
 async function withdrawInTenant(
   key: string,
   actorId: string,
-  reason: string,
+  reason: ShownText,
   scope: ConfigScope
 ): Promise<{
   holds: string[];
@@ -197,7 +200,8 @@ async function withdrawInTenant(
   incomplete: boolean;
 }> {
   const who = UUID_RE.test(actorId) ? { actorId } : { agent: actorId };
-  const note = `withdrawn: superseded — ${reason}`.slice(0, 500);
+  // The record each hold keeps (TASK-209): the catalog's key and values, never English.
+  const note = superseded(reason);
   const holds: string[] = [];
   const failed: string[] = [];
   const store = getProposalStore();
@@ -251,7 +255,7 @@ async function withdrawInTenant(
   }
   let approvals: readonly string[] = [];
   try {
-    const r = await withdrawPendingApprovalsForKey(key, actorId, note, reason, scope);
+    const r = await withdrawPendingApprovalsForKey(key, actorId, note, reason.key, scope);
     approvals = r.withdrawn;
     remaining += r.remaining;
     if (r.incomplete) incomplete = true;
@@ -276,8 +280,8 @@ async function withdrawBatch(
   ctx: {
     readonly key: string;
     readonly scope: ConfigScope;
-    readonly reason: string;
-    readonly note: string;
+    readonly reason: ShownText;
+    readonly note: ShownText;
     readonly who: { actorId: string } | { agent: string };
     readonly actorId: string;
   }
@@ -292,7 +296,7 @@ async function withdrawBatch(
         details: {
           type: "approval_withdrawn",
           reason: "superseded",
-          cause: ctx.reason.slice(0, 500),
+          cause: ctx.reason.key,
           holdIds: ids,
           source: "runtime",
           key: ctx.key,
@@ -340,7 +344,7 @@ async function oneByOne(
   store: ProposalStore,
   batch: readonly ProposalRecord[],
   actorId: string,
-  note: string
+  note: ShownText
 ): Promise<string[]> {
   const out: string[] = [];
   for (const p of batch) {

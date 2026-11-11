@@ -172,3 +172,37 @@ describe("listPendingApprovals — ADR-040 040a", () => {
     expect(await listPendingApprovals()).toHaveLength(1);
   });
 });
+
+// TASK-209 (N-112): a request the platform filed with its own note — "Changed on the config page",
+// moved by 067 from change_comment into change_shown — shows that note, not "No reason given".
+describe("the platform's own note on a request (TASK-209)", () => {
+  const decider = {
+    userId: "admin-9",
+    roleName: "super_admin",
+    permissions: ["config_manage_safety", "config_manage_standard"],
+  } as unknown as Parameters<typeof listPendingApprovals>[1];
+
+  it("is given as commentShown when no person wrote a comment, and only to a decider", async () => {
+    mockList.mockResolvedValue([
+      approval({ changeShown: { key: "screens.records.changed_on_page" } }),
+    ]);
+    const [, config] = await listPendingApprovals([], decider);
+    expect(config.comment).toBeUndefined();
+    expect(config.commentShown).toEqual({ key: "screens.records.changed_on_page" });
+    expect(renderShown(config.commentShown!)).toBe("Changed on the config page");
+    const [, hidden] = await listPendingApprovals([]);
+    expect(hidden.commentShown).toBeUndefined();
+  });
+
+  it("a person's comment stands; the platform's note is not added beside it", async () => {
+    mockList.mockResolvedValue([
+      approval({
+        changeComment: "Fewer bans",
+        changeShown: { key: "screens.records.changed_on_page" },
+      }),
+    ]);
+    const [, config] = await listPendingApprovals([], decider);
+    expect(config.comment).toBe("Fewer bans");
+    expect(config.commentShown).toBeUndefined();
+  });
+});

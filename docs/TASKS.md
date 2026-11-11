@@ -7,6 +7,230 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-209 — Residuals 55i: the platform's notes written by code in the catalog, settings and permissions named by the catalog, a deterministic erasure test
+
+| Field        | Detail                                                                                               |
+| ------------ | ---------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-209                                                                                             |
+| **Type**     | Defect (English TypeScript stored and every reader saw; definitional English on screens; flaky test) |
+| **Severity** | Low (N-112, N-113, N-114)                                                                            |
+| **Phase**    | Phase 5                                                                                              |
+| **Target**   | v6.0.0 (RC)                                                                                          |
+| **Status**   | Fixed on develop (sub-batch 55i of the residuals batch)                                              |
+| **Logged**   | 2026-11-09 (register N-112, N-113, N-114, found by sub-batch 55h)                                    |
+
+Sub-batch 55i of the residuals register, in both repositories (Playform: its TASK-5010).
+
+**N-112 — the platform's notes TypeScript wrote are a catalog key and values (or a code).**
+TASK-208 moved the notes SQL wrote; the platform's TypeScript still composed English into the
+same records. Now each is kept as the catalog's key and values (`platform/errors/recorded-text.ts`,
+`screens.records.*`, `screens.held.note_*`) or a code, and rendered where it is read; what a
+person wrote stays theirs, as written:
+
+- **A held change's decision** (`proposals`): a lapsed hold's and an undecided one's note
+  (`expiredUnused`, `expiredUndecided`); the decision routes' default notes when a person wrote
+  none (`rejected_after_run_failed`, "verified that its run did not take effect", "verified as
+  applied", "approved again: …"); a refused or stale hold's why; a superseded hold's
+  (hold-withdrawal: a power reduction, every agent suspended — the operator's reason a value);
+  the action pipeline's revised and stale-state notes; a duplicate hold's. The stores take a
+  `DecisionNote` (`platform/kernel/types.ts`): a person's string goes to `decision_note`, the
+  platform's key and values to `decision_shown` — inside a withdrawal's record as its `note`.
+  "Marked executed by …", written into `last_run_error`, is the record
+  `screens.records.marked_executed` (who, and their note); the run's note is cleared and the
+  approval's decider stands.
+- **A kept run's note** (`last_run_error`) is a code: the run's own (`approvals.run_failed`…) or
+  a `screens.held.note_*` key (run failed, commit failed, state moved, the two lease notes, which
+  were English matched back on screen). `runNoteShown` words it for the Approvals screen and the
+  export; a held trajectory's step carries it as `lastRunError`, beside the decider's `note` and
+  the platform's `decision`.
+- **A two-person approval** (`config_pending_approvals`): the system's withdrawal (stale,
+  refused, a required job) and a supersession are `review_shown` (new); a request's comment the
+  platform made is `change_shown` (new); the impact summary (English derived from the row's key
+  and values, shown nowhere) is no longer written.
+- **A setting's change** (`platform_config_history.change_shown`, new): "Changed on the config
+  page", "Use the platform default", "Set by an operator for this tenant", "Approved: <the
+  request's comment>", an emergency suspension's, the command bar's summary — the last rendered
+  in English when written. The screens no longer send their own catalog words as a comment (the
+  tenant settings and dual-control panels did). The config tools take the note as `changeShown`,
+  a key the server sets (`CONFIG_SERVER_SET_INPUTS`; a caller's is refused).
+- **The Sentinel**: a ban's reason is `users.ban_note` (TASK-208's column), a strike's reason a
+  code (`guardian_block:<what triggered it>`, worded with the row's category and severity on
+  export). **The escalation reaper's** note is `review_queue.notes_shown` (new). **The effect
+  ledger's** reasons are catalog keys. **job_claim**'s dead lease (050, SQL) records the code
+  `lease_expired`, worded by the Jobs console, as the in-memory store does.
+- **Rows written before are migrated** by migration 067 (`067_recorded_notes_written_by_code.sql`),
+  matched exactly — a person's text inside a composed one ("Approved: …", an operator's reason)
+  kept as a value, anything else left as it is; 062's `review_comment` too. Replayed in
+  `migration-replay.sh` with rows as the code before wrote them, applied twice; 050 applied again
+  is followed by 067 (it redefines 050's job_claim). MIGRATION_v5_to_v6 has the procedure and a
+  verification query (every count 0).
+- **The guard — rule F of `screen-text-indirect`:** no TypeScript in app/api, platform/, lib/ or
+  the screens writes words into a record's note, reason, comment or error — an object's stored
+  field, a statement's parameter into a note or code column, or an argument a function stores
+  (followed through its parameters to a fixed point); a catalog render reaching one is reported
+  too (its words would be stored in one locale). With a `[self-test]`; its known list is empty.
+  On the base it reports 105 sites (the batch's additions included).
+
+**N-113 — a setting's description and a permission's name are the catalog's.** Migrations write
+them in English (`platform_config.description`, `permissions.display_name`, `description`), and
+the config page, the operator's tenant settings, the tenant settings panel, the Roles page and
+the admin search showed that English. Now each is the catalog's, by key and code
+(`platform/errors/definitions.ts`: `screens.settings.<key>`,
+`screens.permissions.<code>.name|description`; an app's own under `screens.app.…`): the config
+answers carry the description as a key the screens render, the Roles page's names are the
+catalog's in the request's language and ordered by them (the search's permission rows too: the
+statement is given the catalog's names by code), a search's cells are keys. **Decision (ADR-051, D4's
+implementation note):** the stored English stays as the definitional record — the configuration
+assistant (the model) reads it and the admin search matches it — and no screen or answer a screen
+shows reads it. **The guard** (`scripts/catalog-definitions-check.mjs`, run by
+`scripts/migration-replay.sh` on its database before any test writes to it;
+`__tests__/catalog-definitions-guard.test.ts` holds the replay to it and plants each gap): every
+setting and permission the migrations define has its entries in every locale the catalog has
+(English today, ADR-051 D6), and the catalog names none the database lacks. First written as a
+DB test reading the shared test database, it saw another suite's setting in one of ten parallel
+runs (the N-114 proof): the replay's database holds only what the migrations define.
+
+**Added in the batch (the coordinator's scope correction) — the same class, to zero:**
+
+- **An audit record's details** carry no English TypeScript composed. A run's failure reason,
+  audited as `approved_run_failed`, `approved_run_indeterminate` and `action_applied_not_recorded`
+  (`platform/agents/tool-invoker.ts`), was English carried by the error (`RUN_RAISED`, the two
+  completion reasons in the action pipeline); each is now a catalog key
+  (`screens.records.run_raised`, `completion_not_written`, `claim_taken_back`). The audit log page
+  (`GET /api/admin/audit`) and the data export render the platform's words in the details — a
+  record (`changeShown`) or a records key — in the reader's language
+  (`platform/errors/recorded-words.ts` `renderRecordedDeep`); codes, ids and a person's text stay
+  as they are. Raw text from a provider, a model or an error goes only under a key named `raw…`,
+  which nothing shows (none today: R-77 keeps an error's text in the log). **Rule F** now also
+  sinks every value of an audit record's details (the `details` of an object naming its
+  `action`) and follows a sink that reads an error's field (`err.reason`) to each `new` of the
+  class it is known to be (a parameter typed as it, an `instanceof`, a `new`); with a self-test.
+- **The Sentinel's reasoning** (`SentinelResult.reasoning`) is a list of catalog keys and values
+  (`screens.sentinel.*`), one per line, not English joined by the agent.
+- **The configuration assistant's change preview** (`ConfigChangeRequest.impact`,
+  `affectedUsers`, in the config tools' answers) is composed from the catalog
+  (`screens.config_impact.*`): the change, then what its tier, kind or key touches; who it
+  affects.
+- **Three suites Jest reported "focused", not "passed"** (risk-tier, roadmap-consistency,
+  review-process): no `.only` — Jest's status for a file where every test ran passed but not every
+  test ran. Thirteen tests were skipped by a condition on the repository they ran in
+  (`(has ? it : it.skip)`): in the platform, a consuming app's checks never ran, and the gates'
+  totals counted them as "skipped". Each now runs in both repositories and says what holds in the
+  other; the proposal-store contract's two arms skipped without a fixture take it as required;
+  data-layer uses the shared database gate. **The guard** (`__tests__/no-skipped-tests.test.ts`):
+  no test file or helper focuses, skips, leaves to do or expects to fail a test (`.only`, `.skip`,
+  `.todo`, `.failing`, `fit`, `xit`, `xdescribe`…, in code, not in strings), the two availability
+  gates aside (`dbDescribe`, `valkeyDescribe`), each checked to fail under its `REQUIRE_…`
+  variable as CI runs; with self-tests. A consumer's proposal-store fixture must now give
+  `markUndecided` and `trajectoryWithCommitment`.
+- **The moderation pipeline's reasons** (the coordinator's second correction): the Guardian's
+  reasoning and context factors, a rating level's name (`config.ts`), the classifier's own notes,
+  the modality, input-screen, image-generation and RAG screens' reasons, a RAG explanation's
+  steps and conclusion, and the profile and social refusals were English composed in TypeScript
+  — stored in `content_safety_audit` and a review case's `moderation_result`, shown to moderators
+  on the review dashboard and returned in an appeal's answer. Each is a catalog key and values
+  (`platform/moderation/reasons.ts`, `screens.moderation.*`); the catalog carries the words they
+  had, so a moderator and a user read the same text (`__tests__/moderation-reasons.test.tsx`
+  compares every template's rendering with the English expression it replaced, value for value).
+  `content_safety_audit` gains `reasoning_shown` and `context_factors_shown` (checked arrays of
+  keys); 067 converts the rows written before — the reasoning part by part (all of it or none),
+  each factor, the classifier's notes — and a text that is not a template exactly keeps its
+  stored text, which the dashboard shows as "a reason recorded before reasons were coded" with
+  the stored text behind "Show the stored text" (N-108's pattern). The classifier model's own
+  words are `rawReason` (raw model output, kept for the record, never shown as a screen's text);
+  the platform's notes on its answer are `note`. **The prompt boundary:** the review
+  assistant's prompt is model input, not a screen — the reasons are rendered there in English,
+  the prompt's language, the same words it always carried (`review-assist.ts` PROMPT_LOCALE; a
+  test pins the line). The review route's input check takes reasons and factors as keys the
+  catalog has (a closed schema of their values). Rule F now sinks `reasoning`, `contextFactors`,
+  `factors` and `conclusion`, a field assigned as well as one in an object literal; with a
+  self-test. Neither the review dashboard nor the appeal form is mounted on a page in either
+  repository (they are components for an app to mount); the walk mounts them on a scratch page.
+  The data export does not carry the reasoning (its content_safety_audit section is the
+  decision's codes); the new columns are classified in the register.
+- **Locales:** English is the only locale the catalog defines (ADR-051 D6), and that is the
+  owner's decision; the N-113 guard checks every locale `CATALOGS` defines, so a second one is
+  held to the same entries the day it is added.
+
+**N-114 — the erasure coverage test was intermittent; now deterministic.** Root cause: the
+other account has two review cases (one the erased user decided, `r2`; one that mentions them,
+`r3`), and the check read `where target_user_id = $1` with no order and took the first row. The
+erasure's updates write new row versions wherever a page has room — which other sessions' writes
+in the same database change — so `r3` ("pending") was sometimes first. Reproduced on the base
+(four copies of the suite at once: the dump shows both rows); the read is now ordered and asserts
+both. **The same class, found by running every DB suite in parallel nine times:**
+`eligible-approvers` failed five times — "one super_admin alone" ran in a shared deployment,
+where every tenant's operators may approve (`asOperator`), and suites beside it make operators of
+their own; it now asks in a single-tenant deployment, as its premise says (the shared case is
+proved beside it with an operator it made). Proved by ten consecutive runs of the affected shard
+and of every DB suite in parallel, and the full gates.
+
+**Design check**
+
+- **Reach:** the proposal stores (both) and their contract kit; the approval routes and the
+  operator's; the expiry job and run recovery; hold withdrawal; the action pipeline; the config
+  stores, tools, governed writes, HTTP handlers, the kill switch and the command bar's agents and
+  mappings; the review store and reaper; the Sentinel; the effect ledger; the job runner and
+  job_claim; the data export; the Approvals, config, tenancy, dual-control, Roles and search
+  screens; the erasure register (new columns classified); the moderation pipeline (the Guardian, its context, levels and classifier notes, the modality, input-screen, image and RAG screens, a RAG explanation), the review route and dashboard, the appeals answer, profile and social screening; the audit log page and the export's audit details.
+- **Races:** none new: each record is written in the statement that decides, withdraws, bans or
+  reaps; the marked-executed record by the same compare-and-set update.
+- **Dependencies down:** a record whose key the catalog lacks cannot be stored (each new column's
+  check takes only a `screens.` key; tests pin every key to English); a setting or permission
+  without its entry fails the guard.
+- **Erasure leftovers:** `review_shown` (who had approved: an administrative act, as
+  `reviewed_by`), `change_shown` (a change's note), `notes_shown` (deleted with the case) are
+  classified; `decision_shown`'s ids are replaced as before (`proposalsAbout`).
+- **Screens × responses:** the config, tenant settings and operator settings answers (fixtures
+  from the routes), the Roles answer, a search's cells; walked at 1280 and 390 px.
+- **Journeys touched:** the admin console's config, Roles, search, Approvals and Audit log; the moderator's review dashboard and an appeal (scratch-mounted for the walk); Operator →
+  Tenants → Settings; the e2e suites, spec by spec.
+- **Weakens a tenant's protection?** No: nothing new is read across tenants; the catalog is the
+  platform's.
+
+**Threat model**
+
+- **Boundary:** what the platform writes into a record and what screens and exports show of it.
+- **Actors that exist today:** administrators and operators deciding and changing things, the
+  configuration assistant (a model, through the config tools), the platform's jobs, a signed-in
+  user exporting their data. The only new input is `changeShown` on the config tools: a caller's
+  is refused (`request.field_not_accepted`), so only the platform's own code sets it.
+- **Bypasses:** a new English note (rule F, at 0), a setting or permission without its entry
+  (the DB guard).
+- **Forgeries:** a person's note that looks like a key stays text (only the `_shown` columns are
+  rendered as records); a note a person wrote that reads like the old English is migrated only on
+  an exact match of the whole composed form.
+- **Legitimate flows:** deciding, withdrawing, expiring and superseding holds; changing and
+  resetting settings; the kill switch; banning; reaping; exporting.
+- **Agreed before code:** the owner's brief for sub-batch 55i (2026-11-09).
+
+**Self-review**
+
+- **Consumers checked:** every reader of `decisionNote`, `decisionShown`, `lastRunError`,
+  `reviewComment`, `changeComment`, `reviewerNotes`, `banReason`, a strike's `reason`, the effect
+  ledger's `error`, a job's `lastError`, a setting's `description` and a permission's name; both
+  proposal stores; the contract kits; the erasure register.
+- **Hostile re-read:** a person's note beginning like a platform note (left), a note on two lines
+  (migrated whole), "Approved: " around the platform's own default (nested record), a command bar
+  summary that does not read back exactly (left), a strike whose text names another category
+  (left), an unknown run code (shown as recorded), a setting key the catalog lacks (no
+  description shown; the guard fails), an app's own settings (its catalog).
+- **Found in the batch and fixed in it (the coordinator's scope corrections, 2026-11-09):** the
+  audit records' run-failure reasons, the Sentinel's reasoning lines, the configuration
+  assistant's impact and affected users, three suites Jest reported "focused", and the
+  moderation pipeline's reasons and their relatives (above). Nothing found is left.
+- **The sweep before the gates** (the coordinator's rule 6): the recorded answers of every route
+  (`__tests__/fixtures/route-responses*.json`) were read for English sentences, and every string
+  literal of three words or more in a result field under platform/, lib/ and app/api was read
+  for where it goes. What remains is one of: a person's own words (a comment, an appeal, a
+  reviewer's notes); a catalog message rendered by the route in the reader's language (an
+  error's `message`); text for a model or an agent — the config tools' descriptions and answers,
+  a workflow's next-action descriptions (ADR-030: the agent's affordances), the review
+  assistant's prompt — or the review assistant's `rationale` (the model's own suggestion, shown
+  to a moderator as the model's); or a result's `error` or `reason` that only a log reads (coded
+  results answer by their code, R-77). None is English the platform composes into a record or a
+  screen.
+
 ### TASK-208 — Residuals 55h: the platform's notes on a record in the catalog, a held change's label that reads right
 
 | Field        | Detail                                                                                   |

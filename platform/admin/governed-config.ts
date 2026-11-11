@@ -36,6 +36,7 @@ import {
   type InvalidValueParams,
 } from "@/platform/admin/config-handlers";
 import type { ErrorCode } from "@/platform/errors/registry";
+import type { ShownText } from "@/platform/errors/shown-text";
 import { getEnhancedConfig } from "@/platform/auth/platform-config";
 import { holds, type VerifiedAdmin } from "@/platform/auth/role-governance";
 import { isOperator, resolveConfigTarget } from "@/platform/admin/config-scope";
@@ -53,7 +54,13 @@ export function tierPermission(tier: string): string {
 export interface GovernedConfigWrite {
   readonly key: string;
   readonly value: unknown;
+  /** What the person wrote, as written ("" when the platform's note says why). */
   readonly changeComment: string;
+  /**
+   * The platform's own note on the change (TASK-209), when no person wrote one: a catalog key and
+   * values, stored as such — never English.
+   */
+  readonly changeShown?: ShownText;
   /** What the change is to; absent means the deployment's default (config-scope.ts). */
   readonly scope?: ConfigScope;
 }
@@ -110,6 +117,7 @@ export async function writeGovernedConfig(
     key: change.key,
     value: change.value,
     changeComment: change.changeComment,
+    ...(change.changeShown ? { changeShown: change.changeShown } : {}),
     actorId: admin.userId,
     actorIsOperator: operator,
     ...(change.scope ? { scope: change.scope } : {}),
@@ -147,7 +155,9 @@ export async function writeGovernedConfig(
 
 export interface GovernedConfigReset {
   readonly key: string;
+  /** As GovernedConfigWrite's: the person's comment, or "" beside the platform's note. */
   readonly changeComment: string;
+  readonly changeShown?: ShownText;
 }
 
 /**
@@ -172,6 +182,7 @@ export async function resetGovernedConfig(
     {
       key: change.key,
       changeComment: change.changeComment,
+      ...(change.changeShown ? { changeShown: change.changeShown } : {}),
       actorId: admin.userId,
       actorIsOperator: operator,
       confirmed: true,

@@ -15,6 +15,7 @@
  * @module platform/moderation
  */
 
+import { isRecordedText } from "@/platform/errors/recorded-text";
 import { logger } from "@/lib/logger";
 import type {
   ReviewQueueStore,
@@ -292,6 +293,7 @@ interface ReviewQueueRow {
   resolved_at: Date | null;
   decision: string | null;
   reviewer_notes: string | null;
+  notes_shown: unknown;
   modified_action: string | null;
   previous_account_status: string | null;
   related_strike_id: string | null;
@@ -322,6 +324,7 @@ function mapRowToItem(row: ReviewQueueRow): ReviewQueueItem {
     resolvedAt: row.resolved_at ? iso(row.resolved_at) : undefined,
     decision: row.decision ? (row.decision as ReviewQueueItem["decision"]) : undefined,
     reviewerNotes: row.reviewer_notes ?? undefined,
+    ...(isRecordedText(row.notes_shown) ? { notesShown: row.notes_shown } : {}),
     modifiedAction: row.modified_action
       ? (row.modified_action as ReviewQueueItem["modifiedAction"])
       : undefined,
@@ -355,7 +358,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
              $11::timestamptz, $12, $13::timestamptz, $14, $15, $16, $17, $18)
            returning id, source, priority, status, moderation_result, target_user_id,
              request_id, explanation_chain, appeal_reason, original_decision_id, claimed_by,
-             claimed_at, resolved_by, resolved_at, decision, reviewer_notes, modified_action,
+             claimed_at, resolved_by, resolved_at, decision, reviewer_notes, notes_shown, modified_action,
              previous_account_status, related_strike_id, created_at, updated_at`,
           [
             item.source,
@@ -395,7 +398,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
         tx.query<ReviewQueueRow>(
           `select id, source, priority, status, moderation_result, target_user_id, request_id,
                   explanation_chain, appeal_reason, original_decision_id, claimed_by,
-                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes, notes_shown,
                   modified_action, previous_account_status, related_strike_id, created_at,
                   updated_at
              from review_queue where id = $1::uuid`,
@@ -416,7 +419,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
         tx.query<ReviewQueueRow>(
           `select id, source, priority, status, moderation_result, target_user_id, request_id,
                   explanation_chain, appeal_reason, original_decision_id, claimed_by,
-                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes, notes_shown,
                   modified_action, previous_account_status, related_strike_id, created_at,
                   updated_at
              from review_queue
@@ -452,6 +455,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
               resolved_at = coalesce($7::timestamptz, resolved_at),
               decision = coalesce($8, decision),
               reviewer_notes = coalesce($9, reviewer_notes),
+              notes_shown = coalesce($16::jsonb, notes_shown),
               modified_action = coalesce($10, modified_action),
               priority = coalesce($11, priority)
             where id = $1::uuid
@@ -459,7 +463,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
               and ($15::text is null or claimed_by is not distinct from $15)
             returning id, source, priority, status, moderation_result, target_user_id,
               request_id, explanation_chain, appeal_reason, original_decision_id, claimed_by,
-              claimed_at, resolved_by, resolved_at, decision, reviewer_notes, modified_action,
+              claimed_at, resolved_by, resolved_at, decision, reviewer_notes, notes_shown, modified_action,
               previous_account_status, related_strike_id, created_at, updated_at`,
           [
             id,
@@ -477,6 +481,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
             fields.claimedAt === null,
             expected?.status ?? null,
             expected?.claimedBy ?? null,
+            fields.notesShown ? JSON.stringify(fields.notesShown) : null,
           ]
         );
         if (rows[0]) return { success: true, item: mapRowToItem(rows[0]) };
@@ -514,7 +519,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
         tx.query<ReviewQueueRow>(
           `select id, source, priority, status, moderation_result, target_user_id, request_id,
                   explanation_chain, appeal_reason, original_decision_id, claimed_by,
-                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes, notes_shown,
                   modified_action, previous_account_status, related_strike_id, created_at,
                   updated_at
              from review_queue
@@ -551,7 +556,7 @@ export class PostgresReviewQueueStore implements ReviewQueueStore {
         tx.query<ReviewQueueRow>(
           `select id, source, priority, status, moderation_result, target_user_id, request_id,
                   explanation_chain, appeal_reason, original_decision_id, claimed_by,
-                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes,
+                  claimed_at, resolved_by, resolved_at, decision, reviewer_notes, notes_shown,
                   modified_action, previous_account_status, related_strike_id, created_at,
                   updated_at
              from review_queue

@@ -123,12 +123,17 @@ describe("ROADMAP.md consistency", () => {
     expect(markerMismatches(planted)).toEqual(['Phase 7: summary "✅" vs header "🔄"']);
   });
 
+  // Runs in every repository — a test skipped by a condition hides what it would check (TASK-209):
+  // Playform's roadmap carries the game overlay, the platform's its own phases.
   const isConsumerOverlay = /playform/i.test(titleOf(md));
-  (isConsumerOverlay ? it : it.skip)(
-    "consumer game overlay is intact (Phase 5 Game Engine, Phase 8 Game 1)",
-    () => {
+  it("the consumer game overlay is intact in Playform's roadmap (Phase 5 Game Engine, Phase 8 Game 1); the platform's has its own", () => {
+    if (isConsumerOverlay) {
       expect(headers.get("5")?.name ?? "").toMatch(/game engine/i);
       expect(headers.get("8")?.name ?? "").toMatch(/game 1/i);
+    } else {
+      expect(titleOf(md)).toMatch(/platform foundation/i);
+      expect(headers.get("5")?.name ?? "").toMatch(/application framework/i);
+      expect(headers.get("8")?.name ?? "").toMatch(/consumer app integration/i);
     }
-  );
+  });
 });

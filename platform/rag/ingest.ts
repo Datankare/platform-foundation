@@ -11,6 +11,7 @@
  * @module platform/rag
  */
 
+import type { RecordedReasons } from "@/platform/moderation/reasons";
 import { createHash } from "node:crypto";
 import type { EmbeddingProvider } from "./embedding-types";
 import type { EmbeddingStore, Document, Chunk, Scope, ChunkingConfig } from "./types";
@@ -38,8 +39,8 @@ export interface IngestResult {
   readonly contentVersion: string;
   /** When rejected: the screen action that withheld ingestion (ADR-043 D4). */
   readonly rejectedBy?: ScreenDecision["action"];
-  /** When rejected: human-readable reason from the screen. */
-  readonly reason?: string;
+  /** When rejected: the screen's reasons, catalog keys and values (TASK-209). */
+  readonly reason?: RecordedReasons;
 }
 
 export interface IngestOptions {

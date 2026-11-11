@@ -9,6 +9,9 @@
  * @module platform/admin
  */
 
+import { CHANGED_ON_PAGE, RESET_TO_DEFAULT } from "@/platform/errors/recorded-text";
+import type { ShownText } from "@/platform/errors/shown-text";
+import { settingDescription } from "@/platform/errors/definitions";
 import { NextRequest, NextResponse } from "next/server";
 import type { VerifiedAdmin } from "@/platform/auth/role-governance";
 import {
@@ -38,9 +41,27 @@ const CONFIG_CHANGE_BODY_SCHEMA: InputSchemaNode = {
   },
 };
 
+/**
+ * A setting as an answer a screen shows lists it (TASK-209, N-113): its description is the
+ * catalog's key (screens.settings.<key>, or an app's), rendered by the screen in its reader's
+ * language — never platform_config.description, the definitional record in English (the
+ * configuration assistant's and the search's).
+ */
+export function describedByCatalog<E extends { readonly key: string }>(
+  entry: E
+): Omit<E, "description"> & { readonly description: ShownText | null } {
+  return { ...entry, description: settingDescription(entry.key) };
+}
+
 export interface ConfigPutOptions {
   /** Force the change's scope (the operators' per-tenant settings: always "tenant"). */
   readonly scope?: ConfigScope;
+  /**
+   * The platform's note when the person wrote no comment (TASK-209): a catalog key, never words
+   * a screen sent — default "Changed on the config page"; an operator's per-tenant settings say
+   * so ("Set by an operator for this tenant").
+   */
+  readonly note?: ShownText;
 }
 
 /** PUT { key, value, changeComment?, scope? } as `admin`, in the current tenant. */
@@ -81,10 +102,11 @@ export async function configPutResponse(
     const outcome = await writeGovernedConfig(admin, {
       key: body.key,
       value: body.value,
-      changeComment:
-        typeof body.changeComment === "string" && body.changeComment.trim() !== ""
-          ? body.changeComment
-          : "Changed on the config page",
+      // A comment the person wrote, as written; none — the platform's note, a catalog key
+      // (TASK-209: it was English).
+      ...(typeof body.changeComment === "string" && body.changeComment.trim() !== ""
+        ? { changeComment: body.changeComment }
+        : { changeComment: "", changeShown: options.note ?? CHANGED_ON_PAGE }),
       ...(scope ? { scope } : {}),
     });
 
@@ -181,7 +203,8 @@ export async function configResetResponse(
   try {
     const outcome = await resetGovernedConfig(admin, {
       key,
-      changeComment: "Use the platform default",
+      changeComment: "",
+      changeShown: RESET_TO_DEFAULT,
     });
     switch (outcome.kind) {
       case "not_found":

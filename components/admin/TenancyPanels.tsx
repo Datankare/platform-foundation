@@ -118,7 +118,8 @@ interface TenantData {
   budget?: { usedUsd: number; budgetUsd: number; exhausted: boolean; period: string };
   settings?: {
     key: string;
-    description: string | null;
+    /** The catalog's key (TASK-209, N-113), rendered here. */
+    description: ShownText | null;
     value: unknown;
     platformValue: unknown;
     overridden: boolean;
@@ -155,7 +156,6 @@ export function TenantSettingsView({ data: initial }: { data: TenantData | undef
         body: JSON.stringify({
           key,
           value: parseValue(drafts[key] ?? ""),
-          changeComment: t("change_comment"),
         }),
       });
       setStatus(
@@ -264,8 +264,10 @@ export function TenantSettingsView({ data: initial }: { data: TenantData | undef
                 <tr key={s.key}>
                   <td className={td}>
                     <span className="font-mono text-blue-300">{s.key}</span>
-                    {s.description && (
-                      <p className="text-xs text-gray-400 mt-1">{s.description}</p>
+                    {isShownText(s.description) && (
+                      <p className="text-xs text-gray-400 mt-1">
+                        {renderShown(s.description)}
+                      </p>
                     )}
                   </td>
                   <td className={td}>
@@ -878,7 +880,8 @@ export function OperatorTenantsView({
 
 interface TenantConfigEntry {
   key: string;
-  description: string | null;
+  /** The catalog's key (TASK-209, N-113), rendered here. */
+  description: ShownText | null;
   value: unknown;
   platformValue: unknown;
   overridden: boolean;
@@ -986,7 +989,6 @@ export function OperatorTenantSettings({
         body: JSON.stringify({
           key,
           value: parseValue(drafts[key] ?? ""),
-          changeComment: t("operator_change_comment"),
         }),
       },
       t("saved", { key })
@@ -1051,7 +1053,9 @@ export function OperatorTenantSettings({
     (e) =>
       !q ||
       e.key.toLowerCase().includes(q) ||
-      (e.description ?? "").toLowerCase().includes(q)
+      (isShownText(e.description) ? renderShown(e.description) : "")
+        .toLowerCase()
+        .includes(q)
   );
 
   return (
@@ -1155,8 +1159,10 @@ export function OperatorTenantSettings({
                     {t(e.tenantOverridable ? "tenant_settable" : "platform_governed")}
                     {e.permissionTier === "safety" ? ` · ${t("safety_tier")}` : ""}
                   </p>
-                  {e.description && (
-                    <p className="text-xs text-gray-400 mt-1">{e.description}</p>
+                  {isShownText(e.description) && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      {renderShown(e.description)}
+                    </p>
                   )}
                 </td>
                 <td className={td}>

@@ -5,6 +5,7 @@
  * ADR-016: Structured classifier output.
  */
 
+import { renderShown } from "@/platform/errors/shown-text";
 import { buildSafetyPrompt, parseClassifierResponse } from "@/prompts/safety/classify-v1";
 import type { ClassifierOutput } from "@/prompts/safety/classify-v1";
 
@@ -56,7 +57,7 @@ describe("parseClassifierResponse", () => {
     expect(result.categories).toEqual([]);
     expect(result.confidence).toBeCloseTo(0.95);
     expect(result.severity).toBe("low");
-    expect(result.reason).toBeUndefined();
+    expect(result.rawReason).toBeUndefined();
   });
 
   it("parses an unsafe response with categories", () => {
@@ -67,7 +68,7 @@ describe("parseClassifierResponse", () => {
     expect(result.categories).toEqual(["violence", "hate"]);
     expect(result.confidence).toBeCloseTo(0.87);
     expect(result.severity).toBe("high");
-    expect(result.reason).toBe("graphic violence");
+    expect(result.rawReason).toBe("graphic violence");
   });
 
   it("handles markdown code fences", () => {
@@ -142,7 +143,7 @@ describe("parseClassifierResponse", () => {
       categories: ["hate"],
       confidence: 0.9,
       severity: "high",
-      reason: "r",
+      rawReason: "r",
     });
   });
 
@@ -151,7 +152,7 @@ describe("parseClassifierResponse", () => {
     const result = parseClassifierResponse("not json at all");
     expect(result.safe).toBe(false);
     expect(result.severity).toBe("medium");
-    expect(result.reason).toContain("Failed to parse");
+    expect(renderShown(result.note!)).toContain("Failed to parse");
   });
 
   it("fails closed on empty string", () => {
@@ -164,7 +165,7 @@ describe("parseClassifierResponse", () => {
       '{"categories": [], "confidence": 0.9, "severity": "low"}'
     );
     expect(result.safe).toBe(false);
-    expect(result.reason).toContain("Missing 'safe' field");
+    expect(renderShown(result.note!)).toBe("Missing 'safe' field");
   });
 
   it("null categories are unjudged", () => {
@@ -180,7 +181,7 @@ describe("parseClassifierResponse", () => {
       '{"safe": false, "categories": ["hate"], "confidence": 0.9, "severity": "high", "reason": 123}'
     );
     expect(result.unjudged).toBe(true);
-    expect(result.reason).toContain("reason is not text");
+    expect(renderShown(result.note!)).toContain("reason is not text");
   });
 
   it("an answer that is not an object fails closed", () => {
@@ -202,6 +203,6 @@ describe("ClassifierOutput type contract", () => {
       severity: "low",
     };
     expect(output).toBeDefined();
-    expect(output.reason).toBeUndefined();
+    expect(output.rawReason).toBeUndefined();
   });
 });

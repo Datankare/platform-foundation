@@ -80,6 +80,10 @@ jest.mock("@/platform/auth/platform-config", () => {
   };
 });
 
+// hostile:role n/a: the command bar route's role cases are command-bar-holds and admin-ai-command-bar [hostile:role]
+// hostile:self n/a: acting on one's own hold is command-bar-holds and r10-one-hold [hostile:self]
+// hostile:store-down n/a: a store down on the command bar is command-bar-holds and admin-ai-command-bar [hostile:store-down]
+// hostile:id-spelling n/a: an id spelled otherwise on the command bar is admin-usability-routes' case [hostile:id-spelling]
 import { NextRequest } from "next/server";
 import {
   authAs,
@@ -377,7 +381,12 @@ describe("rv11 M-2: the operator's kill switch", () => {
     });
     expect(writes).toHaveLength(1);
     expect(writes[0].options).toEqual({ expectPrevious: { value: REGISTRY() } });
-    expect(writes[0].comment).toContain("incident 42");
+    // The platform's note, a catalog key and values, with the operator's reason as written
+    // (TASK-209: it was English).
+    expect(writes[0].comment).toEqual({
+      key: "screens.records.emergency_suspended",
+      params: { reason: "incident 42" },
+    });
     const registry = store.get("agent.trusted_agents") as [string, { status: string }][];
     expect(registry.length).toBeGreaterThan(0);
     expect(registry.every(([, r]) => r.status === "suspended")).toBe(true);

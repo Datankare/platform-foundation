@@ -2,6 +2,7 @@
  * screen-input.test.ts — ADR-044 D4: multimodal input is screened before dispatch and
  * refused fail-closed on block/escalate.
  */
+import { renderShown } from "@/platform/errors/shown-text";
 import { screenMultimodalInput } from "../screen-input";
 import { createOrchestrator } from "../index";
 import type { AIProvider, AIRequest, AIResponse } from "../types";
@@ -66,7 +67,9 @@ describe("screenMultimodalInput", () => {
   it("refuses image input when no classifier is configured (audit X-18)", async () => {
     const r = await screenMultimodalInput(imageReq, "r");
     expect(r.refused).toBe(true);
-    expect(r.reason).toMatch(/escalate/);
+    expect(renderShown(r.reason!)).toBe(
+      "image input escalate: withheld: no classifier configured"
+    );
   });
   it("permits allowed image input", async () => {
     setModalityClassifiers(classifiers({}));

@@ -10,6 +10,7 @@
  * @module platform/moderation
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import type { ModerationAction, ScreeningDirection } from "./types";
 import { logCaught } from "@/platform/observability/caught-error";
 import { logger } from "@/lib/logger";
@@ -27,7 +28,11 @@ export type ScreenAxis = "nsfw" | "real-person" | "baseline";
 export interface AxisVerdict {
   readonly axis: ScreenAxis;
   readonly action: ModerationAction;
-  readonly reasoning?: string;
+  /**
+   * The classifier's own words, raw: provider output, never shown as a screen's text (TASK-209).
+   * Before, `reasoning`.
+   */
+  readonly rawReasoning?: string;
 }
 
 export interface ModalityScreenResult {
@@ -36,7 +41,8 @@ export interface ModalityScreenResult {
   readonly axes: readonly AxisVerdict[];
   /** True when a non-configurable hard-refuse invariant fired (ADR-046 D4). */
   readonly hardRefused: boolean;
-  readonly reasoning: string;
+  /** Why: a catalog key and values (screens.moderation.modality.*, TASK-209). */
+  readonly reasoning: ShownText;
 }
 
 export interface ModalityScreeningOptions {
@@ -85,10 +91,9 @@ export function screenPermits(result: ModalityScreenResult): boolean {
  * setModalityClassifiers; the seam's guarantees (hard-refuse first, independent axes, fail
  * closed) do not depend on them.
  */
-const UNCONFIGURED = "no classifier configured";
 const unconfiguredAxis =
   (axis: ScreenAxis): AxisClassifier =>
-  async () => ({ axis, action: "escalate", reasoning: UNCONFIGURED });
+  async () => ({ axis, action: "escalate" });
 
 const DEFAULT_CLASSIFIERS: ModalityClassifiers = {
   hardRefuse: async () => false,
@@ -127,7 +132,7 @@ export async function screenModality(
         action: "block",
         axes: [],
         hardRefused: true,
-        reasoning: "hard-refuse invariant (non-configurable)",
+        reasoning: shown("screens.moderation.modality.hard_refuse"),
       };
     }
     // ADR-046 D2: independent axes, evaluated separately.
@@ -146,8 +151,11 @@ export async function screenModality(
       axes,
       hardRefused: false,
       reasoning: modalityClassifiersConfigured()
-        ? `axes: ${axes.map((a) => `${a?.axis}=${a?.action}`).join(", ")}`
-        : `withheld: ${UNCONFIGURED}`,
+        ? shown("screens.moderation.modality.axes", {
+            // Codes: each axis and its action.
+            axes: axes.map((a) => `${a?.axis}=${a?.action}`).join(", "),
+          })
+        : shown("screens.moderation.modality.unconfigured"),
     };
   } catch (error) {
     // The reasoning is stored with the review item and read by moderators: the classifier's own
@@ -165,7 +173,7 @@ export async function screenModality(
       action: "escalate",
       axes: [],
       hardRefused: false,
-      reasoning: "fail-closed: the screen did not complete (the detail is in the log)",
+      reasoning: shown("screens.moderation.modality.failed"),
     };
   }
 }

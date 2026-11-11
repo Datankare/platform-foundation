@@ -27,23 +27,19 @@ import {
   runWithoutTenant,
 } from "@/platform/tenancy/context";
 import { Pool } from "pg";
+import { dbDescribe } from "../helpers/db";
 
 const URL = process.env.TEST_DATABASE_URL;
 const OWNER = process.env.TEST_DATABASE_OWNER_URL;
-const enabled = Boolean(URL && OWNER);
-const d = enabled ? describe : describe.skip;
+// The helper's gate: skipped only where no database is configured, a failure under
+// REQUIRE_DB_TESTS=1 (as CI runs) — the one skip __tests__/no-skipped-tests.test.ts allows.
+const d = dbDescribe;
 
 const A = "aaaaaaaa-0000-4000-8000-0000000000aa";
 const B = "bbbbbbbb-0000-4000-8000-0000000000bb";
 const UA = "aaaaaaaa-2222-4222-8222-2222222222aa";
 const UB = "bbbbbbbb-2222-4222-8222-2222222222bb";
 const saved = { ...process.env };
-
-if (process.env.REQUIRE_DB_TESTS === "1" && !enabled) {
-  throw new Error(
-    "REQUIRE_DB_TESTS=1 but TEST_DATABASE_URL / TEST_DATABASE_OWNER_URL are not set"
-  );
-}
 
 const asA = <T>(fn: () => Promise<T>) =>
   runWithTenant({ tenantId: A, mode: "shared" }, fn);

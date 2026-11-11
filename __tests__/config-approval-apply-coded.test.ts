@@ -107,6 +107,11 @@ jest.mock("@/platform/auth/platform-config", () => {
   };
 });
 
+// hostile:role n/a: these routes' role cases are config-routes and r10-one-hold [hostile:role]
+// hostile:self n/a: approving one's own request is config-routes and r10-one-hold [hostile:self]
+// hostile:store-down n/a: a store down on these routes is config-routes and r10-one-hold [hostile:store-down]
+// hostile:id-spelling n/a: an approver id spelled otherwise is approver-rules' case [hostile:id-spelling]
+import { renderShown } from "@/platform/errors/shown-text";
 import { NextRequest } from "next/server";
 import { authAs, CALLERS } from "@/__tests__/helpers/test-identities";
 import { fakeData } from "./helpers/fake-data";
@@ -281,7 +286,20 @@ describe("the screen is told what became of the approval (round 16, items 3 and 
       expect(body.settling).toBeUndefined();
       // Not the approver's rejection: no reviewer on the row, the system named in its note.
       expect(withdrawal()?.sql).toMatch(/reviewed_by = null/);
-      expect(String(withdrawal()?.values[1])).toMatch(/withdrawn by the system/);
+      // The system's record, a catalog key and values (TASK-209: it was English), worded so.
+      const record = JSON.parse(String(withdrawal()?.values[1]));
+      expect(record).toMatchObject({
+        key: "screens.records.config_withdrawn",
+        params: {
+          why: { key: `screens.records.config_${reason}`, params: { key: NUMBER_KEY } },
+          approvedBy: CALLERS.safety_approver.userId,
+        },
+      });
+      expect(renderShown(record)).toMatch(
+        new RegExp(
+          `^withdrawn by the system: ${reason} — "${NUMBER_KEY.replace(/\./g, "\\.")}"`
+        )
+      );
       const records = fakeData()
         .audit.map((a) => a.details as Record<string, unknown>)
         .filter((d) => d.type === "approval_withdrawn");

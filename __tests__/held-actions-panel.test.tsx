@@ -47,6 +47,20 @@ function decideRow(name: string, confirm = "Approve and apply") {
 }
 
 describe("HeldActionsPanel — ADR-040 040a/040c", () => {
+  it("a request with no person's comment shows the platform's note, worded (TASK-209)", () => {
+    const noted = holds.map((h) =>
+      h.source === "config-approval"
+        ? {
+            ...h,
+            comment: undefined,
+            commentShown: { key: "screens.records.changed_on_page" },
+          }
+        : h
+    ) as PendingApproval[];
+    render(<HeldActionsPanel data={{ approvals: noted }} />);
+    expect(screen.getAllByText("Changed on the config page").length).toBe(1);
+  });
+
   it("renders a card per hold with approve/reject controls", () => {
     render(<HeldActionsPanel data={{ approvals: holds }} />);
     expect(screen.getAllByText(/strike_ban_threshold/).length).toBeGreaterThan(0);

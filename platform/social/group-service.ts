@@ -14,6 +14,7 @@
  * @module platform/social
  */
 
+import type { ShownText } from "@/platform/errors/shown-text";
 import type { AgentIdentity } from "@/platform/agents/types";
 import type {
   SocialStore,
@@ -44,13 +45,13 @@ export const GROUP_LIMITS = {
 
 /**
  * Optional content screening function.
- * Returns null if content is clean, or an error string if blocked.
- * Wired to Guardian agent in Sprint 4b.
+ * Returns null if content is clean, or why it is refused — catalog keys and values (TASK-209:
+ * English before) — if blocked. Wired to Guardian agent in Sprint 4b.
  */
 export type ScreenContentFn = (
   text: string,
   contentType: "group-name" | "group-description"
-) => Promise<string | null>;
+) => Promise<readonly ShownText[] | null>;
 
 // ---------------------------------------------------------------------------
 // GroupService
@@ -92,12 +93,12 @@ export class GroupService {
     if (this.screenContent) {
       const nameBlock = await this.screenContent(input.name, "group-name");
       if (nameBlock) {
-        return { success: false, error: nameBlock };
+        return { success: false, error: "content_refused", refused: nameBlock };
       }
 
       const descBlock = await this.screenContent(input.description, "group-description");
       if (descBlock) {
-        return { success: false, error: descBlock };
+        return { success: false, error: "content_refused", refused: descBlock };
       }
     }
 

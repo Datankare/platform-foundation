@@ -241,7 +241,7 @@ describe("R14-L2 audited(): the act's own transaction loses its commit", () => {
       )
     ).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
     expect(audits.map((a) => a.outcome)).toEqual(["attempted", "indeterminate"]);
-    expect(audits[1].reason).toMatch(/whether it took effect is unknown/);
+    expect(audits[1].reason).toBe("screens.records.audit_indeterminate");
   });
 
   it("reported ({ indeterminate: true }): attempted, then indeterminate", async () => {

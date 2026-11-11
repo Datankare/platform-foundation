@@ -10,6 +10,7 @@
  * categories, confidence score, and severity level.
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { sanitizeForPrompt } from "@/lib/sanitize";
 
 /** Safety classification categories per ADR-016 */
@@ -25,7 +26,16 @@ export interface ClassifierOutput {
   categories: SafetyCategory[];
   confidence: number;
   severity: SafetySeverity;
-  reason?: string;
+  /**
+   * The model's own words on why (its JSON's `reason`), raw: model output, kept for the record and
+   * never shown as a screen's text (TASK-209). Before, `reason`, mixed with the platform's notes.
+   */
+  rawReason?: string;
+  /**
+   * The platform's note on the answer, when it could not take it as given (unreadable, declined,
+   * unavailable): a catalog key and values (screens.moderation.classifier.*, TASK-209).
+   */
+  note?: ShownText;
   /**
    * True when the answer could not be read (a parse failure or missing field): the confidence and
    * severity are placeholders, not a judgement, so no threshold may clear the text on them
@@ -101,37 +111,41 @@ export function parseClassifierResponse(raw: string): ClassifierOutput {
   try {
     const parsed: unknown = JSON.parse(cleaned);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return failClosedResult("Classifier answer is not a JSON object");
+      return failClosedResult(shown("screens.moderation.classifier.not_object"));
     }
     result = parsed as Record<string, unknown>;
   } catch {
     /* justified — fail closed on parse error */
-    return failClosedResult("Failed to parse classifier response");
+    return failClosedResult(shown("screens.moderation.classifier.unparsable"));
   }
 
   // Validate required fields — fail closed on missing data
   if (typeof result.safe !== "boolean") {
-    return failClosedResult("Missing 'safe' field");
+    return failClosedResult(shown("screens.moderation.classifier.missing_safe"));
   }
 
-  const problems: string[] = [];
+  // What could not be read, each a catalog key (TASK-209).
+  const problems: ShownText[] = [];
   const categories: SafetyCategory[] = Array.isArray(result.categories)
     ? result.categories.filter(isValidCategory)
     : [];
-  if (!Array.isArray(result.categories)) problems.push("categories missing");
+  if (!Array.isArray(result.categories))
+    problems.push(shown("screens.moderation.problems.categories_missing"));
   else if (categories.length !== result.categories.length)
-    problems.push("unknown category");
+    problems.push(shown("screens.moderation.problems.unknown_category"));
 
   const confidenceValid =
     typeof result.confidence === "number" &&
     Number.isFinite(result.confidence) &&
     result.confidence >= 0 &&
     result.confidence <= 1;
-  if (!confidenceValid) problems.push("confidence missing or outside 0–1");
+  if (!confidenceValid)
+    problems.push(shown("screens.moderation.problems.confidence_invalid"));
   const confidence = confidenceValid ? (result.confidence as number) : 0.5;
 
   const severityValid = isValidSeverity(result.severity);
-  if (!severityValid) problems.push("severity missing or unknown");
+  if (!severityValid)
+    problems.push(shown("screens.moderation.problems.severity_invalid"));
   const severity: SafetySeverity = severityValid
     ? (result.severity as SafetySeverity)
     : "medium";
@@ -144,9 +158,9 @@ export function parseClassifierResponse(raw: string): ClassifierOutput {
     result.reason !== null &&
     typeof result.reason !== "string"
   )
-    problems.push("reason is not text");
+    problems.push(shown("screens.moderation.problems.reason_not_text"));
   if (result.safe && (categories.length > 0 || (severityValid && severity !== "low")))
-    problems.push("a safe verdict with categories or a severity above low");
+    problems.push(shown("screens.moderation.problems.safe_contradiction"));
 
   const reason = typeof result.reason === "string" ? result.reason : undefined;
   if (problems.length > 0) {
@@ -156,7 +170,7 @@ export function parseClassifierResponse(raw: string): ClassifierOutput {
       categories,
       confidence,
       severity,
-      reason: `Classifier answer not fully readable (${problems.join("; ")})`,
+      note: shown("screens.moderation.classifier.unreadable", { problems }),
       unjudged: true,
     };
   }
@@ -165,17 +179,17 @@ export function parseClassifierResponse(raw: string): ClassifierOutput {
     categories,
     confidence,
     severity,
-    reason,
+    ...(reason !== undefined ? { rawReason: reason } : {}),
   };
 }
 
-function failClosedResult(reason: string): ClassifierOutput {
+function failClosedResult(note: ShownText): ClassifierOutput {
   return {
     safe: false,
     categories: [],
     confidence: 0.5,
     severity: "medium",
-    reason,
+    note,
     unjudged: true,
   };
 }

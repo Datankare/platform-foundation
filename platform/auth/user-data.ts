@@ -825,7 +825,11 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "content_safety_audit.classifier_output":
     "the classifier's verdict (categories, scores) — never the screened text",
   "content_safety_audit.reasoning":
-    "the Guardian's reasoning, built from fixed phrases and the thresholds — never the screened text",
+    "the Guardian's reasoning as recorded before its keys (TASK-209), built from fixed phrases and the thresholds — never the screened text",
+  "content_safety_audit.reasoning_shown":
+    "the Guardian's reasoning as catalog keys and values (TASK-209): fixed phrases and the thresholds — never the screened text",
+  "content_safety_audit.context_factors_shown":
+    "the decision's context factors as catalog keys and values (TASK-209): a content type, languages, counts — not an account",
   "document_embeddings.metadata":
     "a document's own description; whose documents they are is in scope_key (documents)",
   "document_embeddings.content":
@@ -842,6 +846,8 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
     "the appellant's own text, deleted with their cases (reviewItems); a mention of someone else in it is the appellant's writing",
   "review_queue.reviewer_notes":
     "a reviewer's notes on a case, deleted with the case's account (reviewItems); kept, as the decision's record, when the reviewer is erased",
+  "review_queue.notes_shown":
+    "the platform's own note on a decision it made (a catalog key and values: TASK-209), deleted with the case's account (reviewItems)",
   "user_feature_restrictions.reason":
     "why a restriction was set (staff's text about the restricted account, deleted with it)",
   "user_strikes.reason":
@@ -885,7 +891,12 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "config_pending_approvals.scope": "a setting's scope",
   "config_pending_approvals.change_comment":
     "an administrator's comment on a setting change (an administrative act)",
-  "config_pending_approvals.impact_summary": "what a setting change would do",
+  "config_pending_approvals.impact_summary":
+    "what a setting change would do (written before TASK-209; no longer written)",
+  "config_pending_approvals.change_shown":
+    "the platform's own note on a setting change request (a catalog key and values: TASK-209)",
+  "config_pending_approvals.review_shown":
+    "the system's record of a decision on an administrative change: why, and who had approved it (an administrative act; TASK-209)",
   "config_pending_approvals.review_comment":
     "an administrator's comment on a decision (an administrative act)",
   "entitlement_groups.created_by":
@@ -923,6 +934,8 @@ export const NO_USER_DATA_COLUMNS: Readonly<Record<string, string>> = {
   "platform_config_history.changed_by": "who made an administrative change",
   "platform_config_history.change_comment":
     "an administrator's comment on a change (an administrative act)",
+  "platform_config_history.change_shown":
+    "the platform's own note on a setting change (a catalog key and values: TASK-209)",
   "platform_config_history.change_source": "where a change came from (route, assistant)",
   "platform_config_history.config_key": "a setting's key",
   "platform_config_history.scope": "a setting's scope",

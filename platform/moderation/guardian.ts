@@ -26,6 +26,7 @@
  * @module platform/moderation
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import type { AgentIdentity } from "@/platform/agents/types";
 import { executeAgent } from "@/platform/agents/runtime";
 import type { WorkflowFn } from "@/platform/agents/runtime";
@@ -112,16 +113,56 @@ function unjudgedFields(
 function isDeclined(output: object): boolean {
   return (output as { declined?: unknown }).declined === true;
 }
+/** The Guardian's reasoning lines that carry a rating level's thresholds (TASK-209). */
+function thresholdLine(
+  kind: "block" | "warn" | "allow",
+  severity: string,
+  t: { blockSeverity: string; warnSeverity: string; label: ShownText }
+): ShownText {
+  return kind === "allow"
+    ? shown("screens.moderation.reasons.allowed", { severity, level: t.label })
+    : shown(`screens.moderation.reasons.${kind}_threshold`, {
+        severity,
+        threshold: kind === "block" ? t.blockSeverity : t.warnSeverity,
+        level: t.label,
+      });
+}
+
+/** A confidence below the level's escalation threshold (TASK-209). */
+function escalateLine(
+  confidence: number,
+  t: { escalateBelow: number; label: ShownText }
+): ShownText {
+  return shown("screens.moderation.reasons.escalate_confidence", {
+    confidence: confidence.toFixed(2),
+    threshold: String(t.escalateBelow),
+    level: t.label,
+  });
+}
+
+/** A severity the context adjusted (TASK-209). */
+function adjustedLine(
+  from: string,
+  to: string,
+  contentType: string,
+  ctx: { severityReduction: number }
+): ShownText {
+  return shown("screens.moderation.reasons.severity_adjusted", {
+    from,
+    to,
+    contentType,
+    reduction: String(ctx.severityReduction),
+  });
+}
+
 /** A declined text's decision: escalated (withheld, queued for review), with its reason. */
 function markDeclined(
   acc: { action: ModerationAction; triggeredBy: ModerationResult["triggeredBy"] },
-  reasonParts: string[]
+  reasonParts: ShownText[]
 ): void {
   acc.action = "escalate";
   acc.triggeredBy = "content-rating";
-  reasonParts.push(
-    "Classifier declined to assess the content (declined) — withheld for human review."
-  );
+  reasonParts.push(shown("screens.moderation.reasons.declined"));
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +240,9 @@ export class Guardian {
   ): Promise<ModerationResult> {
     const startTime = Date.now();
     const ratingLevel: ContentRatingLevel = context.contentRatingLevel ?? 1;
-    const reasonParts: string[] = [];
+    // Why it decided, line by line: catalog keys and values (./reasons.ts, TASK-209 — English
+    // before, stored with the decision and shown to moderators and in exports).
+    const reasonParts: ShownText[] = [];
     const trajectoryStore = getTrajectoryStore();
     const scope = context.userId ?? "anonymous";
 
@@ -213,7 +256,7 @@ export class Guardian {
         context,
         ratingLevel,
         blocklistMatches: [],
-        reasoning: "Empty text — no content to screen.",
+        reasoning: [shown("screens.moderation.reasons.empty_text")],
         severityAdjustment: 0,
         contextFactors: [],
         attributeToUser: true,
@@ -234,7 +277,7 @@ export class Guardian {
       action: ModerationAction;
       triggeredBy: ModerationResult["triggeredBy"];
       severityAdjustment: number;
-      reasoning: string;
+      reasoning: ShownText[];
       classifierCostUsd: number;
       classifierUnavailable: boolean;
       /** The classifier answered, but not a judgement (review 8 H-B, M4). */
@@ -245,7 +288,7 @@ export class Guardian {
       action: "allow",
       triggeredBy: "none",
       severityAdjustment: 0,
-      reasoning: "",
+      reasoning: [],
       classifierCostUsd: 0,
       classifierUnavailable: false,
       unjudged: false,
@@ -258,7 +301,8 @@ export class Guardian {
         case 0: {
           acc.ctxEval = await evaluateContext(context);
           if (acc.ctxEval.factors.length > 0) {
-            reasonParts.push(`Context: ${acc.ctxEval.factors.join("; ")}.`);
+            const factors = acc.ctxEval.factors;
+            reasonParts.push(shown("screens.moderation.reasons.context", { factors }));
           }
           return {
             action: "receive-context",
@@ -300,11 +344,12 @@ export class Guardian {
           ) {
             acc.action = "block";
             acc.triggeredBy = "blocklist";
-            acc.reasoning = `Blocklist hit: ${acc.blocklistResult.matches
-              .map((m) => m.category)
-              .join(
-                ", "
-              )} (severity: ${acc.blocklistResult.maxSeverity}). Blocked immediately — classifier skipped.`;
+            acc.reasoning = [
+              shown("screens.moderation.reasons.blocklist_block", {
+                categories: acc.blocklistResult.matches.map((m) => m.category).join(", "),
+                severity: acc.blocklistResult.maxSeverity,
+              }),
+            ];
             return {
               action: "decide",
               boundary: "commitment",
@@ -350,9 +395,11 @@ export class Guardian {
             acc.action = "escalate";
             acc.triggeredBy = "content-rating";
             reasonParts.push(
-              acc.classifierUnavailable
-                ? "Classifier unavailable — content withheld at every rating level (fail-closed)."
-                : "Classifier answer unreadable — withheld for human review at every rating level (fail-closed)."
+              shown(
+                acc.classifierUnavailable
+                  ? "screens.moderation.reasons.unavailable"
+                  : "screens.moderation.reasons.unreadable"
+              )
             );
           } else if (isDeclined(classifierOutput)) {
             markDeclined(acc, reasonParts);
@@ -360,10 +407,12 @@ export class Guardian {
             acc.action = acc.blocklistResult.matched ? "warn" : "allow";
             acc.triggeredBy = acc.blocklistResult.matched ? "blocklist" : "none";
             reasonParts.push(
-              `Classifier: safe (confidence ${classifierOutput.confidence.toFixed(2)}).`
+              shown("screens.moderation.reasons.safe", {
+                confidence: classifierOutput.confidence.toFixed(2),
+              })
             );
             if (acc.blocklistResult.matched) {
-              reasonParts.push(`Low-severity blocklist match — warning applied.`);
+              reasonParts.push(shown("screens.moderation.reasons.low_blocklist"));
             }
           } else {
             let thresholds;
@@ -372,12 +421,12 @@ export class Guardian {
             } catch {
               thresholds = {
                 level: 1 as const,
-                label: "fail-closed (config unavailable)",
+                label: shown("screens.moderation.levels.fail_closed"),
                 blockSeverity: "low" as const,
                 warnSeverity: "low" as const,
                 escalateBelow: 0.95,
               };
-              reasonParts.push("Config unavailable — using fail-closed thresholds.");
+              reasonParts.push(shown("screens.moderation.reasons.config_unavailable"));
             }
 
             const originalSeverity = classifierOutput.severity;
@@ -388,34 +437,31 @@ export class Guardian {
 
             if (acc.ctxEval.severityReduction > 0) {
               reasonParts.push(
-                `Severity adjusted: ${originalSeverity} → ${adjustedSeverity} (${context.contentType} context, -${acc.ctxEval.severityReduction}).`
+                adjustedLine(
+                  originalSeverity,
+                  adjustedSeverity,
+                  context.contentType,
+                  acc.ctxEval
+                )
               );
             }
 
             if (classifierOutput.confidence < thresholds.escalateBelow) {
               acc.action = "escalate";
               acc.triggeredBy = "content-rating";
-              reasonParts.push(
-                `Confidence ${classifierOutput.confidence.toFixed(2)} below threshold ${thresholds.escalateBelow} for ${thresholds.label} — escalating for human review.`
-              );
+              reasonParts.push(escalateLine(classifierOutput.confidence, thresholds));
             } else if (severityAtOrAbove(adjustedSeverity, thresholds.blockSeverity)) {
               acc.action = "block";
               acc.triggeredBy = "content-rating";
-              reasonParts.push(
-                `Adjusted severity ${adjustedSeverity} ≥ block threshold ${thresholds.blockSeverity} for ${thresholds.label}.`
-              );
+              reasonParts.push(thresholdLine("block", adjustedSeverity, thresholds));
             } else if (severityAtOrAbove(adjustedSeverity, thresholds.warnSeverity)) {
               acc.action = "warn";
               acc.triggeredBy = "content-rating";
-              reasonParts.push(
-                `Adjusted severity ${adjustedSeverity} ≥ warn threshold ${thresholds.warnSeverity} for ${thresholds.label}.`
-              );
+              reasonParts.push(thresholdLine("warn", adjustedSeverity, thresholds));
             } else {
               acc.action = "allow";
               acc.triggeredBy = "content-rating";
-              reasonParts.push(
-                `Adjusted severity ${adjustedSeverity} below warn threshold for ${thresholds.label} — allowed.`
-              );
+              reasonParts.push(thresholdLine("allow", adjustedSeverity, thresholds));
             }
           }
 
@@ -434,7 +480,7 @@ export class Guardian {
           };
         }
         default: {
-          acc.reasoning = reasonParts.join(" ");
+          acc.reasoning = [...reasonParts];
           return {
             action: "decide",
             boundary: "commitment",
@@ -481,8 +527,7 @@ export class Guardian {
         ratingLevel,
         blocklistMatches: acc.blocklistResult.matches.map((m) => m.matched),
         classifierOutput: acc.classifierOutput,
-        reasoning:
-          "Screening run did not complete — escalated for human review (fail-closed).",
+        reasoning: [shown("screens.moderation.reasons.run_incomplete")],
         severityAdjustment: acc.severityAdjustment,
         contextFactors: acc.ctxEval.factors,
         attributeToUser: acc.ctxEval.attributeToUser,
@@ -529,9 +574,9 @@ export class Guardian {
     ratingLevel: ContentRatingLevel;
     blocklistMatches: string[];
     classifierOutput?: ModerationResult["classifierOutput"];
-    reasoning: string;
+    reasoning: ShownText[];
     severityAdjustment: number;
-    contextFactors: string[];
+    contextFactors: ShownText[];
     attributeToUser: boolean;
     pipelineLatencyMs: number;
     classifierCostUsd: number;

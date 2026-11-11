@@ -13,6 +13,7 @@
  *      The Guardian uses them to inform its decision, not as final actions.
  */
 
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import type { SafetySeverity } from "@/prompts/safety/classify-v1";
 import type { ScreeningContext } from "./types";
 import { loadSeverityReduction } from "./config";
@@ -63,7 +64,7 @@ export interface ContextEvaluation {
   /** Whether to attribute strikes to the user */
   readonly attributeToUser: boolean;
   /** Context factors that influenced the evaluation */
-  readonly factors: string[];
+  readonly factors: ShownText[];
 }
 
 /**
@@ -79,11 +80,12 @@ export async function evaluateContext(
     return {
       severityReduction: 0,
       attributeToUser: true,
-      factors: ["unknown-content-type: treated as generation"],
+      factors: [shown("screens.moderation.factors.unknown_content_type")],
     };
   }
 
-  const factors: string[] = [];
+  // Each a catalog key and values (TASK-209: they were English, stored and shown to moderators).
+  const factors: ShownText[] = [];
   let severityReduction = 0;
   let attributeToUser = true;
 
@@ -92,13 +94,18 @@ export async function evaluateContext(
   const reduction = await loadSeverityReduction(context.contentType);
   if (reduction > 0) {
     severityReduction = reduction;
-    factors.push(`${context.contentType}-content: severity reduced by ${reduction}`);
+    factors.push(
+      shown("screens.moderation.factors.severity_reduced", {
+        contentType: context.contentType,
+        reduction: String(reduction),
+      })
+    );
   }
 
   // AI output never penalizes the user
   if (context.contentType === "ai-output") {
     attributeToUser = false;
-    factors.push("ai-output: strikes not attributed to user");
+    factors.push(shown("screens.moderation.factors.ai_output"));
   }
 
   // ── User history adjustments ───────────────────────────────────────
@@ -108,14 +115,14 @@ export async function evaluateContext(
 
     // Clean history = slight leniency on borderline cases
     if (totalScreenings > 100 && recentFlags === 0 && activeStrikes === 0) {
-      factors.push("clean-history: user has long clean record");
+      factors.push(shown("screens.moderation.factors.clean_history"));
       // Note: clean history is a FACTOR, not an adjustment.
       // It provides context for human reviewers on escalated cases.
     }
 
     // Recent pattern of flags = heightened scrutiny
     if (recentFlags >= 3) {
-      factors.push("repeat-flags: 3+ flags in last 24h");
+      factors.push(shown("screens.moderation.factors.repeat_flags"));
       // No severity INCREASE — we don't make the pipeline harsher.
       // But this factor is recorded for human reviewers.
     }
@@ -125,7 +132,10 @@ export async function evaluateContext(
 
   if (context.sourceLanguage || context.targetLanguage) {
     factors.push(
-      `language-context: ${context.sourceLanguage ?? "auto"} → ${context.targetLanguage ?? "unknown"}`
+      shown("screens.moderation.factors.language_context", {
+        source: context.sourceLanguage ?? "auto",
+        target: context.targetLanguage ?? "unknown",
+      })
     );
   }
 

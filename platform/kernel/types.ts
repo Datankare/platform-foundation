@@ -1145,12 +1145,14 @@ export interface ProposalRecord {
   readonly observedVersion?: number;
   readonly decidedBy?: string;
   readonly decidedAt?: string;
-  /** The decider's note, as written (or the system's reason): the record's `note`. */
+  /** The decider's note, as written: the record's `note`. Never the platform's (TASK-209). */
   readonly decisionNote?: string;
   /**
-   * The platform's record of how the decision ended, when it keeps one (a withdrawn approval: who
-   * had approved it and when), as a catalog key and values — rendered with decisionNote
-   * (platform/errors/recorded-words.ts decisionWords; TASK-208, N-110). Never English.
+   * The platform's record of how the decision ended, when it keeps one, as a catalog key and
+   * values — a withdrawn approval's (who had approved it and when, and the platform's why when it
+   * gave one), a lapse's, a supersession's, a duplicate's, a mark as executed — rendered with
+   * decisionNote (platform/errors/recorded-words.ts decisionWords; TASK-208, TASK-209). Never
+   * English.
    */
   readonly decisionShown?: {
     readonly key: string;
@@ -1158,7 +1160,9 @@ export interface ProposalRecord {
   };
   /**
    * Why the last run of this approval failed before taking effect, when one did (review 10 H2):
-   * the approval stands, and approving it again runs it again.
+   * the approval stands, and approving it again runs it again. A code — the run's error code, or
+   * a `screens.held.note_*` key (its outcome unknown, a commit failed…) — never words (TASK-209);
+   * the screens word it (platform/admin/pending-approvals.ts runNote).
    */
   readonly lastRunError?: string;
   /**
@@ -1204,6 +1208,15 @@ export interface CreateProposalArgs {
 }
 
 /**
+ * A decision's note (TASK-209, N-112): what a person wrote — a string, kept as written — or the
+ * platform's own, a catalog key and values (platform/errors/recorded-text.ts: why a hold lapsed,
+ * was superseded or withdrawn, how a decision ended when no note was written). Never English the
+ * platform composed: __tests__/screen-text-indirect rule F.
+ */
+export type DecisionNote =
+  string | { readonly key: string; readonly params?: Readonly<Record<string, unknown>> };
+
+/**
  * Durable proposal storage.
  *
  * `decide` MUST be atomic on the proposal's current status: a second approval of the same
@@ -1221,7 +1234,7 @@ export interface ProposalStore {
       "proposed" | "executed" | "executing" | "indeterminate"
     >,
     decidedBy: string,
-    note?: string
+    note?: DecisionNote
   ): Promise<ProposalRecord | undefined>;
   /**
    * Use an approval whose effect is decided in the same step: `approved` -> `executed`,
@@ -1249,12 +1262,13 @@ export interface ProposalStore {
   complete(proposalId: string, runToken: string): Promise<ProposalRecord | undefined>;
   /**
    * The claimed run failed before taking effect: `executing` or `indeterminate` -> `approved`,
-   * only when `runToken` is the claim's — the approval stands and may be run again. `note` (why)
-   * is kept on the proposal.
+   * only when `runToken` is the claim's — the approval stands and may be run again. `code` (why:
+   * the run's error code, or a `screens.held.note_*` key — never words, TASK-209) is kept on the
+   * proposal as its lastRunError.
    */
   release(
     proposalId: string,
-    note: string,
+    code: string,
     runToken: string
   ): Promise<ProposalRecord | undefined>;
   /**
@@ -1264,13 +1278,15 @@ export interface ProposalStore {
    * (verified that it did not, and withdrawn without running — any held action, TASK-194 rounds
    * 5–6: `decidedBy`, the time and the note recorded, the old run token cleared; a duplicate
    * erasure hold, for one, is closed this way, never run a second time). Only from
-   * `indeterminate`; undefined otherwise. The caller audits it.
+   * `indeterminate`; undefined otherwise. Marked executed, the record keeps who marked it and
+   * their note (decisionShown: screens.records.marked_executed) and the run's note is cleared;
+   * the approval's decider and note stand (TASK-209). The caller audits it.
    */
   resolveIndeterminate(
     proposalId: string,
     resolution: "executed" | "approved" | "rejected",
     decidedBy: string,
-    note: string
+    note: DecisionNote
   ): Promise<ProposalRecord | undefined>;
   /**
    * Run `fn` in one database transaction of the current tenant, which every tenant-transaction
@@ -1287,7 +1303,7 @@ export interface ProposalStore {
   withdraw(
     proposalId: string,
     decidedBy: string,
-    note: string
+    note: DecisionNote
   ): Promise<ProposalRecord | undefined>;
   /**
    * Withdraw many pending holds at once (review 13 L7): each of `proposalIds` that is `proposed`
@@ -1299,7 +1315,7 @@ export interface ProposalStore {
   supersede?(
     proposalIds: readonly string[],
     decidedBy: string,
-    note: string
+    note: DecisionNote
   ): Promise<readonly string[]>;
   query(options: ProposalQuery): Promise<readonly ProposalRecord[]>;
 }

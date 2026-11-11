@@ -37,8 +37,16 @@ import {
   exportUserTables,
 } from "@/platform/auth/user-data";
 import { READ_FAILED, logCaught } from "@/platform/observability/caught-error";
-import { EXPORT_ACTOR_KEYS, isRecordedText } from "@/platform/errors/recorded-text";
-import { renderRecorded } from "@/platform/errors/recorded-words";
+import {
+  EXPORT_ACTOR_KEYS,
+  isRecordedText,
+  strikeReasonText,
+} from "@/platform/errors/recorded-text";
+import {
+  renderRecorded,
+  renderRecordedDeep,
+  runNoteShown,
+} from "@/platform/errors/recorded-words";
 import { renderShown } from "@/platform/errors/shown-text";
 import { DEFAULT_LOCALE } from "@/platform/errors/messages";
 import { logger } from "@/lib/logger";
@@ -88,9 +96,11 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
- * A step's recorded words in `locale` (TASK-208): its `note` and `reason` when the platform
- * recorded them as a catalog key (an erased note, an abandoned run's reason), and its `decision`
- * (a held action's record), rendered with its note. A note a person wrote stays as written.
+ * A step's recorded words in `locale` (TASK-208, TASK-209): its `note` and `reason` when the
+ * platform recorded them as a catalog key (an erased note, an abandoned run's reason), its
+ * `decision` (a held action's record) rendered with its note, its `lastRunError` (a run's code)
+ * by the code's sentence, and any other platform key in it (an effect's error). A note a person
+ * wrote stays as written.
  */
 function renderStep(step: unknown, locale: string): unknown {
   if (!isObject(step) || !isObject(step.output)) return step;
@@ -105,13 +115,18 @@ function renderStep(step: unknown, locale: string): unknown {
       locale,
       typeof output.note === "string" ? output.note : undefined
     );
-  return { ...step, output };
+  if (typeof output.lastRunError === "string") {
+    const run = runNoteShown(output.lastRunError);
+    output.lastRunError = typeof run === "string" ? run : renderShown(run, locale);
+  }
+  return { ...step, output: renderRecordedDeep(output, locale) };
 }
 
 /**
- * The platform's notes in an export, in words (TASK-208, N-110): the profile's ban note, who
- * acted in the audit trail (a code), and every run's steps (any section whose rows have steps).
- * What a person wrote is left as it is.
+ * The platform's notes in an export, in words (TASK-208, N-110; TASK-209, N-112): the profile's
+ * ban note, who acted in the audit trail (a code) and its details' platform words (a catalog key
+ * and values, a run's reason key), a strike's reason (a code), and every run's
+ * steps (any section whose rows have steps). What a person wrote is left as it is.
  */
 export function renderRecords(data: Record<string, unknown>, locale: string): void {
   const profile = data.profile;
@@ -124,6 +139,13 @@ export function renderRecords(data: Record<string, unknown>, locale: string): vo
       let out = row;
       if (name === "auditLog" && typeof row.by === "string" && EXPORT_ACTOR_KEYS[row.by])
         out = { ...out, by: renderShown(EXPORT_ACTOR_KEYS[row.by], locale) };
+      // An audit record's platform words (a run's reason, a change's note: TASK-209), in words.
+      if (name === "auditLog" && isObject(row.details))
+        out = { ...out, details: renderRecordedDeep(row.details, locale) };
+      if (name === "strikes") {
+        const reason = strikeReasonText(row.reason, row);
+        if (reason) out = { ...out, reason: renderShown(reason, locale) };
+      }
       if (Array.isArray(row.steps))
         out = { ...out, steps: row.steps.map((s: unknown) => renderStep(s, locale)) };
       return out;

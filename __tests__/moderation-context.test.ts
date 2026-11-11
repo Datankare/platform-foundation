@@ -8,6 +8,11 @@
 import { evaluateContext, reduceSeverity } from "@/platform/moderation/context";
 import type { ScreeningContext } from "@/platform/moderation/types";
 import { CONTENT_KINDS_FIXTURE, withModules } from "./helpers/modules";
+import { reasonText, type RecordedFactor } from "@/platform/moderation/reasons";
+
+/** The words a reader sees (TASK-209: the reasons are catalog keys; the words are unchanged). */
+const factorWords = (f: RecordedFactor): string =>
+  typeof f === "string" ? f : reasonText(f);
 
 // The content kinds screened here are declared by a fixture module (ADR-054 D4): the core
 // screens what the registered modules declare.
@@ -77,7 +82,7 @@ describe("evaluateContext", () => {
     const result = await evaluateContext(ctx);
 
     expect(result.severityReduction).toBe(1);
-    expect(result.factors).toEqual(
+    expect(result.factors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("translation-content")])
     );
   });
@@ -101,7 +106,7 @@ describe("evaluateContext", () => {
     const result = await evaluateContext(ctx);
 
     expect(result.attributeToUser).toBe(false);
-    expect(result.factors).toEqual(
+    expect(result.factors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("strikes not attributed")])
     );
   });
@@ -117,7 +122,7 @@ describe("evaluateContext", () => {
     };
     const result = await evaluateContext(ctx);
 
-    expect(result.factors).toEqual(
+    expect(result.factors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("clean-history")])
     );
   });
@@ -133,7 +138,7 @@ describe("evaluateContext", () => {
     };
     const result = await evaluateContext(ctx);
 
-    expect(result.factors).toEqual(
+    expect(result.factors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("repeat-flags")])
     );
   });
@@ -146,7 +151,7 @@ describe("evaluateContext", () => {
     };
     const result = await evaluateContext(ctx);
 
-    expect(result.factors).toEqual(
+    expect(result.factors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("ar → en")])
     );
   });
@@ -177,7 +182,7 @@ describe("evaluateContext — unknown contentType (F6)", () => {
 
     expect(result.severityReduction).toBe(0);
     expect(result.attributeToUser).toBe(true);
-    expect(result.factors).toEqual(
+    expect(result.factors.map(factorWords)).toEqual(
       expect.arrayContaining([expect.stringContaining("unknown-content-type")])
     );
   });

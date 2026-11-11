@@ -5,6 +5,12 @@
  */
 
 import { createExplanationBuilder } from "../explainability";
+import type { ShownText } from "@/platform/errors/shown-text";
+
+/** A step's or a conclusion's text is a catalog key (TASK-209): one per label here. */
+const k = (label: string): ShownText => ({
+  key: `screens.app.rag.${label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+});
 
 jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -14,20 +20,20 @@ jest.mock("@/lib/logger", () => ({
 describe("createExplanationBuilder", () => {
   it("builds an empty chain", () => {
     const builder = createExplanationBuilder("req-1");
-    const chain = builder.build("No steps taken");
+    const chain = builder.build(k("No steps taken"));
     expect(chain.requestId).toBe("req-1");
     expect(chain.steps).toHaveLength(0);
-    expect(chain.conclusion).toBe("No steps taken");
+    expect(chain.conclusion).toEqual(k("No steps taken"));
     expect(chain.id).toBeDefined();
     expect(chain.createdAt).toBeDefined();
   });
 
   it("accumulates steps in order", () => {
     const builder = createExplanationBuilder("req-2");
-    builder.addStep("retrieval", "Retrieved 3 chunks", { count: 3 }, 42);
-    builder.addStep("prompt", "Built prompt", { tokens: 500 }, 5);
-    builder.addStep("inference", "Model responded", { model: "mock" }, 200);
-    const chain = builder.build("Answer generated");
+    builder.addStep("retrieval", k("Retrieved 3 chunks"), { count: 3 }, 42);
+    builder.addStep("prompt", k("Built prompt"), { tokens: 500 }, 5);
+    builder.addStep("inference", k("Model responded"), { model: "mock" }, 200);
+    const chain = builder.build(k("Answer generated"));
 
     expect(chain.steps).toHaveLength(3);
     expect(chain.steps[0].phase).toBe("retrieval");
@@ -38,20 +44,20 @@ describe("createExplanationBuilder", () => {
 
   it("preserves step data", () => {
     const builder = createExplanationBuilder("req-3");
-    builder.addStep("test", "description", { key: "value", nested: { a: 1 } }, 10);
-    const chain = builder.build("done");
+    builder.addStep("test", k("description"), { key: "value", nested: { a: 1 } }, 10);
+    const chain = builder.build(k("done"));
 
     expect(chain.steps[0].data).toEqual({ key: "value", nested: { a: 1 } });
-    expect(chain.steps[0].description).toBe("description");
+    expect(chain.steps[0].description).toEqual(k("description"));
   });
 
   it("builds independent chains from same builder", () => {
     const builder = createExplanationBuilder("req-4");
-    builder.addStep("step1", "first", {}, 1);
-    const chain1 = builder.build("conclusion 1");
+    builder.addStep("step1", k("first"), {}, 1);
+    const chain1 = builder.build(k("conclusion 1"));
 
-    builder.addStep("step2", "second", {}, 2);
-    const chain2 = builder.build("conclusion 2");
+    builder.addStep("step2", k("second"), {}, 2);
+    const chain2 = builder.build(k("conclusion 2"));
 
     expect(chain1.steps).toHaveLength(1);
     expect(chain2.steps).toHaveLength(2);

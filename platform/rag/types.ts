@@ -15,6 +15,7 @@
  * @module platform/rag
  */
 
+import type { ShownText } from "@/platform/errors/shown-text";
 // ── Document ──────────────────────────────────────────────────────────
 
 /**
@@ -197,8 +198,11 @@ export interface ExplanationChain {
   readonly requestId: string;
   /** Ordered steps in the explanation */
   readonly steps: readonly ExplanationStep[];
-  /** Final decision/output summary */
-  readonly conclusion: string;
+  /**
+   * Final decision/output summary: a catalog key and values (TASK-209 — a caller's English
+   * before, stored with a review case and shown to moderators); a chain recorded before, its text.
+   */
+  readonly conclusion: ShownText | string;
   /** ISO timestamp */
   readonly createdAt: string;
 }
@@ -209,8 +213,8 @@ export interface ExplanationChain {
 export interface ExplanationStep {
   /** Step label (e.g., "context-retrieval", "prompt-construction", "model-response") */
   readonly phase: string;
-  /** Human-readable description of what happened */
-  readonly description: string;
+  /** What happened: a catalog key and values (TASK-209); a step recorded before, its text. */
+  readonly description: ShownText | string;
   /** Data involved (retrieved chunks, prompt snippet, etc.) */
   readonly data: Record<string, unknown>;
   /** Duration of this step in milliseconds */

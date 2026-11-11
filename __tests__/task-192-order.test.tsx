@@ -28,6 +28,8 @@ import { AuditDataView, RolesDataView } from "@/components/admin/AdminDataViews"
 import { applyUsersSearch } from "@/components/admin/users-search-handoff";
 import ExecutionResultsPanel from "@/components/admin/ExecutionResultsPanel";
 import { SEARCH_SQL, searchParams } from "@/app/api/admin/ai/handlers/search";
+import { permissionNamesByCode } from "@/platform/errors/definitions";
+import { renderMessage } from "@/platform/errors/messages";
 import { shown } from "@/platform/errors/shown-text";
 
 const perm = (code: string, displayName: string, category: string) => ({
@@ -341,18 +343,32 @@ describe("the command bar's search: the screens' order", () => {
     expect(SEARCH_SQL.role_permissions).toMatch(
       /order by r\.sort_order, lower\(r\.name\) collate "C", r\.name collate "C", coalesce\(array_position\(\$2::text\[\], lower\(btrim\(p\.category, E' \\t\\n\\r\\f\\x0B'\)\)\)/
     );
+    // $3: the catalog's names by code, which a permission is ordered by (TASK-209, N-113).
+    const names = JSON.stringify(permissionNamesByCode());
+    expect(JSON.parse(names)).toMatchObject({
+      admin_manage_users: renderMessage("screens.permissions.admin_manage_users.name"),
+    });
     expect(searchParams("role_permissions", { text: "a%b" })).toEqual([
       "a\\%b",
       [...PERMISSION_CATEGORY_ORDER],
+      names,
     ]);
-    // Permissions as the Roles screen orders them (round 1): category, display name, code.
+    expect(SEARCH_SQL.role_permissions).toContain(
+      `lower(coalesce($3::jsonb ->> p.code, p.code)) collate "C"`
+    );
+    expect(SEARCH_SQL.role_permissions).not.toContain("display_name");
+    // Permissions as the Roles screen orders them (round 1): category, the name it shows, code.
     expect(SEARCH_SQL.permissions).toMatch(
       /order by coalesce\(array_position\(\$2::text\[\], lower\(btrim\(category, E' \\t\\n\\r\\f\\x0B'\)\)\)/
     );
     expect(searchParams("permissions", { text: "x" })).toEqual([
       "x",
       [...PERMISSION_CATEGORY_ORDER],
+      names,
     ]);
+    expect(SEARCH_SQL.permissions).toContain(
+      `lower(coalesce($3::jsonb ->> code, code)) collate "C"`
+    );
     // Names compare by code unit in every statement, never by the database's collation.
     expect(SEARCH_SQL.roles).toContain('lower(name) collate "C", name collate "C"');
     // Bound, never in the text.

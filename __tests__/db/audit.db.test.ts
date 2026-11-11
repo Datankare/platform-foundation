@@ -15,6 +15,7 @@ jest.mock("@/lib/logger", () => ({
 import { createHash } from "node:crypto";
 import {
   ACT_RAISED_REASON,
+  ACT_REPORTED_FAILURE,
   AuditWriteError,
   audited,
   auditedResponse,
@@ -163,6 +164,19 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
           error: "refused",
         }))
       );
+      await t.run(() =>
+        audited({ action: "admin_action", targetId: target }, async () => ({
+          success: false,
+          error: "an English sentence a store wrote",
+          errorCode: "approvals.decision_conflict",
+        }))
+      );
+      await t.run(() =>
+        audited({ action: "admin_action", targetId: target }, async () => ({
+          success: false,
+          error: "rate.limited",
+        }))
+      );
       await expect(
         t.run(() =>
           audited({ action: "admin_action", targetId: target }, async () => {
@@ -180,7 +194,13 @@ dbDescribe("platform/auth/audit (Postgres)", () => {
           "attempted:",
           "attempted:",
           `failed:${ACT_RAISED_REASON}`,
-          "failed:refused",
+          // A reported failure's text is logged too; its record names the act's code, or this key
+          // (TASK-209: the text was recorded and shown on the audit log page).
+          `failed:${ACT_REPORTED_FAILURE}`,
+          "attempted:",
+          "failed:approvals.decision_conflict",
+          "attempted:",
+          "failed:rate.limited",
         ].sort()
       );
     });

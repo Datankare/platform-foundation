@@ -16,6 +16,8 @@ import { AUDIT_ACTIONS } from "@/platform/auth/audit";
 import { pageParams } from "@/lib/pagination";
 import { tenantRoute } from "@/platform/tenancy/route";
 import { namedAccounts, type NamedAccount } from "@/platform/admin/account-names";
+import { negotiateLocale } from "@/platform/errors/messages";
+import { renderRecordedDeep } from "@/platform/errors/recorded-words";
 
 /**
  * A row's actor or target as the screen names it (TASK-202, N-63): an account of this tenant by
@@ -99,6 +101,7 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
 
   // Every actor and target of the page, named in one read (N-63).
   const accounts = await namedAccounts(rows.flatMap((r) => [r.actor_id, r.target_id]));
+  const locale = negotiateLocale(request.headers.get("accept-language"));
   const entries = rows.map((row) => ({
     id: row.id,
     action: row.action,
@@ -106,7 +109,9 @@ export const GET = tenantRoute(async function GET(request: NextRequest) {
     targetId: row.target_id,
     actor: shownAccount(row.actor_id ? accounts.get(row.actor_id) : undefined),
     target: shownAccount(row.target_id ? accounts.get(row.target_id) : undefined),
-    details: JSON.stringify(row.details),
+    // The platform's words in its details — a run's reason, a change's note: a catalog key and
+    // values (TASK-209) — in the reader's language; codes, ids and a person's text as they are.
+    details: JSON.stringify(renderRecordedDeep(row.details, locale)),
     createdAt: row.created_at.toISOString(),
   }));
 

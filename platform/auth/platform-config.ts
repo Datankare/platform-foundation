@@ -49,6 +49,11 @@ import {
 } from "@/platform/data";
 import { peekTenant } from "@/platform/tenancy/context";
 import { refusesRequiredSchedule } from "@/platform/jobs/required-schedule";
+import {
+  isRecordedText,
+  noteColumns,
+  type RecordedNote,
+} from "@/platform/errors/recorded-text";
 import type {
   ConfigValueType,
   ConfigValidationResult,
@@ -694,6 +699,7 @@ interface ConfigHistoryRow {
   new_value: unknown;
   changed_by: string | null;
   change_comment: string;
+  change_shown: unknown;
   change_source: string;
   created_at: Date | string;
   scope: string;
@@ -714,7 +720,7 @@ export async function getConfigHistory(
     ({ rows } = await withTenantTx((tx) =>
       tx.query<ConfigHistoryRow>(
         `select id, config_key, previous_value, new_value, changed_by, change_comment,
-                change_source, created_at, scope
+                change_shown, change_source, created_at, scope
            from platform_config_history
           where ($1::text is null or config_key = $1)
             and ($2::uuid is null or changed_by = $2)
@@ -745,6 +751,7 @@ export async function getConfigHistory(
     newValue: row.new_value,
     changedBy: row.changed_by,
     changeComment: row.change_comment,
+    ...(isRecordedText(row.change_shown) ? { changeShown: row.change_shown } : {}),
     changeSource: row.change_source as ConfigChangeSource,
     createdAt: iso(row.created_at),
     scope: row.scope === "tenant" ? "tenant" : "platform",
@@ -857,7 +864,11 @@ export async function setConfigWithHistory(
   key: string,
   value: unknown,
   actorId: string,
-  changeComment: string,
+  /**
+   * What the person wrote, as written — or the platform's own note on the change, a catalog key
+   * and values (TASK-209), kept in change_shown with an empty comment.
+   */
+  changeComment: RecordedNote,
   changeSource: ConfigChangeSource = "config_agent",
   /** A5: Pass a pre-loaded entry to avoid redundant DB round trip */
   preloadedEntry: EnhancedConfigEntry | undefined,
@@ -931,6 +942,7 @@ export async function setConfigWithHistory(
   }
 
   const previousValue = target.scope === "platform" ? entry.platformValue : entry.value;
+  const comment = noteColumns(changeComment);
   // History is visible to the tenant whose change it is; a shared deployment's defaults are the
   // operators' alone (tenant_id null).
   const historyTenant =
@@ -981,14 +993,15 @@ export async function setConfigWithHistory(
     }
     await tx.query(
       `insert into platform_config_history
-         (config_key, previous_value, new_value, changed_by, change_comment, change_source, scope, tenant_id)
-       values ($1, $2::jsonb, $3::jsonb, $4::uuid, $5, $6, $7, $8::uuid)`,
+         (config_key, previous_value, new_value, changed_by, change_comment, change_shown, change_source, scope, tenant_id)
+       values ($1, $2::jsonb, $3::jsonb, $4::uuid, $5, $6::jsonb, $7, $8, $9::uuid)`,
       [
         key,
         JSON.stringify(previousValue ?? null),
         JSON.stringify(value ?? null),
         uuidOrNull(actorId),
-        changeComment,
+        comment.text ?? "",
+        comment.shown ? JSON.stringify(comment.shown) : null,
         changeSource,
         target.scope,
         historyTenant,
@@ -1007,7 +1020,8 @@ export async function setConfigWithHistory(
           scope: target.scope,
           previousValue,
           newValue: value,
-          changeComment,
+          ...(comment.text !== null ? { changeComment: comment.text } : {}),
+          ...(comment.shown ? { changeShown: comment.shown } : {}),
           changeSource,
         },
       },
@@ -1067,7 +1081,8 @@ export async function setConfigWithHistory(
 export async function clearTenantConfig(
   key: string,
   actorId: string,
-  changeComment: string,
+  /** As setConfigWithHistory's: a person's comment, or the platform's note (TASK-209). */
+  changeComment: RecordedNote,
   operator: boolean,
   options: {
     /**
@@ -1094,6 +1109,7 @@ export async function clearTenantConfig(
   }
   const tenant = peekTenant();
   if (!tenant) return { success: false, error: "A tenant's value needs a tenant." };
+  const comment = noteColumns(changeComment);
   if (!entry.tenantOverridable && !operator) {
     return {
       success: false,
@@ -1125,14 +1141,15 @@ export async function clearTenantConfig(
     );
     await tx.query(
       `insert into platform_config_history
-         (config_key, previous_value, new_value, changed_by, change_comment, change_source, scope, tenant_id)
-       values ($1, $2::jsonb, $3::jsonb, $4::uuid, $5, 'admin_ui', 'tenant', $6::uuid)`,
+         (config_key, previous_value, new_value, changed_by, change_comment, change_shown, change_source, scope, tenant_id)
+       values ($1, $2::jsonb, $3::jsonb, $4::uuid, $5, $6::jsonb, 'admin_ui', 'tenant', $7::uuid)`,
       [
         key,
         JSON.stringify(entry.value ?? null),
         JSON.stringify(entry.platformValue ?? null),
         uuidOrNull(actorId),
-        changeComment,
+        comment.text ?? "",
+        comment.shown ? JSON.stringify(comment.shown) : null,
         tenant.tenantId,
       ]
     );
@@ -1146,7 +1163,8 @@ export async function clearTenantConfig(
           type: "config_override_cleared",
           key,
           previousValue: entry.value,
-          changeComment,
+          ...(comment.text !== null ? { changeComment: comment.text } : {}),
+          ...(comment.shown ? { changeShown: comment.shown } : {}),
         },
       },
       async (): Promise<WriteResult> => {

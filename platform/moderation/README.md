@@ -67,11 +67,11 @@ A single screenContent() call flows through 4 files:
 3. **config.ts** — reads thresholds from platform_config table (60s cache)
 4. **context.ts** — determines severity adjustments based on content type and user history
 
-To debug: query content_safety_audit by request_id or trajectory_id, read the reasoning field, check context_factors for adjustments applied.
+To debug: query content_safety_audit by request_id or trajectory_id, read `reasoning_shown` (the Guardian's reasons, catalog keys and values — `reasonsText` words them) and `context_factors_shown` for adjustments applied. A row from before TASK-209 that no template matched keeps its text in `reasoning` / `context_factors`.
 
 ## Reasoning Safety
 
-The reasoning field contains metadata only — severity levels, confidence scores, threshold names, content type labels. Raw input text is never included. The inputHash (SHA-256) is the only reference to original content. The classifierOutput JSONB may contain the classifier's reason string (AI-generated, may reference input themes) — acceptable for admin audit trail but should not be exposed to end users.
+The reasons are catalog keys and values (`platform/moderation/reasons.ts`, `screens.moderation.*`; TASK-209) carrying metadata only — severity levels, confidence scores, threshold and level names, content type labels — worded where they are read, in the reader's language. Raw input text is never included. The inputHash (SHA-256) is the only reference to original content. The classifier's own words (AI-generated, may reference input themes) are kept apart as `classifierOutput.rawReason`: raw model output, never shown as a screen's text; the platform's notes on an answer are `classifierOutput.note` (a key). The review assistant's prompt renders the reasons in English at its boundary (model input, `review-assist.ts`).
 
 ## Gotchas
 

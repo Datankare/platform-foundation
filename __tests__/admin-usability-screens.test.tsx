@@ -77,7 +77,14 @@ describe("Platform config: a setting opens its panel and can be changed (N-60)",
     const panel = screen.getByRole("region", {
       name: /moderation\.strike_ban_threshold/,
     });
-    expect(within(panel).getByText("Strikes before an account is banned.")).toBeTruthy();
+    // The catalog's description, by the setting's key (TASK-209, N-113): the stored English the
+    // fixture's database held ("Strikes before an account is banned.") is never shown.
+    expect(
+      within(panel).getByText(
+        renderMessage("screens.settings.moderation.strike_ban_threshold")
+      )
+    ).toBeTruthy();
+    expect(within(panel).queryByText("Strikes before an account is banned.")).toBeNull();
     expect(within(panel).getByText(cfg("field_default"))).toBeTruthy();
     expect(within(panel).getByText(cfg("range", { min: 1, max: 20 }))).toBeTruthy();
     expect(within(panel).getByText(new RegExp(cfg("tier_safety")))).toBeTruthy();

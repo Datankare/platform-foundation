@@ -17,6 +17,8 @@ export type {
 
 import type { ClassifierOutput, SafetySeverity } from "@/prompts/safety/classify-v1";
 import type { AgentIdentity } from "@/platform/agents/types";
+import type { ShownText } from "@/platform/errors/shown-text";
+import type { RecordedFactor, RecordedReasons } from "./reasons";
 
 // ---------------------------------------------------------------------------
 // Content rating levels — from platform/auth/coppa.ts
@@ -128,12 +130,15 @@ export interface ModerationResult {
   blocklistMatches: string[];
   /** Classifier output (if classifier was invoked) */
   classifierOutput?: ClassifierOutput;
-  /** Human-readable reasoning chain for the decision */
-  reasoning: string;
+  /**
+   * Why it decided, line by line: catalog keys and values (./reasons.ts, TASK-209), worded by a
+   * reader; a record from before the keys holds its stored text.
+   */
+  reasoning: RecordedReasons;
   /** Severity adjustment applied (negative = reduced severity) */
   severityAdjustment: number;
-  /** Context factors that influenced the decision */
-  contextFactors: string[];
+  /** Context factors that influenced the decision: keys and values (or, recorded before, text). */
+  contextFactors: readonly RecordedFactor[];
   /** Whether user strikes should be attributed (false for ai-output) */
   attributeToUser: boolean;
   /** Latency of the full pipeline in ms */
@@ -185,12 +190,12 @@ export interface ModerationAuditRecord {
   severity: string;
   /** Action taken */
   actionTaken: ModerationAction;
-  /** Human-readable reasoning chain */
-  reasoning: string;
+  /** Why it decided: keys and values (./reasons.ts, TASK-209); a record from before, its text. */
+  reasoning: RecordedReasons;
   /** Severity adjustment applied */
   severityAdjustment: number;
-  /** Context factors */
-  contextFactors: string[];
+  /** Context factors: keys and values (or, recorded before, their text). */
+  contextFactors: readonly RecordedFactor[];
   /** Whether user strikes were attributed */
   attributeToUser: boolean;
   /** Classifier cost in USD */
@@ -237,8 +242,8 @@ export interface BlocklistPattern {
 export interface ContentRatingThresholds {
   /** Content rating level */
   readonly level: ContentRatingLevel;
-  /** Label for logging */
-  readonly label: string;
+  /** The level's name, from the catalog (screens.moderation.levels.*, TASK-209): in a reason. */
+  readonly label: ShownText;
   /** Minimum severity that triggers a block */
   readonly blockSeverity: SafetySeverity;
   /** Minimum severity that triggers a warn */
@@ -433,8 +438,11 @@ export interface SentinelResult {
   readonly previousStatus: AccountStatus;
   /** New account status after this decision */
   readonly newStatus: AccountStatus;
-  /** Human-readable reasoning chain */
-  readonly reasoning: string;
+  /**
+   * Why it decided, line by line: each a catalog key and values (screens.sentinel.*, TASK-209),
+   * worded by a reader in their language (renderShown) — never English composed here.
+   */
+  readonly reasoning: readonly ShownText[];
   /** Sentinel trajectory ID (P18) */
   readonly trajectoryId: string;
   /** Sentinel agent ID (P15) */

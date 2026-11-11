@@ -151,7 +151,7 @@ describe("R13-L5 audited() inside a transaction whose commit is lost records ind
     ).rejects.toThrow(/connection failed/);
     expect(audits.map((a) => a.outcome)).toEqual(["attempted", "indeterminate"]);
     expect(audits[1]).toMatchObject({
-      reason: expect.stringMatching(/whether it took effect is unknown/),
+      reason: "screens.records.audit_indeterminate",
       attemptId: audits[0].attemptId,
     });
   });

@@ -57,6 +57,13 @@ const EXPECTED_EXPORTS = [
   "CORE_MODERATION_CONTENT_TYPES",
   "isModerationContentType",
   "listModerationContentTypes",
+  // TASK-209 — the pipeline's reasons as catalog keys, worded by a reader
+  "isRecordedFactor",
+  "isRecordedReasons",
+  "reasonText",
+  "reasonsText",
+  "recordedFactor",
+  "recordedReasons",
 ].sort();
 
 describe("platform/moderation — public API surface", () => {

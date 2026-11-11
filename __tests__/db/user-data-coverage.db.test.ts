@@ -850,17 +850,31 @@ dbDescribe(`${SUITE} erasure`, () => {
         [other]
       )
     ).toEqual(otherBefore);
-    const [review] = await sql(
+    // N-114 (TASK-209): the other account has two cases — the one the user decided (r2) and one
+    // that mentions the user (r3) — read by request, in order. The read had no order and took the
+    // first row Postgres returned: the erasure's updates write new row versions, wherever a page
+    // has room — which other sessions' writes change — so r3 was sometimes first ("pending").
+    const reviews = await sql(
       t,
-      "select status, decision, claimed_by, resolved_by from review_queue where target_user_id = $1::uuid",
+      "select request_id, status, decision, claimed_by, resolved_by from review_queue where target_user_id = $1::uuid order by request_id",
       [other]
     );
-    expect(review).toEqual({
-      status: "resolved",
-      decision: "uphold",
-      claimed_by: null,
-      resolved_by: null,
-    });
+    expect(reviews).toEqual([
+      {
+        request_id: "r2",
+        status: "resolved",
+        decision: "uphold",
+        claimed_by: null,
+        resolved_by: null,
+      },
+      {
+        request_id: "r3",
+        status: "pending",
+        decision: null,
+        claimed_by: null,
+        resolved_by: null,
+      },
+    ]);
     const [shared] = await sql(t, "select meta from app_sessions where id = $1", [
       `s-shared-${user}`,
     ]);

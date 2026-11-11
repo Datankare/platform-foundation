@@ -27,6 +27,11 @@
  * @module platform/moderation
  */
 
+import {
+  BAN_STRIKE_THRESHOLD,
+  STRIKE_REASON_KIND,
+} from "@/platform/errors/recorded-text";
+import { shown, type ShownText } from "@/platform/errors/shown-text";
 import { revokeTokenVerification } from "@/platform/auth/token-verification";
 import type { AgentIdentity } from "@/platform/agents/types";
 import { generateId } from "@/platform/agents/utils";
@@ -123,6 +128,32 @@ const STANDING_RANK: Readonly<Record<AccountStatus, number>> = {
 // Sentinel agent
 // ---------------------------------------------------------------------------
 
+/** A recorded strike's reasoning line (screens.sentinel.*, TASK-209). */
+function strikeLine(
+  category: string,
+  severity: string,
+  expiresAt: string | null
+): ShownText {
+  return expiresAt
+    ? shown("screens.sentinel.strike_recorded", { category, severity, expiresAt })
+    : shown("screens.sentinel.strike_recorded_permanent", { category, severity });
+}
+
+/** The evaluation's reasoning line: the strikes, the thresholds, the consequence (TASK-209). */
+function evaluatedLine(
+  total: number,
+  t: { warnAt: number; suspendAt: number; banAt: number },
+  consequence: string
+): ShownText {
+  return shown("screens.sentinel.evaluated", {
+    total,
+    warnAt: t.warnAt,
+    suspendAt: t.suspendAt,
+    banAt: t.banAt,
+    consequence,
+  });
+}
+
 /**
  * The Sentinel account consequences agent.
  *
@@ -170,7 +201,13 @@ export class Sentinel {
     }
 
     const store = getStrikeStore();
-    const reasonParts: string[] = [];
+    // Why it decided, line by line: catalog keys and values (TASK-209 — it was English), worded
+    // by a reader (screens.sentinel.*).
+    const reasonParts: ShownText[] = [];
+    // The strike's stored reason: a code — what triggered the block — beside its category and
+    // severity in their own columns (TASK-209, N-112: it was the English of reasonParts[0]); the
+    // data export words it (screens.records.strike_guardian_block).
+    const strikeReason = `${STRIKE_REASON_KIND}:${moderationResult.triggeredBy}`;
 
     // Step-shared state lives in one object: its assignments happen inside the
     // workflow closure, and object-property reads use the declared type (they are
@@ -197,7 +234,11 @@ export class Sentinel {
       switch (ctx.stepCount) {
         case 0: {
           reasonParts.push(
-            `Guardian blocked content: ${category} (severity: ${severity}, triggered by: ${moderationResult.triggeredBy}).`
+            shown("screens.sentinel.blocked", {
+              category,
+              severity,
+              triggeredBy: moderationResult.triggeredBy,
+            })
           );
           return {
             action: "receive-block",
@@ -216,7 +257,9 @@ export class Sentinel {
         }
         case 1: {
           const summary = await store.getStrikeSummary(userId);
-          reasonParts.push(`User has ${summary.totalActive} active strike(s).`);
+          reasonParts.push(
+            shown("screens.sentinel.active_strikes", { count: summary.totalActive })
+          );
           return {
             action: "load-history",
             boundary: "cognition",
@@ -245,7 +288,7 @@ export class Sentinel {
             guardianDecisionId: moderationResult.trajectoryId,
             trajectoryId: ctx.trajectoryId,
             agentId: this.identity.actorId,
-            reason: reasonParts[0],
+            reason: strikeReason,
             expiresAt: acc.expiresAt,
             expired: false,
           });
@@ -261,12 +304,10 @@ export class Sentinel {
               requestId,
               route: "platform/moderation/sentinel",
             });
-            reasonParts.push(`Strike recording FAILED: ${recorded.error}.`);
+            // The store's error is in the log line above.
+            reasonParts.push(shown("screens.sentinel.strike_failed"));
           } else {
-            reasonParts.push(
-              `Strike recorded: ${category} (${severity}).` +
-                (acc.expiresAt ? ` Expires: ${acc.expiresAt}.` : " Never expires.")
-            );
+            reasonParts.push(strikeLine(category, severity, acc.expiresAt));
           }
 
           return {
@@ -293,9 +334,7 @@ export class Sentinel {
           acc.newStatus = consequenceToStatus(acc.consequence, acc.currentStatus);
 
           reasonParts.push(
-            `Total active strikes: ${acc.updatedSummary.totalActive}. ` +
-              `Thresholds: warn=${thresholds.warnAt}, suspend=${thresholds.suspendAt}, ban=${thresholds.banAt}. ` +
-              `Consequence: ${acc.consequence}.`
+            evaluatedLine(acc.updatedSummary.totalActive, thresholds, acc.consequence)
           );
 
           return {
@@ -348,9 +387,16 @@ export class Sentinel {
                   this.identity.actorId
                 )
             );
-            reasonParts.push(`Status changed: ${acc.currentStatus} -> ${acc.newStatus}.`);
+            reasonParts.push(
+              shown("screens.sentinel.status_changed", {
+                from: acc.currentStatus,
+                to: acc.newStatus,
+              })
+            );
           } else {
-            reasonParts.push(`No status change needed (current: ${acc.currentStatus}).`);
+            reasonParts.push(
+              shown("screens.sentinel.status_kept", { status: acc.currentStatus })
+            );
           }
 
           return {
@@ -385,9 +431,7 @@ export class Sentinel {
         finalStatus: exec.finalStatus,
         error: exec.error,
       });
-      reasonParts.push(
-        "Sentinel run did not complete — consequence not applied (surfaced)."
-      );
+      reasonParts.push(shown("screens.sentinel.incomplete"));
     }
 
     // The decision record (also read by the appeals route for previousStatus). Best effort: the
@@ -453,7 +497,7 @@ export class Sentinel {
         guardianDecisionId: moderationResult.trajectoryId,
         trajectoryId,
         agentId: this.identity.actorId,
-        reason: reasonParts[0],
+        reason: strikeReason,
         expiresAt: acc.expiresAt,
         expired: false,
         createdAt: new Date().toISOString(),
@@ -462,7 +506,7 @@ export class Sentinel {
       consequenceAction: acc.consequence,
       previousStatus: acc.currentStatus,
       newStatus: acc.newStatus,
-      reasoning: reasonParts.join(" "),
+      reasoning: reasonParts,
       trajectoryId,
       agentId: this.identity.actorId,
     };
@@ -522,8 +566,8 @@ async function updateUserStatus(
             status_changed_at = now(),
             suspended_until = coalesce($4::timestamptz, suspended_until),
             banned_at = case when $5::boolean then now() else banned_at end,
-            ban_reason = case when $5::boolean then $6 else ban_reason end,
-            ban_note = case when $5::boolean then null else ban_note end
+            ban_reason = case when $5::boolean then null else ban_reason end,
+            ban_note = case when $5::boolean then $6::jsonb else ban_note end
           where id = $1::uuid
           returning cognito_sub`,
         [
@@ -532,7 +576,9 @@ async function updateUserStatus(
           agentId,
           suspendedUntil?.toISOString() ?? null,
           ban,
-          "Automatic ban: strike threshold exceeded",
+          // The platform's note on the ban: the catalog's key (TASK-209: it was English in
+          // ban_reason, which is for what a person wrote).
+          JSON.stringify(BAN_STRIKE_THRESHOLD),
         ]
       )
     );

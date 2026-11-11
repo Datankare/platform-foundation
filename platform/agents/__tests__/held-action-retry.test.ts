@@ -151,7 +151,7 @@ describe("a kept approval: the workflow waits to be approved again", () => {
     expect(await proposals.getById(proposalId)).toMatchObject({
       status: "approved",
       // R-77: why the run failed is in the log; the approval keeps a fixed reason.
-      lastRunError: expect.stringContaining("the run raised an error"),
+      lastRunError: "screens.held.note_run_failed",
     });
     expect(executed).toEqual([]);
   });
@@ -163,7 +163,7 @@ describe("a kept approval: the workflow waits to be approved again", () => {
       proposalId,
       awaiting: "retry",
       // R-77: why the run failed is in the log; the approval keeps a fixed reason.
-      lastRunError: expect.stringContaining("the run raised an error"),
+      lastRunError: "screens.held.note_run_failed",
       approver: expect.objectContaining({ actorType: "user" }),
     });
     expect(r.nextActions[0].description).toMatch(/approved again/);

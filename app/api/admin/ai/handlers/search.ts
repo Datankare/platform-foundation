@@ -73,6 +73,11 @@ import { logger } from "@/lib/logger";
 import { SEARCHABLE_TABLES } from "../tool-permissions";
 import { USER_STATUS_SQL } from "@/app/api/admin/users/listing";
 import { coded, type ActionResult, type SearchCell, type SearchTable } from "./shared";
+import {
+  permissionName,
+  permissionNamesByCode,
+  settingDescription,
+} from "@/platform/errors/definitions";
 import { namedAccounts } from "@/platform/admin/account-names";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -208,21 +213,23 @@ export const SEARCH_SQL: Readonly<Record<SearchableTable, string>> = {
   roles: `select id, name, display_name, description, created_at, ${TOTAL} from roles
            where ($1 = '' or ${CONTAINS("name", "$1")} or ${CONTAINS("display_name", "$1")})
            order by ${roleOrderSql()}, id limit ${SEARCH_ROW_LIMIT}`,
-  // $1 text, $2 the category order (PERMISSION_CATEGORY_ORDER). As the Roles screen orders them
-  // (TASK-192 round 1): category, then display name, then code.
+  // $1 text, $2 the category order (PERMISSION_CATEGORY_ORDER), $3 the catalog's names by code
+  // (TASK-209). As the Roles screen orders them (TASK-192 round 1): category, then the name it
+  // shows, then code.
   permissions: `select id, code, display_name, category, ${TOTAL} from permissions
                  where ($1 = '' or ${CONTAINS("code", "$1")} or ${CONTAINS("display_name", "$1")}
                         or ${CONTAINS("category", "$1")})
-                 order by ${permissionOrderSql("$2")}, id limit ${SEARCH_ROW_LIMIT}`,
-  // $1 text, $2 the category order (PERMISSION_CATEGORY_ORDER). As the Roles screen lists them
-  // (TASK-192): by role (sort_order, name), then category — those in $2 in its order, any other
-  // after them by name, case ignored — then the permission's display name and code.
+                 order by ${permissionOrderSql("$2", "", "$3")}, id limit ${SEARCH_ROW_LIMIT}`,
+  // $1 text, $2 the category order (PERMISSION_CATEGORY_ORDER), $3 the catalog's names by code. As
+  // the Roles screen lists them (TASK-192): by role (sort_order, name), then category — those in $2
+  // in its order, any other after them by name, case ignored — then the permission's name as the
+  // screen shows it (TASK-209) and code.
   role_permissions: `select rp.id, r.name as role, p.code as permission, rp.created_at, ${TOTAL}
                        from role_permissions rp
                        join roles r on r.id = rp.role_id
                        join permissions p on p.id = rp.permission_id
                       where ($1 = '' or ${CONTAINS("r.name", "$1")} or ${CONTAINS("p.code", "$1")})
-                      order by ${roleOrderSql("r")}, ${permissionOrderSql("$2", "p")}, rp.id
+                      order by ${roleOrderSql("r")}, ${permissionOrderSql("$2", "p", "$3")}, rp.id
                       limit ${SEARCH_ROW_LIMIT}`,
   // $1 text
   entitlement_groups: `select id, code, display_name, is_active, ${TOTAL} from entitlement_groups
@@ -325,7 +332,11 @@ export function searchParams(table: SearchableTable, f: Filters): unknown[] {
       return [text, f.category ?? null];
     case "permissions":
     case "role_permissions":
-      return [text, [...PERMISSION_CATEGORY_ORDER]];
+      return [
+        text,
+        [...PERMISSION_CATEGORY_ORDER],
+        JSON.stringify(permissionNamesByCode()),
+      ];
     default:
       return [text];
   }
@@ -349,13 +360,23 @@ function cell(value: unknown, json: boolean): SearchCell {
   return JSON.stringify(value) ?? null;
 }
 
-/** A row as its allowlisted cells — only SEARCH_COLUMNS[table], whatever the row carries. */
+/**
+ * A row as its allowlisted cells — only SEARCH_COLUMNS[table], whatever the row carries. A
+ * setting's description and a permission's name are the catalog's, by key and code (TASK-209,
+ * N-113): the stored English is the definitional record (the search matches it), never shown.
+ */
 export function searchRow(
   table: SearchableTable,
   row: Readonly<Record<string, unknown>>
 ): SearchCell[] {
   const json = JSON_COLUMNS[table] ?? [];
-  return SEARCH_COLUMNS[table].map((column) => cell(row[column], json.includes(column)));
+  return SEARCH_COLUMNS[table].map((column) => {
+    if (table === "platform_config" && column === "description")
+      return settingDescription(String(row.key ?? ""));
+    if (table === "permissions" && column === "display_name")
+      return permissionName(String(row.code ?? ""));
+    return cell(row[column], json.includes(column));
+  });
 }
 
 export async function handleSearch(

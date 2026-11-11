@@ -17,6 +17,7 @@
  * @module platform/social
  */
 
+import type { ShownText } from "@/platform/errors/shown-text";
 import type { AgentIdentity } from "@/platform/agents/types";
 
 // ── Group ─────────────────────────────────────────────────────────────
@@ -88,6 +89,11 @@ export interface GroupResult {
   readonly success: boolean;
   readonly group?: Group;
   readonly error?: string;
+  /**
+   * Why the content screen refused it (error "content_refused"): catalog keys and values
+   * (TASK-209), worded where they are shown.
+   */
+  readonly refused?: readonly ShownText[];
 }
 
 /** Result from invite operations */

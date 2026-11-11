@@ -49,6 +49,13 @@ function clean(text: string): string {
 }
 
 /**
+ * A job whose last attempt's lease lapsed (its worker stopped before it finished): dead, recorded
+ * as this code by job_claim (migration 067) and the in-memory store — worded by the Jobs console
+ * (screens.jobs.errors.lease_expired). TASK-209: it was English.
+ */
+export const LEASE_EXPIRED = "lease_expired";
+
+/**
  * The operator-safe description of a thrown value. Never includes a message the platform did
  * not write itself.
  */

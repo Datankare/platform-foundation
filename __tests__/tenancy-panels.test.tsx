@@ -103,7 +103,8 @@ describe("TenantSettingsView", () => {
     expect(sent(0)).toEqual({
       url: "/api/admin/config",
       method: "PUT",
-      body: { key: "max_devices_per_player", value: 5, changeComment: "Tenant settings" },
+      // The note is the server's (screens.records.changed_on_page); the screen sends none.
+      body: { key: "max_devices_per_player", value: 5 },
     });
     expect(sent(1).url).toBe("/api/admin/tenant");
   });
@@ -497,7 +498,6 @@ describe("OperatorTenantsView — one tenant's settings, as an operator", () => 
     expect(JSON.parse(String(put[1].body))).toEqual({
       key: "agent.budget.tenant_max_cost_per_day",
       value: 25,
-      changeComment: "Set by an operator for this tenant",
     });
   });
 

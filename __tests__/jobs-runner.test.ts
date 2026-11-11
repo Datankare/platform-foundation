@@ -755,7 +755,7 @@ describe("runDue at its limits: misbehaving handlers, budgets, leases", () => {
     clock += 6_000;
     expect((await run([k])).claimed).toBe(0);
     expect((await store.getJob(id))?.status).toBe("dead");
-    expect((await store.getJob(id))?.lastError).toMatch(/lease expired/);
+    expect((await store.getJob(id))?.lastError).toBe("lease_expired");
   });
 
   it("does not run a suspended tenant's jobs", async () => {

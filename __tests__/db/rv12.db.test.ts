@@ -23,6 +23,7 @@ jest.mock("@/lib/logger", () => ({
   generateRequestId: () => "req",
 }));
 
+import { POWER_REDUCED } from "@/platform/errors/recorded-text";
 import { PostgresTrajectoryStore } from "@/platform/agents/postgres-trajectory-store";
 import {
   chainSteps,
@@ -489,7 +490,7 @@ dbDescribe(
         })
       );
       const out = await t.run(() =>
-        withdrawSupersededHolds(KEY(), reducer, "rv12 reduction", "tenant")
+        withdrawSupersededHolds(KEY(), reducer, POWER_REDUCED, "tenant")
       );
       expect(out).toEqual({
         holds: [held.proposalId],
@@ -542,10 +543,24 @@ dbDescribe(
       expect(out).toMatchObject({ success: false, errorCode: "approvals.stale" });
       expect(
         await sql(
-          "select status::text as status, review_comment from config_pending_approvals where id = $1::uuid",
+          "select status::text as status, review_comment, review_shown from config_pending_approvals where id = $1::uuid",
           [approval.record!.id]
         )
-      ).toEqual([{ status: "rejected", review_comment: expect.stringMatching(/stale/) }]);
+      ).toEqual([
+        {
+          status: "rejected",
+          // The system's record, a catalog key and values (TASK-209: it was English).
+          review_comment: null,
+          review_shown: {
+            key: "screens.records.config_withdrawn",
+            params: {
+              why: { key: "screens.records.config_stale", params: { key: KEY() } },
+              approvedBy: reviewer,
+              approvedAt: expect.any(String),
+            },
+          },
+        },
+      ]);
     });
   }
 );

@@ -59,6 +59,7 @@ jest.mock("@/platform/moderation/review-service", () => ({
   submitForReview: (...args: unknown[]) => mockSubmitForReview(...args),
 }));
 
+import { reasonsText, type Reasons } from "../reasons";
 import { setOrchestrator, clearMetrics } from "@/platform/ai";
 import { AIRefusalError } from "@/platform/ai/provider";
 import { estimateCost } from "@/platform/ai/instrumentation";
@@ -142,7 +143,7 @@ describe("TASK-186: a classifier that declines the text is withheld for review, 
           expect(r.action).toBe("escalate");
           expect(["allow", "warn"]).not.toContain(r.action);
           expect(r.screeningUnavailable).toBeFalsy();
-          expect(r.reasoning).toMatch(/declined/);
+          expect(reasonsText(r.reasoning as Reasons)).toMatch(/declined/);
           expect((r.classifierOutput as { declined?: true }).declined).toBe(true);
           // Queued for a human, and no strike: the Sentinel never runs.
           expect(mockSubmitForReview).toHaveBeenCalledTimes(1);
@@ -160,7 +161,11 @@ describe("TASK-186: a classifier that declines the text is withheld for review, 
     declined();
     const { classify } = await import("@/platform/moderation/classifier");
     const out = await classify("x", "req-cost");
-    expect(out).toMatchObject({ safe: false, reason: "declined", declined: true });
+    expect(out).toMatchObject({
+      safe: false,
+      note: { key: "screens.moderation.classifier.declined" },
+      declined: true,
+    });
     expect(out.unavailable).toBeUndefined();
     expect(out.unjudged).toBeUndefined();
     expect(out.costUsd).toBeCloseTo(
