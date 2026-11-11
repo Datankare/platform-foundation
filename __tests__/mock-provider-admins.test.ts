@@ -25,6 +25,21 @@ describe("the test double's administrators", () => {
     expect(a?.sessionId).not.toBe(b?.sessionId);
   });
 
+  it("the moderation journey's moderator and member are their own identities (TASK-210)", async () => {
+    const auth = createMockAuthProvider();
+    const m = await auth.verifyToken("mock-access-token:moderator-m");
+    const u = await auth.verifyToken("mock-access-token:member-u");
+    expect(m).toMatchObject({
+      sub: "e2e00000-0000-4000-8000-00000000000d",
+      email: "moderator-m@e2e.test",
+    });
+    expect(u).toMatchObject({
+      sub: "e2e00000-0000-4000-8000-00000000000e",
+      email: "member-u@e2e.test",
+    });
+    expect(new Set([m?.sessionId, u?.sessionId]).size).toBe(2);
+  });
+
   it("[hostile:id-spelling] another spelling of a token, or an inherited property name, is no one", async () => {
     const auth = createMockAuthProvider();
     for (const token of [

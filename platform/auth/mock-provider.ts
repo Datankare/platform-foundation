@@ -40,7 +40,7 @@ const MOCK_GUEST_ID = "mock-guest-001";
 /**
  * Further test-double identities, by token (TASK-202): the E2E admin journeys need two
  * administrators — one asks for a change, a different one approves it (dual control never lets
- * the requester approve). Each signs in with a second factor, as staff must (audit A-9). Only the
+ * the requester approve); the moderation journey (TASK-210) a moderator and a member. Each signs in with a second factor, as staff must (audit A-9). Only the
  * test double knows them: a deployment never runs it (ADR-050 D1 — the environment contract
  * refuses the mock provider off the ci and local hosts).
  */
@@ -54,6 +54,17 @@ export const MOCK_EXTRA_IDENTITIES: Readonly<
   "mock-access-token:admin-b": {
     sub: "e2e00000-0000-4000-8000-00000000000b",
     email: "admin-b@e2e.test",
+  },
+  // TASK-210 (N-117): the moderation journey's moderator (the moderator role, seeded as the
+  // admins are) and the member whose content is blocked and who appeals it (provisioned on first
+  // use with the default role, as every new account is).
+  "mock-access-token:moderator-m": {
+    sub: "e2e00000-0000-4000-8000-00000000000d",
+    email: "moderator-m@e2e.test",
+  },
+  "mock-access-token:member-u": {
+    sub: "e2e00000-0000-4000-8000-00000000000e",
+    email: "member-u@e2e.test",
   },
 };
 

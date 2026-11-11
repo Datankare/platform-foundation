@@ -537,7 +537,7 @@ export class Guardian {
         screeningUnavailable: true,
         unjudgedReason: "unavailable",
       });
-      logModerationAudit(text, failClosed, requestId);
+      logModerationAudit(text, failClosed, requestId, context.userId);
       return failClosed;
     }
 
@@ -560,7 +560,8 @@ export class Guardian {
       ...unjudgedFields(acc.classifierUnavailable, acc.unjudged),
     });
 
-    logModerationAudit(text, result, requestId);
+    // The decision recorded against the account it is about (TASK-210): what an appeal names.
+    logModerationAudit(text, result, requestId, context.userId);
     return result;
   }
 

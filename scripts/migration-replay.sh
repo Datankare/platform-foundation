@@ -474,6 +474,62 @@ DELETE FROM public.effect_ledger WHERE operation_id = 'replay-067';
 DELETE FROM public.jobs WHERE kind = 'replay.r067';
 SQL
 
+step "068: a moderation decision recorded before names the account its strike or review case names — once, never an erased account's, never an ambiguous one"
+# Decisions as the Guardian recorded them before 068 (no account), each named — or not — by a
+# strike or a review case: one by a strike, one by an escalation, one by an erased account's
+# strike, one by two accounts, one by nothing, and one that already names an account. 068 applied
+# again gives the first two theirs and leaves the rest; applied twice, nothing changes.
+"${PSQL[@]}" -q <<'SQL'
+INSERT INTO public.users (tenant_id, id, role_id, deleted_at)
+SELECT t.id, ('0680000' || n || '-0000-4000-8000-000000000000')::uuid, r.id,
+       CASE n WHEN 2 THEN now() END
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (SELECT id FROM public.roles WHERE is_default) r, generate_series(1, 3) n;
+INSERT INTO public.content_safety_audit (tenant_id, id, input_hash, trajectory_id, agent_id, request_id, action_taken, user_id)
+SELECT t.id, ('06800000-0000-4000-8000-00000000000' || v.n)::uuid, 'h', v.trajectory, 'guardian', 'replay-068', 'block', v.user_id
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES (1, 'replay-068-strike', NULL), (2, 'replay-068-review', NULL), (3, 'replay-068-erased', NULL),
+               (4, 'replay-068-two', NULL), (5, 'replay-068-none', NULL), (6, 'replay-068-set', 'recorded-account')
+       ) AS v(n, trajectory, user_id);
+INSERT INTO public.user_strikes (tenant_id, id, user_id, category, severity, trajectory_id, agent_id, reason, guardian_decision_id)
+SELECT t.id, ('06800000-0000-4000-8000-0000000000f' || v.n)::uuid, v.user_id::uuid, 'hate', 'high', 'replay-068', 'sentinel', 'screens.records.strike', v.decision
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES (1, '06800001-0000-4000-8000-000000000000', 'replay-068-strike'),
+               (2, '06800002-0000-4000-8000-000000000000', 'replay-068-erased'),
+               (3, '06800001-0000-4000-8000-000000000000', 'replay-068-two'),
+               (4, '06800001-0000-4000-8000-000000000000', 'replay-068-set')
+       ) AS v(n, user_id, decision);
+INSERT INTO public.review_queue (tenant_id, id, source, status, moderation_result, target_user_id, request_id)
+SELECT t.id, ('06800000-0000-4000-8000-0000000000e' || v.n)::uuid, 'escalation', 'pending',
+       jsonb_build_object('action', 'escalate', 'trajectoryId', v.decision), v.user_id::uuid, 'replay-068'
+  FROM (SELECT id FROM public.tenants ORDER BY created_at, id LIMIT 1) t,
+       (VALUES (1, '06800003-0000-4000-8000-000000000000', 'replay-068-review'),
+               (2, '06800003-0000-4000-8000-000000000000', 'replay-068-two')
+       ) AS v(n, user_id, decision);
+SQL
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/068_moderation_decision_accounts.sql" >/dev/null
+r068() {
+  "${PSQL[@]}" -At -c "SELECT string_agg(trajectory_id || '|' || coalesce(user_id, '-'), E'\n' ORDER BY trajectory_id) FROM public.content_safety_audit WHERE request_id = 'replay-068'"
+}
+expected068='replay-068-erased|-
+replay-068-none|-
+replay-068-review|06800003-0000-4000-8000-000000000000
+replay-068-set|recorded-account
+replay-068-strike|06800001-0000-4000-8000-000000000000
+replay-068-two|-'
+got068=$(r068)
+[ "$got068" = "$expected068" ] \
+  || { echo "✗ 068 did not give past decisions their accounts as its records name them:"; diff <(echo "$expected068") <(echo "$got068") || true; exit 1; }
+"${PSQL[@]}" --single-transaction -f "$ROOT/supabase/migrations/068_moderation_decision_accounts.sql" >/dev/null
+[ "$(r068)" = "$expected068" ] \
+  || { echo "✗ 068 applied twice changed a decision's account again"; exit 1; }
+"${PSQL[@]}" >/dev/null <<'SQL'
+DELETE FROM public.content_safety_audit WHERE request_id = 'replay-068';
+DELETE FROM public.review_queue WHERE request_id = 'replay-068';
+DELETE FROM public.user_strikes WHERE trajectory_id = 'replay-068';
+DELETE FROM public.users WHERE id::text LIKE '0680000%';
+SQL
+
 step "checks"
 "${PSQL[@]}" -At <<'SQL'
 DO $$

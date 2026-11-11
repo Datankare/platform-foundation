@@ -6,7 +6,10 @@
  * The small shared pieces every screen uses with platform/errors/refusal.ts:
  *
  *   <RefusalNotice refusal onRetry onSignOut />   inline: the message, and what can be done —
- *                                                 sign-out for a restricted account, the retry
+ *                                                 for a restricted account its decisions and
+ *                                                 their appeal (the account page, TASK-210 —
+ *                                                 the registry's "offer appeal") and sign-out;
+ *                                                 for rejected content, the same link; the retry
  *                                                 delay for a rate limit, a retry for a service
  *                                                 that is down, sign-in (or "Create an account"
  *                                                 for a guest out of free uses), a gray wait for
@@ -19,6 +22,7 @@
  */
 
 import React from "react";
+import Link from "next/link";
 import { renderMessage } from "@/platform/errors/messages";
 import type { Refusal } from "@/platform/errors/refusal";
 
@@ -40,6 +44,11 @@ export interface RefusalNoticeProps {
   readonly onSignOut?: () => void;
   /** "sign-in": where sign-in is (default /auth). */
   readonly signInHref?: string;
+  /**
+   * A moderation decision's link to the account page, where it is appealed (default shown):
+   * false for a guest, who has no account.
+   */
+  readonly offerAppeal?: boolean;
 }
 
 export function RefusalNotice({
@@ -47,6 +56,7 @@ export function RefusalNotice({
   onRetry,
   onSignOut,
   signInHref = "/auth",
+  offerAppeal = true,
 }: RefusalNoticeProps) {
   const { kind, message } = refusal;
   if (kind === "tenant-unavailable") return <TenantUnavailable refusal={refusal} />;
@@ -65,6 +75,7 @@ export function RefusalNotice({
           {t("account_status", { status: refusal.accountStatus })}
         </p>
       )}
+      {offerAppeal && offersAppeal(refusal) && <AppealLink />}
       {kind === "restricted" && onSignOut && (
         <button type="button" className={BUTTON} onClick={onSignOut}>
           {t("sign_out")}
@@ -88,6 +99,34 @@ export function RefusalNotice({
         </a>
       )}
     </div>
+  );
+}
+
+/**
+ * Whether a refusal is a moderation decision the user can appeal from their account page
+ * (TASK-210, N-117): a restricted account (account.restricted — its registry action is "offer
+ * appeal"), or content the screening rejected (content.rejected). A guest has no account: a
+ * screen serving one shows no link (RefusalNotice's `offerAppeal`).
+ */
+export function offersAppeal(refusal: Pick<Refusal, "kind" | "code">): boolean {
+  return refusal.kind === "restricted" || refusal.code === APPEALABLE_CONTENT;
+}
+
+/** The refusal of content the screening blocked. */
+export const APPEALABLE_CONTENT = "content.rejected";
+
+/** The link to the account page's decisions, where a decision is appealed. */
+export function AppealLink({ className }: { readonly className?: string }) {
+  return (
+    <Link
+      href="/account"
+      className={
+        className ??
+        "mt-2 inline-block text-sm text-blue-300 underline hover:text-blue-200"
+      }
+    >
+      {t("appeal")}
+    </Link>
   );
 }
 

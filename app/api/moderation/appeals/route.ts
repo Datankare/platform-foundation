@@ -1,6 +1,9 @@
 /**
- * app/api/moderation/appeals/route.ts — User appeal submission
+ * app/api/moderation/appeals/route.ts — A user's own decisions, and their appeals
  *
+ * GET  — the blocks of the caller's own content, newest first, each with its appeal if one was
+ *        filed, and the appeal rules (window, reason length): what the account page lists, so a
+ *        user can find the decision they appeal (TASK-210, N-117 — no screen could).
  * POST — a user appeals a block/ban decision made against their own content.
  *
  * ADR-024. Security (F6 + injection defense):
@@ -19,7 +22,7 @@ import { requireAuth } from "@/platform/auth/middleware";
 import { withTenantTx } from "@/platform/data";
 import { getModerationStore } from "@/platform/moderation/store";
 import { getAuditLogForUser } from "@/platform/auth/audit";
-import { submitAppeal } from "@/platform/moderation/review-service";
+import { listOwnDecisions, submitAppeal } from "@/platform/moderation/review-service";
 import { logger, generateRequestId } from "@/lib/logger";
 import type {
   AccountStatus,
@@ -123,6 +126,35 @@ async function derivePreviousStatus(
   }
   return undefined;
 }
+
+/**
+ * The caller's own decisions (TASK-210). Signed in only (requireAuth: a guest has no account to
+ * appeal for); the account is the verified token's, never a parameter — the route reads none. Not
+ * gated on the account's standing: a restricted, suspended or banned account still sees its
+ * decisions and appeals them (the decision under appeal is often why it is restricted).
+ */
+export const GET = tenantRoute(async function GET(request: NextRequest) {
+  const limited = await enforceRateLimit(request, DEFAULT_RULES.API_GLOBAL);
+  if (limited) return limited;
+  const auth = await requireAuth(request);
+  if (auth.error) return auth.error;
+
+  const userId = await resolveUserId(auth.user.sub);
+  if (!userId) return apiError("account.not_found", { request });
+
+  try {
+    return NextResponse.json(await listOwnDecisions(userId));
+  } catch (err) {
+    logger.error("Own decisions read failed", {
+      error: err instanceof Error ? err.message : "Unknown",
+      route: "api/moderation/appeals",
+    });
+    return apiError("service.unavailable", {
+      params: { service: "moderation" },
+      request,
+    });
+  }
+});
 
 export const POST = tenantRoute(async function POST(request: NextRequest) {
   // ADR-052: rate limited before any work.

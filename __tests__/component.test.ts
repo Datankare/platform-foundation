@@ -1,3 +1,25 @@
+/** @jest-environment jsdom */
+/**
+ * __tests__/component.test.ts — the demo home (components/SpikeApp.tsx): its input rules, and
+ * (TASK-210, N-117) a rejection that is a moderation decision linking to where it is appealed.
+ * Platform Foundation's own (Playform's home is its own, sync-excluded with this file).
+ */
+import React from "react";
+import "@testing-library/jest-dom";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { handleRefusal, type Refusal } from "@/platform/errors/refusal";
+
+const mockRefusal: { current: Refusal | null } = { current: null };
+jest.mock("@/platform/errors/refusal", () => {
+  const actual = jest.requireActual("@/platform/errors/refusal");
+  return {
+    ...actual,
+    // The refusal the platform's own handler makes of the route's code (the body is the route's).
+    readRefusal: async () => mockRefusal.current,
+  };
+});
+
+import SpikeApp, { type SpikeAppProps } from "@/components/SpikeApp";
 import {
   canSubmitText,
   getCharState,
@@ -117,5 +139,51 @@ describe("SpikeApp — Component Behavior", () => {
     it("should return false when empty and loading", () => {
       expect(canClearText("", true)).toBe(false);
     });
+  });
+});
+
+describe("SpikeApp — a moderation decision offers its appeal (TASK-210, N-117)", () => {
+  const APPEAL = "See this decision and appeal it";
+  const refuse = async (code: string, isGuest = false) => {
+    mockRefusal.current = handleRefusal(code);
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 }) as never;
+    render(React.createElement(SpikeApp as React.FC<SpikeAppProps>, { isGuest }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "some text" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /translate/i }));
+    });
+  };
+
+  it("rejected content: the decision's message, and the link to appeal it", async () => {
+    await refuse("content.rejected");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(handleRefusal("content.rejected").message);
+    expect(screen.getByRole("link", { name: APPEAL })).toHaveAttribute(
+      "href",
+      "/account"
+    );
+  });
+
+  it("a restricted account: the same link", async () => {
+    await refuse("account.restricted");
+    expect(screen.getByRole("link", { name: APPEAL })).toBeInTheDocument();
+  });
+
+  it("a guest has no account: no link", async () => {
+    await refuse("content.rejected", true);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: APPEAL })).toBeNull();
+  });
+
+  it("another refusal is no decision: no link", async () => {
+    await refuse("rate.limited");
+    expect(screen.queryByRole("link", { name: APPEAL })).toBeNull();
+  });
+
+  it("Clear removes the message and its link", async () => {
+    await refuse("content.rejected");
+    fireEvent.click(screen.getByRole("button", { name: /clear/i }));
+    expect(screen.queryByRole("link", { name: APPEAL })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

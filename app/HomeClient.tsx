@@ -1,7 +1,8 @@
 /**
  * app/HomeClient.tsx — Protected home page
  *
- * Shows the current user identity and a sign-out button above the app's home — the consumer
+ * Shows the current user identity, a link to their account page (the decisions about their
+ * content and their appeals, TASK-210) and a sign-out button above the app's home — the consumer
  * seam platform/modules/app-home.tsx, so this core page imports no module's UI (ADR-054).
  * Redirects to /auth if not authenticated (middleware handles this,
  * but this is a fallback for client-side navigation).
@@ -10,6 +11,7 @@
 "use client";
 
 import { useEffect, useCallback } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/platform/auth/context";
 import AppHome from "@/platform/modules/app-home";
@@ -48,7 +50,7 @@ export default function HomeClient() {
   return (
     <div className="min-h-screen">
       {/* User bar */}
-      <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
+      <div className="flex items-center justify-between gap-2 border-b border-gray-200 bg-white px-4 py-2">
         <div className="text-sm text-gray-600">
           {isGuest ? (
             <span>
@@ -61,15 +63,25 @@ export default function HomeClient() {
               </button>
             </span>
           ) : (
-            <span>{user?.email}</span>
+            <span className="break-all">{user?.email}</span>
           )}
         </div>
-        <button
-          onClick={handleSignOut}
-          className="rounded px-3 py-1 text-sm text-gray-600 hover:bg-gray-100"
-        >
-          {t("sign_out")}
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {!isGuest && (
+            <Link
+              href="/account"
+              className="rounded px-3 py-1 text-sm text-blue-700 hover:bg-gray-100 hover:underline"
+            >
+              {t("your_account")}
+            </Link>
+          )}
+          <button
+            onClick={handleSignOut}
+            className="rounded px-3 py-1 text-sm text-gray-600 hover:bg-gray-100"
+          >
+            {t("sign_out")}
+          </button>
+        </div>
       </div>
 
       {/* The app's home (consumer seam) */}

@@ -473,6 +473,13 @@ const ROUTES: readonly RouteCase[] = [
     valid: () => fc.constant({}),
   },
   {
+    // The caller's own decisions (TASK-210): any signed-in account, its own only.
+    path: "moderation/appeals",
+    method: "GET",
+    load: R("moderation/appeals"),
+    permission: "signed-in",
+  },
+  {
     path: "moderation/appeals",
     method: "POST",
     load: R("moderation/appeals"),

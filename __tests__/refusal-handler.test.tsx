@@ -19,7 +19,11 @@ import {
   retryDelayMs,
 } from "@/platform/errors/refusal";
 import { PLATFORM_ERROR_CODES } from "@/platform/errors/registry";
-import { RefusalNotice, TenantUnavailable } from "@/components/refusal/RefusalNotice";
+import {
+  offersAppeal,
+  RefusalNotice,
+  TenantUnavailable,
+} from "@/components/refusal/RefusalNotice";
 
 const replace = jest.fn();
 const signOut = jest.fn(async () => undefined);
@@ -201,6 +205,40 @@ describe("RefusalNotice", () => {
     expect(screen.getByRole("heading")).toHaveTextContent(
       "This service is not available here"
     );
+  });
+});
+
+describe("RefusalNotice — a moderation decision offers its appeal (TASK-210, N-117)", () => {
+  const APPEAL = "See this decision and appeal it";
+
+  it.each([
+    ["account.restricted", { status: "restricted", feature: "translate" }],
+    ["content.rejected", {}],
+  ])("%s links to the account page, where the decision is appealed", (code, params) => {
+    render(<RefusalNotice refusal={handleRefusal(code, { params })} />);
+    expect(screen.getByRole("link", { name: APPEAL })).toHaveAttribute(
+      "href",
+      "/account"
+    );
+    expect(offersAppeal(handleRefusal(code))).toBe(true);
+  });
+
+  it("a guest's screen offers none (offerAppeal false): a guest has no account", () => {
+    render(
+      <RefusalNotice refusal={handleRefusal("content.rejected")} offerAppeal={false} />
+    );
+    expect(screen.queryByRole("link", { name: APPEAL })).toBeNull();
+  });
+
+  it.each([
+    "rate.limited",
+    "service.unavailable",
+    "auth.required",
+    "request.invalid_body",
+  ])("%s is no moderation decision: no appeal", (code) => {
+    render(<RefusalNotice refusal={handleRefusal(code)} />);
+    expect(screen.queryByRole("link", { name: APPEAL })).toBeNull();
+    expect(offersAppeal(handleRefusal(code))).toBe(false);
   });
 });
 

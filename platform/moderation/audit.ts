@@ -24,17 +24,25 @@ export async function hashInput(text: string): Promise<string> {
 
 /**
  * Build an audit record from a moderation result.
+ *
+ * `userId` — the account whose content was screened, when one is known (the screening context's).
+ * TASK-210 (N-117): it was never recorded, so `content_safety_audit.user_id` was empty for every
+ * decision — an appeal's ownership check (`POST /api/moderation/appeals`: the decision's account
+ * must be the appellant's) refused every appeal, and no account's decisions could be listed,
+ * exported or erased by account.
  */
 export async function buildAuditRecord(
   text: string,
   result: ModerationResult,
-  requestId: string
+  requestId: string,
+  userId?: string
 ): Promise<ModerationAuditRecord> {
   return {
     inputHash: await hashInput(text),
     direction: result.direction,
     contentType: result.contentType,
     contentRatingLevel: result.contentRatingLevel,
+    ...(userId ? { userId } : {}),
     triggeredBy: result.triggeredBy,
     classifierOutput: result.classifierOutput,
     categoriesFlagged: result.classifierOutput?.categories ?? [],
@@ -61,10 +69,11 @@ export async function buildAuditRecord(
 export async function logModerationAudit(
   text: string,
   result: ModerationResult,
-  requestId: string
+  requestId: string,
+  userId?: string
 ): Promise<void> {
   try {
-    const record = await buildAuditRecord(text, result, requestId);
+    const record = await buildAuditRecord(text, result, requestId, userId);
 
     // Write 1: Structured logger (always)
     logger.info("moderation_audit", {

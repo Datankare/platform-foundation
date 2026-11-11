@@ -2,6 +2,7 @@
  * __tests__/moderation-appeals-routes.test.ts
  *
  * Route-integrity tests for the appeals API:
+ *   GET    /api/moderation/appeals        — the caller's own decisions (TASK-210)
  *   POST   /api/moderation/appeals        — user submits an appeal
  *   PATCH  /api/moderation/appeals/[id]   — moderator claims/unclaims/resolves
  *
@@ -39,6 +40,7 @@ jest.mock("@/platform/auth/audit", () => ({
 }));
 
 jest.mock("@/platform/moderation/review-service", () => ({
+  listOwnDecisions: jest.fn(),
   submitAppeal: jest.fn(),
   claimItem: jest.fn(),
   unclaimItem: jest.fn(),
@@ -58,13 +60,14 @@ import { authAs, CALLERS, type CallerName } from "@/__tests__/helpers/test-ident
 import { getModerationStore } from "@/platform/moderation/store";
 import { getAuditLogForUser } from "@/platform/auth/audit";
 import {
+  listOwnDecisions,
   submitAppeal,
   claimItem,
   unclaimItem,
   resolveItem,
 } from "@/platform/moderation/review-service";
 import { getReviewQueueStore } from "@/platform/moderation/review-store";
-import { POST } from "@/app/api/moderation/appeals/route";
+import { GET, POST } from "@/app/api/moderation/appeals/route";
 import { fakeData } from "./helpers/fake-data";
 import { PATCH } from "@/app/api/moderation/appeals/[id]/route";
 
@@ -133,6 +136,95 @@ beforeEach(() => {
     sql.startsWith("select id from users where cognito_sub")
       ? [{ id: "u-app" }]
       : undefined;
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// GET /api/moderation/appeals — the caller's own decisions (TASK-210, N-117)
+// ═══════════════════════════════════════════════════════════════════════
+
+function getReq(caller: CallerName = "free", query = ""): NextRequest {
+  return new NextRequest(`http://localhost/api/moderation/appeals${query}`, {
+    method: "GET",
+    headers: authAs(caller),
+  });
+}
+
+const OWN = {
+  decisions: [
+    {
+      id: "traj-1",
+      decidedAt: "2026-01-01T00:00:00.000Z",
+      contentType: "generation",
+      appealableUntil: "2026-01-04T00:00:00.000Z",
+      appeal: null,
+    },
+  ],
+  appealWindowHours: 72,
+  minReasonLength: 20,
+  maxReasonLength: 2000,
+};
+
+describe("GET /api/moderation/appeals", () => {
+  it("answers the verified caller's own decisions and the appeal rules", async () => {
+    (listOwnDecisions as jest.Mock).mockResolvedValue(OWN);
+    const res = await GET(getReq());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(OWN);
+    expect(listOwnDecisions).toHaveBeenCalledWith("u-app");
+  });
+
+  it("[hostile:self] lists the token's own account, whatever account the query names", async () => {
+    (listOwnDecisions as jest.Mock).mockResolvedValue(OWN);
+    const other = CALLERS.admin.userId;
+    const res = await GET(getReq("free", `?userId=${other}&targetUserId=${other}`));
+    expect(res.status).toBe(200);
+    expect(listOwnDecisions).toHaveBeenCalledTimes(1);
+    expect(listOwnDecisions).toHaveBeenCalledWith("u-app");
+  });
+
+  it("[hostile:role] a caller with no session, or no account, reads nothing", async () => {
+    const anonymous = await GET(getReq("anonymous"));
+    expect(anonymous.status).toBe(401);
+    fakeData().answer = () => [];
+    const unmatched = await GET(getReq("free"));
+    expect(unmatched.status).toBe(403);
+    expect((await unmatched.json()).code).toBe("account.not_found");
+    expect(listOwnDecisions).not.toHaveBeenCalled();
+  });
+
+  it("[hostile:role] a restricted account still reads its decisions (it is what it appeals)", async () => {
+    (listOwnDecisions as jest.Mock).mockResolvedValue(OWN);
+    const res = await GET(getReq("suspended_super_admin"));
+    expect(res.status).toBe(200);
+    expect(listOwnDecisions).toHaveBeenCalledWith("u-app");
+  });
+
+  it("[hostile:store-down] a store that cannot be read is a coded 503, its detail logged only", async () => {
+    (listOwnDecisions as jest.Mock).mockRejectedValue(
+      new Error("relation content_safety_audit: connection refused")
+    );
+    const res = await GET(getReq());
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      code: "service.unavailable",
+      params: { service: "moderation" },
+    });
+    expect(JSON.stringify(body)).not.toContain("connection refused");
+  });
+
+  it("[hostile:id-spelling] the account is the one the token's subject resolves to, as stored", async () => {
+    // The subject's row answers with its id spelled in capitals: the service is given that row's
+    // id, and matches records and appeals by sameId (proved in own-decisions.test.ts).
+    fakeData().answer = (sql) =>
+      sql.startsWith("select id from users where cognito_sub")
+        ? [{ id: "U-APP" }]
+        : undefined;
+    (listOwnDecisions as jest.Mock).mockResolvedValue(OWN);
+    const res = await GET(getReq());
+    expect(res.status).toBe(200);
+    expect(listOwnDecisions).toHaveBeenCalledWith("U-APP");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════

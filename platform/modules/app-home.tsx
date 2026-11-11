@@ -12,7 +12,10 @@
 "use client";
 
 import SpikeApp from "@/components/SpikeApp";
+import { useAuth } from "@/platform/auth/context";
 
 export default function AppHome() {
-  return <SpikeApp />;
+  // A guest's rejection offers no appeal: a guest has no account (TASK-210).
+  const { isGuest } = useAuth();
+  return <SpikeApp isGuest={isGuest} />;
 }

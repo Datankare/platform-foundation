@@ -586,6 +586,46 @@ select (select checksum from public.applied_migrations
             or moderation_result -> 'classifierOutput' ? 'reason') as review_moderation_left;
 ```
 
+**Release candidate (TASK-210):** `068_moderation_decision_accounts.sql`, after 067, on its own:
+
+```bash
+pbcopy < supabase/migrations/068_moderation_decision_accounts.sql
+```
+
+The Guardian recorded every decision in `content_safety_audit` without its account (`user_id`
+null): no appeal could pass its ownership check, no account could see its decisions, and an
+account's export and erasure did not reach them. The code now records the account; this gives the
+rows written before theirs where the platform recorded it elsewhere — a strike the Sentinel gave
+for the decision (`user_strikes.guardian_decision_id`), or an escalation or ban review of it
+(`review_queue`) — only when every such record names the same account, and it exists and is not
+erased. A decision no record names stays without one. No schema change; one pass over
+`content_safety_audit` (joined on its indexed `trajectory_id`); `lock_timeout` 5 s. Then this
+answers one row, its checksum what
+`node scripts/migration-checksum.mjs supabase/migrations/068_moderation_decision_accounts.sql`
+prints, and `decisions_left` 0:
+
+```sql
+with named as (
+  select s.tenant_id, s.guardian_decision_id as trajectory_id, s.user_id::text as user_id
+    from public.user_strikes s where s.guardian_decision_id is not null
+  union
+  select q.tenant_id, q.moderation_result ->> 'trajectoryId', q.target_user_id::text
+    from public.review_queue q
+   where q.source in ('escalation', 'ban_review') and q.moderation_result ->> 'trajectoryId' is not null
+), one_account as (
+  select tenant_id, trajectory_id, min(user_id) as user_id from named
+   group by tenant_id, trajectory_id having count(distinct user_id) = 1
+)
+select (select checksum from public.applied_migrations
+         where filename = '068_moderation_decision_accounts.sql') as checksum,
+       (select count(*) from public.content_safety_audit a
+          join one_account o on o.tenant_id = a.tenant_id and o.trajectory_id = a.trajectory_id
+         where a.user_id is null
+           and exists (select 1 from public.users u
+                        where u.tenant_id = o.tenant_id and u.id::text = o.user_id
+                          and u.deleted_at is null)) as decisions_left;
+```
+
 Every one is idempotent: one already applied (046 on a database on v5.1.x) changes nothing when
 run again. An app's own migrations go in between, by name (`052a_<app>_…` after 052 — §1b).
 

@@ -246,7 +246,11 @@ import { ROLE_PERMISSIONS } from "@/__tests__/helpers/test-identities";
 import { POST as killSwitchPOST } from "@/app/api/admin/agents/suspend/route";
 import { POST as tenantKillSwitchPOST } from "@/app/api/operator/tenants/[id]/agents/suspend/route";
 import { AuditWriteError } from "@/platform/auth/audit";
-import { POST as appealsPOST } from "@/app/api/moderation/appeals/route";
+import {
+  GET as appealsGET,
+  POST as appealsPOST,
+} from "@/app/api/moderation/appeals/route";
+import { PATCH as appealPATCH } from "@/app/api/moderation/appeals/[id]/route";
 import { getModerationStore, resetModerationStore } from "@/platform/moderation/store";
 import {
   getReviewQueueStore,
@@ -1229,7 +1233,11 @@ const KILL_SWITCH: Readonly<Record<string, () => Promise<RouteFixture>>> = {
 };
 
 /** A block the guardian recorded on this caller's content, as the moderation store holds it. */
-async function blocked(trajectoryId: string, userId: string): Promise<void> {
+async function blocked(
+  trajectoryId: string,
+  userId: string,
+  timestamp: string = FIXTURE_NOW
+): Promise<void> {
   await runWithTenant({ tenantId: TENANT, mode: "single" }, () =>
     getModerationStore().logAudit({
       inputHash: "0".repeat(64),
@@ -1261,7 +1269,7 @@ async function blocked(trajectoryId: string, userId: string): Promise<void> {
       agentId: "guardian",
       pipelineLatencyMs: 12,
       requestId: "req_0000000000000001",
-      timestamp: FIXTURE_NOW,
+      timestamp,
     } as never)
   );
 }
@@ -1279,8 +1287,78 @@ const ownAccount = () =>
     /from users where cognito_sub/.test(sql) ? [{ id: CALLERS.free.userId }] : []
   );
 
-/** The appeal form (components/AppealForm/AppealForm.tsx). */
+/** The caller's own decisions, as the account page reads them (TASK-210). */
+const ownDecisions = async () =>
+  record(await appealsGET(req("/api/moderation/appeals", "GET", "free")));
+/** The moderator's action on the caller's appeal (its review item id, from the queue). */
+async function onAppeal(body: Record<string, unknown>): Promise<Response> {
+  const [item] = await runWithTenant({ tenantId: TENANT, mode: "single" }, () =>
+    getReviewQueueStore().query({ source: "appeal" })
+  );
+  return appealPATCH(
+    req(`/api/moderation/appeals/${item.id}`, "PATCH", "moderator", body),
+    {
+      params: Promise.resolve({ id: item.id }),
+    }
+  );
+}
+
+/**
+ * The appeal form (components/AppealForm/AppealForm.tsx) and the account page's decisions
+ * (components/account/ModerationDecisions.tsx, TASK-210).
+ */
 const APPEALS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
+  "GET /api/moderation/appeals — none": async () => {
+    ownAccount();
+    return ownDecisions();
+  },
+  "GET /api/moderation/appeals — one appealable": async () => {
+    ownAccount();
+    await blocked("traj-1", CALLERS.free.userId);
+    return ownDecisions();
+  },
+  "GET /api/moderation/appeals — one past its window": async () => {
+    ownAccount();
+    // Four days before now: the default window is 72 hours.
+    await blocked("traj-old", CALLERS.free.userId, "2025-12-28T00:00:00.000Z");
+    return ownDecisions();
+  },
+  "GET /api/moderation/appeals — appealed, waiting": async () => {
+    ownAccount();
+    await blocked("traj-1", CALLERS.free.userId);
+    await appeal();
+    return ownDecisions();
+  },
+  "GET /api/moderation/appeals — appealed, in review": async () => {
+    ownAccount();
+    await blocked("traj-1", CALLERS.free.userId);
+    await appeal();
+    await onAppeal({ action: "claim" });
+    return ownDecisions();
+  },
+  // Upheld: an overturn's side effects (the account's status restored, its strike expired) write
+  // to the database these producers do not hold; the screen reads either outcome the same way.
+  "GET /api/moderation/appeals — appealed, upheld": async () => {
+    ownAccount();
+    await blocked("traj-1", CALLERS.free.userId);
+    await appeal();
+    await onAppeal({ action: "claim" });
+    const resolved = await onAppeal({
+      action: "resolve",
+      decision: "uphold",
+      reviewerNotes: "The block was right.",
+    });
+    expect(resolved.status).toBe(200);
+    return ownDecisions();
+  },
+  "GET /api/moderation/appeals — the store failing": async () => {
+    ownAccount();
+    jest
+      .spyOn(getModerationStore(), "queryAudits")
+      .mockRejectedValueOnce(new Error("moderation store unavailable"));
+    return ownDecisions();
+  },
+
   "POST /api/moderation/appeals — submitted": async () => {
     ownAccount();
     await blocked("traj-1", CALLERS.free.userId);
@@ -2060,6 +2138,18 @@ const REVIEW: Readonly<Record<string, () => Promise<RouteFixture>>> = {
       .spyOn(getReviewQueueStore(), "query")
       .mockRejectedValueOnce(new Error("review queue unavailable"));
     return reviewList();
+  },
+  "GET /api/moderation/review — a pending appeal": async () => {
+    ownAccount();
+    await blocked("traj-1", CALLERS.free.userId);
+    await appeal();
+    return reviewList();
+  },
+  "PATCH /api/moderation/appeals/[id] — claimed": async () => {
+    ownAccount();
+    await blocked("traj-1", CALLERS.free.userId);
+    await appeal();
+    return record(await onAppeal({ action: "claim" }));
   },
   "PATCH /api/moderation/review/[id] — claimed": async () => {
     await reviewQueue();

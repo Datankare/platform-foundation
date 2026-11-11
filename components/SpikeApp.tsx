@@ -5,6 +5,7 @@ import { Translation } from "@/types";
 import { canSubmitText, getCharState, canClearText } from "@/lib/inputValidation";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { readRefusal } from "@/platform/errors/refusal";
+import { AppealLink, offersAppeal } from "@/components/refusal/RefusalNotice";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
 import { languageName } from "@/components/language-name";
 
@@ -47,12 +48,25 @@ declare global {
   }
 }
 
-export default function SpikeApp() {
+export interface SpikeAppProps {
+  /** A guest has no account: a rejection offers no appeal (TASK-210). */
+  readonly isGuest?: boolean;
+}
+
+export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
   const [text, setText] = useState("");
+  // The shown error is a moderation decision the user can appeal (content.rejected, a restricted
+  // account): the alert links to the account page, where it is appealed (TASK-210, N-117).
+  const [appealable, setAppealable] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [translations, setTranslations] = useState<Translation[]>([]);
-  const [error, setError] = useState("");
+  const [error, setErrorText] = useState("");
+  // Any other error (or none) is not one: the link goes with the decision's own message.
+  const setError = useCallback((message: string) => {
+    setErrorText(message);
+    setAppealable(false);
+  }, []);
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
 
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
@@ -95,7 +109,7 @@ export default function SpikeApp() {
     recognition.start();
     setIsRecording(true);
     setError("");
-  }, []);
+  }, [setError]);
 
   const stopRecording = useCallback(() => {
     if (recognitionRef.current) {
@@ -127,7 +141,9 @@ export default function SpikeApp() {
       // A refusal is shown by its code, through the shared handler (TASK-181; TASK-194 added
       // auth.permission_denied — the feature permission).
       if (!response.ok) {
-        setError((await readRefusal(response)).message);
+        const refusal = await readRefusal(response);
+        setError(refusal.message);
+        setAppealable(!isGuest && offersAppeal(refusal));
         return;
       }
       const data = await response.json();
@@ -233,7 +249,8 @@ export default function SpikeApp() {
             </p>
           )}
 
-          <div className="flex gap-3">
+          {/* Wraps on a phone: the three buttons ran past the card at 390 px (walk, TASK-210). */}
+          <div className="flex flex-wrap gap-3">
             <button
               onClick={isRecording ? stopRecording : startRecording}
               aria-label={isRecording ? msg("stop_recording") : msg("start_voice_input")}
@@ -301,7 +318,8 @@ export default function SpikeApp() {
             aria-live="assertive"
             className="bg-red-900/40 border border-red-700 text-red-300 rounded-xl px-4 py-3 mb-4 text-sm"
           >
-            {error}
+            <p>{error}</p>
+            {appealable && <AppealLink />}
           </div>
         )}
 

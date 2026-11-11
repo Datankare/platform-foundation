@@ -450,7 +450,12 @@ _Last reviewed: September 2026 (Sprint 3d / ADR-039 — registry is the single s
 The human-oversight surface for moderation (P10), backed by `platform/moderation/`
 (review-types, review-store, review-service, review-assist) and surfaced via
 `components/ReviewDashboard` + `components/AppealForm`. See ADR-024 (queue +
-appeals) and ADR-025 (reviewer-assist).
+appeals) and ADR-025 (reviewer-assist). Where people reach them (TASK-210, N-117 — before it no
+page mounted either): a moderator in the admin console's **Moderation** section (`can_moderate`,
+which every moderation route checks); a member on the account page, `/account` — the decisions
+about their own content (`GET /api/moderation/appeals`) with an appeal under each one still
+open — linked from the home page's bar and from the refusal that tells them their content was
+rejected or their account restricted.
 
 ### Review queue
 

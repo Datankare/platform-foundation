@@ -23,6 +23,7 @@ import { withTenantTx, type Tx } from "@/platform/data";
 import { audited, AuditWriteError } from "@/platform/auth/audit";
 import { getStrikeStore } from "./strikes";
 import { getReviewQueueStore } from "./review-store";
+import { getModerationStore } from "./store";
 import { loadEscalationSlaHours, loadRemedialAction } from "./config";
 import type {
   ReviewQueueItem,
@@ -31,6 +32,7 @@ import type {
   ReviewPriority,
   ReviewQueryOptions,
   ReviewResult,
+  ReviewStatus,
   ReviewUpdateExpectation,
 } from "./review-types";
 import type { AccountStatus, ModerationResult, ModerationAction } from "./types";
@@ -555,6 +557,135 @@ export async function getQueue(
   options?: ReviewQueryOptions
 ): Promise<readonly ReviewQueueItem[]> {
   return getReviewQueueStore().query(options);
+}
+
+/** How many of a user's own decisions their account page lists, newest first. */
+export const OWN_DECISIONS_LIMIT = 50;
+
+/** How many of a user's appeals one read takes; past it, each listed decision is asked alone. */
+const OWN_APPEALS_READ = 200;
+
+/** One decision about a user's own content, as their account page shows it (TASK-210, N-117). */
+export interface OwnDecision {
+  /** The decision's trajectory id: what an appeal names (POST /api/moderation/appeals). */
+  readonly id: string;
+  /** When it was decided. */
+  readonly decidedAt: string;
+  /** What was screened: the platform's content type (generation, extraction, profile, …). */
+  readonly contentType: string;
+  /** The last moment an appeal is accepted (the decision plus the appeal window). */
+  readonly appealableUntil: string;
+  /** Its appeal, when one was filed: where it stands, and the decision on it once resolved. */
+  readonly appeal: {
+    readonly status: ReviewStatus;
+    readonly submittedAt: string;
+    readonly decision?: ReviewDecision;
+    readonly modifiedAction?: ModerationAction;
+    readonly resolvedAt?: string;
+  } | null;
+}
+
+/** A user's own blocked decisions and the rules an appeal is held to. */
+export interface OwnDecisions {
+  readonly decisions: readonly OwnDecision[];
+  readonly appealWindowHours: number;
+  readonly minReasonLength: number;
+  readonly maxReasonLength: number;
+}
+
+const instant = (iso: string): number => {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? 0 : t;
+};
+
+/**
+ * The blocks of a user's own content (the Guardian's input decisions recorded against them),
+ * newest first, each with its appeal if one was filed (TASK-210, N-117): what the account page
+ * lists, so a user can find the decision they appeal. Only `userId`'s own: the caller passes the
+ * verified account, never an id from a request. Throws when a store cannot be read (the route
+ * answers 503); never another user's row.
+ */
+export async function listOwnDecisions(userId: string): Promise<OwnDecisions> {
+  const [appealWindowHours, minReasonLength] = await Promise.all([
+    loadAppealWindowHours(),
+    loadMinReasonLength(),
+  ]);
+  const records = await getModerationStore().queryAudits({
+    userId,
+    actionTaken: "block",
+    direction: "input",
+    limit: OWN_DECISIONS_LIMIT,
+  });
+  const own = records.filter(
+    (r) =>
+      sameId(r.userId, userId) &&
+      r.actionTaken === "block" &&
+      r.direction === "input" &&
+      typeof r.trajectoryId === "string" &&
+      r.trajectoryId !== ""
+  );
+  const store = getReviewQueueStore();
+  const oldest = own.reduce<number | undefined>(
+    (min, r) =>
+      min === undefined || instant(r.timestamp) < min ? instant(r.timestamp) : min,
+    undefined
+  );
+  // An appeal is filed after its decision: the appeals since the oldest listed decision hold
+  // every listed decision's appeal — unless the read stopped at its limit; then each listed
+  // decision without one found is asked alone.
+  const appeals =
+    oldest === undefined
+      ? []
+      : await store.query({
+          targetUserId: userId,
+          source: "appeal",
+          since: new Date(oldest).toISOString(),
+          limit: OWN_APPEALS_READ,
+        });
+  const byDecision = new Map<string, ReviewQueueItem>();
+  const take = (a: ReviewQueueItem | null | undefined) => {
+    if (
+      a?.source === "appeal" &&
+      a.originalDecisionId &&
+      sameId(a.targetUserId, userId)
+    ) {
+      byDecision.set(a.originalDecisionId, a);
+    }
+  };
+  appeals.forEach(take);
+  if (appeals.length >= OWN_APPEALS_READ) {
+    for (const r of own) {
+      if (!byDecision.has(r.trajectoryId))
+        take(await store.getByOriginalDecisionId(r.trajectoryId));
+    }
+  }
+  const windowMs = appealWindowHours * 60 * 60 * 1000;
+  const decisions = own
+    .map((r): OwnDecision => {
+      const a = byDecision.get(r.trajectoryId);
+      return {
+        id: r.trajectoryId,
+        decidedAt: r.timestamp,
+        contentType: r.contentType,
+        appealableUntil: new Date(instant(r.timestamp) + windowMs).toISOString(),
+        appeal: a
+          ? {
+              status: a.status,
+              submittedAt: a.createdAt,
+              ...(a.decision ? { decision: a.decision } : {}),
+              ...(a.modifiedAction ? { modifiedAction: a.modifiedAction } : {}),
+              ...(a.resolvedAt ? { resolvedAt: a.resolvedAt } : {}),
+            }
+          : null,
+      };
+    })
+    .sort((x, y) => instant(y.decidedAt) - instant(x.decidedAt));
+  return {
+    decisions,
+    appealWindowHours,
+    minReasonLength,
+    maxReasonLength: MAX_APPEAL_REASON_CHARS,
+  };
 }
 
 /** Get queue statistics */

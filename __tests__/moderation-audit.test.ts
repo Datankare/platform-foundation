@@ -213,6 +213,25 @@ describe("logModerationAudit", () => {
     agentId: "guardian-dual",
   };
 
+  it("records the account whose content was screened (TASK-210, N-117), and none when unknown", async () => {
+    const store = new InMemoryModerationStore();
+    setModerationStore(store);
+    await logModerationAudit("member text", result, "req-own", "acct-1");
+    await logModerationAudit(
+      "guest text",
+      { ...result, trajectoryId: "traj-guest" },
+      "req-guest"
+    );
+    const [own] = await store.queryAudits({ trajectoryId: "traj-dual" });
+    expect(own.userId).toBe("acct-1");
+    const [guest] = await store.queryAudits({ trajectoryId: "traj-guest" });
+    expect(guest).not.toHaveProperty("userId");
+    // The account's own decisions are found by it: what the account page and an appeal read.
+    expect(
+      (await store.queryAudits({ userId: "acct-1" })).map((r) => r.trajectoryId)
+    ).toEqual(["traj-dual"]);
+  });
+
   it("writes to both logger and store", async () => {
     const store = new InMemoryModerationStore();
     setModerationStore(store);

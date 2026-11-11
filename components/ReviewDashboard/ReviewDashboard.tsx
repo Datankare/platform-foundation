@@ -19,12 +19,19 @@
  * The per-item card is extracted into ReviewCard (presentational) so the
  * container stays small; all state and handlers live in the container.
  *
+ * Mounted in the admin console's Moderation section (app/admin/page.tsx, can_moderate — the
+ * permission every moderation route checks; TASK-210, N-117: no page mounted it before). An
+ * appeal is claimed, released and resolved through the appeals route (/api/moderation/appeals/
+ * [id]), every other item through the review route; a refused action shows the refusal's own
+ * message. Every word is the catalog's: the item's source, priority, trigger, status, decision
+ * and the assistant's suggested decision by their codes.
+ *
  * @module components/ReviewDashboard
  */
 
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
 import type {
   ReviewDecision,
   ReviewQueueItem,
@@ -34,7 +41,13 @@ import type { ModerationAction } from "@/platform/moderation/types";
 import type { ReviewRecommendation } from "@/platform/moderation/review-assist";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { readRefusal } from "@/platform/errors/refusal";
-import { renderMessage, type MessageValues } from "@/platform/errors/messages";
+import {
+  CATALOGS,
+  DEFAULT_LOCALE,
+  lookup,
+  renderMessage,
+  type MessageValues,
+} from "@/platform/errors/messages";
 import { renderShown } from "@/platform/errors/shown-text";
 import { recordedFactor, recordedReasons } from "@/platform/moderation/reasons";
 import { Recorded, shownOrStored } from "./recorded";
@@ -138,6 +151,23 @@ interface QueueResult {
   error: string | null;
 }
 
+/**
+ * A closed code's words (screens.review_dashboard.<group>_<code>, passed as that suffix); a code
+ * the catalog does not know — a newer server's — as the code itself, never a missing-key marker.
+ */
+function codeLabel(suffix: string, code: string): string {
+  const key = `screens.review_dashboard.${suffix}`;
+  return lookup(CATALOGS[DEFAULT_LOCALE], key) === undefined ? code : renderMessage(key);
+}
+
+/** The route an item's actions go to: an appeal's own, or the review queue's (ADR-024). */
+export function itemActionPath(item: Pick<ReviewQueueItem, "id" | "source">): string {
+  const id = encodeURIComponent(item.id);
+  return item.source === "appeal"
+    ? `/api/moderation/appeals/${id}`
+    : `/api/moderation/review/${id}`;
+}
+
 /** One read of the review queue; never throws (an outage is an error message). */
 async function fetchQueue(status: ReviewStatus | "all"): Promise<QueueResult> {
   try {
@@ -207,28 +237,34 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
     setFilter(next);
   };
 
-  const patchItem = useCallback(async (id: string, body: Record<string, unknown>) => {
-    setBusyId(id);
-    setError(null);
-    try {
-      const res = await apiFetch(`/api/moderation/review/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error ?? msg("the_action_could_not_be"));
+  const patchItem = useCallback(
+    async (id: string, body: Record<string, unknown>) => {
+      // The item as shown: its source picks the route its actions go to.
+      const item = items.find((i) => i.id === id);
+      setBusyId(id);
+      setError(null);
+      try {
+        const res = await apiFetch(itemActionPath(item ?? { id, source: "escalation" }), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          // TASK-181: the refusal's own message (its code's catalog text), never the body's
+          // compatibility field — an object a screen cannot show.
+          setError((await readRefusal(res)).message);
+          return false;
+        }
+        return true;
+      } catch {
+        setError(msg("could_not_connect_to_the"));
         return false;
+      } finally {
+        setBusyId(null);
       }
-      return true;
-    } catch {
-      setError(msg("could_not_connect_to_the"));
-      return false;
-    } finally {
-      setBusyId(null);
-    }
-  }, []);
+    },
+    [items]
+  );
 
   const getSuggestion = useCallback(async (id: string) => {
     setAssist((a) => ({ ...a, [id]: { loading: true } }));
@@ -296,12 +332,9 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
   }, [draft, patchItem, load, filter]);
 
   return (
-    <div
-      className={`w-full max-w-4xl mx-auto ${t.container}`}
-      data-testid="review-dashboard"
-    >
+    <div className={`w-full max-w-5xl ${t.container}`} data-testid="review-dashboard">
       <div className="flex items-center justify-between mb-4">
-        <h2 className={`text-lg font-semibold ${t.heading}`}>{msg("review_queue")}</h2>
+        <h3 className={`text-lg font-semibold ${t.heading}`}>{msg("review_queue")}</h3>
         <button
           type="button"
           onClick={() => load(filter)}
@@ -312,7 +345,11 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
         </button>
       </div>
 
-      <div className="flex gap-2 mb-4" role="group" aria-label={msg("filter_by_status")}>
+      <div
+        className="flex flex-wrap gap-2 mb-4"
+        role="group"
+        aria-label={msg("filter_by_status")}
+      >
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
@@ -440,7 +477,10 @@ function ReviewCard(props: ReviewCardProps) {
               data-testid={`rd-assist-banner-${item.id}`}
             >
               {msg("suggested", {
-                recommendation: assist.rec.recommendation,
+                recommendation: codeLabel(
+                  `decision_${assist.rec.recommendation}`,
+                  assist.rec.recommendation
+                ),
                 rationale: assist.rec.rationale,
               })}{" "}
               <span className="text-blue-600">{msg("advisory_you_decide")}</span>
@@ -494,7 +534,9 @@ function ReviewCard(props: ReviewCardProps) {
       {item.status === "resolved" && (
         <p className={`text-sm ${t.muted}`} data-testid={`rd-decision-${item.id}`}>
           {msg("decision_line", {
-            decision: item.decision ? msg(`decision_${item.decision}`) : "",
+            decision: item.decision
+              ? codeLabel(`decision_${item.decision}`, item.decision)
+              : "",
           })}
         </p>
       )}
@@ -535,13 +577,18 @@ function ResolvePanel({
   onSubmit,
   onCancel,
 }: ResolvePanelProps) {
+  // Each control named by its label (WCAG 1.3.1, 4.1.2): ids unique to this panel.
+  const id = useId();
   return (
     <div
       className={`mt-3 rounded-lg border p-3 ${t.panel}`}
       data-testid={`rd-resolve-panel-${item.id}`}
     >
-      <label className="block text-xs mb-1">{msg("decision")}</label>
+      <label htmlFor={`${id}-decision`} className="block text-xs mb-1">
+        {msg("decision")}
+      </label>
       <select
+        id={`${id}-decision`}
         value={draft.decision}
         onChange={(e) =>
           onChange({ ...draft, decision: e.target.value as ReviewDecision })
@@ -558,8 +605,11 @@ function ResolvePanel({
 
       {draft.decision === "modify" && (
         <div data-testid="rd-modify-block">
-          <label className="block text-xs mb-1">{msg("modified_action")}</label>
+          <label htmlFor={`${id}-modified`} className="block text-xs mb-1">
+            {msg("modified_action")}
+          </label>
           <select
+            id={`${id}-modified`}
             value={draft.modifiedAction}
             onChange={(e) =>
               onChange({ ...draft, modifiedAction: e.target.value as ModerationAction })
@@ -576,8 +626,11 @@ function ResolvePanel({
         </div>
       )}
 
-      <label className="block text-xs mb-1">{msg("reviewer_notes")}</label>
+      <label htmlFor={`${id}-notes`} className="block text-xs mb-1">
+        {msg("reviewer_notes")}
+      </label>
       <textarea
+        id={`${id}-notes`}
         value={draft.reviewerNotes}
         onChange={(e) => onChange({ ...draft, reviewerNotes: e.target.value })}
         rows={3}
@@ -614,9 +667,15 @@ function ResolvePanel({
 function ItemHeader({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }) {
   return (
     <div className="flex flex-wrap items-center gap-2 mb-2">
-      <Badge className={SOURCE_BADGE[item.source]}>{item.source}</Badge>
-      <Badge className={PRIORITY_BADGE[item.priority]}>{item.priority}</Badge>
-      <Badge className={STATUS_BADGE[item.status]}>{msg(`filter_${item.status}`)}</Badge>
+      <Badge className={SOURCE_BADGE[item.source]}>
+        {codeLabel(`source_${item.source}`, item.source)}
+      </Badge>
+      <Badge className={PRIORITY_BADGE[item.priority]}>
+        {codeLabel(`priority_${item.priority}`, item.priority)}
+      </Badge>
+      <Badge className={STATUS_BADGE[item.status]}>
+        {codeLabel(`filter_${item.status}`, item.status)}
+      </Badge>
       <span
         className={`ml-auto text-xs ${t.muted}`}
         data-testid={`rd-trajectory-${item.id}`}
@@ -675,7 +734,9 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
       )}
 
       <div className="flex flex-wrap gap-1.5 mb-2">
-        <Chip className="bg-blue-100 text-blue-800">{m.triggeredBy}</Chip>
+        <Chip className="bg-blue-100 text-blue-800">
+          {codeLabel(`triggered_${m.triggeredBy}`, m.triggeredBy)}
+        </Chip>
         {severity && (
           <Chip className="bg-amber-100 text-amber-800">
             {msg("severity", { severity: String(severity) })}
@@ -694,11 +755,13 @@ function DecisionContext({ item, t }: { item: ReviewQueueItem; t: ThemeClasses }
       </div>
 
       <p className="text-sm mb-1">
-        <span className={t.muted}>{msg("action")}</span> {msg(`action_${m.action}`)}
+        <span className={t.muted}>{msg("action")}</span>{" "}
+        {codeLabel(`action_${m.action}`, m.action)}
       </p>
-      <p className="text-sm mb-2" data-testid={`rd-reasoning-${item.id}`}>
+      {/* A div: a reason recorded before the keys carries a <details>, which a <p> may not hold. */}
+      <div className="text-sm mb-2" data-testid={`rd-reasoning-${item.id}`}>
         <Recorded {...recordedReasons(m.reasoning)} />
-      </p>
+      </div>
     </div>
   );
 }
@@ -718,19 +781,22 @@ function ExplanationTimeline({ item, t }: { item: ReviewQueueItem; t: ThemeClass
           data-testid={`rd-step-${item.id}-${i}`}
         >
           <span className={`text-xs ${t.muted} min-w-24`}>{step.phase}</span>
-          <span className="text-xs">
+          <div className="text-xs">
             <Recorded {...shownOrStored(step.description)} />
-          </span>
+          </div>
         </div>
       ))}
       {chain.conclusion && (
-        <p className={`text-xs mt-1 ${t.muted}`} data-testid={`rd-conclusion-${item.id}`}>
+        <div
+          className={`text-xs mt-1 ${t.muted}`}
+          data-testid={`rd-conclusion-${item.id}`}
+        >
           {typeof chain.conclusion === "string" ? (
             <Recorded {...shownOrStored(chain.conclusion)} />
           ) : (
             msg("conclusion", { conclusion: renderShown(chain.conclusion) })
           )}
-        </p>
+        </div>
       )}
     </div>
   );

@@ -7,6 +7,185 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-210 — Residuals 55j: the moderator's review queue and the member's appeal on real pages, and no screen component left on no page
+
+| Field        | Detail                                                                                          |
+| ------------ | ----------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-210                                                                                        |
+| **Type**     | Defect (a moderation flow no one could use: the review queue and the appeal mounted on no page) |
+| **Severity** | Medium (N-117)                                                                                  |
+| **Phase**    | Phase 5                                                                                         |
+| **Target**   | v6.0.0 (RC)                                                                                     |
+| **Status**   | Fixed on develop (sub-batch 55j of the residuals batch)                                         |
+| **Logged**   | 2026-11-09 (register N-117, found by sub-batch 55i)                                             |
+
+Sub-batch 55j of the residuals register, in both repositories (Playform: its TASK-5011).
+
+**What was found (N-117).** The review dashboard (`components/ReviewDashboard`) and the appeal
+form (`components/AppealForm`) were imported by no page of either repository. Traced end to end:
+
+- **A moderator** (the `moderator` role: `can_access_admin`, `can_moderate`, `admin_view_audit`,
+  migration 018) signs in to `/admin` and is offered Approvals, Audit log, Capabilities and
+  Tenant (`AdminShell`'s mapping): no section reads `/api/moderation/review`. The queue's routes
+  (`GET`/`POST /api/moderation/review`, `PATCH /api/moderation/review/[id]`, `POST …/assist`,
+  `PATCH /api/moderation/appeals/[id]`) were reachable only by hand-made requests; the journey
+  register exempted all five ("pending the staff journeys").
+- **A member** whose text the Guardian blocks sees `content.rejected` on the home page ("message":
+  no action), or `account.restricted` after strikes (sign-out only — though the registry's action
+  for it reads "Show the restriction; offer appeal"). No screen shows them a decision's id, and
+  `POST /api/moderation/appeals` requires one: no one using the product could appeal.
+- There was no account page (`/account`), no moderation page, and no duplicate path: the
+  components were the only screens for these routes. So they are mounted, not removed.
+
+**The moderator's path.** The admin console's **Moderation** section (`AdminShell`, permission
+`can_moderate`, the one every moderation route checks; `app/admin/page.tsx` renders the review
+dashboard there, with no command bar — the queue is decided item by item). On the dashboard: an
+appeal is claimed, released and resolved through its own route (`/api/moderation/appeals/[id]`,
+which refuses any other item), every other item through the review route; a refused action shows
+the refusal's own message (`readRefusal`; it showed the body's compatibility field); the item's
+source, priority, status, trigger, action and the assistant's suggested decision are the catalog's
+words (`screens.review_dashboard.*`; a code a newer server sends reads as itself); each resolve
+control is named by its label (`useId`); and a reason recorded before the keys, whose disclosure
+is a `<details>`, is no longer inside a `<p>` (invalid HTML: React warned of a hydration error).
+
+**The member's path.** `GET /api/moderation/appeals` (new): the caller's own blocks of their own
+input (`listOwnDecisions`, `platform/moderation/review-service.ts`), newest first, each with its
+appeal if one was filed, and the rules an appeal is held to (window, reason length). The account
+is the verified token's (no parameter is read); a restricted, suspended or banned account still
+reads it (the decision under appeal is often why). `/account` (new page,
+`app/account/AccountClient.tsx`): the decisions about their content
+(`components/account/ModerationDecisions.tsx`) — what was blocked and when, until when it can be
+appealed, the appeal form under it (with the server's limits; its field's id unique on the page),
+a sent appeal confirmed and the list read again, the appeal's standing (waiting, in review,
+decided: stands, overturned or changed), or the window closed. It is reached from the home page's
+bar ("Your account", signed-in users) and from where a decision is seen: the refusal of rejected
+content or of a restricted account links to it (`RefusalNotice`'s `AppealLink`, `offersAppeal`;
+platform-foundation's demo home, Playform's notifications) — never for a guest, who has no account.
+The appeal form's confirmation no longer promises a notification the platform does not send.
+
+**Found by the journey: no decision recorded its account.** The e2e journey's member was blocked
+and the account page listed nothing: the Guardian built its audit record from the result alone
+(`platform/moderation/audit.ts`) and never passed the screening context's user id, so
+`content_safety_audit.user_id` was null on every decision. So the appeals route's ownership check
+(the decision's account must be the appellant's) refused every appeal even when sent by hand, no
+account could find its decisions, and an account's data export and erasure (by `user_id`) never
+reached them. Now the Guardian records the account (`logModerationAudit(…, context.userId)`), and
+**migration 068** gives the rows written before theirs where a strike the Sentinel gave for the
+decision, or an escalation or ban review of it, names one account that exists and is not erased (an
+ambiguous one, an erased account's, or a decision nothing names stays without one). The replay
+applies 068 again over such rows and reads them back; the verification query is in
+MIGRATION_v5_to_v6 (TASK-210).
+
+**The guard.** `__tests__/mounted-screens.test.ts`: every source file under `components/` is
+reached from a file under `app/` by imports (static, `import()`, `require`), transitively — a
+component only an unmounted one imports is unmounted too; a test is never a path. Its known list
+is per repository, minimal and justified in the guard: platform-foundation's
+`components/AdaptiveInput/` (the platform's input component, shipped for a consumer's screen —
+Playform's home mounts it; the platform's demo home has no conductor), Playform's empty. A known
+entry that is reached or names nothing fails. Self-tests on a scratch app.
+
+**What the guard found besides, and what was done.**
+
+- **The profile screen** (`components/auth/ProfilePage.tsx`, `VisibilitySelect.tsx`,
+  `hooks/useProfileForm.ts`): on no page in either repository. The platform has no profile route;
+  Playform has (`GET`/`PUT /api/profile`, screened). The screen went with its route: removed here
+  (with its test and its catalog entries, `screens.auth.profile`, `screens.auth.visibility`), and
+  Playform's own from this commit, mounted at its `/profile` (its TASK-5011). The shared
+  `effect-free-state` test's profile-form case moved with it.
+- **Playform's Teams panel and its cards** — Playform's own (its TASK-5011).
+
+**Tests.** `mounted-screens` (the guard, self-tests); `moderation-guardian` and `moderation-audit`
+(a decision recorded against its account, none for a guest); the replay's 068 step (six rows: a
+strike's, an escalation's, an erased account's, two accounts', none, one already set); `own-decisions` (the service on the real
+in-memory stores: own rows only, however a store spells an id; the appeal read past its limit;
+the window); `moderation-appeals-routes` (GET: the caller's own whatever the query names, no
+session or no account, a restricted account, the store down, the id as stored); route fixtures
+from the handlers (`GET /api/moderation/appeals` — none, appealable, past its window, waiting, in
+review, upheld, the store failing; a pending appeal in the queue; an appeal claimed);
+`moderation-decisions`, `account-page` (the page, the home bar's link), `review-dashboard` (the
+appeal's route, the catalog's words, labelled controls, an unknown code), `admin-console-first-section`
+(a moderator's sections, the Moderation section read and shown), `refusal-handler` (which
+refusals offer the appeal), `appeal-form` (two forms on a page, the confirmation),
+`component` (the demo home's rejection links to its appeal; a guest's does not),
+`mock-provider-admins` (the journey's moderator and member), the role matrix (the new method).
+**E2E** (`e2e/moderation.spec.ts`, the same file in both repositories): a member's blocked text →
+the refusal's link → `/account` → appeal; the moderator's console → Moderation → the assistant
+(no suggestion without a model) → claim → overturn; an escalation filed through the route
+claimed and released; the member sees the appeal decided and is refused the queue. The five
+moderation exemptions are gone from `journey-exemptions.json` (32 → 27); none added.
+`e2e/baseline.spec.ts` (platform-foundation's): on a phone the demo home's buttons stay inside
+their card.
+
+Walked at 1280 and 390 px on production builds of the base and the change: the member's home,
+the home after a blocked text, `/account` (decisions, an appeal open), the moderator's console and
+its Moderation section (pending and resolved). The moderator's journey waits out the console's shared rate limit
+(admin:ops, 30 a minute per address) that the admin specs before it spend.
+
+**Design check**
+
+- **Reach:** the admin console's navigation and page; the review dashboard and the appeal form;
+  the appeals route (a new method) and the review service; the home page's bar; the shared
+  refusal notice (every screen that shows one: the admin console's panels and command bar too —
+  a restricted administrator is offered their decisions as anyone is); the platform's demo home
+  and its seam; the catalog; the test double's identities; the journey register; the platform's
+  file list (`platform-paths.json`: the profile screen is no longer the platform's).
+- **Races:** none new: the list is a read; an appeal is filed by the existing route (one per
+  decision, refused when pending — unchanged); 068 updates only rows with no account, in one
+  statement.
+- **Dependencies down:** the list's stores unreadable → `503 service.unavailable` (moderation),
+  shown by its message with a retry; the assistant down → no suggestion (fail-open, unchanged).
+- **Erasure leftovers:** none new: the list reads `content_safety_audit` and `review_queue`,
+  already in the register — and with the account now recorded (and 068's backfill), an account's
+  decisions are exported and detached on erasure as the register says (they were not reached
+  before). 068 never attaches a decision to an erased account.
+- **Screens × responses:** the account page and the dashboard against the routes' own answers
+  (fixtures produced by the handlers).
+- **Journeys touched:** the member's home → account → appeal; the moderator's console →
+  Moderation; e2e spec by spec on both repositories, base and change.
+- **Weakens a tenant's protection?** No: the list runs in the caller's tenant (`tenantRoute`), on
+  the caller's own rows.
+
+**Threat model**
+
+- **Boundary:** a signed-in account reading the decisions about its own content; a moderator's
+  console offering the queue.
+- **Actors that exist today:** members whose content is blocked (any signed-in account: the route
+  takes the account from the verified token and reads no parameter — a query naming another
+  account is ignored, tested); guests (refused: no account; no link is shown to them);
+  moderators and administrators (the section shows only with `can_moderate`; every route checks
+  it — the section is display only).
+- **Bypasses:** none: the console's section mapping is display only, as every section's; the
+  list reads only rows whose account is the caller's (`sameId` after the store's own filter).
+- **Disclosure:** a decision's id, time, content type and appeal standing go to the account they
+  are about — already in that account's data export. The decision's reasons, the classifier's
+  words and the reviewer's notes are not sent.
+- **Forgeries:** no caller names the account a decision is recorded against: the code records
+  the account the verified request ran as (the screening context's, set by the route from its guard); 068 attributes a past
+  decision only from the platform's own records of it — a strike, a review case — never from
+  input, and leaves one two records disagree on.
+- **Legitimate flows:** a member appealing a block, including a restricted or banned account (the
+  list is not gated on standing); a moderator deciding an appeal.
+- **Agreed before code:** the owner's brief for sub-batch 55j (2026-11-09).
+
+**Self-review**
+
+- **Consumers checked:** every importer of `RefusalNotice` (the admin console, its panels and
+  command bar, the users panel) — the link appears only for a moderation decision; every reader of
+  `AppealForm`'s props; `permittedSections` (the console's first section and every test of it);
+  the journey register; the role matrix; the route fixtures.
+- **Hostile re-read:** a query naming another account (ignored); an appeal of another account's
+  decision (refused by the existing ownership check, unchanged); an appeal on the escalation's
+  route (`/review/[id]` accepts it as before; the dashboard uses the appeal's own); a code the
+  catalog lacks (shown as itself); a decision past its window (no form); two forms on the page
+  (ids unique); a guest (no link, no page content read).
+- **Found in the batch and fixed in it:** every moderation decision recorded without its account
+  (so no appeal could pass, and no account's export or erasure reached them) — the code and
+  migration 068; the dashboard's PATCH error read the body's alias; its
+  codes shown raw; its resolve controls unlabelled; a `<details>` inside a `<p>`; the appeal form's
+  fixed field id and its promise of a notification; `account.restricted`'s "offer appeal" never
+  offered; the demo home's three buttons ran past their card at 390 px (they wrap now — found
+  by the walk). Nothing found is left.
+
 ### TASK-209 — Residuals 55i: the platform's notes written by code in the catalog, settings and permissions named by the catalog, a deterministic erasure test
 
 | Field        | Detail                                                                                               |

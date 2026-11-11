@@ -11,7 +11,7 @@ import type { AIResponse, Orchestrator, CircuitState } from "@/platform/ai";
 import { Guardian } from "@/platform/moderation/guardian";
 import { registerPlatformAgents } from "@/platform/agents/agent-configs";
 import { resetAgentRegistry } from "@/platform/agents/registry";
-import { resetModerationStore } from "@/platform/moderation/store";
+import { getModerationStore, resetModerationStore } from "@/platform/moderation/store";
 import type { ScreeningContext } from "@/platform/moderation/types";
 import { CONTENT_KINDS_FIXTURE, withModules } from "./helpers/modules";
 import {
@@ -226,7 +226,38 @@ describe("Guardian — blocklist", () => {
     expect(result.blocklistMatches).toContain("kill yourself");
     expect(mockComplete).not.toHaveBeenCalled();
   });
+
+  it("records the decision against the account whose content it judged (TASK-210, N-117)", async () => {
+    // Before, the audit record never carried the context's account: an appeal's ownership check
+    // refused every appeal, and no account could find its decisions.
+    const guardian = new Guardian();
+    const result = await guardian.screen(
+      "kill yourself",
+      "input",
+      "req-own",
+      makeContext({ userId: "acct-own" })
+    );
+    await waitForAudit(result.trajectoryId);
+    const [record] = await getModerationStore().queryAudits({
+      trajectoryId: result.trajectoryId,
+    });
+    expect(record).toMatchObject({ userId: "acct-own", actionTaken: "block" });
+    expect(
+      (await getModerationStore().queryAudits({ userId: "acct-own" })).map(
+        (r) => r.trajectoryId
+      )
+    ).toContain(result.trajectoryId);
+  });
 });
+
+/** The audit is written without being awaited (it never blocks screening): wait for it. */
+async function waitForAudit(trajectoryId: string): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    if ((await getModerationStore().queryAudits({ trajectoryId })).length > 0) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`no audit record for ${trajectoryId}`);
+}
 
 // ---------------------------------------------------------------------------
 // Content rating per level

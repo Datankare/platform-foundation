@@ -16,6 +16,7 @@ export type AdminSection =
   | "capabilities"
   | "capability-mapping"
   | "approvals"
+  | "moderation"
   | "erasures"
   | "dual-control"
   | "tenant"
@@ -73,6 +74,14 @@ const NAV_ITEMS: {
     label: section("approvals"),
     icon: "✅",
     permission: "can_access_admin",
+  },
+  {
+    // The human review queue — escalations, ban reviews and appeals (TASK-210, N-117): the
+    // permission every moderation route checks, which the moderator role holds (migration 018).
+    section: "moderation",
+    label: section("moderation"),
+    icon: "⚖️",
+    permission: "can_moderate",
   },
   {
     // The open erasures and their two-operator attestation (TASK-202, S3-E19): operators only, as

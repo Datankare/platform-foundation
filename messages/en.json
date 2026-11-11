@@ -141,44 +141,6 @@
     "auth": {
       "signing_in": "Signing you in…",
       "code_resent": "A new code is on its way. Check your email.",
-      "profile": {
-        "loading_profile": "Loading profile...",
-        "profile_not_found": "Profile not found.",
-        "your_profile": "Your Profile",
-        "sign_out": "Sign Out",
-        "email": "Email",
-        "mfa_enabled": "MFA Enabled",
-        "display_name": "Display Name",
-        "choose_a_display_name": "Choose a display name",
-        "visible": "Visible:",
-        "language": "Language",
-        "english": "English",
-        "spanish": "Spanish",
-        "french": "French",
-        "german": "German",
-        "japanese": "Japanese",
-        "korean": "Korean",
-        "chinese": "Chinese",
-        "hindi": "Hindi",
-        "arabic": "Arabic",
-        "portuguese": "Portuguese",
-        "timezone": "Timezone",
-        "utc": "UTC",
-        "avatar_visibility": "Avatar Visibility",
-        "profile_visibility": "Profile Visibility",
-        "controls_whether_your_profile_appears": "Controls whether your profile appears in search results.",
-        "communication": "Communication",
-        "email_notifications": "Email notifications",
-        "push_notifications": "Push notifications",
-        "account": "Account",
-        "profile_updated_successfully": "Profile updated successfully.",
-        "member_since": "Member since {date}",
-        "last_login": "Last login {date}",
-        "verified": "Verified",
-        "unverified": "Unverified",
-        "saving": "Saving...",
-        "save_changes": "Save Changes"
-      },
       "page": {
         "sign_in_failed": "Sign-in failed",
         "an_unexpected_error_occurred_please": "An unexpected error occurred. Please try again.",
@@ -299,11 +261,6 @@
         "continue_with_google": "Continue with Google",
         "continue_with_apple": "Continue with Apple",
         "continue_with_microsoft": "Continue with Microsoft"
-      },
-      "visibility": {
-        "private": "Private",
-        "friends": "Friends",
-        "public": "Public"
       }
     },
     "tenancy": {
@@ -678,7 +635,8 @@
         "capability-mapping": "Capability map",
         "tenant": "Tenant",
         "tenants": "Tenants (operators)",
-        "erasures": "Erasures"
+        "erasures": "Erasures",
+        "moderation": "Moderation"
       },
       "hints": {
         "generic": "What would you like to do?",
@@ -1241,7 +1199,8 @@
       "retry": "Try again",
       "sign_in": "Sign in",
       "create_account": "Create an account",
-      "tenant_title": "This service is not available here"
+      "tenant_title": "This service is not available here",
+      "appeal": "See this decision and appeal it"
     },
     "review_dashboard": {
       "the_action_could_not_be": "The action could not be completed.",
@@ -1270,21 +1229,32 @@
       "appeal_reason": "Appeal: {reason}",
       "suggested": "Suggested: {recommendation} — {rationale}",
       "decision_line": "Decision: {decision}",
-      "trajectory_and_user": "traj: {trajectory} · user: {user}",
+      "trajectory_and_user": "Decision {trajectory} · account {user}",
       "severity": "severity: {severity}",
       "conclusion": "Conclusion: {conclusion}",
-      "filter_all": "all",
-      "filter_pending": "pending",
-      "filter_claimed": "claimed",
-      "filter_resolved": "resolved",
-      "decision_uphold": "uphold",
-      "decision_overturn": "overturn",
-      "decision_modify": "modify",
-      "action_allow": "allow",
-      "action_warn": "warn",
-      "action_block": "block",
-      "action_escalate": "escalate",
-      "service_unreachable": "Could not connect to the review service."
+      "filter_all": "All",
+      "filter_pending": "Pending",
+      "filter_claimed": "Claimed",
+      "filter_resolved": "Resolved",
+      "decision_uphold": "Uphold",
+      "decision_overturn": "Overturn",
+      "decision_modify": "Modify",
+      "action_allow": "Allow",
+      "action_warn": "Warn",
+      "action_block": "Block",
+      "action_escalate": "Escalate",
+      "service_unreachable": "Could not connect to the review service.",
+      "source_escalation": "Escalation",
+      "source_ban_review": "Ban review",
+      "source_appeal": "Appeal",
+      "priority_critical": "Critical",
+      "priority_high": "High",
+      "priority_normal": "Normal",
+      "triggered_blocklist": "Blocklist",
+      "triggered_classifier": "Classifier",
+      "triggered_content-rating": "Content rating",
+      "triggered_context": "Context",
+      "triggered_none": "No layer"
     },
     "adaptive_input": {
       "input_mode_selection": "Input mode selection",
@@ -1312,7 +1282,7 @@
     },
     "appeal": {
       "could_not_connect_to_the": "Could not connect to the appeals service.",
-      "your_appeal_has_been_submitted": "Your appeal has been submitted for review. You'll be notified once a moderator has reviewed it.",
+      "your_appeal_has_been_submitted": "Your appeal has been submitted. A moderator will review it.",
       "why_should_this_decision_be": "Why should this decision be reconsidered?",
       "explain_the_context_the_automated": "Explain the context the automated system may have missed…",
       "submitting": "Submitting…",
@@ -1329,7 +1299,8 @@
       "loading": "Loading...",
       "sign_in_for_full_access": "Sign in for full access",
       "sign_out": "Sign Out",
-      "guest_session": "Guest session —"
+      "guest_session": "Guest session —",
+      "your_account": "Your account"
     },
     "stream": {
       "truncated": "The answer was cut off at its length limit: it is not complete. Ask for a shorter answer, or ask it to continue."
@@ -1846,6 +1817,39 @@
       "legacy": {
         "recorded": "A reason recorded before reasons were coded.",
         "show": "Show the stored text"
+      }
+    },
+    "account": {
+      "meta_title": "Your account",
+      "loading": "Loading…",
+      "back_home": "← Back to home",
+      "title": "Your account",
+      "guest": "A guest session has no account, so no decision is recorded against it. Sign in to see the decisions about your content.",
+      "sign_in": "Sign in",
+      "decisions": {
+        "title": "Decisions about your content",
+        "explainer": "When our screening blocks something you submitted, it is listed here. You can ask a moderator to review a decision within {hours, plural, one {# hour} other {# hours}} of it.",
+        "loading": "Loading your decisions…",
+        "none": "No decision has blocked your content.",
+        "unreadable": "Your decisions could not be read. Please try again.",
+        "unreachable": "Could not reach the server. Please check your connection.",
+        "retry": "Try again",
+        "blocked_on": "Blocked {date}",
+        "appealable_until": "You can appeal until {date}.",
+        "window_closed": "The time to appeal this decision has passed.",
+        "appeal": "Appeal this decision",
+        "cancel": "Cancel",
+        "appeal_sent": "Your appeal was sent. A moderator will review it; where it stands is shown here.",
+        "appeal_waiting": "Appeal sent {date}. Waiting for a moderator.",
+        "appeal_in_review": "Appeal sent {date}. A moderator is reviewing it.",
+        "outcome_uphold": "Appeal decided {date}: the decision stands.",
+        "outcome_overturn": "Appeal decided {date}: the decision was overturned.",
+        "outcome_modify": "Appeal decided {date}: the decision was changed.",
+        "outcome_unknown": "Appeal decided {date}.",
+        "content_generation": "Text you submitted",
+        "content_extraction": "A file you uploaded",
+        "content_profile": "Your profile",
+        "content_other": "Content you submitted"
       }
     }
   }

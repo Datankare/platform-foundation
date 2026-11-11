@@ -99,3 +99,31 @@ describe("AppealForm", () => {
     await waitFor(() => expect(screen.getByTestId("af-error")).toBeDefined());
   });
 });
+
+describe("AppealForm on a page with several decisions (TASK-210)", () => {
+  it("each form's label names its own field, and the field takes the server's longest reason", () => {
+    render(
+      <>
+        <AppealForm originalDecisionId="traj-1" maxReasonLength={2000} />
+        <AppealForm originalDecisionId="traj-2" maxReasonLength={500} />
+      </>
+    );
+    const fields = screen.getAllByLabelText(/Why should this decision be reconsidered/);
+    expect(fields).toHaveLength(2);
+    expect(fields[0].id).not.toBe(fields[1].id);
+    expect(fields[0].getAttribute("maxlength")).toBe("2000");
+    expect(fields[1].getAttribute("maxlength")).toBe("500");
+  });
+
+  it("the confirmation promises no notification the platform does not send", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(answer(SUBMITTED));
+    render(<AppealForm originalDecisionId="traj-1" />);
+    fireEvent.change(screen.getByTestId("af-reason"), { target: { value: LONG_REASON } });
+    fireEvent.click(screen.getByTestId("af-submit"));
+    const done = await screen.findByTestId("af-success");
+    expect(done.textContent).toBe(
+      "Your appeal has been submitted. A moderator will review it."
+    );
+    expect(done.textContent).not.toMatch(/notified/);
+  });
+});

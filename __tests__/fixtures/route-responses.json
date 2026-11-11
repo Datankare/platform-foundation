@@ -2253,6 +2253,123 @@
       "withdrawn": []
     }
   },
+  "GET /api/moderation/appeals — none": {
+    "status": 200,
+    "body": {
+      "decisions": [],
+      "appealWindowHours": 72,
+      "minReasonLength": 20,
+      "maxReasonLength": 2000
+    }
+  },
+  "GET /api/moderation/appeals — one appealable": {
+    "status": 200,
+    "body": {
+      "decisions": [
+        {
+          "id": "traj-1",
+          "decidedAt": "2026-01-01T00:00:00.000Z",
+          "contentType": "generation",
+          "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "appeal": null
+        }
+      ],
+      "appealWindowHours": 72,
+      "minReasonLength": 20,
+      "maxReasonLength": 2000
+    }
+  },
+  "GET /api/moderation/appeals — one past its window": {
+    "status": 200,
+    "body": {
+      "decisions": [
+        {
+          "id": "traj-old",
+          "decidedAt": "2025-12-28T00:00:00.000Z",
+          "contentType": "generation",
+          "appealableUntil": "2025-12-31T00:00:00.000Z",
+          "appeal": null
+        }
+      ],
+      "appealWindowHours": 72,
+      "minReasonLength": 20,
+      "maxReasonLength": 2000
+    }
+  },
+  "GET /api/moderation/appeals — appealed, waiting": {
+    "status": 200,
+    "body": {
+      "decisions": [
+        {
+          "id": "traj-1",
+          "decidedAt": "2026-01-01T00:00:00.000Z",
+          "contentType": "generation",
+          "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "appeal": {
+            "status": "pending",
+            "submittedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ],
+      "appealWindowHours": 72,
+      "minReasonLength": 20,
+      "maxReasonLength": 2000
+    }
+  },
+  "GET /api/moderation/appeals — appealed, in review": {
+    "status": 200,
+    "body": {
+      "decisions": [
+        {
+          "id": "traj-1",
+          "decidedAt": "2026-01-01T00:00:00.000Z",
+          "contentType": "generation",
+          "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "appeal": {
+            "status": "claimed",
+            "submittedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ],
+      "appealWindowHours": 72,
+      "minReasonLength": 20,
+      "maxReasonLength": 2000
+    }
+  },
+  "GET /api/moderation/appeals — appealed, upheld": {
+    "status": 200,
+    "body": {
+      "decisions": [
+        {
+          "id": "traj-1",
+          "decidedAt": "2026-01-01T00:00:00.000Z",
+          "contentType": "generation",
+          "appealableUntil": "2026-01-04T00:00:00.000Z",
+          "appeal": {
+            "status": "resolved",
+            "submittedAt": "2026-01-01T00:00:00.000Z",
+            "decision": "uphold",
+            "resolvedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ],
+      "appealWindowHours": 72,
+      "minReasonLength": 20,
+      "maxReasonLength": 2000
+    }
+  },
+  "GET /api/moderation/appeals — the store failing": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "moderation"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
   "POST /api/moderation/appeals — submitted": {
     "status": 201,
     "body": {
@@ -3663,6 +3780,106 @@
       },
       "success": false,
       "error": "Something went wrong. Try again; if it continues, quote reference req_0000000000000000."
+    }
+  },
+  "GET /api/moderation/review — a pending appeal": {
+    "status": 200,
+    "body": {
+      "items": [
+        {
+          "source": "appeal",
+          "priority": "normal",
+          "status": "pending",
+          "moderationResult": {
+            "action": "block",
+            "triggeredBy": "classifier",
+            "direction": "input",
+            "contentType": "generation",
+            "contentRatingLevel": 1,
+            "blocklistMatches": [],
+            "reasoning": [
+              {
+                "key": "screens.moderation.reasons.block_threshold",
+                "params": {
+                  "severity": "high",
+                  "threshold": "medium",
+                  "level": {
+                    "key": "screens.moderation.levels.child"
+                  }
+                }
+              }
+            ],
+            "severityAdjustment": 0,
+            "contextFactors": [
+              {
+                "key": "screens.moderation.factors.clean_history"
+              }
+            ],
+            "attributeToUser": true,
+            "pipelineLatencyMs": 12,
+            "classifierCostUsd": 0,
+            "trajectoryId": "traj-1",
+            "agentId": "guardian"
+          },
+          "targetUserId": "00000000-0000-4000-9000-99b3eedb0004",
+          "requestId": "req-test",
+          "appealReason": "This is a sufficiently long and detailed appeal reason.",
+          "originalDecisionId": "traj-1",
+          "id": "review-1",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "PATCH /api/moderation/appeals/[id] — claimed": {
+    "status": 200,
+    "body": {
+      "item": {
+        "source": "appeal",
+        "priority": "normal",
+        "status": "claimed",
+        "moderationResult": {
+          "action": "block",
+          "triggeredBy": "classifier",
+          "direction": "input",
+          "contentType": "generation",
+          "contentRatingLevel": 1,
+          "blocklistMatches": [],
+          "reasoning": [
+            {
+              "key": "screens.moderation.reasons.block_threshold",
+              "params": {
+                "severity": "high",
+                "threshold": "medium",
+                "level": {
+                  "key": "screens.moderation.levels.child"
+                }
+              }
+            }
+          ],
+          "severityAdjustment": 0,
+          "contextFactors": [
+            {
+              "key": "screens.moderation.factors.clean_history"
+            }
+          ],
+          "attributeToUser": true,
+          "pipelineLatencyMs": 12,
+          "classifierCostUsd": 0,
+          "trajectoryId": "traj-1",
+          "agentId": "guardian"
+        },
+        "targetUserId": "00000000-0000-4000-9000-99b3eedb0004",
+        "requestId": "req-test",
+        "appealReason": "This is a sufficiently long and detailed appeal reason.",
+        "originalDecisionId": "traj-1",
+        "id": "review-1",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "claimedBy": "00000000-0000-4000-9000-887b6c240009",
+        "claimedAt": "2026-01-01T00:00:00.000Z"
+      }
     }
   },
   "PATCH /api/moderation/review/[id] — claimed": {

@@ -42,6 +42,7 @@ import { AdminKillSwitchView } from "@/components/admin/AgentKillSwitchPanel";
 import { PlatformConfigPanel } from "@/components/admin/PlatformConfigPanel";
 import { TrustedAgentsPanel } from "@/components/admin/TrustedAgentsPanel";
 import { ErasuresPanel } from "@/components/admin/ErasuresPanel";
+import ReviewDashboard from "@/components/ReviewDashboard/ReviewDashboard";
 import { renderMessage } from "@/platform/errors/messages";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { useAuth } from "@/platform/auth/context";
@@ -183,8 +184,12 @@ const DATA_VIEWS: Record<string, React.FC<DataViewProps>> = {
   "kill-switch": AdminKillSwitchView,
 };
 
-/** Sections that are a form of their own, with no command bar (the kill switch, TASK-172). */
-const NO_PROMPT_BAR: ReadonlySet<string> = new Set(["kill-switch"]);
+/**
+ * Sections that are a form of their own, with no command bar: the kill switch (TASK-172), and the
+ * moderation review queue (TASK-210 — the command bar has no moderation tool; the queue is decided
+ * item by item, by a person).
+ */
+const NO_PROMPT_BAR: ReadonlySet<string> = new Set(["kill-switch", "moderation"]);
 
 /**
  * A planned approve/reject (ADR-040 040c), sent to the deterministic decision route — real admin
@@ -443,6 +448,9 @@ export default function AdminPage() {
             handoff={usersHandoff}
           />
         )}
+
+        {/* The review queue reads and acts on its own routes (can_moderate, TASK-210). */}
+        {section === "moderation" && <ReviewDashboard variant="dark" />}
 
         {DataView &&
           (isPanelUnavailable(panelData[section]) ? (

@@ -13,6 +13,9 @@
  * read while loading, for `auth.mfa_required` or for a refused session, and a role with no section
  * is told so — a safety net: the platform's session route requires can_access_admin, which always
  * opens Approvals and Tenant.
+ *
+ * TASK-210 (N-117): a moderator's console has the review queue — the Moderation section
+ * (can_moderate), which no page offered before: a moderator could open only Approvals and Tenant.
  */
 import React from "react";
 import "@testing-library/jest-dom";
@@ -68,6 +71,8 @@ const PANEL_ROUTES: Record<string, string> = {
   "/api/admin/tenant": "can_access_admin",
   "/api/operator/tenants": "platform_operate",
   "/api/operator/jobs": "platform_operate",
+  // The Moderation section's queue (TASK-210): every moderation route checks can_moderate.
+  "/api/moderation/review": "can_moderate",
 };
 
 const path = (url: unknown) => String(url).split("?")[0];
@@ -89,6 +94,7 @@ const PANEL_ANSWERS: ReadonlyMap<string, RouteFixtureName> = new Map([
   ["/api/admin/tenant", "GET /api/admin/tenant — to a moderator"],
   ["/api/admin/users", "GET /api/admin/users — no accounts"],
   ["/api/admin/roles", "GET /api/admin/roles — the roles"],
+  ["/api/moderation/review", "GET /api/moderation/review — one pending escalation"],
 ]);
 
 /**
@@ -137,11 +143,17 @@ beforeEach(() => {
 });
 
 describe("the one mapping: permittedSections (AdminShell's order)", () => {
-  it("a moderator may open Approvals, then Tenant — nothing else", () => {
+  it("a moderator may open Approvals, Moderation, then Tenant — nothing else", () => {
     expect(permittedSections((c) => MODERATOR.includes(c))).toEqual([
       "approvals",
+      "moderation",
       "tenant",
     ]);
+  });
+  it("Moderation needs can_moderate: an admin without it is not offered the queue", () => {
+    expect(permittedSections((c) => c === "can_access_admin")).not.toContain(
+      "moderation"
+    );
   });
   it("everything ('*') opens on Users, the shell's first section", () => {
     expect(permittedSections(() => true)[0]).toBe("users");
@@ -192,6 +204,20 @@ describe("the console's first panel (TASK-184)", () => {
     await waitFor(() =>
       expect(panelReads()).toEqual(["/api/admin/approvals", "/api/admin/tenant"])
     );
+    await noRefusedRead();
+    // TASK-210: the review queue, on its own section — read from its route, with no command bar
+    // (the queue is decided item by item).
+    fireEvent.click(within(screen.getByRole("navigation")).getByText("Moderation"));
+    await waitFor(() =>
+      expect(panelReads()).toEqual([
+        "/api/admin/approvals",
+        "/api/admin/tenant",
+        "/api/moderation/review",
+      ])
+    );
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/^Moderation$/);
+    expect(await screen.findByTestId("rd-list")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
     await noRefusedRead();
   });
 

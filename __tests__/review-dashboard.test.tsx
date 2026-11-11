@@ -336,3 +336,82 @@ describe("ReviewDashboard — AI assist", () => {
     );
   });
 });
+
+describe("ReviewDashboard — in the console (TASK-210, N-117)", () => {
+  const APPEAL = "GET /api/moderation/review — a pending appeal";
+  const appealId = () =>
+    (routeAnswer(APPEAL)[1] as { items: { id: string }[] }).items[0].id;
+
+  it("claims an appeal through the appeals route (its own, ADR-024)", async () => {
+    fetchMock()
+      .mockResolvedValueOnce(answer(APPEAL))
+      .mockResolvedValueOnce(answer("PATCH /api/moderation/appeals/[id] — claimed"))
+      .mockResolvedValueOnce(answer(APPEAL));
+    render(<ReviewDashboard variant="dark" />);
+    const id = appealId();
+    fireEvent.click(await screen.findByTestId(`rd-claim-${id}`));
+    await waitFor(() => expect(patchCall()).toBeDefined());
+    expect(patchCall()![0]).toBe(`/api/moderation/appeals/${encodeURIComponent(id)}`);
+    expect(JSON.parse(String((patchCall()![1] as RequestInit).body))).toEqual({
+      action: "claim",
+    });
+  });
+
+  it("claims an escalation through the review route", async () => {
+    fetchMock()
+      .mockResolvedValueOnce(answer(ONE))
+      .mockResolvedValueOnce(answer(`${ACT} claimed`))
+      .mockResolvedValueOnce(answer(CLAIMED));
+    render(<ReviewDashboard />);
+    fireEvent.click(await screen.findByTestId("rd-claim-review-1"));
+    await waitFor(() => expect(patchCall()).toBeDefined());
+    expect(patchCall()![0]).toBe("/api/moderation/review/review-1");
+  });
+
+  it("shows an appeal's reason, and every code by the catalog's words", async () => {
+    fetchMock().mockResolvedValueOnce(answer(APPEAL));
+    render(<ReviewDashboard />);
+    const id = appealId();
+    const card = await screen.findByTestId(`rd-item-${id}`);
+    expect(screen.getByTestId(`rd-appeal-reason-${id}`).textContent).toContain(
+      "sufficiently long"
+    );
+    // The source, priority and status badges, the trigger and the action: the catalog's words,
+    // never their codes ("appeal", "normal", "pending", "classifier", "block").
+    expect(card.textContent).toMatch(/^AppealNormalPendingDecision /);
+    expect(card.textContent).toContain("Classifier");
+    expect(card.textContent).toContain("Action: Block");
+  });
+
+  it("names each resolve control by its label (WCAG 1.3.1)", async () => {
+    fetchMock().mockResolvedValueOnce(answer(CLAIMED));
+    render(<ReviewDashboard />);
+    fireEvent.click(await screen.findByTestId("rd-resolve-open-review-1"));
+    expect(screen.getByLabelText("Decision")).toBe(
+      screen.getByTestId("rd-decision-select")
+    );
+    expect(screen.getByLabelText("Reviewer notes")).toBe(screen.getByTestId("rd-notes"));
+    fireEvent.change(screen.getByTestId("rd-decision-select"), {
+      target: { value: "modify" },
+    });
+    expect(screen.getByLabelText("Modified action")).toBe(
+      screen.getByTestId("rd-modified-action")
+    );
+  });
+
+  it("a code the catalog does not know reads as itself, never a missing key", async () => {
+    // The route's own answer, its item's codes as a newer server's might be.
+    const [status, body] = routeAnswer(ONE) as [
+      number,
+      { items: Record<string, unknown>[] },
+    ];
+    body.items[0].source = "future_source";
+    body.items[0].priority = "urgent";
+    fetchMock().mockResolvedValueOnce({ ok: true, status, json: async () => body });
+    render(<ReviewDashboard />);
+    const card = await screen.findByTestId("rd-item-review-1");
+    expect(card.textContent).toContain("future_source");
+    expect(card.textContent).toContain("urgent");
+    expect(card.textContent).not.toContain("screens.review_dashboard");
+  });
+});

@@ -13,12 +13,17 @@
  * failure. UX rule: gray = informational (counter), green = success
  * confirmation, red = actual failure only.
  *
+ * Mounted on the account page, under the decision it appeals (components/account/
+ * ModerationDecisions.tsx, TASK-210, N-117: no page mounted it before). The page passes the
+ * server's own reason limits (GET /api/moderation/appeals); the field's id is unique on the page,
+ * so a page with several decisions keeps each label on its own field.
+ *
  * @module components/AppealForm
  */
 
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import { apiFetch } from "@/platform/auth/api-fetch";
 import { readRefusal } from "@/platform/errors/refusal";
 import { renderMessage, type MessageValues } from "@/platform/errors/messages";
@@ -54,8 +59,10 @@ const THEMES: Record<Variant, ThemeClasses> = {
 export interface AppealFormProps {
   /** Trajectory id of the decision being appealed */
   readonly originalDecisionId: string;
-  /** Minimum reason length — mirrors server config (default 20) */
+  /** Minimum reason length — the server's (GET /api/moderation/appeals; default 20) */
   readonly minReasonLength?: number;
+  /** Longest reason the server accepts (default 2000) */
+  readonly maxReasonLength?: number;
   /** Theme variant (default light) */
   readonly variant?: Variant;
   /** Called with the created review item on a successful submission */
@@ -65,10 +72,12 @@ export interface AppealFormProps {
 export default function AppealForm({
   originalDecisionId,
   minReasonLength = 20,
+  maxReasonLength = 2000,
   variant = "light",
   onSubmitted,
 }: AppealFormProps) {
   const t = THEMES[variant];
+  const fieldId = useId();
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,15 +127,13 @@ export default function AppealForm({
 
   return (
     <div className={`w-full max-w-lg mx-auto ${t.container}`} data-testid="appeal-form">
-      <label
-        htmlFor="appeal-reason"
-        className={`block text-sm font-medium mb-1 ${t.label}`}
-      >
+      <label htmlFor={fieldId} className={`block text-sm font-medium mb-1 ${t.label}`}>
         {msg("why_should_this_decision_be")}
       </label>
       <textarea
-        id="appeal-reason"
+        id={fieldId}
         value={reason}
+        maxLength={maxReasonLength}
         onChange={(e) => setReason(e.target.value)}
         disabled={submitting}
         rows={5}
