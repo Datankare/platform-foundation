@@ -505,7 +505,7 @@ describe("this repository's own app areas, against its real tree", () => {
     ["app/api/agent/delegation/token/route.ts", "auth"],
     ["app/agent/authorize/page.tsx", "auth"],
     ["lib/agent-delegation-data.ts", "auth"],
-    ["lib/pkce.ts", "auth"],
+    ["lib/agent-route-context.ts", "auth"],
     ["lib/identity-conflict.ts", "auth"],
     ["lib/safety.ts", "moderation"],
     ["platform/moderation/audit.ts", "moderation"],

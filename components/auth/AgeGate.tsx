@@ -167,7 +167,7 @@ export default function AgeGate({ onVerified, onCancel }: AgeGateProps) {
       <button
         onClick={handleSubmit}
         disabled={!isComplete}
-        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+        className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {t("continue")}
       </button>

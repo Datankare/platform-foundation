@@ -46,4 +46,6 @@ empty versions. The registry and catalog merge them at load: `apiError("app.file
 type-checks and renders like any platform code. An app key outside its namespaces, or one the
 platform already defines, is refused at load, so an app can neither shadow nor reword a platform
 message. Prefer a platform code whenever one fits (`request.*`, `rate.limited`,
-`service.unavailable`, `content.rejected`, …); add an app code only for what is the app's own.
+`service.unavailable`, `content.held_for_review`, `content.withheld`, …); add an app code only for
+what is the app's own. Refused screened input is answered by `screeningRefusal`
+(`lib/screening-refusal.ts`): only a block is `content.rejected` (TASK-211).

@@ -63,6 +63,9 @@ describe("REFUSAL_HANDLERS", () => {
     ["service.unavailable", "service-unavailable"],
     ["auth.required", "sign-in"],
     ["auth.permission_denied", "message"],
+    ["content.rejected", "message"],
+    ["content.held_for_review", "held"],
+    ["content.withheld", "message"],
     ["app.translate.session_not_found", "message"],
     [undefined, "message"],
     ["not.a.code", "message"],
@@ -235,10 +238,31 @@ describe("RefusalNotice — a moderation decision offers its appeal (TASK-210, N
     "service.unavailable",
     "auth.required",
     "request.invalid_body",
+    // TASK-211 (N-119): held for a moderator, or the model's output withheld — nothing to appeal.
+    "content.held_for_review",
+    "content.withheld",
   ])("%s is no moderation decision: no appeal", (code) => {
     render(<RefusalNotice refusal={handleRefusal(code)} />);
     expect(screen.queryByRole("link", { name: APPEAL })).toBeNull();
     expect(offersAppeal(handleRefusal(code))).toBe(false);
+  });
+});
+
+describe("RefusalNotice — content held for a moderator (TASK-211, N-119)", () => {
+  it("is a wait (status, gray), not a failure: its message, and no appeal or retry", () => {
+    render(
+      <RefusalNotice
+        refusal={handleRefusal("content.held_for_review")}
+        onRetry={() => {}}
+      />
+    );
+    const held = screen.getByRole("status");
+    expect(held).toHaveTextContent(
+      "This is waiting for a moderator to review it before it can be used."
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });
 

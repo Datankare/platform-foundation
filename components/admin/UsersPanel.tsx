@@ -155,7 +155,7 @@ function refusalOf(res: Response, body: Body): Refusal {
 }
 
 const BUTTON =
-  "rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-40";
+  "rounded bg-blue-700 px-3 py-1.5 text-sm text-white hover:bg-blue-800 disabled:opacity-40";
 const QUIET =
   "rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-40";
 const th =

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkSafety } from "@/lib/safety";
+import { screeningRefusal } from "@/lib/screening-refusal";
 import { isOutputAllowed, translatedTexts } from "@/lib/output-screening";
 import { translateToAllLanguages } from "@/lib/translate";
 import { textToSpeech } from "@/lib/tts";
@@ -102,14 +103,24 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     });
 
     if (!safety.safe) {
-      logger.response("/api/process", "POST", 422, requestId, Date.now() - start);
+      // TASK-211 (N-119): blocked, held for a moderator or not judged — each its own answer.
+      const refusal = screeningRefusal(safety);
+      const refused = apiError(refusal.code, { params: refusal.params, request });
+      logger.response(
+        "/api/process",
+        "POST",
+        refused.status,
+        requestId,
+        Date.now() - start
+      );
       // The classifier's reason (it may quote matched terms) goes to the log, not the response.
       logger.info("Process input rejected by content screening", {
         requestId,
+        decision: safety.decision,
         reasons: safety.reasons,
         rawReason: safety.rawReason,
       });
-      return apiError("content.rejected", { request });
+      return refused;
     }
 
     const translations = await translateToAllLanguages(trimmed);
@@ -124,7 +135,8 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
       }))
     ) {
       logger.response("/api/process", "POST", 422, requestId, Date.now() - start);
-      return apiError("content.rejected", { request });
+      // The model's output, not the user's content: withheld, nothing to appeal (TASK-211).
+      return apiError("content.withheld", { request });
     }
 
     const results = await Promise.all(

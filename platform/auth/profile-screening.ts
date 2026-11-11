@@ -46,6 +46,13 @@ export interface ProfileScreeningResult {
   readonly reasons: Readonly<Record<string, readonly ShownText[]>>;
   /** Guardian trajectory IDs (one per screened field) */
   readonly trajectoryIds: readonly string[];
+  /**
+   * What the Guardian decided for each failed field it judged (TASK-211, N-119), so the route
+   * answers by it: "block" — recorded against the account, appealable from the account page;
+   * "escalate" — held for a moderator; "unjudged" — the screening could not run. A field refused
+   * before screening (its shape or length) or warned is in `blockedFields` only.
+   */
+  readonly decisions: Readonly<Record<string, "block" | "escalate" | "unjudged">>;
 }
 
 /** Length limit for a specific field */
@@ -267,6 +274,7 @@ export async function screenProfileUpdate(
       blockedFields: [],
       reasons: { _userId: [shown("screens.moderation.profile.invalid_user")] },
       trajectoryIds: [],
+      decisions: {},
     };
   }
 
@@ -275,13 +283,20 @@ export async function screenProfileUpdate(
     (k) => update[k as keyof ProfileUpdate] !== undefined
   );
   if (updateKeys.length === 0) {
-    return { allowed: true, blockedFields: [], reasons: {}, trajectoryIds: [] };
+    return {
+      allowed: true,
+      blockedFields: [],
+      reasons: {},
+      trajectoryIds: [],
+      decisions: {},
+    };
   }
 
   const screenedFields = await loadScreenedFields();
   const blockedFields: string[] = [];
   const reasons: Record<string, readonly ShownText[]> = {};
   const trajectoryIds: string[] = [];
+  const decisions: Record<string, "block" | "escalate" | "unjudged"> = {};
 
   for (const field of updateKeys) {
     const value = update[field as keyof ProfileUpdate];
@@ -332,6 +347,11 @@ export async function screenProfileUpdate(
       if (result.action === "block" || result.action === "escalate") {
         blockedFields.push(field);
         reasons[field] = guardianReasons(result.reasoning);
+        decisions[field] = result.screeningUnavailable
+          ? "unjudged"
+          : result.action === "escalate"
+            ? "escalate"
+            : "block";
       } else if (result.action === "warn") {
         // Warnings on profile fields are treated as blocks —
         // profiles are public-facing, no "soft warning" makes sense
@@ -352,6 +372,7 @@ export async function screenProfileUpdate(
       });
       blockedFields.push(field);
       reasons[field] = [shown("screens.moderation.profile.unavailable")];
+      decisions[field] = "unjudged";
     }
   }
 
@@ -369,6 +390,42 @@ export async function screenProfileUpdate(
     blockedFields,
     reasons,
     trajectoryIds,
+    decisions,
+  };
+}
+
+/**
+ * How the profile route answers a refused update (TASK-211, N-119). A field the Guardian blocked
+ * is a decision the user can appeal (`appealFields`); when every refused field is held for a
+ * moderator, the update is held (`content.held_for_review`); when every one could not be judged,
+ * the screening is unavailable (`service.unavailable`, moderation). Anything else — a field
+ * refused for its shape or length, or warned, beside or without the others — is
+ * `app.profile.content_rejected`, naming the fields, with the appealable ones.
+ */
+export function profileRefusal(
+  screening: Pick<ProfileScreeningResult, "blockedFields" | "decisions">
+):
+  | {
+      readonly code: "app.profile.content_rejected";
+      readonly params: { readonly fields: string[]; readonly appealFields: string[] };
+    }
+  | { readonly code: "content.held_for_review"; readonly params: Record<string, never> }
+  | {
+      readonly code: "service.unavailable";
+      readonly params: { readonly service: "moderation" };
+    } {
+  const fields = [...screening.blockedFields];
+  const all = (d: "escalate" | "unjudged") =>
+    fields.length > 0 && fields.every((f) => screening.decisions[f] === d);
+  if (all("escalate")) return { code: "content.held_for_review", params: {} };
+  if (all("unjudged"))
+    return { code: "service.unavailable", params: { service: "moderation" } };
+  return {
+    code: "app.profile.content_rejected",
+    params: {
+      fields,
+      appealFields: fields.filter((f) => screening.decisions[f] === "block"),
+    },
   };
 }
 
@@ -376,3 +433,15 @@ export async function screenProfileUpdate(
 function guardianReasons(reasoning: RecordedReasons): readonly ShownText[] {
   return typeof reasoning === "string" ? [] : reasoning;
 }
+
+/**
+ * The codes the profile route's answer can be (__tests__/refusal-coverage.test.ts reads this):
+ * profileRefusal's.
+ */
+export const REFUSAL_GUARDS: Readonly<Record<string, readonly string[]>> = {
+  profileRefusal: [
+    "app.profile.content_rejected",
+    "content.held_for_review",
+    "service.unavailable",
+  ],
+};

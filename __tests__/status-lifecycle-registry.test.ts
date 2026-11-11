@@ -3,7 +3,7 @@
  */
 /**
  * __tests__/status-lifecycle-registry.test.ts — the status-lifecycle register holds to the code
- * (TASK-193; the register: platform/assurance/status-lifecycle.ts)
+ * (TASK-193; the register: __tests__/helpers/status-lifecycle.ts)
  *
  * @guard a status value with no way out: no reaper job, no reason it rests
  *
@@ -21,7 +21,7 @@ import {
   NOT_A_LIFECYCLE,
   STATUS_LIFECYCLE,
   type StateLifecycle,
-} from "@/platform/assurance/status-lifecycle";
+} from "./helpers/status-lifecycle";
 import { CORE_JOBS } from "@/platform/jobs/duties";
 
 const ROOT = process.cwd();

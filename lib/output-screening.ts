@@ -8,7 +8,7 @@
  * agent workflows), a transcript (/api/transcribe), text extracted from a file or a recording
  * (/api/extract), a song match's title and artist (Playform's /api/identify) — runs it through the
  * platform's output screen (checkOutputSafety: direction "output", the strictest rating) and
- * withholds the whole response when it is not allowed (`content.rejected`, the classifier's reason
+ * withholds the whole response when it is not allowed (`content.withheld`, TASK-211; the classifier's reason
  * logged, never returned). TASK-204 (N-47) moved this helper from Playform to the platform, which
  * has a route of its own that needs it.
  *

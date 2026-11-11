@@ -1,5 +1,5 @@
 /**
- * platform/assurance/status-lifecycle.ts — every state of every status column, and what ends it
+ * __tests__/helpers/status-lifecycle.ts — every state of every status column, and what ends it
  * (TASK-193)
  *
  * The October 2026 lifecycle audit (class B) found rows that live for ever because a state had no
@@ -30,7 +30,8 @@
  * Retention of rows at rest is a separate register (rows in a `rest` state are kept until their
  * table's retention removes them); this one is only about getting out of the states that are not.
  *
- * @module platform/assurance
+ * A register only the two tests read, so it lives with them (TASK-211, N-118: it was
+ * platform/assurance/status-lifecycle.ts, a module no entry point loads).
  */
 
 export type StateLifecycle =

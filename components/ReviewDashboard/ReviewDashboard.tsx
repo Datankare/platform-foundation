@@ -357,7 +357,7 @@ export default function ReviewDashboard({ variant = "light" }: ReviewDashboardPr
             onClick={() => selectFilter(s)}
             aria-pressed={filter === s}
             className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
-              filter === s ? "bg-blue-600 text-white" : t.filterInactive
+              filter === s ? "bg-blue-700 text-white" : t.filterInactive
             }`}
             data-testid={`rd-filter-${s}`}
           >
@@ -502,7 +502,7 @@ function ReviewCard(props: ReviewCardProps) {
           type="button"
           onClick={() => props.onClaim(item.id)}
           disabled={busy}
-          className="px-3 py-1 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          className="px-3 py-1 rounded-md text-sm font-medium bg-blue-700 text-white hover:bg-blue-800 disabled:opacity-50"
           data-testid={`rd-claim-${item.id}`}
         >
           {msg("claim")}
@@ -514,7 +514,7 @@ function ReviewCard(props: ReviewCardProps) {
           <button
             type="button"
             onClick={() => props.onOpenResolve(item.id)}
-            className="px-3 py-1 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+            className="px-3 py-1 rounded-md text-sm font-medium bg-blue-700 text-white hover:bg-blue-800"
             data-testid={`rd-resolve-open-${item.id}`}
           >
             {msg("resolve")}
@@ -644,7 +644,7 @@ function ResolvePanel({
           type="button"
           onClick={onSubmit}
           disabled={busy}
-          className="px-3 py-1 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          className="px-3 py-1 rounded-md text-sm font-medium bg-blue-700 text-white hover:bg-blue-800 disabled:opacity-50"
           data-testid="rd-resolve-submit"
         >
           {msg("submit_decision")}

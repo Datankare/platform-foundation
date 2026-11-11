@@ -288,7 +288,7 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                 !canSubmit
                   ? "bg-slate-600 cursor-not-allowed text-slate-400 opacity-50"
-                  : "bg-blue-600 hover:bg-blue-500 text-white cursor-pointer"
+                  : "bg-blue-700 hover:bg-blue-800 text-white cursor-pointer"
               }`}
             >
               {isLoading ? (
@@ -357,7 +357,7 @@ export default function SpikeApp({ isGuest = false }: SpikeAppProps = {}) {
                   className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-800 ${
                     playingIndex === i
                       ? "bg-blue-500 text-white animate-pulse"
-                      : "bg-slate-700 hover:bg-blue-600 text-slate-200 disabled:opacity-40"
+                      : "bg-slate-700 hover:bg-blue-700 text-slate-200 disabled:opacity-40"
                   }`}
                 >
                   <span aria-hidden="true">{playingIndex === i ? "♪" : "🔊"}</span>

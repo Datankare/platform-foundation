@@ -153,7 +153,11 @@ describe("/api/stream — server-side bounds", () => {
 
 describe("/api/stream — screening and streaming", () => {
   it("screens the prompt before any model call", async () => {
-    (checkSafety as jest.Mock).mockResolvedValue({ safe: false, reason: "blocked term" });
+    (checkSafety as jest.Mock).mockResolvedValue({
+      safe: false,
+      reason: "blocked term",
+      decision: "block",
+    });
     const res = await POST(req({ prompt: "hi" }));
     expect(res.status).toBe(422);
     expect(await code(res)).toBe("content.rejected");
@@ -265,16 +269,40 @@ describe("/api/stream — screening and streaming", () => {
     expect(text).not.toContain("[DONE]");
   });
 
-  it("withholds output the screen refuses, ending with a coded content.rejected", async () => {
+  it("withholds output the screen refuses, ending with a coded content.withheld (TASK-211)", async () => {
     streamMock.mockImplementation(async function* () {
       yield { text: "harmful output", done: true };
     });
     (checkOutputSafety as jest.Mock).mockResolvedValue({ safe: false, reason: "x" });
     const text = await (await POST(req({ prompt: "hi" }))).text();
     expect(text).not.toContain("harmful output");
-    expect(text).toContain('"code":"content.rejected"');
+    expect(text).toContain('"code":"content.withheld"');
+    expect(text).not.toContain('"code":"content.rejected"');
     expect(text).not.toContain("[DONE]");
   });
+
+  // TASK-211 (N-119): a block, a hold and an outage are each their own answer — only a block is
+  // content.rejected, the decision a screen links to its appeal.
+  it.each([
+    ["block", 422, "content.rejected", undefined],
+    ["escalate", 422, "content.held_for_review", undefined],
+    ["unjudged", 503, "service.unavailable", { service: "moderation" }],
+    [undefined, 422, "content.held_for_review", undefined],
+  ])(
+    "input screened %s: %d %s, no model call",
+    async (decision, status, expected, params) => {
+      (checkSafety as jest.Mock).mockResolvedValue({
+        safe: false,
+        ...(decision ? { decision } : {}),
+      });
+      const res = await POST(req({ prompt: "hi" }));
+      expect(res.status).toBe(status);
+      const body = await res.json();
+      expect(body.code).toBe(expected);
+      if (params) expect(body.params).toEqual(params);
+      expect(streamMock).not.toHaveBeenCalled();
+    }
+  );
 
   it("[hostile:store-down] withholds output when output screening fails (fail closed)", async () => {
     streamMock.mockImplementation(async function* () {

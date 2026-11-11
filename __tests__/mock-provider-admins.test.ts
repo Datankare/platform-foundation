@@ -40,6 +40,18 @@ describe("the test double's administrators", () => {
     expect(new Set([m?.sessionId, u?.sessionId]).size).toBe(2);
   });
 
+  it("the assistant journey's asker is its own identity (TASK-211)", async () => {
+    const auth = createMockAuthProvider();
+    const q = await auth.verifyToken("mock-access-token:asker-q");
+    const u = await auth.verifyToken("mock-access-token:member-u");
+    const d = await auth.verifyToken("mock-access-token");
+    expect(q).toMatchObject({
+      sub: "e2e00000-0000-4000-8000-00000000000f",
+      email: "asker-q@e2e.test",
+    });
+    expect(new Set([q?.sub, u?.sub, d?.sub]).size).toBe(3);
+  });
+
   it("[hostile:id-spelling] another spelling of a token, or an inherited property name, is no one", async () => {
     const auth = createMockAuthProvider();
     for (const token of [

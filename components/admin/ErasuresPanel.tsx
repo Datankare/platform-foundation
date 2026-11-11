@@ -295,7 +295,7 @@ function Step({
                 <button
                   type="button"
                   disabled={busy}
-                  className={`${btn} border-blue-600 bg-blue-600 text-white`}
+                  className={`${btn} border-blue-600 bg-blue-700 text-white`}
                   onClick={async () => {
                     await onAttest(
                       { decision: confirming },
@@ -394,7 +394,7 @@ function Step({
               <button
                 type="submit"
                 disabled={busy}
-                className={`${btn} border-blue-600 bg-blue-600 text-white`}
+                className={`${btn} border-blue-600 bg-blue-700 text-white`}
               >
                 {t("submit_ask")}
               </button>

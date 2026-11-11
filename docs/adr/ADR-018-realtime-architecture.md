@@ -57,6 +57,14 @@ The `/api/stream` endpoint serves SSE (Server-Sent Events) to the browser. Its f
 (`screens.stream.truncated`), so a cut-off answer is never shown as a complete one (TASK-204,
 N-45; `hooks/useRealtimeStream.ts` exposes it as `truncated`).
 
+**Amendment (2026-11-09, TASK-211, N-118).** The stream's screen is the assistant page
+(`/assistant`, `components/assistant/AssistantPanel.tsx`), reached from the home page's bar: a
+signed-in user's question, the answer shown as it streams, a refusal by its kind. Until then no
+screen used `/api/stream` or its hook, so no journey could reach the route (`e2e/assistant.spec.ts`
+does now). The browser channel hook (`hooks/useRealtimeChannel.ts`) is removed: it never subscribed
+to a `RealtimeProvider` (its messages stayed in the page) and no screen used it; a screen that needs
+channels or presence builds its hook on the provider, with that screen.
+
 ### Scale Migration Path
 
 | Stage      | Concurrent Users            | Provider                                      | Action Required |

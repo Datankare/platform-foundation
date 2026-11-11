@@ -3,7 +3,7 @@
  */
 /**
  * __tests__/db/status-lifecycle.db.test.ts — the status-lifecycle register holds to the schema,
- * and every reaped state is left (TASK-193; platform/assurance/status-lifecycle.ts)
+ * and every reaped state is left (TASK-193; __tests__/helpers/status-lifecycle.ts)
  *
  *   1. Every status column of the replayed schema (a column named `status`, `*_status` or `state`)
  *      is in the register or in NOT_A_LIFECYCLE; every value its enum or check allows is a state
@@ -49,7 +49,7 @@ import {
 import type { ReviewQueueStore } from "@/platform/moderation/review-types";
 import { expireStaleApprovals } from "@/platform/admin/config-approval";
 import { clearConfigCache } from "@/platform/auth/platform-config";
-import { NOT_A_LIFECYCLE, STATUS_LIFECYCLE } from "@/platform/assurance/status-lifecycle";
+import { NOT_A_LIFECYCLE, STATUS_LIFECYCLE } from "../helpers/status-lifecycle";
 
 const store = new PostgresJobStore();
 const RUN = randomUUID().slice(0, 8);

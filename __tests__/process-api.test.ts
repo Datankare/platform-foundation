@@ -137,6 +137,7 @@ describe("POST /api/process", () => {
     (checkSafety as jest.Mock).mockResolvedValueOnce({
       safe: false,
       reason: "inappropriate content",
+      decision: "block",
     });
     const res = await POST(makeRequest({ text: "unsafe content" }));
     expect(res.status).toBe(422);
@@ -144,6 +145,20 @@ describe("POST /api/process", () => {
     expect(data.code).toBe("content.rejected");
     expect(JSON.stringify(data)).not.toContain("inappropriate content");
   });
+
+  // TASK-211 (N-119): only a block is content.rejected (the decision the screen links to appeal).
+  it.each([
+    ["escalate", 422, "content.held_for_review"],
+    ["unjudged", 503, "service.unavailable"],
+  ])(
+    "input screened %s: %d %s, nothing translated",
+    async (decision, status, expected) => {
+      (checkSafety as jest.Mock).mockResolvedValueOnce({ safe: false, decision });
+      const res = await POST(makeRequest({ text: "held content" }));
+      expect(res.status).toBe(status);
+      expect((await res.json()).code).toBe(expected);
+    }
+  );
 
   // TASK-204 (N-47, audit D-17): the translations are screened before speech or the response.
   it("screens the translations once, before any speech is made", async () => {
@@ -169,7 +184,8 @@ describe("POST /api/process", () => {
     const res = await POST(makeRequest({ text: "hello" }));
     expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.code).toBe("content.rejected");
+    // The model's output, not the user's content: withheld, nothing to appeal (TASK-211).
+    expect(body.code).toBe("content.withheld");
     expect(JSON.stringify(body)).not.toContain("slur");
     expect(JSON.stringify(body)).not.toContain("Hola");
     expect(textToSpeech).not.toHaveBeenCalled();
@@ -179,7 +195,7 @@ describe("POST /api/process", () => {
     (checkOutputSafety as jest.Mock).mockRejectedValueOnce(new Error("classifier down"));
     const res = await POST(makeRequest({ text: "hello" }));
     expect(res.status).toBe(422);
-    expect((await res.json()).code).toBe("content.rejected");
+    expect((await res.json()).code).toBe("content.withheld");
   });
 
   it("returns translations with audio", async () => {

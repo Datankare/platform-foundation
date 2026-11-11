@@ -43,6 +43,7 @@ import {
 import { negotiateLocale, renderMessage } from "@/platform/errors/messages";
 import { IncompleteStreamError, screenStream } from "@/platform/ai/screened-stream";
 import { checkOutputSafety, checkSafety } from "@/lib/safety";
+import { screeningRefusal } from "@/lib/screening-refusal";
 import { buildStreamSystemPrompt } from "@/prompts";
 import { logger, generateRequestId } from "@/lib/logger";
 import { tenantRoute } from "@/platform/tenancy/route";
@@ -110,10 +111,13 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     // The classifier's reason may quote matched terms: it goes to the log, not the response.
     logger.info("Stream input rejected by content screening", {
       requestId,
+      decision: safety.decision,
       reasons: safety.reasons,
       rawReason: safety.rawReason,
     });
-    return apiError("content.rejected", { request });
+    // TASK-211 (N-119): blocked, held for a moderator or not judged — each its own answer.
+    const refusal = screeningRefusal(safety);
+    return apiError(refusal.code, { params: refusal.params, request });
   }
 
   const orchestrator = getOrchestrator();
@@ -125,7 +129,7 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     controller: ReadableStreamDefaultController,
     code:
       | "internal.error"
-      | "content.rejected"
+      | "content.withheld"
       | "ai.request_declined"
       | "service.unavailable"
   ) => {
@@ -191,7 +195,8 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           } else if (event.kind === "rejected") {
             logger.info("Stream output withheld by content screening", { requestId });
-            codedEnd(controller, "content.rejected");
+            // The model's output, not the user's content: withheld, nothing to appeal (TASK-211).
+            codedEnd(controller, "content.withheld");
           } else if (isAIRefusalError(event.error)) {
             // The model declined: not an outage, and retrying the same prompt is declined again.
             logger.warn("Stream declined by the model", {

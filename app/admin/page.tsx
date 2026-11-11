@@ -471,7 +471,7 @@ export default function AdminPage() {
         </p>
         <button
           type="button"
-          className="rounded bg-blue-600 px-4 py-2 text-sm text-white"
+          className="rounded bg-blue-700 px-4 py-2 text-sm text-white"
           onClick={() => router.push("/auth")}
         >
           {renderMessage("screens.admin_console.sign_in")}
@@ -530,7 +530,7 @@ export default function AdminPage() {
         />
         <button
           type="button"
-          className="mt-4 rounded bg-blue-600 px-4 py-2 text-sm text-white"
+          className="mt-4 rounded bg-blue-700 px-4 py-2 text-sm text-white"
           onClick={() => {
             void signOut().then(() => router.push("/auth"));
           }}

@@ -2520,6 +2520,72 @@
       "error": "Your session has expired. Sign in again."
     }
   },
+  "POST /api/stream — an answer": {
+    "status": 200,
+    "body": "data: {\"text\":\"A rainbow is sunlight split by raindrops.\",\"done\":false}\n\ndata: {\"text\":\"\",\"done\":true,\"stopReason\":\"end_turn\"}\n\ndata: [DONE]\n\n"
+  },
+  "POST /api/stream — an answer cut off at its length limit": {
+    "status": 200,
+    "body": "data: {\"text\":\"A rainbow is sunlight split\",\"done\":false}\n\ndata: {\"text\":\"\",\"done\":true,\"stopReason\":\"max_tokens\",\"truncated\":true,\"notice\":\"The answer was cut off at its length limit: it is not complete. Ask for a shorter answer, or ask it to continue.\"}\n\ndata: [DONE]\n\n"
+  },
+  "POST /api/stream — the answer withheld by screening": {
+    "status": 200,
+    "body": "data: {\"text\":\"\",\"done\":true,\"code\":\"content.withheld\",\"error\":\"The result was withheld: it could not be cleared to show. Try again, or ask in a different way.\",\"params\":{}}\n\n"
+  },
+  "POST /api/stream — refused (content rejected)": {
+    "status": 422,
+    "body": {
+      "code": "content.rejected",
+      "message": "This content does not meet our guidelines.",
+      "params": {},
+      "success": false,
+      "error": "This content does not meet our guidelines."
+    }
+  },
+  "POST /api/stream — held for a moderator": {
+    "status": 422,
+    "body": {
+      "code": "content.held_for_review",
+      "message": "This is waiting for a moderator to review it before it can be used. Nothing more is needed from you.",
+      "params": {},
+      "success": false,
+      "error": "This is waiting for a moderator to review it before it can be used. Nothing more is needed from you."
+    }
+  },
+  "POST /api/stream — refused (the screening unavailable)": {
+    "status": 503,
+    "body": {
+      "code": "service.unavailable",
+      "message": "This service is unavailable right now. Try again shortly.",
+      "params": {
+        "service": "moderation"
+      },
+      "success": false,
+      "error": "This service is unavailable right now. Try again shortly."
+    }
+  },
+  "POST /api/stream — refused (a guest)": {
+    "status": 401,
+    "body": {
+      "code": "auth.sign_in_required",
+      "message": "Sign in to use this feature.",
+      "params": {},
+      "success": false,
+      "error": "Sign in to use this feature."
+    }
+  },
+  "POST /api/stream — refused (rate limited)": {
+    "status": 429,
+    "body": {
+      "code": "rate.limited",
+      "message": "Too many requests. Try again in a moment.",
+      "params": {
+        "retryAfterSeconds": 30
+      },
+      "success": false,
+      "error": "Too many requests. Try again in a moment."
+    }
+  },
   "POST /api/auth/mfa/setup — the secret and its URI": {
     "status": 200,
     "body": {

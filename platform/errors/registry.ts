@@ -417,7 +417,20 @@ export const PLATFORM_ERROR_CODES = {
   "content.rejected": {
     status: 422,
     params: [{ name: "category", kind: "id", optional: true }],
-    action: "Ask for different input.",
+    action:
+      "Ask for different input. The screening blocked it and recorded the decision against the account: link to the account page, where it can be appealed.",
+  },
+  "content.held_for_review": {
+    status: 422,
+    params: [],
+    action:
+      "Say it is waiting for a moderator. Offer no appeal: nothing was decided against the account.",
+  },
+  "content.withheld": {
+    status: 422,
+    params: [],
+    action:
+      "Say the result was withheld; the user may try again or ask differently. Offer no appeal: the user's own content was not blocked.",
   },
   "feature.not_configured": {
     status: 501,

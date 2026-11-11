@@ -50,6 +50,8 @@ export type RefusalKind =
   | "service-unavailable"
   /** Not signed in (or the session is no longer valid): send to sign-in. */
   | "sign-in"
+  /** Held for a moderator (content.held_for_review): an informational wait, no appeal. */
+  | "held"
   /** Show the server's message. */
   | "message";
 
@@ -117,6 +119,8 @@ export const REFUSAL_HANDLERS = {
   "auth.token_invalid": "sign-in",
   "auth.too_many_attempts": "message",
   "content.rejected": "message",
+  "content.held_for_review": "held",
+  "content.withheld": "message",
   "feature.not_configured": "message",
   "guest.allowance_exhausted": "sign-in",
   "internal.error": "message",

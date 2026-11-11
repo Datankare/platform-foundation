@@ -89,7 +89,8 @@ relevant admin permission; agent routes are governed by the two-principal check.
 
 - `GET /api/health` — liveness (no key presence exposed)
 - `POST /api/process` — text → safety → translate → TTS
-- `POST /api/stream` — streaming pipeline
+- `POST /api/stream` — streaming pipeline: the assistant page (`/assistant`) asks it, a signed-in
+  user's question, the answer streamed (TASK-211)
 
 **Auth** — `/api/auth/*`: sign-in, sign-up, sign-out, guest, verify-email,
 resend-verification, forgot-password, confirm-forgot-password, mfa-challenge,

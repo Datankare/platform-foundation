@@ -462,7 +462,7 @@ export function SettingPanel({
             setRaw(inputFor(entry, entry.value));
             setProblem(null);
           }}
-          className="mt-4 rounded bg-blue-600 px-4 py-2 text-sm text-white"
+          className="mt-4 rounded bg-blue-700 px-4 py-2 text-sm text-white"
         >
           {t("edit")}
         </button>
@@ -508,7 +508,7 @@ export function SettingPanel({
             <button
               type="submit"
               disabled={busy}
-              className="rounded bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+              className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50"
             >
               {busy ? t("submitting") : t("submit")}
             </button>

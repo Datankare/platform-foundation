@@ -15,7 +15,7 @@
  *                  reporter when it changes.
  *
  * TASK-197 (audit D-2): the AI provider, the Google key and the rate-limit store had no probe.
- * Every external selection is now covered (platform/providers/dependency-coverage.ts, and each
+ * Every external selection is now covered (__tests__/helpers/dependency-coverage.ts, and each
  * module slot's `coverage`), and __tests__/dependency-probe-coverage.test.ts holds that each
  * probe a coverage names is built here for that selection.
  *

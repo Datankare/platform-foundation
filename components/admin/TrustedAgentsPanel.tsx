@@ -202,7 +202,7 @@ export function TrustedAgentsPanel({
         <button
           type="button"
           onClick={() => setRegistering(true)}
-          className="rounded bg-blue-600 px-4 py-2 text-sm text-white"
+          className="rounded bg-blue-700 px-4 py-2 text-sm text-white"
         >
           {t("register")}
         </button>
@@ -330,7 +330,7 @@ export function TrustedAgentsPanel({
                                   );
                                   setConfirming(null);
                                 }}
-                                className={`${btn} border-blue-600 bg-blue-600 text-white`}
+                                className={`${btn} border-blue-600 bg-blue-700 text-white`}
                               >
                                 {t("confirm")}
                               </button>
@@ -515,7 +515,7 @@ function AgentForm({
         <button
           type="submit"
           disabled={busy}
-          className="rounded bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+          className="rounded bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50"
         >
           {busy
             ? t("submitting")

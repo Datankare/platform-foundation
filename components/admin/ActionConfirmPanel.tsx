@@ -261,7 +261,7 @@ export default function ActionConfirmPanel({
             className={`text-sm font-medium px-5 py-2.5 rounded-lg transition disabled:opacity-40 ${
               hasDestructive
                 ? "bg-red-600 hover:bg-red-500 text-white"
-                : "bg-blue-600 hover:bg-blue-500 text-white"
+                : "bg-blue-700 hover:bg-blue-800 text-white"
             }`}
           >
             {isExecuting ? p("executing") : p("confirm", { count: selectedActions.size })}

@@ -165,7 +165,7 @@ export default function ModerationDecisions() {
         <button
           type="button"
           onClick={() => void load()}
-          className="mt-2 rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-500"
+          className="mt-2 rounded bg-blue-700 px-3 py-1 text-sm text-white hover:bg-blue-800"
         >
           {t("retry")}
         </button>
@@ -219,7 +219,7 @@ export default function ModerationDecisions() {
                       setSent(null);
                       setOpen(d.id);
                     }}
-                    className="mt-3 rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-500"
+                    className="mt-3 rounded bg-blue-700 px-3 py-1 text-sm font-medium text-white hover:bg-blue-800"
                   >
                     {t("appeal")}
                   </button>

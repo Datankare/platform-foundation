@@ -70,7 +70,7 @@ export default class ErrorBoundary extends Component<
             </p>
             <button
               onClick={() => window.location.reload()}
-              className="px-6 py-2 bg-blue-600 text-white border-0 rounded-lg cursor-pointer text-sm"
+              className="px-6 py-2 bg-blue-700 text-white border-0 rounded-lg cursor-pointer text-sm"
             >
               {t("refresh_page")}
             </button>

@@ -87,7 +87,7 @@ published code-review practice, acknowledged there — is [AI_ENGINEERING.md](do
 - ✅ Realtime foundation — provider-abstracted WebSocket layer (Supabase first, swappable)
 - ✅ Agentic-native message schema — agent identity (P15), intent enforcement (P17), trajectories (P18), memory hints (P16)
 - ✅ AI cache — prompt-hash keying, TTL by use case, hit/miss metrics, cost savings tracking
-- ✅ SSE streaming endpoint (`/api/stream`) + React hooks (`useRealtimeStream`, `useRealtimeChannel`)
+- ✅ SSE streaming endpoint (`/api/stream`) and the assistant page that streams its answers (`/assistant`, `useRealtimeStream` — TASK-211)
 
 ### Language & Voice Foundation (Phase 3 — complete)
 
@@ -213,7 +213,7 @@ platform-foundation/
 ├── prompts/                ← Versioned LLM prompt library with tests (Phase 2 ✅)
 ├── components/admin/       ← Admin UI (GenAI command bar, data views)
 ├── components/auth/        ← Auth UI (login, register, profile, age gate, review/appeals)
-├── hooks/                  ← React hooks (realtime stream, channel, profile)
+├── hooks/                  ← React hooks (the assistant's stream)
 ├── app/api/                ← API routes (admin, auth, health, process, stream, review)
 ├── __tests__/contract/     ← Conformance kits (TCK) for all 26 abstractions (ADR-027)
 ├── supabase/migrations/    ← 69 database migrations

@@ -168,7 +168,7 @@ export default function AdaptiveInput({
               title={config.title}
               disabled={disabled}
               className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
-                isActive ? "bg-blue-600 text-white" : t.pillInactive
+                isActive ? "bg-blue-700 text-white" : t.pillInactive
               } ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
               data-testid={`mode-pill-${mode}`}
             >
@@ -299,7 +299,7 @@ export default function AdaptiveInput({
               aria-label={action.label}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 action.primary
-                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  ? "bg-blue-700 text-white hover:bg-blue-800"
                   : t.actionSecondary
               } ${
                 disabled || isProcessing || action.disabled

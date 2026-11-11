@@ -9,7 +9,10 @@
  *                                                 for a restricted account its decisions and
  *                                                 their appeal (the account page, TASK-210 —
  *                                                 the registry's "offer appeal") and sign-out;
- *                                                 for rejected content, the same link; the retry
+ *                                                 for content the screening blocked
+ *                                                 (`content.rejected`, only ever a block —
+ *                                                 TASK-211) the same link; content held for a
+ *                                                 moderator (`held`) is a gray wait, with none; the retry
  *                                                 delay for a rate limit, a retry for a service
  *                                                 that is down, sign-in (or "Create an account"
  *                                                 for a guest out of free uses), a gray wait for
@@ -34,7 +37,7 @@ const ALERT =
 // Informational, not a failure: gray (the platform's UX rule — red is for failures only).
 const INFO =
   "rounded-xl border border-gray-700 bg-gray-800/40 px-4 py-3 text-sm text-gray-300";
-const BUTTON = "mt-2 rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-500";
+const BUTTON = "mt-2 rounded bg-blue-700 px-3 py-1 text-sm text-white hover:bg-blue-800";
 
 export interface RefusalNoticeProps {
   readonly refusal: Refusal;
@@ -60,7 +63,7 @@ export function RefusalNotice({
 }: RefusalNoticeProps) {
   const { kind, message } = refusal;
   if (kind === "tenant-unavailable") return <TenantUnavailable refusal={refusal} />;
-  if (kind === "consent-wait" || kind === "age-gate") {
+  if (kind === "consent-wait" || kind === "age-gate" || kind === "held") {
     return (
       <div role="status" className={INFO}>
         {message}

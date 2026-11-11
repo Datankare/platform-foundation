@@ -1,8 +1,9 @@
 /**
  * app/HomeClient.tsx — Protected home page
  *
- * Shows the current user identity, a link to their account page (the decisions about their
- * content and their appeals, TASK-210) and a sign-out button above the app's home — the consumer
+ * Shows the current user identity, links to the assistant (TASK-211) and to their account page
+ * (the decisions about their content and their appeals, TASK-210) and a sign-out button above the
+ * app's home — the consumer
  * seam platform/modules/app-home.tsx, so this core page imports no module's UI (ADR-054).
  * Redirects to /auth if not authenticated (middleware handles this,
  * but this is a fallback for client-side navigation).
@@ -67,6 +68,14 @@ export default function HomeClient() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {!isGuest && (
+            <Link
+              href="/assistant"
+              className="rounded px-3 py-1 text-sm text-blue-700 hover:bg-gray-100 hover:underline"
+            >
+              {t("assistant")}
+            </Link>
+          )}
           {!isGuest && (
             <Link
               href="/account"

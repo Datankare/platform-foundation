@@ -65,7 +65,7 @@ export default function ForgotPasswordForm({
         <p className="text-sm text-gray-400">{t("your_password_has_been_reset")}</p>
         <button
           onClick={onBackToLogin}
-          className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition"
+          className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition"
         >
           {t("back_to_sign_in")}
         </button>
@@ -112,7 +112,7 @@ export default function ForgotPasswordForm({
           <button
             type="submit"
             disabled={!email.trim() || isLoading}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {isLoading ? t("sending") : t("send_reset_code")}
           </button>
@@ -195,7 +195,7 @@ export default function ForgotPasswordForm({
           <button
             type="submit"
             disabled={!code || !passwordsMatch || !passwordLongEnough || isLoading}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {isLoading ? t("resetting") : t("reset_password")}
           </button>

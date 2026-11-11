@@ -134,7 +134,7 @@ export default function AdminPromptBar({
         <button
           onClick={handleSubmit}
           disabled={!prompt.trim() || isThinking || disabled}
-          className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-5 py-3 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed"
+          className="bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium px-5 py-3 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {renderMessage("screens.admin_console.plan.run")}
         </button>

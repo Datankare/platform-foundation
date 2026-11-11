@@ -23,19 +23,12 @@
  * held). The known list must name only what is unreached: an entry that is reached, or names no
  * file, fails until it is removed.
  */
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { dirname, join, normalize, sep } from "path";
-import { specifiersIn } from "./helpers/import-graph";
+import { dirname, join } from "path";
+import { filesUnder, isTest, reachedFrom, resolveIn } from "./helpers/reachability";
+
+export { isTest, resolveIn } from "./helpers/reachability";
 
 const ROOT = join(__dirname, "..");
 
@@ -54,67 +47,12 @@ export const KNOWN_UNMOUNTED: Readonly<Record<string, Readonly<Record<string, st
     playform: {},
   };
 
-const SKIP_DIRS = new Set(["node_modules", ".next", ".git", "coverage"]);
-const SOURCE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
-
-const toPosix = (p: string) => p.split(sep).join("/");
-
-/** Every source file under `dir` of `root`, root-relative. */
-function filesUnder(root: string, dir: string): string[] {
-  const abs = join(root, dir);
-  if (!existsSync(abs)) return [];
-  const out: string[] = [];
-  for (const entry of readdirSync(abs, { withFileTypes: true })) {
-    if (SKIP_DIRS.has(entry.name)) continue;
-    const rel = toPosix(join(dir, entry.name));
-    if (entry.isDirectory()) out.push(...filesUnder(root, rel));
-    else if (SOURCE.test(entry.name)) out.push(rel);
-  }
-  return out.sort();
-}
-
-/** Whether a file is a test (jest or Playwright): never a path to a page. */
-export function isTest(rel: string): boolean {
-  return /(?:^|\/)(?:__tests__|__mocks__|e2e|e2e-live)\/|\.test\.|\.spec\./.test(rel);
-}
-
-/** The repository file a specifier names from `from`, or null (a package, or no such file). */
-export function resolveIn(root: string, from: string, specifier: string): string | null {
-  let base: string;
-  if (specifier.startsWith("@/")) base = specifier.slice(2);
-  else if (specifier.startsWith("."))
-    base = toPosix(normalize(join(dirname(from), specifier)));
-  else return null;
-  for (const candidate of [
-    base,
-    `${base}.ts`,
-    `${base}.tsx`,
-    `${base}.js`,
-    `${base}.jsx`,
-    `${base}/index.ts`,
-    `${base}/index.tsx`,
-  ]) {
-    const abs = join(root, candidate);
-    if (existsSync(abs) && statSync(abs).isFile()) return candidate;
-  }
-  return null;
-}
-
 /** Every file reached from the app's non-test files under app/. */
 export function reachedFromPages(root: string): Set<string> {
-  const reached = new Set<string>();
-  const stack = filesUnder(root, "app").filter((f) => !isTest(f));
-  while (stack.length > 0) {
-    const file = stack.pop()!;
-    if (reached.has(file) || isTest(file)) continue;
-    reached.add(file);
-    const source = readFileSync(join(root, file), "utf8");
-    for (const specifier of specifiersIn(file, source)) {
-      const to = resolveIn(root, file, specifier);
-      if (to !== null && !reached.has(to)) stack.push(to);
-    }
-  }
-  return reached;
+  return reachedFrom(
+    root,
+    filesUnder(root, "app").filter((f) => !isTest(f))
+  );
 }
 
 /** Whether a known-list entry (a file, or a folder ending in "/") names `file`. */

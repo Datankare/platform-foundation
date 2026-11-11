@@ -14,6 +14,15 @@ import type { ClassifierOutput } from "@/prompts/safety/classify-v1";
 import { generateRequestId } from "@/lib/logger";
 import { shown } from "@/platform/errors/shown-text";
 
+/**
+ * The classifier's output, and — when the pipeline did not let the input through — what it
+ * decided (TASK-211, N-119; SafetyResult["decision"]). A route answers it with
+ * lib/screening-refusal.ts.
+ */
+export type ScreenedInput = ClassifierOutput & {
+  readonly decision?: SafetyResult["decision"];
+};
+
 /** Who is being screened and the request it belongs to. */
 export interface SafetyOptions {
   readonly requestId?: string;
@@ -28,7 +37,7 @@ export interface SafetyOptions {
 export async function classifyContent(
   text: string,
   options: SafetyOptions | string = {}
-): Promise<ClassifierOutput> {
+): Promise<ScreenedInput> {
   const { requestId, userId } =
     typeof options === "string" ? { requestId: options } : options;
   const reqId = requestId ?? generateRequestId();
@@ -49,6 +58,15 @@ export async function classifyContent(
   // escalate or block after the classifier said "safe" (a failed later step fails closed).
   // Allow and warn let the content through; block and escalate do not (release review).
   const passes = result.action === "allow" || result.action === "warn";
+  // TASK-211 (N-119): not safe is one of three things, and the caller answers each differently —
+  // nothing judged (an outage: withheld, never queued), held for a moderator, or blocked.
+  const decision: SafetyResult["decision"] = passes
+    ? undefined
+    : result.screeningUnavailable
+      ? "unjudged"
+      : result.action === "escalate"
+        ? "escalate"
+        : "block";
   if (result.classifierOutput) {
     return passes
       ? result.classifierOutput
@@ -61,6 +79,7 @@ export async function classifyContent(
             shown("screens.moderation.classifier.pipeline_action", {
               action: result.action,
             }),
+          decision,
         };
   }
 
@@ -77,6 +96,7 @@ export async function classifyContent(
           }),
         }
       : {}),
+    ...(passes ? {} : { decision }),
   };
 }
 
@@ -89,10 +109,12 @@ export async function checkSafety(
   options: SafetyOptions | string = {}
 ): Promise<SafetyResult> {
   const result = await classifyContent(text, options);
+  const decision = result.decision;
   return {
     safe: result.safe,
     ...(result.note ? { reasons: [result.note] } : {}),
     ...(result.rawReason ? { rawReason: result.rawReason } : {}),
+    ...(!result.safe && decision ? { decision } : {}),
   };
 }
 

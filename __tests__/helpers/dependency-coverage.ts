@@ -1,5 +1,5 @@
 /**
- * platform/providers/dependency-coverage.ts — for every core provider selection, what tells
+ * __tests__/helpers/dependency-coverage.ts — for every core provider selection, what tells
  * readiness that the dependency it reaches works (TASK-197, audit D-2)
  *
  * Readiness answered "ready" while the AI key was revoked, the Google key restricted or the
@@ -13,11 +13,13 @@
  * slot's values the same way, and that each named probe is in fact registered for that selection
  * (platform/providers/readiness-probes.ts).
  *
- * @module platform/providers
+ * A requirement only that test checks, so it lives with it (TASK-211, N-118: it was
+ * platform/providers/dependency-coverage.ts, a module no entry point loads); the typecheck covers
+ * the tests, so a new selection still does not compile until it is covered here.
  */
 
 import type { DependencyCoverage } from "@/platform/modules/types";
-import type { CoreProviderSelections } from "./registry";
+import type { CoreProviderSelections } from "@/platform/providers/registry";
 
 export type { DependencyCoverage } from "@/platform/modules/types";
 

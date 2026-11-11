@@ -22,7 +22,6 @@ const PLATFORM_DIRECT: Readonly<Record<string, string>> = {
     "/api/auth/sso/callback — creates the session",
   "platform/auth/context.tsx":
     "/api/auth/refresh (the httpOnly refresh cookie is the credential) and /api/auth/sign-out (sets the Authorization header itself)",
-  "hooks/useRealtimeStream.ts": "/api/stream — sets the Authorization header itself",
 };
 
 /** With the app's own, declared in app-route-policy.ts (directFetch). */

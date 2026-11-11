@@ -72,7 +72,9 @@
       "too_many_attempts": "Too many attempts. Try again later."
     },
     "content": {
-      "rejected": "This content does not meet our guidelines."
+      "rejected": "This content does not meet our guidelines.",
+      "held_for_review": "This is waiting for a moderator to review it before it can be used. Nothing more is needed from you.",
+      "withheld": "The result was withheld: it could not be cleared to show. Try again, or ask in a different way."
     },
     "feature": {
       "not_configured": "This feature isn't available here."
@@ -1300,7 +1302,8 @@
       "sign_in_for_full_access": "Sign in for full access",
       "sign_out": "Sign Out",
       "guest_session": "Guest session —",
-      "your_account": "Your account"
+      "your_account": "Your account",
+      "assistant": "Assistant"
     },
     "stream": {
       "truncated": "The answer was cut off at its length limit: it is not complete. Ask for a shorter answer, or ask it to continue."
@@ -1818,6 +1821,25 @@
         "recorded": "A reason recorded before reasons were coded.",
         "show": "Show the stored text"
       }
+    },
+    "assistant": {
+      "meta_title": "Assistant",
+      "loading": "Loading…",
+      "back_home": "← Back to home",
+      "title": "Assistant",
+      "intro": "Ask a question and read the answer as it is written. Questions and answers are screened, as everything here is.",
+      "guest": "The assistant is for accounts: a guest session cannot use it. Sign in or create an account to ask it a question.",
+      "sign_in": "Sign in",
+      "question_label": "Your question",
+      "question_placeholder": "Ask anything…",
+      "question_hint": "{count, number} of {max, number} characters. Ctrl+Enter (⌘+Enter on a Mac) asks.",
+      "ask": "Ask",
+      "stop": "Stop",
+      "clear": "Clear",
+      "answer_title": "Answer",
+      "asked": "You asked: {question}",
+      "thinking": "Writing the answer…",
+      "stopped": "You stopped the answer: what is shown is not complete."
     },
     "account": {
       "meta_title": "Your account",

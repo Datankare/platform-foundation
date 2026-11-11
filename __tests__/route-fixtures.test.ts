@@ -26,7 +26,13 @@
  */
 
 jest.mock("@/lib/logger", () => ({
-  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  logger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+    response: jest.fn(),
+  },
   generateRequestId: () => "req-test",
 }));
 // The deployment's tenancy as the verifier enters it (a producer for an operator route across
@@ -179,6 +185,24 @@ jest.mock("@/platform/ai", () => {
   };
 });
 
+// The stream beneath /api/stream (TASK-211): a producer sets what the model streams; otherwise the
+// platform's own orchestrator, unchanged.
+const mockStream: { stream?: (...a: unknown[]) => AsyncIterable<unknown> } = {};
+jest.mock("@/platform/ai/orchestrator", () => {
+  const actual = jest.requireActual("@/platform/ai/orchestrator");
+  return {
+    ...actual,
+    getOrchestrator: (...a: unknown[]) => {
+      const real = actual.getOrchestrator(...a);
+      if (!mockStream.stream) return real;
+      return {
+        complete: (...c: unknown[]) => real.complete(...c),
+        stream: mockStream.stream,
+      };
+    },
+  };
+});
+
 // Guest tokens are minted by the platform (platform/auth/guest-token.ts); a producer can make the
 // mint fail as it does in production without its secret (TASK-207).
 const mockMint: { fail?: boolean } = {};
@@ -239,6 +263,9 @@ import { GET as tenantGET } from "@/app/api/admin/tenant/route";
 import { GET as operatorTenantsGET } from "@/app/api/operator/tenants/route";
 import { POST as signOutPOST } from "@/app/api/auth/sign-out/route";
 import { POST as planPOST } from "@/app/api/admin/ai/route";
+import { POST as streamPOST } from "@/app/api/stream/route";
+import * as safety from "@/lib/safety";
+import { createMockAuthProvider } from "@/platform/auth/mock-provider";
 import { AIRefusalError } from "@/platform/ai/provider";
 import { PATCH as usersPATCH } from "@/app/api/admin/users/route";
 import { GET as gdprGET, POST as gdprPOST } from "@/app/api/admin/gdpr/route";
@@ -1431,6 +1458,115 @@ const signIn = () =>
   );
 
 /** The sign-in screen (components/auth/AuthPage.tsx) and the session (platform/auth/context.tsx). */
+/**
+ * /api/stream's answers (TASK-211, N-118): what the assistant screen reads. The screening is the
+ * route's own call, answered here (its classifier is the model); the model streams what the
+ * producer sets. An answer is recorded as the event stream's text, exactly as sent.
+ */
+async function recordStream(res: Response): Promise<RouteFixture> {
+  if (!(res.headers.get("content-type") ?? "").startsWith("text/event-stream"))
+    return record(res);
+  return { status: res.status, body: normaliseBody(await res.text()) };
+}
+/**
+ * A question to the assistant as `who`: the route verifies its caller itself (requireActor, the
+ * platform's test identity provider) and reads the account's standing, answered here as active.
+ */
+async function ask(
+  who: "user" | "guest",
+  prompt = "What is a rainbow?"
+): Promise<Response> {
+  initAuth();
+  mockRealProvider ??= getAuthProvider();
+  const identities = createMockAuthProvider();
+  registerAuthProvider(identities);
+  jest.requireMock<{ checkAccountStatus: jest.Mock }>(
+    "@/platform/auth/account-status-guard"
+  ).checkAccountStatus = jest.fn(async () => ({
+    allowed: true,
+    accountStatus: "active",
+    feature: "stream",
+  }));
+  let token = (await identities.signIn("member@example.test", "x")).accessToken ?? "";
+  if (who === "guest") {
+    const minted = (await (
+      await guestPOST(rawReq("/api/auth/guest", "POST"))
+    ).json()) as {
+      token: string;
+    };
+    token = minted.token;
+  }
+  return streamPOST(
+    rawReq("/api/stream", "POST", { authorization: `Bearer ${token}` }, { prompt })
+  );
+}
+function screened(
+  input: boolean | "block" | "escalate" | "unjudged",
+  output = true
+): void {
+  jest
+    .spyOn(safety, "checkSafety")
+    .mockResolvedValue(
+      input === true
+        ? { safe: true }
+        : { safe: false, decision: input === false ? "block" : input }
+    );
+  jest
+    .spyOn(safety, "checkOutputSafety")
+    .mockResolvedValue(output ? { safe: true } : { safe: false });
+}
+function streams(
+  ...chunks: Array<{ text: string; done: boolean; stopReason?: string }>
+): void {
+  mockStream.stream = async function* () {
+    for (const c of chunks) yield c;
+  };
+}
+const STREAM: Readonly<Record<string, () => Promise<RouteFixture>>> = {
+  "POST /api/stream — an answer": async () => {
+    screened(true);
+    streams(
+      { text: "A rainbow is sunlight ", done: false },
+      { text: "split by raindrops.", done: true, stopReason: "end_turn" }
+    );
+    return recordStream(await ask("user"));
+  },
+  "POST /api/stream — an answer cut off at its length limit": async () => {
+    screened(true);
+    streams(
+      { text: "A rainbow is sunlight split", done: false },
+      { text: "", done: true, stopReason: "max_tokens" }
+    );
+    return recordStream(await ask("user"));
+  },
+  "POST /api/stream — the answer withheld by screening": async () => {
+    screened(true, false);
+    streams({
+      text: "Something the screening withholds.",
+      done: true,
+      stopReason: "end_turn",
+    });
+    return recordStream(await ask("user"));
+  },
+  "POST /api/stream — refused (content rejected)": async () => {
+    screened(false);
+    return recordStream(await ask("user", "something the screening blocks"));
+  },
+  "POST /api/stream — held for a moderator": async () => {
+    screened("escalate");
+    return recordStream(await ask("user", "something the screening holds for review"));
+  },
+  "POST /api/stream — refused (the screening unavailable)": async () => {
+    screened("unjudged");
+    return recordStream(await ask("user"));
+  },
+  "POST /api/stream — refused (a guest)": async () => recordStream(await ask("guest")),
+  "POST /api/stream — refused (rate limited)": async () => {
+    limitedOnce();
+    return recordStream(await ask("user"));
+  },
+};
+
 const SESSION: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   "GET /api/features — no sign-in provider configured": async () =>
     recordFeatures(await featuresGET(rawReq("/api/features", "GET"))),
@@ -3210,6 +3346,7 @@ const PRODUCERS: Readonly<Record<string, () => Promise<RouteFixture>>> = {
   ...KILL_SWITCH,
   ...APPEALS,
   ...SESSION,
+  ...STREAM,
   ...MFA,
   ...JOBS,
   ...DUAL_CONTROL,
@@ -3262,6 +3399,7 @@ async function produceEach(produced: Record<string, RouteFixture>): Promise<void
     resetReviewQueueStore();
     realProvider();
     delete mockModel.complete;
+    delete mockStream.stream;
     delete mockMint.fail;
     delete mockAudit.down;
     delete mockConfigApproval.get;

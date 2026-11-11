@@ -146,7 +146,7 @@ export default function MfaEnrollment({ onSignOut }: { onSignOut: () => void }) 
           type="button"
           onClick={start}
           disabled={busy}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
         >
           {t("start")}
         </button>
@@ -197,7 +197,7 @@ export default function MfaEnrollment({ onSignOut }: { onSignOut: () => void }) 
             type="button"
             onClick={verify}
             disabled={busy || code.length !== 6}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
             {t("confirm")}
           </button>
@@ -209,7 +209,7 @@ export default function MfaEnrollment({ onSignOut }: { onSignOut: () => void }) 
           <button
             type="button"
             onClick={onSignOut}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
+            className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white"
           >
             {t("sign_in_again")}
           </button>

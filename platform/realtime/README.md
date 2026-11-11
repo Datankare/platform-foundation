@@ -56,10 +56,16 @@ for await (const chunk of orchestrator.stream(request, opts)) {
   writer.write(chunk);
 }
 
-// Client: useRealtimeStream hook
-const { startStream, text, isStreaming, abort } = useRealtimeStream();
+// Client: useRealtimeStream hook (the assistant page, components/assistant/AssistantPanel.tsx)
+const { startStream, text, isStreaming, refusal, truncated, abort } = useRealtimeStream();
 startStream("Tell me a story");
 ```
+
+The hook sends the question as the signed-in user (`apiFetch`) and reports a refusal by its kind
+(`platform/errors/refusal.ts`). There is no browser hook for channels: the one that was here
+(`useRealtimeChannel`) never subscribed to the provider — its messages stayed in the page — and no
+screen used it, so it was removed (TASK-211, N-118). A screen that needs channels or presence
+builds its hook on `RealtimeProvider`, with that screen.
 
 ## Adding a New Provider
 

@@ -8,7 +8,7 @@
  * exhausted credit balance, a retired model (TASK-186), a restricted Google key and a rotated
  * rate-limit token all left it "ready": nothing probed them, and nothing required it. Now:
  *
- *   - every selection of every slot — the core's (platform/providers/dependency-coverage.ts,
+ *   - every selection of every slot — the core's (__tests__/helpers/dependency-coverage.ts,
  *     typed so a new selection does not compile uncovered) and every registered module's
  *     (ModuleProviderSlot.coverage, checked here) — is "local", names a probe, or is exempt
  *     with a reason;
@@ -24,7 +24,7 @@ jest.mock("@/platform/data", () => ({
 
 import { getModules } from "@/platform/modules/registry";
 import type { DependencyCoverage } from "@/platform/modules/types";
-import { CORE_DEPENDENCY_COVERAGE } from "@/platform/providers/dependency-coverage";
+import { CORE_DEPENDENCY_COVERAGE } from "./helpers/dependency-coverage";
 import { buildReadinessProbes } from "@/platform/providers/readiness-probes";
 import { CachedHealthProbe } from "@/platform/observability/health";
 

@@ -20,7 +20,7 @@ Every error the API returns has this body (ADR-051 D3):
 - `internal.error` always carries a `requestId` to quote when reporting a problem, and never internal detail. A `retryAfterSeconds` param is also sent as the `Retry-After` header.
 - An app built on the platform adds its own codes, `app.<area>.<name>`, documented in [APP_API_ERRORS.md](APP_API_ERRORS.md).
 
-**106 codes** in 15 areas.
+**108 codes** in 15 areas.
 
 ## Account
 
@@ -110,9 +110,11 @@ Every error the API returns has this body (ADR-051 D3):
 
 ## Content
 
-| Code               | HTTP | Message (en)                               | Params                    | What the caller should do |
-| ------------------ | ---- | ------------------------------------------ | ------------------------- | ------------------------- |
-| `content.rejected` | 422  | This content does not meet our guidelines. | `category` (id, optional) | Ask for different input.  |
+| Code                      | HTTP | Message (en)                                                                                         | Params                    | What the caller should do                                                                                                                            |
+| ------------------------- | ---- | ---------------------------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `content.held_for_review` | 422  | This is waiting for a moderator to review it before it can be used. Nothing more is needed from you. | —                         | Say it is waiting for a moderator. Offer no appeal: nothing was decided against the account.                                                         |
+| `content.rejected`        | 422  | This content does not meet our guidelines.                                                           | `category` (id, optional) | Ask for different input. The screening blocked it and recorded the decision against the account: link to the account page, where it can be appealed. |
+| `content.withheld`        | 422  | The result was withheld: it could not be cleared to show. Try again, or ask in a different way.      | —                         | Say the result was withheld; the user may try again or ask differently. Offer no appeal: the user's own content was not blocked.                     |
 
 ## Optional features
 

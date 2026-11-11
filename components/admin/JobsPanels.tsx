@@ -70,7 +70,7 @@ const td = "py-2 px-3 text-gray-300 border-b border-gray-800/50 align-top";
 const input =
   "bg-[#0a0f1e] border border-gray-700 rounded-md px-2 py-1 text-sm text-gray-200 focus:outline-none focus:border-blue-500";
 const button =
-  "px-3 py-1 rounded-md text-sm bg-blue-600/80 hover:bg-blue-600 text-white disabled:opacity-50";
+  "px-3 py-1 rounded-md text-sm bg-blue-700 hover:bg-blue-800 text-white disabled:opacity-50";
 const quiet =
   "px-3 py-1 rounded-md text-sm border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-50";
 

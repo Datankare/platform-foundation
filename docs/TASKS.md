@@ -7,6 +7,221 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-211 — Residuals 55k: the assistant on a real page, no module left unreached, and only a block is appealed
+
+| Field        | Detail                                                                                 |
+| ------------ | -------------------------------------------------------------------------------------- |
+| **ID**       | TASK-211                                                                               |
+| **Type**     | Defect (a paid AI route no screen used; modules nothing that runs loads)               |
+| **Severity** | Low (N-118), Medium (N-119)                                                            |
+| **Phase**    | Phase 5                                                                                |
+| **Target**   | v6.0.0 (RC)                                                                            |
+| **Status**   | Fixed on develop (sub-batch 55k of the residuals batch)                                |
+| **Logged**   | 2026-11-09 (register N-118, found by sub-batch 55j; N-119, found by this batch's walk) |
+
+Sub-batch 55k of the residuals register, in both repositories (Playform: its TASK-5012).
+
+**What was found (N-118).** 55j's guard covered `components/` only. Outside it, nothing imported
+`hooks/useRealtimeStream.ts`, `hooks/useRealtimeChannel.ts` or `hooks/stream-events.ts` (in both
+repositories) or Playform's `lib/pkce.ts`, except their tests; and no screen used `/api/stream`,
+so no journey could reach it (its journey exemption said so).
+
+**Each module, traced, and the decision.**
+
+| Module                                              | Intent, on the record                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Decision                                                                        |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `/api/stream`, `useRealtimeStream`, `stream-events` | ADR-018 (accepted): the endpoint serves the model's answer to the browser as it is written. The route is the platform's assistant (its own versioned prompt, `prompts/assistant/stream-v1.ts`; "the stream is the assistant", its header), hardened by TASK-133, audit X-11 and TASK-204 N-45 — which kept the hook current so a screen can say an answer was cut off (`screens.stream.truncated`); the exemption: "a journey comes with the screen that uses it". Nothing retired it. | **Wired**: the assistant page, `/assistant` — the feature the route exists for. |
+| `useRealtimeChannel`                                | ADR-018's channel half ("Sprint 5 integration step"). The hook never subscribed to a `RealtimeProvider` (`broadcast` appended to the page's own list; no provider was ever constructed for it); no screen, plan or task calls for channels or presence in a page.                                                                                                                                                                                                                      | **Removed**, with its test case; ADR-018 and the realtime README amended.       |
+| `lib/pkce.ts` (Playform)                            | Sprint 3c U5: "used by the delegation consent screen". TASK-194 (audit C-7) moved the pair to the agent — the agent generates the verifier and exchanges it with its own credential; "keep it where the agent runs, never in a browser" (AGENT_DELEGATION_GUIDE); the consent screen never sees a code or verifier. The server's S256 check is `lib/agent-delegation.ts`'s.                                                                                                            | **Removed**, with its test and its risk-tier entry (Playform's TASK-5012).      |
+
+**The assistant page.** `/assistant` (`app/assistant/AssistantClient.tsx`,
+`components/assistant/AssistantPanel.tsx`), reached from the home page's bar ("Assistant", for a
+signed-in user; a guest is told the assistant is for accounts — the route serves signed-in users
+only — and nothing is sent). A question (bounded as the route bounds it, with a count; Ask, or
+Ctrl/⌘+Enter) goes to `/api/stream` as the user; the answer is a live region read as it grows;
+Stop ends it and marks it incomplete; Clear empties both; an answer cut off at its length limit
+shows the route's notice. A refusal is shown by its kind (`RefusalNotice`): rejected content links
+to its decision on `/account` (the platform's blocklist and classifier record it against the
+account, TASK-210), a rate limit says when to retry, a lost connection or an outage offers "Try
+again"; a refusal mid-answer (output withheld, the model declining) links to no decision — the
+user's own content was not blocked. The hook now sends the session's token itself (`apiFetch`,
+renewed once on a 401 — it took a token getter, and the bare-fetch exemption for it is gone),
+reports a refusal by its kind (`refusal`, `refusedAt`) and `stopped`; and an ended question's late
+events no longer reach the next one's state (its `finally` cleared the newer question's stream:
+found writing the page's test). `/api/stream` leaves `journey-exemptions.json` (PF 27 → 26,
+Playform 24 → 23); none added.
+
+**The guard.** `__tests__/reachable-modules.test.ts` (the same file in both repositories; the
+import walk shared with `mounted-screens` in `__tests__/helpers/reachability.ts`): every source
+file under `app/`, `components/`, `hooks/`, `lib/`, `platform/` or `modules/` must be reached from
+an entry point, transitively, never through a test. The entry points: Next's convention files under
+`app/` (pages, layouts, route handlers, …); middleware and instrumentation (`proxy.ts`,
+`instrumentation.ts`, and the configs the build and lint load); every script under `scripts/`, and
+every source file a script's string, a workflow line or a package script names; package exports —
+`package.json`'s fields, and each core area's `platform/<area>/index.ts`, the import path its README
+gives a consumer (the core's counterpart of a module's registry entry, which is its `index.ts`); the
+module registry (composition roots, each module's definition and entry); and what the other
+repository imports through the platform-paths sync (`CONSUMER_ENTRIES`: the platform's
+`components/AdaptiveInput/` and `platform/auth/profile-screening.ts`, which only Playform loads —
+Playform's run of the same file proves its own entries reach each one). The known list
+(`KNOWN_UNREACHED`) holds two entries per repository, each a consumer-owned register a CI guard
+reads (`platform/route-policy/app-route-policy.ts`, `platform/assurance/unwired-security.ts` — at
+the paths the sync template excludes, so moving them would break every consumer's sync); the guard
+requires each to be imported by a test marked `@guard`. Both lists are exact (an entry reached
+anyway, or naming nothing, fails). Self-tests on a scratch repository for every entry kind, a
+colocated app file, a module only a test or an unreached module loads, script comments and data
+files (not entries), and stale entries.
+
+**What the guard found besides, and what was done.** Three platform files only tests load — moved
+to the tests that use them: `platform/assurance/status-lifecycle.ts` →
+`__tests__/helpers/status-lifecycle.ts` (the lifecycle register its two tests hold to the code and
+the schema), `platform/observability/mock-health-probe.ts` → `__tests__/helpers/mock-health-probe.ts`
+(a test double), `platform/providers/dependency-coverage.ts` →
+`__tests__/helpers/dependency-coverage.ts` (the requirement its test checks; the typecheck covers the
+tests, so a new selection still fails to compile until covered). The relink command
+(`platform/auth/identity-relink-command.ts`) is an entry through `scripts/relink-identity.mjs`,
+which loads it by name. Nothing else: the guard passes in both repositories with the lists above.
+
+**Tests (N-119).** `screening-refusal` (the mapping; `checkSafety`'s decision for a blocklist
+block, a classifier block, an escalation, an outage, allow and warn; the guard); a test per route
+family — `process-api`, `stream-api` (each decision; output withheld), and Playform's
+`process-api`, `tts`, `agent-process-content`, `translate-session`, `translate-session-routes`,
+`agent-approve`, `extract`, `identify`, `transcribe`, `profile-api` (a blocked field appealable,
+one too long not, all held, all unjudged); `refusal-handler` (the `held` kind; no appeal for a
+hold or withheld output; the hold a gray status with no button); `assistant-page` (held, the
+screening unavailable); route fixtures from the handlers (`/api/stream` held and unavailable;
+Playform's dispatch and profile held); Playform's `playform-refusals` and `profile-page`.
+
+**Tests.** `reachable-modules` (the guard; self-tests); `mounted-screens` (on the shared walk,
+unchanged in what it checks); `assistant-page` (the page against the route's own answers: signed
+out, loading, a guest, a question sent as the user and its answer, Ctrl+Enter, a cut-off answer,
+rejected content with its decision's link, an answer withheld mid-stream with none, a rate limit, a
+guest token refused, a lost connection and Try again, Stop and a later question untouched by the
+stopped one, Clear, the bound; the home bar's link, none for a guest); route fixtures produced by
+`/api/stream`'s handler (an answer, a cut-off answer, an answer withheld, rejected content, a
+guest, a rate limit — the event stream recorded as sent); `stream-events` (unchanged, still on the
+route's own events); `client-api-auth` (the stream hook's exemption gone); `effect-free-state`,
+`risk-tier`, `health-probe`, `dependency-probe-coverage`, `status-lifecycle-registry`,
+`status-lifecycle` (DB) on their moved helpers. The contrast fix is held by the journeys'
+accessibility checks (axe, WCAG 2 AA): the assistant's failed on the base colour. **E2E** (`e2e/assistant.spec.ts`, the same file in
+both repositories), as its own test-double user (`asker-q`, `platform/auth/mock-provider.ts`;
+`mock-provider-admins` tests it): the home bar → `/assistant`, accessible; a blocked question → the route's
+refusal (422) shown by its message → its decision on `/account`; an ordinary question → the screen
+shows exactly what the route answered (with no model key, the route's refusal); with the model
+(CI's key) the answer streams and completes; at 390 px nothing overflows. Its own user because the
+blocked question records a decision against the account that asked: on the default e2e user it
+restricted that account, and Playform's later profile and notification journeys were refused
+(found by the first change run).
+
+Walked at 1280 and 390 px on production builds of the base and the change.
+
+**N-119: only a block is `content.rejected` (found by the walk).** With no model key the assistant
+answered an ordinary question "This content does not meet our guidelines", with "See this decision
+and appeal it". The walk's database showed why it was wrong: the screening had recorded nothing to
+appeal — the classifier was unreachable, so the content was withheld unjudged (never queued, never
+a decision). Every route answered `content.rejected` to any input `checkSafety` refused — a block
+(a decision recorded against the account, which the account page lists and an appeal can reach),
+an escalation (queued for a moderator; only a block can be appealed — `review-service`), and an
+outage alike — and to the model's own output withheld (no decision about the user at all); and
+every screen links `content.rejected` to the appeal (TASK-210). The owner's decision (2026-11-09):
+a hold is its own code, with no appeal; the link stays only on a real block.
+
+- **The screening's decision.** `checkSafety` (`lib/safety.ts`) carries `decision` — `block`,
+  `escalate` or `unjudged` (`SafetyResult`, `types/index.ts`), from the pipeline's action and
+  `screeningUnavailable`; `classifyContent` carries it on its result.
+- **One answer for it:** `lib/screening-refusal.ts`, `screeningRefusal` — block →
+  `content.rejected` (422, appealable); escalate → `content.held_for_review` (422, new: "This is
+  waiting for a moderator to review it before it can be used. Nothing more is needed from you.");
+  unjudged → `service.unavailable` (503, `service: moderation`: try again). No decision (a
+  screening that predates it) is answered as held: never an appeal for a decision that may not
+  exist. Pure, so code with injected effects uses it too.
+- **Every input screening answers by it:** platform-foundation's `/api/process` and
+  `/api/stream`; Playform's `/api/process`, `/api/stream`, `/api/tts`,
+  `/api/agent/process-content` and the translate session (`lib/translate-session.ts`, through
+  `/api/translate/dispatch`). Playform's profile route answers by each field's decision
+  (`profileRefusal`, `platform/auth/profile-screening.ts`): a blocked field is named in
+  `appealFields` (the only fields the page offers to appeal — a field refused for its length or
+  shape, or warned, is not a decision); all held → `content.held_for_review`; all unjudged →
+  `service.unavailable`.
+- **Model output withheld is `content.withheld`** (422, new, no appeal): the stream's coded end,
+  `/api/process`'s translations, and Playform's agent workflow and approved step, extract,
+  identify, transcribe and the translate session's translations.
+- **Screens.** `content.held_for_review` is its own refusal kind, `held`: a gray status (a wait,
+  not a failure) with no appeal or retry (`RefusalNotice`; Playform's notifications at info level).
+  `content.rejected` keeps the appeal link — now only ever a block.
+- **The account page** does not list holds: an escalation's outcome is a review case the page does
+  not read, so listing holds is not a small change; the hold's message promises nothing about the
+  account page.
+- **The guard:** `__tests__/screening-refusal.test.ts` — no production source names
+  `content.rejected` but the mapping and the files that define and render the code; every source
+  that calls `checkSafety` answers through `screeningRefusal` (or injects it into code that does,
+  named in the guard). Self-tests on scratch sources and a scratch tree.
+
+**Design check**
+
+- **Reach:** the home page's bar (both repositories); a new page and component; the stream hook
+  and its parser (no other caller); the shared refusal notice (read, unchanged); the catalog
+  (`screens.assistant`, `screens.home.assistant`); the route-fixture producer; the journey
+  register; the platform's file list (`platform-paths.json`).
+- **Races:** a new question while one streams: the old one is aborted and its events dropped (the
+  hook compares its own controller); Ask is replaced by Stop while streaming.
+- **Dependencies down:** the model or the classifier down → the route's coded refusal
+  (`service.unavailable` — for the screening, `moderation`, N-119 below), shown by its message,
+  with Try again; the connection lost → the network refusal.
+- **Erasure leftovers:** none: the page stores nothing; a blocked question's decision is recorded
+  as every screening's is (already in the erasure register).
+- **Screens × responses:** the page against fixtures the handler produced, for every answer kind
+  the route sends.
+- **Journeys touched:** home → assistant; a blocked question → account page; e2e spec by spec on
+  both repositories, base and change.
+- **Weakens a tenant's protection?** No: the route, its guard, its limits and its screening are
+  unchanged; the page only calls it as the signed-in user.
+
+**Threat model**
+
+- **Boundary:** a signed-in account's question to the paid model through `/api/stream`.
+- **Actors that exist today:** any signed-in account could already call `/api/stream` by hand
+  (TASK-133's verified guard, `AI_PER_USER`, the daily paid quota, input and output screening —
+  all unchanged); the page adds no capability, only the screen. Guests are refused by the route
+  and shown no form. A child's account is held by the consent gate (`stream` is a gated feature),
+  shown by its refusal.
+- **Bypasses:** none new: the page sends only the question; the system prompt, tier and token
+  bounds are the server's (`stream-policy`).
+- **Disclosure:** the answer goes to the account that asked; a refusal shows the catalog's
+  message, never the classifier's words.
+- **Forgeries:** the page names no account and sends no id: the route takes the account from the
+  verified token, so a crafted request asks as its own sender only; a journey exemption cannot be
+  added to pass (the register only shrinks: `/api/stream` left it, none was added).
+- **Legitimate flows:** a user asking a question and reading the answer; stopping it; appealing a
+  blocked question from its link.
+- **N-119:** the refusal's code is chosen by the server from the screening's own decision; no
+  caller input selects it. A user learns their content was held rather than blocked — already
+  true of the refusal itself (the content was not used), and it names no category, reason or
+  reviewer. Nothing is opened: a hold or an outage still refuses the content, as before.
+- **Agreed before code:** the owner's brief for sub-batch 55k (2026-11-09); N-119, the owner's decision of the same day (its own code for a hold, the appeal only on a block).
+
+**Self-review**
+
+- **Consumers checked:** every importer of the stream hook (the new panel only) and of
+  `consumeStreamEvents` (the hook, `stream-events.test.ts`); every reader of the three moved files
+  (their tests, and comments naming them); the journey register; the risk tiers (Playform's
+  `lib/pkce.ts` entry, and the shared tier test's example); `client-api-auth`'s exemptions.
+- **Hostile re-read:** a question at the bound (the textarea's `maxLength`; the route refuses past
+  it anyway); a second question while one streams (the first aborted, its late events dropped —
+  tested); a guest (no form, nothing sent); a refusal mid-answer (no appeal link — tested); the
+  guard's own entry rules (a comment or a data file naming a path is not an entry — tested).
+- **Found in the batch and fixed in it:** N-119 (above) — every refusal of screened input, and
+  of withheld model output, offered an appeal for a decision that did not exist unless the input
+  was blocked; white text on `bg-blue-600` is 3.76:1, under WCAG 2 AA's
+  4.5:1 — found by the assistant journey's accessibility check on its Ask button; the same pair was
+  the primary button of 23 platform screens (sign-in, sign-up, MFA, the age gate, the appeal form,
+  the account page, the review dashboard, the admin console's panels, the refusal notice's retry, the
+  demo home): every one is `bg-blue-700` (hover `bg-blue-800`) now, 80%-opacity variants included;
+  the journey's blocked question restricting the shared e2e user (its own identity now);
+  the hook's ended question clearing the next one's stream; the hook's bare fetch with a caller-supplied token (now `apiFetch`, renewed on 401);
+  three test-only modules in `platform/`; the README's hook list (a profile hook and the channel
+  hook, both gone). Nothing found is left.
+
 ### TASK-210 — Residuals 55j: the moderator's review queue and the member's appeal on real pages, and no screen component left on no page
 
 | Field        | Detail                                                                                          |
