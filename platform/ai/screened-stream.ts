@@ -29,7 +29,12 @@ export const OUTPUT_SCREEN_OVERLAP = 120;
 
 export type ScreenedEvent =
   | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "done"; readonly usage?: AIStreamChunk["usage"] }
+  | {
+      readonly kind: "done";
+      readonly usage?: AIStreamChunk["usage"];
+      /** Why the reply ended (TASK-204, N-45): "max_tokens" — cut off at its token limit. */
+      readonly stopReason?: string;
+    }
   | { readonly kind: "rejected" }
   | { readonly kind: "failed"; readonly error: unknown };
 
@@ -84,7 +89,13 @@ export async function* screenStream(
       }
       if (pending) yield release();
       if (chunk.done) {
-        yield { kind: "done", usage: chunk.usage };
+        yield {
+          kind: "done",
+          usage: chunk.usage,
+          ...(typeof chunk.stopReason === "string"
+            ? { stopReason: chunk.stopReason }
+            : {}),
+        };
         return;
       }
     }

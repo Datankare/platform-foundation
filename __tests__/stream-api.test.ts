@@ -14,6 +14,7 @@ import {
   STREAM_MAX_TOKENS,
 } from "@/platform/ai/stream-policy";
 import { AIProviderError, AIRefusalError } from "@/platform/ai/provider";
+import { renderMessage } from "@/platform/errors/messages";
 
 jest.mock("@/lib/safety", () => ({
   checkSafety: jest.fn().mockResolvedValue({ safe: true }),
@@ -65,6 +66,10 @@ async function code(res: Response): Promise<string | undefined> {
   return ((await res.json()) as { code?: string }).code;
 }
 
+// Hostile cases (REVIEW.md 3):
+// hostile:self n/a: a streamed answer names no account, so there is no self to act on
+// hostile:id-spelling n/a: the route takes no id, only the caller's prompt and tier
+
 describe("/api/stream — caller verification", () => {
   it("refuses a request with no credentials", async () => {
     const res = await POST(req({ prompt: "hi" }, null));
@@ -78,7 +83,7 @@ describe("/api/stream — caller verification", () => {
     expect(streamMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a guest — streaming is for signed-in users", async () => {
+  it("[hostile:role] refuses a guest — streaming is for signed-in users", async () => {
     const guest = await mintGuestToken();
     const res = await POST(req({ prompt: "hi" }, `Bearer ${guest.token}`));
     expect(res.status).toBe(401);
@@ -182,6 +187,38 @@ describe("/api/stream — screening and streaming", () => {
     );
   });
 
+  // TASK-204 (N-45): an answer the model stopped at its token limit is shown as cut off.
+  it("marks an answer cut off at max_tokens as truncated, with the catalog's notice", async () => {
+    streamMock.mockImplementation(async function* () {
+      yield { text: "Half an ans", done: false };
+      yield {
+        text: "",
+        done: true,
+        stopReason: "max_tokens",
+        usage: { inputTokens: 1, outputTokens: 64 },
+      };
+    });
+    const text = await (await POST(req({ prompt: "hi", maxTokens: 64 }))).text();
+    const events = text
+      .split("\n\n")
+      .filter((l) => l.startsWith("data: {"))
+      .map((l) => JSON.parse(l.slice(6)));
+    const done = events[events.length - 1];
+    expect(done).toMatchObject({ done: true, truncated: true, stopReason: "max_tokens" });
+    expect(done.notice).toBe(renderMessage("screens.stream.truncated"));
+    expect(done.notice).not.toBe("screens.stream.truncated");
+    expect(text).toContain("data: [DONE]");
+  });
+
+  it("an answer that ended on its own is not marked truncated", async () => {
+    streamMock.mockImplementation(async function* () {
+      yield { text: "Done.", done: true, stopReason: "end_turn" };
+    });
+    const text = await (await POST(req({ prompt: "hi" }))).text();
+    expect(text).not.toContain("truncated");
+    expect(text).toContain('"stopReason":"end_turn"');
+  });
+
   it("reports an upstream failure by code, without its message", async () => {
     streamMock.mockImplementation(async function* () {
       yield { text: "", done: false };
@@ -239,7 +276,7 @@ describe("/api/stream — screening and streaming", () => {
     expect(text).not.toContain("[DONE]");
   });
 
-  it("withholds output when output screening fails (fail closed)", async () => {
+  it("[hostile:store-down] withholds output when output screening fails (fail closed)", async () => {
     streamMock.mockImplementation(async function* () {
       yield { text: "unscreened", done: true };
     });

@@ -389,6 +389,20 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
   const scopeKey = scopeId ?? scopeType;
   const tenantId = runTenant();
 
+  // TASK-204 (N-46): the governed per-trajectory step cap, as executeAgent applies it (ADR-048
+  // D1): an administrator's lower ceiling holds on resume too. A trajectory already at the cap
+  // runs no further step and stays paused.
+  const stepCap = await resolveStepCap(agentConfig.budgetConfig.maxStepsPerTrajectory);
+  const stepLimitReached = (): ExecutionResult => ({
+    success: false,
+    trajectoryId: args.trajectoryId,
+    stepsCompleted: stepCount,
+    totalCostUsd,
+    finalStatus: "paused",
+    error: `step limit (${stepCap}) reached before the workflow finished`,
+  });
+  if (stepCount >= stepCap) return stepLimitReached();
+
   await trajectoryStore.updateStatus(args.trajectoryId, "running");
 
   try {
@@ -449,16 +463,9 @@ export async function resumeAgent(args: ResumeAgentArgs): Promise<ExecutionResul
 
       if (!outcome.continueExecution) break;
       // As executeAgent: a run cut short by the step cap has not finished (audit C-9).
-      if (stepCount >= agentConfig.budgetConfig.maxStepsPerTrajectory) {
+      if (stepCount >= stepCap) {
         await trajectoryStore.updateStatus(args.trajectoryId, "paused");
-        return {
-          success: false,
-          trajectoryId: args.trajectoryId,
-          stepsCompleted: stepCount,
-          totalCostUsd,
-          finalStatus: "paused",
-          error: `step limit (${agentConfig.budgetConfig.maxStepsPerTrajectory}) reached before the workflow finished`,
-        };
+        return stepLimitReached();
       }
     }
 

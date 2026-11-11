@@ -46,7 +46,9 @@ All AI-facing components are managed as code.
 
 - **Registry:** Prompts, tool definitions, and workflows are versioned in a central registry.
 - **Lifecycle:** Changes are testable, comparable, and reversible.
-- **Deployment:** A/B testing and canary rollouts are first-class capabilities.
+- **Deployment:** A/B testing and canary rollouts are to be first-class capabilities. _Not built yet:_ a
+  prompt or model change ships to everyone at once, behind the deterministic eval lane and the live
+  eval lane (ADR-038); split tests and canaries are planned ([FEAT-091](./TASKS.md)).
 
 ## 6. Structured Outputs and Self-Healing Contracts
 
@@ -163,28 +165,29 @@ The execution unit is the trajectory, not the request.
 
 ## Principle Readiness
 
-| #   | Principle                         | Status       | Platform Implementation                                         |
-| --- | --------------------------------- | ------------ | --------------------------------------------------------------- |
-| 1   | Intent-Driven Interaction         | ✅ Built     | Admin AI command bar — NL → plan → confirm → execute            |
-| 2   | Agentic Execution Model           | ⏳ Phase 5   | Agentic framework planned                                       |
-| 3   | Total Observability               | ✅ Built     | Tracing, metrics, error reporting, health (Sprint 3)            |
-| 4   | Structural Safety by Default      | ✅ Built     | Blocklist + LLM classifier + middleware pipeline (Sprint 2)     |
-| 5   | Prompts as Versioned Artifacts    | ✅ Built     | Prompt registry with versions + tests (Sprint 1)                |
-| 6   | Structured Outputs & Self-Healing | 🔶 Partial   | Structured classifier output; schema validation layer planned   |
-| 7   | Provider-Aware Orchestration      | ✅ Built     | Provider abstraction, model tiering, circuit breaker (Sprint 1) |
-| 8   | Context & Memory Management       | ⏳ Phase 4   | RAG, embeddings, user context planned                           |
-| 9   | Automated Eval & Validation       | ⏳ Phase 3   | Eval framework planned                                          |
-| 10  | Human Oversight & Control         | ✅ Built     | Plan → confirm → execute pattern                                |
-| 11  | Resilient Degradation             | 🔶 Partial   | Circuit breaker + retry built; fallback providers planned       |
-| 12  | Economic Transparency             | 🔶 Partial   | Per-call cost tracking built; per-user budgets in Phase 6       |
-| 13  | Control Plane & Governance        | ⏳ Phase 6–7 | Token budgets, A/B testing planned                              |
-| 14  | Self-Improving Feedback Loops     | ⏳ Phase 7   | Feedback loop + quality monitoring planned                      |
-| 15  | Agent Identity as Delegation      | ⏳ Phase 5   | Delegated capability model for agentic framework                |
-| 16  | Cognitive Memory Architecture     | ⏳ Phase 4–5 | Extends RAG/user context with structured memory types           |
-| 17  | Cognition-Commitment Boundary     | ⏳ Phase 5   | Draft-then-commit pattern in agentic framework                  |
-| 18  | Durable Execution Trajectories    | ⏳ Phase 5   | Checkpointed, resumable, inspectable agent workflows            |
+| #   | Principle                         | Status     | Platform Implementation                                                                                                   |
+| --- | --------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Intent-Driven Interaction         | ✅ Built   | Admin AI command bar — NL → plan → confirm → execute                                                                      |
+| 2   | Agentic Execution Model           | ✅ Built   | Agent runtime and workflow loop (`platform/agents`, ADR-029/030): tools through the governed action pipeline              |
+| 3   | Total Observability               | ✅ Built   | Tracing, metrics, error reporting, health (Sprint 3)                                                                      |
+| 4   | Structural Safety by Default      | ✅ Built   | Blocklist + LLM classifier; input screened, output screened (stream windows, `lib/output-screening.ts`)                   |
+| 5   | Prompts as Versioned Artifacts    | 🔶 Partial | Prompt registry with versions and eval suites; A/B tests and canary rollouts not built ([FEAT-091](./TASKS.md))           |
+| 6   | Structured Outputs & Self-Healing | ✅ Built   | Tool inputs and outputs checked against JSON Schema, retried rather than coerced (ADR-029 D3); prompt parsers fail closed |
+| 7   | Provider-Aware Orchestration      | ✅ Built   | Provider abstraction, model tiering, circuit breaker; the weekly model check (`scripts/check-model-ids.mjs`)              |
+| 8   | Context & Memory Management       | 🔶 Partial | RAG types, chunker and embedding registry (`platform/rag`); no embedding provider built                                   |
+| 9   | Automated Eval & Validation       | ✅ Built   | Prompt evals: a deterministic lane gating CI and a keyed live lane, `npm run eval:live` (ADR-038)                         |
+| 10  | Human Oversight & Control         | ✅ Built   | Plan → confirm → execute; held actions and two-person approval (dual control)                                             |
+| 11  | Resilient Degradation             | 🔶 Partial | Circuit breaker + retry built; a fallback model per tier planned ([TASK-188](./TASKS.md))                                 |
+| 12  | Economic Transparency             | 🔶 Partial | Per-call cost; agent and tenant budgets; a daily paid-request quota per user; no per-user cost budget                     |
+| 13  | Control Plane & Governance        | 🔶 Partial | Governed settings by tier, dual control, agent budgets and step caps; A/B testing not built ([FEAT-091](./TASKS.md))      |
+| 14  | Self-Improving Feedback Loops     | ⏳ Planned | Feedback loop + quality monitoring planned                                                                                |
+| 15  | Agent Identity as Delegation      | 🔶 Partial | Agents act under their own identity, scoped capabilities and on-behalf-of; delegated credentials are the app's (Playform) |
+| 16  | Cognitive Memory Architecture     | ⏳ Planned | Extends RAG/user context with structured memory types                                                                     |
+| 17  | Cognition-Commitment Boundary     | ✅ Built   | Each step records its boundary; a gated action is held as a proposal until approved (ADR-029 D5–D8)                       |
+| 18  | Durable Execution Trajectories    | ✅ Built   | Trajectories checkpointed per step, resumable under the same caps, retained by policy (`platform/agents`)                 |
 
-**Summary:** 5 of 18 principles fully implemented, 7 partially implemented or cross-phase, 6 planned across Phases 3–7. All 18 are accounted for in the [GenAI-Native Roadmap](./GENAI_ROADMAP.md).
+**Summary (re-checked against the code on 2026-11-08, TASK-204 N-49):** 10 of 18 principles built,
+6 partially built, 2 planned. All 18 are accounted for in the [GenAI-Native Roadmap](./GENAI_ROADMAP.md).
 
 ---
 
@@ -204,4 +207,4 @@ The execution unit is the trajectory, not the request.
 | 2026-04-09 | Raman Sud | Added P15–P18 (Agent Identity, Cognitive Memory, Cognition-Commitment Boundary, Durable Execution Trajectories). Informed by Rodriguez 2026 "Agent-Native Rewrite." Readiness table updated to 18 principles. |
 | 2026-04-07 | Raman Sud | Initial manifesto — 14 principles extracted from platform architecture and roadmap planning. Readiness table added.                                                                                           |
 
-_Last updated: April 23, 2026 (Sprint 3a close — footer added per L16)_
+_Last updated: November 8, 2026 (TASK-204, N-49 — §5 and the readiness table re-checked against the code)_

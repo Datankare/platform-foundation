@@ -2,9 +2,9 @@
  * __tests__/helpers/db.ts — tests against the replayed Postgres (ADR-053 D8)
  *
  * TEST_DATABASE_URL signs in as app_tenant, TEST_DATABASE_OWNER_URL as the owner (CI: the
- * migration-replay database; locally: `npm run test:db`). Without them every `dbDescribe` suite
- * is skipped — unless REQUIRE_DB_TESTS=1, when a missing database is a failure, so CI can never
- * pass by skipping.
+ * migration-replay database; locally: `npm run test:db`, scripts/test-db.sh). Without them every
+ * `dbDescribe` suite is skipped — unless REQUIRE_DB_TESTS=1, when a missing database is a failure,
+ * so CI can never pass by skipping.
  *
  * Suites share one database and run in parallel, so each works only in tenants it creates
  * (`createTestTenant`), with random ids, and removes them afterwards.
@@ -49,7 +49,13 @@ export async function connectTestDatabase(): Promise<void> {
   process.env.DATABASE_SSL = "disable";
   process.env.DATABASE_POOL_MAX = "4";
   process.env.DATABASE_STATEMENT_TIMEOUT_MS = "10000";
-  await setDataPoolFactory((role) => new Pool(poolConfig(role)));
+  // TASK-204 (N-3): the budget suites put 20-24 transactions at once on these 4 connections. A
+  // queued checkout waits up to the test's own bound (DB_TEST_TIMEOUT_MS), not the deployment's
+  // 5 s connect timeout, so a burst under CI load waits its turn instead of failing.
+  await setDataPoolFactory(
+    (role) =>
+      new Pool({ ...poolConfig(role), connectionTimeoutMillis: DB_TEST_TIMEOUT_MS })
+  );
 }
 
 export async function disconnectTestDatabase(): Promise<void> {

@@ -10,11 +10,36 @@ import {
   type PacingDecisionResult,
   type PacingDecision,
 } from "@/prompts/adaptive/pacing-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildPacingPrompt,
+  PACING_V1,
+  type PacingInput,
+} from "@/prompts/adaptive/pacing-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 const DECISIONS: readonly PacingDecision[] = ["accelerate", "steady", "slow", "pause"];
 
-export const PACING_EVAL: EvalSuite<PacingDecisionResult> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<PacingDecisionResult, PacingInput> = {
+  config: PACING_V1,
+  build: buildPacingPrompt,
+  cases: [
+    {
+      id: "live:struggling-learner-slows",
+      input: {
+        scopeLabel: "a learner's vocabulary drill",
+        signal:
+          "The last 8 answers were wrong and each took over 40 seconds; the learner asked for a hint 5 times.",
+        recentSummaries: ["steady: accuracy fell from 80% to 50%"],
+      },
+      assert: (o) =>
+        (o.decision === "slow" || o.decision === "pause") && o.rationale.length > 0,
+    },
+  ],
+};
+
+export const PACING_EVAL: EvalSuite<PacingDecisionResult, PacingInput> = {
+  live: LIVE,
   prompt: "adaptive-pacing",
   source: "prompts/adaptive/pacing-v1.ts",
   parse: parsePacingResponse,

@@ -20,17 +20,7 @@
  * The per-change protocol itself is run by the AI engineer, not by CI; nothing here claims to
  * prove it ran (AI_ENGINEERING §3).
  */
-import {
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "fs";
-import { spawn } from "child_process";
-import { tmpdir } from "os";
-import { MODEL_REGISTRY } from "@/platform/ai/types";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { parse } from "yaml";
 
@@ -42,6 +32,33 @@ describe("CLAUDE.md", () => {
 
   it("is short: an index of rules and pointers, not a manual", () => {
     expect(text.split("\n").length).toBeLessThanOrEqual(90);
+  });
+
+  // TASK-204 (N-10): the gate it gives runs what CI runs — every script it names exists, the lint
+  // refuses warnings, and the database suites run (`npm test` alone skips every one of them).
+  it("its gate names only scripts that exist, and runs the database suites", () => {
+    const gate = /```zsh\n(npm run [^\n]+)\n/.exec(text)?.[1] ?? "";
+    const scripts = (
+      JSON.parse(read("package.json")) as { scripts: Record<string, string> }
+    ).scripts;
+    const named = [...gate.matchAll(/npm run ([\w:-]+)/g)].map((m) => m[1]);
+    expect(named).toEqual(expect.arrayContaining(["lint", "test:db"]));
+    expect(named.filter((n) => !(n in scripts))).toEqual([]);
+    expect(scripts.lint).toMatch(/--max-warnings 0\b/);
+    expect(gate).not.toMatch(/&& npm test\b/);
+    expect(read("scripts/test-db.sh")).toMatch(/REQUIRE_DB_TESTS=1/);
+  });
+
+  // TASK-204 (N-14): a rule that holds only beside a baseline says so, naming the baseline.
+  it("names the baselines its text-and-errors rule holds beside", () => {
+    // platform-foundation's "Errors and text", Playform's "Data, errors, text".
+    const rule =
+      /\*\*(?:Errors and text|Data, errors, text):\*\*[\s\S]*?(?=\n- \*\*)/.exec(
+        text
+      )?.[0] ?? "";
+    expect(rule).toMatch(/screen-literal-baseline\.json/);
+    expect(rule).toMatch(/\bR-75\b/);
+    expect(rule).toMatch(/\bR-77\b/);
   });
 
   it.each([
@@ -105,10 +122,12 @@ describe("REVIEW.md", () => {
     expect(text).toContain(failure);
   });
 
-  it("sets the rules: tags, capped nits, file:line, a counted summary, skipped paths", () => {
-    for (const tag of ["**Important**", "**Nit**", "**Pre-existing**"])
+  it("sets the rules: tags, every nit listed, file:line, a counted summary, skipped paths", () => {
+    for (const tag of ["**Important**", "**Low**", "**Nit**", "**Pre-existing**"])
       expect(text).toContain(tag);
-    expect(text).toMatch(/Nits are capped/);
+    // TASK-204 (N-13): no cap — every finding, every Nit, is listed and fixed.
+    expect(text).toMatch(/Every finding is listed — every Nit too/);
+    expect(text).not.toMatch(/Nits are capped|three per review/);
     expect(text).toMatch(/names a file and line/);
     expect(text).toMatch(/summary opens with a count/);
     expect(text).toContain('"Nothing to fix."');
@@ -225,51 +244,24 @@ type Workflow = {
   jobs: Record<string, Job>;
 };
 
-/** The security review's gate step, run against a scan's result (TASK-197). */
+/** The security review workflow (TASK-183; our own step since TASK-204, N-86). */
 const wf = parse(read(".github/workflows/security-review.yml")) as Workflow & {
   jobs: { "security-review": Job & { env: Record<string, string> } };
 };
 const job = wf.jobs["security-review"];
-const gate = (job.steps.find(
-  (st) => (st as { name?: string }).name === "Open findings block"
-)?.run ?? "") as string;
 
-function bash(script: string, env: Record<string, string>) {
-  return new Promise<{ code: number | null; out: string }>((resolve) => {
-    const child = spawn("bash", ["-c", script], {
-      env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv,
-    });
-    let out = "";
-    child.stdout.on("data", (d: Buffer) => (out += d));
-    child.stderr.on("data", (d: Buffer) => (out += d));
-    child.on("close", (code: number | null) => resolve({ code, out }));
-  });
+/** What the security review workflow must not do (TASK-204, N-86): each problem found, by name. */
+export function securityReviewProblems(text: string): string[] {
+  const code = text.replace(/^\s*#.*$/gm, "");
+  const out: string[] = [];
+  if (/claude-code-security-review@/.test(code)) out.push("uses the third-party action");
+  if (/claude-[a-z]+-\d/.test(code)) out.push("names a model");
+  if (!/SECURITY_REVIEW_RESULTS="\$RUNNER_TEMP\//.test(code))
+    out.push("writes its results into the checkout");
+  if (/security-review\.mjs[^\n]*(?:\|\|\s*true|; *exit 0)/.test(code))
+    out.push("swallows the review's exit code");
+  return out;
 }
-
-/** One run of the gate after a scan that left `scanned` (and the action's `errlog`). */
-async function runGate(opts: { scanned: unknown; errlog?: string; findings?: string }) {
-  const ws = mkdtempSync(join(tmpdir(), "sr-"));
-  const summary = join(ws, "summary.md");
-  writeFileSync(join(ws, "claudecode-results.json"), JSON.stringify(opts.scanned));
-  if (opts.errlog) writeFileSync(join(ws, "claudecode-error.log"), opts.errlog);
-  const r = await bash(gate, {
-    GITHUB_WORKSPACE: ws,
-    GITHUB_STEP_SUMMARY: summary,
-    FINDINGS: opts.findings ?? "0",
-  });
-  let summaryText = "";
-  try {
-    summaryText = readFileSync(summary, "utf8");
-  } catch {
-    // No summary written.
-  }
-  return { ...r, summary: summaryText };
-}
-
-const tooLarge = {
-  error:
-    "Failed to fetch PR data: 406 Client Error: Not Acceptable for url: https://api.github.com/repos/x/y/pulls/9",
-};
 
 describe("the review workflows", () => {
   const WORKFLOWS = ["review-tier.yml", "security-review.yml"].map(
@@ -303,38 +295,61 @@ describe("the review workflows", () => {
     }
   );
 
-  it("the security review: the pinned action, its key only from the secret, a skip without it, and a failing check on findings", () => {
+  it("[self-test] the security review's rules find a re-added action, a named model, an in-tree results file and a swallowed exit", () => {
+    const real = read(".github/workflows/security-review.yml");
+    expect(securityReviewProblems(real)).toEqual([]);
+    const planted = real
+      .replace(
+        "      - name: Security review (scripts/security-review.mjs)",
+        "      - uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda\n        with:\n          claude-model: claude-opus-4-1-20250805\n      - name: Security review (scripts/security-review.mjs)"
+      )
+      .replace('"$RUNNER_TEMP/security-review-results.json"', "results.json")
+      .replace(
+        "node scripts/security-review.mjs",
+        "node scripts/security-review.mjs || true"
+      );
+    expect(securityReviewProblems(planted)).toEqual([
+      "uses the third-party action",
+      "names a model",
+      "writes its results into the checkout",
+      "swallows the review's exit code",
+    ]);
+  });
+
+  it("the security review: our own step, its key only from the secret, a skip without it, and the script's exit as the check", () => {
     const text = read(".github/workflows/security-review.yml");
-    const wf = parse(text) as Workflow & {
-      jobs: { "security-review": Job & { env: Record<string, string> } };
-    };
-    const job = wf.jobs["security-review"];
-    const action = job.steps.find((s) =>
-      s.uses?.startsWith("anthropics/claude-code-security-review@")
+    // TASK-204 (N-86): the third-party action is gone, from the steps and from every `uses:`.
+    expect(text.replace(/^\s*#.*$/gm, "")).not.toMatch(/claude-code-security-review/);
+    const review = job.steps.find((st) =>
+      /scripts\/security-review\.mjs/.test(st.run ?? "")
     );
-    expect(action?.uses).toBe(
-      "anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda"
-    );
-    expect(action?.with).toMatchObject({
-      "claude-api-key": "${{ secrets.ANTHROPIC_API_KEY }}",
-      "comment-pr": "true",
-      "run-every-commit": "true",
+    expect(review).toBeDefined();
+    const env = (review as { env?: Record<string, string> }).env ?? {};
+    expect(env.ANTHROPIC_API_KEY).toBe("${{ secrets.ANTHROPIC_API_KEY }}");
+    expect(env.BASE_SHA).toBe("${{ github.event.pull_request.base.sha }}");
+    expect(env.HEAD_SHA).toBe("${{ github.event.pull_request.head.sha }}");
+    // No model is named in the workflow: the script reads the registry's standard tier.
+    expect(text.replace(/^\s*#.*$/gm, "")).not.toMatch(/claude-[a-z]+-\d/);
+    // The results go to the runner's temp directory, never into the checkout (N-2).
+    expect(review?.run).toMatch(/SECURITY_REVIEW_RESULTS="\$RUNNER_TEMP\//);
+    // The checkout has the history the base...head diff needs, and keeps no credentials.
+    const checkout = job.steps.find((st) => st.uses?.startsWith("actions/checkout@"));
+    expect(checkout?.with).toMatchObject({
+      "fetch-depth": 0,
+      "persist-credentials": false,
     });
-    // The key is present for this repository's own branches only; a fork's PR is skipped, and its
-    // check fails (the skip step, next test).
     expect(job.env.SAME_REPO).toBe(
       "${{ github.event.pull_request.head.repo.full_name == github.repository }}"
     );
     expect(job.env.HAS_KEY).toBe("${{ secrets.ANTHROPIC_API_KEY != '' }}");
-    const gated = job.steps.filter((s) => s !== job.steps[0]);
+    const gated = job.steps.filter((st) => st !== job.steps[0]);
     for (const step of gated)
       expect((step as { if?: string }).if).toBe(
         "env.HAS_KEY == 'true' && env.SAME_REPO == 'true'"
       );
     expect(job.steps[0].run).toMatch(/::notice::Security review skipped/);
-    const gate = job.steps[job.steps.length - 1].run ?? "";
-    expect(gate).toMatch(/if \[ "\$FINDINGS" -ne 0 \]; then[\s\S]*exit 1/);
-    expect(gate).toMatch(/left no readable result[\s\S]*exit 1/);
+    // The script's exit code is the check: no `|| true`, no swallowed status.
+    expect(review?.run).not.toMatch(/\|\|\s*true|; *exit 0/);
   });
 
   it("the security review: a skip is never a pass for a fork, or when the review is required", () => {
@@ -386,15 +401,7 @@ describe("the review workflows", () => {
   });
 });
 
-describe("the security review gate (TASK-197)", () => {
-  it("sets claude-model to a registry model (the action's default is not ours)", () => {
-    const action = job.steps.find((st) =>
-      st.uses?.startsWith("anthropics/claude-code-security-review@")
-    );
-    const ids = Object.values(MODEL_REGISTRY).map((m) => m.modelId);
-    expect(ids).toContain(action?.with?.["claude-model"]);
-  });
-
+describe("the security review gate (TASK-197, TASK-204)", () => {
   // Review round 3 (the owner's decision): no in-workflow acknowledgement of any kind.
   it("has no acknowledgement mechanism: no label events, no label, no status or issue-events lookup", () => {
     const text = read(".github/workflows/security-review.yml").replace(/^\s*#.*$/gm, "");
@@ -404,45 +411,6 @@ describe("the security review gate (TASK-197)", () => {
     ).toEqual(["opened", "reopened", "synchronize"]);
     expect(text).not.toMatch(/labeled|security-review-not-reviewable|statuses|issues\//);
     expect(job.permissions).toEqual({ contents: "read", "pull-requests": "write" });
-  });
-
-  it("a PR too large to diff (406) fails: not reviewed, an admin reviews it and merges with the recorded bypass", async () => {
-    const r = await runGate({ scanned: tooLarge });
-    expect(r.code).toBe(1);
-    expect(r.out).toContain(
-      "::error::The action cannot fetch this PR's diff (too large). It has not been reviewed. A repository admin must review the diff manually and, if satisfied, merge using the ruleset's admin bypass (GitHub records the bypass)."
-    );
-    expect(r.out).not.toMatch(/re-run/i);
-    expect(r.summary).toContain("not reviewable by the action (406)");
-  });
-
-  it("the 406 match is anchored to the action's PR-data error (L1)", async () => {
-    const r = await runGate({
-      scanned: { error: "Claude Code not available: Failed to fetch PR data: 406 " },
-    });
-    expect(r.code).toBe(1);
-    expect(r.out).not.toContain("cannot fetch this PR's diff");
-    expect(r.out).toContain("left no readable result");
-  });
-
-  it("[self-test] findings still block, and a clean scan passes", async () => {
-    const found = await runGate({
-      scanned: { findings: [{ severity: "HIGH" }] },
-      findings: "1",
-    });
-    expect(found.code).toBe(1);
-    const clean = await runGate({ scanned: { findings: [] } });
-    expect(clean.code).toBe(0);
-  });
-
-  it("surfaces the action's disabled false-positive filter as a warning", async () => {
-    const r = await runGate({
-      scanned: { findings: [] },
-      errlog: "WARNING Claude API validation failed: API validation failed: 404 model",
-    });
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("::warning::The security review's API check failed");
-    expect(r.summary).toContain("false-positive filter was disabled");
   });
 });
 

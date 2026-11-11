@@ -42,6 +42,8 @@ jobs:
         with:
           ref: develop
           path: target
+          # TASK-204: the history guard reads which platform commit the app already carries.
+          fetch-depth: 0
 
       - name: Read sync config
         id: config
@@ -77,6 +79,13 @@ jobs:
           token: ${{ github.token }}
           path: source
           persist-credentials: false
+          # TASK-204: the history guard checks the source contains what the app carries.
+          fetch-depth: 0
+
+      - name: Fetch the platform's develop
+        # The history guard finds a carried "(TASK-nnn)" on develop, which the source ref (main, a
+        # tag) may not have. The platform is public: no credentials.
+        run: git -C source fetch --no-tags -q origin +refs/heads/develop:refs/remotes/origin/develop
 
       - name: Version guard
         # An app may adopt the platform from develop ahead of its release: never sync an older or
@@ -84,8 +93,18 @@ jobs:
         # docs/templates/sync-version-guard.sh to .github/scripts/ in the app.
         id: guard
         run: bash target/.github/scripts/sync-version-guard.sh source target >> "$GITHUB_OUTPUT"
-      - name: Sync files
+
+      - name: History guard
+        # TASK-204: a newer version is not enough — the source must contain every platform commit
+        # the app already carries (its newest "(platform TASK-nnn)" or sync commit), or the pull
+        # request would roll the app back past it. Copy docs/templates/sync-carried-guard.sh to
+        # .github/scripts/ in the app.
+        id: carried
         if: steps.guard.outputs.proceed == 'true'
+        run: bash target/.github/scripts/sync-carried-guard.sh source target >> "$GITHUB_OUTPUT"
+
+      - name: Sync files
+        if: steps.guard.outputs.proceed == 'true' && steps.carried.outputs.proceed == 'true'
         id: sync
         env:
           RESOLVED_REF: ${{ steps.resolve.outputs.resolved_ref }}
@@ -101,7 +120,7 @@ jobs:
           echo "Synced $RESOLVED_REF @ $SHA"
 
       - name: Open the pull request
-        if: steps.guard.outputs.proceed == 'true'
+        if: steps.guard.outputs.proceed == 'true' && steps.carried.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ secrets.FOUNDATION_SYNC_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -144,9 +163,31 @@ jobs:
           echo "Opened sync pull request #$NEW for $SOURCE $REF @ $SHORT" | tee -a "$SUMMARY"
           # Every older sync pull request is superseded: closed with a comment, its branch deleted.
           while IFS=$'\t' read -r NUM HEAD TITLE; do
-            [ -n "$NUM" ] && [ "$NUM" != "$NEW" ] || continue
+            if [ -z "$NUM" ] || [ "$NUM" = "$NEW" ]; then continue; fi
             gh api -X POST "repos/$GH_REPO/issues/$NUM/comments" -f body="Superseded by #$NEW." >/dev/null
             gh api -X PATCH "repos/$GH_REPO/pulls/$NUM" -f state=closed >/dev/null
             gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$HEAD" >/dev/null || echo "Branch $HEAD already gone"
             echo "Closed #$NUM ($HEAD): superseded by #$NEW" | tee -a "$SUMMARY"
+          done <<< "$OPEN"
+
+      - name: Close sync pull requests that would roll back
+        # TASK-204: when a guard says there is nothing to sync, every open sync pull request is
+        # stale (an older run's, or one a former copy of this workflow opened from an older source):
+        # each is closed with a comment saying why, and its branch deleted. Idempotent: none open,
+        # nothing done. REST only (gh api).
+        if: steps.guard.outputs.proceed == 'false' || steps.carried.outputs.proceed == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          OPEN=$(gh api --paginate "repos/$GH_REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.head.ref | startswith("auto-sync/")) | [.number, .head.ref] | @tsv')
+          while IFS=$'\t' read -r NUM HEAD; do
+            [ -n "$NUM" ] || continue
+            gh api -X POST "repos/$GH_REPO/issues/$NUM/comments" -f body="Closed: the platform source does not add to what this repository already carries, so merging this would roll it back (sync guards, TASK-204)." >/dev/null
+            gh api -X PATCH "repos/$GH_REPO/pulls/$NUM" -f state=closed >/dev/null
+            gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$HEAD" >/dev/null || echo "Branch $HEAD already gone"
+            echo "Closed #$NUM ($HEAD): it would roll back" | tee -a "$SUMMARY"
           done <<< "$OPEN"

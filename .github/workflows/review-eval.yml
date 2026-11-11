@@ -1,0 +1,53 @@
+name: Reviewer eval
+
+# TASK-183 §6, TASK-204 (N-44): score the reviewer over its eval set (docs/review-evals/) with
+# scripts/review-eval.mjs — each case's review input (never the case file) given to the reviewer
+# (MODEL_REGISTRY's standard tier, instructed by CLAUDE.md and REVIEW.md as they are on this ref),
+# each answer scored by a separate verifier call against the case's rubric. The result is the row
+# for the README's Runs table (the step summary, and the uploaded results file); the keep rule
+# (README) decides whether a change to the reviewer stays.
+#
+#   - By hand only (workflow_dispatch): run it when CLAUDE.md, REVIEW.md, the protocol, or the
+#     reviewing model or tools change. Paid (two calls per case), so never on a schedule or a PR.
+#   - REQUIRE_REVIEW_EVAL is 'true': without the ANTHROPIC_API_KEY secret the run fails, saying so.
+#   - The whole history is checked out: the cases name public develop commits.
+#   - The key reaches the script through env and is sent only as a header. Least permissions.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  review-eval:
+    name: review-eval
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (the whole history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Score the reviewer
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REQUIRE_REVIEW_EVAL: "true"
+        run: node scripts/review-eval.mjs --out "$RUNNER_TEMP/review-eval.json"
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: review-eval
+          path: ${{ runner.temp }}/review-eval.json
+          if-no-files-found: ignore
+          retention-days: 90

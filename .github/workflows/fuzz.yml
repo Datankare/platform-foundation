@@ -73,9 +73,10 @@ jobs:
       - name: Property tests, 5,000 cases each
         run: |
           set -euo pipefail
-          files=$(grep -rlE "from [\"']fast-check[\"']" __tests__ platform lib app --include='*.test.ts' --include='*.test.tsx' | grep -v '^__tests__/db/')
-          echo "property test files: $files"
-          npx jest $files --json --outputFile=jest-results-properties.json
+          # One path per element (TASK-204, N-92: no word splitting of a string).
+          mapfile -t files < <(grep -rlE "from [\"']fast-check[\"']" __tests__ platform lib app --include='*.test.ts' --include='*.test.tsx' | grep -v '^__tests__/db/')
+          echo "property test files: ${files[*]}"
+          npx jest "${files[@]}" --json --outputFile=jest-results-properties.json
         env:
           FC_NUM_RUNS: "5000"
           REQUIRE_DB_TESTS: "1"
@@ -156,12 +157,13 @@ jobs:
           RATE_LIMIT_STORE=memory AI_PROVIDER=mock AUTH_PROVIDER=mock \
           GUEST_TOKEN_SECRET="$(openssl rand -base64 32)" ANTHROPIC_API_KEY="$canary" \
           REFRESH_COOKIE_KEY="$(openssl rand -hex 32)" \
-            nohup npx next start -p 3000 > server.log 2>&1 &
-          for i in $(seq 1 60); do
+            nohup npx next start -p 3000 > "$RUNNER_TEMP/server.log" 2>&1 &
+          # TASK-204 (N-2): the log is the runner's, never a file in the checkout.
+          for _ in $(seq 1 60); do
             curl -sf -o /dev/null http://127.0.0.1:3000/api/health/ready && exit 0
             sleep 1
           done
-          echo "server did not start"; cat server.log; exit 1
+          echo "server did not start"; cat "$RUNNER_TEMP/server.log"; exit 1
 
       - name: Monkey
         run: node scripts/monkey/monkey.mjs
@@ -183,4 +185,4 @@ jobs:
 
       - name: Server log
         if: failure() && !inputs.target_url
-        run: tail -n 200 server.log
+        run: tail -n 200 "$RUNNER_TEMP/server.log"

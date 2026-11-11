@@ -8,8 +8,9 @@ name: Model registry check
 # TASK-197 (audit D-3): a deprecated model, or one whose retires_at is within
 # MODEL_RETIRE_LEAD_DAYS (repository variable; default 30), fails the run — a failed scheduled run
 # notifies, a warning did not. With the GOOGLE_API_KEY secret, the Google voices the platform
-# names are checked against voices.list too. The deployed keys are checked at readiness
-# (the ai-provider and google-tts probes), not here.
+# names are checked against voices.list too, and (TASK-204, N-50) the speech-to-text model by one
+# recognize call on silence; with OPENAI_API_KEY, the embedding models on OpenAI's models API.
+# The deployed keys are checked at readiness (the ai-provider and google-tts probes), not here.
 #
 # TASK-197 (the 2026-10-28 incident: the security-review action sent the CI key to a retired
 # model): every model a workflow names must be a MODEL_REGISTRY model, and a pinned action that
@@ -41,6 +42,8 @@ on:
       - platform/voice/voices.ts
       - lib/tts.ts
       - scripts/check-model-ids.mjs
+      - platform/voice/google-stt.ts
+      - platform/rag/embedding-types.ts
       - .github/workflows/**
 
 permissions: {}
@@ -71,6 +74,9 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          # TASK-204 (N-50): the embedding models, when this secret is set (skipped with a notice
+          # otherwise: no deployment sets EMBEDDING_PROVIDER=openai yet).
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           MODEL_CHECK_REQUIRED: ${{ vars.MODEL_CHECK_REQUIRED }}
           MODEL_RETIRE_LEAD_DAYS: ${{ vars.MODEL_RETIRE_LEAD_DAYS }}
           # The action's file list (api.github.com) with the job's read-only token, not the

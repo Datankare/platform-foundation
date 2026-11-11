@@ -40,6 +40,7 @@ import {
   readJsonBody,
   type InputSchemaNode,
 } from "@/platform/errors";
+import { negotiateLocale, renderMessage } from "@/platform/errors/messages";
 import { IncompleteStreamError, screenStream } from "@/platform/ai/screened-stream";
 import { checkOutputSafety, checkSafety } from "@/lib/safety";
 import { buildStreamSystemPrompt } from "@/prompts";
@@ -161,7 +162,31 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
           if (event.kind === "text") {
             send(controller, { text: event.text, done: false });
           } else if (event.kind === "done") {
-            send(controller, { text: "", done: true, usage: event.usage });
+            // TASK-204 (N-45): an answer the model stopped at its token limit is incomplete: the
+            // final event says so, with the catalog's words, rather than reading as complete.
+            const truncated = event.stopReason === "max_tokens";
+            if (truncated) {
+              logger.info("Stream answer cut off at its token limit", {
+                requestId,
+                maxTokens: input.maxTokens,
+              });
+            }
+            send(controller, {
+              text: "",
+              done: true,
+              usage: event.usage,
+              ...(event.stopReason ? { stopReason: event.stopReason } : {}),
+              ...(truncated
+                ? {
+                    truncated: true,
+                    notice: renderMessage(
+                      "screens.stream.truncated",
+                      {},
+                      negotiateLocale(request.headers.get("accept-language"))
+                    ),
+                  }
+                : {}),
+            });
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           } else if (event.kind === "rejected") {
             logger.info("Stream output withheld by content screening", { requestId });

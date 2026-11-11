@@ -213,6 +213,14 @@ function readExemptions(): ExemptionsFile {
   return JSON.parse(readFileSync(EXEMPTIONS_FILE, "utf8")) as ExemptionsFile;
 }
 
+/**
+ * Whether CI is set, as the runners set it (TASK-204, N-19; TASK-198 round 3's residual): "true"
+ * (GitHub Actions) or "1"; "false", "0" or empty is not CI — `Boolean("false")` was true.
+ */
+export function inCi(value: string | undefined): boolean {
+  return /^(?:true|1)$/i.test((value ?? "").trim());
+}
+
 describe("journey coverage (TASK-198, D-21)", () => {
   it("self-test: paths, params and what a journey names", () => {
     // A template path with a placeholder, built so that this file holds no escaped placeholder.
@@ -300,13 +308,44 @@ describe("journey coverage (TASK-198, D-21)", () => {
     ).toEqual([]);
   });
 
+  // TASK-204 (N-5): a journey counts only where a workflow runs it — PF's e2e/ once ran nowhere,
+  // yet credited / and /api/health as covered.
+  it("every directory whose journeys count is run by a workflow", () => {
+    const wf = join(ROOT, ".github/workflows");
+    const workflows = existsSync(wf)
+      ? readdirSync(wf)
+          .filter((f) => /\.ya?ml$/.test(f))
+          .map((f) => readFileSync(join(wf, f), "utf8"))
+          .join("\n")
+      : "";
+    const runs: Record<string, RegExp> = {
+      e2e: /npm run test:e2e\b/,
+      "e2e-live": /playwright test --config e2e-live\//,
+    };
+    const counted = ["e2e", "e2e-live"].filter(
+      (d) => walk(join(ROOT, d)).filter((f) => /\.spec\.tsx?$/.test(f)).length > 0
+    );
+    expect(counted).toContain("e2e");
+    expect(counted.filter((d) => !runs[d].test(workflows))).toEqual([]);
+  });
+
+  it("[self-test] reads CI as the runners set it, never CI=false as CI", () => {
+    expect(["true", "TRUE", "1", " true "].map(inCi)).toEqual([true, true, true, true]);
+    expect(["false", "0", "", "no", undefined].map(inCi)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
   it("against the base branch (CI): no unit that had a journey there is exempted now", () => {
     const base = process.env.JOURNEY_BASE;
     // In CI (or with JOURNEY_BASE_REQUIRED=1) the base must be there (round 2): a workflow that
     // stopped writing it would otherwise turn this check into a pass. Locally the checks above stand.
     if (!base) {
-      const required =
-        Boolean(process.env.CI) || process.env.JOURNEY_BASE_REQUIRED === "1";
+      const required = inCi(process.env.CI) || process.env.JOURNEY_BASE_REQUIRED === "1";
       expect(required ? "JOURNEY_BASE is not set in CI (ci.yml's base step)" : "").toBe(
         ""
       );

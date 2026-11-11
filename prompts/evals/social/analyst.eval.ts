@@ -9,13 +9,37 @@ import {
   type HealthReport,
   type HealthStatus,
 } from "@/prompts/social/analyst-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildAnalystPrompt,
+  ANALYST_V1,
+  type AnalystInput,
+} from "@/prompts/social/analyst-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 // The model emits three; "unknown" is the parser's fail-closed default.
 const MODEL_STATUSES: readonly HealthStatus[] = ["healthy", "at-risk", "declining"];
 const ALL_STATUSES: readonly HealthStatus[] = [...MODEL_STATUSES, "unknown"];
 
-export const ANALYST_EVAL: EvalSuite<HealthReport> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<HealthReport, AnalystInput> = {
+  config: ANALYST_V1,
+  build: buildAnalystPrompt,
+  cases: [
+    {
+      id: "live:active-group-is-judged",
+      input: {
+        groupName: "Sunday Choir",
+        memberCount: 24,
+        recentActivitySummary:
+          "Last 7 days: 21 of 24 members posted, 140 messages, 3 practice sessions scheduled and attended, no reports.",
+      },
+      assert: (o) => o.status !== "unknown" && o.score >= 0 && o.score <= 100,
+    },
+  ],
+};
+
+export const ANALYST_EVAL: EvalSuite<HealthReport, AnalystInput> = {
+  live: LIVE,
   prompt: "analyst",
   source: "prompts/social/analyst-v1.ts",
   parse: parseAnalystResponse,

@@ -63,6 +63,21 @@ jobs:
       - name: Layer 0c — Format check
         run: npm run format:check
 
+      # TASK-204 (N-92): the workflows lint clean (actionlint, with shellcheck on every run script,
+      # the runner's own shellcheck) and stay clean. Pinned and checksum-verified, as gitleaks is.
+      - name: Layer 0c — Workflow lint (actionlint)
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+        run: |
+          set -euo pipefail
+          curl --retry 5 --retry-all-errors -sSfL -o "$RUNNER_TEMP/actionlint.tgz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          command -v shellcheck >/dev/null || { echo "::error::shellcheck is not on the runner: actionlint would skip the run scripts"; exit 1; }
+          "$RUNNER_TEMP/actionlint" -color
+
       - name: Layer 0e — Override audit (TASK-070)
         run: npm run overrides:audit
 
@@ -185,7 +200,13 @@ jobs:
           else
             base="HEAD^1"
           fi
-          git rev-parse --verify -q "$base^{commit}" >/dev/null || { echo "::error::no base commit $base to compare the journey exemptions with"; exit 1; }
+          if ! git rev-parse --verify -q "$base^{commit}" >/dev/null; then
+            # TASK-204 (N-19; TASK-198 round 3's residual): a force-push dropped the push's base —
+            # compare with the last promotion (the merge base with origin/staging), as the
+            # process check does, rather than failing every run until the next ordinary push.
+            base=$(git merge-base HEAD origin/staging) || { echo "::error::no base commit to compare the journey exemptions with (a force-push, and no history shared with origin/staging)"; exit 1; }
+            echo "::warning::the push's base is gone (a force-push): the journey exemptions are compared with the last promotion ($base)"
+          fi
           dir="$RUNNER_TEMP/journey-base"
           mkdir -p "$dir"
           git ls-tree -r --name-only "$base" -- app > "$dir/app-files.txt"
@@ -243,6 +264,15 @@ jobs:
           REQUIRE_DB_TESTS: "1"
           REQUIRE_VALKEY_TESTS: "1"
 
+      # TASK-204 (N-19): the suites that must act on a seeded key (__tests__/db-serial/*.serial.ts:
+      # the kill switch's platform scope) run alone, after the parallel passes — jest's testMatch
+      # leaves them out of those, so they never race another suite on the shared database.
+      - name: Layer 1 — Serial database suites
+        run: npm run test:db-serial -- --json --outputFile=jest-results-serial.json
+        env:
+          REQUIRE_DB_TESTS: "1"
+          REQUIRE_VALKEY_TESTS: "1"
+
       - name: Layer 1 — Test results (on failure)
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -260,6 +290,78 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+      # TASK-204 (N-5, N-94): Layer 3 — platform-foundation's own E2E specs (e2e/: the baseline page
+      # with its accessibility audit, /api/health, the admin console walked as two administrators)
+      # on the production build just made, as Playform's Layer 3 runs (its TASK-5001): the server
+      # on a database of its own, built by the migration replay, signed in as app_tenant (a
+      # throwaway password) and the owner; playwright.config.ts refuses to start in CI without
+      # them, and e2e/global-setup.ts records the test double's adult age through
+      # /api/account/age. The journeys these specs name are now run, not only counted.
+      - name: Layer 3 — Playwright version (the browser cache's key)
+        id: playwright
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./package-lock.json").packages["node_modules/@playwright/test"].version')
+          if [ -z "$version" ] || [ "$version" = "undefined" ]; then echo "no @playwright/test in package-lock.json"; exit 1; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "@playwright/test $version on ${ImageOS:-unknown}"
+
+      - name: Layer 3 — Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.image }}-${{ steps.playwright.outputs.version }}
+
+      - name: Layer 3 — Install Playwright browsers (not cached)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium --with-deps
+
+      - name: Layer 3 — Install Playwright system dependencies (browsers cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Layer 3 — Database for the E2E server (migration replay)
+        run: |
+          set -euo pipefail
+          psql -X -q -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE e2e"
+          PGDATABASE=e2e bash scripts/migration-replay.sh
+          pw="ci-$(openssl rand -hex 16)"
+          PGDATABASE=e2e psql -X -q -v ON_ERROR_STOP=1 -c "ALTER ROLE app_tenant LOGIN PASSWORD '$pw'"
+          echo "::add-mask::$pw"
+          echo "E2E_DATABASE_URL=postgresql://app_tenant:$pw@localhost:$PGPORT/e2e" >> "$GITHUB_ENV"
+          echo "E2E_DATABASE_OWNER_URL=postgresql://postgres:postgres@localhost:$PGPORT/e2e" >> "$GITHUB_ENV"
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+
+      - name: Layer 3 — E2E tests
+        run: npm run test:e2e -- --fail-on-flaky-tests
+
+      # The permission was resolved, not skipped: the test double's user reached the guarded
+      # routes and was provisioned with the default role.
+      - name: Layer 3 — The E2E user was provisioned on the database
+        run: |
+          set -euo pipefail
+          n=$(psql -X -At -v ON_ERROR_STOP=1 -c "select count(*) from users where id = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' and deleted_at is null")
+          [ "$n" = "1" ] || { echo "the E2E user was not provisioned ($n)"; exit 1; }
+          echo "the E2E user was provisioned on the replayed database"
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: e2e
+
+      - name: Layer 3 — Playwright report (on failure)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
 
   # Layer 1c — Migration replay (TASK-091)
   # Builds a database from zero the way a new instance is built — Supabase shim, schema
@@ -501,7 +603,7 @@ jobs:
           ready=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/api/health/ready")
           live=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/api/health/live")
           echo "while draining: ready $ready, live $live"
-          [ "$ready" = "503" ] && [ "$live" = "200" ] || { docker logs app; exit 1; }
+          if [ "$ready" != "503" ] || [ "$live" != "200" ]; then docker logs app; exit 1; fi
           # A second signal joins the stop under way.
           docker kill -s TERM app >/dev/null
           code=$(timeout 30 docker wait app)

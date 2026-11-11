@@ -103,13 +103,12 @@ function runExpressionFix(file: string, line: number, expr: string): string {
   );
 }
 
-/** What to write instead of an unanchored sync exclude (H-3). */
+/** What to write instead of an unanchored sync exclude (H-3; TASK-204, R-80). */
 function excludeFix(pattern: string): string {
-  const bare = pattern.replace(/\/+$/, "");
   return (
-    `sync-config exclude "${pattern}" has no "/", so rsync matches it at any depth (it also keeps out ` +
-    `platform files named ${bare} in subdirectories). Write "/${pattern}" for the root ${pattern.endsWith("/") ? "directory" : "file"}, ` +
-    `or "<dir>/${pattern}" for one elsewhere.`
+    `sync-config exclude "${pattern}" does not start with "/", so rsync matches it against the end ` +
+    `of every path (a bare name at any depth; "types/**" inside "shared/types/" too) and keeps ` +
+    `platform files out that it was not meant to. Write "/${pattern}", anchored at the root.`
   );
 }
 
@@ -367,7 +366,7 @@ describe("workflow hygiene", () => {
         ' }) and write "$SOURCE" in the script.'
     );
     expect(excludeFix("jest.setup.ts")).toMatch(
-      /^sync-config exclude "jest\.setup\.ts" has no "\/", .* Write "\/jest\.setup\.ts" for the root file, or "<dir>\/jest\.setup\.ts" for one elsewhere\.$/
+      /^sync-config exclude "jest\.setup\.ts" does not start with "\/", .* Write "\/jest\.setup\.ts", anchored at the root\.$/
     );
   });
 
@@ -628,16 +627,28 @@ describe("workflow hygiene", () => {
   });
 });
 
-describe("sync excludes (H-3)", () => {
+describe("sync excludes (H-3; TASK-204, R-80)", () => {
   const config = join(process.cwd(), ".github/sync-config.json");
-  /** Patterns that match at any depth (no "/" except a trailing one). */
+  /**
+   * Patterns rsync does not anchor at the transfer root: every one without a leading "/". rsync
+   * matches such a pattern against the end of each path — a bare name at any depth, and one with
+   * a "/" inside it too ("types/**" also matched shared/types/README.md: R-80).
+   */
   const unanchored = (patterns: readonly string[]) =>
-    patterns.filter((p) => !p.replace(/\/+$/, "").includes("/"));
+    patterns.filter((p) => !p.startsWith("/"));
 
-  it("self-test", () => {
+  it("[self-test] refuses every exclude without a leading '/', a directory pattern included", () => {
     expect(
-      unanchored(["/package.json", "package.json", "cognito-*", "types/**", "app/"])
-    ).toEqual(["package.json", "cognito-*", "app/"]);
+      unanchored([
+        "/package.json",
+        "package.json",
+        "cognito-*",
+        "types/**",
+        "app/",
+        "/types/**",
+        "__tests__/cognito-*",
+      ])
+    ).toEqual(["package.json", "cognito-*", "types/**", "app/", "__tests__/cognito-*"]);
   });
 
   const configs = [config, join(TEMPLATES, "sync-config.json")].filter((f) =>
@@ -1126,6 +1137,220 @@ describe("the engineering-process step: no title read, a force-push survived (TA
   });
 });
 
+/**
+ * TASK-204 (N-2): the files a workflow's scripts write — `>` and `>>` redirections, `--output`,
+ * `--outputFile`, `--output-file` — go to the runner's own places ($RUNNER_TEMP, the $GITHUB_*
+ * files, /dev/*), to a variable the script set under $RUNNER_TEMP, or to a path git ignores. A
+ * file left in the checkout (the fuzz job's server.log, semgrep.sarif, the security action's
+ * error log) dirties the tree a later step checks, and can be swept into a commit.
+ */
+const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+
+export function writtenTargets(script: string): string[] {
+  const text = script
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    // Quoted text is an echo's words, not a redirection.
+    .map((l) => l.replace(/'[^']*'/g, "''"))
+    .join("\n");
+  const temps = new Set(
+    [...text.matchAll(/(?:^|[\s;])([a-z_]\w*)=("?)\$\{?RUNNER_TEMP\b/gim)].map(
+      (m) => m[1]
+    )
+  );
+  const out: string[] = [];
+  const seen = (target: string) => {
+    const t = target.replace(/^"|"$/g, "");
+    if (!t || t.startsWith("&")) return;
+    if (
+      /^\$\{?(?:RUNNER_TEMP|GITHUB_OUTPUT|GITHUB_ENV|GITHUB_STEP_SUMMARY|GITHUB_PATH)\b/.test(
+        t
+      )
+    )
+      return;
+    if (t.startsWith("/dev/")) return;
+    const v = t.match(/^\$\{?([a-z_]\w*)\}?/i);
+    if (v && temps.has(v[1])) return;
+    out.push(t);
+  };
+  for (const m of text.matchAll(/(?:^|[\s;|&(])\d?>>?[ \t]*("?[^\s;|&)"]+"?)/gm))
+    seen(m[1]);
+  for (const m of text.matchAll(/--output(?:File|-file)?(?:=|[ \t]+)("?[^\s;|&)"]+"?)/g))
+    seen(m[1]);
+  return out;
+}
+
+describe("files the workflows write stay out of the checkout (TASK-204, N-2)", () => {
+  it("[self-test] finds a redirect or --output into the checkout; passes the runner's places", () => {
+    expect(
+      writtenTargets(
+        [
+          "npx next start > server.log 2>&1 &",
+          "semgrep --sarif --output semgrep.sarif .",
+          "npx jest --outputFile=jest-results-x.json",
+          'echo ok >> "$GITHUB_STEP_SUMMARY"',
+          'echo "a -> main" > /dev/null',
+          'x > "$RUNNER_TEMP/server.log"',
+          'dir="$RUNNER_TEMP/base"; ls > "$dir/files.txt"',
+          "# echo > commented.txt",
+          "echo 'the line > quoted.txt'",
+        ].join("\n")
+      )
+    ).toEqual(["server.log", "semgrep.sarif", "jest-results-x.json"]);
+  });
+
+  it("every file a workflow's script writes is under the runner's temp, or ignored by git", () => {
+    const targets = [
+      ...new Set(
+        WORKFLOWS.flatMap((f) =>
+          scriptsOf(read(f)).flatMap((sc) => writtenTargets(sc.text))
+        )
+      ),
+    ];
+    const status = (f: string) =>
+      spawnSync("git", ["check-ignore", "-q", "--no-index", f], { cwd: process.cwd() })
+        .status;
+    expect(targets.filter((f) => ![0, 1].includes(status(f) ?? -1))).toEqual([]);
+    expect(targets.filter((f) => status(f) === 1)).toEqual([]);
+  });
+});
+
+/** TASK-204 (N-9): Semgrep's blocking rules are pinned to a commit, never the live registry. */
+describe("Semgrep's rules are pinned (TASK-204, N-9)", () => {
+  const semgrep = WORKFLOWS.filter(
+    (f) => /semgrep/.test(read(f)) && /semgrep scan/.test(read(f))
+  );
+
+  it("every scan reads the pinned rules, never a registry pack, with metrics off", () => {
+    expect(semgrep.length).toBeGreaterThan(0);
+    for (const f of semgrep) {
+      for (const sc of scriptsOf(read(f)).filter((x) => /semgrep scan/.test(x.text))) {
+        expect([f, sc.text]).not.toEqual([
+          f,
+          expect.stringMatching(/--config[ =]+(?:p|r)\//),
+        ]);
+        expect([f, sc.text]).toEqual([
+          f,
+          expect.stringMatching(
+            /--metrics=off --config "\$RUNNER_TEMP\/semgrep-rules\.yml"/
+          ),
+        ]);
+      }
+    }
+  });
+
+  it("the pin is a 40-hex commit of semgrep-rules, with directories and a floor", () => {
+    const spec = JSON.parse(read(".semgrep/rules.json")) as {
+      repository: string;
+      commit: string;
+      dirs: string[];
+      min_rules: number;
+    };
+    expect(spec.repository).toBe("https://github.com/semgrep/semgrep-rules");
+    expect(spec.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(spec.dirs.length).toBeGreaterThan(0);
+    expect(spec.min_rules).toBeGreaterThan(0);
+  });
+});
+
+describe("the sync never opens a pull request that would roll the app back (TASK-204)", () => {
+  const files = [
+    "docs/templates/sync-from-foundation.yml",
+    ".github/workflows/sync-from-foundation.yml",
+  ].filter((f) => existsSync(join(process.cwd(), f)));
+  const steps = (file: string) =>
+    ((parseDocument(readFileSync(join(process.cwd(), file), "utf8")).toJS() as Workflow)
+      .jobs?.sync?.steps ?? []) as (Step & { id?: string })[];
+  const named = (file: string, name: string) =>
+    steps(file).find((st) => st.name === name);
+
+  it("both guards gate the sync and the pull request; both checkouts have their history", () => {
+    for (const f of files) {
+      const both =
+        "steps.guard.outputs.proceed == 'true' && steps.carried.outputs.proceed == 'true'";
+      expect([f, named(f, "Sync files")?.if]).toEqual([f, both]);
+      expect([f, named(f, "Open the pull request")?.if]).toEqual([f, both]);
+      expect(named(f, "History guard")?.run).toMatch(
+        /^bash target\/\.github\/scripts\/sync-carried-guard\.sh source target >> "\$GITHUB_OUTPUT"$/
+      );
+      expect(named(f, "History guard")?.if).toBe("steps.guard.outputs.proceed == 'true'");
+      const checkouts = steps(f).filter((st) => st.uses?.startsWith("actions/checkout@"));
+      expect(checkouts).toHaveLength(2);
+      for (const c of checkouts) expect([f, c.with?.["fetch-depth"]]).toEqual([f, 0]);
+      expect(named(f, "Fetch the platform's develop")?.run).toContain(
+        "+refs/heads/develop:refs/remotes/origin/develop"
+      );
+    }
+  });
+
+  it("[self-test] a guard that says no closes every open sync pull request, and nothing else", () => {
+    const step = named(files[0], "Close sync pull requests that would roll back");
+    expect(step?.if).toBe(
+      "steps.guard.outputs.proceed == 'false' || steps.carried.outputs.proceed == 'false'"
+    );
+    for (const f of files)
+      expect(named(f, "Close sync pull requests that would roll back")?.run).toBe(
+        step?.run
+      );
+    const dir = mkdtempSync(join(tmpdir(), "sync-close-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "gh"),
+      [
+        "#!/bin/bash",
+        'echo "$*" >> "$GH_LOG"',
+        'if [ "$1 $2" = "api --paginate" ]; then printf "%b" "$GH_OPEN"; fi',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    const close = (open: string) => {
+      const log = join(dir, "gh.log");
+      writeFileSync(log, "");
+      const r = spawnSync("bash", ["-c", step?.run ?? "exit 9"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          GH_LOG: log,
+          GH_OPEN: open,
+          GH_REPO: "o/r",
+        },
+      });
+      return {
+        status: r.status,
+        calls: readFileSync(log, "utf8").trim().split("\n").filter(Boolean),
+      };
+    };
+    try {
+      expect(close("")).toEqual({
+        status: 0,
+        calls: [expect.stringMatching(/^api --paginate repos\/o\/r\/pulls\?state=open/)],
+      });
+      const both = close("7\tauto-sync/foundation-1\n9\tauto-sync/foundation-2\n");
+      expect(both.status).toBe(0);
+      expect(both.calls.slice(1)).toEqual([
+        expect.stringMatching(
+          /^api -X POST repos\/o\/r\/issues\/7\/comments -f body=Closed: /
+        ),
+        "api -X PATCH repos/o/r/pulls/7 -f state=closed",
+        "api -X DELETE repos/o/r/git/refs/heads/auto-sync/foundation-1",
+        expect.stringMatching(
+          /^api -X POST repos\/o\/r\/issues\/9\/comments -f body=Closed: /
+        ),
+        "api -X PATCH repos/o/r/pulls/9 -f state=closed",
+        "api -X DELETE repos/o/r/git/refs/heads/auto-sync/foundation-2",
+      ]);
+      // The list asked for is the sync branches' only (the --jq filter), so nothing else is closed.
+      expect(both.calls[0]).toContain('startswith("auto-sync/")');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the sync opens one pull request at a time (TASK-200, round 8)", () => {
   /** The sync workflows here: the template, and an app's own copy when it has one. */
   const files = [
@@ -1469,5 +1694,26 @@ describe("runner images are pinned (TASK-201, S2-C1)", () => {
     );
     expect(steps.length).toBeGreaterThan(0);
     expect(files.flatMap((f) => pgdgProblems(f, load(f)))).toEqual([]);
+  });
+});
+
+/** TASK-204 (N-8, N-21): what CI runs agrees with the handover gate, and the config is not stale. */
+describe("the gates' configuration (TASK-204)", () => {
+  const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+    scripts: Record<string, string>;
+    jest: { coveragePathIgnorePatterns?: string[] };
+  };
+
+  it("lint refuses warnings, as CLAUDE.md's gate does (N-8)", () => {
+    expect(pkg.scripts.lint).toMatch(/^eslint \. .*--max-warnings 0\b/);
+    const ci = readFileSync(join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+    expect(ci).toMatch(/run: npm run lint\b/);
+  });
+
+  it("every coverage ignore that names a file names one that exists (N-21)", () => {
+    const named = (pkg.jest.coveragePathIgnorePatterns ?? []).filter((p) =>
+      /\.[cm]?[jt]sx?$/.test(p)
+    );
+    expect(named.filter((p) => !existsSync(join(process.cwd(), p)))).toEqual([]);
   });
 });

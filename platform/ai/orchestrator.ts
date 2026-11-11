@@ -357,6 +357,7 @@ export function createOrchestrator(options?: CreateOrchestratorOptions): Orchest
         yield {
           text,
           done: true,
+          ...(response.stopReason ? { stopReason: response.stopReason } : {}),
           usage: {
             inputTokens: response.usage.inputTokens,
             outputTokens: response.usage.outputTokens,

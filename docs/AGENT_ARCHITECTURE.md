@@ -225,7 +225,7 @@ Conductor routes audio to Identification agent. Trajectory step 3 logged. Pipeli
 
 ### Step 6 — Song identified
 
-Identification agent returns match. Guardian screens content (title, artist) for safety. Returns: `{ matched: true, song: { title, artist, album, language }, confidence: 0.92, cost: { apiCalls: 2, usd: 0.005 } }`
+Identification agent returns match. The route screens the match's text (title, artist, album) with the platform's output screen (`lib/output-screening.ts`, fail closed; Playform's `/api/identify`, TASK-204 N-48) before it is returned. Returns: `{ matched: true, song: { title, artist, album, language }, confidence: 0.92, cost: { apiCalls: 2, usd: 0.005 } }`
 
 ### Step 7 — Intent agent determines actions
 

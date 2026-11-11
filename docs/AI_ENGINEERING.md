@@ -294,8 +294,9 @@ review rounds; these are what those rounds kept teaching.
    over cached git fixtures, stopping at its first failing case: the jest suite spawns the script
    per case and is too slow per mutant. (Mutation testing goes back to DeMillo, Lipton and Sayward,
    "Hints on Test Data Selection: Help for the Practicing Programmer", IEEE Computer, 1978.)
-7. **The stop rule.** A round with no Important (or Low) finding ends the review; a Nit fixed after it
-   is verified by a test, not by another round.
+7. **The stop rule.** A round with no Important and no Low finding (REVIEW.md rule 2 defines both)
+   ends the review; each Nit of that last round is still fixed, and verified by a test, not by
+   another round.
 
 ## 4. Risk tiers
 
@@ -367,21 +368,34 @@ out, install or execute the head's code.
 
 ### 4.3 The security review
 
-`.github/workflows/security-review.yml` runs Anthropic's open-source action
+`.github/workflows/security-review.yml` runs our own security review,
+`scripts/security-review.mjs` (TASK-204, N-86), on every pull request to `develop`, `staging` and
+`main`. Until 2026-11-08 it ran Anthropic's open-source action
 [`anthropics/claude-code-security-review`](https://github.com/anthropics/claude-code-security-review)
-on every pull request to `develop`, `staging` and `main`, pinned to commit
-`0c6a49f1fa56a1d472575da86a94dbc1edb78eda` (its `main` on 2026-02-11; the repository publishes no
-release tags). Inputs: `claude-api-key` (the `ANTHROPIC_API_KEY` secret), `claude-model`, `comment-pr: true`
-(findings are posted on the PR), `upload-results: true`, `run-every-commit: true`.
+(pinned to `0c6a49f`, its `main` of 2026-02-11, no release tags); that commit hard-coded a retired
+model for its API check (`claudecode/claude_api_client.py:62`) that no input could change, and no
+newer release existed, so it was replaced before its exception's review-by date (2026-12-31).
+What the action did is kept: a model reviews the PR's diff for security issues, the findings are
+posted on the PR, and the check fails while any is open.
 
-- **It fails its check; blocking is planned.** The action itself never fails on findings; it reports a count
-  (`findings-count`). The workflow's next step fails the check when that count is not zero, and
-  also when the scan ran but left no readable result. A later commit that fixes the finding
-  re-runs the scan (`run-every-commit`), and a clean run clears the check. To make the check
-  stop a merge, it must be a required status check in branch protection — an owner setting,
-  planned.
-- **A false positive** is answered in the PR's "Review rounds" section with its reason. The
-  action has no way to mark one finding resolved, so the check stays red: until it is a required
+- **Credit.** The review prompt and the second, false-positive pass are adapted from that action:
+  Anthropic, **"Claude Code Security Reviewer"** (`claudecode/prompts.py` and
+  `claudecode/findings_filter.py`, MIT licence), github.com/anthropics/claude-code-security-review.
+- **How it works.** The diff is git's own (`base...head`, from a checkout with the full history),
+  reviewed in parts of at most 120,000 characters (a file split at its hunks). The model is
+  `MODEL_REGISTRY.standard`, read from `platform/ai/types.ts` with its own settings — no workflow
+  names a model, and the weekly model check covers it. A finding is kept only when it names a
+  changed file, is at confidence ≥ 0.8, and a second call confirms it. One comment per PR,
+  updated on each push. Exit 0 (no findings), 1 (findings), 2 (no review: the API failed, an
+  answer was unreadable or cut off, or the diff was past the bound) — 2 is a failure, never a pass.
+  It installs nothing: Node's own `fetch`, no package at run time (the action installed Claude
+  Code and Python requirements unpinned).
+- **It fails its check; blocking is planned.** The script's exit is the check: it fails when a
+  finding is open, and when no review could be made. Every push is reviewed again
+  (`synchronize`), and a clean review clears the check. To make the check stop a merge, it must be
+  a required status check in branch protection — an owner setting, planned.
+- **A false positive** is answered in the PR's "Review rounds" section with its reason. There is
+  no way to mark one finding resolved, so the check stays red: until it is a required
   check, a red check does not stop a merge; once it is required, the owner can merge past it as
   an administrator only if branch protection allows administrators to bypass.
 - **A skip is never a pass where it matters.** Without the key the job writes a notice and a
@@ -397,35 +411,26 @@ release tags). Inputs: `claude-api-key` (the `ANTHROPIC_API_KEY` secret), `claud
   not pass without a scan, so the owner re-runs it after adding the key as a Dependabot secret,
   or merges past it knowingly.
 - **Forks get no key, and fail.** The workflow uses `pull_request`, never `pull_request_target`:
-  GitHub gives a fork's PR no secrets and a read-only token. The scan runs only when the PR's head
-  is a branch of this repository; a fork's PR is never scanned, so its check fails. The action's
-  own README says it is not hardened against prompt injection and should review trusted PRs
-  only; this is how that holds here.
-- **What it installs.** The action installs Claude Code from npm and its Python requirements at
-  run time, unpinned by its own workflow; pinning the action's commit does not pin those. Recorded
-  in ASSURANCE §3.
-- **Its model (TASK-197).** `claude-model` is set to the platform's standard tier
-  (`MODEL_REGISTRY.standard`); unset, the action used its own default (`claude-opus-4-1-20250805`).
-  The model check (`scripts/check-model-ids.mjs`) fails a workflow model that is not a registry
-  model. The pinned commit also hard-codes the retired `claude-3-5-haiku-20241022` for its API
-  check (`claudecode/claude_api_client.py:62`); when that check fails the action turns off its
-  false-positive filter and only logs it. No input overrides it: the model check lists it as a
-  known exception — a loud warning and a summary line until its review-by date (2026-12-31), a
-  failure after it — and the gate step turns the log line ("Claude
-  API validation failed") into a warning in the summary. On 2026-10-28 this sent Playform's
-  `ANTHROPIC_API_KEY` — the playform-dev app key — to the retired model (Anthropic's notice).
-- **A pull request too large to diff (TASK-197).** GitHub answers 406 for the diff of a very large
-  PR — Playform's auto-sync PRs are expected to hit it — and the action fetches the diff itself, so
-  it cannot review such a PR in parts. The check fails with: "The action cannot fetch this PR's
-  diff (too large). It has not been reviewed. A repository admin must review the diff manually
-  and, if satisfied, merge using the ruleset's admin bypass (GitHub records the bypass)." That is
-  the whole procedure: the admin reads the diff (locally, `git diff base...head`, when the web
-  view refuses it too), and merges past the failing check with the ruleset's bypass; GitHub's
+  GitHub gives a fork's PR no secrets and a read-only token. The review runs only when the PR's
+  head is a branch of this repository; a fork's PR is never reviewed, so its check fails. The diff
+  is untrusted input to a model (prompt injection: the action's README said the same of itself),
+  so only trusted branches are reviewed; the prompt marks the diff as data, and the reply is read
+  only as bounded JSON whose text is escaped before it is posted.
+- **Its model.** The registry's standard tier (`claude-sonnet-5-5` today), read by the script; the
+  model check (`scripts/check-model-ids.mjs`) fails any model a workflow names that is not a
+  registry model, and carries no action exception any more (TASK-204: an exception for an action
+  no workflow uses fails the run). On 2026-10-28 the action had sent Playform's
+  `ANTHROPIC_API_KEY` — the playform-dev app key — to its retired model (Anthropic's notice).
+- **A pull request too large to review (TASK-197, TASK-204).** The diff is read locally, so the
+  action's 406 is gone; a diff past the script's bound (24 parts of 120,000 characters) is not
+  reviewed in part. The check fails with: "the diff is too large to review within the bound … A
+  repository admin must review the diff manually and, if satisfied, merge using the ruleset's
+  admin bypass (GitHub records the bypass)." That is the whole procedure: the admin reads the
+  diff (locally, `git diff base...head`, when the web view refuses it too), and merges past the failing check with the ruleset's bypass; GitHub's
   audit log and the PR's timeline record who bypassed. There is no label, acknowledgement or
   re-run that turns the check green — an in-workflow acknowledgement was built and removed after
   three review rounds (the owner's decision, TASK-197 round 3): each version could be forged or
-  replayed. The 406 is matched only as the action's own PR-data error (anchored), so no other
-  failure reads as "too large".
+  replayed.
 - **CI keys (owner action, TASK-197).** Give each repository a CI-only Anthropic key (its own
   workspace or key, with its own spend limit) for its `ANTHROPIC_API_KEY` secret — never an app's
   deployment key — so a CI tool's calls are neither billed to nor reported against an app.
@@ -451,7 +456,9 @@ README has the scoring rubric. When CLAUDE.md, REVIEW.md, this protocol, or the 
 tools change, the reviewer is run over every case and scored; a change to the reviewer is kept
 only when the score does not fall and the noise does not rise (the README's keep rule). Each
 new incident, revert or late finding adds a case.
-Status: the cases are written; **no scored run is recorded yet** — the first one is planned.
+Status: the cases are written and the scorer is built (`scripts/review-eval.mjs`, the **Reviewer
+eval** workflow, TASK-204); **no scored run is recorded yet** — the first needs the
+`ANTHROPIC_API_KEY` secret and is an owner step (TASK-183, Open).
 
 ## 7. Metrics
 

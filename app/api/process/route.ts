@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkSafety } from "@/lib/safety";
+import { isOutputAllowed, translatedTexts } from "@/lib/output-screening";
 import { translateToAllLanguages } from "@/lib/translate";
 import { textToSpeech } from "@/lib/tts";
 import { ProcessResponse } from "@/types";
@@ -111,6 +112,19 @@ export const POST = tenantRoute(async function POST(request: NextRequest) {
     }
 
     const translations = await translateToAllLanguages(trimmed);
+
+    // TASK-204 (N-47, audit D-17): the translations are a model's output — screened before speech
+    // is made from them or they are returned; withheld whole when not allowed or when the screen
+    // cannot run (fail closed).
+    if (
+      !(await isOutputAllowed(translatedTexts(translations), {
+        requestId,
+        route: "/api/process",
+      }))
+    ) {
+      logger.response("/api/process", "POST", 422, requestId, Date.now() - start);
+      return apiError("content.rejected", { request });
+    }
 
     const results = await Promise.all(
       translations.map(async (t) => {

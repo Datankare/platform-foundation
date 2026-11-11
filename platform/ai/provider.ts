@@ -229,6 +229,8 @@ export class AnthropicProvider implements AIProvider {
     // circuit breaker sees it — never a short answer reported as done.
     let streamError: { type: string; message: string } | null = null;
     let stopped = false;
+    // TASK-204 (N-45): why the reply ended, carried on the final chunk.
+    let stopReason: string | undefined;
 
     try {
       while (true) {
@@ -260,6 +262,9 @@ export class AnthropicProvider implements AIProvider {
               }
             } else if (event.type === "message_delta") {
               refused = event.delta?.stop_reason === "refusal";
+              if (typeof event.delta?.stop_reason === "string") {
+                stopReason = event.delta.stop_reason;
+              }
               outputTokens = event.usage?.output_tokens ?? 0;
             } else if (event.type === "error") {
               streamError = {
@@ -275,6 +280,7 @@ export class AnthropicProvider implements AIProvider {
               yield {
                 text: "",
                 done: true,
+                ...(stopReason === undefined ? {} : { stopReason }),
                 usage: {
                   inputTokens,
                   outputTokens,

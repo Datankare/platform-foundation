@@ -11,7 +11,7 @@
 import { execFileSync, spawn } from "child_process";
 import { createServer, type Server } from "http";
 import type { AddressInfo } from "net";
-import { mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { MODEL_REGISTRY } from "@/platform/ai/types";
@@ -21,6 +21,9 @@ const SCRIPT = join(ROOT, "scripts/check-model-ids.mjs");
 const KEY = "sk-test-model-check-not-a-real-key";
 const SECRET_BODY = "BODY-MUST-NOT-BE-PRINTED";
 const NO_WORKFLOWS = mkdtempSync(join(tmpdir(), "model-check-wf-"));
+// TASK-204 (N-86): production carries no action exception; the mechanism is tested with the entry
+// it last carried (the replaced security-review action), from this fixture.
+const KNOWN = join(ROOT, "__tests__/fixtures/known-action-models.json");
 
 function run(env: Record<string, string>): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
@@ -282,25 +285,50 @@ describe("check-model-ids", () => {
       )}, "utf8"))])]`
     ) as string[];
 
-    function google(offered: string[], status = 200): Promise<Server> {
+    const recognized: Record<string, unknown>[] = [];
+    function google(
+      offered: string[],
+      status = 200,
+      speechStatus = 200
+    ): Promise<Server> {
       const server = createServer((req, res) => {
-        if (req.headers["x-goog-api-key"] !== "g-key")
-          return res.writeHead(403).end("{}");
-        res
-          .writeHead(status, { "content-type": "application/json" })
-          .end(JSON.stringify({ voices: offered.map((name) => ({ name })) }));
+        let raw = "";
+        req.on("data", (c: Buffer) => (raw += c));
+        req.on("end", () => {
+          if (req.headers["x-goog-api-key"] !== "g-key")
+            return res.writeHead(403).end("{}");
+          // TASK-204 (N-50): the speech-to-text model's recognize call.
+          if (req.url === "/v1/speech:recognize") {
+            recognized.push(JSON.parse(raw) as Record<string, unknown>);
+            return res
+              .writeHead(speechStatus, { "content-type": "application/json" })
+              .end("{}");
+          }
+          res
+            .writeHead(status, { "content-type": "application/json" })
+            .end(JSON.stringify({ voices: offered.map((name) => ({ name })) }));
+        });
       });
       return new Promise((resolve) =>
         server.listen(0, "127.0.0.1", () => resolve(server))
       );
     }
 
-    async function withGoogle(offered: string[], status = 200, key = "g-key") {
-      const g = await google(offered, status);
+    async function withGoogle(
+      offered: string[],
+      status = 200,
+      key = "g-key",
+      speechStatus = 200
+    ) {
+      const g = await google(offered, status, speechStatus);
       try {
         return await withApi(
           { models: all() },
-          { GOOGLE_API_KEY: key, GOOGLE_TTS_BASE_URL: base(g) }
+          {
+            GOOGLE_API_KEY: key,
+            GOOGLE_TTS_BASE_URL: base(g),
+            GOOGLE_STT_BASE_URL: base(g),
+          }
         );
       } finally {
         g.close();
@@ -334,11 +362,45 @@ describe("check-model-ids", () => {
       expect(r.out).toContain("Google voices could not be listed (HTTP 403)");
     });
 
-    it("says what it cannot check (speech-to-text) and skips without a key", async () => {
+    it("skips the Google checks without a key, saying so", async () => {
       const r = await withApi({ models: all() });
       expect(r.code).toBe(0);
-      expect(r.out).toContain("latest_long is not checked");
-      expect(r.out).toContain("::notice::GOOGLE_API_KEY is not set");
+      expect(r.out).toContain(
+        "::notice::GOOGLE_API_KEY is not set: the Google voice check"
+      );
+      expect(r.out).toContain(
+        "::notice::GOOGLE_API_KEY is not set: the speech-to-text model check was skipped"
+      );
+    });
+
+    // TASK-204 (N-50): latest_long is checked by a recognize call on silence.
+    it("checks the speech-to-text model the platform names with one recognize call", async () => {
+      recognized.length = 0;
+      const r = await withGoogle(voices);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("ok speech-to-text model latest_long accepts a request");
+      expect(recognized).toHaveLength(1);
+      expect(recognized[0]).toMatchObject({
+        config: { model: "latest_long", encoding: "LINEAR16", sampleRateHertz: 16000 },
+      });
+      expect(typeof (recognized[0].audio as { content: string }).content).toBe("string");
+    });
+
+    it("fails when the speech-to-text model is refused, never printing the key", async () => {
+      const r = await withGoogle(voices, 200, "g-key", 400);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(
+        "::error::speech-to-text model latest_long refused a request (HTTP 400)"
+      );
+      expect(r.out).not.toContain("g-key");
+    });
+
+    it("reads the speech-to-text models a source names", () => {
+      expect(
+        exported(
+          `m.speechModels('const c = { model: "latest_long", x: 1 }; model: "chirp_2"')`
+        )
+      ).toEqual(["latest_long", "chirp_2"]);
     });
   });
 
@@ -350,6 +412,63 @@ describe("check-model-ids", () => {
     expect(wf).toMatch(/MODEL_CHECK_REQUIRED: \$\{\{ vars\.MODEL_CHECK_REQUIRED \}\}/);
     expect(wf).toMatch(/pull_request:\n\s+paths:\n\s+- platform\/ai\/types\.ts/);
     expect(wf).not.toMatch(/^\s*pull_request_target:/m);
+  });
+});
+
+// TASK-204 (N-50): the embedding models, against OpenAI's models API when the key is set.
+describe("embedding models (TASK-204, N-50)", () => {
+  const ids = exported(
+    `m.embeddingModelIds(readFileSync(${JSON.stringify(join(ROOT, "platform/rag/embedding-types.ts"))}, "utf8"))`
+  ) as string[];
+
+  function openai(known: string[]): Promise<Server> {
+    const server = createServer((req, res) => {
+      if (req.headers.authorization !== "Bearer o-key")
+        return res.writeHead(401).end("{}");
+      const id = decodeURIComponent((req.url ?? "").replace(/^\/v1\/models\//, ""));
+      if (!known.includes(id)) return res.writeHead(404).end("{}");
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ id }));
+    });
+    return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
+  }
+
+  it("reads the registry's text-embedding models (not the mock)", () => {
+    expect(ids).toEqual(["text-embedding-3-small", "text-embedding-3-large"]);
+  });
+
+  it("skips without OPENAI_API_KEY, naming what it did not check", async () => {
+    const r = await withApi({ models: all() });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "::notice::OPENAI_API_KEY is not set: the embedding models (text-embedding-3-small, text-embedding-3-large) were not checked"
+    );
+  });
+
+  it("passes when each resolves; fails naming a withdrawn one; never prints the key", async () => {
+    for (const [known, code] of [
+      [ids, 0],
+      [["text-embedding-3-small"], 1],
+    ] as const) {
+      const o = await openai([...known]);
+      try {
+        const r = await withApi(
+          { models: all() },
+          { OPENAI_API_KEY: "o-key", OPENAI_BASE_URL: base(o) }
+        );
+        expect(r.code).toBe(code);
+        if (code === 1)
+          expect(r.out).toContain(
+            "::error::embedding model text-embedding-3-large does not resolve (HTTP 404)"
+          );
+        else
+          expect(r.out).toContain("ok embedding model text-embedding-3-large resolves");
+        expect(r.out).not.toContain("o-key");
+      } finally {
+        o.close();
+      }
+    }
   });
 });
 
@@ -396,6 +515,7 @@ describe("the workflows' models and the pinned actions' (TASK-197, the 2026-10-2
     const r = await run({
       MODEL_CHECK_WORKFLOWS_DIR: pinned(),
       MODEL_CHECK_NOW: "2026-12-31T12:00:00Z",
+      MODEL_CHECK_KNOWN_ACTIONS: KNOWN,
       GITHUB_STEP_SUMMARY: file,
     });
     expect(r.code).toBe(0);
@@ -414,6 +534,7 @@ describe("the workflows' models and the pinned actions' (TASK-197, the 2026-10-2
     const r = await run({
       MODEL_CHECK_WORKFLOWS_DIR: pinned(),
       MODEL_CHECK_NOW: "2027-01-01T00:00:01Z",
+      MODEL_CHECK_KNOWN_ACTIONS: KNOWN,
     });
     expect(r.code).toBe(1);
     expect(r.out).toContain(
@@ -476,6 +597,7 @@ describe("the workflows' models and the pinned actions' (TASK-197, the 2026-10-2
     const server = await actionSourceServer(files, extra);
     try {
       return await run({
+        MODEL_CHECK_KNOWN_ACTIONS: KNOWN,
         ...env,
         MODEL_CHECK_WORKFLOWS_DIR: repinned(ref),
         MODEL_CHECK_NOW: "2026-11-01T00:00:00Z",
@@ -548,6 +670,7 @@ describe("the workflows' models and the pinned actions' (TASK-197, the 2026-10-2
     const server = await actionSourceServer({ [NEW]: haiku }, constants);
     const check = (workflow: string) =>
       run({
+        MODEL_CHECK_KNOWN_ACTIONS: KNOWN,
         MODEL_CHECK_WORKFLOWS_DIR: workflows({ "security-review.yml": workflow }),
         MODEL_CHECK_NOW: "2026-11-01T00:00:00Z",
         MODEL_CHECK_ACTION_SOURCE_BASE: base(server),
@@ -660,13 +783,30 @@ describe("the workflows' models and the pinned actions' (TASK-197, the 2026-10-2
     ).toEqual([true, false, false, false]);
   });
 
-  it("this repository: every model its workflows name is a registry model; the known exception is a warning before its date", () => {
+  // TASK-204 (N-86): the security-review action is replaced; no exception is left in force.
+  it("this repository: every model its workflows name is a registry model, and no action exception is in force", () => {
     const { problems, warnings } = exported(
-      `m.workflowProblems(${JSON.stringify(join(ROOT, ".github/workflows"))}, m.registryModelIds(src), Date.parse("2026-11-01T00:00:00Z"))`
+      `m.workflowProblems(${JSON.stringify(join(ROOT, ".github/workflows"))}, m.registryModelIds(src), Date.parse("2027-06-01T00:00:00Z"))`
     ) as { problems: string[]; warnings: string[] };
     expect(problems).toEqual([]);
-    expect(warnings.filter((p) => /validates with a retired model/.test(p)).length).toBe(
-      1
+    expect(warnings).toEqual([]);
+    expect(exported("m.KNOWN_ACTION_MODELS")).toEqual({});
+    for (const f of readdirSync(join(ROOT, ".github/workflows")))
+      expect(readFileSync(join(ROOT, ".github/workflows", f), "utf8")).not.toMatch(
+        /uses:\s*anthropics\/claude-code-security-review@/
+      );
+  });
+});
+
+describe("a stale action exception (TASK-204, N-86)", () => {
+  it("[self-test] an exception for an action no workflow uses fails the run (stale)", async () => {
+    const r = await run({
+      MODEL_CHECK_WORKFLOWS_DIR: NO_WORKFLOWS,
+      MODEL_CHECK_KNOWN_ACTIONS: KNOWN,
+    });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(
+      "KNOWN_ACTION_MODELS records anthropics/claude-code-security-review, which no workflow uses: remove its exception"
     );
   });
 });

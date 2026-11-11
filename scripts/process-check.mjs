@@ -201,7 +201,8 @@ const HELPER_SPECIFIER = String.raw`["'](?:\.{1,2}\/(?:\.\.\/)*|@\/__tests__\/)h
 const HELPER_IMPORTS = importOf(HELPER_SPECIFIER).map(
   (re) => new RegExp(re.source, "gm")
 );
-const TEST_FILE = /\.test\.tsx?$/;
+/** A test file: the only files rule 3 judges (checkRange collects them; drivesRoute reads them). */
+export const TEST_FILE = /\.test\.tsx?$/;
 
 /** Whether an answer is one: four words or more, not a placeholder (PLACEHOLDER_START, _SLOT). */
 export const answered = (text) => {
@@ -615,12 +616,12 @@ export function importedHelpers(text) {
 }
 
 /**
- * Whether a test file drives a route handler: it imports an app/api route module, or a test
- * helper (`__tests__/helpers/…`, one level) that does. `helperText(name)` gives a helper's text
- * (null when it cannot be read).
+ * Whether a test file's text drives a route handler: it imports an app/api route module, or a
+ * test helper (`__tests__/helpers/…`, one level) that does. `helperText(name)` gives a helper's
+ * text (null when it cannot be read). Only test files are read (TEST_FILE, at checkRange's
+ * collection: TASK-204 N-18 — a second check here could not be told apart from the first).
  */
-export function isRouteTest(path, text, helperText) {
-  if (!TEST_FILE.test(path)) return false;
+export function drivesRoute(text, helperText) {
   if (ROUTE_IMPORTS.some((re) => re.test(text))) return true;
   // An unreadable helper (null) imports nothing: RegExp#test reads it as "null".
   return importedHelpers(text).some((name) =>
@@ -828,7 +829,7 @@ function nameStatus(out) {
   // Stryker disable next-line MethodExpression: the one empty part is the last, an odd one out
   const parts = out.split("\0").filter(Boolean);
   const list = [];
-  for (let i = 0; i + 1 < parts.length; i += 2)
+  for (let i = 0; i < parts.length; i += 2)
     list.push({ status: parts[i], path: parts[i + 1] });
   return list;
 }
@@ -871,31 +872,13 @@ export function ownPaths(result, parents) {
 /**
  * What a commit itself changes. A two-parent merge: what differs from git's own re-merge of its
  * parents (`git show --remerge-diff`) — a clean merge changes nothing, a file both parents edited
- * cleanly included; a conflict's resolution or anything added in the merge does. It finds every
- * path ownPaths would (a path differing from both parents differs from their re-merge too, which
- * takes one side's blob when only one side changed it) without ownPaths' false finding on a file
- * both sides edited cleanly. An octopus merge (which --remerge-diff skips): ownPaths. A git older
- * than 2.36 cannot judge a two-parent merge: MergeUnjudgeable. Every path is read NUL-separated.
+ * cleanly included; a conflict's resolution or anything added in the merge does. Any other commit
+ * (one parent, a root, an octopus merge, which --remerge-diff skips): ownPaths — for one parent the
+ * paths `git diff-tree` names, for a root every path (TASK-204 N-18: one reading, not two that
+ * could not be told apart). A git older than 2.36 cannot judge a two-parent merge:
+ * MergeUnjudgeable. Every path is read NUL-separated.
  */
 function changes(sha, parents, cwd) {
-  if (parents.length < 2)
-    return nameStatus(
-      git(
-        [
-          "diff-tree",
-          "--no-commit-id",
-          "-r",
-          "--no-renames",
-          "--name-status",
-          "-z",
-          "--root",
-          "--end-of-options",
-          sha,
-          "--",
-        ],
-        cwd
-      )
-    );
   if (parents.length === 2) {
     if (!hasRemergeDiff(cwd)) throw new MergeUnjudgeable(git(["--version"], cwd));
     return nameStatus(
@@ -1013,7 +996,8 @@ function readTree(rev, cwd) {
     ["ls-tree", "-r", "-z", "--end-of-options", rev],
     cwd
   ).split("\0")) {
-    const m = /^(\d{6}) (?:blob|commit) ([0-9a-f]+)\t(.*)/s.exec(entry);
+    // Sticky (`y`): the entry from its start, where every ls-tree entry has its mode.
+    const m = /(\d{6}) (?:blob|commit) ([0-9a-f]+)\t(.*)/sy.exec(entry);
     if (m) out.set(m[3], `${m[1]} ${m[2]}`);
   }
   return out;
@@ -1083,7 +1067,9 @@ function trueRevert(files, sha, parent, reverted, cwd, registers) {
       .filter(own)
   );
   const touched = new Set(files.map((f) => f.path).filter(own));
-  if (undone.size === 0 || touched.size !== undone.size) return false;
+  // Equal sizes and every undone path touched: the same files. (Neither is ever empty here: a
+  // commit judged changes code or the process's files, and a register is neither.)
+  if (touched.size !== undone.size) return false;
   const now = treeBlobs(sha, cwd);
   const was = treeBlobs(parent, cwd);
   const after = treeBlobs(reverted, cwd);
@@ -1108,12 +1094,13 @@ function hostileFindings(testFiles, head, cwd) {
   };
   for (const path of [...testFiles].sort()) {
     const text = textAt(head, path, cwd);
-    if (text === null || !isRouteTest(path, text, helperText)) continue;
+    if (text === null || !drivesRoute(text, helperText)) continue;
     let missing;
     try {
       missing = missingHostileTags(text);
     } catch (err) {
-      if (!(err instanceof LexError)) throw err;
+      // A LexError, the only error the reading throws (TASK-204 N-18): whatever it is, the file
+      // is not passed over — the check fails, naming it.
       findings.push(
         `${path} drives a route and cannot be read for its hostile cases: ${err.message}`
       );
@@ -1321,7 +1308,8 @@ export function checkRange({ base, head = "HEAD", cwd = process.cwd() }) {
         git(["rev-list", "--end-of-options", ...introParents, "--"], cwd)
           .split("\n")
           .filter(Boolean)
-      : []
+      : // Stryker disable next-line ArrayDeclaration: no commit's sha is the mutant's text
+        []
   );
   const ruled = (sha) => intro !== undefined && !beforeRule.has(sha);
 
@@ -1457,12 +1445,13 @@ export function checkRange({ base, head = "HEAD", cwd = process.cwd() }) {
     // commit changed, each back to what it was before it (a merge: its first parent, as GitHub's
     // Revert button does).
     const target = REVERT_SUBJECT.test(subject) ? revertedCommit(sha, cwd) : null;
-    const earlier = target !== null && judged.has(target);
+    // (judged holds no null.) The exact inverse first: it reads the target, so a null one fails.
+    const earlier = judged.has(target);
     const revertOf =
       target !== null &&
       parents.length === 1 &&
-      (earlier || onBase(target, from, cwd)) &&
-      trueRevert(files, sha, parents[0], target, cwd, registers)
+      trueRevert(files, sha, parents[0], target, cwd, registers) &&
+      (earlier || onBase(target, from, cwd))
         ? target
         : null;
     if (revertOf !== null && earlier)
@@ -1499,7 +1488,9 @@ export function checkRange({ base, head = "HEAD", cwd = process.cwd() }) {
           : `${short} is a true revert of ${revertOf.slice(0, 7)}, on the base: judged there`
       );
     tasks.forEach((t) => name(t, sha, revertOf));
-    judged.set(sha, revertOf === null ? tasks : []);
+    // A revert's own tasks too: reverted in turn in this range (a Reapply), the pair is a net
+    // no-op for them as well (TASK-204 N-18).
+    judged.set(sha, tasks);
     // A change to a high-tier path (a gate or a security boundary) carries a threat model.
     const highPath = revertOf === null ? files.find((f) => high(f.path)) : undefined;
     if (highPath)

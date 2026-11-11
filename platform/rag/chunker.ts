@@ -85,54 +85,95 @@ function chunkBySlidingWindow(doc: Document, config: ChunkingConfig): readonly C
 
 // ── Sentence-aware ────────────────────────────────────────────────────
 
-const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
+const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/g;
 
-// TODO: If a single sentence exceeds maxChunkSize, it is included whole.
-// This preserves semantic coherence for embeddings. If real document
-// ingestion reveals frequent oversized sentences, add sliding-window
-// fallback within sentence boundaries.
-function chunkBySentence(doc: Document, config: ChunkingConfig): readonly Chunk[] {
-  const sentences = doc.content.split(SENTENCE_BOUNDARY);
-  const chunks: Chunk[] = [];
-  let currentContent = "";
-  let chunkStart = 0;
-  let index = 0;
+/** A [start, end) span of the document's text. */
+interface Span {
+  readonly start: number;
+  readonly end: number;
+}
 
-  for (const sentence of sentences) {
-    if (
-      currentContent.length > 0 &&
-      currentContent.length + sentence.length > config.maxChunkSize
-    ) {
-      chunks.push({
-        id: generateId(),
-        documentId: doc.id,
-        content: currentContent,
-        index,
-        startOffset: chunkStart,
-        endOffset: chunkStart + currentContent.length,
-        metadata: { ...doc.metadata, source: doc.source },
-      });
-      index++;
-
-      const overlapText = currentContent.slice(-config.overlapSize);
-      chunkStart = chunkStart + currentContent.length - overlapText.length;
-      currentContent = overlapText;
-    }
-
-    currentContent += (currentContent.length > 0 ? " " : "") + sentence;
+/** The document's sentences as spans (the whitespace between them is in neither). */
+function sentenceSpans(text: string): Span[] {
+  const spans: Span[] = [];
+  let start = 0;
+  for (const m of text.matchAll(SENTENCE_BOUNDARY)) {
+    const end = m.index ?? 0;
+    if (end > start) spans.push({ start, end });
+    start = end + m[0].length;
   }
+  if (start < text.length) spans.push({ start, end: text.length });
+  return spans.filter((s) => text.slice(s.start, s.end).trim().length > 0);
+}
 
-  if (currentContent.trim().length > 0) {
+/**
+ * TASK-204 (N-51): a sentence longer than `max` is split within itself — at the last whitespace
+ * in each window when there is one in its second half, else at `max` — so no piece passes the
+ * bound (an embedding model's input limit). Leading whitespace of a piece is skipped.
+ */
+function boundedPieces(text: string, span: Span, max: number): Span[] {
+  const pieces: Span[] = [];
+  let start = span.start;
+  while (start < span.end) {
+    while (start < span.end && /\s/.test(text[start])) start++;
+    if (start >= span.end) break;
+    if (span.end - start <= max) {
+      pieces.push({ start, end: span.end });
+      break;
+    }
+    let cut = start + max;
+    for (let i = cut; i > start + Math.floor(max / 2); i--) {
+      if (/\s/.test(text[i])) {
+        cut = i;
+        break;
+      }
+    }
+    pieces.push({ start, end: cut });
+    start = cut;
+  }
+  return pieces;
+}
+
+/**
+ * Sentences packed into chunks of at most `maxChunkSize` characters. Each chunk is a slice of the
+ * document (`content` is `doc.content.slice(startOffset, endOffset)`); a chunk after the first
+ * starts up to `overlapSize` characters before the previous one ended, less when the overlap and
+ * the next sentence would together pass the bound.
+ */
+function chunkBySentence(doc: Document, config: ChunkingConfig): readonly Chunk[] {
+  const text = doc.content;
+  const max = config.maxChunkSize;
+  const pieces = sentenceSpans(text).flatMap((s) => boundedPieces(text, s, max));
+  const chunks: Chunk[] = [];
+  const push = (start: number, end: number) => {
     chunks.push({
       id: generateId(),
       documentId: doc.id,
-      content: currentContent,
-      index,
-      startOffset: chunkStart,
-      endOffset: chunkStart + currentContent.length,
+      content: text.slice(start, end),
+      index: chunks.length,
+      startOffset: start,
+      endOffset: end,
       metadata: { ...doc.metadata, source: doc.source },
     });
-  }
+  };
 
+  let current: Span | null = null;
+  for (const piece of pieces) {
+    if (current === null) {
+      current = piece;
+      continue;
+    }
+    if (piece.end - current.start <= max) {
+      current = { start: current.start, end: piece.end };
+      continue;
+    }
+    push(current.start, current.end);
+    const start = Math.min(
+      piece.start,
+      Math.max(current.end - config.overlapSize, piece.end - max, current.start)
+    );
+    current = { start, end: piece.end };
+  }
+  if (current !== null) push(current.start, current.end);
   return chunks;
 }

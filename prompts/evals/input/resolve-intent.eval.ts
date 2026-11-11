@@ -9,11 +9,35 @@ import {
   parseResolveIntentResponse,
   type ResolvedIntent,
 } from "@/prompts/input/resolve-intent-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildResolveIntentPrompt,
+  RESOLVE_INTENT_V1,
+  type ResolveIntentInput,
+} from "@/prompts/input/resolve-intent-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 const act = (id: string) => ({ id, label: `L-${id}`, primary: false });
 
-export const RESOLVE_INTENT_EVAL: EvalSuite<ResolvedIntent> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<ResolvedIntent, ResolveIntentInput> = {
+  config: RESOLVE_INTENT_V1,
+  build: buildResolveIntentPrompt,
+  cases: [
+    {
+      id: "live:song-to-identify",
+      input: {
+        classification: "music",
+        mode: "listen",
+        confidence: 0.92,
+        userContext: "The user held the microphone up to a song playing on the radio.",
+      },
+      assert: (o) => o.intent !== "unknown" && o.actions.length > 0 && o.confidence > 0,
+    },
+  ],
+};
+
+export const RESOLVE_INTENT_EVAL: EvalSuite<ResolvedIntent, ResolveIntentInput> = {
+  live: LIVE,
   prompt: "resolve-intent",
   source: "prompts/input/resolve-intent-v1.ts",
   parse: parseResolveIntentResponse,

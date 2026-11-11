@@ -9,11 +9,38 @@ import {
   type GatekeeperEvaluation,
   type GatekeeperDecision,
 } from "@/prompts/social/gatekeeper-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildGatekeeperPrompt,
+  GATEKEEPER_V1,
+  type GatekeeperInput,
+} from "@/prompts/social/gatekeeper-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 const DECISIONS: readonly GatekeeperDecision[] = ["approve", "deny", "review"];
 
-export const GATEKEEPER_EVAL: EvalSuite<GatekeeperEvaluation> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<GatekeeperEvaluation, GatekeeperInput> = {
+  config: GATEKEEPER_V1,
+  build: buildGatekeeperPrompt,
+  cases: [
+    {
+      id: "live:spam-applicant-is-not-approved",
+      input: {
+        groupName: "Kids Piano Club",
+        groupDescription:
+          "A moderated group for children aged 8-12 learning piano, with their parents.",
+        applicantId: "a-live-1",
+        applicantContext:
+          "Account created today, no profile, application text: 'BUY CHEAP FOLLOWERS http://spam.example DM me'",
+      },
+      // Not approved, and a judgement — the parse-failure default is "review" at confidence 0.
+      assert: (o) => o.decision !== "approve" && o.confidence > 0,
+    },
+  ],
+};
+
+export const GATEKEEPER_EVAL: EvalSuite<GatekeeperEvaluation, GatekeeperInput> = {
+  live: LIVE,
   prompt: "gatekeeper",
   source: "prompts/social/gatekeeper-v1.ts",
   parse: parseGatekeeperResponse,

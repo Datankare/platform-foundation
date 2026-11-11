@@ -1,47 +1,40 @@
 name: Security review
 
-# TASK-183 (docs/AI_ENGINEERING.md §4.3): Anthropic's open-source Claude Code security review on
-# every pull request; its findings are posted on the PR, and the check fails while it reports any.
+# TASK-183 (docs/AI_ENGINEERING.md §4.3): a model reviews every pull request's diff for security
+# issues; its findings are posted on the PR, and the check fails while it reports any.
 #
-#   - The action: anthropics/claude-code-security-review, pinned to the commit of its main branch
-#     merged on 2026-02-11 (the repository publishes no release tags). It never fails on findings
-#     itself; it reports a count, and the "Open findings block" step below fails on it.
-#     TASK-201 (2026-11-07): re-checked — no tag or release exists and this commit is still the
-#     head of main, so there is nothing newer to pin; its default model (claude-opus-4-1-20250805,
-#     constants.py:8) is overridden by `claude-model` below, which the model check now requires.
+#   - TASK-204 (N-86): our own step, scripts/security-review.mjs, replaces the
+#     anthropics/claude-code-security-review action (pinned at 0c6a49f, no release tags), whose
+#     API check hard-coded a retired model (claude_api_client.py:62) that no input could change —
+#     so its false-positive filter was off, and the model check's exception for it expired on
+#     2026-12-31. What it did is kept: the diff reviewed for security issues, the findings posted
+#     on the PR (one comment, updated on each push), the check failing on any. Its prompt is
+#     adapted from the action's (Anthropic, MIT; credited in AI_ENGINEERING §4.3); each finding is
+#     checked by a second call (the action's filter, working again).
+#   - The model is MODEL_REGISTRY's standard tier, read from platform/ai/types.ts by the script:
+#     no workflow names a model, and the weekly model check covers it. No install: Node's own
+#     fetch, no package installed at run time (the action installed Claude Code and Python
+#     requirements unpinned).
+#   - The diff is git's own, from the checkout (base...head): no PR is too large to fetch (the
+#     action's 406). A diff past the script's bound fails the check, saying so — never a silent
+#     pass, never "re-run": a repository admin reviews the diff by hand and, if satisfied, merges
+#     with the ruleset's admin bypass, which GitHub records (TASK-197 review round 3, the owner's
+#     decision; there is no in-workflow acknowledgement).
 #   - pull_request, never pull_request_target: GitHub gives a fork's pull request no secrets and a
-#     read-only token, so a fork can neither reach the key nor post as the repository. The scan
-#     also runs only when the PR's head is a branch of this repository — the action's README says
-#     it is not hardened against prompt injection and should review trusted PRs only.
-#   - A skipped scan never reads as a passed one. It always writes a notice and a summary, and:
-#       - a fork's PR fails (no scan can run there);
+#     read-only token, so a fork can neither reach the key nor post as the repository. The review
+#     also runs only when the PR's head is a branch of this repository: the diff is untrusted
+#     input to a model (prompt injection), so only trusted branches are reviewed.
+#   - A skipped review never reads as a passed one. It always writes a notice and a summary, and:
+#       - a fork's PR fails (no review can run there);
 #       - without the ANTHROPIC_API_KEY secret it passes, unless the repository variable
 #         SECURITY_REVIEW_REQUIRED is 'true' — then it fails. Set the variable once the key is set.
 #       - a Dependabot PR does not receive repository (Actions) secrets; it is treated as having
 #         no key, so it fails when the review is required. A required check must not pass
-#         without a scan: the owner re-runs it after adding the key as a Dependabot secret, or
+#         without a review: the owner re-runs it after adding the key as a Dependabot secret, or
 #         merges past it knowingly.
 #     The variable reaches the shell through env, never as an expression inside run.
-#   - run-every-commit: each push is scanned again, so a commit that fixes a finding clears the
-#     check (the default scans a PR once and would leave the first result standing).
-#   - The action installs Claude Code (npm) and its Python requirements unpinned at run time;
-#     pinning its commit does not pin those (ASSURANCE §3).
-#   - TASK-197 (the 2026-10-28 incident). The model is set: `claude-model` is the platform's
-#     standard tier (MODEL_REGISTRY in platform/ai/types.ts; scripts/check-model-ids.mjs fails a
-#     workflow model that is not a registry model) — unset, the action used its own default
-#     (claude-opus-4-1-20250805). The pinned commit also hard-codes claude-3-5-haiku-20241022, a
-#     retired model, for its API check (claudecode/claude_api_client.py:62): that check fails and
-#     the action silently turns its false-positive filter off. No input overrides it; the model
-#     check lists it as a known exception (a loud warning until its review-by date, 2026-12-31,
-#     then a failure), and the "Open findings block" step below turns the action's "Claude API
-#     validation failed" log line into a warning in the summary. Upstream: an issue is to be
-#     filed (TASK-197).
-#   - A pull request too large for GitHub to serve as a diff (406 Not Acceptable — Playform's
-#     auto-sync PRs are expected to hit it) cannot be reviewed by the action: it fetches the PR's
-#     diff itself, so it cannot be fed in parts. The check FAILS, saying so — never a silent pass,
-#     never "re-run". There is no in-workflow acknowledgement (TASK-197 review round 3, the
-#     owner's decision): a repository admin reviews the diff by hand and, if satisfied, merges with
-#     the ruleset's admin bypass, which GitHub records (docs/AI_ENGINEERING.md §4.3, REVIEW.md).
+#   - Every push is reviewed again (synchronize), so a commit that fixes a finding clears the check.
+#   - The results file goes to $RUNNER_TEMP, never into the checkout.
 
 on:
   pull_request:
@@ -100,69 +93,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          # The base...head diff needs the merge base: the whole history (git, not the API).
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Claude Code security review
-        id: review
+      - name: Setup Node
         if: env.HAS_KEY == 'true' && env.SAME_REPO == 'true'
-        uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda # main, 2026-02-11 (no release tags)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # The platform's standard tier (MODEL_REGISTRY.standard, platform/ai/types.ts); the model
-          # check fails when this is not a registry model (TASK-197).
-          claude-model: claude-sonnet-5-5
-          comment-pr: "true"
-          upload-results: "true"
-          run-every-commit: "true"
+          node-version: "24"
 
-      - name: Open findings block
+      - name: Security review (scripts/security-review.mjs)
         if: env.HAS_KEY == 'true' && env.SAME_REPO == 'true'
         env:
-          FINDINGS: ${{ steps.review.outputs.findings-count }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
-          results="$GITHUB_WORKSPACE/claudecode-results.json"
-          errlog="$GITHUB_WORKSPACE/claudecode-error.log"
-          # TASK-197: the pinned action's API check uses a retired model; when it fails the action
-          # turns off its false-positive filter and says so only in its own log.
-          if [ -f "$errlog" ] && grep -q "Claude API validation failed" "$errlog"; then
-            echo "::warning::The security review's API check failed (Claude API validation failed): the action's false-positive filter was disabled, so its findings were not filtered. Known cause: the pinned action validates with a retired model (TASK-197)."
-            {
-              echo "> ⚠ The action's false-positive filter was disabled: its API check failed (\"Claude API validation failed\" — the pinned action validates with a retired model, TASK-197)."
-              echo
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-          # TASK-197: a PR too large for GitHub to serve as a diff (406) cannot be reviewed by the
-          # action. Not a pass and not "re-run": it fails, and an admin reviews it by hand.
-          if [ -s "$results" ] && jq -e '(.error // "") | test("^Failed to fetch PR data: 406 ")' "$results" > /dev/null 2>&1; then
-            msg="The action cannot fetch this PR's diff (too large). It has not been reviewed. A repository admin must review the diff manually and, if satisfied, merge using the ruleset's admin bypass (GitHub records the bypass)."
-            echo "::error::$msg"
-            {
-              echo "## Security review: not reviewable by the action (406)"
-              echo
-              echo "$msg See docs/AI_ENGINEERING.md §4.3."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          if [ ! -s "$results" ] || ! jq -e '(.error | not) and (.findings | type == "array")' "$results" > /dev/null 2>&1; then
-            echo "::error::The security review ran but left no readable result (see the job log and the security-review-results artifact). Re-run the job; nothing was reviewed."
-            exit 1
-          fi
-          case "$FINDINGS" in
-            '' | *[!0-9]*) echo "::error::The security review reported no finding count."; exit 1 ;;
-          esac
-          {
-            echo "## Security review: $FINDINGS finding(s)"
-            echo
-            if [ "$FINDINGS" -eq 0 ]; then
-              echo "Nothing to fix."
-            else
-              jq -r '.findings[] | "- **\(.severity // "?")** `\(.file // "?"):\(.line // "?")` \(.description // .title // "" | tostring | .[0:300])"' "$results"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$FINDINGS" -ne 0 ]; then
-            echo "::error::$FINDINGS open security finding(s). Fix each, or answer it with its reason in the PR's Review rounds section (docs/AI_ENGINEERING.md §4.3)."
-            exit 1
-          fi
-          echo "Security review: no findings."
+          SECURITY_REVIEW_RESULTS="$RUNNER_TEMP/security-review-results.json" node scripts/security-review.mjs

@@ -19,6 +19,8 @@ import { registerAgent, resetAgentRegistry } from "@/platform/agents/registry";
 import { BudgetTracker } from "@/platform/agents/budget-tracker";
 import type { ActionSpec, AgentIdentity, SessionEvent } from "@/platform/kernel";
 import type { WorkflowFn } from "@/platform/agents/runtime";
+import * as platformConfig from "@/platform/auth/platform-config";
+import { BUDGET_STEP_CAP_KEY } from "@/platform/agents/budget-config";
 
 const actor: AgentIdentity = {
   actorType: "agent",
@@ -286,5 +288,116 @@ describe("D5 — resume re-executes no recorded step", () => {
       trajectoryStore: new InMemoryTrajectoryStore(),
     });
     expect(result.error).toMatch(/not found/);
+  });
+});
+
+// TASK-204 (N-46): resume honours the governed per-trajectory step cap, as executeAgent does
+// (ADR-048 D1): min(agent.budget.max_steps_per_trajectory, the agent's default).
+describe("resume honours the governed step cap (N-46)", () => {
+  const spy = jest.spyOn(platformConfig, "getConfig");
+  afterEach(() => spy.mockReset());
+  afterAll(() => spy.mockRestore());
+
+  beforeEach(() => {
+    resetAgentRegistry();
+    registerAgent({
+      id: "guardian",
+      name: "guardian",
+      description: "test",
+      tools: [],
+      budgetConfig: {
+        maxCostPerTrajectory: 1,
+        maxCostPerDay: 10,
+        maxStepsPerTrajectory: 6,
+      },
+      effortTier: "standard",
+    });
+  });
+
+  async function pausedWith(steps: number) {
+    const trajectoryStore = new InMemoryTrajectoryStore();
+    const rec = await trajectoryStore.create(
+      { kind: "agent", id: "guardian" },
+      "screen",
+      "platform"
+    );
+    const id = rec.trajectory.trajectoryId;
+    for (let i = 0; i < steps; i++) {
+      await trajectoryStore.addStep(id, {
+        stepIndex: i,
+        action: `step-${i}`,
+        input: {},
+        output: {},
+        cost: 0,
+        durationMs: 1,
+        timestamp: new Date().toISOString(),
+        boundary: "cognition",
+      });
+    }
+    await trajectoryStore.updateStatus(id, "paused");
+    return { trajectoryStore, id };
+  }
+
+  const forever: WorkflowFn = async (ctx) => ({
+    action: `step-${ctx.stepCount}`,
+    boundary: "cognition",
+    input: {},
+    output: {},
+    costUsd: 0,
+    continueExecution: true,
+  });
+
+  it("stops at a governed cap below the agent's default", async () => {
+    spy.mockImplementation(
+      async (key: string, d?: unknown) => (key === BUDGET_STEP_CAP_KEY ? 3 : d) as never
+    );
+    const { trajectoryStore, id } = await pausedWith(1);
+    const result = await resumeAgent({
+      trajectoryId: id,
+      workflow: forever,
+      trajectoryStore,
+      budgetTracker: new BudgetTracker(),
+    });
+    expect(result.finalStatus).toBe("paused");
+    expect(result.stepsCompleted).toBe(3);
+    expect(result.error).toBe("step limit (3) reached before the workflow finished");
+    expect(spy).toHaveBeenCalledWith(BUDGET_STEP_CAP_KEY, 6);
+  });
+
+  it("runs no step when the trajectory is already at the cap, and stays paused", async () => {
+    spy.mockImplementation(
+      async (key: string, d?: unknown) => (key === BUDGET_STEP_CAP_KEY ? 2 : d) as never
+    );
+    const { trajectoryStore, id } = await pausedWith(2);
+    const ran: number[] = [];
+    const result = await resumeAgent({
+      trajectoryId: id,
+      workflow: async (ctx) => {
+        ran.push(ctx.stepCount);
+        return forever(ctx);
+      },
+      trajectoryStore,
+      budgetTracker: new BudgetTracker(),
+    });
+    expect(ran).toEqual([]);
+    expect(result).toMatchObject({
+      finalStatus: "paused",
+      stepsCompleted: 2,
+      success: false,
+    });
+    expect((await trajectoryStore.getById(id))?.trajectory.status).toBe("paused");
+  });
+
+  it("[hostile:store-down] a config store that fails falls back to the agent's default", async () => {
+    spy.mockRejectedValue(new Error("db down"));
+    const { trajectoryStore, id } = await pausedWith(0);
+    const result = await resumeAgent({
+      trajectoryId: id,
+      workflow: forever,
+      trajectoryStore,
+      budgetTracker: new BudgetTracker(),
+    });
+    expect(result.stepsCompleted).toBe(6);
+    expect(result.error).toBe("step limit (6) reached before the workflow finished");
   });
 });

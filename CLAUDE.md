@@ -5,10 +5,9 @@ Loaded by every agent working or reviewing here. Kept short; the detail is in th
 ## What this is
 
 A Next.js application platform that apps (Playform first) take by sync: identity and access,
-tenancy, governed AI and agents, moderation, jobs, observability. It is pre-launch: no
-deployment of its own serves users. Map: [docs/README.md](docs/README.md); architecture:
-[docs/TAD.md](docs/TAD.md); the assurance model: [docs/ASSURANCE.md](docs/ASSURANCE.md); how a
-change is reviewed: [docs/AI_ENGINEERING.md](docs/AI_ENGINEERING.md) and [REVIEW.md](REVIEW.md).
+tenancy, governed AI and agents, moderation, jobs, observability; pre-launch, with no deployment of
+its own. Map: [docs/README.md](docs/README.md); architecture: [TAD](docs/TAD.md); assurance:
+[ASSURANCE](docs/ASSURANCE.md); review: [AI_ENGINEERING](docs/AI_ENGINEERING.md), REVIEW.md.
 
 ## Stack
 
@@ -22,8 +21,9 @@ or Upstash for the shared cache; Jest with ts-jest; Semgrep, CodeQL and gitleaks
   implementation through the consumer seams ([SETUP_AND_INTEGRATION](docs/SETUP_AND_INTEGRATION.md) §6).
 - **Data:** only `platform/data` reaches Postgres; values are bound parameters, never SQL text;
   every route handler runs in its tenant scope (`tenantRoute`). The tests in ASSURANCE §2 hold this.
-- **Errors and text:** every refusal is a coded error from the catalog
-  ([API_ERRORS](docs/API_ERRORS.md), generated); every word on a screen comes from `messages/`.
+- **Errors and text:** every refusal is a coded error ([API_ERRORS](docs/API_ERRORS.md), generated);
+  every screen word comes from `messages/` and a caught error's text is only logged — except the
+  sites in `screen-literal-baseline.json` (R-75) and the `platform/` dirs R-77's guard skips yet.
 - **Registers:** work and defects go in [TASKS](docs/TASKS.md), deferred security items in
   [SECURITY_DEBT](docs/SECURITY_DEBT.md), every new doc in the [docs index](docs/README.md).
 - **Width:** code is formatted by Prettier at its `printWidth` (`.prettierrc`); comments and
@@ -83,7 +83,7 @@ its risk tier sets (`node scripts/risk-tier.mjs --base origin/develop`); walk an
 browser on a production build first (REVIEW.md 25); then the gates:
 
 ```zsh
-npm run format:check && npm run typecheck && npx eslint . --max-warnings 0 && npm test
+npm run format:check && npm run typecheck && npm run lint && npm run test:db -- --full
 node scripts/module-manifest.cjs --check
 node scripts/process-check.mjs --base origin/develop
 ```

@@ -439,3 +439,47 @@ describe("prompt caching (opt-in)", () => {
     expect(res.usage).toMatchObject({ cacheReadTokens: 600, cacheWriteTokens: 0 });
   });
 });
+
+// TASK-204 (N-45): the final chunk carries why the reply ended, so a reply cut at max_tokens is
+// not passed on as a complete one.
+describe("the stream's stop reason", () => {
+  const events = (stopReason?: string) => [
+    { type: "message_start", message: { usage: { input_tokens: 1 } } },
+    { type: "content_block_delta", delta: { type: "text_delta", text: "Half an ans" } },
+    {
+      type: "message_delta",
+      delta: stopReason === undefined ? {} : { stop_reason: stopReason },
+      usage: { output_tokens: 4 },
+    },
+    { type: "message_stop" },
+  ];
+
+  it.each(["max_tokens", "end_turn", "stop_sequence"])(
+    "the final chunk carries stop_reason %s",
+    async (reason) => {
+      mockFetch(() => sseResponse(events(reason)));
+      const chunks = await drain(new AnthropicProvider("k").stream(request("fast")));
+      const last = chunks[chunks.length - 1];
+      expect(last.done).toBe(true);
+      expect(last.stopReason).toBe(reason);
+      const partial = chunks.filter((c) => !c.done);
+      expect(partial.length).toBeGreaterThan(0);
+      expect(partial.every((c) => c.stopReason === undefined)).toBe(true);
+    }
+  );
+
+  it("[hostile] a message_delta with no or a non-string stop_reason leaves it unset", async () => {
+    mockFetch(() => sseResponse(events()));
+    let chunks = await drain(new AnthropicProvider("k").stream(request("fast")));
+    expect(chunks[chunks.length - 1].stopReason).toBeUndefined();
+    mockFetch(() =>
+      sseResponse(
+        events().map((e) =>
+          e.type === "message_delta" ? { ...e, delta: { stop_reason: { x: 1 } } } : e
+        )
+      )
+    );
+    chunks = await drain(new AnthropicProvider("k").stream(request("fast")));
+    expect(chunks[chunks.length - 1].stopReason).toBeUndefined();
+  });
+});

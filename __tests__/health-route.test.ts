@@ -28,7 +28,8 @@ jest.mock("@/lib/logger", () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import { GET, deployedCommit } from "@/app/api/health/route";
+import { GET } from "@/app/api/health/route";
+import { deployedCommit } from "@/platform/observability/deployment";
 import { resetHealthCache } from "@/platform/observability/readiness";
 
 function stateWith(report: HealthReport) {
@@ -58,8 +59,13 @@ beforeEach(() => {
   mockCaptureError.mockReset();
 });
 
+// Hostile cases (REVIEW.md 3), for a public probe:
+// hostile:role n/a: the probe is public, read without any session or role
+// hostile:self n/a: it names no account, so there is no self to act on
+// hostile:id-spelling n/a: it takes no id, in its path or its query
+
 describe("GET /api/health — fail closed", () => {
-  it("returns 503 when observability was never initialized", async () => {
+  it("[hostile:store-down] returns 503 when observability was never initialized", async () => {
     // "We cannot know" is not "healthy". Reporting ok here is the defect being fixed.
     const res = await GET();
     expect(res.status).toBe(503);

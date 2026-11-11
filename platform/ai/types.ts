@@ -210,6 +210,12 @@ export interface AIStreamChunk {
   done: boolean;
   /** Token usage (only present on final chunk) */
   usage?: AIUsage & { cost?: number };
+  /**
+   * Why the reply ended (final chunk only; the provider's own value, e.g. "end_turn",
+   * "max_tokens"). TASK-204 (N-45): "max_tokens" means the answer was cut off at its token
+   * limit — a caller shows it as cut off, never as complete.
+   */
+  stopReason?: string;
 }
 
 /** Options for AI streaming */

@@ -37,10 +37,12 @@ acknowledgement (TASK-197; [AI_ENGINEERING](docs/AI_ENGINEERING.md) §4.3).
 
 1. **Evidence.** Every finding names a file and line and says what happens there. A guess from
    a name is not a finding.
-2. **Tags.** Each finding is **Important** (a defect this change introduces or exposes), **Nit**
-   (style, naming, wording — no defect) or **Pre-existing** (a defect the change did not introduce;
-   it is filed, not blamed on the change).
-3. **Nits are capped** at three per review. Say how many more there were, in one line.
+2. **Tags.** Each finding is **Important** (a defect this change introduces or exposes that can
+   hurt a user, a tenant or a gate), **Low** (a real defect this change introduces or exposes whose
+   harm is small or needs an unlikely sequence), **Nit** (style, naming, wording — no defect) or
+   **Pre-existing** (a defect the change did not introduce; it is filed, not blamed on the change).
+3. **Every finding is listed — every Nit too,** grouped by file when there are many, so all of them
+   are fixed in one round (the owner's rule: done means every finding fixed). No cap.
 4. **Flag the class, not the instance.** When a defect can recur elsewhere, say where else to
    look; the fix covers every instance.
 5. **No repeats.** A finding already answered (fixed, or resolved with a reason) is not raised
@@ -110,8 +112,8 @@ A change to a gate or a security boundary (a High-tier path) is reviewed this wa
     `npm run test:mutation` — whenever `scripts/process-check.mjs` changes): the score stays at 90%
     or more; an equivalent mutant is marked with its reason, or (when its line also
     holds a mutant a test kills) left to survive and listed in the Self-review.
-24. **The stop rule.** A round with no Important (or Low) finding ends the review; a Nit fixed after
-    it is verified by a test.
+24. **The stop rule.** A round with no Important and no Low finding (rule 2) ends the review; each
+    Nit of that last round is still fixed, and verified by a test, not by another round.
 
 ## Blocking rule — the usability lens (TASK-202)
 

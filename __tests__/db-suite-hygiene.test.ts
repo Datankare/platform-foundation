@@ -10,8 +10,11 @@
  *   D-18  No suite writes a SEEDED platform_config key — one the migrations insert, which other
  *         suites read as the deployment's value — by SQL (`update|insert into|delete from
  *         platform_config` with that key as a literal, a parameter, or a constant holding it).
- *         A suite makes its own keys (`test.<random>`, `r13.<tenant id>`). r13.db's kill-switch case
- *         rewrote `agent.trusted_agents` for the length of a test.
+ *         A suite makes its own keys (`test.<random>`, `r13.<tenant id>`). A case that can only
+ *         act on a seeded key (the kill switch's platform scope rewrites `agent.trusted_agents`)
+ *         runs in the serial pass: __tests__/db-serial/*.serial.ts, which jest's testMatch leaves
+ *         out of every parallel pass and `npm run test:db-serial` runs alone, after them (TASK-204,
+ *         N-19 — the TASK-198 allowance list is gone). The other rules hold there too.
  *   D-14  No suite runs under a statement timeout shorter than the DB suites' own (10 s,
  *         helpers/db.ts): the data layer sets idle_in_transaction_session_timeout to the same
  *         value, so a worker stalled that long on the loaded database has its session killed.
@@ -28,17 +31,8 @@ const ROOT = join(__dirname, "..");
 const DB_SUITES = join(ROOT, "__tests__/db");
 const SUITE_TIMEOUT_MS = 10_000;
 
-/**
- * Writes of a seeded key that cannot be made on a key of the suite's own, by file and key: the
- * reason (round 1, L5: one allowance never covers another key in the same file). May only shrink.
- */
-const SEEDED_WRITES_ALLOWED: Readonly<Record<string, Readonly<Record<string, string>>>> =
-  {
-    "__tests__/db/r13.db.test.ts": {
-      "agent.trusted_agents":
-        "the kill switch's platform scope (a single-tenant deployment) acts only on agent.trusted_agents — the key is fixed in agent-kill-switch.ts and power-reduction.ts, so no random key can stand in; the row is restored in a finally, and no other suite reads its platform value (rv11 writes only a tenant override). To leave this list it needs a serial DB pass (TASK-198 follow-up)",
-    },
-  };
+/** The serial pass's suites (TASK-204, N-19): run alone, so a seeded write races nothing. */
+const SERIAL_SUITES = join(ROOT, "__tests__/db-serial");
 
 function walk(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -102,14 +96,64 @@ export function suiteFindings(
   const out: SuiteFinding[] = [];
   const line = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const consts = new Map<string, string>();
+  // TASK-204 (N-19, TASK-198 round 3's residuals): a target held in a constant, a writer under
+  // another name (an import alias, a constant holding it, a namespace's property).
+  const initializers = new Map<string, ts.Expression>();
+  const writers = new Set(CONFIG_WRITERS);
   const collect = (n: ts.Node) => {
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
       const v = stringValue(n.initializer, new Map());
       if (v !== undefined) consts.set(n.name.text, v);
+      initializers.set(n.name.text, n.initializer);
+      if (ts.isIdentifier(n.initializer) && writers.has(n.initializer.text))
+        writers.add(n.name.text);
     }
+    if (ts.isImportSpecifier(n) && CONFIG_WRITERS.has((n.propertyName ?? n.name).text))
+      writers.add(n.name.text);
     ts.forEachChild(n, collect);
   };
   collect(sf);
+  /** The writer a call calls, by any name: `f(…)` or `ns.f(…)`. */
+  const callsWriter = (call: ts.CallExpression) =>
+    (ts.isIdentifier(call.expression) && writers.has(call.expression.text)) ||
+    (ts.isPropertyAccessExpression(call.expression) &&
+      CONFIG_WRITERS.has(call.expression.name.text));
+  /**
+   * The scope a writer's target names: "platform" (left out, `undefined`,
+   * PLATFORM_DEFAULT_TARGET, an object without `scope`), "tenant", or "unknown" (a spread that may
+   * carry a scope, any other expression) — read from the AST, through constants; unknown counts
+   * as platform (fail closed).
+   */
+  const scopeOf = (target: ts.Expression | undefined, depth = 0): string => {
+    if (target === undefined) return "platform";
+    if (ts.isParenthesizedExpression(target) || ts.isAsExpression(target))
+      return scopeOf(target.expression, depth);
+    if (ts.isIdentifier(target)) {
+      if (target.text === "undefined" || target.text === "PLATFORM_DEFAULT_TARGET")
+        return "platform";
+      const init = initializers.get(target.text);
+      return init && depth < 5 ? scopeOf(init, depth + 1) : "unknown";
+    }
+    if (ts.isObjectLiteralExpression(target)) {
+      let spread = false;
+      let scope: string | undefined;
+      for (const p of target.properties) {
+        if (ts.isSpreadAssignment(p)) spread = true;
+        else if (
+          ts.isPropertyAssignment(p) &&
+          (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) &&
+          p.name.text === "scope"
+        )
+          scope =
+            stringValue(
+              ts.isAsExpression(p.initializer) ? p.initializer.expression : p.initializer,
+              consts
+            ) ?? "unknown";
+      }
+      return scope ?? (spread ? "unknown" : "platform");
+    }
+    return "unknown";
+  };
 
   const inTest = (n: ts.Node): ts.CallExpression | undefined => {
     for (let p = n.parent; p; p = p.parent) {
@@ -150,20 +194,21 @@ export function suiteFindings(
     // setConfigWithHistory) at the platform scope, on a seeded key, a literal or a constant
     // holding one. Platform scope (round 2): the target `{ scope: "platform", … }`, the target left
     // out or `undefined` (its default), or PLATFORM_DEFAULT_TARGET.
-    if (
-      ts.isCallExpression(n) &&
-      ts.isIdentifier(n.expression) &&
-      CONFIG_WRITERS.has(n.expression.text) &&
-      n.arguments.length > 0
-    ) {
-      const key = stringValue(n.arguments[0], consts);
-      const target = n.arguments[TARGET_ARG];
-      const platformScope =
-        target === undefined ||
-        (ts.isIdentifier(target) &&
-          (target.text === "undefined" || target.text === "PLATFORM_DEFAULT_TARGET")) ||
-        /\bscope:\s*["']platform["']/.test(target.getText(sf));
-      if (key !== undefined && seeded.has(key) && platformScope)
+    if (ts.isCallExpression(n) && callsWriter(n) && n.arguments.length > 0) {
+      const spreadAt = n.arguments.findIndex((a) => ts.isSpreadElement(a));
+      const key = spreadAt === 0 ? undefined : stringValue(n.arguments[0], consts);
+      // A spread before the target leaves it at an unknown position: unknown scope.
+      const scope =
+        spreadAt >= 0 && spreadAt <= TARGET_ARG
+          ? "unknown"
+          : scopeOf(n.arguments[TARGET_ARG]);
+      if (spreadAt === 0)
+        out.push({
+          line: line(n),
+          kind: "seeded-write",
+          text: "<a key the guard cannot read>",
+        });
+      else if (key !== undefined && seeded.has(key) && scope !== "tenant")
         out.push({ line: line(n), kind: "seeded-write", text: key });
     }
     // D-14: DATABASE_STATEMENT_TIMEOUT_MS set below the suites' bound outside one test's finally.
@@ -270,6 +315,37 @@ describe("database suites on the shared database (TASK-198)", () => {
       [20, "short-timeout", "DATABASE_STATEMENT_TIMEOUT_MS 300"],
       [1, "sampled-plan", "reads plans"],
     ]);
+    // TASK-204 (N-19): a target in a constant, a spread, an aliased or namespaced writer.
+    expect(
+      suiteFindings(
+        `
+        import { setConfigWithHistory as write } from "@/platform/auth/platform-config";
+        import * as pc from "@/platform/auth/platform-config";
+        const KEY = "signups_enabled";
+        const TENANT = { scope: "tenant" };
+        const PLATFORM = { scope: "platform", operator: true };
+        const set2 = write;
+        it("x", async () => {
+          await write(KEY, 1, a, "c", "admin_ui", undefined, PLATFORM);
+          await write(KEY, 1, a, "c", "admin_ui", undefined, TENANT);
+          await pc.setConfigWithHistory(KEY, 1, a, "c");
+          await set2(KEY, 1, a, "c", "admin_ui", undefined, { ...TENANT, scope: "platform" });
+          await write(KEY, 1, a, "c", "admin_ui", undefined, { ...TENANT });
+          await write(KEY, ...rest);
+          await write(...all);
+          await write(KEY, 1, a, "c", "admin_ui", undefined, { ...PLATFORM, scope: "tenant" });
+        });
+      `,
+        seeded
+      ).map((f) => [f.line, f.text])
+    ).toEqual([
+      [9, "signups_enabled"],
+      [11, "signups_enabled"],
+      [12, "signups_enabled"],
+      [13, "signups_enabled"],
+      [14, "signups_enabled"],
+      [15, "<a key the guard cannot read>"],
+    ]);
     // EXPLAIN only to type-check SQL is not reading a plan.
     expect(
       suiteFindings("await client.query(`explain (generic_plan) ${sql}`);", seeded)
@@ -277,21 +353,43 @@ describe("database suites on the shared database (TASK-198)", () => {
   });
 
   const suites = walk(DB_SUITES).filter((f) => /\.tsx?$/.test(f));
-  it("finds the DB suites", () => {
+  const serial = walk(SERIAL_SUITES).filter((f) => /\.serial\.ts$/.test(f));
+  it("finds the DB suites and the serial pass's", () => {
     expect(suites.length).toBeGreaterThan(20);
+    expect(serial.length).toBeGreaterThan(0);
+  });
+
+  it("the serial pass's suites are left out of the parallel passes and run alone (N-19)", () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+      jest: { testMatch: string[] };
+    };
+    // testMatch takes only *.test.ts(x): a *.serial.ts is never in a parallel pass.
+    expect(pkg.jest.testMatch.length).toBeGreaterThan(0);
+    expect(
+      pkg.jest.testMatch.every(
+        (m) => /\.test\.tsx?"?$/.test(m) || /\.test\.tsx?$/.test(m)
+      )
+    ).toBe(true);
+    expect(pkg.scripts["test:db-serial"]).toMatch(
+      /^jest --testMatch "<rootDir>\/__tests__\/db-serial\/\*\*\/\*\.serial\.ts" --runInBand$/
+    );
+    const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+    expect(ci).toMatch(/npm run test:db-serial\b/);
   });
 
   it("no DB suite writes a seeded config key, shortens the suites' timeout, or reads plans on sampled statistics", () => {
     const problems: string[] = [];
     const used = new Set<string>();
-    for (const file of suites.map(rel)) {
+    for (const file of [...suites, ...serial].map(rel)) {
       for (const f of suiteFindings(
         readFileSync(join(ROOT, file), "utf8"),
         seeded,
         file
       )) {
-        if (f.kind === "seeded-write" && SEEDED_WRITES_ALLOWED[file]?.[f.text]) {
-          used.add(`${file} ${f.text}`);
+        // The serial pass runs alone: its seeded writes race no other suite.
+        if (f.kind === "seeded-write" && file.startsWith("__tests__/db-serial/")) {
+          used.add(file);
           continue;
         }
         problems.push(
@@ -304,9 +402,7 @@ describe("database suites on the shared database (TASK-198)", () => {
       }
     }
     expect(problems).toEqual([]);
-    const allowed = Object.entries(SEEDED_WRITES_ALLOWED).flatMap(([file, keys]) =>
-      Object.keys(keys).map((k) => `${file} ${k}`)
-    );
-    expect(allowed.filter((a) => !used.has(a))).toEqual([]);
+    // A serial suite that no longer writes a seeded key belongs back in the parallel passes.
+    expect(serial.map(rel).filter((f) => !used.has(f))).toEqual([]);
   });
 });

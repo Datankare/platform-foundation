@@ -8,12 +8,14 @@ import {
   setGuestUsageStore,
   type GuestUsageStore,
 } from "@/platform/auth/guest-allowance";
-import { checkSafety } from "@/lib/safety";
+import { checkOutputSafety, checkSafety } from "@/lib/safety";
+import { textToSpeech } from "@/lib/tts";
 import { getConfig } from "@/platform/auth/platform-config";
 import { InMemoryRateLimiter, setRateLimiter } from "@/platform/rate-limit";
 
 jest.mock("@/lib/safety", () => ({
   checkSafety: jest.fn().mockResolvedValue({ safe: true }),
+  checkOutputSafety: jest.fn().mockResolvedValue({ safe: true }),
 }));
 
 jest.mock("@/lib/translate", () => ({
@@ -80,6 +82,10 @@ function makeRequest(body: unknown, token: string | null = userToken): NextReque
   });
 }
 
+// Hostile cases (REVIEW.md 3):
+// hostile:self n/a: a translation names no account, so there is no self to act on
+// hostile:id-spelling n/a: the route takes no id, only the text to translate
+
 describe("POST /api/process", () => {
   it.each([
     ["malformed JSON", "{not json", "request.invalid_json"],
@@ -139,6 +145,43 @@ describe("POST /api/process", () => {
     expect(JSON.stringify(data)).not.toContain("inappropriate content");
   });
 
+  // TASK-204 (N-47, audit D-17): the translations are screened before speech or the response.
+  it("screens the translations once, before any speech is made", async () => {
+    (checkOutputSafety as jest.Mock).mockClear();
+    (textToSpeech as jest.Mock).mockClear();
+    const res = await POST(makeRequest({ text: "hello" }));
+    expect(res.status).toBe(200);
+    expect(checkOutputSafety).toHaveBeenCalledTimes(1);
+    expect((checkOutputSafety as jest.Mock).mock.calls[0][0]).toBe(
+      "Hello world\nनमस्ते दुनिया\nHola mundo"
+    );
+    expect((checkOutputSafety as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+      (textToSpeech as jest.Mock).mock.invocationCallOrder[0]
+    );
+  });
+
+  it("[hostile] withholds every translation the output screen refuses: coded, no speech made", async () => {
+    (checkOutputSafety as jest.Mock).mockResolvedValueOnce({
+      safe: false,
+      reason: "slur x",
+    });
+    (textToSpeech as jest.Mock).mockClear();
+    const res = await POST(makeRequest({ text: "hello" }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.code).toBe("content.rejected");
+    expect(JSON.stringify(body)).not.toContain("slur");
+    expect(JSON.stringify(body)).not.toContain("Hola");
+    expect(textToSpeech).not.toHaveBeenCalled();
+  });
+
+  it("[hostile:store-down] withholds when the output screen cannot run (fail closed)", async () => {
+    (checkOutputSafety as jest.Mock).mockRejectedValueOnce(new Error("classifier down"));
+    const res = await POST(makeRequest({ text: "hello" }));
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("content.rejected");
+  });
+
   it("returns translations with audio", async () => {
     const res = await POST(makeRequest({ text: "hello" }));
     const data = await res.json();
@@ -149,7 +192,7 @@ describe("POST /api/process", () => {
 });
 
 describe("POST /api/process — actors and the guest allowance (ADR-050 D4)", () => {
-  it("refuses an anonymous request before any paid call", async () => {
+  it("[hostile:role] refuses an anonymous request before any paid call", async () => {
     const res = await POST(makeRequest({ text: "hello" }, null));
     expect(res.status).toBe(401);
     expect((await res.json()).code).toBe("auth.required");

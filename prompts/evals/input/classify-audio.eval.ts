@@ -9,11 +9,46 @@ import {
   type AudioClassificationResult,
   type AudioClassification,
 } from "@/prompts/input/classify-audio-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildClassifyAudioPrompt,
+  CLASSIFY_AUDIO_V1,
+  type ClassifyAudioInput,
+} from "@/prompts/input/classify-audio-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 const CLASSES: readonly AudioClassification[] = ["speech", "music", "noise"];
 
-export const CLASSIFY_AUDIO_EVAL: EvalSuite<AudioClassificationResult> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<AudioClassificationResult, ClassifyAudioInput> = {
+  config: CLASSIFY_AUDIO_V1,
+  build: buildClassifyAudioPrompt,
+  cases: [
+    {
+      id: "live:speech",
+      input: {
+        description:
+          "One adult voice talking in English at a normal pace, pauses between sentences, no instruments",
+        durationMs: 6000,
+      },
+      assert: (o) => o.classification === "speech",
+    },
+    {
+      id: "live:music",
+      input: {
+        description:
+          "A steady drum beat at 120 bpm with a piano playing chords and a sung melody",
+        durationMs: 8000,
+      },
+      assert: (o) => o.classification === "music",
+    },
+  ],
+};
+
+export const CLASSIFY_AUDIO_EVAL: EvalSuite<
+  AudioClassificationResult,
+  ClassifyAudioInput
+> = {
+  live: LIVE,
   prompt: "classify-audio",
   source: "prompts/input/classify-audio-v1.ts",
   parse: parseClassifyAudioResponse,

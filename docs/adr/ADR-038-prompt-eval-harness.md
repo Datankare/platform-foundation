@@ -20,7 +20,11 @@ fails the build when a prompt or template change breaks the contract. Two lanes:
   fail-closed default that stops firing. Deterministic and free, so it gates every PR
   (including forks and Dependabot PRs, which receive no secrets — the exact constraint that
   bit the Sprint-3d E2E).
-- **Live lane (non-gating, keyed, manual/periodic).** `npm run eval:live` calls the real model
+- **Live lane (non-gating, keyed, manual/periodic).** _Built in TASK-204 (N-43, 2026-11-08):
+  `prompts/evals/live.run.ts`, each suite's `live` cases, recordings in
+  `prompts/evals/recordings/` replayed by `__tests__/prompt-evals-live.test.ts`, the weekly keyed
+  workflow `.github/workflows/eval-live.yml`; without a key it says it skipped, never silently._
+  `npm run eval:live` calls the real model
   through the orchestrator, scores _answer quality_ against the same datasets, and re-records
   the golden fixtures. It traces every call into the observability fabric. It is never a CI
   hard gate (non-deterministic, costs money, needs a key); it is a quality dashboard and the

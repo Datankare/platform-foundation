@@ -46,8 +46,6 @@ import {
 import { keepAliveForProbes } from "@/platform/observability/keep-probes-alive";
 import { tenantRoute } from "@/platform/tenancy/route";
 
-export { deployedCommit };
-
 /** Per-probe bound for this route (the registry's default). */
 const HEALTH_TIMEOUT_MS = 5_000;
 

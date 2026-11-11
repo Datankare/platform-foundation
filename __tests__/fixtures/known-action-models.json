@@ -1,0 +1,21 @@
+{
+  "$comment": "TASK-204 (N-86): the exception the model check carried for anthropics/claude-code-security-review@0c6a49f until the action was replaced, kept as the fixture that tests the exception mechanism (scripts/check-model-ids.mjs KNOWN_ACTION_MODELS, through MODEL_CHECK_KNOWN_ACTIONS). Not in force: production has no exception.",
+  "anthropics/claude-code-security-review": {
+    "model": "claude-3-5-haiku-20241022",
+    "file": "claudecode/claude_api_client.py",
+    "where": "validate_api_access (claude_api_client.py:62 at 0c6a49f), called by findings_filter.py:188",
+    "verifiedAt": "0c6a49f1fa56a1d472575da86a94dbc1edb78eda",
+    "status": "retired (Anthropic's notice, 2026-10-28)",
+    "effect": "the pinned security-review action validates with a retired model; its false-positive filter is disabled (the scan itself uses the claude-model input)",
+    "degraded": "the action's false-positive filter is off: every finding is reported unfiltered",
+    "upstream": "anthropics/claude-code-security-review: hard-coded retired validation model (issue to be filed by the owner — TASK-197)",
+    "reviewBy": "2026-12-31",
+    "overridden": {
+      "claude-opus-4-1-20250805": {
+        "file": "claudecode/constants.py",
+        "input": "claude-model",
+        "where": "DEFAULT_CLAUDE_MODEL (constants.py:8 at 0c6a49f), read from CLAUDE_MODEL, which action.yml:189 sets from the claude-model input"
+      }
+    }
+  }
+}

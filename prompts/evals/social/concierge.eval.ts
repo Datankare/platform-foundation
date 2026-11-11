@@ -8,11 +8,38 @@ import {
   parseConciergeResponse,
   type OnboardingAction,
 } from "@/prompts/social/concierge-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildConciergePrompt,
+  CONCIERGE_V1,
+  type ConciergeInput,
+} from "@/prompts/social/concierge-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 const action = (id: string) => ({ id, label: `L-${id}`, primary: false });
 
-export const CONCIERGE_EVAL: EvalSuite<readonly OnboardingAction[]> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<readonly OnboardingAction[], ConciergeInput> = {
+  config: CONCIERGE_V1,
+  build: buildConciergePrompt,
+  cases: [
+    {
+      id: "live:welcomes-a-new-member",
+      input: {
+        groupName: "Beginner Guitar",
+        groupDescription: "A friendly group for people learning their first chords.",
+        memberName: "Asha",
+      },
+      // More than the parse-failure default (the single "welcome-intro" action).
+      assert: (o) =>
+        o.length > 0 &&
+        o.every((a) => a.label.trim().length > 0) &&
+        !(o.length === 1 && o[0].id === "welcome-intro"),
+    },
+  ],
+};
+
+export const CONCIERGE_EVAL: EvalSuite<readonly OnboardingAction[], ConciergeInput> = {
+  live: LIVE,
   prompt: "concierge",
   source: "prompts/social/concierge-v1.ts",
   parse: parseConciergeResponse,

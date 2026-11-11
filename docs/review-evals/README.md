@@ -42,6 +42,15 @@ A consuming app keeps its own cases in a folder of its own (Playform: `playform/
 
 ## How to run a case
 
+`node scripts/review-eval.mjs` (all cases, or `--cases 01,13`; `--out results.json`) runs the rubric
+below end to end (TASK-204, N-44): it builds each case's review input from history or `inputs/`,
+gives the reviewer (the registry's standard model, instructed by this repository's CLAUDE.md and
+REVIEW.md) that input, has a separate verifier call score the answer against the case, caps a 2
+without the Important tag at 1 in code, and prints the Runs row. It needs `ANTHROPIC_API_KEY` and
+the repository's history; by hand in CI: the **Reviewer eval** workflow
+(`.github/workflows/review-eval.yml`, workflow_dispatch). A reviewer that is not a single model call
+(an agent with tools) is run by hand as below and scored with the same rubric.
+
 Give the reviewer under test the case's **review input** (a diff, or files as of a commit), the
 repository's CLAUDE.md and REVIEW.md, and read access to the tree at that commit — never the case
 file itself. Collect its findings as it would post them, after its own verifier step.
@@ -66,4 +75,6 @@ file itself. Collect its findings as it would post them, after its own verifier 
 | Date | Reviewer (model, protocol, CLAUDE.md/REVIEW.md commit) | Score | Noise | Kept |
 | ---- | ------------------------------------------------------ | ----- | ----- | ---- |
 
-No run is recorded yet; the first scored run is planned (TASK-183).
+No run is recorded yet. The scorer is built (TASK-204); the first scored run is an owner step,
+because it needs the `ANTHROPIC_API_KEY` secret (set in Playform, not in platform-foundation):
+run **Reviewer eval** by hand in Playform and record its row here (TASK-183, Open).

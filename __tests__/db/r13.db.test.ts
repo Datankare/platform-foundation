@@ -17,9 +17,11 @@
  *   L6  ABA: a value changed and changed back before approval — the approval applies (its base is
  *       identical; documented, ADR-040 / runbook §5).
  *   L7  250 holds on one key are withdrawn in 3 batches: 3 audit records, all withdrawn.
- *   H2  (rv12-killswitch on Postgres) the kill switch, tenant and platform scope, with the real
+ *   H2  (rv12-killswitch on Postgres) the kill switch, tenant scope, with the real
  *       setConfigWithHistory: it withdraws the holds of its scope; a held change requested before
- *       it, approved after, is stale and changes nothing.
+ *       it, approved after, is stale and changes nothing. Its platform scope writes the seeded
+ *       agent.trusted_agents itself, so it runs alone, in the serial pass:
+ *       __tests__/db-serial/kill-switch-platform.serial.ts (TASK-204, N-19).
  */
 
 jest.mock("@/lib/logger", () => ({
@@ -509,7 +511,7 @@ dbDescribe("R13-L7 withdrawing many holds is bounded", () => {
   }, 60_000);
 });
 
-dbDescribe("R13 the kill switch on Postgres (rv12 H2): tenant and platform scope", () => {
+dbDescribe("R13 the kill switch on Postgres (rv12 H2): tenant scope", () => {
   const KEY = "agent.trusted_agents";
   const REGISTRY = [
     ["agent:a", { owner: "o", scopes: ["x", "y"], status: "active", maxTokenTtl: 300 }],
@@ -596,78 +598,5 @@ dbDescribe("R13 the kill switch on Postgres (rv12 H2): tenant and platform scope
         suspendAllAgents(admin, "again")
       )
     ).toEqual({ ok: true, suspended: [], republished: true });
-  });
-
-  it("platform scope (single-tenant deployment): suspends the platform default, withdraws platform-scope holds; restored after", async () => {
-    const admin = await opAdmin();
-    const [{ value: original }] = await owner(
-      "select value from platform_config where key = $1",
-      [KEY]
-    );
-    await owner("update platform_config set value = $2::jsonb where key = $1", [
-      KEY,
-      JSON.stringify(REGISTRY),
-    ]);
-    clearConfigCache();
-    try {
-      const proposals = new PostgresProposalStore();
-      setProposalStore(proposals);
-      const single = { tenantId: t.id, mode: "single" as const };
-      const platformHold = await runWithTenant(single, () =>
-        proposals.create({
-          operationId: `op_r13_ks_${t.id}`,
-          sessionId: "s",
-          trajectoryId: "t",
-          label: "update_config",
-          actor: {
-            actorType: "agent",
-            actorId: "config-manager",
-            agentRole: "config-manager",
-          },
-          effects: ["stateWrite"],
-          effectiveRisk: "restricted",
-          payload: { key: KEY, value: [], heldPrevious: { value: REGISTRY } },
-        })
-      );
-      const outcome = await runWithTenant(single, () =>
-        suspendAllAgents(admin, "incident")
-      );
-      expect(outcome).toEqual({
-        ok: true,
-        suspended: ["agent:a", "agent:b"],
-        withdrawn: [platformHold.proposalId],
-      });
-      const [row] = await owner("select value from platform_config where key = $1", [
-        KEY,
-      ]);
-      expect(statuses(row.value)).toEqual(["suspended", "suspended"]);
-      // A compare-and-set against the registry as it was: refused.
-      const stale = await runWithTenant(single, () =>
-        setConfigWithHistory(
-          KEY,
-          REGISTRY,
-          admin.userId,
-          "older",
-          "admin_ui",
-          undefined,
-          {
-            scope: "platform",
-            operator: true,
-          },
-          { expectPrevious: { value: REGISTRY } }
-        )
-      );
-      expect(stale).toMatchObject({ success: false, stale: true });
-    } finally {
-      await owner("update platform_config set value = $2::jsonb where key = $1", [
-        KEY,
-        JSON.stringify(original),
-      ]);
-      await owner(
-        "delete from platform_config_history where config_key = $1 and changed_by = $2::uuid",
-        [KEY, admin.userId]
-      );
-      clearConfigCache();
-    }
   });
 });

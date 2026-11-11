@@ -19,6 +19,7 @@
 "use client";
 
 import { readRefusal } from "@/platform/errors/refusal";
+import { consumeStreamEvents } from "./stream-events";
 import { useState, useCallback, useRef } from "react";
 
 export interface StreamRequestOptions {
@@ -40,6 +41,11 @@ export interface UseRealtimeStreamResult {
   isStreaming: boolean;
   /** Error message if streaming failed */
   error: string | null;
+  /**
+   * The answer was cut off at its token limit (TASK-204, N-45): `text` is incomplete, and
+   * `notice` says so in the catalog's words. Null while streaming and for a complete answer.
+   */
+  truncated: { notice: string } | null;
   /** Abort the current stream */
   abort: () => void;
   /** Reset state for a new stream */
@@ -58,6 +64,7 @@ export function useRealtimeStream(
   const [text, setText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState<{ notice: string } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const abort = useCallback(() => {
@@ -70,6 +77,7 @@ export function useRealtimeStream(
     abort();
     setText("");
     setError(null);
+    setTruncated(null);
   }, [abort]);
 
   const startStream = useCallback(
@@ -82,6 +90,7 @@ export function useRealtimeStream(
 
       setText("");
       setError(null);
+      setTruncated(null);
       setIsStreaming(true);
 
       (async () => {
@@ -110,35 +119,11 @@ export function useRealtimeStream(
             throw new Error("No response body");
           }
 
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-
-            for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const data = line.slice(6).trim();
-              if (data === "[DONE]") continue;
-
-              try {
-                const chunk = JSON.parse(data);
-                if (chunk.error) {
-                  setError(chunk.error);
-                } else if (chunk.text) {
-                  setText((prev) => prev + chunk.text);
-                }
-              } catch {
-                // Skip unparseable lines
-              }
-            }
-          }
+          await consumeStreamEvents(response.body, {
+            onText: (t) => setText((prev) => prev + t),
+            onError: setError,
+            onTruncated: (notice) => setTruncated({ notice }),
+          });
         } catch (err) {
           if (err instanceof Error && err.name === "AbortError") {
             // User cancelled — not an error
@@ -154,5 +139,5 @@ export function useRealtimeStream(
     [getAccessToken]
   );
 
-  return { startStream, text, isStreaming, error, abort, reset };
+  return { startStream, text, isStreaming, error, truncated, abort, reset };
 }

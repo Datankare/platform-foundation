@@ -184,4 +184,19 @@ describe("screenStream", () => {
       )
     );
   });
+
+  // TASK-204 (N-45): the stop reason travels on the done event.
+  it("passes the final chunk's stop reason on its done event", async () => {
+    async function* cut(): AsyncGenerator<AIStreamChunk> {
+      yield { text: "Half an ", done: false };
+      yield { text: "ans", done: true, stopReason: "max_tokens" };
+    }
+    const events = await collect(screenStream(cut(), allow));
+    expect(released(events)).toBe("Half an ans");
+    expect(events[events.length - 1]).toEqual({
+      kind: "done",
+      usage: undefined,
+      stopReason: "max_tokens",
+    });
+  });
 });

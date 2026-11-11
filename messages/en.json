@@ -1279,6 +1279,9 @@
       "sign_in_for_full_access": "Sign in for full access",
       "sign_out": "Sign Out",
       "guest_session": "Guest session —"
+    },
+    "stream": {
+      "truncated": "The answer was cut off at its length limit: it is not complete. Ask for a shorter answer, or ask it to continue."
     }
   }
 }

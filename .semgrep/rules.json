@@ -1,0 +1,13 @@
+{
+  "$comment": "TASK-204 (N-9): the Semgrep rules CI blocks on — github.com/semgrep/semgrep-rules at this commit, selected by scripts/semgrep-rules.py (security vulnerability rules, not audit, confidence MEDIUM or HIGH, in these directories). Raising the commit is a reviewed change: run the scan and triage what is new. The rules are Semgrep, Inc.'s (semgrep-rules, Semgrep Rules License v1.0): fetched at run time to scan this repository's own code, never copied into it.",
+  "repository": "https://github.com/semgrep/semgrep-rules",
+  "commit": "16b9e6d45f10649f6a531ec4838ed9924372c3bc",
+  "dirs": [
+    "javascript",
+    "typescript",
+    "yaml/github-actions",
+    "dockerfile",
+    "generic/secrets"
+  ],
+  "min_rules": 60
+}

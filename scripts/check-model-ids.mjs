@@ -16,9 +16,14 @@
 //
 //   3. TASK-197 (audit D-3): with GOOGLE_API_KEY set, lists Google's text-to-speech voices
 //      (voices.list, free) and fails when a voice the platform names (platform/voice/voices.ts,
-//      and lib/tts.ts where an app keeps its own) is no longer offered. Speech-to-text's
-//      `latest_long` cannot be checked — Speech v1 has no models list — and the run says so.
-//      Without the key the Google check is skipped with a notice.
+//      and lib/tts.ts where an app keeps its own) is no longer offered. TASK-204 (N-50): each
+//      speech-to-text model platform/voice/google-stt.ts names (`latest_long`; and
+//      lib/transcribe.ts where an app keeps its own) is checked by one recognize call on a
+//      quarter-second of silence (Speech v1 has no list of models): any answer but 200 fails.
+//      Without the key the Google checks are skipped with a notice.
+//   3b. TASK-204 (N-50): with OPENAI_API_KEY set, each `text-embedding-*` model the embedding
+//      registry names (platform/rag/embedding-types.ts) must resolve on OpenAI's models API
+//      (GET /v1/models/{id}). Without the key: skipped with a notice and a summary line.
 //
 //   4. TASK-197 (the 2026-10-28 incident): the models named in .github/workflows/** — an action's
 //      `claude-model:` input, any `model:` set to a claude-* id — must be MODEL_REGISTRY ids, so
@@ -49,6 +54,9 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REGISTRY = join(ROOT, "platform/ai/types.ts");
 const VOICE_SOURCES = ["platform/voice/voices.ts", "lib/tts.ts"].map((f) =>
+  join(ROOT, f)
+);
+const SPEECH_SOURCES = ["platform/voice/google-stt.ts", "lib/transcribe.ts"].map((f) =>
   join(ROOT, f)
 );
 const DAY_MS = 86_400_000;
@@ -89,43 +97,36 @@ export function registryEntries(source) {
  * (owner/repo), whatever ref a workflow pins: at each pinned ref the action's own source (`file`)
  * is read and the hard-coded model re-verified (review round 1, L2). While the source still holds
  * `model`, the entry is a documented exception: a loud warning until `reviewBy`, a failure after
- * it. `verifiedAt` is the commit the string was confirmed at, by reading the source.
+ * it. `verifiedAt` is the commit the string was confirmed at, by reading the source. An entry for
+ * an action no workflow uses any more fails the run (TASK-204): an exception cannot outlive its
+ * action.
  *
  * `overridden` (TASK-201): a default model the action's source names that an input does override
  * — not an exception, but held to the override: the workflow step that uses the action must set
- * that input (`claude-model`) to a model, which the workflow-model check then holds to the
- * registry. A step without it fails, naming the input. Re-verified at 0c6a49f on 2026-11-07, which
- * is still the head of the action's `main` (no release tags): `claudecode/constants.py:8`
- * `DEFAULT_CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL') or 'claude-opus-4-1-20250805'`, and
- * `action.yml:189` sets `CLAUDE_MODEL: ${{ inputs.claude-model }}` — the scan
- * (`github_action_audit.py:227`, `--model`) and the false-positive filter's calls use it; only
- * `validate_api_access` keeps its own hard-coded model (`model`, above).
+ * that input to a model, which the workflow-model check then holds to the registry. A step without
+ * it fails, naming the input.
+ *
+ * Empty since TASK-204 (N-86, 2026-11-08): the only entry was anthropics/claude-code-security-review
+ * at 0c6a49f — `validate_api_access` (claudecode/claude_api_client.py:62) hard-coded the retired
+ * claude-3-5-haiku-20241022, and constants.py:8 defaulted to claude-opus-4-1-20250805 (overridden
+ * by `claude-model`); review-by 2026-12-31. The action was replaced by our own step
+ * (scripts/security-review.mjs, on the registry's standard model) and removed from every workflow.
+ * The mechanism stays, tested with that entry as its fixture
+ * (__tests__/fixtures/known-action-models.json, through MODEL_CHECK_KNOWN_ACTIONS).
  */
-export const KNOWN_ACTION_MODELS = Object.freeze({
-  "anthropics/claude-code-security-review": {
-    model: "claude-3-5-haiku-20241022",
-    file: "claudecode/claude_api_client.py",
-    where:
-      "validate_api_access (claude_api_client.py:62 at 0c6a49f), called by findings_filter.py:188",
-    verifiedAt: "0c6a49f1fa56a1d472575da86a94dbc1edb78eda",
-    status: "retired (Anthropic's notice, 2026-10-28)",
-    effect:
-      "the pinned security-review action validates with a retired model; its false-positive filter is disabled (the scan itself uses the claude-model input)",
-    degraded:
-      "the action's false-positive filter is off: every finding is reported unfiltered",
-    upstream:
-      "anthropics/claude-code-security-review: hard-coded retired validation model (issue to be filed by the owner — TASK-197)",
-    reviewBy: "2026-12-31",
-    overridden: Object.freeze({
-      "claude-opus-4-1-20250805": {
-        file: "claudecode/constants.py",
-        input: "claude-model",
-        where:
-          "DEFAULT_CLAUDE_MODEL (constants.py:8 at 0c6a49f), read from CLAUDE_MODEL, which action.yml:189 sets from the claude-model input",
-      },
-    }),
-  },
-});
+export const KNOWN_ACTION_MODELS = Object.freeze({});
+
+/**
+ * The exceptions in force: KNOWN_ACTION_MODELS, or, for the tests only, the JSON file named by
+ * MODEL_CHECK_KNOWN_ACTIONS (its "$comment" key is not an action).
+ */
+export function knownActionModels() {
+  const file = process.env.MODEL_CHECK_KNOWN_ACTIONS;
+  if (!file) return KNOWN_ACTION_MODELS;
+  const read = JSON.parse(readFileSync(file, "utf8"));
+  delete read.$comment;
+  return read;
+}
 
 /**
  * The value a workflow gives `input` in the `with:` of the step that uses `uses` (owner/repo@ref),
@@ -307,7 +308,12 @@ async function actionModels(action, ref, recordedFile) {
  * re-verified in its source at the pinned ref — a documented exception warns until its review-by
  * date and fails after it; a hard-coded model nobody recorded fails. Returns { problems, warnings }.
  */
-export async function workflowProblems(dir, registryIds, now = Date.now()) {
+export async function workflowProblems(
+  dir,
+  registryIds,
+  now = Date.now(),
+  knownActions = knownActionModels()
+) {
   let files = [];
   try {
     files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f));
@@ -316,6 +322,7 @@ export async function workflowProblems(dir, registryIds, now = Date.now()) {
   }
   const problems = [];
   const warnings = [];
+  const used = new Set();
   for (const f of files.sort()) {
     const text = readFileSync(join(dir, f), "utf8");
     for (const { line, model, unverifiable } of workflowModels(text)) {
@@ -331,7 +338,8 @@ export async function workflowProblems(dir, registryIds, now = Date.now()) {
     }
     for (const uses of new Set(workflowActions(text))) {
       const [action, ref] = uses.split("@");
-      const known = KNOWN_ACTION_MODELS[action];
+      used.add(action);
+      const known = Object.hasOwn(knownActions, action) ? knownActions[action] : null;
       if (!known) continue;
       const scanned = await actionModels(action, ref, known.file);
       warnings.push(...scanned.notes.map((n) => `${f}: ${n}`));
@@ -380,6 +388,15 @@ export async function workflowProblems(dir, registryIds, now = Date.now()) {
           `${msg} — its review-by date ${known.reviewBy} has passed (or is not a date): re-pin or replace the action`
         );
       }
+    }
+  }
+  // TASK-204: an exception for an action no workflow uses is stale; it is removed, so it cannot be
+  // carried forward to excuse a later pin of the same action without a fresh review.
+  for (const action of Object.keys(knownActions).sort()) {
+    if (!used.has(action)) {
+      problems.push(
+        `KNOWN_ACTION_MODELS records ${action}, which no workflow uses: remove its exception`
+      );
     }
   }
   return { problems, warnings };
@@ -556,6 +573,8 @@ async function main() {
   }
 
   await checkGoogleVoices(lines, fail);
+  await checkSpeechModels(lines, fail);
+  await checkEmbeddingModels(lines, fail);
 
   console.log(
     failed === 0
@@ -573,9 +592,6 @@ async function main() {
  * Skipped, with a notice, without GOOGLE_API_KEY.
  */
 async function checkGoogleVoices(lines, fail) {
-  console.log(
-    "::notice::Google speech-to-text model latest_long is not checked: Speech v1 offers no list of models"
-  );
   const key = process.env.GOOGLE_API_KEY ?? "";
   if (!key) {
     console.log(
@@ -633,6 +649,141 @@ async function checkGoogleVoices(lines, fail) {
   console.log(
     `ok ${wanted.filter((n) => offered.has(n)).length}/${wanted.length} Google voices offered`
   );
+}
+
+/** The speech-to-text models a source names (`model: "latest_long"`), each once. */
+export function speechModels(source) {
+  return [
+    ...new Set([...source.matchAll(/\bmodel:\s*"([a-z][a-z0-9_]*)"/g)].map((m) => m[1])),
+  ];
+}
+
+/** The embedding model IDs the embedding registry names (`modelId: "text-embedding-…"`). */
+export function embeddingModelIds(source) {
+  return [
+    ...new Set(
+      [...source.matchAll(/\bmodelId:\s*"(text-embedding-[A-Za-z0-9.-]+)"/g)].map(
+        (m) => m[1]
+      )
+    ),
+  ];
+}
+
+/** A quarter of a second of 16 kHz, 16-bit silence (LINEAR16), base64: the cheapest valid audio. */
+const SILENCE = Buffer.alloc(8000).toString("base64");
+
+/**
+ * TASK-204 (N-50): the speech-to-text model the platform names still accepts a request. One
+ * recognize call per model; skipped, with a notice, without GOOGLE_API_KEY.
+ */
+async function checkSpeechModels(lines, fail) {
+  const key = process.env.GOOGLE_API_KEY ?? "";
+  if (!key) {
+    console.log(
+      "::notice::GOOGLE_API_KEY is not set: the speech-to-text model check was skipped."
+    );
+    lines.push("- – speech-to-text models: skipped (no GOOGLE_API_KEY)");
+    return;
+  }
+  // The platform's recogniser, and lib/transcribe.ts where an app keeps its own.
+  const models = [
+    ...new Set(
+      SPEECH_SOURCES.flatMap((f) => {
+        try {
+          return speechModels(readFileSync(f, "utf8"));
+        } catch {
+          return [];
+        }
+      })
+    ),
+  ];
+  if (models.length === 0) {
+    fail("no speech-to-text model found in platform/voice/google-stt.ts");
+    return;
+  }
+  const base = (
+    process.env.GOOGLE_STT_BASE_URL || "https://speech.googleapis.com"
+  ).replace(/\/+$/, "");
+  for (const model of models) {
+    let status = 0;
+    try {
+      const res = await fetch(`${base}/v1/speech:recognize`, {
+        method: "POST",
+        headers: { "X-Goog-Api-Key": key, "content-type": "application/json" },
+        body: JSON.stringify({
+          config: {
+            encoding: "LINEAR16",
+            sampleRateHertz: 16000,
+            languageCode: "en-US",
+            model,
+          },
+          audio: { content: SILENCE },
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      status = res.status;
+    } catch {
+      status = 0;
+    }
+    if (status === 200) {
+      console.log(`ok speech-to-text model ${model} accepts a request`);
+      lines.push(`- ✓ speech-to-text ${model}: request accepted`);
+    } else {
+      fail(
+        `speech-to-text model ${model} refused a request (${why(status)}): retired, renamed, or the key may not call Speech-to-Text`
+      );
+    }
+  }
+}
+
+/**
+ * TASK-204 (N-50): each text-embedding model the embedding registry names still resolves on
+ * OpenAI's models API. Skipped, with a notice, without OPENAI_API_KEY (sent only as a header).
+ */
+async function checkEmbeddingModels(lines, fail) {
+  let ids = [];
+  try {
+    ids = embeddingModelIds(
+      readFileSync(join(ROOT, "platform/rag/embedding-types.ts"), "utf8")
+    );
+  } catch {
+    return;
+  }
+  if (ids.length === 0) return;
+  const key = process.env.OPENAI_API_KEY ?? "";
+  if (!key) {
+    console.log(
+      `::notice::OPENAI_API_KEY is not set: the embedding models (${ids.join(", ")}) were not checked.`
+    );
+    lines.push(`- – embedding models: skipped (no OPENAI_API_KEY): ${ids.join(", ")}`);
+    return;
+  }
+  const base = (process.env.OPENAI_BASE_URL || "https://api.openai.com").replace(
+    /\/+$/,
+    ""
+  );
+  for (const id of ids) {
+    let status = 0;
+    let body = {};
+    try {
+      const res = await fetch(`${base}/v1/models/${encodeURIComponent(id)}`, {
+        headers: { authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(20_000),
+      });
+      status = res.status;
+      body = res.ok ? await res.json().catch(() => ({})) : {};
+    } catch {
+      status = 0;
+    }
+    if (status === 200 && body?.id === id) {
+      console.log(`ok embedding model ${id} resolves`);
+      lines.push(`- ✓ embedding ${id} resolves`);
+    } else {
+      fail(
+        `embedding model ${id} does not resolve (${why(status)}): retired, renamed or mistyped`
+      );
+    }
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

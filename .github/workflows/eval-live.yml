@@ -1,0 +1,94 @@
+name: Live eval lane
+
+# TASK-204 (N-43): ADR-038's live lane — every registered prompt's live cases sent to the real
+# model through the orchestrator (as production sends them), parsed by the prompt's own parser and
+# asserted; the answers are recorded in prompts/evals/recordings/ and uploaded as an artifact, to
+# be committed with the change that refreshed them (the deterministic lane replays them on every
+# PR: __tests__/prompt-evals-live.test.ts).
+#
+#   - Never a PR gate (ADR-038 D4: non-deterministic, paid, keyed): weekly, by hand, and when the
+#     model registry changes on develop — a model change gets a quality check (TASK-187).
+#   - REQUIRE_EVAL_LIVE is 'true' here: a run without the ANTHROPIC_API_KEY secret fails, saying so
+#     (a scheduled run that evaluated nothing must not read as green). By hand without the key,
+#     npm run eval:live says it skipped (a notice and a test named for it), never silently.
+#   - The key reaches the run through env and is sent only as a header; nothing prints it.
+#   - Least permissions: contents: read; the checkout keeps no credentials.
+
+on:
+  schedule:
+    - cron: "41 5 * * 2"
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths:
+      - platform/ai/types.ts
+      - prompts/**
+
+permissions: {}
+
+concurrency:
+  group: eval-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval-live:
+    name: eval-live
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      # TASK-198 D-16 (every jest pass): its seed recorded, its results kept, its suites required.
+      - name: The run's fast-check seed
+        run: |
+          set -euo pipefail
+          seed=$((16#${GITHUB_SHA:0:7}))
+          echo "FC_SEED=$seed" >> "$GITHUB_ENV"
+          echo "fast-check seed (from ${GITHUB_SHA:0:7}): $seed" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Live eval lane
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REQUIRE_EVAL_LIVE: "true"
+          REQUIRE_DB_TESTS: "1"
+          REQUIRE_VALKEY_TESTS: "1"
+        run: npm run eval:live -- --json --outputFile=jest-results-eval-live.json
+
+      - name: Test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jest-results-eval-live
+          path: jest-results-*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload the recordings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: eval-live-recordings
+          path: prompts/evals/recordings/*.json
+          if-no-files-found: ignore
+          retention-days: 30

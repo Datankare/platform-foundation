@@ -30,7 +30,33 @@ export interface EvalCoverage {
   readonly enums: Readonly<Record<string, readonly string[]>>;
 }
 
-export interface EvalSuite<Output> {
+/**
+ * One live-lane case (ADR-038 §1, TASK-204 N-43): an input the prompt's builder takes, sent to the
+ * real model, and an assertion over the parsed answer. Assertions are about meaning a correct
+ * model gives every time (a plainly safe text is safe; a speech description is speech), never a
+ * grade by another model (D2).
+ */
+export interface LiveCase<Output, Input> {
+  readonly id: string;
+  readonly input: Input;
+  readonly assert: (out: Output) => boolean;
+}
+
+/** How the live lane calls the model for a suite's prompt: as production calls it. */
+export interface LiveLane<Output, Input> {
+  /** The prompt's registered config (its name, tier, max tokens, temperature). */
+  readonly config: {
+    readonly name: string;
+    readonly tier: "fast" | "standard";
+    readonly maxTokens: number;
+    readonly temperature?: number;
+  };
+  /** The prompt's own builder: its text is the one user message, as production sends it. */
+  readonly build: (input: Input) => string;
+  readonly cases: readonly LiveCase<Output, Input>[];
+}
+
+export interface EvalSuite<Output, Input = unknown> {
   /** Registry name — must be a registered prompt (listPrompts: the core's or a module's). */
   readonly prompt: string;
   /** Source file (relative to repo root) — the meta-test parses it to cross-check `coverage`. */
@@ -39,10 +65,12 @@ export interface EvalSuite<Output> {
   readonly parse: (raw: string) => Output;
   readonly coverage: EvalCoverage;
   readonly cases: readonly EvalCase<Output>[];
+  /** The live lane's cases (`npm run eval:live`); every suite has them (the meta-test). */
+  readonly live: LiveLane<Output, Input>;
 }
 
 /** Erase a suite's output type for heterogeneous storage; parse+assert stay internally
  *  consistent, so the cast is safe. */
-export function defineSuite<O>(s: EvalSuite<O>): EvalSuite<unknown> {
-  return s as EvalSuite<unknown>;
+export function defineSuite<O, I>(s: EvalSuite<O, I>): EvalSuite<unknown> {
+  return s as unknown as EvalSuite<unknown>;
 }

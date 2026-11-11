@@ -46,6 +46,11 @@ export const suite = (promptName: string): EvalSuite<unknown> => ({
   parse: (raw) => raw,
   coverage: { enums: {} },
   cases: [],
+  live: {
+    config: { name: promptName, tier: "fast", maxTokens: 64 },
+    build: (input) => String(input),
+    cases: [],
+  },
 });
 
 /** A module declaring one of everything, named after `id`. */

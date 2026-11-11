@@ -8,11 +8,50 @@ import {
   parseMatchmakerResponse,
   type MatchmakerRecommendation,
 } from "@/prompts/social/matchmaker-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildMatchmakerPrompt,
+  MATCHMAKER_V1,
+  type MatchmakerInput,
+} from "@/prompts/social/matchmaker-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 const rec = (groupId: string, score: number) => ({ groupId, score, reason: "r" });
 
-export const MATCHMAKER_EVAL: EvalSuite<readonly MatchmakerRecommendation[]> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<readonly MatchmakerRecommendation[], MatchmakerInput> = {
+  config: MATCHMAKER_V1,
+  build: buildMatchmakerPrompt,
+  cases: [
+    {
+      id: "live:interest-match-ranks-first",
+      input: {
+        userId: "u-live-2",
+        userInterests: ["classical violin", "orchestra"],
+        candidateGroups: [
+          {
+            id: "g-violin",
+            name: "Violin Practice Circle",
+            description: "Classical violinists sharing etudes and orchestra parts",
+            memberCount: 40,
+          },
+          {
+            id: "g-fantasy",
+            name: "Fantasy Football",
+            description: "Weekly football league banter",
+            memberCount: 300,
+          },
+        ],
+      },
+      assert: (o) => o.length > 0 && o[0].groupId === "g-violin",
+    },
+  ],
+};
+
+export const MATCHMAKER_EVAL: EvalSuite<
+  readonly MatchmakerRecommendation[],
+  MatchmakerInput
+> = {
+  live: LIVE,
   prompt: "matchmaker",
   source: "prompts/social/matchmaker-v1.ts",
   parse: parseMatchmakerResponse,

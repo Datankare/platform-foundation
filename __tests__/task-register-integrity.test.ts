@@ -182,3 +182,63 @@ describe("task register integrity", () => {
     expect(gaps).toEqual([]);
   });
 });
+
+// TASK-204 (N-12): a target is a promise of when; one that names a sprint already closed says
+// nothing. The Phase 5 sprints released in v5.0.0 and v6.0.0 are closed; an Open entry names a
+// release, a phase or a condition instead.
+const CLOSED_SPRINT = /^(?:Phase 5, )?Sprint (?:3[abc]?|[4-6]|7[ARSTX]?)\b(?! [A-Z0-9])/;
+/** Statuses that end an entry (it is not Open, whatever its section). */
+const ENDED =
+  /^(?:resolved|closed|fixed|superseded|implemented|boundary implemented|wave 1 fixed)/i;
+
+describe("targets and sections that say what is open (TASK-204, N-12, N-44)", () => {
+  const sections = (text: string = TASKS) => {
+    const open = text.slice(0, text.indexOf("\n## Known Issue"));
+    const resolved = text.slice(text.indexOf("\n## Resolved Items"));
+    return { open, resolved };
+  };
+
+  it("[self-test] a closed sprint is refused; a release, a phase or a later sprint is not", () => {
+    for (const t of [
+      "Phase 5, Sprint 4",
+      "Phase 5, Sprint 7",
+      "Sprint 7",
+      "Phase 5, Sprint 7R close",
+    ])
+      expect([t, CLOSED_SPRINT.test(t)]).toEqual([t, true]);
+    for (const t of [
+      "v6.x",
+      "Phase 6",
+      "Phase 5, Sprint 7O",
+      "Phase 5, Sprint 8",
+      "Phase 5, Sprint 7B",
+    ])
+      expect([t, CLOSED_SPRINT.test(t)]).toEqual([t, false]);
+  });
+
+  it("no Open entry targets a closed sprint", () => {
+    const stale = entries(sections().open)
+      .filter((e) => !ENDED.test(field(e.body, "Status")))
+      .filter((e) => CLOSED_SPRINT.test(field(e.body, "Target")))
+      .map((e) => `${e.id}: ${field(e.body, "Target")}`);
+    expect(stale).toEqual([]);
+  });
+
+  it("[self-test] an entry under Resolved Items that is still open is found", () => {
+    const text = `## Open Items\n\n## Known Issue — x\n\n## Resolved Items\n\n### TASK-1 — a\n\n| **Status** | Open — two parts remain |\n`;
+    expect(stillOpen(sections(text).resolved)).toEqual(["TASK-1"]);
+  });
+
+  it("no entry under Resolved Items is still open (TASK-183 was: N-44)", () => {
+    expect(stillOpen(sections().resolved)).toEqual([]);
+  });
+});
+
+/** Entries whose status says work remains. */
+function stillOpen(text: string): string[] {
+  return entries(text)
+    .filter((e) =>
+      /^open\b|\bare open\b|\bremains? open\b/i.test(field(e.body, "Status"))
+    )
+    .map((e) => e.id);
+}

@@ -91,7 +91,10 @@ function useHighlight(
     if (idsKey === prevIdsRef.current) return;
 
     const prevSet = new Set(prevIdsRef.current.split(",").filter(Boolean));
-    const newIds = ids.filter((id) => !prevSet.has(id));
+    // From the key, not the list: a list is a new array on every render, so depending on it ran
+    // this again on the highlight's own render — clearing its timer, and the row stayed marked
+    // (TASK-204, N-41).
+    const newIds = idsKey.split(",").filter((id) => id && !prevSet.has(id));
     prevIdsRef.current = idsKey;
 
     if (newIds.length > 0) {
@@ -99,7 +102,7 @@ function useHighlight(
       const timer = setTimeout(() => setHighlighted(new Set()), clamped * 1000);
       return () => clearTimeout(timer);
     }
-  }, [idsKey, ids, clamped]);
+  }, [idsKey, clamped]);
 
   return highlighted;
 }

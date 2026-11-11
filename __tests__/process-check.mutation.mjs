@@ -699,7 +699,7 @@ test("missingHostileTags: a tag in a running title, or a waiver with its reason"
   );
 });
 
-test("importedHelpers and isRouteTest: a route imported directly or through a helper", () => {
+test("importedHelpers and drivesRoute: a route imported directly or through a helper", () => {
   eq(
     m.importedHelpers(
       [
@@ -719,7 +719,7 @@ test("importedHelpers and isRouteTest: a route imported directly or through a he
     ),
     ["calls", "b.ts", "h", "i", "c", "d", "e/f", "g"]
   );
-  const route = (spec) => m.isRouteTest("__tests__/x.test.ts", spec, () => null);
+  const route = (spec) => m.drivesRoute(spec, () => null);
   for (const t of [
     'import { GET } from "@/app/api/x/route";',
     "import { GET } from '../app/api/x/[id]/route';",
@@ -747,15 +747,23 @@ test("importedHelpers and isRouteTest: a route imported directly or through a he
     'import x from"@/app/api/x/route";',
   ])
     eq([t, route(t)], [t, false]);
-  eq(m.isRouteTest("__tests__/x.test.js", 'import "@/app/api/x/route";'), false);
-  eq(m.isRouteTest("__tests__/x.test.tsx", 'import "@/app/api/x/route";'), true);
-  eq(m.isRouteTest("__tests__/x.test.ts.bak", 'import "@/app/api/x/route";'), false);
+  // A test file (rule 3 reads only these): .test.ts and .test.tsx, at the end of the path.
+  eq(
+    [
+      "x.test.js",
+      "x.test.tsx",
+      "x.test.ts",
+      "x.test.ts.bak",
+      "x.spec.ts",
+      "xtest.ts",
+    ].map((f) => m.TEST_FILE.test(`__tests__/${f}`)),
+    [false, true, true, false, false, false]
+  );
   const helpers = {
     calls: 'import { GET } from "@/app/api/x/route";',
     other: "export {};",
   };
-  const via = (text) =>
-    m.isRouteTest("__tests__/y.test.ts", text, (n) => helpers[n] ?? null);
+  const via = (text) => m.drivesRoute(text, (n) => helpers[n] ?? null);
   eq(via('import { call } from "./helpers/calls";'), true);
   eq(via('import { o } from "./helpers/other";'), false);
   eq(via('import { o } from "./helpers/missing";'), false);
@@ -764,11 +772,7 @@ test("importedHelpers and isRouteTest: a route imported directly or through a he
     true
   );
   eq(
-    m.isRouteTest(
-      "__tests__/y.test.ts",
-      'import { c } from "./helpers/calls";',
-      () => null
-    ),
+    m.drivesRoute('import { c } from "./helpers/calls";', () => null),
     false
   );
 });
@@ -1374,12 +1378,12 @@ test("survivors: the paths, subjects and parsers a full Stryker run left unteste
   eq(m.commentLines("// a */ b"), ["a */ b"]);
   eq(m.commentLines("/*\nx // y\n*/"), ["", "x // y", ""]);
   eq(m.commentLines("/**\n ** x\n */"), ["", "x", ""]);
-  // isRouteTest: an import on any line, not only the first.
+  // drivesRoute: an import on any line, not only the first.
   for (const t of [
     'const a = 1;\nimport "@/app/api/x/route";',
     'const a = 1;\nrequire("@/app/api/x/route");',
   ])
-    eq([t, m.isRouteTest("__tests__/x.test.ts", t, () => null)], [t, true]);
+    eq([t, m.drivesRoute(t, () => null)], [t, true]);
   // Counts: a number, or an object's count; a count is a whole number, not negative.
   eq(
     [m.countOf(3), m.countOf({ count: 2 }), m.countOf(null), m.countOf("3")],
@@ -1597,6 +1601,8 @@ test("the CLI: usage errors exit 2 with the usage line", () => {
     ["--head", "x", "--base"],
     ["--pr-title", "t", "--base", "x"],
     ["--override", "x"],
+    ["--base", "x", "--head"],
+    ["--base", "x", "--bogus", "y"],
   ]) {
     const r = cli(args, HERE);
     eq([args, r.code, r.out, r.err], [args, 2, "", usage]);
@@ -3566,6 +3572,171 @@ test("round 8: promotions after their merges, Reapply, one tag missing, entries 
     'TASK-200 has no "Self-review" block',
     `platform TASK-200: the change touches no entry in docs/A.md that references "platform TASK-200" (record the app's work there; sync platform-foundation's entry first)`,
   ]);
+});
+
+test("round 9 (TASK-204 N-18): the last survivors", () => {
+  const appTasks = (...e) =>
+    `# App tasks\n\n## Open Items\n\n${e.join("\n")}\n## Resolved\n`;
+  const fx = fixture("round9", (repo, dir) => {
+    const out = {};
+    /** Start a line of history of its own. */
+    const line = (name, files) => {
+      repo.git("checkout", "-q", "-f", "--orphan", name);
+      repo.git("rm", "-q", "-rf", "--ignore-unmatch", ".");
+      repo.git("clean", "-q", "-fdx", "-e", ".fixture.json");
+      return repo.commit("chore: start", { "scripts/process-check.mjs": STUB, ...files });
+    };
+    const revertOf = (sha, subject, files, remove = []) => {
+      repo.write(files);
+      for (const p of remove) repo.git("rm", "-q", p);
+      repo.git("add", "-A");
+      repo.git("commit", "-q", "-m", subject, "-m", `This reverts commit ${sha}.`);
+      return repo.git("rev-parse", "HEAD");
+    };
+    // nameStatus: a two-parent merge's own path, under a tier ("*": top-level files) it misses.
+    out.kBase = line("k", {
+      "scripts/risk-tiers.json": JSON.stringify({ high: [{ paths: ["*"] }] }),
+      "docs/TASKS.md": ADD("TASK-980", COMPLETE),
+      "platform/a.ts": "a\n",
+    });
+    repo.git("checkout", "-q", "-b", "k-side");
+    repo.commit("fix: side (TASK-980)", { "platform/a.ts": "c\n" });
+    repo.git("checkout", "-q", "k");
+    repo.commit("fix: main (TASK-980)", {
+      "platform/a.ts": "b\n",
+      "docs/TASKS.md": ADD("TASK-980", `${COMPLETE}\n\nMerged.`),
+    });
+    try {
+      repo.git("merge", "-q", "--no-ff", "-m", "Merge k-side (TASK-980)", "k-side");
+    } catch {
+      // The conflict, resolved below.
+    }
+    out.kMerge = repo.commit("Merge k-side (TASK-980)", { "platform/a.ts": "d\n" });
+    // A non-test file importing a route is no route test.
+    repo.at(out.kBase);
+    out.usesRoute = repo.commit("feat: u (TASK-980)", {
+      "lib/uses-route.ts": 'import { GET } from "@/app/api/x/route";\n',
+      "docs/TASKS.md": ADD("TASK-980", `${COMPLETE}\n\nUses.`),
+    });
+    // A true revert of a commit on the base that removes the entry the commit had changed.
+    line("a", { "docs/TASKS.md": ADD("TASK-981", COMPLETE), "platform/a.ts": "1\n" });
+    out.aX = repo.commit("fix: p (TASK-981)", {
+      "platform/a.ts": "2\n",
+      "docs/TASKS.md": ADD("TASK-981", `${COMPLETE}\n\nChanged.`),
+    });
+    out.aR = revertOf(out.aX, 'Revert "fix: p (TASK-981)"', {
+      "platform/a.ts": "1\n",
+      "docs/TASKS.md": register(OLD),
+    });
+    // An app: two registers; platform TASK-200 on a high-tier path; a plain TASK-200 untouched.
+    const appEntry = (id, note, threat) =>
+      entry(
+        id,
+        `For platform TASK-200: ${note}.\n\n${COMPLETE}${threat ? `\n\n${THREAT}` : ""}`
+      );
+    out.dBase = line("d", {
+      "docs/TASKS.md": register(OLD, entry("TASK-200", COMPLETE)),
+      "scripts/process-check.app.json": JSON.stringify({
+        taskRegisters: ["docs/A.md", "docs/B.md"],
+      }),
+      "docs/A.md": appTasks(entry("TASK-5001", "Old.")),
+      "docs/B.md": appTasks(entry("TASK-5002", "Old.")),
+      "platform/a.ts": "1\n",
+    });
+    out.dOne = repo.commit("ci: x (platform TASK-200)", {
+      ".github/workflows/x.yml": "on: push\n",
+      "docs/A.md": appTasks(appEntry("TASK-5001", "one", false)),
+    });
+    repo.at(out.dBase);
+    out.dTwo = repo.commit("ci: x (platform TASK-200)", {
+      ".github/workflows/x.yml": "on: push\n",
+      "docs/A.md": appTasks(
+        appEntry("TASK-5001", "one", false),
+        appEntry("TASK-5003", "two", true)
+      ),
+    });
+    repo.at(out.dBase);
+    out.eOwn = repo.commit("fix: y (TASK-200)", { "lib/y.ts": "y\n" });
+    // A baseline key that names no file ("#odd") is no key a deletion vacated.
+    out.fBase = line("f", {
+      "docs/TASKS.md": register(OLD),
+      "fake-fetch-baseline.json": JSON.stringify({ count: 1, files: { "#odd": 1 } }),
+    });
+    out.fHead = repo.commit("chore: re-key", {
+      "fake-fetch-baseline.json": JSON.stringify({
+        count: 1,
+        files: { "lib/n.test.ts": 1 },
+      }),
+    });
+    // A commit and its true revert in the range, the revert's subject naming no task.
+    out.hBase = line("h", {
+      "docs/TASKS.md": ADD("TASK-984", COMPLETE),
+      "platform/a.ts": "1\n",
+    });
+    out.hX = repo.commit("fix: x (TASK-984)", {
+      "platform/a.ts": "2\n",
+      "docs/TASKS.md": ADD("TASK-984", `${COMPLETE}\n\nChanged.`),
+    });
+    out.hR = revertOf(out.hX, 'Revert "fix: x"', {
+      "platform/a.ts": "1\n",
+      "docs/TASKS.md": ADD("TASK-984", COMPLETE),
+    });
+    // A revert of a commit on the base, then its reapply: a net no-op.
+    line("j", { "docs/TASKS.md": ADD("TASK-985", COMPLETE), "platform/a.ts": "1\n" });
+    out.jX = repo.commit("fix: x (TASK-985)", {
+      "platform/a.ts": "2\n",
+      "docs/TASKS.md": ADD("TASK-985", `${COMPLETE}\n\nChanged.`),
+    });
+    out.jR = revertOf(out.jX, 'Revert "fix: x (TASK-985)"', { "platform/a.ts": "1\n" });
+    out.jRR = revertOf(out.jR, 'Reapply "fix: x"', { "platform/a.ts": "2\n" });
+    // Last: a commit whose tree cannot be read (an object lost) — git's failure is not a finding.
+    out.lBase = line("l", {
+      "docs/TASKS.md": ADD("TASK-986", COMPLETE),
+      "lib/l-a.ts": "l\n",
+    });
+    out.lC = repo.commit("fix: l (TASK-986)", {
+      "lib/l-b.ts": "l\n",
+      "docs/TASKS.md": ADD("TASK-986", `${COMPLETE}\n\nMore.`),
+    });
+    const lost = repo.git("rev-parse", `${out.lC}:lib`);
+    rmSync(join(dir, ".git", "objects", lost.slice(0, 2), lost.slice(2)));
+    return out;
+  });
+  const s9 = (sha) => sha.slice(0, 7);
+  // nameStatus reads pairs only: no path-less entry a "*" tier could match.
+  eq(check(fx, fx.kBase, fx.kMerge).findings, []);
+  eq(check(fx, fx.kBase, fx.usesRoute).findings, []);
+  // The entry gone with a true revert of a commit on the base that had it: passes.
+  eq(check(fx, fx.aX, fx.aR).findings, []);
+  // The app's entries: the first lacking its Threat model fails alone; a later complete one passes.
+  eq(check(fx, fx.dBase, fx.dOne).findings, [
+    'TASK-5001 has no "Threat model" block (the change touches .github/workflows/x.yml, a high-tier path)',
+  ]);
+  eq(check(fx, fx.dBase, fx.dTwo).findings, []);
+  eq(check(fx, fx.dBase, fx.eOwn).findings, [
+    "TASK-200: the change does not touch its entry in docs/TASKS.md, platform-foundation's synced register (for platform-foundation's task, end the subject with (platform TASK-200) and record the app's work in an entry of docs/A.md or docs/B.md that references \"platform TASK-200\")",
+  ]);
+  eq(check(fx, fx.fBase, fx.fHead).findings, [
+    "fake-fetch-baseline.json: lib/n.test.ts added — the base does not list it, and no key it could replace went with its file (deleted or renamed in this change); fix the new findings instead, or remove the key",
+  ]);
+  eq(check(fx, fx.hBase, fx.hR), {
+    findings: [],
+    notes: [
+      `${s9(fx.hR)} is a true revert of ${s9(fx.hX)}, earlier in this range: the pair is a net no-op`,
+    ],
+    commits: 2,
+    tasks: ["TASK-984"],
+  });
+  eq(check(fx, fx.jX, fx.jRR), {
+    findings: [],
+    notes: [
+      `${s9(fx.jRR)} is a true revert of ${s9(fx.jR)}, earlier in this range: the pair is a net no-op`,
+    ],
+    commits: 2,
+    tasks: ["TASK-985"],
+  });
+  // The commit's own reading fails, and the check with it — not a finding, not a later read.
+  assert.throws(() => check(fx, fx.lBase, fx.lC), /Command failed: git ls-tree/);
 });
 
 // ── run ────────────────────────────────────────────────────────────────────────────────────────

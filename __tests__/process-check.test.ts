@@ -1347,6 +1347,26 @@ describe("scripts/process-check.mjs: round 7 — the single-owner cut (TASK-200)
     repo.done();
   });
 
+  it("[self-test] a revert and its reapply of a commit on the base, in one range, are a net no-op (TASK-204 N-18)", () => {
+    const { repo } = started();
+    const fix = repo.commit("fix: x (TASK-971)", {
+      "platform/a.ts": "export const a = 2;\n",
+      "docs/TASKS.md": ADD_ENTRY("TASK-971", `${COMPLETE}\n\nChanged.`),
+    });
+    // The revert names the task (its quoted subject) and leaves the entry; the reapply names none.
+    const revertOnly = (sha: string, subject: string, a: string) => {
+      repo.write({ "platform/a.ts": `export const a = ${a};\n` });
+      repo.git("add", "-A");
+      repo.git("commit", "-q", "-m", subject, "-m", `This reverts commit ${sha}.`);
+      return repo.git("rev-parse", "HEAD");
+    };
+    const reverted = revertOnly(fix, 'Revert "fix: x (TASK-971)"', "1");
+    revertOnly(reverted, 'Reapply "fix: x"', "2");
+    // The range changes nothing: the entry is as the base has it, and nothing is asked of it.
+    expect(repo.check(fix)).toMatchObject({ code: 0, errors: [] });
+    repo.done();
+  });
+
   it("[self-test] an app's (platform TASK-nnn) on a high-tier path: the app's entry carries the Threat model", () => {
     const { repo } = started();
     const appTasks = (body: string) =>

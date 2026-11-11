@@ -9,7 +9,12 @@ import {
   type DigestItem,
   type DigestPriority,
 } from "@/prompts/social/curator-v1";
-import type { EvalSuite } from "../types";
+import {
+  buildCuratorPrompt,
+  CURATOR_V1,
+  type CuratorInput,
+} from "@/prompts/social/curator-v1";
+import type { EvalSuite, LiveLane } from "../types";
 
 const PRIORITIES: readonly DigestPriority[] = ["high", "medium", "low"];
 const item = (priority: DigestPriority) => ({
@@ -18,7 +23,29 @@ const item = (priority: DigestPriority) => ({
   priority,
 });
 
-export const CURATOR_EVAL: EvalSuite<readonly DigestItem[]> = {
+// TASK-204 (N-43): the live lane — the real model, called as production calls it (ADR-038 §1).
+const LIVE: LiveLane<readonly DigestItem[], CuratorInput> = {
+  config: CURATOR_V1,
+  build: buildCuratorPrompt,
+  cases: [
+    {
+      id: "live:digest-from-activity",
+      input: {
+        groupName: "Bollywood Karaoke",
+        userId: "u-live-1",
+        recentActivity: [
+          "Priya shared a new duet recording of Tum Hi Ho",
+          "The Friday karaoke night moved to Saturday 7 pm",
+          "Three members asked for lyrics of Kesariya",
+        ],
+      },
+      assert: (o) => o.length > 0 && o.every((i) => i.title.trim().length > 0),
+    },
+  ],
+};
+
+export const CURATOR_EVAL: EvalSuite<readonly DigestItem[], CuratorInput> = {
+  live: LIVE,
   prompt: "curator",
   source: "prompts/social/curator-v1.ts",
   parse: parseCuratorResponse,

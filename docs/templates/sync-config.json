@@ -1,9 +1,9 @@
 {
-  "$comment": "TEMPLATE (TASK-160) — copy to .github/sync-config.json. Every exclude is anchored (audit H-3): a root file is written with a leading '/', a file elsewhere with its directory. A bare name (\"package.json\", \"jest.setup.ts\") matches at any depth and silently keeps platform files of the same name out of your app. The consumer seams are always excluded (docs/SETUP_AND_INTEGRATION.md §6).",
+  "$comment": "TEMPLATE (TASK-160) — copy to .github/sync-config.json. Every exclude starts with '/' (audit H-3; TASK-204, R-80): rsync anchors such a pattern at the transfer root, so '/package.json' is the root file and '/types/**' the root types/ directory only. A pattern without a leading '/' is matched against the END of every path — a bare name at any depth, and 'types/**' inside 'shared/types/' too — silently keeping platform files of the same name out of your app; workflow-hygiene refuses one. The consumer seams are always excluded (docs/SETUP_AND_INTEGRATION.md §6).",
   "source": "Datankare/platform-foundation",
   "source_ref": "latest",
   "exclude": [
-    ".github/**",
+    "/.github/**",
     "/.env.example",
     "/.gitleaksignore",
     "/README.md",
@@ -19,16 +19,16 @@
     "/fake-fetch-baseline.json",
     "/body-schema-baseline.json",
     "/open-input-register.json",
-    "docs/APP_API_ERRORS.md",
-    "docs/APP_ENV_REFERENCE.md",
-    "messages/app/**",
-    "platform/errors/app-codes.ts",
-    "platform/auth/app-audit-details.ts",
-    "platform/route-policy/app-route-policy.ts",
-    "platform/assurance/unwired-security.ts",
-    "platform/modules/app-modules.ts",
-    "platform/modules/app-home.tsx",
-    "platform/modules/app-manifest.json",
-    "platform/modules/__tests__/app-modules.test.ts"
+    "/docs/APP_API_ERRORS.md",
+    "/docs/APP_ENV_REFERENCE.md",
+    "/messages/app/**",
+    "/platform/errors/app-codes.ts",
+    "/platform/auth/app-audit-details.ts",
+    "/platform/route-policy/app-route-policy.ts",
+    "/platform/assurance/unwired-security.ts",
+    "/platform/modules/app-modules.ts",
+    "/platform/modules/app-home.tsx",
+    "/platform/modules/app-manifest.json",
+    "/platform/modules/__tests__/app-modules.test.ts"
   ]
 }

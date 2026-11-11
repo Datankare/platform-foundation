@@ -29,19 +29,40 @@ jobs:
 
       - name: Install Semgrep
         # Pinned (audit H-12): an unpinned scanner changes its rules under the build without a
-        # commit. Raise it deliberately, with the findings of the new version triaged.
-        run: pip install semgrep==1.182.0
+        # commit. Raise it deliberately, with the findings of the new version triaged. PyYAML is
+        # for scripts/semgrep-rules.py.
+        run: pip install semgrep==1.182.0 pyyaml==6.0.3
+
+      # TASK-204 (N-9): the rules are pinned too. The registry packs (p/owasp-top-ten,
+      # p/typescript) were downloaded on every run, so the blocking rules changed without a commit.
+      # They now come from semgrep-rules at the commit in .semgrep/rules.json, selected by
+      # scripts/semgrep-rules.py; nothing is downloaded from the registry (--metrics=off).
+      - name: The pinned rules
+        run: |
+          set -euo pipefail
+          repo=$(jq -r '.repository' .semgrep/rules.json)
+          commit=$(jq -r '.commit' .semgrep/rules.json)
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::.semgrep/rules.json: commit is not a 40-hex sha"; exit 1; }
+          git init -q "$RUNNER_TEMP/semgrep-rules"
+          git -C "$RUNNER_TEMP/semgrep-rules" fetch -q --depth 1 "$repo" "$commit"
+          git -C "$RUNNER_TEMP/semgrep-rules" checkout -q FETCH_HEAD
+          python3 scripts/semgrep-rules.py "$RUNNER_TEMP/semgrep-rules" "$RUNNER_TEMP/semgrep-rules.yml"
 
       - name: Run Semgrep
-        run: semgrep scan --config p/owasp-top-ten --config p/typescript --error .
+        run: semgrep scan --metrics=off --config "$RUNNER_TEMP/semgrep-rules.yml" --error .
 
       - name: Run Semgrep (SARIF for code scanning)
+        id: sarif
         if: always()
-        run: semgrep scan --config p/owasp-top-ten --config p/typescript --sarif --output semgrep.sarif . || true
+        run: |
+          set -uo pipefail
+          # Written to the runner's temp directory, never into the checkout (TASK-204, N-2).
+          semgrep scan --metrics=off --config "$RUNNER_TEMP/semgrep-rules.yml" --sarif --output "$RUNNER_TEMP/semgrep.sarif" . || true
+          if [ -s "$RUNNER_TEMP/semgrep.sarif" ]; then echo "written=true" >> "$GITHUB_OUTPUT"; fi
 
       - name: Upload to code scanning
-        if: always() && hashFiles('semgrep.sarif') != ''
+        if: always() && steps.sarif.outputs.written == 'true'
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: ${{ runner.temp }}/semgrep.sarif
           category: semgrep

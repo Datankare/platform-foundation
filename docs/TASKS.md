@@ -7,6 +7,220 @@ Security-specific items live in SECURITY_DEBT.md.
 
 ## Open Items
 
+### TASK-204 — Residuals 55d: CI, process, tests, journeys and AI — every gate able to fail, every admin route walked
+
+| Field        | Detail                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **ID**       | TASK-204                                                                                                                             |
+| **Type**     | Defect (gates that could not fail, unwalked routes, AI answers unscreened or unmarked) and process                                   |
+| **Severity** | Important (N-4, N-15, N-38, N-39, N-43, N-86, N-88, N-94); the rest Low and Nit                                                      |
+| **Phase**    | Phase 5                                                                                                                              |
+| **Target**   | v6.0.0 (RC)                                                                                                                          |
+| **Status**   | Open — N-17 remains (below); every other item fixed on develop (sub-batch 55d); owner steps below                                    |
+| **Logged**   | 2026-11-08 (the rebuilt residuals register: N-2 to N-21, N-38, N-39, N-41, N-43 to N-51, N-86, N-88, N-92, N-94, N-96, the sync bug) |
+
+Sub-batch 55d of the residuals register, in both repositories (Playform: its TASK-5005). Each item
+names the register row; every fix has a test that fails without it.
+
+**Workflows and gates.**
+
+- **N-2** — what a workflow writes goes to `$RUNNER_TEMP`, never the checkout (the fuzz server's
+  log, Semgrep's SARIF and JSON); `workflow-hygiene` reads every `>`/`>>`/`--output`/`tee` target
+  of every workflow (`writtenTargets`, with a `[self-test]`).
+- **N-8** — `npm run lint` is `--max-warnings 0`, as CLAUDE.md's gate always said.
+- **N-9** — Semgrep's rules are pinned: `.semgrep/rules.json` names a `semgrep/semgrep-rules`
+  commit, the directories and a floor of 60 rules; `scripts/semgrep-rules.py` keeps the security
+  rules (no audit rules; confidence medium or high) — 81 rules, no finding in either repository —
+  and the job installs `semgrep==1.182.0` and fetches the rules by that commit, `--metrics=off`.
+  The rules are Semgrep, Inc.'s "semgrep-rules" (Semgrep Rules License v1.0): fetched at run time
+  to scan our own code, never copied into the repositories.
+- **N-92** — actionlint and shellcheck clean in both repositories (platform-foundation 3 findings,
+  Playform 8: SC2015 `a && b || c` in `ci.yml`, an unquoted list and an unused loop variable in
+  `fuzz.yml`, the deploy smoke check's output lines grouped); a new CI step, "Layer 0c — Workflow
+  lint", runs actionlint 1.7.7 checked by its sha256.
+- **N-6** (Playform) — its E2E step fails when `ANTHROPIC_API_KEY` is empty and
+  `E2E_KEY_REQUIRED` is not `false` (Dependabot's runs, which get no secrets, warn instead), and
+  runs `--fail-on-flaky-tests`: a retry that passes is a failure.
+- **N-7** (Playform) — the live journeys are required unless `JOURNEY_REQUIRED` is `false`; a
+  skipped journey is a warning listed in the run's summary (LIVE_JOURNEY_CHECK §9).
+- **N-5, N-94** — platform-foundation's own E2E layer, as Playform's TASK-5001: after the build,
+  the production server on a database the migration replay builds, every durable store on Postgres,
+  `--fail-on-flaky-tests`, the test double's age recorded through `/api/account/age`
+  (`e2e/global-setup.ts`, Playform's), the report uploaded. `playwright.config.ts` refuses a CI run
+  without the two connections.
+- **N-10, N-14** — `npm run test:db` exists (`scripts/test-db.sh`: the database suites, then the
+  serial ones; `--full` the whole run); CLAUDE.md's gate line names it, and its errors bullet names
+  the two baselines' exceptions (R-75, R-77) instead of stating the rules as facts.
+- **N-3** — the test pool's connect timeout is `DB_TEST_TIMEOUT_MS`, as its statements'
+  (`__tests__/helpers/db.ts`); `test-pool-burst.db.test.ts` (40 transactions at once, each 0.6 s)
+  failed with "timeout exceeded when trying to connect" before.
+- **N-19** — TASK-198's residuals: the platform-scope kill-switch test moved to
+  `__tests__/db-serial/` and runs alone (`npm run test:db-serial`, its own CI step);
+  `SEEDED_WRITES_ALLOWED` is gone (db-suite-hygiene reads writer aliases, namespaced calls, constants
+  and spreads, with a self-test); journey-coverage's `inCi()` accepts `true` and `1`; the journey
+  check's base falls back to `git merge-base` after a force-push.
+- **N-11, N-12** — the register: TASK-050, TASK-080, TASK-088, TASK-089 closed (their conditions
+  met); 33 Open tasks (and TASK-118) whose sprint had closed re-targeted to `v6.x`, saying from what;
+  `task-register-integrity` refuses an Open task targeted at a closed sprint.
+- **N-13** — REVIEW.md: the stop rule names the Low tag it uses; rule 3 lists every Nit (no cap).
+- **N-15** — R-79: `scripts/health-watch.mjs` reads `/api/health`'s public answer (names and
+  statuses, never detail) and judges it: unreachable, unhealthy, or `job-schedules` not healthy is a
+  problem. Playform's hourly `health-watch.yml` runs it for dev, staging and production and opens,
+  comments on and closes one issue per environment.
+- **N-16, N-20, N-21** — every sync exclude is anchored (`/types/**`; a pattern without `/` matched
+  any path's end); the guard's self-test asserts the anchoring; Playform excludes its own
+  `scripts/fetch-wrappers.app.json`; `components/SpikeAppWrapper.tsx` (gone) leaves the coverage
+  ignore list.
+- **N-4, N-41** — coverage reads `platform/**` (barrels and type files aside), `app/admin/**` and
+  every component: the admin console's own code included, `platform/auth/index.ts` no longer
+  ignored. What the wider scope found is tested in the same change (ENGINEERING_LEARNINGS 79): the
+  confirm step's every action description and state (`action-confirm-describe.test.tsx`:
+  ActionConfirmPanel 57% → 100% of its lines), the read views' remaining states
+  (`admin-data-views-states.test.tsx`), the command bar's results
+  (`execution-results-states.test.tsx`), `@/platform/rag`'s public surface and stores
+  (`platform/rag/__tests__/module-surface.test.ts`) and the Supabase realtime provider's events,
+  streams and lifetime (`supabase-realtime-behaviour.test.ts`). One defect found doing it: a role or group that arrived
+  while its view was open stayed marked for good — the highlight's effect depended on a list made
+  anew each render, so the highlight's own render cleared its timer; it now depends on the ids'
+  key (the test fails without it). The floors stand; the run is below.
+- **N-96** — `app/api/health/route.ts` exports only its handler; `route-exports.test.ts` refuses a
+  route file exporting anything Next.js does not read (it broke `next build --webpack`, TS2344).
+- **N-18** — the 26 Stryker survivors of `scripts/process-check.mjs`, each killed or removed:
+  - killed by a new case (the suite's round 9): the entry a true revert removes when the reverted
+    commit had changed it (1172); an app's two entries, the first lacking its Threat model (1212,
+    four); the app's message with two registers (1220); a baseline key naming no file (1264); a
+    commit whose tree cannot be read fails the check (1429); the in-range revert's bookkeeping and
+    note when its subject names no task (1473, 1498 ×2); the CLI's missing value (1547).
+  - removed by a simpler reading, the old one's survivor gone with it: every commit other than a
+    two-parent merge is read by `ownPaths` (one reading instead of two that could not be told apart:
+    881); `nameStatus` loops `i < length` (830–831, three: a path-less entry is now planted and
+    killed); `ls-tree`'s entry is matched sticky (1016); the empty-undone guard (1086, never
+    reachable: a judged commit changes code or the process's files, a register neither); the
+    reading of a route test fails the check on any error (1116; `LexError` is the only one it
+    throws); test files are chosen once, where the range's files are read (`drivesRoute`, 1437);
+    `judged.has(target)` (1460); the exact inverse is read before the base (a null target cannot
+    reach it: 1462).
+  - a defect found: a revert of a commit on the base and its reapply in one range left the
+    reverted task's entry required (a net no-op flagged). A revert's own tasks are now recorded
+    (1502), so the reapply names them by a revert too; tested in both suites.
+  - marked: the rule's-start list when the script's first commit is a root (1324: no sha is the
+    mutant's text).
+  - Stryker, run by hand on the result (in two halves, lines 1–700 and 701–end, each under the
+    sandbox's two-hour limit; then every line with a timed-out mutant again with a 90-second
+    timeout, since a loaded host had timed out tests that were merely slow), on Stryker 10.1.1:
+    **99.11%** — 1,904 mutants, 1,871 killed, 16 timed out (each a loop that never ends: `j -= 1`, `||` for `&&`, a
+    bound made `true`), 17 survived. The 17 are TASK-200's equivalents, unchanged: the lexer's `<`
+    at a text's end (five) and a skipped describe's end; `hasPath`'s stdio (two); the text and
+    `git --version` caches bypassed (nine). The 26 survivors of TASK-200's last run: none left.
+- **The sync** (N-88 and the bug behind it) — the scheduled sync opened pull requests that rolled
+  Playform back past platform-foundation commits it already carried (from `main` v5.1.1, without
+  `acceptsTemperature` — so the model check failed on them, N-88). `sync-carried-guard.sh` finds
+  the newest platform commit the app carries (its last sync commit, or the newest
+  `(platform TASK-nnn)` subject) and lets the sync proceed only when the source strictly descends
+  from it; the workflow closes older or rolling-back sync pull requests and opens at most one.
+  Checked against the real histories: `main` (3236c51) and `develop` (992b230) both answer
+  `proceed=false` for Playform today. Re-enabling the sync is an owner step after the v6.0.0
+  promotion (PLAYFORM_MIGRATION_v0.8_to_v0.9 §7).
+
+**AI.**
+
+- **N-43** — ADR-038's live lane exists: each eval suite has live cases, `npm run eval:live` sends
+  them to the model through the orchestrator, parses and asserts them, and records the answers
+  (`prompts/evals/recordings/`), which the deterministic lane replays on every pull request. Without
+  a key it says it skipped (a notice and a test named for it); `eval-live.yml` runs it weekly, by
+  hand and on a registry change, and fails without the key.
+- **N-44** — `scripts/review-eval.mjs` scores the reviewer eval set (each case's planted defect
+  found where expected, a verifier pass, a score per case); `review-eval.yml`, by hand. TASK-183
+  moved back to Open Items: the scoring exists, the first scored run is the owner's.
+- **N-45** — a streamed answer cut off at `max_tokens` ends with `stopReason`, `truncated: true` and
+  a notice in the reader's language; `useRealtimeStream` exposes it (ADR-018).
+- **N-46** — `resumeAgent` reads the governed step cap and stops at it, as `runAgent` does.
+- **N-47, N-48** — `/api/process` screens its translations before speaking them, and Playform's
+  `/api/identify` screens the song's metadata (`lib/output-screening.ts`, now shared); the audit
+  register's D-17 row and AGENT_ARCHITECTURE corrected.
+- **N-49** — the manifesto's claims are true: A/B testing and canaries marked planned (FEAT-091);
+  the readiness table re-read (10 built, 6 partial, 2 planned).
+- **N-50** — the model check reads the speech model (`latest_long`, Google's model list) and the
+  embedding models (`text-embedding-3-*`, OpenAI's), each where the key is set.
+- **N-51** — the chunker splits a sentence longer than `maxChunkSize` (no chunk over the size,
+  each chunk its source's slice: a property test); the TODO is gone.
+- **N-86** — the security review is ours: `scripts/security-review.mjs` reviews the pull request's
+  diff with the registry's standard model (`claude-sonnet-5-5`), verifies each finding, and keeps
+  one comment up to date; the prompt is adapted from Anthropic's "Claude Code Security Reviewer"
+  (anthropics/claude-code-security-review, MIT). The action and its exception in
+  `check-model-ids` are gone (a stale exception is now a finding). Before 2026-12-31.
+
+**Not done: N-17.** The hand-written fetch bodies (platform-foundation 196 in 19 files, Playform
+253 in 24) are unchanged: each needs a route fixture made by its handler, a batch of its own.
+
+**Owner steps** (each with its check): after the v6.0.0 promotion, re-enable the sync
+(PLAYFORM_MIGRATION_v0.8_to_v0.9 §7); in Playform, set the repository variable `JOURNEY_REQUIRED`
+unset or `true` with the journey secrets in place (LIVE_JOURNEY_CHECK §9) and run the Reviewer eval
+once by hand (`review-eval.yml`); optionally set `OPENAI_API_KEY` for the embedding check.
+
+**Design check**
+
+- **Reach:** CI, the owner's tools and two answers: the stream's last event (a signed-in caller),
+  `/api/process` and Playform's `/api/identify` (each caller as before, the guards unchanged). The
+  live eval and the security review reach the model with the repository's key; the health watch
+  reads three public addresses.
+- **Races:** two syncs at once: the workflow's concurrency group runs one, and it closes older sync
+  pull requests before opening one; a pull request pushed during its review: the comment is
+  replaced, never duplicated (its marker); two health-watch runs: one issue per environment,
+  found by its label.
+- **Dependencies down:** the model down: the security review exits 2 ("no review"), the live eval
+  fails, the screening withholds the answer (fail closed: 422 `content.rejected`); GitHub's API down: the
+  health watch fails its run (the failure alert); the platform's history unreadable: the sync
+  guard exits 1, never proceeds.
+- **Erasure leftovers:** none new: the recordings hold model answers to fixed eval inputs, no
+  person's data; the health watch stores an issue naming probe names and statuses only; the
+  security review posts findings about code.
+- **Screens × responses:** no screen changes. The stream's done event gains fields a reader may
+  ignore (tested with the hook); `/api/identify` gains a 422 `content.rejected`, which the
+  recorder shows through the shared refusal handler as information, as every 422 (unchanged).
+- **Journeys touched:** `e2e/admin-routes.spec.ts` (new, both repositories): every console section,
+  an erasure with dual control, the jobs console, the tenancy operator routes, readiness, the
+  planner, the password policy and the kill switch; journey exemptions down (platform-foundation
+  65 to 32, Playform 52 to 30).
+- **Weakens a tenant's protection?** No: two answers are screened that were not, the step cap
+  holds on resume, and the gates that changed can now fail where they could not.
+
+**Threat model**
+
+- **Boundary:** the CI workflows and their secrets (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN`), the sync
+  between the repositories, and two routes' answers. Actors that exist: the owner (the only person
+  who pushes), his agents, Dependabot, the model, and the running system's users.
+- **Bypasses:** a pull request whose diff carries instructions to the reviewer (the diff is data in
+  the prompt, each finding verified, nothing executed; the review runs on same-repository pull
+  requests only); a sync rolling Playform back (the history guard — tests on real histories); a
+  model answer carrying unsafe text past `/api/process` or `/api/identify` (screened — tests); a
+  live eval passing without a key (it fails, saying so); a gate passing on nothing (each `[self-test]`).
+- **Forgeries:** a Dependabot run without secrets mistaken for a pass (it warns, named); a stale
+  model exception kept by hand (refused). Anything needing a second person with write access is out
+  of scope: no such actor exists.
+- **Legitimate flows:** a pull request reviewed and commented on; the weekly live eval; the hourly
+  health watch opening and closing its issue; a sync after the promotion, once its guard proceeds; a
+  translation and an identification answered as before when the screening passes.
+- **Agreed before code:** the owner's brief for sub-batch 55d (2026-11-08): fix every item, kill
+  the survivors, replace the action before 2026-12-31, make the sync idempotent, re-enable it only
+  after the promotion.
+
+**Self-review**
+
+- **Consumers checked:** every caller of the changed contracts — `AIStreamChunk` (provider,
+  orchestrator, screened stream, the route, the hook), `resumeAgent` (the agent routes), the chunker
+  (the RAG ingest), `KNOWN_ACTION_MODELS` (the model check and its workflow), `isRouteTest` (now
+  `drivesRoute`: the script and its suite), the eval suites' `live` (each suite, the module
+  fixtures), the sync workflow and its template (Playform's copy and PLAYFORM_SYNC), both coverage
+  configurations and baselines, both journey-exemption files.
+- **Hostile re-read:** tried each change against its own aim: a diff that tells the reviewer to
+  pass (verified findings only; exit 1 on any); a sync source equal to, behind or beside what
+  Playform carries (`proceed=false`, tests on planted and real histories); a resumed agent past its
+  cap (stopped — test); a cut-off answer read as whole (marked — test through the real route); a
+  sentence of 10,000 characters (split, each chunk its slice — property test); a workflow writing
+  into the checkout (refused — self-test); an unanchored exclude (refused — self-test); every
+  process-check fix seen killing its mutant, and Stryker run on the whole script (above).
+
 ---
 
 ### FEAT-090 — Admin-authored workflow composition (governed)
@@ -51,6 +265,27 @@ workflow assembled from existing intents would run with no new step code.
 4. Remove this entry when delivered.
 
 ---
+
+### FEAT-091 — Prompt and model A/B tests and canary rollouts (planned)
+
+| Field          | Detail                                                  |
+| -------------- | ------------------------------------------------------- |
+| **ID**         | FEAT-091                                                |
+| **Type**       | Feature — GenAI control plane (GENAI_MANIFESTO §5, P13) |
+| **Severity**   | Enhancement                                             |
+| **Component**  | prompts/, platform/ai (orchestrator), admin governance  |
+| **Status**     | Planned — not built                                     |
+| **Logged**     | 2026-11-08 (TASK-204, N-49)                             |
+| **Resolve by** | Own ADR before build (ADR-017 surface 9, GENAI_ROADMAP) |
+
+**What:** GENAI_MANIFESTO §5 called A/B testing and canary rollouts "first-class capabilities"; no
+code implements them (a prompt or model change ships to every caller at once). Until this is
+built, a change is held by the deterministic eval lane in CI and the keyed live lane
+(`npm run eval:live`, ADR-038) — the manifesto and its readiness table now say so (P5 and P13
+Partial). **Scope for the ADR:** a governed split (by tenant, cohort or percentage) between two
+registered prompt versions or model tiers; the live lane's assertions as the comparison; a
+canary that widens on its own only while the error and refusal rates hold; every split
+recorded in the trajectory and the metrics, so a result can be attributed to its arm.
 
 ### CI-001 — GitHub Actions Node.js 24 deprecation warning
 
@@ -146,16 +381,16 @@ environment (TASK-128), or retire server-side conversion for client-side WAV cap
 
 ### TASK-031 — File-level docstrings on SongMatchCard + useAudioRecorder
 
-| Field        | Detail                 |
-| ------------ | ---------------------- |
-| **ID**       | TASK-031               |
-| **Type**     | Documentation          |
-| **Severity** | Low                    |
-| **Phase**    | Phase 5, Sprint 7      |
-| **Target**   | Phase 5, Sprint 7      |
-| **Status**   | Open                   |
-| **Logged**   | 2026-04-18             |
-| **Source**   | PHASE4_PLAN.md line 88 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-031                                                                      |
+| **Type**     | Documentation                                                                 |
+| **Severity** | Low                                                                           |
+| **Phase**    | Phase 5, Sprint 7                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-04-18                                                                    |
+| **Source**   | PHASE4_PLAN.md line 88                                                        |
 
 **What:** Add file-level docstrings to SongMatchCard and
 useAudioRecorder components in Playform.
@@ -166,16 +401,16 @@ useAudioRecorder components in Playform.
 
 ### TASK-032 — Language picker hidden during identification
 
-| Field        | Detail                 |
-| ------------ | ---------------------- |
-| **ID**       | TASK-032               |
-| **Type**     | UX — contextual UI     |
-| **Severity** | Low                    |
-| **Phase**    | Phase 5, Sprint 7      |
-| **Target**   | Phase 5, Sprint 7      |
-| **Status**   | Open                   |
-| **Logged**   | 2026-04-18             |
-| **Source**   | PHASE4_PLAN.md line 85 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-032                                                                      |
+| **Type**     | UX — contextual UI                                                            |
+| **Severity** | Low                                                                           |
+| **Phase**    | Phase 5, Sprint 7                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-04-18                                                                    |
+| **Source**   | PHASE4_PLAN.md line 85                                                        |
 
 **What:** Language picker should be hidden during song
 identification mode (contextual UI behavior).
@@ -186,16 +421,16 @@ identification mode (contextual UI behavior).
 
 ### TASK-033 — Song language displayed on SongMatchCard
 
-| Field        | Detail                 |
-| ------------ | ---------------------- |
-| **ID**       | TASK-033               |
-| **Type**     | Feature                |
-| **Severity** | Low                    |
-| **Phase**    | Phase 5, Sprint 7      |
-| **Target**   | Phase 5, Sprint 7      |
-| **Status**   | Open                   |
-| **Logged**   | 2026-04-18             |
-| **Source**   | PHASE4_PLAN.md line 86 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-033                                                                      |
+| **Type**     | Feature                                                                       |
+| **Severity** | Low                                                                           |
+| **Phase**    | Phase 5, Sprint 7                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-04-18                                                                    |
+| **Source**   | PHASE4_PLAN.md line 86                                                        |
 
 **What:** Display the identified song's language on the
 SongMatchCard component.
@@ -206,16 +441,16 @@ SongMatchCard component.
 
 ### TASK-035 — Streaming service search links
 
-| Field        | Detail                 |
-| ------------ | ---------------------- |
-| **ID**       | TASK-035               |
-| **Type**     | Feature                |
-| **Severity** | Low                    |
-| **Phase**    | Phase 5, Sprint 7      |
-| **Target**   | Phase 5, Sprint 7      |
-| **Status**   | Open                   |
-| **Logged**   | 2026-04-18             |
-| **Source**   | PHASE4_PLAN.md line 87 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-035                                                                      |
+| **Type**     | Feature                                                                       |
+| **Severity** | Low                                                                           |
+| **Phase**    | Phase 5, Sprint 7                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-04-18                                                                    |
+| **Source**   | PHASE4_PLAN.md line 87                                                        |
 
 **What:** Add search links to streaming services
 (Spotify, Apple Music, YouTube Music) on song identification
@@ -251,16 +486,16 @@ the `config.expire-approvals` platform job (ADR-056 D3, migration 050).
 
 ### TASK-037 — Config-AI conversational endpoint is a keyword stub
 
-| Field        | Detail                                                  |
-| ------------ | ------------------------------------------------------- |
-| **ID**       | TASK-037                                                |
-| **Type**     | Feature — agentic surface                               |
-| **Severity** | Medium                                                  |
-| **Phase**    | Phase 5 (Sprint 2/3, on the agentic workflow framework) |
-| **Target**   | Phase 5, Sprint 4                                       |
-| **Status**   | Open                                                    |
-| **Logged**   | 2026-06-21                                              |
-| **Source**   | app/api/admin/config-ai/route.ts:179                    |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-037                                                                      |
+| **Type**     | Feature — agentic surface                                                     |
+| **Severity** | Medium                                                                        |
+| **Phase**    | Phase 5 (Sprint 2/3, on the agentic workflow framework)                       |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-06-21                                                                    |
+| **Source**   | app/api/admin/config-ai/route.ts:179                                          |
 
 **What:** The conversational config-AI endpoint (`config-ai/route.ts`)
 still returns `buildAcknowledgment()`, a keyword-matching stub — not
@@ -279,16 +514,16 @@ extend the keyword approach. Verified still-open Phase 5 Sprint 0.
 
 ### TASK-038 — Verify useAudioRecorder records ≥10s
 
-| Field        | Detail                                 |
-| ------------ | -------------------------------------- |
-| **ID**       | TASK-038                               |
-| **Type**     | Reliability verification               |
-| **Severity** | Medium                                 |
-| **Phase**    | Phase 5, Sprint 7                      |
-| **Target**   | Phase 5, Sprint 7                      |
-| **Status**   | Open                                   |
-| **Logged**   | 2026-04-25                             |
-| **Source**   | TASK-026 rotation — Gotcha G-VOICE-001 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-038                                                                      |
+| **Type**     | Reliability verification                                                      |
+| **Severity** | Medium                                                                        |
+| **Phase**    | Phase 5, Sprint 7                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-04-25                                                                    |
+| **Source**   | TASK-026 rotation — Gotcha G-VOICE-001                                        |
 
 **What:** ACRCloud requires ≥10s of audio for reliable
 fingerprint matching. Verify that `useAudioRecorder` in
@@ -349,16 +584,16 @@ If unregistered, the probe is dead code (Gotcha #27).
 
 ### TASK-042 — Refactor dual ACRCloud env-var read sites
 
-| Field        | Detail                                  |
-| ------------ | --------------------------------------- |
-| **ID**       | TASK-042                                |
-| **Type**     | Refactor                                |
-| **Severity** | Low                                     |
-| **Phase**    | Phase 5, Sprint 1                       |
-| **Target**   | Phase 5, Sprint 6                       |
-| **Status**   | Open                                    |
-| **Logged**   | 2026-04-25                              |
-| **Source**   | TASK-026 rotation pre-flight finding F1 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-042                                                                      |
+| **Type**     | Refactor                                                                      |
+| **Severity** | Low                                                                           |
+| **Phase**    | Phase 5, Sprint 1                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 6", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-04-25                                                                    |
+| **Source**   | TASK-026 rotation pre-flight finding F1                                       |
 
 **What:** Both `platform/providers/registry.ts` (lines 226–228)
 and `platform/voice/acrcloud-identify.ts` (lines 87–89)
@@ -373,16 +608,16 @@ Single source of truth violation.
 
 ### TASK-045 — Rebase + maintain Playform GENAI_ROADMAP overlay
 
-| Field        | Detail                       |
-| ------------ | ---------------------------- |
-| **ID**       | TASK-045                     |
-| **Type**     | Documentation / process      |
-| **Severity** | Medium                       |
-| **Phase**    | Phase 5, Sprint 7            |
-| **Target**   | Phase 5, Sprint 7            |
-| **Status**   | Open                         |
-| **Logged**   | 2026-06-21                   |
-| **Source**   | Phase 5 entry gate N3 review |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-045                                                                      |
+| **Type**     | Documentation / process                                                       |
+| **Severity** | Medium                                                                        |
+| **Phase**    | Phase 5, Sprint 7                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-06-21                                                                    |
+| **Source**   | Phase 5 entry gate N3 review                                                  |
 
 **What:** Playform's docs/GENAI_ROADMAP.md is a sync-excluded
 overlay frozen at Sprint 3d (2026-04-27) — missing Sprints 4-7
@@ -403,16 +638,16 @@ froze.
 
 ### TASK-046 — Auth-enable k6 + live moderation/agent re-baseline
 
-| Field        | Detail                                        |
-| ------------ | --------------------------------------------- |
-| **ID**       | TASK-046                                      |
-| **Type**     | Testing infrastructure / performance baseline |
-| **Severity** | Medium                                        |
-| **Phase**    | Phase 5, Sprint 7 (phase-exit expectation)    |
-| **Target**   | Phase 5, Sprint 7                             |
-| **Status**   | Open                                          |
-| **Logged**   | 2026-06-21                                    |
-| **Source**   | Phase 5 Sprint 0 k6 re-baseline finding       |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-046                                                                      |
+| **Type**     | Testing infrastructure / performance baseline                                 |
+| **Severity** | Medium                                                                        |
+| **Phase**    | Phase 5, Sprint 7 (phase-exit expectation)                                    |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-06-21                                                                    |
+| **Source**   | Phase 5 Sprint 0 k6 re-baseline finding                                       |
 
 **What:** `k6/api-load.js`'s `DRY_RUN=0` ("live, ~$5") profile is stale — it predates
 Sprint 3d, which added `requireAuthWithStatus` to `/api/process` (and, in Playform, guarded `/api/stream` — in platform-foundation that route was unguarded until TASK-133). The
@@ -488,16 +723,16 @@ needs its own Playform develop → staging → main promotion.
 
 ### TASK-050 — Jest worker crashes with stack overflow in soft-delete warning
 
-| Field        | Detail                                               |
-| ------------ | ---------------------------------------------------- |
-| **ID**       | TASK-050                                             |
-| **Type**     | Test infrastructure — latent crash                   |
-| **Severity** | Medium (does not fail the gate — exit code stays 0)  |
-| **Phase**    | Phase 5, Sprint 1                                    |
-| **Target**   | Phase 5, Sprint 4                                    |
-| **Status**   | Open                                                 |
-| **Logged**   | 2026-07-06                                           |
-| **Source**   | Playform `npx jest` output during the audit-fix gate |
+| Field        | Detail                                                                             |
+| ------------ | ---------------------------------------------------------------------------------- |
+| **ID**       | TASK-050                                                                           |
+| **Type**     | Test infrastructure — latent crash                                                 |
+| **Severity** | Medium (does not fail the gate — exit code stays 0)                                |
+| **Phase**    | Phase 5, Sprint 1                                                                  |
+| **Target**   | Done (TASK-204)                                                                    |
+| **Status**   | Closed 2026-11-08 (TASK-204, N-11): the close condition holds in both repositories |
+| **Logged**   | 2026-07-06                                                                         |
+| **Source**   | Playform `npx jest` output during the audit-fix gate                               |
 
 **What:** A Jest worker process hard-crashes with `RangeError: Maximum call stack size
 exceeded` inside `jest-util`'s soft-deleted-global warning path (`emitAccessWarning` →
@@ -524,6 +759,11 @@ exceeded` occurrences.
 ---
 
 **Retargeted Phase 5, Sprint 4:** Does not fail the suite; it is noise in the output. Real, because noise hides signal, but nothing depends on it.
+
+**Closed 2026-11-08 (TASK-204, N-11).** The leak was Sentry's version-keyed global carrier,
+cleared after every test file by `jest.setup.ts` in both repositories (synced); Playform also sets
+`"globalsCleanup": "off"`. TASK-204's full suites ran with zero `Maximum call stack size exceeded`
+in their output in both repositories (counted in its gate logs).
 
 ### TASK-056 — CI-signal parity for platform-foundation (the less-watched repo)
 
@@ -620,7 +860,7 @@ result cache; a failing provider makes it report unhealthy; k6 re-baselined agai
 | **Type**     | CI / supply-chain process                                                                                                                                                                                                             |
 | **Severity** | Medium — recurring manual toil + risk                                                                                                                                                                                                 |
 | **Phase**    | Phase 5, Sprint 2                                                                                                                                                                                                                     |
-| **Target**   | Phase 5, Sprint 7                                                                                                                                                                                                                     |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12)                                                                                                                                                         |
 | **Status**   | Open — code/CI half resolved (Sprint 6.5 M6a: scheduled audit sweep + override register); process half: PF reaudit cadence + cross-repo reconciliation documented (Sprint 7 m2); the Playform-side wiring gap it surfaced is TASK-090 |
 | **Logged**   | 2026-07-24                                                                                                                                                                                                                            |
 
@@ -697,15 +937,15 @@ divergence in formatter version between the repos fails a check rather than a sy
 
 ### TASK-060 — PR backlog accumulates unmerged; branch staleness goes unnoticed
 
-| Field        | Detail                                     |
-| ------------ | ------------------------------------------ |
-| **ID**       | TASK-060                                   |
-| **Type**     | Repo hygiene / process defect              |
-| **Severity** | Medium — stale bases and hidden sync state |
-| **Phase**    | Phase 5, Sprint 2                          |
-| **Target**   | Phase 5, Sprint 4                          |
-| **Status**   | Open                                       |
-| **Logged**   | 2026-07-26                                 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-060                                                                      |
+| **Type**     | Repo hygiene / process defect                                                 |
+| **Severity** | Medium — stale bases and hidden sync state                                    |
+| **Phase**    | Phase 5, Sprint 2                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-07-26                                                                    |
 
 **What:** Two related accumulations, neither of which anything alerts on.
 
@@ -960,7 +1200,7 @@ production call, and no budget column is unwritten.
 | **Type**     | Dependency hygiene                                                                                                                               |
 | **Severity** | Medium — the failure mode is silent and points the wrong way                                                                                     |
 | **Phase**    | Phase 5, Sprint 2                                                                                                                                |
-| **Target**   | Phase 5, Sprint 7                                                                                                                                |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12)                                                                    |
 | **Status**   | Open — register + drift guard landed (Sprint 6.5 M6a); reaudit cadence landed (Sprint 7 m2: scripts/override-reaudit.mjs on the scheduled sweep) |
 | **Logged**   | 2026-08-04                                                                                                                                       |
 
@@ -1028,15 +1268,15 @@ conformance arm.
 
 ### TASK-068 — Decide whether compensation should unwind automatically
 
-| Field        | Detail                                             |
-| ------------ | -------------------------------------------------- |
-| **ID**       | TASK-068                                           |
-| **Type**     | Deferred design decision                           |
-| **Severity** | Low — a decision to make on evidence, not a defect |
-| **Phase**    | Phase 5, Sprint 2                                  |
-| **Target**   | Phase 5, Sprint 4                                  |
-| **Status**   | Open — deliberately                                |
-| **Logged**   | 2026-07-29                                         |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-068                                                                      |
+| **Type**     | Deferred design decision                                                      |
+| **Severity** | Low — a decision to make on evidence, not a defect                            |
+| **Phase**    | Phase 5, Sprint 2                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open — deliberately                                                           |
+| **Logged**   | 2026-07-29                                                                    |
 
 **What:** ADR-029 D6 says rollback appends compensating actions but does not say who triggers
 it. Sprint 2 implemented `compensateTrajectory()` as an **invoked** entry point: a caller
@@ -1103,15 +1343,15 @@ completed without the caller asking.
 
 ### TASK-072 — Turn advancement is not durable until the coordinator owns it
 
-| Field        | Detail                                                |
-| ------------ | ----------------------------------------------------- |
-| **ID**       | TASK-072                                              |
-| **Type**     | Partial durability                                    |
-| **Severity** | Low — correct when callers cooperate, silent when not |
-| **Phase**    | Phase 5, Sprint 2                                     |
-| **Target**   | Phase 5, Sprint 4                                     |
-| **Status**   | Open                                                  |
-| **Logged**   | 2026-08-04                                            |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-072                                                                      |
+| **Type**     | Partial durability                                                            |
+| **Severity** | Low — correct when callers cooperate, silent when not                         |
+| **Phase**    | Phase 5, Sprint 2                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-04                                                                    |
 
 **What:** Migration 029 and `SessionMeta` make turn state durable, so a turn-based session no
 longer loses whose turn it is on restart. But `dispatch()` only CHECKS turn order — it does
@@ -1174,15 +1414,15 @@ ADR-030 reference that keeps the sequence explained stays in place (GOTCHA-70).
 
 ### TASK-069 — Remove the brace-expansion override once upstream ships a clean tree
 
-| Field        | Detail                                      |
-| ------------ | ------------------------------------------- |
-| **ID**       | TASK-069                                    |
-| **Type**     | Dependency stopgap                          |
-| **Severity** | Low — correct today, and should not persist |
-| **Phase**    | Phase 5, Sprint 2                           |
-| **Target**   | Phase 5, Sprint 4                           |
-| **Status**   | Open                                        |
-| **Logged**   | 2026-08-04 (backfilled — see below)         |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-069                                                                      |
+| **Type**     | Dependency stopgap                                                            |
+| **Severity** | Low — correct today, and should not persist                                   |
+| **Phase**    | Phase 5, Sprint 2                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-04 (backfilled — see below)                                           |
 
 **What:** Both repos override `brace-expansion@5` to `5.0.9` to clear GHSA-rgw5-rvv9-x895,
 which reaches production through `@sentry/nextjs` → `@sentry/bundler-plugin-core` → `glob` →
@@ -1336,15 +1576,15 @@ mentioned and which PF's `.env.local` still lacks.
 
 ### TASK-075b — Cross-request durability is unprovable until an agent endpoint exists
 
-| Field        | Detail                                                        |
-| ------------ | ------------------------------------------------------------- |
-| **ID**       | TASK-075b                                                     |
-| **Type**     | Verification                                                  |
-| **Severity** | Medium — the demo's premise depends on it                     |
-| **Phase**    | Phase 5, Sprint 3a                                            |
-| **Target**   | Phase 5, Sprint 3b — with the B-layer endpoint, not before it |
-| **Status**   | Open                                                          |
-| **Logged**   | 2026-08-14                                                    |
+| Field        | Detail                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-075b                                                                                                                 |
+| **Type**     | Verification                                                                                                              |
+| **Severity** | Medium — the demo's premise depends on it                                                                                 |
+| **Phase**    | Phase 5, Sprint 3a                                                                                                        |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 3b — with the B-layer endpoint, not before it", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                                                                      |
+| **Logged**   | 2026-08-14                                                                                                                |
 
 **What:** TASK-075's close condition — a trajectory written by one request is readable by
 another — cannot be run today. Nothing in `app/` calls `executeAgent`, and nothing in `app/`
@@ -1368,15 +1608,15 @@ reads back.
 
 ### TASK-076 — Nothing detects sustained silence from telemetry
 
-| Field        | Detail                                                     |
-| ------------ | ---------------------------------------------------------- |
-| **ID**       | TASK-076                                                   |
-| **Type**     | Operational monitoring                                     |
-| **Severity** | Medium — the failure mode is indistinguishable from health |
-| **Phase**    | Phase 5, Sprint 3a                                         |
-| **Target**   | Phase 5, Sprint 4                                          |
-| **Status**   | Open                                                       |
-| **Logged**   | 2026-08-11                                                 |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-076                                                                      |
+| **Type**     | Operational monitoring                                                        |
+| **Severity** | Medium — the failure mode is indistinguishable from health                    |
+| **Phase**    | Phase 5, Sprint 3a                                                            |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-11                                                                    |
 
 **What:** Sentry has been configured and receiving nothing, because observability was
 initialised on a bundle copy no route read. Nobody noticed, because an absence of errors looks
@@ -1398,15 +1638,15 @@ than assumed.
 
 ### TASK-077 — Provider accessors do not warn when configuration did not arrive
 
-| Field        | Detail                                                       |
-| ------------ | ------------------------------------------------------------ |
-| **ID**       | TASK-077                                                     |
-| **Type**     | Observability of configuration                               |
-| **Severity** | Medium — this is the property that let ADR-032's defect hide |
-| **Phase**    | Phase 5, Sprint 3a                                           |
-| **Target**   | Phase 5, Sprint 4                                            |
-| **Status**   | Open                                                         |
-| **Logged**   | 2026-08-11                                                   |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-077                                                                      |
+| **Type**     | Observability of configuration                                                |
+| **Severity** | Medium — this is the property that let ADR-032's defect hide                  |
+| **Phase**    | Phase 5, Sprint 3a                                                            |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-11                                                                    |
 
 **What:** ADR-032 D5 says a fallback that fires because configuration did not arrive is an
 error, not a default. The startup self-check now logs what each slot resolved to, which
@@ -1432,15 +1672,15 @@ a warning naming the slot, rather than silent in-memory behaviour.
 
 ### TASK-078 — sustainability-gate.sh is wired into neither CI
 
-| Field        | Detail                                              |
-| ------------ | --------------------------------------------------- |
-| **ID**       | TASK-078                                            |
-| **Type**     | Automation that is not automated                    |
-| **Severity** | Medium — the gate runs only when somebody remembers |
-| **Phase**    | Phase 5, Sprint 3a                                  |
-| **Target**   | Phase 5, Sprint 4                                   |
-| **Status**   | Open                                                |
-| **Logged**   | 2026-08-11                                          |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-078                                                                      |
+| **Type**     | Automation that is not automated                                              |
+| **Severity** | Medium — the gate runs only when somebody remembers                           |
+| **Phase**    | Phase 5, Sprint 3a                                                            |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-11                                                                    |
 
 **What:** `scripts/sustainability-gate.sh` exists in both repositories and is referenced by
 neither `ci.yml`. The 22-point sustainability gate — the one the closure checklist says no
@@ -1502,15 +1742,15 @@ person solving that problem finds the prior attempt rather than repeating it.
 
 ### TASK-080 — Nothing stops coverage slack from re-accumulating
 
-| Field        | Detail                                                    |
-| ------------ | --------------------------------------------------------- |
-| **ID**       | TASK-080                                                  |
-| **Type**     | Quality-gate mechanism                                    |
-| **Severity** | Low — the gate works today; it degrades quietly over time |
-| **Phase**    | Phase 5, Sprint 3a                                        |
-| **Target**   | Phase 5, Sprint 4                                         |
-| **Status**   | Open                                                      |
-| **Logged**   | 2026-08-11                                                |
+| Field        | Detail                                                        |
+| ------------ | ------------------------------------------------------------- |
+| **ID**       | TASK-080                                                      |
+| **Type**     | Quality-gate mechanism                                        |
+| **Severity** | Low — the gate works today; it degrades quietly over time     |
+| **Phase**    | Phase 5, Sprint 3a                                            |
+| **Target**   | Done (TASK-204)                                               |
+| **Status**   | Closed 2026-11-08 (TASK-204, N-11): the close condition holds |
+| **Logged**   | 2026-08-11                                                    |
 
 **What:** platform-foundation holds 89.2% statements and 91.9% functions against gates of 80
 and 84. Playform holds 89.9 and 91.5 against the same. That is five to eight points of slack on
@@ -1537,6 +1777,11 @@ sprint closes.
 **Close when:** slack above the margin raises the floor without anyone editing package.json.
 
 ---
+
+**Closed 2026-11-08 (TASK-204, N-11).** Re-verified: `scripts/coverage-ratchet.mjs` raises
+`coverage-baseline.json` when the actuals exceed it by more than the margin and fails a fall below
+it, and CI runs it after the coverage pass (Layer 1b, both repositories) — slack above the margin
+raises the floor with no one editing `package.json`.
 
 ### TASK-081 — CodeQL on Playform is deferred on cost, not overlooked
 
@@ -1580,15 +1825,15 @@ lives.
 
 ### TASK-082 — Six major-version bumps, each needing work rather than a merge
 
-| Field        | Detail                                      |
-| ------------ | ------------------------------------------- |
-| **ID**       | TASK-082                                    |
-| **Type**     | Dependency upgrades                         |
-| **Severity** | Low for most; Medium for eslint-config-next |
-| **Phase**    | Phase 5, Sprint 3a                          |
-| **Target**   | Phase 5, Sprint 4                           |
-| **Status**   | Open                                        |
-| **Logged**   | 2026-08-12                                  |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-082                                                                      |
+| **Type**     | Dependency upgrades                                                           |
+| **Severity** | Low for most; Medium for eslint-config-next                                   |
+| **Phase**    | Phase 5, Sprint 3a                                                            |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-12                                                                    |
 
 **What:** the Dependabot triage separated patches and minors — merged — from majors, which
 change behaviour by definition and may pass CI while doing so.
@@ -1617,15 +1862,15 @@ open untriaged.
 
 ### TASK-083 — Sync cannot tell an orphan from a Playform file
 
-| Field        | Detail                                                |
-| ------------ | ----------------------------------------------------- |
-| **ID**       | TASK-083                                              |
-| **Type**     | Sync tooling                                          |
-| **Severity** | Low — the sync is correct; the reviewer is uninformed |
-| **Phase**    | Phase 5, Sprint 3a                                    |
-| **Target**   | Phase 5, Sprint 4                                     |
-| **Status**   | Open                                                  |
-| **Logged**   | 2026-08-13                                            |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-083                                                                      |
+| **Type**     | Sync tooling                                                                  |
+| **Severity** | Low — the sync is correct; the reviewer is uninformed                         |
+| **Phase**    | Phase 5, Sprint 3a                                                            |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-13                                                                    |
 
 **What:** the sync runs `rsync` without `--delete` by design (Sprint 7, item D), so a file
 platform-foundation deletes stays in Playform indefinitely. That has cost a debugging cycle
@@ -1703,15 +1948,15 @@ that gotcha was cited in the same file.
 
 ### TASK-085 — Declared step cost and provider-reported cost are not reconciled
 
-| Field        | Detail                                             |
-| ------------ | -------------------------------------------------- |
-| **ID**       | TASK-085                                           |
-| **Type**     | Cost accounting                                    |
-| **Severity** | Medium — budget decisions are made on the estimate |
-| **Phase**    | Phase 5, Sprint 3b                                 |
-| **Target**   | Phase 5, Sprint 4                                  |
-| **Status**   | Open                                               |
-| **Logged**   | 2026-08-15                                         |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-085                                                                      |
+| **Type**     | Cost accounting                                                               |
+| **Severity** | Medium — budget decisions are made on the estimate                            |
+| **Phase**    | Phase 5, Sprint 3b                                                            |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-15                                                                    |
 
 **What:** `WorkflowStep.estimatedCostUSD` is a static declaration, and it is what the budget
 ceiling is checked against and what the trajectory records. The providers already emit their
@@ -1740,15 +1985,15 @@ reported figure in the trajectory, and the conformance arm still passes.
 
 ### TASK-086 — Capabilities reports configured providers, not the full D8 list
 
-| Field        | Detail                                           |
-| ------------ | ------------------------------------------------ |
-| **ID**       | TASK-086                                         |
-| **Type**     | Discovery completeness                           |
-| **Severity** | Low — the endpoint is honest about what it omits |
-| **Phase**    | Phase 5, Sprint 3b                               |
-| **Target**   | Phase 5, Sprint 4                                |
-| **Status**   | Open                                             |
-| **Logged**   | 2026-08-15                                       |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-086                                                                      |
+| **Type**     | Discovery completeness                                                        |
+| **Severity** | Low — the endpoint is honest about what it omits                              |
+| **Phase**    | Phase 5, Sprint 3b                                                            |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 4", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-08-15                                                                    |
 
 **What:** ADR-030 D8 lists capabilities as reporting goals, params, cost AND latency
 ranges, languages, limits, and resolved provider names. The shipped endpoint reports the
@@ -1785,15 +2030,15 @@ probe result, not a live check.
 
 ### TASK-087 — Admin-governed approval policy, capability definition, AND agent identity rung 2 (Sprint 3c)
 
-| Field        | Detail                                                  |
-| ------------ | ------------------------------------------------------- |
-| **ID**       | TASK-087                                                |
-| **Type**     | Feature / sprint                                        |
-| **Severity** | Medium — the seam exists; governance of it does not yet |
-| **Phase**    | Phase 5, Sprint 3c                                      |
-| **Target**   | Phase 5, Sprint 3c                                      |
-| **Status**   | Open                                                    |
-| **Logged**   | 2026-08-15                                              |
+| Field        | Detail                                                                         |
+| ------------ | ------------------------------------------------------------------------------ |
+| **ID**       | TASK-087                                                                       |
+| **Type**     | Feature / sprint                                                               |
+| **Severity** | Medium — the seam exists; governance of it does not yet                        |
+| **Phase**    | Phase 5, Sprint 3c                                                             |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 3c", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                           |
+| **Logged**   | 2026-08-15                                                                     |
 
 **What:** Sprint 3b shipped the approval-policy SEAM — approvalPolicy() in gating.ts returns
 a human approver by default, and HeldAction.approver is a typed identity so an agent approver
@@ -1814,15 +2059,15 @@ reachable and governed end to end.
 
 ### TASK-088 — Three Phase-5 modules are outside coverage measurement
 
-| Field        | Detail                                                     |
-| ------------ | ---------------------------------------------------------- |
-| **ID**       | TASK-088                                                   |
-| **Type**     | Coverage integrity                                         |
-| **Severity** | Medium — the reported floor does not cover the newest code |
-| **Phase**    | Phase 5                                                    |
-| **Target**   | Phase 5, Sprint 4 (with TASK-080)                          |
-| **Status**   | Open                                                       |
-| **Logged**   | 2026-08-15                                                 |
+| Field        | Detail                                                              |
+| ------------ | ------------------------------------------------------------------- |
+| **ID**       | TASK-088                                                            |
+| **Type**     | Coverage integrity                                                  |
+| **Severity** | Medium — the reported floor does not cover the newest code          |
+| **Phase**    | Phase 5                                                             |
+| **Target**   | Done (TASK-204)                                                     |
+| **Status**   | Closed 2026-11-08 (TASK-204, N-4): every platform/ tree is measured |
+| **Logged**   | 2026-08-15                                                          |
 
 **What:** `collectCoverageFrom` lists lib, app/api, components, and four platform modules
 (auth, agents, input, moderation). It does NOT list platform/kernel, platform/app-framework
@@ -1847,17 +2092,24 @@ to include them, and CI is green at the new floor (coordinated with TASK-080).
 
 ---
 
+**Closed 2026-11-08 (TASK-204, N-4).** `collectCoverageFrom` measures `platform/**/*.{ts,tsx}`
+(tests, declarations and the 23 pure re-export barrels left out, each named), not 13 trees: the 19
+unmeasured trees — voice, observability, ai, tenancy, social, providers, rag, cache, kernel,
+action-pipeline, realtime, rate-limit, gdpr, app-framework, data, translation, assurance,
+route-policy, security — and the admin console's main files (N-41) are in the ratchet's figures;
+the baseline was re-derived from that run (TASK-204 records the numbers).
+
 ### TASK-089 — PF CI never boots the production build, so the D3 store guard only fails downstream
 
-| Field        | Detail                                                                                                                                               |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ID**       | TASK-089                                                                                                                                             |
-| **Type**     | CI integrity                                                                                                                                         |
-| **Severity** | Medium — a class of production-boot regression is invisible to PF's own gate                                                                         |
-| **Phase**    | Phase 5                                                                                                                                              |
-| **Target**   | Phase 5, Sprint 7                                                                                                                                    |
-| **Status**   | Open — option (b) simulated-boot test landed (Sprint 7 m1: `__tests__/production-boot-guard.test.ts`); option (a) full CI E2E layer remains the goal |
-| **Logged**   | 2026-09-25                                                                                                                                           |
+| Field        | Detail                                                                       |
+| ------------ | ---------------------------------------------------------------------------- |
+| **ID**       | TASK-089                                                                     |
+| **Type**     | CI integrity                                                                 |
+| **Severity** | Medium — a class of production-boot regression is invisible to PF's own gate |
+| **Phase**    | Phase 5                                                                      |
+| **Target**   | Done (TASK-204)                                                              |
+| **Status**   | Closed 2026-11-08 (TASK-204, N-5/N-94): option (a) is built                  |
+| **Logged**   | 2026-09-25                                                                   |
 
 **What:** PF's `ci.yml` (Layers 0d/0a/0b/0c/0e/1/1b/2) runs typecheck, lint, format, unit tests +
 coverage, the ratchet, the override audit, and build — but never starts the production build
@@ -1880,6 +2132,12 @@ platform-level smoke suite. (b) Add an integration test driving `instrumentation
 a simulated production boot that asserts the fail-closed behavior _and_ that the `E2E_IN_MEMORY_STORES`
 opt-out lets boot complete (agents register, health OK) — cheaper, no server, but not a true
 end-to-end boot. Recommend (b) as the floor (guaranteed catch) and (a) as the eventual goal.
+
+**Closed 2026-11-08 (TASK-204, N-5/N-94).** Option (a): PF's CI Pipeline now builds the
+production app and runs `npm run test:e2e` on it (Layer 3: the baseline page with its accessibility
+audit, `/api/health`, the admin console walked as two administrators) on a database the migration
+replay builds; the container-image job already boots the production image and smoke-tests it.
+Option (b) (`production-boot-guard.test.ts`) stays as the cheap floor.
 
 ### TASK-090 — Playform inherits the guard scripts but never runs them (sync excludes package.json + .github)
 
@@ -1980,15 +2238,15 @@ own Cognito pool, Google client, guest secret and durable stores; `/api/health` 
 
 ### TASK-093 — Language lists are not in alphabetical order
 
-| Field        | Detail            |
-| ------------ | ----------------- |
-| **ID**       | TASK-093          |
-| **Type**     | Enhancement       |
-| **Severity** | Low — usability   |
-| **Phase**    | Phase 5           |
-| **Target**   | Phase 5, Sprint 7 |
-| **Status**   | Open              |
-| **Logged**   | 2026-09-26        |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-093                                                                      |
+| **Type**     | Enhancement                                                                   |
+| **Severity** | Low — usability                                                               |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-09-26                                                                    |
 
 **What:** The _Add languages_ picker and the translation card's _Also:_ row list languages in a fixed, non-alphabetical order.
 
@@ -1996,15 +2254,15 @@ own Cognito pool, Google client, guest secret and durable stores; `/api/health` 
 
 ### TASK-094 — Each language click re-translates — no batch multi-language selection
 
-| Field        | Detail                    |
-| ------------ | ------------------------- |
-| **ID**       | TASK-094                  |
-| **Type**     | Enhancement               |
-| **Severity** | Medium — cost and latency |
-| **Phase**    | Phase 5                   |
-| **Target**   | Phase 5, Sprint 7         |
-| **Status**   | Open                      |
-| **Logged**   | 2026-09-26                |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-094                                                                      |
+| **Type**     | Enhancement                                                                   |
+| **Severity** | Medium — cost and latency                                                     |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-09-26                                                                    |
 
 **What:** Toggling a language chip after a translation immediately dispatches a new translate turn: one paid request (and 2–5 s) per click.
 
@@ -2012,15 +2270,15 @@ own Cognito pool, Google client, guest secret and durable stores; `/api/health` 
 
 ### TASK-095 — Translate turns take 2–5 s
 
-| Field        | Detail                   |
-| ------------ | ------------------------ |
-| **ID**       | TASK-095                 |
-| **Type**     | Performance              |
-| **Severity** | Medium — perceived speed |
-| **Phase**    | Phase 5                  |
-| **Target**   | Phase 5, Sprint 7        |
-| **Status**   | Open                     |
-| **Logged**   | 2026-09-26               |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-095                                                                      |
+| **Type**     | Performance                                                                   |
+| **Severity** | Medium — perceived speed                                                      |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-09-26                                                                    |
 
 **What:** Measured on `playform-dev` (Vercel `iad1`, 2026-09-26): translate turn median 2.6 s server-side (1.7–5.4 s); every other session action median 0.26 s; text-to-speech 0.22 s. The session/governance path costs ≈ 0.25 s; the rest is the safety check (an LLM call) completing before detection, classification (a second LLM call) and translation start.
 
@@ -2028,15 +2286,15 @@ own Cognito pool, Google client, guest secret and durable stores; `/api/health` 
 
 ### TASK-096 — PDF upload fails in deployment — `@napi-rs/canvas` is a devDependency
 
-| Field        | Detail                               |
-| ------------ | ------------------------------------ |
-| **ID**       | TASK-096                             |
-| **Type**     | Bug                                  |
-| **Severity** | Medium — a visible feature is broken |
-| **Phase**    | Phase 5                              |
-| **Target**   | Phase 5, Sprint 7                    |
-| **Status**   | Open                                 |
-| **Logged**   | 2026-09-26                           |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-096                                                                      |
+| **Type**     | Bug                                                                           |
+| **Severity** | Medium — a visible feature is broken                                          |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-09-26                                                                    |
 
 **What:** `/api/extract` fails with `DOMMatrix is not defined`: the PDF parser needs `@napi-rs/canvas` at runtime, but Playform lists it under devDependencies, so the deployment never installs it.
 
@@ -2246,15 +2504,15 @@ The production project's default address redirects (308) to `playform.datankare.
 
 ### TASK-106 — Refresh-token rotation is off
 
-| Field        | Detail             |
-| ------------ | ------------------ |
-| **ID**       | TASK-106           |
-| **Type**     | Security hardening |
-| **Severity** | Low                |
-| **Phase**    | Phase 5            |
-| **Target**   | Phase 5, Sprint 7  |
-| **Status**   | Open               |
-| **Logged**   | 2026-09-26         |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-106                                                                      |
+| **Type**     | Security hardening                                                            |
+| **Severity** | Low                                                                           |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-09-26                                                                    |
 
 **What:** Cognito's refresh-token rotation requires disabling `ALLOW_REFRESH_TOKEN_AUTH` and refreshing via `GetTokensFromRefreshToken`; the provider uses `REFRESH_TOKEN_AUTH`, so rotation stays off.
 
@@ -2280,15 +2538,15 @@ The production project's default address redirects (308) to `playform.datankare.
 
 ### TASK-108 — Teams has no participation surface and shows invented group data
 
-| Field        | Detail            |
-| ------------ | ----------------- |
-| **ID**       | TASK-108          |
-| **Type**     | Product           |
-| **Severity** | Medium            |
-| **Phase**    | Phase 5           |
-| **Target**   | Phase 5, Sprint 7 |
-| **Status**   | Open              |
-| **Logged**   | 2026-09-26        |
+| Field        | Detail                                                                        |
+| ------------ | ----------------------------------------------------------------------------- |
+| **ID**       | TASK-108                                                                      |
+| **Type**     | Product                                                                       |
+| **Severity** | Medium                                                                        |
+| **Phase**    | Phase 5                                                                       |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                          |
+| **Logged**   | 2026-09-26                                                                    |
 
 **What:** Group names and member counts are derived from ids and scores (marked demo-only in code), and there is no posting, chat or activity view, so groups cannot be used.
 
@@ -2503,15 +2761,15 @@ then production after promotion.
 
 ### TASK-118 — Dependabot version-update backlog
 
-| Field        | Detail                     |
-| ------------ | -------------------------- |
-| **ID**       | TASK-118                   |
-| **Type**     | Maintenance — dependencies |
-| **Severity** | Low                        |
-| **Phase**    | Phase 5                    |
-| **Target**   | Sprint 7                   |
-| **Status**   | Open                       |
-| **Logged**   | 2026-10-09                 |
+| Field        | Detail                                                               |
+| ------------ | -------------------------------------------------------------------- |
+| **ID**       | TASK-118                                                             |
+| **Type**     | Maintenance — dependencies                                           |
+| **Severity** | Low                                                                  |
+| **Phase**    | Phase 5                                                              |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Sprint 7", closed: TASK-204 N-12) |
+| **Status**   | Open                                                                 |
+| **Logged**   | 2026-10-09                                                           |
 
 **What:** Dependabot version-update pull requests have accumulated. Those opened against `main`
 (#335, #337, #423, #426) were closed at v3.0.1 — every change goes develop → staging → production,
@@ -2771,15 +3029,15 @@ guest-usage rename, the sync's `modules` selection, and Playform opting in.
 
 ### TASK-128 — Deploy anywhere: a container image, infrastructure as code, a second host
 
-| Field        | Detail                                                                                             |
-| ------------ | -------------------------------------------------------------------------------------------------- |
-| **ID**       | TASK-128                                                                                           |
-| **Type**     | Architecture — deployability                                                                       |
-| **Severity** | High — portability off the current hosts is designed for but untested                              |
-| **Phase**    | Phase 5                                                                                            |
-| **Target**   | Phase 5, Sprint 7R (decision, container build), Sprint 7P (AWS environment)                        |
-| **Status**   | Open — the container image in v6.0.0 (Sprint 7R R6; ADR-055 Accepted 2026-10-24); AWS is Sprint 7P |
-| **Logged**   | 2026-10-20                                                                                         |
+| Field        | Detail                                                                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-128                                                                                                                                |
+| **Type**     | Architecture — deployability                                                                                                            |
+| **Severity** | High — portability off the current hosts is designed for but untested                                                                   |
+| **Phase**    | Phase 5                                                                                                                                 |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7R (decision, container build), Sprint 7P (AWS environment)", closed: TASK-204 N-12) |
+| **Status**   | Open — the container image in v6.0.0 (Sprint 7R R6; ADR-055 Accepted 2026-10-24); AWS is Sprint 7P                                      |
+| **Logged**   | 2026-10-20                                                                                                                              |
 
 **What:** only Vercel has been deployed to; `infra/` holds placeholders; the environment contract detects a
 hosted deployment through `VERCEL=1`; the cache provider speaks Upstash's REST protocol only.
@@ -2819,7 +3077,7 @@ Valkey provider, CI deploying to both hosts with the smoke test on both.
 | **Type**     | Operations                                                                                                                               |
 | **Severity** | High — required for any mission-critical claim                                                                                           |
 | **Phase**    | Phase 5                                                                                                                                  |
-| **Target**   | Phase 5, Sprint 7R (decision), Sprint 7O (implementation)                                                                                |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7R (decision), Sprint 7O (implementation)", closed: TASK-204 N-12)                    |
 | **Status**   | Open — background work and health in v6.0.0 (Sprint 7R R5; ADR-056 Accepted 2026-10-24); recovery, alerting and objectives are Sprint 7O |
 | **Logged**   | 2026-10-20                                                                                                                               |
 
@@ -3270,15 +3528,15 @@ check reports it.
 
 ### TASK-149 — ESLint 9 is out of support; ESLint 10 waits on Next's plugins
 
-| Field        | Detail                                                                                   |
-| ------------ | ---------------------------------------------------------------------------------------- |
-| **ID**       | TASK-149                                                                                 |
-| **Type**     | Dependency hygiene                                                                       |
-| **Severity** | Low — development tooling only; nothing it checks reaches users                          |
-| **Phase**    | Phase 5                                                                                  |
-| **Target**   | Phase 5, Sprint 7R close (re-checked each dependency batch)                              |
-| **Status**   | Open — re-checked 2026-10-24 (Sprint 7R close): the plugins still declare ESLint up to 9 |
-| **Logged**   | 2026-10-23                                                                               |
+| Field        | Detail                                                                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-149                                                                                                                |
+| **Type**     | Dependency hygiene                                                                                                      |
+| **Severity** | Low — development tooling only; nothing it checks reaches users                                                         |
+| **Phase**    | Phase 5                                                                                                                 |
+| **Target**   | v6.x (re-targeted 2026-11-08 from "Phase 5, Sprint 7R close (re-checked each dependency batch)", closed: TASK-204 N-12) |
+| **Status**   | Open — re-checked 2026-10-24 (Sprint 7R close): the plugins still declare ESLint up to 9                                |
+| **Logged**   | 2026-10-23                                                                                                              |
 
 **What:** `npm` reports `eslint@9.39.5` as no longer supported. ESLint 10 is held back (Dependabot
 ignores its major) because the React, accessibility and import plugins in `eslint-config-next` 16.4
@@ -4303,6 +4561,64 @@ differ (temperature, thinking, prefill), so the fallback must carry its own `Mod
 and quality change silently unless the alert is acted on. Not built now: pre-launch, the weekly
 check plus a one-line registry change is the proportionate path.
 
+### TASK-183 — A documented, acknowledged AI-engineering review process
+
+| Field        | Detail                                                                                                      |
+| ------------ | ----------------------------------------------------------------------------------------------------------- |
+| **ID**       | TASK-183                                                                                                    |
+| **Type**     | Assurance, process                                                                                          |
+| **Severity** | —                                                                                                           |
+| **Phase**    | Phase 5                                                                                                     |
+| **Target**   | v6.0.0 promotion (the owner steps below)                                                                    |
+| **Status**   | Open — in place on develop; the parts under "Not done" remain (moved from Resolved Items by TASK-204, N-44) |
+| **Logged**   | 2026-10-27                                                                                                  |
+
+Following _How the Claude Code team does code review_ (Addy Osmani, Morgan Westlee Lunt and Qing
+Wang, claude.dev Blog, 2026-10-15; [AI_ENGINEERING](AI_ENGINEERING.md) §1 has the full
+acknowledgement). **Why:** in October 2026 server-side tests passed while real users could not
+finish (TASK-180, TASK-181, Playform's date-of-birth screen), and the identity re-link (TASK-174)
+ran three review rounds before its approach was questioned.
+
+**Done.** `CLAUDE.md` and `REVIEW.md` (each repository's own); `docs/AI_ENGINEERING.md` — the
+article's practices adopted, adapted or declined, the per-change review protocol the AI engineer
+runs before handover, risk tiers set from the change, the evidence a change carries, metrics;
+`scripts/risk-tier.mjs` with its patterns in `scripts/risk-tiers.json` (an app adds
+`scripts/risk-tiers.app.json`); the `review-tier` job (`.github/workflows/review-tier.yml`,
+running the base branch's classifier and patterns; `.github/`, `scripts/risk-tier*`, `REVIEW.md`,
+`CLAUDE.md` and any `.gitattributes` always High; a refusal labelled `risk:high`); the
+security review (`.github/workflows/security-review.yml` — since TASK-204 our own step,
+`scripts/security-review.mjs`, replacing the pinned action — failing its check while findings are reported, skipped with a notice without
+`ANTHROPIC_API_KEY` — failing instead for a fork's PR, or when the repository variable
+`SECURITY_REVIEW_REQUIRED` is `true`); the PR template's Risk tier, Testing, Security, Performance,
+How to revert
+and Review rounds; the reviewer eval set `docs/review-evals/` (17 cases from this register and
+the October 2026 CI failures, with a scoring rubric: 14 reproduce from public history; cases 02,
+04 and 08 have their input reconstructed from pre-release history, in `docs/review-evals/inputs/`). ASSURANCE §1, §3 and §6 updated.
+
+**Tests.** `__tests__/risk-tier.test.ts` (tiers by path and by changed lines; a removed line and a
+removed SQL comment count; tests' content does not raise a tier; renames keep the old path; an
+app's areas merge; the hard rule; `--patterns`; upper-case tenancy SQL; names with spaces, quotes
+or glob characters; a `.gitattributes` cannot hide content; output over 64 KB through a pipe; unsafe, quoted paths and refs refused; in an app, its real paths classify High); `__tests__/review-process.test.ts` (CLAUDE.md's
+standing rules, REVIEW.md's failures and rules, every eval case indexed and complete, the review
+workflows on `pull_request` only, pinned, without credentials and least-privileged, the tier
+from the base's classifier, a skipped security review failing for a fork or when required, the PR
+template's sections, the acknowledgements).
+
+**Not done.** A PR that changes a workflow runs its own copy of it, so its tier and security
+result are not trustworthy (ASSURANCE §3): the owner runs the base classifier locally
+(AI_ENGINEERING §4.2); the `pull_request_target` job that would read the head only as data is
+planned. The `ANTHROPIC_API_KEY` secret in platform-foundation (the security review skips
+until it is set), and then `SECURITY_REVIEW_REQUIRED=true` there and in Playform, which has the
+key; `security-review` and `review-tier` as required checks in branch protection
+(owner settings); the first scored run of the eval set — the scorer is built (TASK-204:
+`scripts/review-eval.mjs`, the **Reviewer eval** workflow) and needs the `ANTHROPIC_API_KEY`
+secret, so the owner runs it in Playform and its row goes into `docs/review-evals/README.md`; the
+first milestone's metrics (AI_ENGINEERING §7, at the v6.0.0 promotion); circuit breakers (declined
+for now, AI_ENGINEERING §8).
+
+**Moved to Open Items (TASK-204, N-44):** filed under Resolved Items with work left, an Open-Items
+review never saw it; `task-register-integrity` now refuses an entry there whose status is open.
+
 ## Known Issue — TASK-020 numbering collision
 
 TASK-020 is used for two different items:
@@ -4485,58 +4801,6 @@ acknowledgement): machine-checked specifications, kept in CI, for the job queue'
 held-action dual control, row-level tenant isolation (a model generated from `pg_policies`, checked
 with an SMT solver) and the refresh-cookie and sign-out protocol. The job queue first. Each new
 concurrent or security-critical state machine gets a specification as part of being done.
-
-### TASK-183 — A documented, acknowledged AI-engineering review process
-
-| Field        | Detail                                                          |
-| ------------ | --------------------------------------------------------------- |
-| **ID**       | TASK-183                                                        |
-| **Type**     | Assurance, process                                              |
-| **Severity** | —                                                               |
-| **Phase**    | Phase 5                                                         |
-| **Target**   | Phase 5, with the next promotion                                |
-| **Status**   | In place on develop; the parts listed under "Not done" are open |
-| **Logged**   | 2026-10-27                                                      |
-
-Following _How the Claude Code team does code review_ (Addy Osmani, Morgan Westlee Lunt and Qing
-Wang, claude.dev Blog, 2026-10-15; [AI_ENGINEERING](AI_ENGINEERING.md) §1 has the full
-acknowledgement). **Why:** in October 2026 server-side tests passed while real users could not
-finish (TASK-180, TASK-181, Playform's date-of-birth screen), and the identity re-link (TASK-174)
-ran three review rounds before its approach was questioned.
-
-**Done.** `CLAUDE.md` and `REVIEW.md` (each repository's own); `docs/AI_ENGINEERING.md` — the
-article's practices adopted, adapted or declined, the per-change review protocol the AI engineer
-runs before handover, risk tiers set from the change, the evidence a change carries, metrics;
-`scripts/risk-tier.mjs` with its patterns in `scripts/risk-tiers.json` (an app adds
-`scripts/risk-tiers.app.json`); the `review-tier` job (`.github/workflows/review-tier.yml`,
-running the base branch's classifier and patterns; `.github/`, `scripts/risk-tier*`, `REVIEW.md`,
-`CLAUDE.md` and any `.gitattributes` always High; a refusal labelled `risk:high`); the
-Claude Code security review (`.github/workflows/security-review.yml`, the action pinned to a
-commit, failing its check while findings are reported, skipped with a notice without
-`ANTHROPIC_API_KEY` — failing instead for a fork's PR, or when the repository variable
-`SECURITY_REVIEW_REQUIRED` is `true`); the PR template's Risk tier, Testing, Security, Performance,
-How to revert
-and Review rounds; the reviewer eval set `docs/review-evals/` (17 cases from this register and
-the October 2026 CI failures, with a scoring rubric: 14 reproduce from public history; cases 02,
-04 and 08 have their input reconstructed from pre-release history, in `docs/review-evals/inputs/`). ASSURANCE §1, §3 and §6 updated.
-
-**Tests.** `__tests__/risk-tier.test.ts` (tiers by path and by changed lines; a removed line and a
-removed SQL comment count; tests' content does not raise a tier; renames keep the old path; an
-app's areas merge; the hard rule; `--patterns`; upper-case tenancy SQL; names with spaces, quotes
-or glob characters; a `.gitattributes` cannot hide content; output over 64 KB through a pipe; unsafe, quoted paths and refs refused; in an app, its real paths classify High); `__tests__/review-process.test.ts` (CLAUDE.md's
-standing rules, REVIEW.md's failures and rules, every eval case indexed and complete, the review
-workflows on `pull_request` only, pinned, without credentials and least-privileged, the tier
-from the base's classifier, a skipped security review failing for a fork or when required, the PR
-template's sections, the acknowledgements).
-
-**Not done.** A PR that changes a workflow runs its own copy of it, so its tier and security
-result are not trustworthy (ASSURANCE §3): the owner runs the base classifier locally
-(AI_ENGINEERING §4.2); the `pull_request_target` job that would read the head only as data is
-planned. The `ANTHROPIC_API_KEY` secret in platform-foundation (the security review skips
-until it is set), and then `SECURITY_REVIEW_REQUIRED=true` there and in Playform, which has the
-key; `security-review` and `review-tier` as required checks in branch protection
-(owner settings); the first scored run of the eval set; the first milestone's metrics; circuit
-breakers (declined for now, AI_ENGINEERING §8).
 
 ### TASK-184 — The admin console read a panel before it knew the admin could open it
 
@@ -7364,7 +7628,9 @@ parity workflow (N-87) — Playform TASK-5004 in `docs/PLAYFORM_TASKS.md`.
   null-prototype object (prototype untouched — test), `npm ci` from the new lockfile (installs,
   `npm ls` clean).
 
-_Last updated: November 8, 2026 (TASK-203, rebased onto TASK-205 — erasure, retention, security and dual-control readiness)_
+_Last updated: November 8, 2026 (TASK-204, rebased onto TASK-203 — residuals 55d: CI, process, tests, journeys and AI)_
+
+_Previously updated: November 8, 2026 (TASK-203, rebased onto TASK-205 — erasure, retention, security and dual-control readiness)_
 
 _Previously updated: November 8, 2026 (TASK-205 — caught-error text logged, never returned; every screen literal in the catalog)_
 

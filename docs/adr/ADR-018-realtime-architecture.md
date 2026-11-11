@@ -51,7 +51,11 @@ The `AIProvider` interface is extended with an optional `stream()` method return
 - Fallback: if streaming fails, retry with `complete()` and return as single chunk
 - Cost tracking per stream
 
-The `/api/stream` endpoint serves SSE (Server-Sent Events) to the browser.
+The `/api/stream` endpoint serves SSE (Server-Sent Events) to the browser. Its final event
+(`done: true`) carries the model's `stopReason`; an answer the model stopped at its token limit
+(`max_tokens`) is also marked `truncated: true` with the catalog's `notice`
+(`screens.stream.truncated`), so a cut-off answer is never shown as a complete one (TASK-204,
+N-45; `hooks/useRealtimeStream.ts` exposes it as `truncated`).
 
 ### Scale Migration Path
 
